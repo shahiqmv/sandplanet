@@ -261,3 +261,41 @@ class ExtractionTests(QuoteBase):
                                  {"file": upload}, format="multipart")
         self.assertEqual(r.data["extracted"], 0)
         self.assertEqual(len(r.data["lines"]), 1)
+
+    QUOTE_HTML_CODE_FIRST = """
+    <html><body style="font-family: Arial; font-size: 10pt">
+    <h3>MANAS-style layout</h3>
+    <p>Code Qty Item Description Rate MVR Amount MVR</p>
+    <p>5735 5 TIN PAINT REMOVER BOSNY MVR150.00 MVR750.00</p>
+    <p>5340 95 TIN PAINT REMOVER SPRAY DEER MVR90.00 MVR8,550.00</p>
+    <p>6611 50 PCS SANDING DISC VELCRO #80 MVR5.00 MVR250.00</p>
+    <p>Subtotal: MVR9,550.00</p>
+    </body></html>
+    """
+
+    def test_code_first_layout_with_currency_prefixes(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
+        try:
+            from weasyprint import HTML
+        except Exception:  # pragma: no cover
+            self.skipTest("WeasyPrint unavailable")
+        pdf_bytes = HTML(string=self.QUOTE_HTML_CODE_FIRST).write_pdf()
+
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        quotation = self.add_quote(pr["ref"], self.hw, [], terms="Cash")
+        with override_settings(MEDIA_ROOT="test-media"):
+            upload = SimpleUploadedFile("manas.pdf", pdf_bytes,
+                                        content_type="application/pdf")
+            r = self.client.post(f"/api/v1/quotations/{quotation['id']}/file",
+                                 {"file": upload}, format="multipart")
+        self.assertEqual(r.data["extracted"], 3, r.data["lines"])
+        spray = next(line for line in r.data["lines"]
+                     if "SPRAY" in line["supplier_desc"])
+        self.assertEqual(float(spray["qty"]), 95.0)
+        self.assertEqual(float(spray["rate"]), 90.0)
+        self.assertEqual(float(spray["amount"]), 8550.0)
+        self.assertEqual(spray["unit"], "TIN")
+        self.assertIn("5340", spray["remarks"])

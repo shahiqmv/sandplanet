@@ -94,30 +94,61 @@ def _rows_from_table(table):
     return out
 
 
-# text fallback: "<description> <qty> [unit] <rate> <amount>" at line end
-_TEXT_LINE = re.compile(
-    r"^(?P<desc>.{4,}?)\s+(?P<qty>\d[\d,]*\.?\d*)\s+"
-    r"(?P<unit>[A-Za-z]{1,6}\.?)?\s*(?P<rate>\d[\d,]*\.?\d*)\s+"
-    r"(?P<amount>\d[\d,]*\.?\d*)\s*$"
-)
+_UNIT_TOKEN = re.compile(r"^[A-Za-z]{1,6}\.?$")
+_NUMERIC_TOKEN = re.compile(r"^(MVR|Rf|USD)?-?\d[\d,]*\.?\d*$", re.I)
+_INT_TOKEN = re.compile(r"^\d{2,6}$")
 
 
 def _rows_from_text(text):
+    """Token-based line parser. Handles both common layouts:
+      A) desc-first:  <description> <qty> [unit] <rate> <amount>
+      B) code-first:  [item code] <qty> [unit] <description> <rate> <amount>
+    Currency prefixes (MVR150.00) are tolerated. Every candidate row must
+    pass qty x rate = amount."""
     out = []
     for raw in (text or "").splitlines():
-        match = _TEXT_LINE.match(raw.strip())
-        if not match:
+        tokens = raw.strip().split()
+        if len(tokens) < 4:
             continue
-        qty = _to_decimal(match.group("qty"))
-        rate = _to_decimal(match.group("rate"))
-        amount = _to_decimal(match.group("amount"))
-        if amount is None or not _amount_checks(qty, rate, amount):
+        if not (_NUMERIC_TOKEN.match(tokens[-1]) and
+                _NUMERIC_TOKEN.match(tokens[-2])):
             continue
-        out.append({
-            "supplier_desc": " ".join(match.group("desc").split()),
-            "unit": (match.group("unit") or "").strip("."),
-            "qty": qty, "rate": rate, "amount": amount,
-        })
+        amount = _to_decimal(tokens[-1])
+        rate = _to_decimal(tokens[-2])
+        body = tokens[:-2]
+        if amount is None or rate is None or not body:
+            continue
+
+        parsed = None
+        # find the qty token: any numeric token that satisfies the check
+        for i, tok in enumerate(body):
+            if not _NUMERIC_TOKEN.match(tok):
+                continue
+            qty = _to_decimal(tok)
+            if qty is None or not _amount_checks(qty, rate, amount):
+                continue
+            unit = ""
+            if i + 1 < len(body) and _UNIT_TOKEN.match(body[i + 1]):
+                unit = body[i + 1].strip(".")
+                desc_tokens = body[:i] + body[i + 2:]
+            else:
+                desc_tokens = body[:i] + body[i + 1:]
+            # a leading bare item code stays out of the description
+            code = ""
+            if desc_tokens and i <= 1 and _INT_TOKEN.match(desc_tokens[0]):
+                code = desc_tokens[0]
+                desc_tokens = desc_tokens[1:]
+            desc = " ".join(desc_tokens).strip()
+            if len(desc) < 3 or not re.search(r"[A-Za-z]{2,}", desc):
+                continue
+            parsed = {
+                "supplier_desc": desc, "unit": unit,
+                "qty": qty, "rate": rate, "amount": amount,
+                "remarks": f"Supplier code {code}" if code else "",
+            }
+            break
+        if parsed:
+            out.append(parsed)
     return out
 
 

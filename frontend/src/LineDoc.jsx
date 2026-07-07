@@ -559,13 +559,18 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
+  const [quoteFiles, setQuoteFiles] = useState({});
 
   useEffect(() => {
     if (initial.doc_type === "PR") {
       api("/parameters/gst_rate").then((p) => setGstRate(+p.value))
         .catch(() => {});
+      api(`/pr/${initial.ref}/quotations`).then((qs) =>
+        setQuoteFiles(Object.fromEntries(
+          qs.filter((q) => q.file_url)
+            .map((q) => [q.supplier_name, q.file_url])))).catch(() => {});
     }
-  }, [initial.doc_type]);
+  }, [initial.doc_type, initial.ref]);
 
   async function act(action, body) {
     setError(null);
@@ -715,7 +720,17 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   style={line.is_changed ? { background: "#fff8e6" } : {}}>
                 {isPR ? (<>
                   <td style={td}>{line.vendor}</td>
-                  <td style={td}>{line.quotation_ref}</td>
+                  <td style={td}>
+                    {line.quotation_ref}
+                    {quoteFiles[line.vendor] && (
+                      <>
+                        {line.quotation_ref ? " " : ""}
+                        <a href={quoteFiles[line.vendor]} target="_blank"
+                           rel="noreferrer"
+                           title="Open the uploaded quotation">📎 quote</a>
+                      </>
+                    )}
+                  </td>
                   <td style={td}>{line.payment_terms}</td>
                   <td style={td}>{line.amount_cash}</td>
                   <td style={td}>{line.amount_credit}</td>

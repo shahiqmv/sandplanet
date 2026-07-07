@@ -223,6 +223,7 @@ def quotation_file(request, pk):
                 quotation=quotation, line_no=i,
                 supplier_desc=row["supplier_desc"], unit=row["unit"] or "",
                 qty=row["qty"], rate=row["rate"], amount=row["amount"],
+                remarks=row.get("remarks", ""),
             )
         extracted = len(rows)
         if extracted:
