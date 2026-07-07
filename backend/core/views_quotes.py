@@ -105,6 +105,16 @@ def _can_edit_quotes(request, pr):
     return None
 
 
+def _resync_pr(pr):
+    """Vendor summary follows the quotations dynamically (owner request):
+    every quotation change rebuilds the PR's vendor rows while it is
+    still editable."""
+    from .procurement import sync_pr_vendor_rows
+
+    if pr.status in ("DRAFT", "SUBMITTED"):
+        sync_pr_vendor_rows(pr)
+
+
 def _save_quote_lines(quotation, lines_data):
     quotation.lines.all().delete()
     for i, data in enumerate(lines_data, start=1):
@@ -159,6 +169,7 @@ def pr_quotations(request, ref):
         created_by=request.user,
     )
     _save_quote_lines(quotation, request.data.get("lines") or [])
+    _resync_pr(pr)
     audit("quotation", quotation.id, "QUOTATION_ADDED", actor=request.user,
           detail={"pr": pr.ref, "supplier": supplier.name})
     return Response(QuotationSerializer(quotation,
@@ -177,8 +188,10 @@ def quotation_detail(request, pk):
     if err:
         return err
     if request.method == "DELETE":
+        pr = quotation.document
         quotation.lines.all().delete()
         quotation.delete()
+        _resync_pr(pr)
         audit("quotation", pk, "QUOTATION_REMOVED", actor=request.user)
         return Response(status=204)
     for field in ("quote_ref", "quote_date", "valid_until", "payment_terms",
@@ -190,6 +203,7 @@ def quotation_detail(request, pk):
     quotation.save()
     if "lines" in request.data:
         _save_quote_lines(quotation, request.data["lines"])
+    _resync_pr(quotation.document)
     return Response(QuotationSerializer(quotation,
                                         context={"request": request}).data)
 
@@ -227,6 +241,7 @@ def quotation_file(request, pk):
             )
         extracted = len(rows)
         if extracted:
+            _resync_pr(quotation.document)
             audit("quotation", quotation.id, "QUOTATION_LINES_EXTRACTED",
                   actor=request.user, detail={"count": extracted})
     data = QuotationSerializer(quotation, context={"request": request}).data
