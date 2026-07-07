@@ -1,0 +1,100 @@
+"""Seed master data per the Build Brief M1: sites (spec §2), admin user,
+manpower categories (spec §5.1/§5.2), company parameters (spec §6A.3).
+Idempotent — safe to re-run."""
+
+import os
+
+from django.core.management.base import BaseCommand
+
+from core.models import CompanyParameter, ManpowerCategory, Site, User
+
+SITES = [  # spec §2: current sites at go-live, imported as Active
+    ("SJR", "Soneva Jani"),
+    ("SFR", "Soneva Fushi"),
+    ("SSR", "Soneva Secret"),
+    ("VKR", "Vakkaru Maldives"),
+    ("SSL", "Six Senses Laamu"),
+    ("BVR", "Bvlgari Ranfushi"),
+    ("RCM", "The Ritz-Carlton Maldives"),
+    ("MXR", "Max Royal"),
+    ("WAM", "Waldorf Astoria Maldives"),
+    ("CNR", "Conrad Maldives"),
+    ("HPI", "The Halcyon Private Isles"),
+]
+
+DPR_CATEGORIES = {  # spec §5.1
+    "STAFF": [
+        "Project Manager", "Site Engineer", "MEP Engineer", "QS/QC",
+        "Supervisor", "Foreman", "Site Admin/Storekeeper",
+    ],
+    "LABOUR": [
+        "Mason", "Carpenter", "Steel Fixer/Bar Bender", "Welder", "Plumber",
+        "Electrician", "Painter/Tiler", "Skilled Labour", "Unskilled Labour",
+        "Driver/Kappi/Cleaner",
+    ],
+}
+
+TWS_CATEGORIES = {  # spec §5.2 (coarser list)
+    "STAFF": ["Project Manager", "Site Engineer", "Supervisor/Foreman", "Other staff"],
+    "LABOUR": [
+        "Mason/Tiler", "Carpenter", "Steel Fixer/Welder", "Plumber/Electrician",
+        "Painter", "Skilled/Unskilled Labour",
+    ],
+}
+
+PARAMETERS = [
+    # Defaults per Maldives Employment Act practice — PENDING owner
+    # confirmation (Build Brief: confirm during M1).
+    ("ot_multiplier", 1.25,
+     "Overtime pay multiplier. DEFAULT — confirm with payroll practice."),
+    ("hourly_rate_divisor", 240,
+     "Monthly basic pay ÷ this = hourly rate (30 days × 8 h). DEFAULT — confirm."),
+]
+
+
+class Command(BaseCommand):
+    help = "Seed sites, admin user, manpower categories, company parameters."
+
+    def handle(self, *args, **options):
+        for code, name in SITES:
+            _, created = Site.objects.get_or_create(
+                code=code, defaults={"name": name, "status": Site.Status.ACTIVE}
+            )
+            if created:
+                self.stdout.write(f"  site {code} — {name}")
+        Site.objects.get_or_create(
+            code="MLE",
+            defaults={
+                "name": "Head Office, Male'",
+                "is_head_office": True,
+                "status": Site.Status.ACTIVE,
+            },
+        )
+
+        if not User.objects.filter(username="admin").exists():
+            password = os.environ.get("SEED_ADMIN_PASSWORD", "sandplanet-admin")
+            User.objects.create_superuser(
+                username="admin",
+                password=password,
+                full_name="System Administrator",
+                role=User.Role.ADMIN,
+            )
+            self.stdout.write("  admin user created (change the password!)")
+
+        for list_type, groups in (("DPR", DPR_CATEGORIES), ("TWS", TWS_CATEGORIES)):
+            order = 0
+            for grp, names in groups.items():
+                for name in names:
+                    order += 10
+                    ManpowerCategory.objects.get_or_create(
+                        list_type=list_type,
+                        name=name,
+                        defaults={"grp": grp, "sort_order": order},
+                    )
+
+        for key, value, description in PARAMETERS:
+            CompanyParameter.objects.get_or_create(
+                key=key, defaults={"value": value, "description": description}
+            )
+
+        self.stdout.write(self.style.SUCCESS("Seed complete."))
