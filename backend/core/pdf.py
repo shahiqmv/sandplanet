@@ -8,8 +8,21 @@ Staging/production set PDF_REQUIRED=1 — there, generation failures block.
 """
 
 import logging
+import os
+import sys
 
 from django.conf import settings
+
+if sys.platform == "win32":  # point WeasyPrint at a GTK3 runtime (D4)
+    # tschoonj build required — its Pango is new enough for WeasyPrint >= 53
+    _candidates = [
+        os.environ.get("GTK_DLL_DIR"),
+        r"C:\Program Files\GTK3-Runtime Win64\bin",
+    ]
+    for _gtk in _candidates:
+        if _gtk and os.path.isdir(_gtk):
+            os.environ.setdefault("WEASYPRINT_DLL_DIRECTORIES", _gtk)
+            break
 from django.core.files.base import ContentFile
 from django.template.loader import render_to_string
 

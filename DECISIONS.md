@@ -23,9 +23,11 @@ default storage falls back to Django FileSystemStorage under `backend/media/`
 `S3_ENDPOINT_URL` is set — staging/production always set it; the App Platform
 "no persistent disk" rule is unaffected.
 
-## 2026-07-07 — D4: WeasyPrint not installed on local Windows dev
-WeasyPrint needs GTK libraries that are painful on Windows. requirements.txt
-installs it on non-Windows platforms only (CI + staging/production, both Linux).
-Locally, PDF generation is skipped with a logged warning (`PDF_REQUIRED=0`);
-staging/production set `PDF_REQUIRED=1` so a missing engine blocks issue there.
-PDF layout verification against the Excel prints happens in CI/staging.
+## 2026-07-07 — D4: WeasyPrint on Windows needs the GTK3 runtime
+WeasyPrint requires GTK libraries. On Windows dev machines install them with
+`winget install GtkD.GtkPlusRuntime.x64`; core/pdf.py auto-points WeasyPrint at
+`C:\Program Files\Gtk-Runtime\bin` (override with `GTK_DLL_DIR`). RESOLVED
+2026-07-07: installed on the dev machine — local PDF generation works.
+Safety net kept: if the engine is missing, local dev (`PDF_REQUIRED=0`) skips
+PDF with a logged warning; staging/production set `PDF_REQUIRED=1` so a missing
+engine blocks issue there. Layout acceptance is still against the Excel prints.
