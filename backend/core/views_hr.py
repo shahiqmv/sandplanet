@@ -1,0 +1,441 @@
+"""Employees & site timesheets (spec §6A). Sensitive fields (basic_pay,
+passport_no) are serialized only for HO HR / Admin, never logged, and
+excluded from site-level responses."""
+
+from datetime import date, datetime, timedelta
+from decimal import Decimal
+
+from django.db import transaction
+from django.http import HttpResponse
+from django.utils import timezone
+from rest_framework import serializers, viewsets
+from rest_framework.decorators import action, api_view
+from rest_framework.permissions import BasePermission
+from rest_framework.response import Response
+
+from .audit import audit
+from .models import (
+    Attendance,
+    CompanyParameter,
+    Employee,
+    EmployeeSiteAllocation,
+    Site,
+    TimesheetMonth,
+    User,
+)
+from .permissions import scoped_site_ids
+
+HR_ROLES = ("HO_HR", "ADMIN")
+SENSITIVE_FIELDS = ("passport_no", "basic_pay", "work_permit_no",
+                    "emergency_contact")
+
+
+def _is_hr(user):
+    return user.role in HR_ROLES
+
+
+class IsHrOrReadOnly(BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return _is_hr(request.user)
+
+
+class EmployeeSerializer(serializers.ModelSerializer):
+    site_id = serializers.SerializerMethodField()
+    site_code = serializers.SerializerMethodField()
+    job_category_name = serializers.CharField(source="job_category.name",
+                                              read_only=True, default=None)
+
+    class Meta:
+        model = Employee
+        fields = ["id", "emp_no", "full_name", "passport_no", "nationality",
+                  "job_category", "job_category_name", "basic_pay",
+                  "work_permit_no", "work_permit_expiry", "emergency_contact",
+                  "join_date", "is_active", "site_id", "site_code"]
+        read_only_fields = ["emp_no"]
+
+    def get_site_id(self, obj):
+        return obj.current_site_id()
+
+    def get_site_code(self, obj):
+        row = obj.site_allocations.filter(to_date__isnull=True) \
+            .select_related("site").first()
+        return row.site.code if row else None
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        # Site users see emp no, name, category only (spec §6A.1)
+        if request and not _is_hr(request.user):
+            for field in SENSITIVE_FIELDS:
+                data.pop(field, None)
+        return data
+
+
+class EmployeeViewSet(viewsets.ModelViewSet):
+    serializer_class = EmployeeSerializer
+    permission_classes = [IsHrOrReadOnly]
+    http_method_names = ["get", "post", "patch", "head", "options"]
+
+    def get_queryset(self):
+        qs = Employee.objects.select_related("job_category").order_by("emp_no")
+        site_ids = scoped_site_ids(self.request.user)
+        if site_ids is not None:  # site roles: own roster only
+            qs = qs.filter(site_allocations__site_id__in=site_ids,
+                           site_allocations__to_date__isnull=True)
+        if self.request.GET.get("site"):
+            qs = qs.filter(site_allocations__site_id=self.request.GET["site"],
+                           site_allocations__to_date__isnull=True)
+        if self.request.GET.get("active") != "all":
+            qs = qs.filter(is_active=True)
+        return qs.distinct()
+
+    def perform_create(self, serializer):
+        from .numbering import next_ref
+
+        with transaction.atomic():
+            n = int(next_ref("EMP", None).split("-")[1])
+            employee = serializer.save(emp_no=f"EMP-{n:04d}")
+        audit("employee", employee.id, "EMPLOYEE_CREATED",
+              actor=self.request.user, detail={"emp_no": employee.emp_no})
+
+    def perform_update(self, serializer):
+        employee = serializer.save()
+        audit("employee", employee.id, "EMPLOYEE_UPDATED",
+              actor=self.request.user,
+              detail={"fields": sorted(k for k in self.request.data
+                                       if k not in SENSITIVE_FIELDS)})
+
+    @action(detail=True, methods=["post"])
+    def allocate(self, request, pk=None):
+        """Transfer to a site; history kept for payroll (spec §6A.1)."""
+        employee = self.get_object()
+        try:
+            site = Site.objects.get(pk=request.data.get("site_id"))
+        except Site.DoesNotExist:
+            return Response({"detail": "Unknown site_id."}, status=400)
+        today = date.today()
+        employee.site_allocations.filter(to_date__isnull=True) \
+            .update(to_date=today)
+        EmployeeSiteAllocation.objects.create(employee=employee, site=site,
+                                              from_date=today)
+        audit("employee", employee.id, "EMPLOYEE_ALLOCATED",
+              actor=request.user, to_state=site.code)
+        return Response(self.get_serializer(employee).data)
+
+    @action(detail=True, methods=["post"])
+    def deactivate(self, request, pk=None):
+        employee = self.get_object()
+        employee.is_active = False
+        employee.save(update_fields=["is_active"])
+        employee.site_allocations.filter(to_date__isnull=True) \
+            .update(to_date=date.today())
+        audit("employee", employee.id, "EMPLOYEE_DEACTIVATED",
+              actor=request.user)
+        return Response(self.get_serializer(employee).data)
+
+
+# ===== Attendance =====
+
+
+def _month_locked(site_id, day):
+    return TimesheetMonth.objects.filter(
+        site_id=site_id, year=day.year, month=day.month, status="LOCKED"
+    ).exists()
+
+
+def _window_hours(site):
+    start = datetime.combine(date.today(), site.working_hours_from)
+    end = datetime.combine(date.today(), site.working_hours_to)
+    return Decimal((end - start).seconds) / 3600
+
+
+def _normal_hours(site, check_in, check_out, remark):
+    if remark in ("ABSENT", "SICK", "LEAVE"):
+        return Decimal("0")
+    full = _window_hours(site)
+    if remark == "HALF_DAY":
+        return (full / 2).quantize(Decimal("0.01"))
+    if check_in and check_out:
+        start = max(check_in, site.working_hours_from)
+        end = min(check_out, site.working_hours_to)
+        overlap = (datetime.combine(date.today(), end) -
+                   datetime.combine(date.today(), start)).total_seconds()
+        return max(Decimal(str(overlap)) / 3600, Decimal("0")) \
+            .quantize(Decimal("0.01"))
+    return full.quantize(Decimal("0.01"))  # present, default site hours
+
+
+def _site_scope_ok(request, site):
+    site_ids = scoped_site_ids(request.user)
+    return site_ids is None or site.id in site_ids
+
+
+@api_view(["GET"])
+def attendance_grid(request):
+    """Whole crew on one screen (spec §6A.2): roster with existing rows."""
+    try:
+        site = Site.objects.get(pk=request.GET.get("site"))
+        day = date.fromisoformat(request.GET.get("date"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "site and date required."}, status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+
+    roster = Employee.objects.filter(
+        is_active=True, site_allocations__site=site,
+        site_allocations__to_date__isnull=True,
+    ).select_related("job_category").order_by("emp_no").distinct()
+    existing = {a.employee_id: a for a in Attendance.objects.filter(
+        site=site, day=day)}
+    rows = []
+    for employee in roster:
+        att = existing.get(employee.id)
+        rows.append({
+            "attendance_id": att.id if att else None,
+            "employee_id": employee.id,
+            "emp_no": employee.emp_no,
+            "full_name": employee.full_name,
+            "category": employee.job_category.name
+            if employee.job_category else "",
+            "check_in": att.check_in if att else site.working_hours_from,
+            "check_out": att.check_out if att else site.working_hours_to,
+            "ot_requested": att.ot_requested if att else 0,
+            "ot_approved": att.ot_approved if att else None,
+            "remark": att.remark if att else "PRESENT",
+            "saved": att is not None,
+        })
+    return Response({
+        "site": site.code, "date": day.isoformat(),
+        "locked": _month_locked(site.id, day),
+        "rows": rows,
+    })
+
+
+@api_view(["PUT"])
+def attendance_bulk(request):
+    """Day-grid upsert by Site Admin / SE; late edits audited (spec §6A.2)."""
+    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"):
+        return Response({"detail": "Site team records attendance."}, status=403)
+    try:
+        site = Site.objects.get(pk=request.data.get("site"))
+        day = date.fromisoformat(request.data.get("date"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "site and date required."}, status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not allocated to this site."}, status=403)
+    if day > date.today():
+        return Response({"detail": "Attendance cannot be entered for future "
+                                   "days."}, status=400)
+    if _month_locked(site.id, day):
+        return Response({"detail": "This month is locked. Ask HO HR to "
+                                   "reopen it."}, status=400)
+
+    def parse_time(value):
+        if not value:
+            return None
+        if isinstance(value, str):
+            return datetime.strptime(value[:5], "%H:%M").time()
+        return value
+
+    late_edit = day < date.today()
+    saved = 0
+    for row in request.data.get("rows", []):
+        try:
+            employee = Employee.objects.get(pk=row.get("employee_id"),
+                                            is_active=True)
+        except Employee.DoesNotExist:
+            continue
+        check_in = parse_time(row.get("check_in"))
+        check_out = parse_time(row.get("check_out"))
+        remark = row.get("remark") or "PRESENT"
+        record, _created = Attendance.objects.update_or_create(
+            employee=employee, day=day,
+            defaults={
+                "site": site,
+                "check_in": check_in, "check_out": check_out,
+                "remark": remark,
+                "ot_requested": Decimal(str(row.get("ot_requested") or 0)),
+                "entered_by": request.user,
+            },
+        )
+        record.normal_hours = _normal_hours(
+            site, record.check_in, record.check_out, remark)
+        record.save(update_fields=["normal_hours"])
+        saved += 1
+    audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
+          detail={"site": site.code, "date": day.isoformat(), "rows": saved,
+                  "late_edit": late_edit})
+    return Response({"saved": saved, "late_edit": late_edit})
+
+
+@api_view(["POST"])
+def ot_approve(request):
+    """PM approves OT per day or in batch; unapproved OT can never flow
+    into payroll (spec §6A.2)."""
+    ids = request.data.get("ids") or []
+    rows = Attendance.objects.filter(pk__in=ids).select_related("site")
+    if not rows:
+        return Response({"detail": "ids required."}, status=400)
+    for row in rows:
+        pm = row.site.current_pm()
+        if not (request.user.role == "ADMIN" or
+                (request.user.role == "PM" and pm and pm.id == request.user.id)):
+            return Response({"detail": f"Only the site PM approves OT "
+                                       f"({row.site.code})."}, status=403)
+        if _month_locked(row.site_id, row.day):
+            return Response({"detail": "Month is locked."}, status=400)
+    hours_override = request.data.get("hours")
+    for row in rows:
+        row.ot_approved = Decimal(str(hours_override)) \
+            if hours_override is not None else row.ot_requested
+        row.ot_approved_by = request.user
+        row.ot_approved_at = timezone.now()
+        row.save(update_fields=["ot_approved", "ot_approved_by",
+                                "ot_approved_at"])
+    audit("attendance", rows[0].site_id, "OT_APPROVED", actor=request.user,
+          detail={"count": len(rows)})
+    return Response({"approved": len(rows)})
+
+
+# ===== Month close & payroll (spec §6A.3) =====
+
+
+@api_view(["POST"])
+def timesheet_lock(request, site_id, year, month):
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    pm = site.current_pm()
+    if not (request.user.role == "ADMIN" or
+            (request.user.role == "PM" and pm and pm.id == request.user.id)):
+        return Response({"detail": "The site PM signs off the month."},
+                        status=403)
+    row, _ = TimesheetMonth.objects.get_or_create(site=site, year=year,
+                                                  month=month)
+    if row.status == "LOCKED":
+        return Response({"detail": "Already locked."}, status=400)
+    row.status = "LOCKED"
+    row.signed_off_by = request.user
+    row.signed_off_at = timezone.now()
+    row.save()
+    audit("timesheet", row.id, "TIMESHEET_LOCKED", actor=request.user,
+          detail={"site": site.code, "period": f"{year}-{month:02d}"})
+    return Response({"status": "LOCKED",
+                     "signed_off_by": request.user.full_name})
+
+
+@api_view(["POST"])
+def timesheet_reopen(request, site_id, year, month):
+    """HR reopen with reason — audited (spec §6A.3)."""
+    if not _is_hr(request.user):
+        return Response({"detail": "HO HR/Payroll reopens months."}, status=403)
+    reason = (request.data.get("reason") or "").strip()
+    if not reason:
+        return Response({"detail": "A reason is required."}, status=400)
+    try:
+        row = TimesheetMonth.objects.get(site_id=site_id, year=year,
+                                         month=month, status="LOCKED")
+    except TimesheetMonth.DoesNotExist:
+        return Response({"detail": "Month is not locked."}, status=400)
+    row.status = "OPEN"
+    row.reopened_by = request.user
+    row.reopen_reason = reason
+    row.save()
+    audit("timesheet", row.id, "TIMESHEET_REOPENED", actor=request.user,
+          detail={"reason": reason, "period": f"{year}-{month:02d}"})
+    return Response({"status": "OPEN"})
+
+
+def _param_decimal(key, default):
+    try:
+        return Decimal(str(CompanyParameter.objects.get(key=key).value))
+    except CompanyParameter.DoesNotExist:
+        return Decimal(str(default))
+
+
+@api_view(["GET"])
+def payroll_export(request, year, month):
+    """Per employee: days worked, absences, hours, approved OT, computed
+    gross = basic + OT x hourly x multiplier. HR/Admin only."""
+    if not _is_hr(request.user):
+        return Response({"detail": "HO HR/Payroll only."}, status=403)
+    multiplier = _param_decimal("ot_multiplier", 1.25)
+    divisor = _param_decimal("hourly_rate_divisor", 240)
+
+    qs = Attendance.objects.filter(day__year=year, day__month=month) \
+        .select_related("employee", "site")
+    if request.GET.get("site"):
+        qs = qs.filter(site_id=request.GET["site"])
+
+    by_employee = {}
+    for att in qs:
+        entry = by_employee.setdefault(att.employee_id, {
+            "employee": att.employee, "site_codes": set(),
+            "days_worked": 0, "absences": 0,
+            "normal_hours": Decimal("0"), "ot_hours": Decimal("0"),
+        })
+        entry["site_codes"].add(att.site.code)
+        if att.remark in ("ABSENT", "SICK", "LEAVE"):
+            entry["absences"] += 1
+        elif att.remark == "HALF_DAY":
+            entry["days_worked"] += 0.5
+        else:
+            entry["days_worked"] += 1
+        entry["normal_hours"] += att.normal_hours or 0
+        entry["ot_hours"] += att.ot_approved or 0  # approved OT ONLY
+
+    rows = []
+    for entry in sorted(by_employee.values(),
+                        key=lambda e: e["employee"].emp_no):
+        employee = entry["employee"]
+        basic = employee.basic_pay or Decimal("0")
+        hourly = (basic / divisor).quantize(Decimal("0.01")) if divisor else 0
+        ot_amount = (entry["ot_hours"] * hourly * multiplier) \
+            .quantize(Decimal("0.01"))
+        rows.append({
+            "emp_no": employee.emp_no, "full_name": employee.full_name,
+            "sites": "/".join(sorted(entry["site_codes"])),
+            "days_worked": entry["days_worked"],
+            "absences": entry["absences"],
+            "normal_hours": entry["normal_hours"],
+            "ot_hours_approved": entry["ot_hours"],
+            "basic_pay": basic, "hourly_rate": hourly,
+            "ot_amount": ot_amount, "gross": basic + ot_amount,
+        })
+
+    # NB: "format" is reserved by DRF content negotiation — use "export"
+    if request.GET.get("export") == "xlsx":
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = f"Payroll {year}-{month:02d}"
+        headers = ["Emp No", "Name", "Site(s)", "Days Worked", "Absences",
+                   "Normal Hours", "Approved OT (h)", "Basic Pay (MVR)",
+                   "Hourly Rate", "OT Amount", "Gross (MVR)"]
+        ws.append(headers)
+        for row in rows:
+            ws.append([row["emp_no"], row["full_name"], row["sites"],
+                       row["days_worked"], row["absences"],
+                       float(row["normal_hours"]),
+                       float(row["ot_hours_approved"]),
+                       float(row["basic_pay"]), float(row["hourly_rate"]),
+                       float(row["ot_amount"]), float(row["gross"])])
+        response = HttpResponse(
+            content_type="application/vnd.openxmlformats-officedocument"
+                         ".spreadsheetml.sheet")
+        response["Content-Disposition"] = \
+            f'attachment; filename="payroll-{year}-{month:02d}.xlsx"'
+        wb.save(response)
+        return response
+
+    return Response({
+        "period": f"{year}-{month:02d}",
+        "ot_multiplier": multiplier, "hourly_rate_divisor": divisor,
+        "rows": rows,
+    })

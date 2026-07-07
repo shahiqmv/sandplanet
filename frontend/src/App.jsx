@@ -5,6 +5,8 @@ import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
+import EmployeesPage from "./EmployeesPage.jsx";
+import AttendancePage from "./AttendancePage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
@@ -187,7 +189,8 @@ export default function App() {
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
             {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
-              ["items", "Items"], ["suppliers", "Suppliers"]]
+              ["items", "Items"], ["suppliers", "Suppliers"],
+              ["employees", "Employees"]]
               .map(([key, label]) => (
               <button key={key}
                       style={navBtn(hoPage === key && !openSite && !docView)}
@@ -282,6 +285,7 @@ export default function App() {
                                             doc: null })}
                 onNewQa={(docType) => setDocView({ mode: "qa-form", docType,
                                                    doc: null })}
+                onAttendance={() => setDocView({ mode: "attendance" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -298,6 +302,12 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "employees" && (
+            <EmployeesPage me={me} sites={sites} />
+          )}
+          {docView?.mode === "attendance" && openSite && (
+            <AttendancePage site={openSite} me={me} onClose={closeDoc} />
           )}
           {!docView && !openSite &&
             (!me.is_ho || hoPage === "sites") && (

@@ -595,3 +595,111 @@ class QuotationLine(models.Model):
 
     class Meta:
         ordering = ["line_no"]
+
+
+# ===== Employees & timesheets (spec §6A, design §2) =====
+
+
+class Employee(models.Model):
+    """Employee database, maintained by HO HR/Payroll (+Admin). Employees
+    are NOT app users (spec §6A.1). passport_no and basic_pay are sensitive:
+    HR/Admin only — API-gated, never in site-level exports or logs."""
+
+    emp_no = models.CharField(max_length=10, unique=True)  # EMP-0231, server-issued
+    full_name = models.TextField()
+    passport_no = models.TextField(blank=True)          # sensitive
+    nationality = models.TextField(blank=True)
+    job_category = models.ForeignKey(  # company-wide DPR list (spec §6A.1)
+        ManpowerCategory, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="employees",
+    )
+    basic_pay = models.DecimalField(max_digits=12, decimal_places=2,  # sensitive
+                                    null=True, blank=True)
+    work_permit_no = models.TextField(blank=True)
+    work_permit_expiry = models.DateField(null=True, blank=True)
+    emergency_contact = models.TextField(blank=True)
+    join_date = models.DateField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)  # deactivate, never delete
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.emp_no} — {self.full_name}"
+
+    def current_site_id(self):
+        row = self.site_allocations.filter(to_date__isnull=True).first()
+        return row.site_id if row else None
+
+
+class EmployeeSiteAllocation(models.Model):
+    """Transfer history — payroll must know where each person worked and
+    when (spec §6A.1)."""
+
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="site_allocations")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="employee_allocations")
+    from_date = models.DateField()
+    to_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-from_date"]
+
+
+class TimesheetMonth(models.Model):
+    """Month close: PM sign-off locks the site's timesheet; corrections
+    need an audited HR reopen (spec §6A.3)."""
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="timesheet_months")
+    year = models.IntegerField()
+    month = models.IntegerField()
+    status = models.CharField(max_length=10, default="OPEN")  # OPEN/LOCKED
+    signed_off_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    signed_off_at = models.DateTimeField(null=True, blank=True)
+    reopened_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    null=True, blank=True, related_name="+")
+    reopen_reason = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["site", "year", "month"],
+                                    name="uniq_timesheet_month")
+        ]
+
+
+class Attendance(models.Model):
+    """One row per employee per day at their allocated site (spec §6A.2)."""
+
+    REMARKS = [("PRESENT", "Present"), ("ABSENT", "Absent"), ("SICK", "Sick"),
+               ("LEAVE", "Leave"), ("HALF_DAY", "Half day")]
+
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="attendance")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="attendance")
+    day = models.DateField()
+    check_in = models.TimeField(null=True, blank=True)
+    check_out = models.TimeField(null=True, blank=True)
+    normal_hours = models.DecimalField(max_digits=4, decimal_places=2,
+                                       null=True, blank=True)  # computed
+    ot_requested = models.DecimalField(max_digits=4, decimal_places=2,
+                                       default=0)
+    ot_approved = models.DecimalField(max_digits=4, decimal_places=2,  # PM only
+                                      null=True, blank=True)
+    ot_approved_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                       null=True, blank=True, related_name="+")
+    ot_approved_at = models.DateTimeField(null=True, blank=True)
+    remark = models.CharField(max_length=12, choices=REMARKS, default="PRESENT")
+    entered_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["employee", "day"],
+                                    name="uniq_attendance_day")
+        ]
+        ordering = ["day"]

@@ -1,7 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_documents as docs, views_quotes as quotes
+from . import views, views_documents as docs, views_hr as hr, \
+    views_quotes as quotes
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -12,6 +13,7 @@ router.register(
 router.register("holidays", views.HolidayViewSet, basename="holiday")
 router.register("items", views.ItemViewSet, basename="item")
 router.register("suppliers", quotes.SupplierViewSet, basename="supplier")
+router.register("employees", hr.EmployeeViewSet, basename="employee")
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -47,5 +49,14 @@ urlpatterns = [
     path("dashboards/site/<int:site_id>", docs.dashboard_site,
          name="dashboard-site"),
     path("dashboards/ho", docs.dashboard_ho, name="dashboard-ho"),
+    path("attendance", hr.attendance_grid, name="attendance-grid"),
+    path("attendance/bulk", hr.attendance_bulk, name="attendance-bulk"),
+    path("attendance/ot-approve", hr.ot_approve, name="ot-approve"),
+    path("timesheets/<int:site_id>/<int:year>/<int:month>/lock",
+         hr.timesheet_lock, name="timesheet-lock"),
+    path("timesheets/<int:site_id>/<int:year>/<int:month>/reopen",
+         hr.timesheet_reopen, name="timesheet-reopen"),
+    path("payroll-export/<int:year>/<int:month>", hr.payroll_export,
+         name="payroll-export"),
     path("", include(router.urls)),
 ]
