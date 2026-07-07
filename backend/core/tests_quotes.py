@@ -25,10 +25,8 @@ class QuoteBase(TestCase):
         self.rebar = Item.objects.create(code="ITM-90002",
                                          description="Rebar B500 12mm",
                                          unit="kg")
-        self.hw = Supplier.objects.create(name="Male' Hardware Pvt Ltd",
-                                          payment_terms_default="COD")
-        self.steel = Supplier.objects.create(name="Maldives Steel Traders",
-                                             payment_terms_default="30 days credit")
+        self.hw = Supplier.objects.create(name="Male' Hardware Pvt Ltd")
+        self.steel = Supplier.objects.create(name="Maldives Steel Traders")
         self.client = APIClient()
 
     def as_user(self, user):
@@ -62,11 +60,11 @@ class QuoteBase(TestCase):
             "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr["ref"]],
         }, format="json").data
 
-    def add_quote(self, pr_ref, supplier, lines):
+    def add_quote(self, pr_ref, supplier, lines, terms=""):
         self.as_user(self.purchasing)
         r = self.client.post(f"/api/v1/pr/{pr_ref}/quotations", {
             "supplier": supplier.id, "quote_ref": f"QT-{supplier.id}",
-            "lines": lines,
+            "payment_terms": terms, "lines": lines,
         }, format="json")
         assert r.status_code == 201, r.data
         return r.data
@@ -82,8 +80,7 @@ class SupplierTests(QuoteBase):
         self.as_user(self.purchasing)
         r = self.client.post("/api/v1/suppliers",
                              {"name": "Lagoon Marine Supplies",
-                              "contact_person": "Ahmed",
-                              "payment_terms_default": "50% advance"},
+                              "contact_person": "Ahmed"},
                              format="json")
         self.assertEqual(r.status_code, 201)
 
@@ -135,12 +132,12 @@ class PoGenerationTests(QuoteBase):
         self.add_quote(pr["ref"], self.hw, [
             {"supplier_desc": "OPC cement 50kg", "unit": "bag", "qty": 150,
              "rate": 120, "mr_line": mr["lines"][0]["id"], "awarded": True},
-        ])
+        ], terms="COD")
         self.add_quote(pr["ref"], self.steel, [
             {"supplier_desc": "Deformed bar Grade 500, 12mm dia", "unit": "kg",
              "qty": 500, "rate": 18.50, "mr_line": mr["lines"][1]["id"],
              "awarded": True},
-        ])
+        ], terms="30 days credit")
         # vendor rows derived from quotes
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/sync-vendor-rows")
         vendors = {line["vendor"]: line for line in r.data["lines"]}

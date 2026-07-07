@@ -67,6 +67,49 @@ function useItems() {
   return items;
 }
 
+// Pick references from a dropdown instead of typing them (owner UX request)
+function RefPicker({ label, refs, setRefs, options, hint }) {
+  const chosen = refs.split(",").map((s) => s.trim()).filter(Boolean);
+  const remaining = options.filter((o) => !chosen.includes(o.ref));
+  return (
+    <label style={{ fontSize: 13 }}>{label}
+      <select value="" style={inputStyle}
+              onChange={(e) => {
+                if (e.target.value) {
+                  setRefs([...chosen, e.target.value].join(","));
+                }
+              }}>
+        <option value="">
+          {remaining.length ? `Select… (${remaining.length} open)`
+                            : (hint || "None open")}
+        </option>
+        {remaining.map((o) => (
+          <option key={o.ref} value={o.ref}>{o.label}</option>
+        ))}
+      </select>
+      {chosen.length > 0 && (
+        <span style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                       marginTop: 4 }}>
+          {chosen.map((ref) => (
+            <span key={ref}
+                  style={{ background: "var(--sp-navy)", color: "#fff",
+                           borderRadius: 12, padding: "2px 10px",
+                           fontSize: 12 }}>
+              {ref}{" "}
+              <a href="#" style={{ color: "var(--sp-sky)",
+                                   textDecoration: "none" }}
+                 onClick={(e) => { e.preventDefault();
+                   setRefs(chosen.filter((r) => r !== ref).join(",")); }}>
+                ×
+              </a>
+            </span>
+          ))}
+        </span>
+      )}
+    </label>
+  );
+}
+
 function ItemCell({ items, row, set }) {
   const label = (it) => `${it.code} — ${it.description}`;
   if (row.free_text) {
@@ -117,6 +160,32 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   const [mrRefs, setMrRefs] = useState("");
   const [prRefs, setPrRefs] = useState("");
   const [poRefs, setPoRefs] = useState("");
+  const [openMrs, setOpenMrs] = useState([]);
+  const [related, setRelated] = useState({ prs: [], pos: [] });
+
+  const isRefForm = (docType === "PR" || docType === "LM") && !existing;
+
+  useEffect(() => {
+    if (!isRefForm) return;
+    const params = siteId ? `&site=${siteId}` : "";
+    api(`/documents/list?doc_type=MR&open=1${params}`).then(setOpenMrs);
+  }, [isRefForm, siteId]);
+
+  useEffect(() => {
+    if (docType !== "LM" || existing) return;
+    const first = mrRefs.split(",")[0]?.trim();
+    if (!first) return setRelated({ prs: [], pos: [] });
+    api(`/mr/${first}/related`).then(setRelated)
+      .catch(() => setRelated({ prs: [], pos: [] }));
+  }, [docType, existing, mrRefs]);
+
+  // Picking an MR pins the site (PR/LM follow the MR's site)
+  useEffect(() => {
+    if (!isRefForm || siteId) return;
+    const first = mrRefs.split(",")[0]?.trim();
+    const mr = openMrs.find((m) => m.ref === first);
+    if (mr) setSiteId(mr.site);
+  }, [mrRefs, openMrs, isRefForm, siteId]);
   const [rows, setRows] = useState(
     existing?.lines?.map((l) => ({
       item_id: l.item, free_text: l.is_free_text,
@@ -261,33 +330,46 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
           </label>
         ))}
         {isHOForm && !existing && (
-          <label style={{ fontSize: 13 }}>MR Reference(s), comma-separated
-            <input value={mrRefs} onChange={(e) => setMrRefs(e.target.value)}
-                   placeholder="MR-SJR-001" style={inputStyle} />
-          </label>
+          <RefPicker label="MR Reference(s)" refs={mrRefs} setRefs={setMrRefs}
+                     options={openMrs.map((m) => ({
+                       ref: m.ref,
+                       label: `${m.ref} · ${m.site_code} · ${m.status
+                         .replace(/_/g, " ")}${m.payload?.planned_loading
+                         ? " · " + m.payload.planned_loading : ""}`,
+                     }))} />
         )}
         {docType === "LM" && !existing && (
           <>
-            <label style={{ fontSize: 13 }}>PR Reference(s)
-              <input value={prRefs} onChange={(e) => setPrRefs(e.target.value)}
-                     placeholder="PR-001" style={inputStyle} />
-            </label>
-            <label style={{ fontSize: 13 }}>PO Reference(s)
-              <input value={poRefs} onChange={(e) => setPoRefs(e.target.value)}
-                     placeholder="PO-001" style={inputStyle} />
-            </label>
+            <RefPicker label="PR Reference(s)" refs={prRefs} setRefs={setPrRefs}
+                       hint={mrRefs ? "No PRs for this MR" : "Pick an MR first"}
+                       options={related.prs.map((p) => ({
+                         ref: p.ref,
+                         label: `${p.ref} · ${p.status.replace(/_/g, " ")}`,
+                       }))} />
+            <RefPicker label="PO Reference(s)" refs={poRefs} setRefs={setPoRefs}
+                       hint={mrRefs ? "No POs for this MR" : "Pick an MR first"}
+                       options={related.pos.map((p) => ({
+                         ref: p.ref,
+                         label: `${p.ref} · ${p.supplier} · ${p.status}`,
+                       }))} />
           </>
         )}
       </div>
 
       {docType === "LM" && !existing && (
-        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-          <button onClick={prefillFromPo} style={ghostButton}>
+        <div style={{ display: "flex", gap: 8, marginTop: 10,
+                      alignItems: "center" }}>
+          <button onClick={prefillFromPo} style={ghostButton}
+                  disabled={!poRefs.trim()}>
             Prefill lines from PO
           </button>
-          <button onClick={prefillFromMr} style={ghostButton}>
-            Prefill lines from MR
+          <button onClick={prefillFromMr} style={ghostButton}
+                  disabled={!mrRefs.trim()}>
+            Prefill lines from MR (cash purchases)
           </button>
+          <span style={{ fontSize: 12, color: "#5a6b78" }}>
+            No PO? Prefill from the MR and edit the loaded quantities.
+          </span>
         </div>
       )}
 

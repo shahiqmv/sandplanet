@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const EMPTY = { name: "", contact_person: "", phone: "", email: "",
-                payment_terms_default: "" };
+                address: "" };
 
 export default function SuppliersPage({ me }) {
   const [suppliers, setSuppliers] = useState([]);
@@ -57,12 +57,11 @@ export default function SuppliersPage({ me }) {
           <input placeholder="Email" value={draft.email}
                  onChange={(e) => setDraft({ ...draft, email: e.target.value })}
                  style={{ ...inputStyle, width: 180 }} />
-          <input placeholder="Default payment terms"
-                 value={draft.payment_terms_default}
+          <input placeholder="Address (shown on POs)"
+                 value={draft.address}
                  onChange={(e) => setDraft({ ...draft,
-                                             payment_terms_default:
-                                             e.target.value })}
-                 style={{ ...inputStyle, width: 160 }} />
+                                             address: e.target.value })}
+                 style={{ ...inputStyle, width: 200 }} />
           <button onClick={add} disabled={!draft.name} style={buttonStyle}>
             Add supplier</button>
         </div>
@@ -73,7 +72,7 @@ export default function SuppliersPage({ me }) {
         <thead><tr>
           <th style={th}>Name</th><th style={th}>Contact</th>
           <th style={th}>Phone</th><th style={th}>Email</th>
-          <th style={th}>Payment terms</th>{canEdit && <th style={th} />}
+          <th style={th}>Address</th>{canEdit && <th style={th} />}
         </tr></thead>
         <tbody>
           {suppliers.map((s) => (
@@ -83,7 +82,7 @@ export default function SuppliersPage({ me }) {
               <td style={td}>{s.contact_person}</td>
               <td style={td}>{s.phone}</td>
               <td style={td}>{s.email}</td>
-              <td style={td}>{s.payment_terms_default}</td>
+              <td style={td}>{s.address}</td>
               {canEdit && (
                 <td style={td}>
                   <button onClick={async () => {

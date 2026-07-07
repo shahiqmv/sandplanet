@@ -93,6 +93,7 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
   const [adding, setAdding] = useState(false);
   const [newSupplier, setNewSupplier] = useState("");
   const [newRef, setNewRef] = useState("");
+  const [newTerms, setNewTerms] = useState("");
   const [newLines, setNewLines] = useState([{ ...emptyLine }]);
   const [editing, setEditing] = useState({}); // quotation id -> lines state
   const [error, setError] = useState(null);
@@ -116,11 +117,13 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
       await api(`/pr/${doc.ref}/quotations`, {
         method: "POST",
         body: { supplier: +newSupplier, quote_ref: newRef,
+                payment_terms: newTerms,
                 lines: newLines.filter((l) => l.supplier_desc) },
       });
       setAdding(false);
       setNewLines([{ ...emptyLine }]);
       setNewRef("");
+      setNewTerms("");
       load();
       onChanged?.();
     } catch (e) {
@@ -276,6 +279,10 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
             <input placeholder="Quote ref" value={newRef}
                    onChange={(e) => setNewRef(e.target.value)}
                    style={{ ...inputStyle, width: 140 }} />
+            <input placeholder="Payment terms for THIS quote (COD, 30 days…)"
+                   value={newTerms}
+                   onChange={(e) => setNewTerms(e.target.value)}
+                   style={{ ...inputStyle, width: 260 }} />
           </div>
           <QuoteLinesEditor lines={newLines} setLines={setNewLines}
                             mrOptions={mrOptions} />

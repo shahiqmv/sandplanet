@@ -698,6 +698,15 @@ def document_attachments(request, ref):
 # ===== Lists, registers, dashboards =====
 
 
+# "Open" = still actionable in the chain (for reference pick-lists)
+OPEN_STATUSES = {
+    "MR": ["SENT_TO_HO", "PR_RAISED", "LOADING_PLANNED", "PARTIALLY_LOADED"],
+    "PR": ["SUBMITTED", "APPROVED", "PAYMENT_PROCESSING", "PAID_PO_ISSUED"],
+    "PO": ["DRAFT", "ISSUED"],
+    "LM": ["DRAFT", "LOADING", "DEPARTED"],
+}
+
+
 @api_view(["GET"])
 def documents_list(request):
     qs = Document.objects.select_related("site").order_by("-doc_date", "-id")
@@ -710,6 +719,10 @@ def documents_list(request):
         qs = qs.filter(doc_type=request.GET["doc_type"])
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
+    if request.GET.get("open"):
+        statuses = OPEN_STATUSES.get(request.GET.get("doc_type", ""), None)
+        if statuses:
+            qs = qs.filter(status__in=statuses, is_void=False)
     return Response(
         DocumentSerializer(qs[:200], many=True,
                            context={"request": request}).data
@@ -937,6 +950,31 @@ def mr_lm_prefill(request, ref):
         })
     return Response({"mr_ref": doc.ref, "site_id": doc.site_id,
                      "site_code": doc.site.code, "lines": rows})
+
+
+@api_view(["GET"])
+def mr_related(request, ref):
+    """PRs raised against this MR and their POs — for LM reference
+    pick-lists (owner UX request)."""
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "MR":
+        return err or Response({"detail": "Not an MR."}, status=400)
+    prs = [link.from_document
+           for link in doc.links_to.filter(link_type="MR_PR")
+           .select_related("from_document")]
+    pos = []
+    for pr in prs:
+        for link in pr.links_to.filter(link_type="PR_PO") \
+                .select_related("from_document__supplier"):
+            pos.append(link.from_document)
+    return Response({
+        "mr_ref": doc.ref,
+        "prs": [{"ref": pr.ref, "status": pr.status}
+                for pr in prs if not pr.is_void],
+        "pos": [{"ref": po.ref, "status": po.status,
+                 "supplier": po.supplier.name if po.supplier else ""}
+                for po in pos if not po.is_void],
+    })
 
 
 @api_view(["GET"])

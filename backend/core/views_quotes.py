@@ -26,7 +26,7 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = ["id", "name", "contact_person", "phone", "email", "address",
-                  "payment_terms_default", "notes", "is_active"]
+                  "notes", "is_active"]
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
@@ -154,8 +154,7 @@ def pr_quotations(request, ref):
         quote_ref=request.data.get("quote_ref", ""),
         quote_date=request.data.get("quote_date") or None,
         valid_until=request.data.get("valid_until") or None,
-        payment_terms=request.data.get("payment_terms")
-        or supplier.payment_terms_default,
+        payment_terms=request.data.get("payment_terms", ""),
         notes=request.data.get("notes", ""),
         created_by=request.user,
     )

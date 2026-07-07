@@ -534,7 +534,8 @@ class Supplier(models.Model):
     phone = models.TextField(blank=True)
     email = models.TextField(blank=True)
     address = models.TextField(blank=True)
-    payment_terms_default = models.TextField(blank=True)
+    # payment terms live per quotation, not per supplier — terms vary by
+    # goods/volume (owner, 2026-07-07)
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)

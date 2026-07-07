@@ -34,6 +34,7 @@ urlpatterns = [
     path("pending-items", docs.pending_items, name="pending-items"),
     path("pending-items/<int:pk>", docs.pending_items, name="pending-item"),
     path("mr/<str:ref>/lm-prefill", docs.mr_lm_prefill, name="mr-lm-prefill"),
+    path("mr/<str:ref>/related", docs.mr_related, name="mr-related"),
     path("lm/<str:ref>/grn-prefill", docs.lm_grn_prefill, name="lm-grn-prefill"),
     path("po/<str:ref>/lm-prefill", docs.po_lm_prefill, name="po-lm-prefill"),
     path("pr/<str:ref>/quotations", quotes.pr_quotations, name="pr-quotations"),
