@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_documents as docs
+from . import views, views_documents as docs, views_quotes as quotes
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -11,6 +11,7 @@ router.register(
 )
 router.register("holidays", views.HolidayViewSet, basename="holiday")
 router.register("items", views.ItemViewSet, basename="item")
+router.register("suppliers", quotes.SupplierViewSet, basename="supplier")
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -34,6 +35,14 @@ urlpatterns = [
     path("pending-items/<int:pk>", docs.pending_items, name="pending-item"),
     path("mr/<str:ref>/lm-prefill", docs.mr_lm_prefill, name="mr-lm-prefill"),
     path("lm/<str:ref>/grn-prefill", docs.lm_grn_prefill, name="lm-grn-prefill"),
+    path("po/<str:ref>/lm-prefill", docs.po_lm_prefill, name="po-lm-prefill"),
+    path("pr/<str:ref>/quotations", quotes.pr_quotations, name="pr-quotations"),
+    path("pr/<str:ref>/coverage", quotes.pr_coverage, name="pr-coverage"),
+    path("pr/<str:ref>/sync-vendor-rows", quotes.pr_sync_vendor_rows,
+         name="pr-sync-vendor-rows"),
+    path("quotations/<int:pk>", quotes.quotation_detail, name="quotation-detail"),
+    path("quotations/<int:pk>/file", quotes.quotation_file,
+         name="quotation-file"),
     path("dashboards/site/<int:site_id>", docs.dashboard_site,
          name="dashboard-site"),
     path("dashboards/ho", docs.dashboard_ho, name="dashboard-ho"),

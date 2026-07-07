@@ -1,0 +1,197 @@
+from datetime import date, timedelta
+
+from django.test import TestCase
+from rest_framework.test import APIClient
+
+from .models import Document, Item, Site, SitePmHistory, Supplier, User
+from .tests import make_user
+
+
+class QuoteBase(TestCase):
+    def setUp(self):
+        self.site = Site.objects.create(
+            code="SJR", name="Soneva Jani", status=Site.Status.ACTIVE,
+            start_date=date.today() - timedelta(days=60),
+        )
+        self.sa = make_user("sa1", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("pm1", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.purchasing = make_user("hop1", User.Role.HO_PURCHASING)
+        self.director = make_user("dir1", User.Role.DIRECTOR)
+        self.cement = Item.objects.create(code="ITM-90001",
+                                          description="Cement OPC 50kg bag",
+                                          unit="bag")
+        self.rebar = Item.objects.create(code="ITM-90002",
+                                         description="Rebar B500 12mm",
+                                         unit="kg")
+        self.hw = Supplier.objects.create(name="Male' Hardware Pvt Ltd",
+                                          payment_terms_default="COD")
+        self.steel = Supplier.objects.create(name="Maldives Steel Traders",
+                                             payment_terms_default="30 days credit")
+        self.client = APIClient()
+
+    def as_user(self, user):
+        self.client.force_authenticate(user)
+
+    def act(self, ref, action, body=None):
+        return self.client.post(f"/api/v1/documents/{ref}/actions/{action}",
+                                body or {}, format="json")
+
+    def sent_mr(self):
+        self.as_user(self.sa)
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "lines": [
+                {"item_id": self.cement.id, "qty_required": 200,
+                 "qty_stock": 50, "qty_to_order": 150},
+                {"item_id": self.rebar.id, "qty_required": 500, "qty_stock": 0,
+                 "qty_to_order": 500},
+            ],
+        }, format="json").data
+        self.act(mr["ref"], "submit")
+        self.as_user(self.pm)
+        self.act(mr["ref"], "approve")
+        self.as_user(self.sa)
+        self.act(mr["ref"], "send")
+        return self.client.get(f"/api/v1/documents/{mr['ref']}").data
+
+    def draft_pr(self, mr):
+        self.as_user(self.purchasing)
+        return self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr["ref"]],
+        }, format="json").data
+
+    def add_quote(self, pr_ref, supplier, lines):
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr_ref}/quotations", {
+            "supplier": supplier.id, "quote_ref": f"QT-{supplier.id}",
+            "lines": lines,
+        }, format="json")
+        assert r.status_code == 201, r.data
+        return r.data
+
+
+class SupplierTests(QuoteBase):
+    def test_site_roles_cannot_edit_suppliers(self):
+        self.as_user(self.sa)
+        r = self.client.post("/api/v1/suppliers", {"name": "X"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_purchasing_creates_supplier(self):
+        self.as_user(self.purchasing)
+        r = self.client.post("/api/v1/suppliers",
+                             {"name": "Lagoon Marine Supplies",
+                              "contact_person": "Ahmed",
+                              "payment_terms_default": "50% advance"},
+                             format="json")
+        self.assertEqual(r.status_code, 201)
+
+
+class CoverageTests(QuoteBase):
+    def test_coverage_tally_and_submit_gate(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        cement_line = mr["lines"][0]["id"]
+        rebar_line = mr["lines"][1]["id"]
+        # quote covers cement only, awarded
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC cement 50kg (Fuji brand)", "unit": "bag",
+             "qty": 150, "rate": 120, "mr_line": cement_line, "awarded": True},
+        ])
+        r = self.client.get(f"/api/v1/pr/{pr['ref']}/coverage")
+        self.assertEqual(r.data["uncovered"], ["Rebar B500 12mm"])
+        # submit blocked while rebar is unquoted
+        r = self.act(pr["ref"], "submit")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Rebar B500 12mm", r.data["uncovered"])
+        # override requires a reason
+        r = self.act(pr["ref"], "submit", {"allow_uncovered": True})
+        self.assertEqual(r.status_code, 400)
+        r = self.act(pr["ref"], "submit", {"allow_uncovered": True,
+                                           "comment": "Rebar deferred to next "
+                                                      "loading per PM"})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+
+    def test_matched_but_unawarded_blocks_submit(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC 50kg", "qty": 150, "rate": 120,
+             "mr_line": mr["lines"][0]["id"], "awarded": True},
+            {"supplier_desc": "Deformed bar 12mm", "qty": 500, "rate": 18,
+             "mr_line": mr["lines"][1]["id"], "awarded": False},
+        ])
+        r = self.act(pr["ref"], "submit")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.data["unawarded"], ["Rebar B500 12mm"])
+
+
+class PoGenerationTests(QuoteBase):
+    def full_award(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC cement 50kg", "unit": "bag", "qty": 150,
+             "rate": 120, "mr_line": mr["lines"][0]["id"], "awarded": True},
+        ])
+        self.add_quote(pr["ref"], self.steel, [
+            {"supplier_desc": "Deformed bar Grade 500, 12mm dia", "unit": "kg",
+             "qty": 500, "rate": 18.50, "mr_line": mr["lines"][1]["id"],
+             "awarded": True},
+        ])
+        # vendor rows derived from quotes
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/sync-vendor-rows")
+        vendors = {line["vendor"]: line for line in r.data["lines"]}
+        assert float(vendors["Male' Hardware Pvt Ltd"]["amount_cash"]) == 18000.0
+        assert float(vendors["Maldives Steel Traders"]["amount_credit"]) == 9250.0
+        self.act(pr["ref"], "submit")
+        self.as_user(self.director)
+        r = self.act(pr["ref"], "approve")
+        assert r.status_code == 200, r.data
+        return mr, pr
+
+    def test_approval_generates_po_per_supplier(self):
+        mr, pr = self.full_award()
+        pos = Document.objects.filter(doc_type="PO").order_by("ref")
+        self.assertEqual(pos.count(), 2)
+        self.assertEqual([po.ref for po in pos], ["PO-001", "PO-002"])
+        by_supplier = {po.supplier.name: po for po in pos}
+        hw_po = by_supplier["Male' Hardware Pvt Ltd"]
+        lines = list(hw_po.current_revision.lines.all())
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].item_id, self.cement.id)
+        self.assertEqual(float(lines[0].qty_required), 150.0)
+        self.assertEqual(float(lines[0].rate), 120.0)
+        self.assertEqual(float(lines[0].amount), 18000.0)
+        self.assertEqual(hw_po.current_revision.payload["pr_ref"], pr["ref"])
+
+    def test_po_issue_generates_pdf_and_lm_prefill(self):
+        self.full_award()
+        po = Document.objects.filter(doc_type="PO",
+                                     supplier=self.steel).first()
+        self.as_user(self.purchasing)
+        r = self.act(po.ref, "issue")
+        self.assertEqual(r.data["status"], "ISSUED")
+        self.assertTrue(any(a["kind"] == "GENERATED_PDF"
+                            for a in r.data["attachments"]))
+        # LM prefill from the PO
+        r = self.client.get(f"/api/v1/po/{po.ref}/lm-prefill")
+        self.assertEqual(r.data["lines"][0]["qty_loaded"], 500.0)
+        # LM created against the PO links PO→LM
+        lm = self.client.post("/api/v1/documents", {
+            "doc_type": "LM", "site_id": self.site.id,
+            "po_refs": [po.ref], "payload": {"vessel": "MV Dhoni 7"},
+            "lines": r.data["lines"],
+        }, format="json").data
+        self.assertIn({"type": "PO_LM", "ref": po.ref, "direction": "to"},
+                      lm["links"])
+
+    def test_quotes_locked_after_approval(self):
+        mr, pr = self.full_award()
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/quotations", {
+            "supplier": self.hw.id, "lines": [],
+        }, format="json")
+        self.assertEqual(r.status_code, 400)

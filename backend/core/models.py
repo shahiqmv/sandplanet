@@ -220,6 +220,7 @@ class Document(models.Model):
         GRN = "GRN"
         PR = "PR"
         LM = "LM"
+        PO = "PO"  # purchase order (R2)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -271,6 +272,10 @@ class Document(models.Model):
             "DRAFT": {"COUNTED"},
             "COUNTED": {"COMPLETE", "SHORTAGE_REPORTED"},
         },
+        "PO": {  # generated per awarded supplier on PR approval (R2)
+            "DRAFT": {"ISSUED"},
+            "ISSUED": {"CLOSED"},
+        },
     }
 
     doc_type = models.CharField(max_length=3, choices=Type.choices)
@@ -293,6 +298,10 @@ class Document(models.Model):
     voided_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(
         User, on_delete=models.PROTECT, related_name="documents_created"
+    )
+    supplier = models.ForeignKey(  # POs only (R2)
+        "Supplier", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="purchase_orders",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -440,6 +449,10 @@ class DocumentLine(models.Model):
     quotation_ref = models.TextField(blank=True)
     payment_terms = models.TextField(blank=True)
     action_taken = models.TextField(blank=True)  # slip no. / PO no.
+    rate = models.DecimalField(max_digits=14, decimal_places=2,  # PO lines (R2)
+                               null=True, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                 null=True, blank=True)
     is_changed = models.BooleanField(default=False)  # MR amendment flag (§5.5 r3)
     remarks = models.TextField(blank=True)
 
@@ -461,7 +474,8 @@ class DocumentLine(models.Model):
 
 class DocumentLink(models.Model):
     LINK_TYPES = [("MR_PR", "MR→PR"), ("MR_LM", "MR→LM"), ("PR_LM", "PR→LM"),
-                  ("LM_GRN", "LM→GRN"), ("IR_NCR", "IR→NCR")]
+                  ("LM_GRN", "LM→GRN"), ("IR_NCR", "IR→NCR"),
+                  ("PR_PO", "PR→PO"), ("PO_LM", "PO→LM")]
 
     from_document = models.ForeignKey(
         Document, on_delete=models.PROTECT, related_name="links_from"
@@ -507,3 +521,76 @@ class PendingItem(models.Model):
 
     class Meta:
         ordering = ["-created_at"]
+
+
+# ===== Suppliers, quotations, purchase orders (DECISIONS.md R2) =====
+
+
+class Supplier(models.Model):
+    """Supplier contact database, owned by HO Purchasing (R2)."""
+
+    name = models.TextField()
+    contact_person = models.TextField(blank=True)
+    phone = models.TextField(blank=True)
+    email = models.TextField(blank=True)
+    address = models.TextField(blank=True)
+    payment_terms_default = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+def quotation_path(instance, filename):
+    return f"quotations/{instance.document.ref}/{instance.supplier_id}-{filename}"
+
+
+class Quotation(models.Model):
+    """A supplier's quotation captured against a PR, in the supplier's own
+    wording; lines are matched manually to MR lines (R2)."""
+
+    document = models.ForeignKey(  # the PR
+        Document, on_delete=models.PROTECT, related_name="quotations"
+    )
+    supplier = models.ForeignKey(
+        Supplier, on_delete=models.PROTECT, related_name="quotations"
+    )
+    quote_ref = models.TextField(blank=True)
+    quote_date = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    payment_terms = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    file = models.FileField(upload_to=quotation_path, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
+class QuotationLine(models.Model):
+    quotation = models.ForeignKey(
+        Quotation, on_delete=models.CASCADE, related_name="lines"
+    )
+    line_no = models.IntegerField()
+    supplier_desc = models.TextField()  # the supplier's wording, verbatim
+    unit = models.CharField(max_length=20, blank=True)
+    qty = models.DecimalField(max_digits=12, decimal_places=2,
+                              null=True, blank=True)
+    rate = models.DecimalField(max_digits=14, decimal_places=2,
+                               null=True, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                 null=True, blank=True)
+    mr_line = models.ForeignKey(  # the manual match (R2)
+        DocumentLine, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="quote_matches",
+    )
+    awarded = models.BooleanField(default=False)
+    remarks = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["line_no"]

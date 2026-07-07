@@ -50,7 +50,7 @@ export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
       <section style={card}>
         <div style={{ display: "flex", gap: 8, alignItems: "center",
                       flexWrap: "wrap", marginBottom: 12 }}>
-          {["MR", "PR", "LM", "GRN", "PENDING"].map((key) => (
+          {["MR", "PR", "PO", "LM", "GRN", "PENDING"].map((key) => (
             <button key={key} onClick={() => setTab(key)}
                     style={tab === key ? buttonStyle
                                        : { ...ghostButton }}>

@@ -72,6 +72,8 @@ def save_lines(revision, lines_data, previous_revision=None):
             urgent_reason=data.get("urgent_reason") or "",
             amount_cash=_dec(data.get("amount_cash")),
             amount_credit=_dec(data.get("amount_credit")),
+            rate=_dec(data.get("rate")),
+            amount=_dec(data.get("amount")),
             vendor=data.get("vendor") or "",
             quotation_ref=data.get("quotation_ref") or "",
             payment_terms=data.get("payment_terms") or "",
@@ -223,3 +225,77 @@ def next_item_code():
     # Reuse the doc counter machinery: gap-free, row-locked
     ref = next_ref("ITM", None)
     return f"ITM-{int(ref.split('-')[1]):05d}"
+
+
+def generate_pos_for_pr(pr, actor):
+    """On Director approval of the PR (award), generate one draft PO per
+    awarded supplier from the awarded quotation lines (R2). Purchasing
+    reviews and issues each PO."""
+    from .models import DocumentRevision, QuotationLine
+    from .numbering import next_ref
+    from django.db import transaction
+
+    awarded = (
+        QuotationLine.objects.filter(quotation__document=pr, awarded=True)
+        .select_related("quotation__supplier", "mr_line__item")
+        .order_by("quotation__supplier_id", "line_no")
+    )
+    by_supplier = {}
+    for ql in awarded:
+        by_supplier.setdefault(ql.quotation.supplier, []).append(ql)
+
+    created = []
+    for supplier, quote_lines in by_supplier.items():
+        with transaction.atomic():
+            ref = next_ref("PO", pr.site)
+            po = Document.objects.create(
+                doc_type="PO", ref=ref, site=pr.site, doc_date=date.today(),
+                status="DRAFT", created_by=actor, supplier=supplier,
+                previous_ir=None,
+            )
+            quotation = quote_lines[0].quotation
+            revision = DocumentRevision.objects.create(
+                document=po, rev_label="R0", created_by=actor,
+                payload={
+                    "pr_ref": pr.ref,
+                    "supplier_name": supplier.name,
+                    "supplier_contact": supplier.contact_person,
+                    "quote_ref": quotation.quote_ref,
+                    "payment_terms": quotation.payment_terms,
+                },
+            )
+            po.current_revision = revision
+            po.save(update_fields=["current_revision"])
+            for i, ql in enumerate(quote_lines, start=1):
+                mr_line = ql.mr_line
+                DocumentLine.objects.create(
+                    revision=revision, line_no=i,
+                    item=mr_line.item if mr_line else None,
+                    free_text_desc=(ql.supplier_desc
+                                    if not (mr_line and mr_line.item)
+                                    else ""),
+                    unit=ql.unit or (mr_line.unit if mr_line else ""),
+                    qty_required=ql.qty,
+                    rate=ql.rate, amount=ql.amount,
+                    remarks=ql.remarks,
+                )
+            link_documents(po, pr, "PR_PO")
+        audit("document", po.id, "PO_GENERATED", actor=actor,
+              detail={"ref": po.ref, "pr": pr.ref, "supplier": supplier.name})
+        created.append(po)
+    return created
+
+
+def po_lm_prefill_lines(po):
+    """LM lines from a PO: what was ordered from this supplier (R2)."""
+    rows = []
+    for line in po.current_revision.lines.select_related("item"):
+        rows.append({
+            "item_id": line.item_id,
+            "free_text_desc": line.free_text_desc,
+            "unit": line.unit,
+            "qty_loaded": float(line.qty_required or 0),
+            "qty_pending": 0,
+            "remarks": line.remarks,
+        })
+    return rows

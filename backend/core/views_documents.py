@@ -23,15 +23,18 @@ from .numbering import next_ref
 from .pdf import generate_pdf
 from .permissions import scoped_site_ids
 from .procurement import (
+    generate_pos_for_pr,
     grn_lines_from_lm,
     link_documents,
     on_grn_verified,
     on_lm_departed,
     on_pr_approved,
+    po_lm_prefill_lines,
     resolve_refs,
     save_lines,
     validate_mr_lines,
 )
+from .views_quotes import pr_coverage_data
 from .serializers_documents import (
     AttachmentSerializer,
     DocumentSerializer,
@@ -47,6 +50,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "GRN": {"SITE_ADMIN", "PM"},
     "PR": {"HO_PURCHASING"},             # Head Office documents
     "LM": {"HO_PURCHASING"},
+    "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
 RESULTS = {  # client results per type (spec §5.3/§5.4)
@@ -180,8 +184,11 @@ def document_create(request):
     pr_docs, missing = resolve_refs(request.data.get("pr_refs"), "PR")
     if missing:
         return Response({"detail": f"Unknown PR refs: {sorted(missing)}"}, status=400)
+    po_docs, missing = resolve_refs(request.data.get("po_refs"), "PO")
+    if missing:
+        return Response({"detail": f"Unknown PO refs: {sorted(missing)}"}, status=400)
     # A PR/LM belongs to the same site/project as the MRs it answers
-    wrong = [d.ref for d in mr_docs + pr_docs if d.site_id != site.id]
+    wrong = [d.ref for d in mr_docs + pr_docs + po_docs if d.site_id != site.id]
     if wrong:
         return Response(
             {"detail": f"References belong to a different site: {wrong}. "
@@ -205,6 +212,8 @@ def document_create(request):
             link_documents(doc, mr, "MR_PR" if doc_type == "PR" else "MR_LM")
         for pr in pr_docs:
             link_documents(doc, pr, "PR_LM")
+        for po in po_docs:
+            link_documents(doc, po, "PO_LM")
         if lm is not None:
             link_documents(doc, lm, "LM_GRN")
     audit("document", doc.id, "DOC_CREATED", actor=request.user,
@@ -385,12 +394,13 @@ def _do_issue(request, doc, comment):
                            f"to issue ({captioned} attached)."},
                 status=400,
             )
-    if doc.doc_type in ("DPR", "TWS", "IR", "MAR"):
-        # DPR/TWS issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
+    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "PO"):
+        # DPR/TWS/PO issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         return _apply(request, doc, "ISSUED", "ISSUE",
                       roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
                       pdf_milestone="issue", comment=comment)
-    return Response({"detail": "Issue applies to DPR/TWS/IR/MAR."}, status=400)
+    return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO."},
+                    status=400)
 
 
 def _do_submit(request, doc, comment):
@@ -399,6 +409,23 @@ def _do_submit(request, doc, comment):
              "MAR": {"SITE_ENGINEER", "PM"}}.get(doc.doc_type)
     if roles is None:
         return Response({"detail": "Submit applies to MR/PR/IR/MAR."}, status=400)
+    if doc.doc_type == "PR" and doc.quotations.exists():
+        # Coverage tally (R2): every MR line quoted AND awarded, or an
+        # explicit override with a reason.
+        rows = pr_coverage_data(doc)
+        uncovered = [r["description"] for r in rows if not r["covered"]]
+        unawarded = [r["description"] for r in rows
+                     if r["covered"] and not r["awarded"]]
+        if (uncovered or unawarded) and not request.data.get("allow_uncovered"):
+            return Response({
+                "detail": "MR lines are not fully quoted/awarded. Match and "
+                          "award them, or resubmit with allow_uncovered and "
+                          "a reason in the comment.",
+                "uncovered": uncovered, "unawarded": unawarded,
+            }, status=400)
+        if (uncovered or unawarded) and not comment.strip():
+            return Response({"detail": "A reason is required to submit with "
+                                       "uncovered MR lines."}, status=400)
     return _apply(request, doc, "SUBMITTED", "SUBMIT", roles=roles,
                   comment=comment)
 
@@ -407,12 +434,13 @@ def _do_approve(request, doc, comment):
     if doc.doc_type in ("MR", "IR", "MAR"):  # PM gate (spec §5.3–§5.5)
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
-    if doc.doc_type == "PR":  # Director approval (spec §5.7)
+    if doc.doc_type == "PR":  # Director approval = award approval (§5.7, R2)
         err = _apply(request, doc, "APPROVED", "APPROVE",
                      roles={"DIRECTOR"}, lock_revision=True,
                      pdf_milestone="approved", comment=comment)
         if err is None:
             on_pr_approved(doc, request.user)
+            generate_pos_for_pr(doc, request.user)
         return err
     return Response({"detail": "Approve applies to MR/PR/IR/MAR."}, status=400)
 
@@ -613,9 +641,9 @@ def _do_close(request, doc, comment):
         })
         return None
     roles = {"MR": {"SITE_ADMIN", "PM", "HO_PURCHASING"},
-             "PR": {"HO_PURCHASING"}}.get(doc.doc_type)
+             "PR": {"HO_PURCHASING"}, "PO": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Close applies to MR/PR/IR."}, status=400)
+        return Response({"detail": "Close applies to MR/PR/PO/IR."}, status=400)
     return _apply(request, doc, "CLOSED", "CLOSE", roles=roles, comment=comment)
 
 
@@ -909,6 +937,15 @@ def mr_lm_prefill(request, ref):
         })
     return Response({"mr_ref": doc.ref, "site_id": doc.site_id,
                      "site_code": doc.site.code, "lines": rows})
+
+
+@api_view(["GET"])
+def po_lm_prefill(request, ref):
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "PO":
+        return err or Response({"detail": "Not a PO."}, status=400)
+    return Response({"po_ref": doc.ref, "site_id": doc.site_id,
+                     "lines": po_lm_prefill_lines(doc)})
 
 
 @api_view(["GET"])

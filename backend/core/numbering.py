@@ -2,7 +2,7 @@ from django.db import IntegrityError, transaction
 
 from .models import DocCounter
 
-GLOBAL_TYPES = {"PR", "LM"}  # number globally, no site code in ref (spec §4.1)
+GLOBAL_TYPES = {"PR", "LM", "PO"}  # global numbering, no site code (§4.1, R2)
 
 
 def next_ref(doc_type, site):

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
+import QuotationsPanel from "./QuotationsPanel.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
@@ -8,6 +9,7 @@ export const DOC_LABELS = {
   PR: "Procurement Requisition",
   LM: "Loading Manifest",
   GRN: "Goods Received Note",
+  PO: "Purchase Order",
 };
 
 const HEADER_FIELDS = {
@@ -47,6 +49,10 @@ const ACTIONS = {
   ],
   LM: [["depart", "Depart (issue manifest)", ["DRAFT", "LOADING"],
         ["HO_PURCHASING", "ADMIN"]]],
+  PO: [
+    ["issue", "Issue to supplier", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
+    ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
+  ],
   GRN: [
     ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "ADMIN"]],
     ["verify", "Verify (SE/PM)", ["COUNTED"], ["SITE_ENGINEER", "PM", "ADMIN"]],
@@ -110,6 +116,7 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   const [siteId, setSiteId] = useState(existing?.site || site?.id || "");
   const [mrRefs, setMrRefs] = useState("");
   const [prRefs, setPrRefs] = useState("");
+  const [poRefs, setPoRefs] = useState("");
   const [rows, setRows] = useState(
     existing?.lines?.map((l) => ({
       item_id: l.item, free_text: l.is_free_text,
@@ -130,6 +137,24 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   const setP = (k, v) => setPayload({ ...payload, [k]: v });
   const setRow = (i, patch) =>
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  async function prefillFromPo() {
+    const first = poRefs.split(",")[0]?.trim();
+    if (!first) return setError("Enter a PO ref first.");
+    try {
+      const data = await api(`/po/${first}/lm-prefill`);
+      setSiteId(data.site_id);
+      setRows(data.lines.map((l) => ({
+        item_id: l.item_id, free_text: !l.item_id,
+        free_text_desc: l.free_text_desc, unit: l.unit,
+        qty_loaded: l.qty_loaded, qty_pending: l.qty_pending,
+        remarks: l.remarks,
+      })));
+      setError(null);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   async function prefillFromMr() {
     const first = mrRefs.split(",")[0]?.trim();
@@ -186,6 +211,7 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
         };
         if (mrRefs.trim()) body.mr_refs = mrRefs.split(",").map((s) => s.trim());
         if (prRefs.trim()) body.pr_refs = prRefs.split(",").map((s) => s.trim());
+        if (poRefs.trim()) body.po_refs = poRefs.split(",").map((s) => s.trim());
         doc = await api("/documents", { method: "POST", body });
       }
       onSaved(doc);
@@ -234,17 +260,28 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
           </label>
         )}
         {docType === "LM" && !existing && (
-          <label style={{ fontSize: 13 }}>PR Reference(s)
-            <input value={prRefs} onChange={(e) => setPrRefs(e.target.value)}
-                   placeholder="PR-001" style={inputStyle} />
-          </label>
+          <>
+            <label style={{ fontSize: 13 }}>PR Reference(s)
+              <input value={prRefs} onChange={(e) => setPrRefs(e.target.value)}
+                     placeholder="PR-001" style={inputStyle} />
+            </label>
+            <label style={{ fontSize: 13 }}>PO Reference(s)
+              <input value={poRefs} onChange={(e) => setPoRefs(e.target.value)}
+                     placeholder="PO-001" style={inputStyle} />
+            </label>
+          </>
         )}
       </div>
 
       {docType === "LM" && !existing && (
-        <button onClick={prefillFromMr} style={{ ...ghostButton, marginTop: 10 }}>
-          Prefill lines from MR
-        </button>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button onClick={prefillFromPo} style={ghostButton}>
+            Prefill lines from PO
+          </button>
+          <button onClick={prefillFromMr} style={ghostButton}>
+            Prefill lines from MR
+          </button>
+        </div>
       )}
 
       <SectionTitle>
@@ -555,6 +592,10 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit }) {
                   <th style={th}>Manifest</th><th style={th}>Received</th>
                   <th style={th}>Short/Excess</th>
                 </>)}
+                {doc.doc_type === "PO" && (<>
+                  <th style={th}>Qty</th><th style={th}>Rate</th>
+                  <th style={th}>Amount</th>
+                </>)}
               </>)}
               <th style={th}>Remarks</th>
             </tr>
@@ -604,6 +645,12 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit }) {
                         (num(line.qty_received) - num(line.qty_manifest))}
                     </td>
                   </>)}
+                  {doc.doc_type === "PO" && (<>
+                    <td style={td}>{line.qty_required}</td>
+                    <td style={td}>{line.rate}</td>
+                    <td style={td}>
+                      {Number(line.amount || 0).toLocaleString()}</td>
+                  </>)}
                 </>)}
                 <td style={td}>{line.remarks}</td>
               </tr>
@@ -611,6 +658,14 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit }) {
           </tbody>
         </table>
       </div>
+
+      {doc.doc_type === "PR" && (
+        <QuotationsPanel doc={doc} me={me} onChanged={async () => {
+          const fresh = await api(`/documents/${doc.ref}`);
+          setDoc(fresh);
+          onChanged?.();
+        }} />
+      )}
 
       {doc.revisions?.length > 1 && (
         <p style={{ fontSize: 12, color: "#5a6b78" }}>

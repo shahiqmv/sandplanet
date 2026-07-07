@@ -46,7 +46,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "free_text_desc", "is_free_text", "unit",
                   "qty_required", "qty_stock", "qty_to_order",
                   "qty_loaded", "qty_pending", "qty_manifest", "qty_received",
-                  "priority", "urgent_reason",
+                  "priority", "urgent_reason", "rate", "amount",
                   "amount_cash", "amount_credit", "vendor", "quotation_ref",
                   "payment_terms", "action_taken", "is_changed", "remarks"]
 
@@ -71,6 +71,8 @@ class DocumentSerializer(serializers.ModelSerializer):
     )
     previous_ir_ref = serializers.CharField(source="previous_ir.ref",
                                             read_only=True, default=None)
+    supplier_name = serializers.CharField(source="supplier.name",
+                                          read_only=True, default=None)
     resubmitted_as = serializers.SerializerMethodField()
 
     class Meta:
@@ -78,7 +80,7 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = ["id", "doc_type", "ref", "site", "site_code", "site_name",
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
-                  "previous_ir_ref", "resubmitted_as",
+                  "previous_ir_ref", "resubmitted_as", "supplier_name",
                   "attachments", "approvals", "created_by_name", "created_at"]
 
     def get_resubmitted_as(self, obj):

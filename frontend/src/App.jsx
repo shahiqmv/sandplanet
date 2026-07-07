@@ -4,6 +4,7 @@ import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
+import SuppliersPage from "./SuppliersPage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
@@ -185,7 +186,8 @@ export default function App() {
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
             {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
-              ["items", "Items"]].map(([key, label]) => (
+              ["items", "Items"], ["suppliers", "Suppliers"]]
+              .map(([key, label]) => (
               <button key={key}
                       style={navBtn(hoPage === key && !openSite && !docView)}
                       onClick={() => { setHoPage(key); setOpenSite(null);
@@ -286,6 +288,9 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
+            <SuppliersPage me={me} />
           )}
           {!docView && !openSite &&
             (!me.is_ho || hoPage === "sites") && (

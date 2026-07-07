@@ -31,3 +31,15 @@ WeasyPrint requires GTK libraries. On Windows dev machines install them with
 Safety net kept: if the engine is missing, local dev (`PDF_REQUIRED=0`) skips
 PDF with a logged warning; staging/production set `PDF_REQUIRED=1` so a missing
 engine blocks issue there. Layout acceptance is still against the Excel prints.
+
+## 2026-07-07 — R2: Quotation capture, MR-line matching, and Purchase Orders (owner-directed scope addition)
+The R1 spec kept PR vendor rows as quote summaries and deferred any PO module
+to Phase 3. Owner identified the gap: nothing ties supplier quotes to MR items,
+so quotes cannot be tallied against the manifest. Added now (ahead of M5):
+supplier database; quotation capture per PR (supplier's own line wording +
+file); manual matching form quote-line -> MR line (supplier descriptions
+differ by design); coverage tally blocks PR submit while MR lines are
+unquoted/unawarded (explicit override with reason allowed); Director's PR
+approval doubles as the award approval and auto-generates draft POs (global
+PO-NNN numbering) per awarded supplier; LM prefills from POs. An MR line may
+be split across suppliers.
