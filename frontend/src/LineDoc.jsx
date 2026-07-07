@@ -198,6 +198,13 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
     setBusy(true);
     setError(null);
     try {
+      let effectiveSite = siteId;
+      if (!effectiveSite && mrRefs.trim()) {
+        // PR/LM follow the MR's site — resolve it instead of asking again
+        const mr = await api(`/documents/${mrRefs.split(",")[0].trim()}`);
+        effectiveSite = mr.site;
+        setSiteId(mr.site);
+      }
       let doc;
       if (existing) {
         doc = await api(`/documents/${existing.ref}`, {
@@ -206,7 +213,7 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
         });
       } else {
         const body = {
-          doc_type: docType, site_id: siteId, payload,
+          doc_type: docType, site_id: effectiveSite, payload,
           lines: linesForSave(),
         };
         if (mrRefs.trim()) body.mr_refs = mrRefs.split(",").map((s) => s.trim());
@@ -284,6 +291,15 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
         </div>
       )}
 
+      {docType === "PR" && !existing ? (
+        <p style={{ background: "#e8f0f7", borderRadius: 8, padding: "10px 14px",
+                    fontSize: 13, color: "var(--sp-navy)", marginTop: 16 }}>
+          Save the draft first — then capture each supplier's quotation and
+          match it to the MR lines on the next screen. The vendor summary
+          builds itself from the quotes.
+        </p>
+      ) : (
+      <>
       <SectionTitle>
         {docType === "PR" ? "Vendors" : "Items"}
       </SectionTitle>
@@ -433,6 +449,8 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
               style={{ ...ghostButton, padding: "4px 12px", marginTop: 6 }}>
         + Add row
       </button>
+      </>
+      )}
 
       {docType === "MR" && (
         <p style={{ fontSize: 12, color: "#5a6b78", marginTop: 10 }}>
