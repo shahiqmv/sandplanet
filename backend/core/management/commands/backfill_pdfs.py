@@ -10,13 +10,25 @@ from core.pdf import generate_pdf
 class Command(BaseCommand):
     help = "Backfill archived PDFs for issued documents that have none."
 
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--force", action="store_true",
+            help="Regenerate even when PDFs exist (dev/template work only — "
+                 "archived PDFs are immutable in production use).",
+        )
+
     def handle(self, *args, **options):
         qs = Document.objects.filter(
             status__in=["ISSUED", "VERIFIED"], is_void=False
         )
         for doc in qs:
-            if doc.attachments.filter(kind="GENERATED_PDF").exists():
-                continue
+            existing = doc.attachments.filter(kind="GENERATED_PDF")
+            if existing.exists():
+                if not options["force"]:
+                    continue
+                for old in existing:
+                    old.file.delete(save=False)
+                existing.delete()
             issue_pdf = generate_pdf(doc, doc.current_revision, "issue")
             verified_pdf = (
                 generate_pdf(doc, doc.current_revision, "verified")

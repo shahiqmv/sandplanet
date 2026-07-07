@@ -6,11 +6,15 @@
   /* FRM-PRJ-01 R0 — verify against the Excel print layout (acceptance criteria) */
   @page { size: A4 portrait; margin: 14mm 12mm; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #1c2b36; }
-  .band { background: #16527E; color: #fff; padding: 6px 10px; }
-  .band h1 { margin: 0; font-size: 13pt; letter-spacing: 1px; }
-  .band .sub { color: #29ABE2; font-size: 8pt; }
-  .formno { float: right; text-align: right; font-size: 8pt; color: #fff; }
-  .rule { border-bottom: 2.5px solid #29ABE2; margin-bottom: 8px; }
+  .letterhead { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  .letterhead td { border: none; padding: 0; vertical-align: middle; }
+  .letterhead .logo img { height: 11mm; }
+  .letterhead .title { text-align: right; font-size: 17pt; font-weight: 800;
+                       color: #000; letter-spacing: 0.5px; }
+  .band-navy { height: 3.2mm; background: #16527E; }
+  .band-sky { height: 1.8mm; background: #1B75BB; margin-top: 0.6mm;
+              margin-bottom: 6px; }
+  .formno { text-align: right; font-size: 8pt; color: #5a6b78; margin: 2px 0 6px; }
   .refstamp { float: right; border: 1.5px solid #16527E; color: #16527E;
               padding: 2px 8px; font-weight: bold; font-size: 10pt; }
   h2 { font-size: 9.5pt; color: #16527E; border-bottom: 1px solid #29ABE2;
@@ -37,12 +41,13 @@
 </head>
 <body>
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
-<div class="band">
-  <div class="formno">FRM-PRJ-01 · R0<br>{{ rev.rev_label }}</div>
-  <h1>SAND PLANET</h1>
-  <div class="sub">DAILY PROGRESS REPORT</div>
-</div>
-<div class="rule"></div>
+<table class="letterhead"><tr>
+  <td class="logo"><img src="{{ logo_src }}"></td>
+  <td class="title">DAILY PROGRESS REPORT</td>
+</tr></table>
+<div class="band-navy"></div>
+<div class="band-sky"></div>
+<div class="formno">FRM-PRJ-01 · R0 · Rev {{ rev.rev_label }}</div>
 
 <div class="refstamp">{{ doc.ref }}</div>
 <table class="kv">
@@ -126,9 +131,13 @@
 
 {% if photos %}
 <div class="pagebreak"></div>
-<div class="band"><h1>PROGRESS PHOTOS — {{ doc.ref }}</h1>
-  <div class="sub">{{ doc.doc_date|date:"d/m/y" }}</div></div>
-<div class="rule"></div>
+<table class="letterhead"><tr>
+  <td class="logo"><img src="{{ logo_src }}"></td>
+  <td class="title">PROGRESS PHOTOS — {{ doc.ref }}</td>
+</tr></table>
+<div class="band-navy"></div>
+<div class="band-sky"></div>
+<div class="formno">{{ doc.doc_date|date:"d/m/y" }}</div>
 {% for p in photos %}
 <div class="photo"><img src="{{ p.src }}"><div class="cap">{{ forloop.counter }}. {{ p.caption }}</div></div>
 {% endfor %}

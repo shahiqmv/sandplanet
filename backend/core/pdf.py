@@ -45,6 +45,7 @@ def _dpr_context(document, revision):
         count = int(counts.get(str(cat.id), 0) or 0)
         total += count
         manpower_rows.append({"grp": cat.grp, "name": cat.name, "count": count})
+    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     photos = []
     for p in document.attachments.filter(kind="PHOTO").order_by("id"):
         try:
@@ -55,6 +56,7 @@ def _dpr_context(document, revision):
     approvals = list(document.approvals.select_related("actor").all())
     return {
         "doc": document,
+        "logo_src": f"file:///{logo}",
         "site": site,
         "payload": payload,
         "manpower_rows": manpower_rows,
