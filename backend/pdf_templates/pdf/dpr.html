@@ -11,8 +11,8 @@
   .letterhead .logo img { height: 11mm; }
   .letterhead .title { text-align: right; font-size: 17pt; font-weight: 800;
                        color: #000; letter-spacing: 0.5px; }
-  .band-navy { height: 3.2mm; background: #16527E; }
-  .band-sky { height: 1.8mm; background: #1B75BB; margin-top: 0.6mm;
+  .band-navy { height: 1.6mm; background: #16527E; }
+  .band-sky { height: 0.9mm; background: #1B75BB; margin-top: 0.5mm;
               margin-bottom: 6px; }
   .formno { text-align: right; font-size: 8pt; color: #5a6b78; margin: 2px 0 6px; }
   .refstamp { float: right; border: 1.5px solid #16527E; color: #16527E;
@@ -41,19 +41,15 @@
 </head>
 <body>
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
-<table class="letterhead"><tr>
-  <td class="logo"><img src="{{ logo_src }}"></td>
-  <td class="title">DAILY PROGRESS REPORT</td>
-</tr></table>
-<div class="band-navy"></div>
-<div class="band-sky"></div>
-<div class="formno">FRM-PRJ-01 · R0 · Rev {{ rev.rev_label }}</div>
+{% with subline="FRM-PRJ-01 · R0 · Rev "|add:rev.rev_label %}
+{% include "pdf/_letterhead.html" with title="DAILY PROGRESS REPORT" subline=subline %}
+{% endwith %}
 
 <div class="refstamp">{{ doc.ref }}</div>
 <table class="kv">
   <tr><td class="k">Project / Site</td><td>{{ site.name }} ({{ site.code }})</td>
       <td class="k">Date / Day</td><td>{{ doc.doc_date|date:"d/m/y" }} — {{ doc.doc_date|date:"l" }}</td></tr>
-  <tr><td class="k">Client</td><td>{{ site.client_name }}</td>
+  <tr><td class="k">Client</td><td><strong>{{ site.client_name }}</strong></td>
       <td class="k">Consultant</td><td>{{ site.consultant_name }}</td></tr>
   <tr><td class="k">Working hours</td><td>{{ payload.working_hours|default:"" }}</td>
       <td class="k">Weather AM / PM</td><td>{{ payload.weather_am|default:"—" }} / {{ payload.weather_pm|default:"—" }}</td></tr>
@@ -131,13 +127,9 @@
 
 {% if photos %}
 <div class="pagebreak"></div>
-<table class="letterhead"><tr>
-  <td class="logo"><img src="{{ logo_src }}"></td>
-  <td class="title">PROGRESS PHOTOS — {{ doc.ref }}</td>
-</tr></table>
-<div class="band-navy"></div>
-<div class="band-sky"></div>
-<div class="formno">{{ doc.doc_date|date:"d/m/y" }}</div>
+{% with photos_title="PROGRESS PHOTOS — "|add:doc.ref %}
+{% include "pdf/_letterhead.html" with title=photos_title subline=doc.doc_date|date:"d/m/y" %}
+{% endwith %}
 {% for p in photos %}
 <div class="photo"><img src="{{ p.src }}"><div class="cap">{{ forloop.counter }}. {{ p.caption }}</div></div>
 {% endfor %}

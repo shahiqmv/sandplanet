@@ -1,0 +1,12 @@
+{% comment %}
+Shared company letterhead for ALL report PDFs. Usage from a form template:
+  include "pdf/_letterhead.html" with title="DAILY PROGRESS REPORT" subline="FRM-PRJ-01 R0"
+Requires logo_src in context (core/pdf.py provides it).
+{% endcomment %}
+<table class="letterhead"><tr>
+  <td class="logo"><img src="{{ logo_src }}"></td>
+  <td class="title">{{ title }}</td>
+</tr></table>
+<div class="band-navy"></div>
+<div class="band-sky"></div>
+{% if subline %}<div class="formno">{{ subline }}</div>{% endif %}
