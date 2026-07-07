@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py --version)",
+      "Bash(npm --version)",
+      "Bash(git --version)",
+      "Bash(docker --version)",
+      "Bash(docker compose *)"
+    ]
+  }
+}

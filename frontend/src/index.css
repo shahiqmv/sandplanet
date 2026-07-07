@@ -1,0 +1,18 @@
+:root {
+  --sp-navy: #16527e;
+  --sp-sky: #29abe2;
+  --sp-bg: #f4f7fa;
+  --sp-text: #1c2b36;
+  --sp-border: #d6e2ec;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: var(--sp-bg);
+  color: var(--sp-text);
+}
