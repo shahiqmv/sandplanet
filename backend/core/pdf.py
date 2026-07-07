@@ -72,6 +72,9 @@ def generate_pdf(document, revision, milestone):
     Attachment or None when the engine is unavailable locally."""
     if document.doc_type == "DPR":
         template, context = "dpr.html", _dpr_context(document, revision)
+    elif document.doc_type == "PO":
+        # External stationery: no site names or internal refs (owner, R2)
+        template, context = "po.html", _po_context(document, revision)
     elif document.doc_type in LINE_FORMS:
         template, context = "lines_form.html", _lines_context(document, revision)
     elif document.doc_type in ("IR", "MAR", "TWS"):
@@ -165,27 +168,6 @@ LINE_FORMS = {
         "sigs": [("Prepared By — Purchasing", "DEPART"),
                  ("Loaded/Checked By — Boat Crew", None),
                  ("Received At Site By (via GRN)", None)],
-    },
-    "PO": {
-        "title": "PURCHASE ORDER",
-        "form_no": "FRM-PRC-05 · R0",
-        "columns": [
-            ("Item Description", "description", False),
-            ("Unit", "unit", False),
-            ("Qty", "qty_required", True),
-            ("Rate (MVR)", "rate", True),
-            ("Amount (MVR)", "amount", True),
-            ("Remarks", "remarks", False),
-        ],
-        "header_keys": [("Supplier", "supplier_name"),
-                        ("Contact", "supplier_contact"),
-                        ("Quotation Ref", "quote_ref"),
-                        ("Payment Terms", "payment_terms"),
-                        ("Against PR", "pr_ref")],
-        "sigs": [("Prepared / Issued By — Purchasing", "ISSUE"),
-                 ("Award Approved — Sr PM / Director (via PR)", None),
-                 ("Supplier Acceptance", None)],
-        "totals": ["amount"],
     },
     "GRN": {
         "title": "GOODS RECEIVED NOTE",
@@ -301,4 +283,75 @@ def _lines_context(document, revision):
              else ""}
             for title, action in config["sigs"]
         ],
+    }
+
+
+# ===== External Purchase Order (owner format, R2) =====
+
+
+def _param(key, default):
+    from .models import CompanyParameter
+
+    try:
+        return CompanyParameter.objects.get(key=key).value
+    except CompanyParameter.DoesNotExist:
+        return default
+
+
+def _money(value):
+    from decimal import Decimal
+
+    return f"{Decimal(value).quantize(Decimal('0.01')):,}"
+
+
+def _po_context(document, revision):
+    from decimal import Decimal
+
+    payload = revision.payload or {}
+    supplier = document.supplier
+    lines = []
+    untaxed = Decimal("0")
+    for line in revision.lines.select_related("item"):
+        amount = line.amount if line.amount is not None else (
+            (line.qty_required or 0) * (line.rate or 0)
+        )
+        untaxed += Decimal(amount or 0)
+        lines.append({
+            "description": line.description,
+            "qty": _fmt(float(line.qty_required)) if line.qty_required else "",
+            "unit": line.unit,
+            "rate": _money(line.rate or 0),
+            "amount": _money(amount or 0),
+        })
+    gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
+    gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
+    issue_stamp = ""
+    for a in document.approvals.select_related("actor"):
+        if a.action == "ISSUE":
+            issue_stamp = (f"{a.actor.full_name} — "
+                           f"{a.acted_at.strftime('%d/%m/%Y %H:%M')} — "
+                           f"issued electronically via Sand Planet Site "
+                           f"Documents")
+    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
+    return {
+        "doc": document,
+        "payload": payload,
+        "supplier": supplier,
+        "logo_src": f"file:///{logo}",
+        "lines": lines,
+        "totals": {
+            "untaxed": _money(untaxed),
+            "gst_rate": _fmt(float(gst_rate)),
+            "gst": _money(gst),
+            "total": _money(untaxed + gst),
+        },
+        "issue_stamp": issue_stamp,
+        "company": {
+            "legal_name": _param("company_legal_name", "Sand Planet Pvt Ltd"),
+            "tin": _param("company_tin", ""),
+            "address": _param("company_address", ""),
+            "email": _param("company_email", ""),
+            "website": _param("company_website", ""),
+            "tagline": _param("company_tagline", ""),
+        },
     }

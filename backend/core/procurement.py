@@ -257,11 +257,13 @@ def generate_pos_for_pr(pr, actor):
             revision = DocumentRevision.objects.create(
                 document=po, rev_label="R0", created_by=actor,
                 payload={
-                    "pr_ref": pr.ref,
+                    "pr_ref": pr.ref,  # internal only — never on the PO PDF
                     "supplier_name": supplier.name,
                     "supplier_contact": supplier.contact_person,
                     "quote_ref": quotation.quote_ref,
                     "payment_terms": quotation.payment_terms,
+                    "expected_delivery": (pr.current_revision.payload or {})
+                    .get("requested_delivery", ""),
                 },
             )
             po.current_revision = revision

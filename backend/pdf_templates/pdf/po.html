@@ -1,0 +1,118 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* External Purchase Order — commercial stationery, NO project specifics
+     (supplier does not see site names or internal MR/PR references). */
+  @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt;
+         color: #1c2b36; }
+  .masthead { text-align: center; margin-bottom: 10mm; }
+  .masthead img { height: 16mm; }
+  .masthead .legal { color: #5a6b78; font-size: 10pt; margin-top: 2mm; }
+  .supplier { width: 60mm; margin-left: auto; font-size: 9.5pt;
+              line-height: 1.45; margin-bottom: 8mm; }
+  .supplier .name { font-weight: 700; }
+  h1 { text-align: center; font-weight: 400; font-size: 19pt; color: #1c2b36;
+       margin: 0 0 8mm; }
+  h1 strong { font-weight: 700; }
+  .meta { width: 100%; border-collapse: collapse; margin-bottom: 6mm; }
+  .meta td { border: none; padding: 0 4px; vertical-align: top; }
+  .meta .k { font-weight: 700; font-size: 9pt; padding-bottom: 1mm; }
+  table.lines { width: 100%; border-collapse: collapse; }
+  .lines th { text-align: left; font-size: 9pt; padding: 6px 8px;
+              background: #f0f3f6; border-bottom: 1.5px solid #1c2b36; }
+  .lines td { padding: 6px 8px; border-bottom: 0.5px solid #d6e2ec;
+              font-size: 9.5pt; }
+  .num { text-align: right; }
+  thead { display: table-header-group; }
+  .totals { width: 70mm; margin-left: auto; margin-top: 5mm;
+            border-collapse: collapse; }
+  .totals td { padding: 2.5px 8px; font-size: 9.5pt; }
+  .totals .grand td { font-weight: 700; border-top: 1.2px solid #1c2b36;
+                      padding-top: 5px; }
+  .terms { margin-top: 8mm; font-size: 9.5pt; }
+  .terms .k { font-weight: 700; }
+  .sig { margin-top: 14mm; }
+  .sig .stamp { color: #1a7f37; font-size: 8pt; max-width: 90mm; }
+  .sig .line { margin-top: 12mm; border-top: 0.8px solid #1c2b36;
+               width: 70mm; padding-top: 2mm; font-size: 9pt; }
+  .footer { position: fixed; bottom: -22mm; left: 0; right: 0;
+            border-top: 0.8px solid #d6e2ec; padding-top: 3mm;
+            font-size: 8pt; color: #5a6b78; }
+  .footer .right { float: right; text-align: right; color: #9db4c5;
+                   font-weight: 700; }
+  .void { position: fixed; top: 40%; left: 15%; font-size: 60pt;
+          color: rgba(192,57,43,.25); transform: rotate(-25deg); }
+</style>
+</head>
+<body>
+{% if doc.is_void %}<div class="void">VOID / CANCELLED</div>{% endif %}
+
+<div class="footer">
+  <div class="right">{{ company.tagline }}</div>
+  {{ company.address }} | TIN: {{ company.tin }}<br>
+  {{ company.email }} | {{ company.website }}
+</div>
+
+<div class="masthead">
+  <img src="{{ logo_src }}">
+  <div class="legal">{{ company.legal_name }}</div>
+</div>
+
+<div class="supplier">
+  <div class="name">{{ supplier.name }}</div>
+  {% if supplier.contact_person %}Attn: {{ supplier.contact_person }}<br>{% endif %}
+  {% if supplier.address %}{{ supplier.address|linebreaksbr }}<br>{% endif %}
+  {% if supplier.phone %}{{ supplier.phone }}<br>{% endif %}
+  {% if supplier.email %}{{ supplier.email }}{% endif %}
+</div>
+
+<h1>Purchase Order <strong># {{ doc.ref }}</strong></h1>
+
+<table class="meta"><tr>
+  <td><div class="k">Order Date</div>{{ doc.doc_date|date:"d/m/Y" }}</td>
+  <td><div class="k">Your Quotation Ref</div>{{ payload.quote_ref|default:"—" }}</td>
+  <td><div class="k">Payment Terms</div>{{ payload.payment_terms|default:"—" }}</td>
+  <td><div class="k">Expected Delivery</div>{{ payload.expected_delivery|default:"—" }}</td>
+</tr></table>
+
+<table class="lines">
+  <thead><tr>
+    <th style="width:6%">No.</th><th>Description</th>
+    <th style="width:10%" class="num">Qty</th>
+    <th style="width:8%">Unit</th>
+    <th style="width:14%" class="num">Unit Price</th>
+    <th style="width:16%" class="num">Amount (MVR)</th>
+  </tr></thead>
+  {% for line in lines %}
+  <tr>
+    <td>{{ forloop.counter }}</td>
+    <td>{{ line.description }}</td>
+    <td class="num">{{ line.qty }}</td>
+    <td>{{ line.unit }}</td>
+    <td class="num">{{ line.rate }}</td>
+    <td class="num">{{ line.amount }}</td>
+  </tr>
+  {% endfor %}
+</table>
+
+<table class="totals">
+  <tr><td>Untaxed Amount</td><td class="num">MVR {{ totals.untaxed }}</td></tr>
+  <tr><td>GST ({{ totals.gst_rate }}%)</td><td class="num">MVR {{ totals.gst }}</td></tr>
+  <tr class="grand"><td>Total</td><td class="num">MVR {{ totals.total }}</td></tr>
+</table>
+
+{% if payload.notes %}
+<div class="terms"><span class="k">Notes:</span> {{ payload.notes }}</div>
+{% endif %}
+
+<div class="sig">
+  {% if issue_stamp %}
+  <div class="stamp">Issued by {{ issue_stamp }}</div>
+  {% endif %}
+  <div class="line">For {{ company.legal_name }} — Authorised Signature</div>
+</div>
+</body>
+</html>

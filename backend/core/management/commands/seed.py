@@ -49,6 +49,15 @@ PARAMETERS = [
      "Overtime pay multiplier. DEFAULT — confirm with payroll practice."),
     ("hourly_rate_divisor", 240,
      "Monthly basic pay ÷ this = hourly rate (30 days × 8 h). DEFAULT — confirm."),
+    # External PO stationery (values from the company's current PO format)
+    ("gst_rate", 8, "GST %% applied on Purchase Orders."),
+    ("company_legal_name", "Sand Planet Pvt Ltd", "Legal name on external documents."),
+    ("company_tin", "1052866GST501", "TIN shown in the PO footer."),
+    ("company_address", "Ma. Maaraadha aage | Maldives", "PO footer address."),
+    ("company_email", "sales@sandplanet.mv", "PO footer email."),
+    ("company_website", "http://sandplanet.mv", "PO footer website."),
+    ("company_tagline", "WE GO ABOVE AND BEYOND ON EVERY JOB, PERIOD",
+     "PO footer tagline."),
 ]
 
 
