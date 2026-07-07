@@ -41,10 +41,17 @@ from .serializers_documents import (
 CREATE_ROLES = {  # spec §3 "can create"
     "DPR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
     "TWS": {"SITE_ENGINEER", "PM"},
+    "IR": {"SITE_ENGINEER", "PM"},       # SE submits with QA/QC
+    "MAR": {"SITE_ENGINEER", "PM"},      # SE submits with QS
     "MR": {"SITE_ADMIN", "PM"},          # Site Admin owns the MR sequence
     "GRN": {"SITE_ADMIN", "PM"},
     "PR": {"HO_PURCHASING"},             # Head Office documents
     "LM": {"HO_PURCHASING"},
+}
+SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
+RESULTS = {  # client results per type (spec §5.3/§5.4)
+    "IR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REJECTED"},
+    "MAR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN"}
 MIN_DPR_PHOTOS = 4  # decision 8 — hard block
@@ -105,14 +112,33 @@ def document_create(request):
         )
 
     doc_date = request.data.get("doc_date") or date.today().isoformat()
-    if doc_type == "DPR":  # one per site per working day (spec §5.1)
+    if doc_type in ("DPR", "TWS"):  # one per site per working day (§5.1/§5.2)
         clash = Document.objects.filter(
-            doc_type="DPR", site=site, doc_date=doc_date, is_void=False
+            doc_type=doc_type, site=site, doc_date=doc_date, is_void=False
         ).first()
         if clash:
             return Response(
                 {"detail": f"{clash.ref} already exists for {doc_date}."}, status=400
             )
+
+    # IR resubmission: new number quoting the previous, rejected IR (§4.2)
+    previous_ir = None
+    if doc_type == "IR" and request.data.get("previous_ir_ref"):
+        try:
+            previous_ir = Document.objects.get(
+                ref=request.data["previous_ir_ref"], doc_type="IR", is_void=False
+            )
+        except Document.DoesNotExist:
+            return Response({"detail": "Unknown previous IR."}, status=400)
+        if previous_ir.status != "REJECTED":
+            return Response(
+                {"detail": f"{previous_ir.ref} is {previous_ir.status} — only a "
+                           f"rejected IR is resubmitted under a new number."},
+                status=400,
+            )
+        if previous_ir.site_id != site.id:
+            return Response({"detail": "Previous IR is for a different site."},
+                            status=400)
 
     payload = request.data.get("payload") or {}
     lines_data = request.data.get("lines") or []
@@ -166,7 +192,7 @@ def document_create(request):
         ref = next_ref(doc_type, site)  # locks counter until commit — gap-free
         doc = Document.objects.create(
             doc_type=doc_type, ref=ref, site=site, doc_date=doc_date,
-            status="DRAFT", created_by=request.user,
+            status="DRAFT", created_by=request.user, previous_ir=previous_ir,
         )
         revision = DocumentRevision.objects.create(
             document=doc, rev_label="R0", payload=payload, created_by=request.user
@@ -253,9 +279,14 @@ def document_revise(request, ref):
     with transaction.atomic():
         old_revision.is_current = False
         old_revision.save(update_fields=["is_current"])
+        # Carry contractor content; the client's outcome belongs to the old
+        # revision only — the new round gets a fresh result (spec §4.2)
+        carried = dict(old_revision.payload or {})
+        for workflow_key in ("client_result", "closure", "acknowledgement"):
+            carried.pop(workflow_key, None)
         new_revision = DocumentRevision.objects.create(
             document=doc, rev_label=next_label,
-            payload=old_revision.payload, created_by=request.user,
+            payload=carried, created_by=request.user,
         )
         # carry lines over unflagged; edits via PATCH mark is_changed (§5.5 r3)
         save_lines(new_revision, [
@@ -332,6 +363,8 @@ def document_action(request, ref, action_name):
         "submit": _do_submit, "approve": _do_approve, "return": _do_return,
         "send": _do_send, "depart": _do_depart, "count": _do_count,
         "record-payment": _do_record_payment, "close": _do_close,
+        "record-result": _do_record_result, "client-verify": _do_client_verify,
+        "acknowledge": _do_acknowledge,
     }.get(action_name)
     if handler is None:
         return Response({"detail": f"Unknown action '{action_name}'."}, status=400)
@@ -344,8 +377,6 @@ def document_action(request, ref, action_name):
 
 
 def _do_issue(request, doc, comment):
-    if doc.doc_type not in ("DPR", "TWS"):
-        return Response({"detail": "Issue applies to DPR/TWS."}, status=400)
     if doc.doc_type == "DPR":
         captioned = doc.attachments.filter(kind="PHOTO").exclude(caption="").count()
         if captioned < MIN_DPR_PHOTOS:
@@ -354,21 +385,26 @@ def _do_issue(request, doc, comment):
                            f"to issue ({captioned} attached)."},
                 status=400,
             )
-    return _apply(request, doc, "ISSUED", "ISSUE",
-                  roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
-                  pdf_milestone="issue", comment=comment)
+    if doc.doc_type in ("DPR", "TWS", "IR", "MAR"):
+        # DPR/TWS issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
+        return _apply(request, doc, "ISSUED", "ISSUE",
+                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
+                      pdf_milestone="issue", comment=comment)
+    return Response({"detail": "Issue applies to DPR/TWS/IR/MAR."}, status=400)
 
 
 def _do_submit(request, doc, comment):
-    roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"}}.get(doc.doc_type)
+    roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"},
+             "IR": {"SITE_ENGINEER", "PM"},
+             "MAR": {"SITE_ENGINEER", "PM"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Submit applies to MR/PR."}, status=400)
+        return Response({"detail": "Submit applies to MR/PR/IR/MAR."}, status=400)
     return _apply(request, doc, "SUBMITTED", "SUBMIT", roles=roles,
                   comment=comment)
 
 
 def _do_approve(request, doc, comment):
-    if doc.doc_type == "MR":  # PM approval — mandatory gate (spec §5.5 r6)
+    if doc.doc_type in ("MR", "IR", "MAR"):  # PM gate (spec §5.3–§5.5)
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PR":  # Director approval (spec §5.7)
@@ -378,20 +414,105 @@ def _do_approve(request, doc, comment):
         if err is None:
             on_pr_approved(doc, request.user)
         return err
-    return Response({"detail": "Approve applies to MR/PR."}, status=400)
+    return Response({"detail": "Approve applies to MR/PR/IR/MAR."}, status=400)
 
 
 def _do_return(request, doc, comment):
     """Return with comment → back to Draft (spec §7.2)."""
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
-    if doc.doc_type == "MR":
+    if doc.doc_type in ("MR", "IR", "MAR"):
         return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PR":
         return _apply(request, doc, "DRAFT", "RETURN", roles={"DIRECTOR"},
                       comment=comment)
-    return Response({"detail": "Return applies to MR/PR."}, status=400)
+    return Response({"detail": "Return applies to MR/PR/IR/MAR."}, status=400)
+
+
+def _set_workflow_payload(revision, key, data):
+    """Server-controlled, write-once workflow blocks (client result, Part C).
+    The contractor's issued content stays immutable; these record the client's
+    outcome, which arrives after issue by design (decision 1)."""
+    payload = revision.payload or {}
+    payload[key] = data
+    revision.payload = payload
+    revision.save(update_fields=["payload"])
+
+
+def _do_record_result(request, doc, comment):
+    """Site team records the client's result in-app (decision 1)."""
+    if doc.doc_type not in RESULTS:
+        return Response({"detail": "record-result applies to IR/MAR."}, status=400)
+    if request.user.role not in SITE_TEAM and request.user.role != "ADMIN":
+        return Response({"detail": "Site team records client results."}, status=403)
+    result = (request.data.get("result") or "").upper().replace(" ", "_")
+    if result not in RESULTS[doc.doc_type]:
+        return Response(
+            {"detail": f"result must be one of {sorted(RESULTS[doc.doc_type])}."},
+            status=400,
+        )
+    if (doc.current_revision.payload or {}).get("client_result"):
+        return Response({"detail": "A result is already recorded for this "
+                                   "revision."}, status=400)
+    err = _apply(request, doc, result, "RESULT_RECORDED",
+                 roles=SITE_TEAM, comment=comment)
+    if err is not None:
+        return err
+    block = {
+        "result": result,
+        "comments": comment,
+        "recorded_by_user": request.user.full_name,
+        "reviewed_by": request.data.get("reviewed_by", ""),
+        "position": request.data.get("position", ""),
+        "inspection_date": request.data.get("inspection_date", ""),
+    }
+    if doc.doc_type == "MAR" and result in ("APPROVED",
+                                            "APPROVED_WITH_COMMENTS"):
+        block["approval_date"] = date.today().isoformat()  # spec §5.4
+    _set_workflow_payload(doc.current_revision, "client_result", block)
+    Approval.objects.filter(document=doc, revision=doc.current_revision,
+                            action="RESULT_RECORDED").update(result=result)
+    generate_pdf(doc, doc.current_revision, "result")
+    return None
+
+
+def _do_client_verify(request, doc, comment):
+    """IR Part C: client verifies the comment closure (recorded in-app)."""
+    if doc.doc_type != "IR":
+        return Response({"detail": "client-verify applies to IR."}, status=400)
+    if request.user.role not in SITE_TEAM and request.user.role != "ADMIN":
+        return Response({"detail": "Site team records client verification."},
+                        status=403)
+    err = _apply(request, doc, "CLOSED", "CLIENT_VERIFIED",
+                 roles=SITE_TEAM, comment=comment)
+    if err is not None:
+        return err
+    payload = doc.current_revision.payload or {}
+    closure = payload.get("closure", {})
+    closure["verified_by"] = request.data.get("verified_by", "")
+    closure["verified_date"] = date.today().isoformat()
+    _set_workflow_payload(doc.current_revision, "closure", closure)
+    generate_pdf(doc, doc.current_revision, "closed")
+    return None
+
+
+def _do_acknowledge(request, doc, comment):
+    """TWS client-rep acknowledgement, recorded in-app (decision 1)."""
+    if doc.doc_type != "TWS":
+        return Response({"detail": "acknowledge applies to TWS."}, status=400)
+    if request.user.role not in SITE_TEAM and request.user.role != "ADMIN":
+        return Response({"detail": "Site team records acknowledgement."},
+                        status=403)
+    err = _apply(request, doc, "ACKNOWLEDGED", "ACKNOWLEDGE",
+                 roles=SITE_TEAM, comment=comment)
+    if err is not None:
+        return err
+    _set_workflow_payload(doc.current_revision, "acknowledgement", {
+        "acknowledged_by": request.data.get("acknowledged_by", ""),
+        "date": date.today().isoformat(),
+    })
+    return None
 
 
 def _do_send(request, doc, comment):
@@ -472,10 +593,29 @@ def _do_record_payment(request, doc, comment):
 
 
 def _do_close(request, doc, comment):
+    if doc.doc_type == "IR":
+        # Part C: corrective action taken, closed by the PM (spec §5.3)
+        if not (_is_site_pm(request.user, doc.site)
+                or request.user.role == "ADMIN"):
+            return Response({"detail": "Only the site's PM closes Part C."},
+                            status=403)
+        if not comment.strip():
+            return Response({"detail": "Describe the corrective action taken."},
+                            status=400)
+        err = _apply(request, doc, "CLOSED_BY_PM", "CLOSE", pm_gate=True,
+                     comment=comment)
+        if err is not None:
+            return err
+        _set_workflow_payload(doc.current_revision, "closure", {
+            "corrective_action": comment,
+            "closed_by_pm": request.user.full_name,
+            "closed_date": date.today().isoformat(),
+        })
+        return None
     roles = {"MR": {"SITE_ADMIN", "PM", "HO_PURCHASING"},
              "PR": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Close applies to MR/PR."}, status=400)
+        return Response({"detail": "Close applies to MR/PR/IR."}, status=400)
     return _apply(request, doc, "CLOSED", "CLOSE", roles=roles, comment=comment)
 
 
@@ -591,9 +731,12 @@ def register_generic(request, doc_type):
                     for k in ("planned_loading", "trades_covered", "required_by",
                               "vessel", "destination", "expected_arrival",
                               "requested_delivery", "action_taken",
-                              "manifest_ref")
+                              "manifest_ref", "discipline", "location",
+                              "material_description", "manufacturer")
                     if payload.get(k)
                 },
+                "prev_ir": doc.previous_ir.ref if doc.previous_ir else None,
+                "result": (payload.get("client_result") or {}).get("result"),
             })
     return Response({"doc_type": doc_type, "rows": rows})
 

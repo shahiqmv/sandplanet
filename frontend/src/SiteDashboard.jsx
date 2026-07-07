@@ -5,17 +5,24 @@ import { StatusChip, buttonStyle, card, td, th } from "./ui.jsx";
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 
-export default function SiteDashboard({ site, me, onNewDpr, onNewMr,
+export default function SiteDashboard({ site, me, onNewDpr, onNewMr, onNewQa,
                                         onCreateGrn, onOpenDoc, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
+  const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
 
   const load = useCallback(() => {
     api(`/dashboards/site/${site.id}`).then(setDash);
     api(`/registers/dpr-tws?site=${site.id}`).then(setRegister);
     api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
+    Promise.all([
+      api(`/documents/list?site=${site.id}&doc_type=IR`),
+      api(`/documents/list?site=${site.id}&doc_type=MAR`),
+    ]).then(([irs, mars]) => setQaDocs(
+      [...irs, ...mars].sort((a, b) => b.created_at.localeCompare(a.created_at))
+    ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
   }, [site.id]);
@@ -51,15 +58,58 @@ export default function SiteDashboard({ site, me, onNewDpr, onNewMr,
             {gaps} gap day{gaps === 1 ? "" : "s"} in the last two weeks
           </div>
         </div>
-        <span style={{ display: "flex", gap: 8 }}>
+        <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {canCreate && (
-            <button onClick={onNewDpr} style={buttonStyle}>+ New DPR</button>
+            <>
+              <button onClick={onNewDpr} style={buttonStyle}>+ DPR</button>
+              <button onClick={() => onNewQa("TWS")} style={buttonStyle}>
+                + TWS</button>
+            </>
+          )}
+          {["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+            <>
+              <button onClick={() => onNewQa("IR")} style={buttonStyle}>
+                + IR</button>
+              <button onClick={() => onNewQa("MAR")} style={buttonStyle}>
+                + MAR</button>
+            </>
           )}
           {canMr && (
-            <button onClick={onNewMr} style={buttonStyle}>+ New MR</button>
+            <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
           )}
         </span>
       </section>
+
+      {qaDocs.length > 0 && (
+        <section style={card}>
+          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+            Inspections &amp; Material Approvals
+          </h2>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {qaDocs.slice(0, 8).map((d) => (
+                <tr key={d.ref}>
+                  <td style={{ ...td, width: 130 }}>
+                    <a href="#" onClick={(e) => { e.preventDefault();
+                                                  onOpenDoc(d.ref); }}
+                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                      {d.ref}
+                    </a>
+                  </td>
+                  <td style={td}>{d.doc_date}</td>
+                  <td style={td}>
+                    {d.payload?.discipline || d.payload?.material_description
+                      ?.slice(0, 50) || ""}
+                  </td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <StatusChip status={d.is_void ? "VOID" : d.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {incomingLms.length > 0 && (
         <section style={{ ...card, background: "#fff8e6" }}>

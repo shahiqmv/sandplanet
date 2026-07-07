@@ -225,6 +225,25 @@ class Document(models.Model):
     TRANSITIONS = {
         "DPR": {"DRAFT": {"ISSUED"}, "ISSUED": {"VERIFIED"}},
         "TWS": {"DRAFT": {"ISSUED"}, "ISSUED": {"ACKNOWLEDGED"}},
+        "IR": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},  # DRAFT = returned
+            "PM_APPROVED": {"ISSUED"},
+            # Client result (recorded in-app by the site team, decision 1)
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS", "REJECTED"},
+            # Part C closure for Approved-with-Comments (spec §5.3)
+            "APPROVED_WITH_COMMENTS": {"CLOSED_BY_PM"},
+            "CLOSED_BY_PM": {"CLOSED"},
+            # REJECTED is terminal: resubmit = NEW IR quoting previous (§4.2)
+        },
+        "MAR": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+            # REVISE_RESUBMIT → new revision, same number, restart at DRAFT
+        },
         "MR": {
             "DRAFT": {"SUBMITTED"},
             "SUBMITTED": {"PM_APPROVED", "DRAFT"},  # DRAFT = returned

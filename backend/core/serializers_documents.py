@@ -69,13 +69,23 @@ class DocumentSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(
         source="created_by.full_name", read_only=True
     )
+    previous_ir_ref = serializers.CharField(source="previous_ir.ref",
+                                            read_only=True, default=None)
+    resubmitted_as = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
         fields = ["id", "doc_type", "ref", "site", "site_code", "site_name",
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
+                  "previous_ir_ref", "resubmitted_as",
                   "attachments", "approvals", "created_by_name", "created_at"]
+
+    def get_resubmitted_as(self, obj):
+        if obj.doc_type != "IR":
+            return None
+        child = Document.objects.filter(previous_ir=obj, is_void=False).first()
+        return child.ref if child else None
 
     def get_payload(self, obj):
         return obj.current_revision.payload if obj.current_revision else {}

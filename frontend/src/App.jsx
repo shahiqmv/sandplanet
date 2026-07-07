@@ -5,6 +5,7 @@ import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
+import { QADocView, QAForm } from "./QADocs.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
@@ -124,11 +125,21 @@ export default function App() {
     setError(null);
     try {
       const doc = await api(`/documents/${ref}`);
-      setDocView(doc.doc_type === "DPR" ? { mode: "dpr-view", doc }
-                                        : { mode: "line-view", doc });
+      const mode = doc.doc_type === "DPR" ? "dpr-view"
+                 : ["IR", "MAR", "TWS"].includes(doc.doc_type) ? "qa-view"
+                 : "line-view";
+      setDocView({ mode, doc });
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  function resubmitIr(doc) {
+    const payload = { ...doc.payload };
+    delete payload.client_result;
+    delete payload.closure;
+    setDocView({ mode: "qa-form", docType: "IR", doc: null,
+                 prefill: { previous_ir_ref: doc.ref, payload } });
   }
 
   async function createGrn(lmRef) {
@@ -227,6 +238,19 @@ export default function App() {
                          onEdit={(doc) => setDocView({
                            mode: "line-form", docType: doc.doc_type, doc })} />
           )}
+          {docView?.mode === "qa-form" && (
+            <QAForm docType={docView.docType} site={openSite}
+                    existing={docView.doc} prefill={docView.prefill}
+                    onSaved={(doc) => { bump();
+                      setDocView({ mode: "qa-view", doc }); }}
+                    onCancel={closeDoc} />
+          )}
+          {docView?.mode === "qa-view" && (
+            <QADocView doc={docView.doc} me={me} onClose={closeDoc}
+                       onChanged={bump} onResubmit={resubmitIr}
+                       onEdit={(doc) => setDocView({
+                         mode: "qa-form", docType: doc.doc_type, doc })} />
+          )}
 
           {!docView && openSite && (
             <>
@@ -247,6 +271,8 @@ export default function App() {
                 onNewDpr={() => setDocView({ mode: "dpr-form", doc: null })}
                 onNewMr={() => setDocView({ mode: "line-form", docType: "MR",
                                             doc: null })}
+                onNewQa={(docType) => setDocView({ mode: "qa-form", docType,
+                                                   doc: null })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
