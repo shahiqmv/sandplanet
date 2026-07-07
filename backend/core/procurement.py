@@ -301,3 +301,30 @@ def po_lm_prefill_lines(po):
             "remarks": line.remarks,
         })
     return rows
+
+
+def sync_pr_vendor_rows(pr):
+    """Vendor-summary rows derived from captured quotations (R2): one row
+    per supplier, cash vs credit split by the quotation's payment terms.
+    Totals count AWARDED lines only — what we actually intend to buy;
+    quotes with nothing awarded still appear (total 0) for the record."""
+    revision = pr.current_revision
+    revision.lines.all().delete()
+    line_no = 0
+    for quotation in pr.quotations.select_related("supplier") \
+            .prefetch_related("lines"):
+        all_lines = list(quotation.lines.all())
+        awarded = [line for line in all_lines if line.awarded]
+        total = sum((line.amount or 0) for line in awarded)
+        is_credit = "credit" in (quotation.payment_terms or "").lower()
+        line_no += 1
+        DocumentLine.objects.create(
+            revision=revision, line_no=line_no,
+            free_text_desc=quotation.supplier.name,
+            vendor=quotation.supplier.name,
+            quotation_ref=quotation.quote_ref,
+            payment_terms=quotation.payment_terms,
+            amount_cash=None if is_credit else total,
+            amount_credit=total if is_credit else None,
+            remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
+        )

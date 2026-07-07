@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
-import QuotationsPanel from "./QuotationsPanel.jsx";
+import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
@@ -554,9 +554,18 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   );
 }
 
-export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit }) {
+export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
+                              onOpenMatch }) {
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
+  const [gstRate, setGstRate] = useState(8);
+
+  useEffect(() => {
+    if (initial.doc_type === "PR") {
+      api("/parameters/gst_rate").then((p) => setGstRate(+p.value))
+        .catch(() => {});
+    }
+  }, [initial.doc_type]);
 
   async function act(action, body) {
     setError(null);
@@ -759,13 +768,39 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit }) {
         </table>
       </div>
 
-      {doc.doc_type === "PR" && (
-        <QuotationsPanel doc={doc} me={me} onChanged={async () => {
-          const fresh = await api(`/documents/${doc.ref}`);
-          setDoc(fresh);
-          onChanged?.();
-        }} />
-      )}
+      {doc.doc_type === "PR" && (() => {
+        const untaxed = doc.lines.reduce(
+          (a, l) => a + num(l.amount_cash) + num(l.amount_credit), 0);
+        const gst = untaxed * gstRate / 100;
+        return (
+          <>
+            {untaxed > 0 && (
+              <table style={{ marginLeft: "auto", borderCollapse: "collapse",
+                              fontSize: 13 }}>
+                <tbody>
+                  <tr><td style={{ padding: "2px 10px" }}>Untaxed Amount</td>
+                      <td style={{ padding: "2px 10px", textAlign: "right" }}>
+                        MVR {untaxed.toLocaleString()}</td></tr>
+                  <tr><td style={{ padding: "2px 10px" }}>GST ({gstRate}%)</td>
+                      <td style={{ padding: "2px 10px", textAlign: "right" }}>
+                        MVR {gst.toLocaleString(undefined,
+                          { maximumFractionDigits: 2 })}</td></tr>
+                  <tr style={{ fontWeight: 700 }}>
+                      <td style={{ padding: "4px 10px",
+                                   borderTop: "1px solid var(--sp-navy)" }}>
+                        Total incl. GST</td>
+                      <td style={{ padding: "4px 10px", textAlign: "right",
+                                   borderTop: "1px solid var(--sp-navy)" }}>
+                        MVR {(untaxed + gst).toLocaleString(undefined,
+                          { maximumFractionDigits: 2 })}</td></tr>
+                </tbody>
+              </table>
+            )}
+            <QuotationsSummary doc={doc} me={me}
+                               onOpenWorkspace={() => onOpenMatch(doc)} />
+          </>
+        );
+      })()}
 
       {doc.revisions?.length > 1 && (
         <p style={{ fontSize: 12, color: "#5a6b78" }}>

@@ -7,6 +7,7 @@ import ItemsPage from "./ItemsPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
+import { MatchingWorkspace } from "./QuotationsPanel.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
@@ -237,8 +238,14 @@ export default function App() {
           {docView?.mode === "line-view" && (
             <LineDocView doc={docView.doc} me={me} onClose={closeDoc}
                          onChanged={bump}
+                         onOpenMatch={(doc) => setDocView({
+                           mode: "pr-match", doc })}
                          onEdit={(doc) => setDocView({
                            mode: "line-form", docType: doc.doc_type, doc })} />
+          )}
+          {docView?.mode === "pr-match" && (
+            <MatchingWorkspace doc={docView.doc} me={me} onChanged={bump}
+                               onClose={() => openDoc(docView.doc.ref)} />
           )}
           {docView?.mode === "qa-form" && (
             <QAForm docType={docView.docType} site={openSite}

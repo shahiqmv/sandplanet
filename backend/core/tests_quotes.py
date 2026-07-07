@@ -192,3 +192,72 @@ class PoGenerationTests(QuoteBase):
             "supplier": self.hw.id, "lines": [],
         }, format="json")
         self.assertEqual(r.status_code, 400)
+
+
+class ExtractionTests(QuoteBase):
+    QUOTE_HTML = """
+    <html><body>
+    <h2>Male' Hardware Pvt Ltd — Quotation QT-9001</h2>
+    <table>
+      <tr><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th>
+          <th>Amount</th></tr>
+      <tr><td>OPC cement Fuji brand 50kg</td><td>150</td><td>bag</td>
+          <td>120.00</td><td>18,000.00</td></tr>
+      <tr><td>Deformed bar G500 12mm</td><td>500</td><td>kg</td>
+          <td>18.50</td><td>9,250.00</td></tr>
+      <tr><td>Delivery charge</td><td>1</td><td>trip</td>
+          <td>500.00</td><td>500.00</td></tr>
+    </table>
+    </body></html>
+    """
+
+    def test_pdf_upload_extracts_lines(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
+        try:
+            from weasyprint import HTML
+        except Exception:  # pragma: no cover - engine missing locally
+            self.skipTest("WeasyPrint unavailable")
+        pdf_bytes = HTML(string=self.QUOTE_HTML).write_pdf()
+
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        quotation = self.add_quote(pr["ref"], self.hw, [], terms="Cash")
+        with override_settings(MEDIA_ROOT="test-media"):
+            upload = SimpleUploadedFile("QT-9001.pdf", pdf_bytes,
+                                        content_type="application/pdf")
+            r = self.client.post(f"/api/v1/quotations/{quotation['id']}/file",
+                                 {"file": upload}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["extracted"], 3)
+        descriptions = [line["supplier_desc"] for line in r.data["lines"]]
+        self.assertIn("OPC cement Fuji brand 50kg", descriptions)
+        cement = next(line for line in r.data["lines"]
+                      if "OPC" in line["supplier_desc"])
+        self.assertEqual(float(cement["qty"]), 150.0)
+        self.assertEqual(float(cement["rate"]), 120.0)
+        self.assertEqual(float(cement["amount"]), 18000.0)
+
+    def test_upload_does_not_overwrite_existing_lines(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
+        try:
+            from weasyprint import HTML
+        except Exception:  # pragma: no cover
+            self.skipTest("WeasyPrint unavailable")
+        pdf_bytes = HTML(string=self.QUOTE_HTML).write_pdf()
+
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        quotation = self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "Manually entered", "qty": 1, "rate": 10},
+        ], terms="Cash")
+        with override_settings(MEDIA_ROOT="test-media"):
+            upload = SimpleUploadedFile("QT-9001.pdf", pdf_bytes,
+                                        content_type="application/pdf")
+            r = self.client.post(f"/api/v1/quotations/{quotation['id']}/file",
+                                 {"file": upload}, format="multipart")
+        self.assertEqual(r.data["extracted"], 0)
+        self.assertEqual(len(r.data["lines"]), 1)

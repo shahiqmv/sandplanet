@@ -209,8 +209,28 @@ def quotation_file(request, pk):
         return Response({"detail": "file is required."}, status=400)
     quotation.file = upload
     quotation.save(update_fields=["file"])
-    return Response(QuotationSerializer(quotation,
-                                        context={"request": request}).data)
+
+    # Auto-capture line items from the file when none exist yet (owner UX):
+    # digital PDFs parse; scans return nothing and lines are entered manually.
+    extracted = 0
+    if not quotation.lines.exists() and \
+            (upload.name or "").lower().endswith(".pdf"):
+        from .quote_extract import extract_quote_lines
+
+        rows = extract_quote_lines(quotation.file)
+        for i, row in enumerate(rows, start=1):
+            QuotationLine.objects.create(
+                quotation=quotation, line_no=i,
+                supplier_desc=row["supplier_desc"], unit=row["unit"] or "",
+                qty=row["qty"], rate=row["rate"], amount=row["amount"],
+            )
+        extracted = len(rows)
+        if extracted:
+            audit("quotation", quotation.id, "QUOTATION_LINES_EXTRACTED",
+                  actor=request.user, detail={"count": extracted})
+    data = QuotationSerializer(quotation, context={"request": request}).data
+    data["extracted"] = extracted
+    return Response(data)
 
 
 def pr_coverage_data(pr):
@@ -273,23 +293,9 @@ def pr_sync_vendor_rows(request, ref):
     if pr.status != "DRAFT":
         return Response({"detail": "Sync vendor rows while the PR is a draft."},
                         status=400)
-    revision = pr.current_revision
-    revision.lines.all().delete()
-    for i, quotation in enumerate(
-        pr.quotations.select_related("supplier").prefetch_related("lines"),
-        start=1,
-    ):
-        total = sum((line.amount or 0) for line in quotation.lines.all())
-        is_credit = "credit" in (quotation.payment_terms or "").lower()
-        DocumentLine.objects.create(
-            revision=revision, line_no=i,
-            free_text_desc=quotation.supplier.name,
-            vendor=quotation.supplier.name,
-            quotation_ref=quotation.quote_ref,
-            payment_terms=quotation.payment_terms,
-            amount_cash=None if is_credit else total,
-            amount_credit=total if is_credit else None,
-        )
+    from .procurement import sync_pr_vendor_rows
+
+    sync_pr_vendor_rows(pr)
     audit("document", pr.id, "PR_VENDOR_ROWS_SYNCED", actor=request.user,
           detail={"ref": pr.ref})
     from .serializers_documents import DocumentSerializer

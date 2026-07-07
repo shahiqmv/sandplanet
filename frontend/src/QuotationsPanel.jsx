@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api.js";
-import { SectionTitle, buttonStyle, ghostButton, inputStyle, td, th }
+import { api, apiUpload } from "./api.js";
+import { SectionTitle, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
 function num(v) {
@@ -33,7 +33,8 @@ function QuoteLinesEditor({ lines, setLines, mrOptions }) {
                        style={inputStyle} />
               </td>
               <td style={{ padding: 3 }}>
-                <input value={line.unit || ""} style={{ ...inputStyle, width: 55 }}
+                <input value={line.unit || ""}
+                       style={{ ...inputStyle, width: 55 }}
                        onChange={(e) => setLine(i, { unit: e.target.value })} />
               </td>
               <td style={{ padding: 3 }}>
@@ -86,58 +87,141 @@ function QuoteLinesEditor({ lines, setLines, mrOptions }) {
   );
 }
 
-export default function QuotationsPanel({ doc, me, onChanged }) {
+function CoverageBanner({ coverage }) {
+  if (!coverage) return null;
+  const clean = coverage.uncovered.length === 0 &&
+                coverage.unawarded.length === 0;
+  return (
+    <div style={{ borderRadius: 8, padding: "10px 14px", marginBottom: 10,
+                  fontSize: 13, background: clean ? "#effaf1" : "#fdeceb" }}>
+      {clean ? "✓ Every MR line is quoted and awarded." : (<>
+        {coverage.uncovered.length > 0 && (
+          <div><strong>Not quoted:</strong> {coverage.uncovered.join(", ")}</div>
+        )}
+        {coverage.unawarded.length > 0 && (
+          <div><strong>Quoted but not awarded:</strong>{" "}
+            {coverage.unawarded.join(", ")}</div>
+        )}
+      </>)}
+    </div>
+  );
+}
+
+function useQuoteData(docRef) {
   const [quotations, setQuotations] = useState([]);
   const [coverage, setCoverage] = useState(null);
+  const load = useCallback(() => {
+    api(`/pr/${docRef}/quotations`).then(setQuotations);
+    api(`/pr/${docRef}/coverage`).then(setCoverage);
+  }, [docRef]);
+  useEffect(load, [load]);
+  return { quotations, coverage, load };
+}
+
+// Compact block shown on the PR page itself
+export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
+  const { quotations, coverage } = useQuoteData(doc.ref);
+  const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
+    ["DRAFT", "SUBMITTED"].includes(doc.status);
+
+  return (
+    <div style={{ marginTop: 8 }}>
+      <SectionTitle>Quotations &amp; MR coverage</SectionTitle>
+      <CoverageBanner coverage={coverage} />
+      {quotations.map((q) => {
+        const matched = q.lines.filter((l) => l.mr_line).length;
+        return (
+          <div key={q.id}
+               style={{ display: "flex", gap: 12, alignItems: "baseline",
+                        padding: "6px 2px", flexWrap: "wrap",
+                        borderTop: "1px solid var(--sp-border)" }}>
+            <strong style={{ color: "var(--sp-navy)" }}>{q.supplier_name}</strong>
+            <span style={{ fontSize: 12, color: "#5a6b78" }}>
+              {q.quote_ref}{q.payment_terms && ` · ${q.payment_terms}`} ·
+              MVR {Number(q.total).toLocaleString()} ·
+              {" "}{matched}/{q.lines.length} lines matched ·
+              {" "}{q.lines.filter((l) => l.awarded).length} awarded
+            </span>
+            {q.file_url && (
+              <a href={q.file_url} target="_blank" rel="noreferrer"
+                 style={{ fontSize: 12 }}>quotation file</a>
+            )}
+          </div>
+        );
+      })}
+      <div style={{ marginTop: 10 }}>
+        <button onClick={onOpenWorkspace} style={buttonStyle}>
+          {canEdit ? "Open matching workspace →" : "View quotations →"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Full-page workspace: capture quotes (file upload = auto-extract), match, award
+export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
+  const { quotations, coverage, load } = useQuoteData(doc.ref);
   const [suppliers, setSuppliers] = useState([]);
   const [adding, setAdding] = useState(false);
   const [newSupplier, setNewSupplier] = useState("");
   const [newRef, setNewRef] = useState("");
-  const [newTerms, setNewTerms] = useState("");
-  const [newLines, setNewLines] = useState([{ ...emptyLine }]);
-  const [editing, setEditing] = useState({}); // quotation id -> lines state
+  const [newTerms, setNewTerms] = useState("Cash");
+  const [newFile, setNewFile] = useState(null);
+  const [newLines, setNewLines] = useState([]);
+  const [notice, setNotice] = useState(null);
+  const [editing, setEditing] = useState({});
   const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api("/suppliers").then(setSuppliers);
+  }, []);
 
   const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
     ["DRAFT", "SUBMITTED"].includes(doc.status);
-
-  const load = useCallback(() => {
-    api(`/pr/${doc.ref}/quotations`).then(setQuotations);
-    api(`/pr/${doc.ref}/coverage`).then(setCoverage);
-    api("/suppliers").then(setSuppliers);
-  }, [doc.ref]);
-
-  useEffect(load, [load]);
-
   const mrOptions = coverage?.rows || [];
 
   async function addQuotation() {
+    setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      await api(`/pr/${doc.ref}/quotations`, {
+      const q = await api(`/pr/${doc.ref}/quotations`, {
         method: "POST",
         body: { supplier: +newSupplier, quote_ref: newRef,
                 payment_terms: newTerms,
                 lines: newLines.filter((l) => l.supplier_desc) },
       });
+      if (newFile) {
+        const fd = new FormData();
+        fd.append("file", newFile);
+        const res = await apiUpload(`/quotations/${q.id}/file`, fd);
+        setNotice(res.extracted
+          ? `✓ ${res.extracted} line item(s) captured automatically from the `
+            + "file — review, match and award them below."
+          : "File attached. No line items could be read automatically "
+            + "(scanned copy?) — add the lines below manually.");
+      }
       setAdding(false);
-      setNewLines([{ ...emptyLine }]);
+      setNewSupplier("");
       setNewRef("");
-      setNewTerms("");
+      setNewTerms("Cash");
+      setNewFile(null);
+      setNewLines([]);
       load();
       onChanged?.();
     } catch (e) {
       setError(e.message);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function saveQuotation(q) {
     setError(null);
     try {
-      await api(`/quotations/${q.id}`, {
-        method: "PATCH",
-        body: { lines: editing[q.id] },
-      });
+      await api(`/quotations/${q.id}`, { method: "PATCH",
+                                         body: { lines: editing[q.id] } });
       setEditing((s) => { const n = { ...s }; delete n[q.id]; return n; });
       load();
       onChanged?.();
@@ -146,40 +230,26 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
     }
   }
 
-  async function syncVendors() {
-    setError(null);
-    try {
-      await api(`/pr/${doc.ref}/sync-vendor-rows`, { method: "POST" });
-      onChanged?.();
-    } catch (e) {
-      setError(e.message);
-    }
-  }
-
   return (
-    <div style={{ marginTop: 8 }}>
-      <SectionTitle>Quotations &amp; MR coverage</SectionTitle>
+    <section style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "baseline" }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
+          Quotation matching — {doc.ref}
+          <span style={{ color: "#5a6b78", fontSize: 14 }}>
+            {" "}· {doc.site_code}</span>
+        </h2>
+        <button onClick={onClose} style={ghostButton}>← Back to PR</button>
+      </div>
+      <p style={{ fontSize: 13, color: "#5a6b78", margin: "6px 0 14px" }}>
+        Capture each supplier's quotation, match their lines to the MR items,
+        and tick the winning (awarded) lines. POs are generated per supplier
+        on Director approval.
+      </p>
 
-      {coverage && (
-        <div style={{ borderRadius: 8, padding: "10px 14px", marginBottom: 10,
-                      fontSize: 13,
-                      background: coverage.uncovered.length ||
-                                  coverage.unawarded.length
-                        ? "#fdeceb" : "#effaf1" }}>
-          {coverage.uncovered.length === 0 && coverage.unawarded.length === 0
-            ? "✓ Every MR line is quoted and awarded."
-            : (<>
-                {coverage.uncovered.length > 0 && (
-                  <div><strong>Not quoted:</strong>{" "}
-                    {coverage.uncovered.join(", ")}</div>
-                )}
-                {coverage.unawarded.length > 0 && (
-                  <div><strong>Quoted but not awarded:</strong>{" "}
-                    {coverage.unawarded.join(", ")}</div>
-                )}
-              </>)}
-        </div>
-      )}
+      <CoverageBanner coverage={coverage} />
+      {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
       {quotations.map((q) => {
         const lines = editing[q.id] ?? q.lines.map((l) => ({
@@ -197,7 +267,7 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
               <strong style={{ color: "var(--sp-navy)" }}>
                 {q.supplier_name}</strong>
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
-                {q.quote_ref} {q.payment_terms && `· ${q.payment_terms}`} ·
+                {q.quote_ref}{q.payment_terms && ` · ${q.payment_terms}`} ·
                 total MVR {Number(q.total).toLocaleString()}
               </span>
               {q.file_url && (
@@ -242,6 +312,11 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
                       <td style={td}>{l.awarded ? "★ awarded" : ""}</td>
                     </tr>
                   ))}
+                  {q.lines.length === 0 && (
+                    <tr><td style={td} colSpan={6}>
+                      No lines yet — click "Edit / match lines" to add them.
+                    </td></tr>
+                  )}
                 </tbody>
               </table>
             )}
@@ -249,28 +324,20 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
         );
       })}
 
-      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-
       {canEdit && !adding && (
-        <div style={{ display: "flex", gap: 10 }}>
-          <button onClick={() => setAdding(true)} style={buttonStyle}>
-            + Add quotation
-          </button>
-          {doc.status === "DRAFT" && quotations.length > 0 && (
-            <button onClick={syncVendors} style={ghostButton}>
-              Rebuild vendor summary from quotes
-            </button>
-          )}
-        </div>
+        <button onClick={() => setAdding(true)} style={buttonStyle}>
+          + Add quotation
+        </button>
       )}
 
       {adding && (
         <div style={{ border: "1px dashed var(--sp-border)", borderRadius: 8,
                       padding: 14 }}>
-          <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+          <div style={{ display: "flex", gap: 10, marginBottom: 8,
+                        flexWrap: "wrap", alignItems: "center" }}>
             <select value={newSupplier}
                     onChange={(e) => setNewSupplier(e.target.value)}
-                    style={{ ...inputStyle, width: 260 }}>
+                    style={{ ...inputStyle, width: 240 }}>
               <option value="">Select supplier…</option>
               {suppliers.map((s) => (
                 <option key={s.id} value={s.id}>{s.name}</option>
@@ -278,22 +345,38 @@ export default function QuotationsPanel({ doc, me, onChanged }) {
             </select>
             <input placeholder="Quote ref" value={newRef}
                    onChange={(e) => setNewRef(e.target.value)}
-                   style={{ ...inputStyle, width: 140 }} />
-            <input placeholder="Payment terms for THIS quote (COD, 30 days…)"
-                   value={newTerms}
-                   onChange={(e) => setNewTerms(e.target.value)}
-                   style={{ ...inputStyle, width: 260 }} />
+                   style={{ ...inputStyle, width: 130 }} />
+            <select value={newTerms}
+                    onChange={(e) => setNewTerms(e.target.value)}
+                    style={{ ...inputStyle, width: 110 }}>
+              <option>Cash</option>
+              <option>Credit</option>
+            </select>
+            <label style={{ fontSize: 13 }}>
+              Quotation file (PDF):{" "}
+              <input type="file" accept=".pdf,image/*"
+                     onChange={(e) => setNewFile(e.target.files[0])} />
+            </label>
           </div>
-          <QuoteLinesEditor lines={newLines} setLines={setNewLines}
-                            mrOptions={mrOptions} />
+          <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 8px" }}>
+            Upload a digital PDF and the line items are captured automatically
+            for matching. Scanned copies attach as reference — enter their
+            lines manually.
+          </p>
+          {!newFile && (
+            <QuoteLinesEditor lines={newLines} setLines={setNewLines}
+                              mrOptions={mrOptions} />
+          )}
           <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
-            <button onClick={addQuotation} disabled={!newSupplier}
-                    style={buttonStyle}>Save quotation</button>
+            <button onClick={addQuotation} disabled={!newSupplier || busy}
+                    style={buttonStyle}>
+              {busy ? "Saving…" : "Save quotation"}
+            </button>
             <button onClick={() => setAdding(false)} style={ghostButton}>
               Cancel</button>
           </div>
         </div>
       )}
-    </div>
+    </section>
   );
 }

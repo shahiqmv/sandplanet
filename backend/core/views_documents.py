@@ -24,6 +24,7 @@ from .pdf import generate_pdf
 from .permissions import scoped_site_ids
 from .procurement import (
     generate_pos_for_pr,
+    sync_pr_vendor_rows,
     grn_lines_from_lm,
     link_documents,
     on_grn_verified,
@@ -426,6 +427,8 @@ def _do_submit(request, doc, comment):
         if (uncovered or unawarded) and not comment.strip():
             return Response({"detail": "A reason is required to submit with "
                                        "uncovered MR lines."}, status=400)
+        # Vendor summary always reflects the quotes at submit time
+        sync_pr_vendor_rows(doc)
     return _apply(request, doc, "SUBMITTED", "SUBMIT", roles=roles,
                   comment=comment)
 

@@ -264,8 +264,22 @@ def _lines_context(document, revision):
     for link in document.links_to.select_related("from_document"):
         links.append(link.from_document.ref)
 
+    # GST summary on the PR (owner request; rate = gst_rate parameter)
+    tax_summary = None
+    if document.doc_type == "PR":
+        untaxed = totals_acc.get("amount_cash", Decimal("0")) + \
+                  totals_acc.get("amount_credit", Decimal("0"))
+        gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
+        gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
+        tax_summary = [
+            ("Untaxed Amount", _money(untaxed)),
+            (f"GST ({_fmt(float(gst_rate))}%)", _money(gst)),
+            ("Total incl. GST", _money(untaxed + gst)),
+        ]
+
     logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     return {
+        "tax_summary": tax_summary,
         "doc": document,
         "rev": revision,
         "site": document.site,
