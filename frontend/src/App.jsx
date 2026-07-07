@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
+import HODashboard from "./HODashboard.jsx";
+import ItemsPage from "./ItemsPage.jsx";
+import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
@@ -30,13 +33,11 @@ function Login({ onLogin }) {
       <form onSubmit={submit} style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)" }}>Sign in</h2>
         <label style={{ display: "block", fontSize: 13, marginBottom: 4 }}>
-          Username
-        </label>
+          Username</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)}
                autoFocus style={inputStyle} />
         <label style={{ display: "block", fontSize: 13, margin: "12px 0 4px" }}>
-          Password
-        </label>
+          Password</label>
         <input type="password" value={password}
                onChange={(e) => setPassword(e.target.value)} style={inputStyle} />
         {error && <p style={{ color: "#c0392b", fontSize: 13,
@@ -78,12 +79,24 @@ function SiteList({ sites, onOpen }) {
   );
 }
 
+const navBtn = (active) => ({
+  background: "transparent",
+  color: active ? "#fff" : "var(--sp-sky)",
+  border: "none",
+  borderBottom: active ? "2px solid var(--sp-sky)" : "2px solid transparent",
+  padding: "4px 10px",
+  cursor: "pointer",
+  fontSize: 14,
+});
+
 export default function App() {
   const [me, setMe] = useState(null);
   const [sites, setSites] = useState([]);
   const [openSite, setOpenSite] = useState(null);
-  const [docView, setDocView] = useState(null); // {mode:'form'|'view', doc}
+  const [hoPage, setHoPage] = useState("dashboard");
+  const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
@@ -108,39 +121,78 @@ export default function App() {
   }
 
   async function openDoc(ref) {
-    const doc = await api(`/documents/${ref}`);
-    setDocView({ mode: "view", doc });
+    setError(null);
+    try {
+      const doc = await api(`/documents/${ref}`);
+      setDocView(doc.doc_type === "DPR" ? { mode: "dpr-view", doc }
+                                        : { mode: "line-view", doc });
+    } catch (e) {
+      setError(e.message);
+    }
   }
 
-  function bumpAndClose() {
-    setDocView(null);
+  async function createGrn(lmRef) {
+    setError(null);
+    try {
+      const doc = await api("/documents", {
+        method: "POST",
+        body: { doc_type: "GRN", site_id: openSite.id, lm_ref: lmRef },
+      });
+      setDocView({ mode: "line-form", docType: "GRN", doc });
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function bump() {
     setRefresh((n) => n + 1);
   }
 
+  function closeDoc() {
+    setDocView(null);
+    bump();
+  }
+
   if (me === null) return null;
+
+  const showHoNav = me.authenticated && me.is_ho;
 
   return (
     <div>
       <header style={{ background: "var(--sp-navy)", color: "#fff",
                        padding: "14px 28px",
                        borderBottom: "4px solid var(--sp-sky)",
-                       display: "flex", alignItems: "baseline", gap: 12 }}>
+                       display: "flex", alignItems: "baseline", gap: 16 }}>
         <h1 style={{ margin: 0, fontSize: 20, letterSpacing: 0.5,
                      cursor: "pointer" }}
-            onClick={() => { setDocView(null);
+            onClick={() => { setDocView(null); setHoPage("dashboard");
                              if (!me.landing_site_id) setOpenSite(null); }}>
           SAND PLANET
         </h1>
-        <span style={{ color: "var(--sp-sky)", fontSize: 14 }}>Site Documents</span>
+        <span style={{ color: "var(--sp-sky)", fontSize: 14 }}>
+          Site Documents</span>
+        {showHoNav && (
+          <nav style={{ display: "flex", gap: 4 }}>
+            {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
+              ["items", "Items"]].map(([key, label]) => (
+              <button key={key}
+                      style={navBtn(hoPage === key && !openSite && !docView)}
+                      onClick={() => { setHoPage(key); setOpenSite(null);
+                                       setDocView(null); }}>
+                {label}
+              </button>
+            ))}
+          </nav>
+        )}
         {me.authenticated && (
           <span style={{ marginLeft: "auto", fontSize: 13 }}>
             {me.full_name} · {me.role.replace(/_/g, " ")}
             <button onClick={logoutUser}
                     style={{ marginLeft: 14, background: "transparent",
                              color: "var(--sp-sky)",
-                             border: "1px solid var(--sp-sky)", borderRadius: 6,
-                             padding: "3px 10px", cursor: "pointer",
-                             fontSize: 12 }}>
+                             border: "1px solid var(--sp-sky)",
+                             borderRadius: 6, padding: "3px 10px",
+                             cursor: "pointer", fontSize: 12 }}>
               Sign out
             </button>
           </span>
@@ -150,10 +202,33 @@ export default function App() {
       {!me.authenticated ? (
         <Login onLogin={setMe} />
       ) : (
-        <main style={{ maxWidth: 900, margin: "32px auto", padding: "0 16px" }}>
-          {!openSite && <SiteList sites={sites} onOpen={setOpenSite} />}
+        <main style={{ maxWidth: 1000, margin: "32px auto", padding: "0 16px" }}>
+          {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
-          {openSite && !docView && (
+          {docView?.mode === "dpr-form" && (
+            <DPRForm site={openSite} existing={docView.doc}
+                     onSaved={closeDoc} onCancel={closeDoc} />
+          )}
+          {docView?.mode === "dpr-view" && (
+            <DPRView doc={docView.doc} me={me} onClose={closeDoc}
+                     onChanged={bump}
+                     onEdit={(doc) => setDocView({ mode: "dpr-form", doc })} />
+          )}
+          {docView?.mode === "line-form" && (
+            <LineDocForm docType={docView.docType} site={openSite}
+                         sites={sites} me={me} existing={docView.doc}
+                         onSaved={(doc) => { bump();
+                           setDocView({ mode: "line-view", doc }); }}
+                         onCancel={closeDoc} />
+          )}
+          {docView?.mode === "line-view" && (
+            <LineDocView doc={docView.doc} me={me} onClose={closeDoc}
+                         onChanged={bump}
+                         onEdit={(doc) => setDocView({
+                           mode: "line-form", docType: doc.doc_type, doc })} />
+          )}
+
+          {!docView && openSite && (
             <>
               <div style={{ display: "flex", justifyContent: "space-between",
                             alignItems: "baseline", marginBottom: 16 }}>
@@ -161,7 +236,7 @@ export default function App() {
                   {openSite.code} — {openSite.name}{" "}
                   <StatusChip status={openSite.status} />
                 </h2>
-                {(sites.length > 1 && (me.is_ho || me.allocations.length > 1)) && (
+                {(me.is_ho || me.allocations.length > 1) && (
                   <button onClick={() => setOpenSite(null)} style={ghostButton}>
                     ← All sites
                   </button>
@@ -169,22 +244,26 @@ export default function App() {
               </div>
               <SiteDashboard
                 site={openSite} me={me} refresh={refresh}
-                onNewDpr={() => setDocView({ mode: "form", doc: null })}
+                onNewDpr={() => setDocView({ mode: "dpr-form", doc: null })}
+                onNewMr={() => setDocView({ mode: "line-form", docType: "MR",
+                                            doc: null })}
+                onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
             </>
           )}
 
-          {openSite && docView?.mode === "form" && (
-            <DPRForm site={openSite} existing={docView.doc}
-                     onSaved={bumpAndClose} onCancel={bumpAndClose} />
+          {!docView && !openSite && me.is_ho && hoPage === "dashboard" && (
+            <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
+                         onNew={(docType) => setDocView({ mode: "line-form",
+                                                          docType, doc: null })} />
           )}
-
-          {openSite && docView?.mode === "view" && (
-            <DPRView doc={docView.doc} me={me}
-                     onClose={bumpAndClose}
-                     onChanged={() => setRefresh((n) => n + 1)}
-                     onEdit={(doc) => setDocView({ mode: "form", doc })} />
+          {!docView && !openSite && me.is_ho && hoPage === "items" && (
+            <ItemsPage me={me} />
+          )}
+          {!docView && !openSite &&
+            (!me.is_ho || hoPage === "sites") && (
+            <SiteList sites={sites} onOpen={setOpenSite} />
           )}
         </main>
       )}

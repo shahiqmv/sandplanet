@@ -70,10 +70,13 @@ def _dpr_context(document, revision):
 def generate_pdf(document, revision, milestone):
     """Render and archive the PDF for a workflow milestone. Returns the
     Attachment or None when the engine is unavailable locally."""
-    template = {"DPR": "dpr.html"}.get(document.doc_type)
-    if template is None:
+    if document.doc_type == "DPR":
+        template, context = "dpr.html", _dpr_context(document, revision)
+    elif document.doc_type in LINE_FORMS:
+        template, context = "lines_form.html", _lines_context(document, revision)
+    else:
         return None
-    html = render_to_string(f"pdf/{template}", _dpr_context(document, revision))
+    html = render_to_string(f"pdf/{template}", context)
     try:
         from weasyprint import HTML
 
@@ -95,3 +98,180 @@ def generate_pdf(document, revision, milestone):
         f"{revision.rev_label}-{milestone}.pdf", ContentFile(pdf_bytes), save=True
     )
     return attachment
+
+
+# ===== Line-form PDFs: MR / PR / LM / GRN (shared letterhead + table) =====
+
+LINE_FORMS = {
+    "MR": {
+        "title": "MATERIAL REQUISITION",
+        "form_no": "FRM-PRC-01 · R1",
+        "columns": [
+            ("Item Description", "description", False),
+            ("Unit", "unit", False),
+            ("Required Qty", "qty_required", True),
+            ("Site Stock", "qty_stock", True),
+            ("Qty to Order", "qty_to_order", True),
+            ("Priority", "priority", False),
+            ("Remarks", "remarks", False),
+        ],
+        "header_keys": [("Planned Loading/Trip", "planned_loading"),
+                        ("Trades Covered", "trades_covered"),
+                        ("Required On Site By", "required_by")],
+        "sigs": [("Prepared By — Site Admin", "SEND"),
+                 ("Approved By — Project Manager", "APPROVE"),
+                 ("", None)],
+        "notes": "Unsigned MRs will be returned. Mark urgent lines with reason. "
+                 "One consolidated MR per loading (Instructions sheet).",
+    },
+    "PR": {
+        "title": "PROCUREMENT REQUISITION",
+        "form_no": "FRM-PRC-02 · R0",
+        "columns": [
+            ("Vendor", "vendor", False),
+            ("Quotation Ref", "quotation_ref", False),
+            ("Payment Terms", "payment_terms", False),
+            ("Amount Cash/Bank (MVR)", "amount_cash", True),
+            ("Amount Credit (MVR)", "amount_credit", True),
+            ("Action Taken (Slip/PO No.)", "action_taken", False),
+        ],
+        "header_keys": [("Requested Delivery", "requested_delivery"),
+                        ("Action Taken", "action_taken")],
+        "sigs": [("Prepared By — Purchasing", "SUBMIT"),
+                 ("Approved By — Sr PM / Director, Projects", "APPROVE"),
+                 ("Finance — Payment / PO Issued", "PAYMENT_RECORDED")],
+        "totals": ["amount_cash", "amount_credit"],
+    },
+    "LM": {
+        "title": "LOADING MANIFEST",
+        "form_no": "FRM-PRC-03 · R0",
+        "columns": [
+            ("Item Description", "description", False),
+            ("Unit", "unit", False),
+            ("Qty Loaded", "qty_loaded", True),
+            ("Qty Pending", "qty_pending", True),
+            ("Condition / Remarks", "remarks", False),
+        ],
+        "header_keys": [("Vessel/Boat", "vessel"),
+                        ("Departure Point", "departure_point"),
+                        ("Expected Arrival", "expected_arrival"),
+                        ("Trip/Load No.", "trip_no")],
+        "sigs": [("Prepared By — Purchasing", "DEPART"),
+                 ("Loaded/Checked By — Boat Crew", None),
+                 ("Received At Site By (via GRN)", None)],
+    },
+    "GRN": {
+        "title": "GOODS RECEIVED NOTE",
+        "form_no": "FRM-PRC-04 · R1",
+        "columns": [
+            ("Item Description", "description", False),
+            ("Unit", "unit", False),
+            ("Qty as per Manifest", "qty_manifest", True),
+            ("Qty Received", "qty_received", True),
+            ("Shortage/Excess", "_shortage", True),
+            ("Condition/Remarks", "remarks", False),
+        ],
+        "header_keys": [("Manifest Ref", "manifest_ref"),
+                        ("Vessel/Boat", "vessel"),
+                        ("Date Received", "date_received")],
+        "sigs": [("Received/Counted By — Site Admin / Storekeeper", "COUNT"),
+                 ("Verified By — Site Engineer / PM", "VERIFY"),
+                 ("", None)],
+    },
+}
+
+
+def _fmt(value):
+    if value is None:
+        return ""
+    if isinstance(value, float):
+        return f"{value:,.2f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def _stamp_for(approvals, action):
+    for a in approvals:
+        if a.action == action:
+            return (f"{a.actor.full_name} — {a.actor_role} — "
+                    f"{a.acted_at.strftime('%d/%m/%y %H:%M')} — "
+                    f"approved electronically via Sand Planet Site Documents")
+    return ""
+
+
+def _lines_context(document, revision):
+    from decimal import Decimal
+
+    config = LINE_FORMS[document.doc_type]
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+
+    lines = []
+    totals_acc = {field: Decimal("0") for field in config.get("totals", [])}
+    for line in revision.lines.select_related("item"):
+        cells = []
+        for _label, field, is_num in config["columns"]:
+            if field == "description":
+                value = line.description
+            elif field == "_shortage":
+                if line.qty_received is None or line.qty_manifest is None:
+                    value = ""
+                else:
+                    value = _fmt(float(line.qty_received - line.qty_manifest))
+            else:
+                value = getattr(line, field, "") or payload.get(field, "")
+                if isinstance(value, Decimal):
+                    value = float(value)
+                value = _fmt(value)
+                if field in totals_acc and getattr(line, field) is not None:
+                    totals_acc[field] += getattr(line, field)
+            cells.append({"value": value, "num": is_num})
+        lines.append({"cells": cells, "is_changed": line.is_changed,
+                      "is_free_text": line.item_id is None and
+                      document.doc_type in ("MR", "LM", "GRN")})
+
+    totals = None
+    if config.get("totals"):
+        totals = [{"value": "Grand Total", "num": False}]
+        # pad to align with columns: description columns before amounts
+        pads = len(config["columns"]) - len(config["totals"]) - 2
+        totals += [{"value": "", "num": False}] * max(pads, 0)
+        for field in config["totals"]:
+            totals.append({"value": _fmt(float(totals_acc[field])), "num": True})
+        totals.append({"value": "", "num": False})
+        totals = [{"value": "", "num": False}] + totals  # No. column
+
+    header_rows, pair = [], []
+    for label, key in config["header_keys"]:
+        pair += [label, _fmt(payload.get(key, ""))]
+        if len(pair) == 4:
+            header_rows.append(pair)
+            pair = []
+    if pair:
+        header_rows.append(pair + ["", ""])
+
+    links = []
+    for link in document.links_from.select_related("to_document"):
+        links.append(link.to_document.ref)
+    for link in document.links_to.select_related("from_document"):
+        links.append(link.from_document.ref)
+
+    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
+    return {
+        "doc": document,
+        "rev": revision,
+        "site": document.site,
+        "logo_src": f"file:///{logo}",
+        "form_title": config["title"],
+        "form_subline": f"{config['form_no']} · Rev {revision.rev_label}",
+        "columns": [{"label": c[0], "num": c[2]} for c in config["columns"]],
+        "header_rows": header_rows,
+        "links_line": " · ".join(sorted(set(links))),
+        "lines": lines,
+        "totals": totals,
+        "notes": config.get("notes", ""),
+        "sig_blocks": [
+            {"title": title, "stamp": _stamp_for(approvals, action) if action
+             else ""}
+            for title, action in config["sigs"]
+        ],
+    }

@@ -3,19 +3,27 @@ import { api } from "./api.js";
 import { StatusChip, buttonStyle, card, td, th } from "./ui.jsx";
 
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
+const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 
-export default function SiteDashboard({ site, me, onNewDpr, onOpenDoc, refresh }) {
+export default function SiteDashboard({ site, me, onNewDpr, onNewMr,
+                                        onCreateGrn, onOpenDoc, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
+  const [mrs, setMrs] = useState([]);
+  const [incomingLms, setIncomingLms] = useState([]);
 
   const load = useCallback(() => {
     api(`/dashboards/site/${site.id}`).then(setDash);
     api(`/registers/dpr-tws?site=${site.id}`).then(setRegister);
+    api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
+    api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
+      .then(setIncomingLms);
   }, [site.id]);
 
   useEffect(load, [load, refresh]);
 
   const canCreate = CAN_CREATE_DPR.includes(me.role);
+  const canMr = CAN_CREATE_MR.includes(me.role);
   const gaps = register?.rows.filter((r) => r.gap).length || 0;
 
   return (
@@ -43,10 +51,71 @@ export default function SiteDashboard({ site, me, onNewDpr, onOpenDoc, refresh }
             {gaps} gap day{gaps === 1 ? "" : "s"} in the last two weeks
           </div>
         </div>
-        {canCreate && (
-          <button onClick={onNewDpr} style={buttonStyle}>+ New DPR</button>
-        )}
+        <span style={{ display: "flex", gap: 8 }}>
+          {canCreate && (
+            <button onClick={onNewDpr} style={buttonStyle}>+ New DPR</button>
+          )}
+          {canMr && (
+            <button onClick={onNewMr} style={buttonStyle}>+ New MR</button>
+          )}
+        </span>
       </section>
+
+      {incomingLms.length > 0 && (
+        <section style={{ ...card, background: "#fff8e6" }}>
+          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+            🚤 Incoming boats — manifests in transit
+          </h2>
+          {incomingLms.map((lm) => (
+            <div key={lm.ref} style={{ display: "flex", gap: 12,
+                                       alignItems: "center", padding: "4px 0" }}>
+              <a href="#" onClick={(e) => { e.preventDefault();
+                                            onOpenDoc(lm.ref); }}
+                 style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                {lm.ref}
+              </a>
+              <span style={{ fontSize: 13, color: "#5a6b78" }}>
+                {lm.payload?.vessel} · expected {lm.payload?.expected_arrival}
+              </span>
+              {canMr && (
+                <button onClick={() => onCreateGrn(lm.ref)}
+                        style={{ ...buttonStyle, marginLeft: "auto",
+                                 padding: "4px 12px", fontSize: 13 }}>
+                  Receive → New GRN
+                </button>
+              )}
+            </div>
+          ))}
+        </section>
+      )}
+
+      {mrs.length > 0 && (
+        <section style={card}>
+          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+            Material Requisitions
+          </h2>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {mrs.slice(0, 8).map((mr) => (
+                <tr key={mr.ref}>
+                  <td style={{ ...td, width: 130 }}>
+                    <a href="#" onClick={(e) => { e.preventDefault();
+                                                  onOpenDoc(mr.ref); }}
+                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                      {mr.ref}
+                    </a>
+                  </td>
+                  <td style={td}>{mr.doc_date}</td>
+                  <td style={td}>{mr.payload?.planned_loading}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <StatusChip status={mr.is_void ? "VOID" : mr.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
 
       <section style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>

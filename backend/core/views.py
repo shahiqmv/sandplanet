@@ -253,3 +253,75 @@ def parameter_detail(request, key):
     except CompanyParameter.DoesNotExist:
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
     return Response(ParameterSerializer(param).data)
+
+
+# ===== Item Master (spec §5.0) — owned by HO Purchasing =====
+
+
+from rest_framework.permissions import BasePermission  # noqa: E402
+
+from .models import Item  # noqa: E402
+from .procurement import next_item_code  # noqa: E402
+from .serializers_documents import ItemSerializer  # noqa: E402
+
+
+class IsPurchasingOrReadOnly(BasePermission):
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True  # sites need the catalog for MR autocomplete
+        return request.user.role in ("HO_PURCHASING", "ADMIN")
+
+
+class ItemViewSet(viewsets.ModelViewSet):
+    serializer_class = ItemSerializer
+    permission_classes = [IsPurchasingOrReadOnly]
+    http_method_names = ["get", "post", "patch", "head", "options"]
+
+    def get_queryset(self):
+        qs = Item.objects.filter(merged_into__isnull=True).order_by("code")
+        search = self.request.GET.get("search")
+        if search:
+            from django.db.models import Q
+
+            qs = qs.filter(Q(description__icontains=search) |
+                           Q(code__icontains=search) |
+                           Q(category__icontains=search))
+        if self.request.GET.get("active") != "all":
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def perform_create(self, serializer):
+        from django.db import transaction
+
+        with transaction.atomic():  # row-locked counter needs a transaction
+            item = serializer.save(code=next_item_code())
+        audit("item", item.id, "ITEM_CREATED", actor=self.request.user,
+              detail={"code": item.code})
+
+    def perform_update(self, serializer):
+        item = serializer.save()
+        audit("item", item.id, "ITEM_UPDATED", actor=self.request.user,
+              detail={"fields": sorted(self.request.data.keys())})
+
+    @action(detail=True, methods=["post"])
+    def merge(self, request, pk=None):
+        """Duplicate resolution (spec §5.0): this item merges into target;
+        existing document lines keep their history."""
+        item = self.get_object()
+        try:
+            target = Item.objects.get(pk=request.data.get("target_id"),
+                                      merged_into__isnull=True)
+        except Item.DoesNotExist:
+            return Response({"detail": "target_id must be an unmerged item."},
+                            status=400)
+        if target.pk == item.pk:
+            return Response({"detail": "Cannot merge an item into itself."},
+                            status=400)
+        item.merged_into = target
+        item.is_active = False
+        item.save(update_fields=["merged_into", "is_active"])
+        audit("item", item.id, "ITEM_MERGED", actor=request.user,
+              to_state=target.code)
+        return Response(self.get_serializer(target).data)

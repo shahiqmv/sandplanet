@@ -9,7 +9,8 @@
       "PowerShell(winget search \"GTK\" --source winget)",
       "PowerShell(winget install --id GtkD.GtkPlusRuntime.x64 -e --accept-source-agreements --accept-package-agreements --silent)",
       "PowerShell($env:WEASYPRINT_DLL_DIRECTORIES = \"C:\\\\Program Files\\\\Gtk-Runtime\\\\bin\"; Set-Location \"C:\\\\Users\\\\96079\\\\OneDrive\\\\SandPlanet Projects\\\\siteapp\\\\backend\"; .\\\\.venv\\\\Scripts\\\\python.exe -c \"import weasyprint; print\\('WeasyPrint', weasyprint.__version__, 'OK'\\)\")",
-      "PowerShell(Set-Location \"C:\\\\Users\\\\96079\\\\OneDrive\\\\SandPlanet Projects\\\\siteapp\\\\backend\"; .\\\\.venv\\\\Scripts\\\\python.exe manage.py shell -c \\(Get-Content -Raw \"C:\\\\Users\\\\96079\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-96079-OneDrive-SandPlanet-Projects-siteapp\\\\57778330-4baa-43dd-b044-6cecdc11f16e\\\\scratchpad\\\\backfill_pdfs.py\"\\))"
+      "PowerShell(Set-Location \"C:\\\\Users\\\\96079\\\\OneDrive\\\\SandPlanet Projects\\\\siteapp\\\\backend\"; .\\\\.venv\\\\Scripts\\\\python.exe manage.py shell -c \\(Get-Content -Raw \"C:\\\\Users\\\\96079\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-96079-OneDrive-SandPlanet-Projects-siteapp\\\\57778330-4baa-43dd-b044-6cecdc11f16e\\\\scratchpad\\\\backfill_pdfs.py\"\\))",
+      "Bash(./.venv/Scripts/python.exe -)"
     ]
   }
 }

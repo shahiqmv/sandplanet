@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -13,20 +14,44 @@ from .models import (
     Document,
     DocumentRevision,
     Holiday,
+    Item,
+    PendingItem,
     Site,
     User,
 )
 from .numbering import next_ref
 from .pdf import generate_pdf
 from .permissions import scoped_site_ids
-from .serializers_documents import AttachmentSerializer, DocumentSerializer
+from .procurement import (
+    grn_lines_from_lm,
+    link_documents,
+    on_grn_verified,
+    on_lm_departed,
+    on_pr_approved,
+    resolve_refs,
+    save_lines,
+    validate_mr_lines,
+)
+from .serializers_documents import (
+    AttachmentSerializer,
+    DocumentSerializer,
+    PendingItemSerializer,
+)
 
 CREATE_ROLES = {  # spec §3 "can create"
     "DPR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
     "TWS": {"SITE_ENGINEER", "PM"},
+    "MR": {"SITE_ADMIN", "PM"},          # Site Admin owns the MR sequence
+    "GRN": {"SITE_ADMIN", "PM"},
+    "PR": {"HO_PURCHASING"},             # Head Office documents
+    "LM": {"HO_PURCHASING"},
 }
-ISSUE_ROLES = CREATE_ROLES
+LINE_TYPES = {"MR", "PR", "LM", "GRN"}
 MIN_DPR_PHOTOS = 4  # decision 8 — hard block
+
+
+def _serialize(doc, request):
+    return DocumentSerializer(doc, context={"request": request}).data
 
 
 def _get_scoped_document(request, ref):
@@ -45,6 +70,16 @@ def _is_site_pm(user, site):
     return user.role == User.Role.PM and pm is not None and pm.id == user.id
 
 
+def _can(request, doc_type, roles):
+    return request.user.role in roles or request.user.role == "ADMIN"
+
+
+def _previous_revision(doc):
+    return (
+        doc.revisions.exclude(pk=doc.current_revision_id).order_by("-id").first()
+    )
+
+
 @api_view(["POST"])
 def document_create(request):
     doc_type = request.data.get("doc_type")
@@ -58,12 +93,13 @@ def document_create(request):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None and site.id not in site_ids:
         return Response({"detail": "Not allocated to this site."}, status=403)
-    if request.user.role not in CREATE_ROLES[doc_type] and request.user.role != "ADMIN":
+    if not _can(request, doc_type, CREATE_ROLES[doc_type]):
         return Response({"detail": "Role cannot create this document."}, status=403)
-    # Lifecycle rules (spec §2.2)
+    # Lifecycle rules (spec §2.2); MAR/MR may begin at AWARDED (mobilization)
     if site.status == Site.Status.CLOSED:
         return Response({"detail": "Site is closed — no new documents."}, status=400)
-    if site.status == Site.Status.ON_HOLD and request.user.role not in ("PM", "ADMIN"):
+    if site.status == Site.Status.ON_HOLD and request.user.role not in ("PM", "ADMIN") \
+            and not request.user.is_ho:
         return Response(
             {"detail": "Site on hold — only PM/HO can create documents."}, status=403
         )
@@ -79,6 +115,53 @@ def document_create(request):
             )
 
     payload = request.data.get("payload") or {}
+    lines_data = request.data.get("lines") or []
+
+    # GRN is raised FROM a manifest: prefill lines + link (spec §5.6)
+    lm = None
+    if doc_type == "GRN":
+        lm_ref = request.data.get("lm_ref") or payload.get("manifest_ref")
+        if not lm_ref:
+            return Response({"detail": "GRN requires lm_ref (the manifest)."},
+                            status=400)
+        try:
+            lm = Document.objects.get(ref=lm_ref, doc_type="LM", is_void=False)
+        except Document.DoesNotExist:
+            return Response({"detail": f"Unknown manifest '{lm_ref}'."}, status=400)
+        if lm.site_id != site.id:
+            return Response({"detail": "Manifest is for a different site."},
+                            status=400)
+        if not lines_data:
+            lines_data = grn_lines_from_lm(lm)
+        payload.setdefault("manifest_ref", lm.ref)
+        payload.setdefault("vessel", (lm.current_revision.payload or {}).get(
+            "vessel", ""))
+        payload.setdefault(
+            "mr_refs",
+            list(lm.links_from.filter(link_type="MR_LM")
+                 .values_list("to_document__ref", flat=True)),
+        )
+
+    if doc_type == "MR":
+        error = validate_mr_lines(lines_data)
+        if error:
+            return Response({"detail": error}, status=400)
+
+    # Cross-references arrive as refs, stored as FK links (spec §4.3)
+    mr_docs, missing = resolve_refs(request.data.get("mr_refs"), "MR")
+    if missing:
+        return Response({"detail": f"Unknown MR refs: {sorted(missing)}"}, status=400)
+    pr_docs, missing = resolve_refs(request.data.get("pr_refs"), "PR")
+    if missing:
+        return Response({"detail": f"Unknown PR refs: {sorted(missing)}"}, status=400)
+    # A PR/LM belongs to the same site/project as the MRs it answers
+    wrong = [d.ref for d in mr_docs + pr_docs if d.site_id != site.id]
+    if wrong:
+        return Response(
+            {"detail": f"References belong to a different site: {wrong}. "
+                       f"Pick the site the MR was raised for."}, status=400
+        )
+
     with transaction.atomic():
         ref = next_ref(doc_type, site)  # locks counter until commit — gap-free
         doc = Document.objects.create(
@@ -90,10 +173,17 @@ def document_create(request):
         )
         doc.current_revision = revision
         doc.save(update_fields=["current_revision"])
+        if doc_type in LINE_TYPES:
+            save_lines(revision, lines_data)
+        for mr in mr_docs:
+            link_documents(doc, mr, "MR_PR" if doc_type == "PR" else "MR_LM")
+        for pr in pr_docs:
+            link_documents(doc, pr, "PR_LM")
+        if lm is not None:
+            link_documents(doc, lm, "LM_GRN")
     audit("document", doc.id, "DOC_CREATED", actor=request.user,
           to_state="DRAFT", detail={"ref": ref})
-    return Response(DocumentSerializer(doc, context={"request": request}).data,
-                    status=201)
+    return Response(_serialize(doc, request), status=201)
 
 
 @api_view(["GET", "PATCH"])
@@ -102,18 +192,24 @@ def document_detail(request, ref):
     if err:
         return err
     if request.method == "GET":
-        return Response(DocumentSerializer(doc, context={"request": request}).data)
+        return Response(_serialize(doc, request))
 
     # PATCH — draft revisions only (issued revisions immutable, spec §7.2)
     revision = doc.current_revision
     if doc.is_void or doc.status != "DRAFT" or revision.issued_at is not None:
         return Response({"detail": "Only draft documents can be edited."}, status=400)
-    if request.user.role not in CREATE_ROLES.get(doc.doc_type, set()) \
-            and request.user.role != "ADMIN":
+    if not _can(request, doc.doc_type, CREATE_ROLES.get(doc.doc_type, set())):
         return Response({"detail": "Role cannot edit this document."}, status=403)
     if "payload" in request.data:
         revision.payload = request.data["payload"]
         revision.save(update_fields=["payload"])
+    if "lines" in request.data and doc.doc_type in LINE_TYPES:
+        if doc.doc_type == "MR":
+            error = validate_mr_lines(request.data["lines"])
+            if error:
+                return Response({"detail": error}, status=400)
+        save_lines(revision, request.data["lines"],
+                   previous_revision=_previous_revision(doc))
     if "doc_date" in request.data and doc.doc_type == "DPR":
         clash = Document.objects.filter(
             doc_type="DPR", site=doc.site, doc_date=request.data["doc_date"],
@@ -125,7 +221,103 @@ def document_detail(request, ref):
             )
         doc.doc_date = request.data["doc_date"]
         doc.save(update_fields=["doc_date"])
-    return Response(DocumentSerializer(doc, context={"request": request}).data)
+    elif "doc_date" in request.data:
+        doc.doc_date = request.data["doc_date"]
+        doc.save(update_fields=["doc_date"])
+    doc.refresh_from_db()
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def document_revise(request, ref):
+    """MR amendment / MAR resubmission: same number, next revision label,
+    restarts at Draft; previous revision stays visible (spec §4.2)."""
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if doc.doc_type not in ("MR", "MAR"):
+        return Response({"detail": "Only MR/MAR use revisions; IR gets a new "
+                                   "number quoting the previous IR."}, status=400)
+    if doc.is_void:
+        return Response({"detail": "Document is void."}, status=400)
+    if doc.status == "DRAFT":
+        return Response({"detail": "Document is already an editable draft."},
+                        status=400)
+    if doc.status == "CLOSED":
+        return Response({"detail": "Closed documents cannot be amended."}, status=400)
+    if not _can(request, doc.doc_type, CREATE_ROLES.get(doc.doc_type, set())):
+        return Response({"detail": "Role cannot amend this document."}, status=403)
+
+    old_revision = doc.current_revision
+    next_label = f"R{int(old_revision.rev_label[1:]) + 1}"
+    with transaction.atomic():
+        old_revision.is_current = False
+        old_revision.save(update_fields=["is_current"])
+        new_revision = DocumentRevision.objects.create(
+            document=doc, rev_label=next_label,
+            payload=old_revision.payload, created_by=request.user,
+        )
+        # carry lines over unflagged; edits via PATCH mark is_changed (§5.5 r3)
+        save_lines(new_revision, [
+            {"item_id": line.item_id, "free_text_desc": line.free_text_desc,
+             "unit": line.unit,
+             "qty_required": line.qty_required, "qty_stock": line.qty_stock,
+             "qty_to_order": line.qty_to_order, "priority": line.priority,
+             "urgent_reason": line.urgent_reason, "remarks": line.remarks}
+            for line in old_revision.lines.all()
+        ])
+        old_status = doc.status
+        doc.current_revision = new_revision
+        doc.status = "DRAFT"
+        doc.save(update_fields=["current_revision", "status", "updated_at"])
+    audit("document", doc.id, "DOC_REVISED", actor=request.user,
+          from_state=old_status, to_state="DRAFT",
+          detail={"ref": doc.ref, "rev": next_label})
+    return Response(_serialize(doc, request), status=201)
+
+
+# ===== Workflow actions =====
+
+
+def _transition(doc, new_status):
+    allowed = Document.TRANSITIONS[doc.doc_type].get(doc.status, set())
+    return new_status in allowed
+
+
+def _record(doc, action, request, comment="", result=""):
+    Approval.objects.create(
+        document=doc, revision=doc.current_revision, action=action,
+        result=result, actor=request.user, actor_role=request.user.role,
+        comment=comment,
+    )
+
+
+def _apply(request, doc, new_status, action, roles=None, pm_gate=False,
+           lock_revision=False, pdf_milestone=None, comment=""):
+    if pm_gate:
+        if not (_is_site_pm(request.user, doc.site) or
+                request.user.role == "ADMIN"):
+            return Response({"detail": "Only the site's PM can do this."},
+                            status=403)
+    elif roles is not None and not _can(request, doc.doc_type, roles):
+        return Response({"detail": f"Role cannot {action.lower()} this document."},
+                        status=403)
+    if not _transition(doc, new_status):
+        return Response({"detail": f"Cannot {action.lower()} from {doc.status}."},
+                        status=400)
+    old = doc.status
+    with transaction.atomic():
+        if lock_revision and doc.current_revision.issued_at is None:
+            doc.current_revision.issued_at = timezone.now()
+            doc.current_revision.save(update_fields=["issued_at"])
+        doc.status = new_status
+        doc.save(update_fields=["status", "updated_at"])
+        _record(doc, action, request, comment=comment)
+    audit("document", doc.id, f"DOC_{action}", actor=request.user,
+          from_state=old, to_state=new_status, detail={"ref": doc.ref})
+    if pdf_milestone:
+        generate_pdf(doc, doc.current_revision, pdf_milestone)
+    return None
 
 
 @api_view(["POST"])
@@ -135,32 +327,25 @@ def document_action(request, ref, action_name):
         return err
     if doc.is_void:
         return Response({"detail": "Document is void."}, status=400)
-    handler = {"issue": _do_issue, "verify": _do_verify, "void": _do_void}.get(
-        action_name
-    )
+    handler = {
+        "issue": _do_issue, "verify": _do_verify, "void": _do_void,
+        "submit": _do_submit, "approve": _do_approve, "return": _do_return,
+        "send": _do_send, "depart": _do_depart, "count": _do_count,
+        "record-payment": _do_record_payment, "close": _do_close,
+    }.get(action_name)
     if handler is None:
         return Response({"detail": f"Unknown action '{action_name}'."}, status=400)
-    return handler(request, doc)
+    comment = request.data.get("comment", "") if hasattr(request, "data") else ""
+    result = handler(request, doc, comment)
+    if isinstance(result, Response):
+        return result
+    doc.refresh_from_db()
+    return Response(_serialize(doc, request))
 
 
-def _transition(doc, new_status):
-    allowed = Document.TRANSITIONS[doc.doc_type].get(doc.status, set())
-    return new_status in allowed
-
-
-def _record(doc, action, request, comment=""):
-    Approval.objects.create(
-        document=doc, revision=doc.current_revision, action=action,
-        actor=request.user, actor_role=request.user.role, comment=comment,
-    )
-
-
-def _do_issue(request, doc):
-    if request.user.role not in ISSUE_ROLES.get(doc.doc_type, set()) \
-            and request.user.role != "ADMIN":
-        return Response({"detail": "Role cannot issue this document."}, status=403)
-    if not _transition(doc, "ISSUED"):
-        return Response({"detail": f"Cannot issue from {doc.status}."}, status=400)
+def _do_issue(request, doc, comment):
+    if doc.doc_type not in ("DPR", "TWS"):
+        return Response({"detail": "Issue applies to DPR/TWS."}, status=400)
     if doc.doc_type == "DPR":
         captioned = doc.attachments.filter(kind="PHOTO").exclude(caption="").count()
         if captioned < MIN_DPR_PHOTOS:
@@ -169,41 +354,138 @@ def _do_issue(request, doc):
                            f"to issue ({captioned} attached)."},
                 status=400,
             )
-    old = doc.status
-    revision = doc.current_revision
-    with transaction.atomic():
-        revision.issued_at = timezone.now()  # locks the revision
-        revision.save(update_fields=["issued_at"])
-        doc.status = "ISSUED"
-        doc.save(update_fields=["status", "updated_at"])
-        _record(doc, "ISSUE", request)
-    audit("document", doc.id, "DOC_ISSUED", actor=request.user,
-          from_state=old, to_state="ISSUED", detail={"ref": doc.ref})
-    generate_pdf(doc, revision, "issue")
-    return Response(DocumentSerializer(doc, context={"request": request}).data)
+    return _apply(request, doc, "ISSUED", "ISSUE",
+                  roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
+                  pdf_milestone="issue", comment=comment)
 
 
-def _do_verify(request, doc):
-    if not _is_site_pm(request.user, doc.site) and request.user.role != "ADMIN":
-        return Response({"detail": "Only the site's PM can verify."}, status=403)
-    if not _transition(doc, "VERIFIED"):
-        return Response({"detail": f"Cannot verify from {doc.status}."}, status=400)
-    old = doc.status
-    with transaction.atomic():
-        doc.status = "VERIFIED"
-        doc.save(update_fields=["status", "updated_at"])
-        _record(doc, "VERIFY", request, comment=request.data.get("comment", ""))
-    audit("document", doc.id, "DOC_VERIFIED", actor=request.user,
-          from_state=old, to_state="VERIFIED", detail={"ref": doc.ref})
-    generate_pdf(doc, doc.current_revision, "verified")
-    return Response(DocumentSerializer(doc, context={"request": request}).data)
+def _do_submit(request, doc, comment):
+    roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"}}.get(doc.doc_type)
+    if roles is None:
+        return Response({"detail": "Submit applies to MR/PR."}, status=400)
+    return _apply(request, doc, "SUBMITTED", "SUBMIT", roles=roles,
+                  comment=comment)
 
 
-def _do_void(request, doc):
-    """Void + reissue path (spec §7.2): admin-visible, reason required,
-    number kept — the register row remains."""
-    if not (request.user.role == "ADMIN" or _is_site_pm(request.user, doc.site)):
-        return Response({"detail": "Only PM or Admin can void."}, status=403)
+def _do_approve(request, doc, comment):
+    if doc.doc_type == "MR":  # PM approval — mandatory gate (spec §5.5 r6)
+        return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
+                      comment=comment)
+    if doc.doc_type == "PR":  # Director approval (spec §5.7)
+        err = _apply(request, doc, "APPROVED", "APPROVE",
+                     roles={"DIRECTOR"}, lock_revision=True,
+                     pdf_milestone="approved", comment=comment)
+        if err is None:
+            on_pr_approved(doc, request.user)
+        return err
+    return Response({"detail": "Approve applies to MR/PR."}, status=400)
+
+
+def _do_return(request, doc, comment):
+    """Return with comment → back to Draft (spec §7.2)."""
+    if not comment.strip():
+        return Response({"detail": "A comment is required to return."}, status=400)
+    if doc.doc_type == "MR":
+        return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
+                      comment=comment)
+    if doc.doc_type == "PR":
+        return _apply(request, doc, "DRAFT", "RETURN", roles={"DIRECTOR"},
+                      comment=comment)
+    return Response({"detail": "Return applies to MR/PR."}, status=400)
+
+
+def _do_send(request, doc, comment):
+    """MR: issue to HO Purchasing after PM approval (spec §5.5 r7)."""
+    if doc.doc_type != "MR":
+        return Response({"detail": "Send applies to MR."}, status=400)
+    return _apply(request, doc, "SENT_TO_HO", "SEND",
+                  roles={"SITE_ADMIN", "PM"}, lock_revision=True,
+                  pdf_milestone="sent", comment=comment)
+
+
+def _do_depart(request, doc, comment):
+    """LM departure = crew countersign moment; locks the manifest, creates
+    pending items, updates MR statuses (spec §5.8)."""
+    if doc.doc_type != "LM":
+        return Response({"detail": "Depart applies to LM."}, status=400)
+    err = _apply(request, doc, "DEPARTED", "DEPART",
+                 roles={"HO_PURCHASING"}, lock_revision=True,
+                 pdf_milestone="departed", comment=comment)
+    if err is None:
+        on_lm_departed(doc, request.user)
+    return err
+
+
+def _do_count(request, doc, comment):
+    if doc.doc_type != "GRN":
+        return Response({"detail": "Count applies to GRN."}, status=400)
+    return _apply(request, doc, "COUNTED", "COUNT",
+                  roles={"SITE_ADMIN"}, comment=comment)
+
+
+def _do_verify(request, doc, comment):
+    if doc.doc_type == "DPR":
+        return _apply(request, doc, "VERIFIED", "VERIFY", pm_gate=True,
+                      comment=comment)
+    if doc.doc_type == "GRN":  # SE/PM verify; immutable afterwards (spec §5.6)
+        if not _can(request, "GRN", {"SITE_ENGINEER", "PM"}):
+            return Response({"detail": "Only SE/PM can verify a GRN."}, status=403)
+        shortage = any(
+            (line.qty_received or 0) < (line.qty_manifest or 0)
+            for line in doc.current_revision.lines.all()
+        )
+        new_status = "SHORTAGE_REPORTED" if shortage else "COMPLETE"
+        err = _apply(request, doc, new_status, "VERIFY",
+                     roles={"SITE_ENGINEER", "PM"}, lock_revision=True,
+                     pdf_milestone="verified", comment=comment)
+        if err is None:
+            on_grn_verified(doc, request.user)
+            if shortage:
+                audit("document", doc.id, "GRN_SHORTAGE_REPORTED",
+                      actor=request.user,
+                      detail={"ref": doc.ref,
+                              "reported_at": timezone.now().isoformat()})
+        return err
+    return Response({"detail": "Verify applies to DPR/GRN."}, status=400)
+
+
+def _do_record_payment(request, doc, comment):
+    """PR: Purchasing records payment status + Action Taken (decision 6)."""
+    if doc.doc_type != "PR":
+        return Response({"detail": "record-payment applies to PR."}, status=400)
+    if not _can(request, "PR", {"HO_PURCHASING"}):
+        return Response({"detail": "Only HO Purchasing records payment."},
+                        status=403)
+    action_taken = (request.data.get("action_taken") or "").strip()
+    if not action_taken:
+        return Response({"detail": "action_taken (slip no. / PO no.) required."},
+                        status=400)
+    err = _apply(request, doc, "PAID_PO_ISSUED", "PAYMENT_RECORDED",
+                 roles={"HO_PURCHASING"}, comment=comment)
+    if err is None:
+        payload = doc.current_revision.payload or {}
+        payload["action_taken"] = action_taken
+        doc.current_revision.payload = payload
+        doc.current_revision.save(update_fields=["payload"])
+        _record(doc, "ACTION_TAKEN", request, comment=action_taken)
+    return err
+
+
+def _do_close(request, doc, comment):
+    roles = {"MR": {"SITE_ADMIN", "PM", "HO_PURCHASING"},
+             "PR": {"HO_PURCHASING"}}.get(doc.doc_type)
+    if roles is None:
+        return Response({"detail": "Close applies to MR/PR."}, status=400)
+    return _apply(request, doc, "CLOSED", "CLOSE", roles=roles, comment=comment)
+
+
+def _do_void(request, doc, comment):
+    """Void + reissue path (spec §7.2): reason required, number kept."""
+    if not (request.user.role == "ADMIN" or _is_site_pm(request.user, doc.site)
+            or (doc.doc_type in ("PR", "LM")
+                and request.user.role == "HO_PURCHASING")):
+        return Response({"detail": "Only PM/Admin (or HO Purchasing for PR/LM) "
+                                   "can void."}, status=403)
     reason = (request.data.get("reason") or "").strip()
     if not reason:
         return Response({"detail": "A reason is required to void."}, status=400)
@@ -215,7 +497,10 @@ def _do_void(request, doc):
     _record(doc, "VOID", request, comment=reason)
     audit("document", doc.id, "DOC_VOIDED", actor=request.user,
           from_state=doc.status, to_state="VOID", detail={"reason": reason})
-    return Response(DocumentSerializer(doc, context={"request": request}).data)
+    return None
+
+
+# ===== Attachments =====
 
 
 @api_view(["POST"])
@@ -242,6 +527,9 @@ def document_attachments(request, ref):
                     status=201)
 
 
+# ===== Lists, registers, dashboards =====
+
+
 @api_view(["GET"])
 def documents_list(request):
     qs = Document.objects.select_related("site").order_by("-doc_date", "-id")
@@ -252,12 +540,102 @@ def documents_list(request):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("doc_type"):
         qs = qs.filter(doc_type=request.GET["doc_type"])
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
     return Response(
-        DocumentSerializer(qs[:200], many=True, context={"request": request}).data
+        DocumentSerializer(qs[:200], many=True,
+                           context={"request": request}).data
     )
 
 
-# ===== DPR/TWS register with gap detection (spec §6) =====
+@api_view(["GET"])
+def register_generic(request, doc_type):
+    """Registers are views over document data (spec §6) — one row per
+    document (MR: one per revision)."""
+    doc_type = doc_type.upper()
+    if doc_type not in Document.TRANSITIONS:
+        return Response({"detail": "Unknown register."}, status=404)
+    qs = Document.objects.filter(doc_type=doc_type).select_related(
+        "site", "current_revision", "created_by"
+    ).order_by("-id")
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None:
+        qs = qs.filter(site_id__in=site_ids)
+    if request.GET.get("site"):
+        qs = qs.filter(site_id=request.GET["site"])
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+
+    rows = []
+    for doc in qs[:300]:
+        revisions = list(doc.revisions.order_by("id")) if doc_type in ("MR", "MAR") \
+            else [doc.current_revision]
+        links = {}
+        for link in doc.links_from.select_related("to_document"):
+            links.setdefault(link.link_type, []).append(link.to_document.ref)
+        for link in doc.links_to.select_related("from_document"):
+            links.setdefault(link.link_type, []).append(link.from_document.ref)
+        for revision in revisions:
+            payload = (revision.payload if revision else {}) or {}
+            rows.append({
+                "ref": doc.ref,
+                "rev": revision.rev_label if revision else "R0",
+                "is_current_rev": bool(revision and revision.is_current),
+                "date": doc.doc_date.isoformat(),
+                "site_code": doc.site.code,
+                "status": "VOID" if doc.is_void else doc.status,
+                "created_by": doc.created_by.full_name,
+                "links": links,
+                "payload_summary": {
+                    k: payload.get(k)
+                    for k in ("planned_loading", "trades_covered", "required_by",
+                              "vessel", "destination", "expected_arrival",
+                              "requested_delivery", "action_taken",
+                              "manifest_ref")
+                    if payload.get(k)
+                },
+            })
+    return Response({"doc_type": doc_type, "rows": rows})
+
+
+@api_view(["GET", "PATCH"])
+def pending_items(request, pk=None):
+    if request.method == "PATCH":
+        if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+            return Response({"detail": "HO Purchasing edits the pending log."},
+                            status=403)
+        try:
+            row = PendingItem.objects.get(pk=pk)
+        except PendingItem.DoesNotExist:
+            return Response({"detail": "Not found."}, status=404)
+        for field in ("reason", "action_next"):
+            if field in request.data:
+                setattr(row, field, request.data[field])
+        if request.data.get("clear"):  # manual clear with reason (spec §6)
+            reason = (request.data.get("cleared_reason") or "").strip()
+            if not reason:
+                return Response({"detail": "cleared_reason required for manual "
+                                           "clear."}, status=400)
+            row.status = "CLEARED"
+            row.cleared_date = date.today()
+            row.cleared_reason = reason
+            audit("pending_item", row.id, "PENDING_CLEARED_MANUAL",
+                  actor=request.user, detail={"reason": reason})
+        row.save()
+        return Response(PendingItemSerializer(row).data)
+
+    qs = PendingItem.objects.select_related(
+        "site", "item", "pr_document", "cleared_lm",
+        "lm_line__revision__document"
+    )
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None:
+        qs = qs.filter(site_id__in=site_ids)
+    if request.GET.get("site"):
+        qs = qs.filter(site_id=request.GET["site"])
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"].upper())
+    return Response(PendingItemSerializer(qs[:300], many=True).data)
 
 
 @api_view(["GET"])
@@ -336,10 +714,66 @@ def dashboard_site(request, site_id):
     drafts = Document.objects.filter(
         site=site, status="DRAFT", is_void=False
     ).count()
+    incoming_lms = Document.objects.filter(
+        doc_type="LM", site=site, status="DEPARTED", is_void=False
+    ).count()
     return Response({
         "site": site.code,
         "dpr_today": {"ref": dpr_today.ref, "status": dpr_today.status}
         if dpr_today else None,
         "unverified_dprs": unverified,
         "open_drafts": drafts,
+        "incoming_lms": incoming_lms,
     })
+
+
+@api_view(["GET"])
+def dashboard_ho(request):
+    if not request.user.is_ho:
+        return Response({"detail": "HO roles only."}, status=403)
+    base = Document.objects.filter(is_void=False)
+    return Response({
+        "mrs_awaiting_action": base.filter(doc_type="MR",
+                                           status="SENT_TO_HO").count(),
+        "prs_awaiting_approval": base.filter(doc_type="PR",
+                                             status="SUBMITTED").count(),
+        "prs_awaiting_payment": base.filter(
+            doc_type="PR", status__in=["APPROVED", "PAYMENT_PROCESSING"]).count(),
+        "lms_in_transit": base.filter(doc_type="LM", status="DEPARTED").count(),
+        "pending_items_open": PendingItem.objects.filter(status="PENDING").count(),
+        "grn_shortages": base.filter(doc_type="GRN",
+                                     status="SHORTAGE_REPORTED").count(),
+    })
+
+
+# ===== Prefill conveniences (design §3) =====
+
+
+@api_view(["GET"])
+def mr_lm_prefill(request, ref):
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "MR":
+        return err or Response({"detail": "Not an MR."}, status=400)
+    rows = []
+    for line in doc.current_revision.lines.select_related("item"):
+        rows.append({
+            "item_id": line.item_id,
+            "free_text_desc": line.free_text_desc,
+            "unit": line.unit,
+            "qty_loaded": float(line.qty_to_order or line.qty_required or 0),
+            "qty_pending": 0,
+            "remarks": line.remarks,
+        })
+    return Response({"mr_ref": doc.ref, "site_id": doc.site_id,
+                     "site_code": doc.site.code, "lines": rows})
+
+
+@api_view(["GET"])
+def lm_grn_prefill(request, ref):
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "LM":
+        return err or Response({"detail": "Not an LM."}, status=400)
+    return Response({"lm_ref": doc.ref, "lines": grn_lines_from_lm(doc),
+                     "payload": {"manifest_ref": doc.ref,
+                                 "vessel": (doc.current_revision.payload or {})
+                                 .get("vessel", "")}})

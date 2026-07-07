@@ -10,6 +10,7 @@ router.register(
     "manpower-categories", views.ManpowerCategoryViewSet, basename="manpowercategory"
 )
 router.register("holidays", views.HolidayViewSet, basename="holiday")
+router.register("items", views.ItemViewSet, basename="item")
 
 urlpatterns = [
     path("health", views.health, name="health"),
@@ -24,8 +25,17 @@ urlpatterns = [
          name="document-action"),
     path("documents/<str:ref>/attachments", docs.document_attachments,
          name="document-attachments"),
+    path("documents/<str:ref>/revisions", docs.document_revise,
+         name="document-revise"),
     path("registers/dpr-tws", docs.register_dpr_tws, name="register-dpr-tws"),
+    path("registers/<str:doc_type>", docs.register_generic,
+         name="register-generic"),
+    path("pending-items", docs.pending_items, name="pending-items"),
+    path("pending-items/<int:pk>", docs.pending_items, name="pending-item"),
+    path("mr/<str:ref>/lm-prefill", docs.mr_lm_prefill, name="mr-lm-prefill"),
+    path("lm/<str:ref>/grn-prefill", docs.lm_grn_prefill, name="lm-grn-prefill"),
     path("dashboards/site/<int:site_id>", docs.dashboard_site,
          name="dashboard-site"),
+    path("dashboards/ho", docs.dashboard_ho, name="dashboard-ho"),
     path("", include(router.urls)),
 ]

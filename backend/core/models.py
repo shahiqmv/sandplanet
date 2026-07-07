@@ -225,6 +225,33 @@ class Document(models.Model):
     TRANSITIONS = {
         "DPR": {"DRAFT": {"ISSUED"}, "ISSUED": {"VERIFIED"}},
         "TWS": {"DRAFT": {"ISSUED"}, "ISSUED": {"ACKNOWLEDGED"}},
+        "MR": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},  # DRAFT = returned
+            "PM_APPROVED": {"SENT_TO_HO"},
+            "SENT_TO_HO": {"PR_RAISED", "LOADING_PLANNED"},
+            "PR_RAISED": {"LOADING_PLANNED"},
+            "LOADING_PLANNED": {"PARTIALLY_LOADED", "LOADED"},
+            "PARTIALLY_LOADED": {"PARTIALLY_LOADED", "LOADED", "CLOSED"},
+            "LOADED": {"CLOSED"},
+        },
+        "PR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"APPROVED", "DRAFT", "REJECTED", "CANCELLED"},
+            "APPROVED": {"PAYMENT_PROCESSING", "PAID_PO_ISSUED"},
+            "PAYMENT_PROCESSING": {"PAID_PO_ISSUED"},
+            "PAID_PO_ISSUED": {"CLOSED"},
+        },
+        "LM": {
+            "DRAFT": {"LOADING", "DEPARTED"},
+            "LOADING": {"DEPARTED"},
+            # DEPARTED shown as In Transit; final states set by the site's GRN
+            "DEPARTED": {"RECEIVED", "RECEIVED_WITH_SHORTAGE"},
+        },
+        "GRN": {
+            "DRAFT": {"COUNTED"},
+            "COUNTED": {"COMPLETE", "SHORTAGE_REPORTED"},
+        },
     }
 
     doc_type = models.CharField(max_length=3, choices=Type.choices)
@@ -331,3 +358,133 @@ class Attachment(models.Model):
         User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
     created_at = models.DateTimeField(auto_now_add=True)
+
+
+# ===== Item master (spec §5.0) & procurement chain (§5.5–§5.8, §6) =====
+
+
+class Item(models.Model):
+    """Company-wide catalog, owned by HO Purchasing. Units fixed per item;
+    a product handled in two units = two catalog entries (spec §5.0)."""
+
+    code = models.CharField(max_length=12, unique=True)  # ITM-00412, server-issued
+    description = models.TextField()
+    unit = models.CharField(max_length=10)
+    category = models.TextField(blank=True)  # trade/discipline
+    brand = models.TextField(blank=True)
+    spec_ref = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    merged_into = models.ForeignKey(  # duplicate resolution
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.code} — {self.description[:40]}"
+
+
+class DocumentLine(models.Model):
+    """Typed item lines for MR/PR/LM/GRN (design payload-vs-columns rule)."""
+
+    revision = models.ForeignKey(
+        DocumentRevision, on_delete=models.CASCADE, related_name="lines"
+    )
+    line_no = models.IntegerField()
+    item = models.ForeignKey(  # NULL only for flagged free-text new items
+        Item, on_delete=models.PROTECT, null=True, blank=True, related_name="lines"
+    )
+    free_text_desc = models.TextField(blank=True)
+    unit = models.CharField(max_length=10, blank=True)
+    qty_required = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    qty_stock = models.DecimalField(max_digits=12, decimal_places=2,
+                                    null=True, blank=True)
+    qty_to_order = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    qty_loaded = models.DecimalField(max_digits=12, decimal_places=2,
+                                     null=True, blank=True)
+    qty_pending = models.DecimalField(max_digits=12, decimal_places=2,
+                                      null=True, blank=True)
+    qty_manifest = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    qty_received = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    priority = models.CharField(max_length=8, blank=True)  # MR: NORMAL/URGENT
+    urgent_reason = models.TextField(blank=True)
+    amount_cash = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)  # PR vendor rows
+    amount_credit = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    vendor = models.TextField(blank=True)
+    quotation_ref = models.TextField(blank=True)
+    payment_terms = models.TextField(blank=True)
+    action_taken = models.TextField(blank=True)  # slip no. / PO no.
+    is_changed = models.BooleanField(default=False)  # MR amendment flag (§5.5 r3)
+    remarks = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["line_no"]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(item__isnull=False) | ~models.Q(free_text_desc="")
+                ),
+                name="line_item_or_free_text",
+            )
+        ]
+
+    @property
+    def description(self):
+        return self.item.description if self.item else self.free_text_desc
+
+
+class DocumentLink(models.Model):
+    LINK_TYPES = [("MR_PR", "MR→PR"), ("MR_LM", "MR→LM"), ("PR_LM", "PR→LM"),
+                  ("LM_GRN", "LM→GRN"), ("IR_NCR", "IR→NCR")]
+
+    from_document = models.ForeignKey(
+        Document, on_delete=models.PROTECT, related_name="links_from"
+    )
+    to_document = models.ForeignKey(
+        Document, on_delete=models.PROTECT, related_name="links_to"
+    )
+    link_type = models.CharField(max_length=8, choices=LINK_TYPES)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["from_document", "to_document", "link_type"],
+                name="uniq_document_link",
+            )
+        ]
+
+
+class PendingItem(models.Model):
+    """Pending Items Log (spec §6): auto-created from LM lines with
+    qty_pending > 0; cleared automatically when a later LM ships the item."""
+
+    lm_line = models.ForeignKey(
+        DocumentLine, on_delete=models.PROTECT, related_name="pending_items"
+    )
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="pending_items")
+    pr_document = models.ForeignKey(Document, on_delete=models.PROTECT,
+                                    null=True, blank=True, related_name="+")
+    item = models.ForeignKey(Item, on_delete=models.PROTECT,
+                             null=True, blank=True, related_name="+")
+    free_text_desc = models.TextField(blank=True)
+    unit = models.CharField(max_length=10, blank=True)
+    qty_pending = models.DecimalField(max_digits=12, decimal_places=2)
+    reason = models.TextField(blank=True)  # e.g. Vendor Stock-Out
+    action_next = models.TextField(blank=True)
+    status = models.CharField(max_length=10, default="PENDING")  # PENDING/CLEARED
+    cleared_date = models.DateField(null=True, blank=True)
+    cleared_lm = models.ForeignKey(Document, on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="+")
+    cleared_reason = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
