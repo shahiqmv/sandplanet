@@ -3,6 +3,18 @@ function getCookie(name) {
   return match ? decodeURIComponent(match[2]) : null;
 }
 
+export async function apiUpload(path, formData) {
+  const res = await fetch(`/api/v1${path}`, {
+    method: "POST",
+    headers: { "X-CSRFToken": getCookie("csrftoken") },
+    credentials: "same-origin",
+    body: formData,
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.detail || `Upload failed (${res.status})`);
+  return data;
+}
+
 export async function api(path, { method = "GET", body } = {}) {
   const headers = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";

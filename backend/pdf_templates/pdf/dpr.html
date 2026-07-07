@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* FRM-PRJ-01 R0 — verify against the Excel print layout (acceptance criteria) */
+  @page { size: A4 portrait; margin: 14mm 12mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #1c2b36; }
+  .band { background: #16527E; color: #fff; padding: 6px 10px; }
+  .band h1 { margin: 0; font-size: 13pt; letter-spacing: 1px; }
+  .band .sub { color: #29ABE2; font-size: 8pt; }
+  .formno { float: right; text-align: right; font-size: 8pt; color: #fff; }
+  .rule { border-bottom: 2.5px solid #29ABE2; margin-bottom: 8px; }
+  .refstamp { float: right; border: 1.5px solid #16527E; color: #16527E;
+              padding: 2px 8px; font-weight: bold; font-size: 10pt; }
+  h2 { font-size: 9.5pt; color: #16527E; border-bottom: 1px solid #29ABE2;
+       padding-bottom: 2px; margin: 10px 0 4px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
+  th, td { border: 0.6px solid #9db4c5; padding: 3px 5px; text-align: left;
+           font-size: 8.5pt; }
+  th { background: #e8f0f7; color: #16527E; }
+  thead { display: table-header-group; } /* repeat headers across pages */
+  .kv td { border: none; padding: 1.5px 4px; }
+  .kv .k { color: #5a6b78; width: 22%; }
+  .sig { width: 100%; margin-top: 14px; border-collapse: collapse; }
+  .sig td { border: 0.6px solid #9db4c5; height: 52px; vertical-align: bottom;
+            width: 33%; padding: 4px 6px; }
+  .sig .t { font-weight: bold; color: #16527E; vertical-align: top; height: auto; }
+  .stamp { color: #1a7f37; font-size: 7.5pt; }
+  .photo { width: 46%; display: inline-block; margin: 1.5%; vertical-align: top; }
+  .photo img { width: 100%; border: 1px solid #9db4c5; }
+  .photo .cap { font-size: 8pt; color: #5a6b78; }
+  .pagebreak { page-break-before: always; }
+  .void { position: fixed; top: 40%; left: 15%; font-size: 60pt; color: rgba(192,57,43,.25);
+          transform: rotate(-25deg); }
+</style>
+</head>
+<body>
+{% if doc.is_void %}<div class="void">VOID</div>{% endif %}
+<div class="band">
+  <div class="formno">FRM-PRJ-01 · R0<br>{{ rev.rev_label }}</div>
+  <h1>SAND PLANET</h1>
+  <div class="sub">DAILY PROGRESS REPORT</div>
+</div>
+<div class="rule"></div>
+
+<div class="refstamp">{{ doc.ref }}</div>
+<table class="kv">
+  <tr><td class="k">Project / Site</td><td>{{ site.name }} ({{ site.code }})</td>
+      <td class="k">Date / Day</td><td>{{ doc.doc_date|date:"d/m/y" }} — {{ doc.doc_date|date:"l" }}</td></tr>
+  <tr><td class="k">Client</td><td>{{ site.client_name }}</td>
+      <td class="k">Consultant</td><td>{{ site.consultant_name }}</td></tr>
+  <tr><td class="k">Working hours</td><td>{{ payload.working_hours|default:"" }}</td>
+      <td class="k">Weather AM / PM</td><td>{{ payload.weather_am|default:"—" }} / {{ payload.weather_pm|default:"—" }}</td></tr>
+  {% if payload.weather_am == "Rainy" or payload.weather_pm == "Rainy" %}
+  <tr><td class="k">Rain from / to</td><td>{{ payload.rain_from|default:"" }} – {{ payload.rain_to|default:"" }}</td>
+      <td class="k">Work time lost (hrs)</td><td>{{ payload.work_time_lost|default:"0" }}</td></tr>
+  {% endif %}
+</table>
+
+<h2>1. Work Done Today</h2>
+<table>
+  <thead><tr><th style="width:6%">No.</th><th>Activity</th><th style="width:22%">Location/Area/Villa</th>
+             <th style="width:10%">Progress %</th><th style="width:22%">Remarks</th></tr></thead>
+  {% for row in payload.work_done %}
+  <tr><td>{{ forloop.counter }}</td><td>{{ row.activity }}</td><td>{{ row.location }}</td>
+      <td>{{ row.progress_pct }}</td><td>{{ row.remarks }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>2. Manpower</h2>
+<table>
+  <thead><tr><th>Group</th><th>Category</th><th style="width:12%">Count</th></tr></thead>
+  {% for row in manpower_rows %}{% if row.count %}
+  <tr><td>{{ row.grp }}</td><td>{{ row.name }}</td><td>{{ row.count }}</td></tr>
+  {% endif %}{% endfor %}
+  <tr><th colspan="2">Total Manpower at Site</th><th>{{ manpower_total }}</th></tr>
+</table>
+
+<h2>3. Machinery &amp; Equipment in Use</h2>
+<table>
+  <thead><tr><th>Item</th><th style="width:10%">Nos</th><th style="width:35%">Remarks</th></tr></thead>
+  {% for row in payload.machinery %}
+  <tr><td>{{ row.item }}</td><td>{{ row.nos }}</td><td>{{ row.remarks }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>4. Key Materials at Site</h2>
+<table>
+  <thead><tr><th>Material</th><th>Unit</th><th>Opening</th><th>Received</th>
+             <th>Consumed</th><th>Balance</th><th>Remarks</th></tr></thead>
+  {% for row in payload.materials %}
+  <tr><td>{{ row.material }}</td><td>{{ row.unit }}</td><td>{{ row.opening }}</td>
+      <td>{{ row.received }}</td><td>{{ row.consumed }}</td>
+      <td>{{ row.balance }}</td><td>{{ row.remarks }}</td></tr>
+  {% endfor %}
+</table>
+
+<h2>5. Matters Affecting Progress</h2>
+<p>{{ payload.matters_affecting|default:"None."|linebreaksbr }}</p>
+
+<h2>6. Visitors / Special Events / Client &amp; Consultant Instructions</h2>
+<p>{{ payload.visitors_instructions|default:"None."|linebreaksbr }}</p>
+
+<h2>7. Safety</h2>
+<p>Accidents / incidents today:
+  <strong>{% if payload.safety.incident %}YES{% else %}No{% endif %}</strong>
+  {% if payload.safety.incident %}<br>{{ payload.safety.details|linebreaksbr }}{% endif %}</p>
+
+<table class="sig">
+  <tr><td class="t">Prepared By — Site Engineer / Admin</td>
+      <td class="t">Verified By — Project Manager</td>
+      <td class="t">For Client / Consultant</td></tr>
+  <tr>
+    <td>{% for a in approvals %}{% if a.action == "ISSUE" %}
+        <span class="stamp">Issued by {{ a.actor.full_name }} — {{ a.actor_role }} —
+        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Site Documents</span>
+        {% endif %}{% endfor %}</td>
+    <td>{% for a in approvals %}{% if a.action == "VERIFY" %}
+        <span class="stamp">Approved by {{ a.actor.full_name }} — {{ a.actor_role }} —
+        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Site Documents</span>
+        {% endif %}{% endfor %}</td>
+    <td></td>
+  </tr>
+</table>
+
+{% if photos %}
+<div class="pagebreak"></div>
+<div class="band"><h1>PROGRESS PHOTOS — {{ doc.ref }}</h1>
+  <div class="sub">{{ doc.doc_date|date:"d/m/y" }}</div></div>
+<div class="rule"></div>
+{% for p in photos %}
+<div class="photo"><img src="{{ p.src }}"><div class="cap">{{ forloop.counter }}. {{ p.caption }}</div></div>
+{% endfor %}
+{% endif %}
+</body>
+</html>

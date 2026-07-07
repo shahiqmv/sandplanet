@@ -190,3 +190,144 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ["-at"]
+
+
+# ===== Documents (design §2, spec §4/§5/§7) =====
+
+
+class DocCounter(models.Model):
+    """Gap-free numbering: row-locked (SELECT FOR UPDATE) at ref issue."""
+
+    doc_type = models.CharField(max_length=3)
+    site = models.ForeignKey(  # NULL for global PR/LM
+        Site, on_delete=models.PROTECT, null=True, blank=True
+    )
+    last_no = models.IntegerField(default=0)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["doc_type", "site"], name="uniq_counter")
+        ]
+
+
+class Document(models.Model):
+    class Type(models.TextChoices):
+        DPR = "DPR"
+        TWS = "TWS"
+        IR = "IR"
+        MAR = "MAR"
+        MR = "MR"
+        GRN = "GRN"
+        PR = "PR"
+        LM = "LM"
+
+    # Per-type state machines (spec §7.1). Void is a flag, not a state.
+    TRANSITIONS = {
+        "DPR": {"DRAFT": {"ISSUED"}, "ISSUED": {"VERIFIED"}},
+        "TWS": {"DRAFT": {"ISSUED"}, "ISSUED": {"ACKNOWLEDGED"}},
+    }
+
+    doc_type = models.CharField(max_length=3, choices=Type.choices)
+    ref = models.CharField(max_length=20, unique=True)  # DPR-SJR-001 / PR-014
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="documents")
+    doc_date = models.DateField()  # the form's principal date
+    status = models.CharField(max_length=30, default="DRAFT")
+    current_revision = models.ForeignKey(
+        "DocumentRevision", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+",
+    )
+    previous_ir = models.ForeignKey(  # IR resubmission chain (spec §4.2)
+        "self", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    is_void = models.BooleanField(default=False)
+    void_reason = models.TextField(blank=True)
+    voided_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    voided_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, related_name="documents_created"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["doc_type", "site", "doc_date"])]
+
+    def __str__(self):
+        return self.ref
+
+
+class DocumentRevision(models.Model):
+    """Immutable snapshot once issued_at is set (spec §7.2)."""
+
+    document = models.ForeignKey(
+        Document, on_delete=models.PROTECT, related_name="revisions"
+    )
+    rev_label = models.CharField(max_length=4, default="R0")
+    payload = models.JSONField()  # full form contents (design payload-vs-columns rule)
+    is_current = models.BooleanField(default=True)
+    issued_at = models.DateTimeField(null=True, blank=True)  # set at issue → locks it
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "rev_label"], name="uniq_revision_label"
+            )
+        ]
+
+
+class Approval(models.Model):
+    """Every workflow action, immutable (spec §7.2)."""
+
+    document = models.ForeignKey(
+        Document, on_delete=models.PROTECT, related_name="approvals"
+    )
+    revision = models.ForeignKey(
+        DocumentRevision, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="approvals",
+    )
+    action = models.CharField(max_length=30)  # SUBMIT/APPROVE/RETURN/ISSUE/VERIFY/...
+    result = models.CharField(max_length=40, blank=True)  # client results
+    actor = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    actor_role = models.CharField(max_length=20)
+    comment = models.TextField(blank=True)
+    acted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["acted_at"]
+
+
+def attachment_path(instance, filename):
+    ref = instance.document.ref if instance.document else "misc"
+    if instance.kind == "GENERATED_PDF":  # design §4: pdf/{ref}/{rev}-{milestone}.pdf
+        return f"pdf/{ref}/{filename}"
+    return f"attachments/{ref}/{filename}"
+
+
+class Attachment(models.Model):
+    KINDS = [
+        ("PHOTO", "Photo"), ("ENCLOSURE", "Enclosure"), ("QUOTATION", "Quotation"),
+        ("EVIDENCE", "Evidence"), ("GENERATED_PDF", "Generated PDF"),
+    ]
+
+    document = models.ForeignKey(
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="attachments",
+    )
+    revision = models.ForeignKey(
+        DocumentRevision, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="attachments",
+    )
+    kind = models.CharField(max_length=20, choices=KINDS)
+    file = models.FileField(upload_to=attachment_path)
+    file_name = models.TextField(blank=True)
+    content_type = models.TextField(blank=True)
+    size_bytes = models.BigIntegerField(default=0)
+    caption = models.TextField(blank=True)  # DPR photo captions
+    uploaded_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)

@@ -17,6 +17,13 @@ SECRET_KEY = os.environ.get(
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
 ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
+# Vite dev server proxies /api same-origin in production builds; in dev the
+# browser origin is the Vite port, so trust it explicitly (dev only).
+CSRF_TRUSTED_ORIGINS = os.environ.get(
+    "CSRF_TRUSTED_ORIGINS",
+    "http://localhost:5173,http://127.0.0.1:5173" if DEBUG else "",
+).split(",") if (os.environ.get("CSRF_TRUSTED_ORIGINS") or DEBUG) else []
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -45,7 +52,7 @@ TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
         # frontend/dist lets Django serve the built SPA (same origin, design §1)
-        "DIRS": [BASE_DIR.parent / "frontend" / "dist"],
+        "DIRS": [BASE_DIR.parent / "frontend" / "dist", BASE_DIR / "pdf_templates"],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
@@ -107,6 +114,30 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Files: Spaces/MinIO when configured (design §1); local-disk fallback for
+# dev without Docker only (DECISIONS.md D3). Production must set S3_* env.
+if os.environ.get("S3_ENDPOINT_URL"):
+    STORAGES = {
+        "default": {
+            "BACKEND": "storages.backends.s3.S3Storage",
+            "OPTIONS": {
+                "endpoint_url": os.environ["S3_ENDPOINT_URL"],
+                "access_key": os.environ.get("S3_ACCESS_KEY"),
+                "secret_key": os.environ.get("S3_SECRET_KEY"),
+                "bucket_name": os.environ.get("S3_BUCKET", "sandplanet-local"),
+            },
+        },
+        "staticfiles": {
+            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        },
+    }
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+
+# PDFs block issue when true (staging/production); local dev may lack the
+# WeasyPrint GTK libraries (DECISIONS.md D4).
+PDF_REQUIRED = os.environ.get("PDF_REQUIRED", "0") == "1"
 STATICFILES_DIRS = (
     [BASE_DIR.parent / "frontend" / "dist" / "assets"]
     if (BASE_DIR.parent / "frontend" / "dist" / "assets").exists()
