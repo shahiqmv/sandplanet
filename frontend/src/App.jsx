@@ -9,6 +9,7 @@ import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollPage from "./PayrollPage.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
+import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
@@ -224,6 +225,7 @@ export default function App() {
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
             {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
+              ["manage", "Site Setup"],
               ["items", "Items"], ["suppliers", "Suppliers"],
               ["employees", "Employees"],
               ...(["HO_HR", "FINANCE", "ADMIN"].includes(me.role)
@@ -407,6 +409,9 @@ export default function App() {
             <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "manage" && (
+            <SitesManagePage me={me} onChanged={bump} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />

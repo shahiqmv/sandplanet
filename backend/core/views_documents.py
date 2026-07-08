@@ -84,6 +84,17 @@ def _is_site_pm(user, site):
     return user.role == User.Role.PM and pm is not None and pm.id == user.id
 
 
+def _is_pm_for(user, doc):
+    """PM gate for a document: the PROJECT PM when the document belongs to
+    a project that has one (R4 management round); the site PM always
+    remains authorised as fallback."""
+    if user.role != User.Role.PM:
+        return False
+    if doc.project_id and doc.project.pm_id and doc.project.pm_id == user.id:
+        return True
+    return _is_site_pm(user, doc.site)
+
+
 def _can(request, doc_type, roles):
     return request.user.role in roles or request.user.role == "ADMIN"
 
@@ -360,9 +371,10 @@ def _record(doc, action, request, comment="", result=""):
 def _apply(request, doc, new_status, action, roles=None, pm_gate=False,
            lock_revision=False, pdf_milestone=None, comment=""):
     if pm_gate:
-        if not (_is_site_pm(request.user, doc.site) or
+        if not (_is_pm_for(request.user, doc) or
                 request.user.role == "ADMIN"):
-            return Response({"detail": "Only the site's PM can do this."},
+            return Response({"detail": "Only the project's PM (or the "
+                                       "site's PM) can do this."},
                             status=403)
     elif roles is not None and not _can(request, doc.doc_type, roles):
         return Response({"detail": f"Role cannot {action.lower()} this document."},
@@ -662,9 +674,9 @@ def _do_verify(request, doc, comment):
 def _do_close(request, doc, comment):
     if doc.doc_type == "IR":
         # Part C: corrective action taken, closed by the PM (spec §5.3)
-        if not (_is_site_pm(request.user, doc.site)
+        if not (_is_pm_for(request.user, doc)
                 or request.user.role == "ADMIN"):
-            return Response({"detail": "Only the site's PM closes Part C."},
+            return Response({"detail": "Only the project's PM closes Part C."},
                             status=403)
         if not comment.strip():
             return Response({"detail": "Describe the corrective action taken."},

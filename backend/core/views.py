@@ -18,7 +18,12 @@ from .models import (
     User,
     UserSiteAllocation,
 )
-from .permissions import IsAdmin, IsAdminOrReadOnly, scoped_site_ids
+from .permissions import (
+    IsAdmin,
+    IsAdminOrReadOnly,
+    IsSiteManagerOrReadOnly,
+    scoped_site_ids,
+)
 from .serializers import (
     AllocationSerializer,
     HolidaySerializer,
@@ -97,7 +102,7 @@ def _me_payload(user):
 
 class SiteViewSet(viewsets.ModelViewSet):
     serializer_class = SiteSerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsSiteManagerOrReadOnly]  # Admin + Director (R4)
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
@@ -233,6 +238,15 @@ class HolidayViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAdminOrReadOnly]
     queryset = Holiday.objects.all().order_by("day")
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pm_list(request):
+    """Active PM users, for site/project PM assignment pick-lists."""
+    pms = User.objects.filter(role=User.Role.PM, is_active=True) \
+        .order_by("full_name")
+    return Response([{"id": u.id, "full_name": u.full_name} for u in pms])
 
 
 @api_view(["GET", "PUT"])

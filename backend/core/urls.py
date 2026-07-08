@@ -21,6 +21,7 @@ urlpatterns = [
     path("auth/logout", views.auth_logout, name="auth-logout"),
     path("auth/me", views.auth_me, name="auth-me"),
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
+    path("pms", views.pm_list, name="pm-list"),
     path("documents", docs.document_create, name="document-create"),
     path("documents/list", docs.documents_list, name="documents-list"),
     path("documents/<str:ref>", docs.document_detail, name="document-detail"),

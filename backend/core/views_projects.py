@@ -25,16 +25,33 @@ def _can_view_value(user, project):
 
 class ProjectSerializer(serializers.ModelSerializer):
     site_code = serializers.CharField(source="site.code", read_only=True)
+    pm_name = serializers.CharField(source="pm.full_name", read_only=True,
+                                    default=None)
     activity_count = serializers.SerializerMethodField()
     overall_progress = serializers.SerializerMethodField()
+    latest_manpower = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
         fields = ["id", "site", "site_code", "code", "title", "scope",
-                  "boq_ref", "contract_value", "start_date",
+                  "boq_ref", "contract_value", "loa_date", "pm", "pm_name",
+                  "manpower_summary", "start_date",
                   "planned_completion", "actual_completion", "status",
-                  "activity_count", "overall_progress"]
+                  "activity_count", "overall_progress", "latest_manpower"]
         read_only_fields = ["site", "status"]
+
+    def get_latest_manpower(self, obj):
+        """Total manpower from the project's most recent issued DPR."""
+        dpr = obj.documents.filter(doc_type="DPR", is_void=False,
+                                   status__in=["ISSUED", "VERIFIED"]) \
+            .order_by("-doc_date").first()
+        if not dpr or not dpr.current_revision:
+            return None
+        counts = (dpr.current_revision.payload or {}).get("manpower", {}) or {}
+        try:
+            return sum(int(v or 0) for v in counts.values())
+        except (TypeError, ValueError):
+            return None
 
     def get_activity_count(self, obj):
         return obj.activities.count()

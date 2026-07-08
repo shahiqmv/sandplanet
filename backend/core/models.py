@@ -76,6 +76,7 @@ class Site(models.Model):
         max_length=10, choices=Status.choices, default=Status.AWARDED
     )
     client_name = models.TextField(blank=True)
+    client_address = models.TextField(blank=True)
     client_contact = models.TextField(blank=True)
     client_designation = models.TextField(blank=True)
     client_phone = models.TextField(blank=True)
@@ -729,10 +730,15 @@ class Project(models.Model):
                              related_name="projects")
     code = models.CharField(max_length=12)  # short label, e.g. OWV-POOLS
     title = models.TextField()
-    scope = models.TextField(blank=True)
+    scope = models.TextField(blank=True)  # general summary
     boq_ref = models.TextField(blank=True)
     contract_value = models.DecimalField(  # same sensitivity rule as sites
         max_digits=14, decimal_places=2, null=True, blank=True)
+    loa_date = models.DateField(null=True, blank=True)  # letter of award
+    pm = models.ForeignKey(  # Project PM — approval routing prefers this
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="pm_projects")
+    manpower_summary = models.TextField(blank=True)  # e.g. "1 SE, 2 masons…"
     start_date = models.DateField(null=True, blank=True)
     planned_completion = models.DateField(null=True, blank=True)
     actual_completion = models.DateField(null=True, blank=True)

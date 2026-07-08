@@ -172,3 +172,46 @@ class ProgrammeTests(ProjectBase):
             f"&to={day.isoformat()}").data
         self.assertIsNotNone(pools_reg["rows"][0]["dpr_ref"])
         self.assertTrue(spa_reg["rows"][0]["gap"])
+
+
+class ProjectPmRoutingTests(ProjectBase):
+    def test_project_pm_approves_project_documents(self):
+        # a second PM handles POOLS17 specifically (not the site PM)
+        project_pm = make_user("pm2", User.Role.PM, site=self.site)
+        stranger_pm = make_user("pm3", User.Role.PM, site=self.site)
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}",
+                              {"pm": project_pm.id}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["pm_name"], project_pm.full_name)
+
+        # an IR under the project
+        self.client.force_authenticate(self.se)
+        ir = self.client.post("/api/v1/documents", {
+            "doc_type": "IR", "site_id": self.site.id,
+            "project_id": self.pools.id,
+            "payload": {"discipline": "Civil",
+                        "work_description": "Footing rebar"},
+        }, format="json").data
+        self.client.post(f"/api/v1/documents/{ir['ref']}/actions/submit")
+
+        # unrelated PM: refused; project PM: approves
+        self.client.force_authenticate(stranger_pm)
+        r = self.client.post(f"/api/v1/documents/{ir['ref']}/actions/approve")
+        self.assertEqual(r.status_code, 403)
+        self.client.force_authenticate(project_pm)
+        r = self.client.post(f"/api/v1/documents/{ir['ref']}/actions/approve")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "PM_APPROVED")
+
+    def test_site_pm_remains_fallback(self):
+        self.client.force_authenticate(self.se)
+        ir = self.client.post("/api/v1/documents", {
+            "doc_type": "IR", "site_id": self.site.id,
+            "project_id": self.pools.id,
+            "payload": {"discipline": "Civil", "work_description": "x"},
+        }, format="json").data
+        self.client.post(f"/api/v1/documents/{ir['ref']}/actions/submit")
+        self.client.force_authenticate(self.pm)  # site PM, no project PM set
+        r = self.client.post(f"/api/v1/documents/{ir['ref']}/actions/approve")
+        self.assertEqual(r.status_code, 200)
