@@ -1,7 +1,7 @@
 """Projects under sites + programme milestones (DECISIONS.md R4)."""
 
 import re
-from datetime import datetime
+from datetime import date, datetime
 
 from rest_framework import serializers
 from rest_framework.decorators import api_view
@@ -35,7 +35,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         model = Project
         fields = ["id", "site", "site_code", "code", "title", "scope",
                   "boq_ref", "contract_value", "loa_date", "pm", "pm_name",
-                  "manpower_summary", "start_date",
+                  "manpower_summary", "manpower_plan", "start_date",
                   "planned_completion", "actual_completion", "status",
                   "activity_count", "overall_progress", "latest_manpower"]
         read_only_fields = ["site", "status"]
@@ -355,3 +355,98 @@ def dashboard_portfolio(request):
             "open_items": open_items, "health": health,
         })
     return Response({"counts": counts, "projects": rows})
+
+
+def _month_span(start, finish):
+    """[(label, days)] month columns across the programme span."""
+    import calendar
+    from datetime import date as ddate
+
+    months = []
+    y, m = start.year, start.month
+    while (y, m) <= (finish.year, finish.month):
+        first = ddate(y, m, 1)
+        last = ddate(y, m, calendar.monthrange(y, m)[1])
+        days = (min(last, finish) - max(first, start)).days + 1
+        months.append((first.strftime("%b %y"), days))
+        m += 1
+        if m == 13:
+            y, m = y + 1, 1
+    return months
+
+
+@api_view(["GET"])
+def programme_pdf(request, pk):
+    """The award package (owner): the construction programme as a
+    letterhead PDF — Gantt + activity table + planned-manpower histogram
+    — downloaded and sent to the client upon award."""
+    try:
+        project = Project.objects.select_related("site").get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and project.site_id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+
+    from django.http import HttpResponse
+    from django.template.loader import render_to_string
+
+    from .pdf import company_info, logo_src
+
+    activities = list(project.activities.all())
+    dated = [a for a in activities if a.start and (a.finish or a.start)]
+    rows, months = [], []
+    if dated:
+        span_start = min(a.start for a in dated)
+        span_end = max((a.finish or a.start) for a in dated)
+        span = max((span_end - span_start).days + 1, 1)
+        total_days = span
+        months = [{"label": lab, "width": round(100 * d / total_days, 3)}
+                  for lab, d in _month_span(span_start, span_end)]
+        for a in activities:
+            row = {"name": a.name, "indent": a.indent,
+                   "is_milestone": a.is_milestone,
+                   "duration": a.duration_days,
+                   "start": a.start, "finish": a.finish,
+                   "progress": float(a.progress), "bar": None}
+            if a.start:
+                end = a.finish or a.start
+                offset = 100 * (a.start - span_start).days / span
+                width = 100 * ((end - a.start).days + 1) / span
+                row["bar"] = {"offset": round(offset, 3),
+                              "width": max(round(width, 3), 0.4)}
+            rows.append(row)
+    plan = []
+    counts = [int(p.get("workers") or 0) for p in project.manpower_plan or []]
+    peak = max(counts, default=0)
+    for p in project.manpower_plan or []:
+        w = int(p.get("workers") or 0)
+        try:
+            label = datetime.strptime(p.get("month", ""), "%Y-%m") \
+                .strftime("%b %y")
+        except ValueError:
+            label = p.get("month", "")
+        plan.append({"label": label, "workers": w,
+                     "height": round(100 * w / peak, 1) if peak else 0})
+
+    html = render_to_string("pdf/programme.html", {
+        "project": project, "site": project.site,
+        "logo_src": logo_src(), "co": company_info(),
+        "rows": rows, "months": months, "plan": plan, "peak": peak,
+        "generated": date.today().strftime("%d.%m.%Y"),
+    })
+    try:
+        from weasyprint import HTML
+
+        from django.conf import settings
+
+        pdf_bytes = HTML(string=html,
+                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:
+        return Response({"detail": "PDF engine unavailable on this "
+                                   "server."}, status=503)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = (
+        f'attachment; filename="Programme-{project.site.code}-'
+        f'{project.code}.pdf"')
+    return response

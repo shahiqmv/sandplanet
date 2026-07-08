@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  /* Award package: construction programme + manpower histogram —
+     landscape for the Gantt */
+  @page { size: A4 landscape; margin: 10mm 10mm 22mm 10mm; }
+
+  .meta td { font-size: 8pt; }
+  table.gantt-table td { height: 15px; padding: 1px 5px; font-size: 7.5pt; }
+  .tl { position: relative; padding: 0 !important; }
+  /* WeasyPrint has no `inset` shorthand — explicit edges */
+  .tl .track { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+  .tl .bar { position: absolute; top: 3px; height: 9px;
+             background: #29ABE2; border-radius: 2px; }
+  .tl .bar.summary { background: #16527E; top: 5px; height: 5px; }
+  .tl .bar .done { display: block; height: 100%;
+                   background: rgba(22,82,126,.55); }
+  .tl .ms { position: absolute; top: 1px; font-size: 8pt; color: #9A5B00; }
+  .months { display: flex; }
+  .months span { font-size: 6.5pt; color: #6a7681; text-align: center;
+                 border-left: 0.5px solid #A9B6C0; overflow: hidden;
+                 white-space: nowrap; }
+  .grid { background-image: repeating-linear-gradient(
+            to right, #EFEAE0 0 0.4px, transparent 0.4px 100%); }
+
+  /* Manpower histogram */
+  .histo { display: flex; align-items: flex-end; gap: 4px;
+           height: 60mm; margin-top: 6mm; border-bottom: 1px solid #A9B6C0;
+           border-left: 1px solid #A9B6C0; padding: 0 4px; }
+  .histo .col { flex: 1; display: flex; flex-direction: column;
+                justify-content: flex-end; height: 100%; text-align: center; }
+  .histo .n { font-size: 7.5pt; font-weight: 700; color: #10344F; }
+  .histo .fill { background: #29ABE2; border-radius: 2px 2px 0 0; }
+  .histo-labels { display: flex; gap: 4px; padding: 0 4px; }
+  .histo-labels span { flex: 1; text-align: center; font-size: 6.5pt;
+                       color: #6a7681; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="Programme" %}
+{% include "pdf/_letterhead.html" with title="CONSTRUCTION PROGRAMME" %}
+
+<table class="meta">
+  <tr><td class="lbl" style="width:12%">Project</td>
+      <td style="width:38%">{{ project.title }} ({{ project.code }})</td>
+      <td class="lbl" style="width:12%">Client</td>
+      <td>{{ site.client_name }}</td></tr>
+  <tr><td class="lbl">Site</td><td>{{ site.name }} ({{ site.code }})</td>
+      <td class="lbl">LOA / Start / Finish</td>
+      <td>{{ project.loa_date|date:"d.m.Y"|default:"—" }} ·
+          {{ project.start_date|date:"d.m.Y"|default:"—" }} ·
+          {{ project.planned_completion|date:"d.m.Y"|default:"—" }}</td></tr>
+  <tr><td class="lbl">Prepared</td><td>{{ generated }}</td>
+      <td class="lbl">BOQ Ref</td><td>{{ project.boq_ref|default:"—" }}</td></tr>
+</table>
+
+{% if rows %}
+<h2>1.&nbsp; PROGRAMME OF WORKS</h2>
+<table class="gantt-table">
+  <thead>
+    <tr>
+      <th style="width:26%">Activity</th>
+      <th style="width:5%">Days</th>
+      <th style="width:7%">Start</th>
+      <th style="width:7%">Finish</th>
+      <th>
+        <div class="months">
+          {% for m in months %}<span style="width:{{ m.width }}%">{{ m.label }}</span>{% endfor %}
+        </div>
+      </th>
+    </tr>
+  </thead>
+  {% for r in rows %}
+  <tr>
+    <td style="padding-left:{{ r.indent }}0px;
+               {% if r.indent == 0 %}font-weight:700;background:#EAF1F6;{% endif %}">
+      {% if r.is_milestone %}◆ {% endif %}{{ r.name }}</td>
+    <td class="ctr">{{ r.duration|default_if_none:"" }}</td>
+    <td class="ctr">{{ r.start|date:"d/m/y"|default:"" }}</td>
+    <td class="ctr">{{ r.finish|date:"d/m/y"|default:"" }}</td>
+    <td class="tl">
+      <div class="track grid">
+        {% if r.bar %}
+          {% if r.is_milestone %}
+            <span class="ms" style="left:{{ r.bar.offset }}%">◆</span>
+          {% else %}
+            <span class="bar{% if r.indent == 0 %} summary{% endif %}"
+                  style="left:{{ r.bar.offset }}%;width:{{ r.bar.width }}%">
+              <span class="done" style="width:{{ r.progress }}%"></span>
+            </span>
+          {% endif %}
+        {% endif %}
+      </div>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<p class="note">Solid fill inside a bar shows progress to date. ◆ = milestone.</p>
+{% endif %}
+
+{% if plan %}
+<div class="pagebreak"></div>
+{% include "pdf/_letterhead.html" with title="MANPOWER HISTOGRAM" %}
+<table class="meta">
+  <tr><td class="lbl" style="width:12%">Project</td>
+      <td style="width:38%">{{ project.title }} ({{ project.code }})</td>
+      <td class="lbl" style="width:12%">Peak manpower</td>
+      <td>{{ peak }}</td></tr>
+</table>
+<h2>2.&nbsp; PLANNED MANPOWER — BY MONTH</h2>
+<div class="histo">
+  {% for p in plan %}
+  <div class="col">
+    <span class="n">{{ p.workers }}</span>
+    <span class="fill" style="height:{{ p.height }}%"></span>
+  </div>
+  {% endfor %}
+</div>
+<div class="histo-labels">
+  {% for p in plan %}<span>{{ p.label }}</span>{% endfor %}
+</div>
+{% if project.manpower_summary %}
+<p class="note" style="margin-top:6mm">{{ project.manpower_summary }}</p>
+{% endif %}
+{% endif %}
+</body>
+</html>

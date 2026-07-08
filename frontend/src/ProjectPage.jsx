@@ -12,6 +12,7 @@ import { Chip, Eyebrow, RefStamp, Stat, StatusChip, card, ghostButton, td,
 const TABS = [
   ["overview", "Overview", true],
   ["programme", "Programme", true],
+  ["manpower", "Manpower plan", true],
   ["documents", "Documents", true],
   ["bom", "BOM · Phase B", false],
   ["budget", "Budget · later", false],
@@ -66,8 +67,15 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
           <StatusChip status={project.status} />
           <span style={{ fontSize: 13, color: "var(--muted)" }}>
             {project.site_code}</span>
-          <button onClick={onClose}
-                  style={{ ...ghostButton, marginLeft: "auto" }}>← Back</button>
+          <a href={`/api/v1/projects/${project.id}/programme.pdf`}
+             target="_blank" rel="noreferrer"
+             title="The award package: programme Gantt + activity table +
+manpower histogram, on the letterhead — send to the client"
+             style={{ marginLeft: "auto", fontSize: 13,
+                      color: "var(--navy)", fontWeight: 600 }}>
+            ⬇ Programme PDF
+          </a>
+          <button onClick={onClose} style={ghostButton}>← Back</button>
         </div>
         <div style={{ display: "flex", gap: 6, marginTop: 14,
                       flexWrap: "wrap" }}>
@@ -144,6 +152,10 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
         </section>
       )}
 
+      {tab === "manpower" && (
+        <ManpowerPlanTab project={project} me={me} onSaved={load} />
+      )}
+
       {tab === "documents" && (
         <section style={card}>
           {!docs ? "Loading…" : (
@@ -164,6 +176,119 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
         </section>
       )}
     </>
+  );
+}
+
+// Planned manpower per month — feeds the histogram sent to the client
+// with the programme upon award (owner).
+function ManpowerPlanTab({ project, me, onSaved }) {
+  const [rows, setRows] = useState(
+    project.manpower_plan?.length ? project.manpower_plan
+      : [{ month: "", workers: "" }]);
+  const [notice, setNotice] = useState(null);
+  const [error, setError] = useState(null);
+  const canManage = ["PM", "DIRECTOR", "ADMIN"].includes(me.role);
+  const clean = rows.filter((r) => r.month && parseInt(r.workers, 10) > 0);
+  const peak = Math.max(...clean.map((r) => parseInt(r.workers, 10)), 1);
+
+  async function save() {
+    setError(null);
+    try {
+      await api(`/projects/${project.id}`, {
+        method: "PATCH",
+        body: { manpower_plan: clean.map((r) => ({
+          month: r.month, workers: parseInt(r.workers, 10) })) },
+      });
+      setNotice("Manpower plan saved — it prints on the Programme PDF.");
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  return (
+    <section style={card}>
+      <Eyebrow meta={clean.length ? `peak ${peak}` : null}>
+        Planned manpower by month
+      </Eyebrow>
+      {clean.length > 0 && (
+        <div style={{ display: "flex", alignItems: "flex-end", gap: 6,
+                      height: 120, borderBottom: "1px solid var(--line)",
+                      borderLeft: "1px solid var(--line)",
+                      padding: "0 6px", maxWidth: 640, marginBottom: 4 }}>
+          {clean.map((r, i) => (
+            <div key={i} style={{ flex: 1, display: "flex",
+                                  flexDirection: "column",
+                                  justifyContent: "flex-end",
+                                  textAlign: "center", height: "100%" }}>
+              <div style={{ fontSize: 11, fontWeight: 700,
+                            color: "var(--navy)" }}>{r.workers}</div>
+              <div style={{ background: "var(--sky)",
+                            borderRadius: "3px 3px 0 0",
+                            height: `${(100 * r.workers) / peak}%` }} />
+            </div>
+          ))}
+        </div>
+      )}
+      {clean.length > 0 && (
+        <div style={{ display: "flex", gap: 6, maxWidth: 640,
+                      padding: "0 6px", marginBottom: 14 }}>
+          {clean.map((r, i) => (
+            <span key={i} style={{ flex: 1, textAlign: "center",
+                                   fontSize: 10.5,
+                                   color: "var(--faint)" }}>{r.month}</span>
+          ))}
+        </div>
+      )}
+      {canManage ? (
+        <>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: "flex", gap: 8,
+                                  alignItems: "center", marginBottom: 6 }}>
+              <input type="month" value={r.month}
+                     onChange={(e) => setRows(rows.map((x, j) =>
+                       j === i ? { ...x, month: e.target.value } : x))}
+                     style={{ padding: "6px 8px", borderRadius: 8,
+                              border: "1px solid #BFD6E6" }} />
+              <input type="number" min="0" value={r.workers}
+                     placeholder="workers"
+                     onChange={(e) => setRows(rows.map((x, j) =>
+                       j === i ? { ...x, workers: e.target.value } : x))}
+                     style={{ width: 100, padding: "6px 8px",
+                              borderRadius: 8,
+                              border: "1px solid #BFD6E6" }} />
+              <button onClick={() => setRows(rows.filter((_, j) => j !== i))}
+                      style={{ ...ghostButton, padding: "2px 8px",
+                               color: "var(--red-fg)" }}>×</button>
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button onClick={() => setRows([...rows,
+                                            { month: "", workers: "" }])}
+                    style={{ ...ghostButton, padding: "4px 12px" }}>
+              + Add month
+            </button>
+            <button onClick={save} disabled={!clean.length}
+                    style={{ background: "var(--navy)", color: "#fff",
+                             border: "none", borderRadius: 8,
+                             padding: "6px 16px", fontWeight: 600,
+                             cursor: "pointer" }}>
+              Save plan
+            </button>
+          </div>
+        </>
+      ) : (
+        !clean.length && (
+          <p style={{ fontSize: 13, color: "var(--muted)" }}>
+            No manpower plan yet — the PM enters the planned workers per
+            month here.</p>
+        )
+      )}
+      {notice && <p style={{ color: "var(--green-fg)", fontSize: 13 }}>
+        {notice}</p>}
+      {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>
+        {error}</p>}
+    </section>
   );
 }
 

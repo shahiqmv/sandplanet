@@ -742,6 +742,9 @@ class Project(models.Model):
         User, on_delete=models.PROTECT, null=True, blank=True,
         related_name="pm_projects")
     manpower_summary = models.TextField(blank=True)  # e.g. "1 SE, 2 masons…"
+    # Planned manpower per month [{"month": "2026-05", "workers": 45}] —
+    # the histogram sent to the client with the programme upon award
+    manpower_plan = models.JSONField(default=list, blank=True)
     start_date = models.DateField(null=True, blank=True)
     planned_completion = models.DateField(null=True, blank=True)
     actual_completion = models.DateField(null=True, blank=True)

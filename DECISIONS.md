@@ -205,3 +205,14 @@ site-wide daily reports carrying rows tagged to this project.
 Phase B decided: the QS builds the BOM from the BOQ (manual, assisted) —
 no automatic tender-BOQ conversion. Phase C: budget via project-tagged
 procurement; tender module.
+
+## 2026-07-08 — R10 addendum: programme export + manpower histogram (award package)
+Owner: the programme and manpower histogram are SENT to the client upon
+award. Added: Project.manpower_plan (planned workers per month, edited on
+the workspace's new "Manpower plan" tab with a live histogram preview)
+and GET /projects/{id}/programme.pdf — a landscape letterhead PDF with
+the programme of works (activity table + CSS Gantt: month grid, navy
+summary bars, sky task bars with progress fill, milestone diamonds) and
+a MANPOWER HISTOGRAM page (bars per month, peak, manpower summary note).
+Downloaded via "⬇ Programme PDF" on the project page; a one-off export,
+not a numbered document. WeasyPrint quirk: no `inset` shorthand.

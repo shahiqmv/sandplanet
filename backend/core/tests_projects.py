@@ -256,3 +256,26 @@ class ProjectWorkspaceTests(ProjectBase):
                               {"predecessors": str(a.id)}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["predecessors"], str(a.id))
+
+
+class ProgrammeExportTests(ProjectBase):
+    def test_manpower_plan_roundtrip(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}", {
+            "manpower_plan": [{"month": "2026-05", "workers": 20},
+                              {"month": "2026-06", "workers": 45}],
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["manpower_plan"][1]["workers"], 45)
+
+    def test_programme_pdf_downloads(self):
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/projects/{self.pools.id}/programme",
+                         {"paste": SAMPLE_PASTE}, format="json")
+        self.client.patch(f"/api/v1/projects/{self.pools.id}", {
+            "manpower_plan": [{"month": "2026-05", "workers": 20}],
+        }, format="json")
+        r = self.client.get(f"/api/v1/projects/{self.pools.id}/programme.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertIn("Programme-VKR-POOLS17.pdf", r["Content-Disposition"])
