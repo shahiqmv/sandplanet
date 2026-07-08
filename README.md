@@ -1,4 +1,4 @@
-# Sand Planet — Site Documents
+# Sand Planet — Project Management App
 
 Production web application for Sand Planet's site documentation (DPR, TWS, IR,
 MAR, MR, PR, LM, GRN), registers, and site timesheets. Authoritative documents:

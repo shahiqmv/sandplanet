@@ -10,9 +10,6 @@ export default function EmployeesPage({ me, sites }) {
   const [categories, setCategories] = useState([]);
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
-  const [period, setPeriod] = useState(() =>
-    new Date().toISOString().slice(0, 7));
-  const [payrollSite, setPayrollSite] = useState("");
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
@@ -48,10 +45,6 @@ export default function EmployeesPage({ me, sites }) {
     load();
   }
 
-  const [year, month] = period.split("-");
-  const exportUrl = `/api/v1/payroll-export/${year}/${+month}?export=xlsx` +
-    (payrollSite ? `&site=${payrollSite}` : "");
-
   return (
     <>
       <section style={card}>
@@ -60,25 +53,6 @@ export default function EmployeesPage({ me, sites }) {
           <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
             Employees
           </h2>
-          {seesPay && (
-            <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input type="month" value={period}
-                     onChange={(e) => setPeriod(e.target.value)}
-                     style={{ ...inputStyle, width: 150 }} />
-              <select value={payrollSite}
-                      onChange={(e) => setPayrollSite(e.target.value)}
-                      style={{ ...inputStyle, width: 170 }}>
-                <option value="">All sites</option>
-                {sites.filter((s) => !s.is_head_office).map((s) => (
-                  <option key={s.id} value={s.id}>{s.code}</option>
-                ))}
-              </select>
-              <a href={exportUrl} style={{ ...buttonStyle,
-                                           textDecoration: "none" }}>
-                ⬇ Payroll export (Excel)
-              </a>
-            </span>
-          )}
         </div>
 
         {isHr && (

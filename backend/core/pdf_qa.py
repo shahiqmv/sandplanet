@@ -29,7 +29,7 @@ def _stamp_for(approvals, action):
         if a.action == action:
             return (f"{a.actor.full_name} — {a.actor_role} — "
                     f"{a.acted_at.strftime('%d/%m/%y %H:%M')} — "
-                    f"approved electronically via Sand Planet Site Documents")
+                    f"approved electronically via Sand Planet Project Management App")
     return ""
 
 

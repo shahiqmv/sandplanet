@@ -719,10 +719,12 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           <thead>
             <tr>
               {isPR ? (<>
-                <th style={th}>Vendor</th><th style={th}>Quotation</th>
-                <th style={th}>Terms</th><th style={th}>Cash</th>
-                <th style={th}>Credit</th><th style={th}>PO</th>
-                <th style={th}>Payment</th>
+                <th style={th}>Vendor</th><th style={th}>Quotation Ref</th>
+                <th style={th}>Terms</th>
+                <th style={{ ...th, textAlign: "right" }}>Cash</th>
+                <th style={{ ...th, textAlign: "right" }}>Credit</th>
+                <th style={{ ...th, textAlign: "right" }}>Total</th>
+                <th style={th}>PO / Payment Ref</th>
               </>) : (<>
                 <th style={th}>Description</th><th style={th}>Unit</th>
                 {doc.doc_type === "MR" && (<>
@@ -741,7 +743,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   <th style={th}>Amount</th>
                 </>)}
               </>)}
-              <th style={th}>Remarks</th>
+              {!isPR && <th style={th}>Remarks</th>}
             </tr>
           </thead>
           <tbody>
@@ -762,19 +764,17 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                     )}
                   </td>
                   <td style={td}>{line.payment_terms}</td>
-                  <td style={td}>{line.amount_cash}</td>
-                  <td style={td}>{line.amount_credit}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {line.amount_cash
+                      ? Number(line.amount_cash).toLocaleString() : ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {line.amount_credit
+                      ? Number(line.amount_credit).toLocaleString() : ""}</td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
+                    {(num(line.amount_cash) + num(line.amount_credit))
+                      .toLocaleString()}</td>
                   <td style={td}>
-                    {line.po_ref ? (
-                      <a href="#" style={{ color: "var(--sp-navy)",
-                                           fontWeight: 600 }}
-                         onClick={(e) => { e.preventDefault();
-                                           onOpenDoc?.(line.po_ref); }}>
-                        {line.po_ref}
-                      </a>
-                    ) : "—"}
-                  </td>
-                  <td style={td}>
+                    {/* slip no. for cash, PO no. for credit */}
                     {line.action_taken ? (
                       <>
                         <span style={{ color: "#1a7f37", fontWeight: 600 }}>
@@ -790,6 +790,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                           </>
                         )}
                       </>
+                    ) : line.po_ref ? (
+                      <a href="#" style={{ color: "var(--sp-navy)",
+                                           fontWeight: 600 }}
+                         onClick={(e) => { e.preventDefault();
+                                           onOpenDoc?.(line.po_ref); }}>
+                        {line.po_ref}
+                      </a>
                     ) : canRecordPay && payRow !== line.id ? (
                       <button onClick={() => { setPayRow(line.id);
                                                setPayRef(""); setPayFile(null); }}
@@ -857,7 +864,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                       {Number(line.amount || 0).toLocaleString()}</td>
                   </>)}
                 </>)}
-                <td style={td}>{line.remarks}</td>
+                {!isPR && <td style={td}>{line.remarks}</td>}
               </tr>
             ))}
           </tbody>
@@ -865,30 +872,52 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       </div>
 
       {doc.doc_type === "PR" && (() => {
-        const untaxed = doc.lines.reduce(
-          (a, l) => a + num(l.amount_cash) + num(l.amount_credit), 0);
-        const gst = untaxed * gstRate / 100;
+        const cash = doc.lines.reduce((a, l) => a + num(l.amount_cash), 0);
+        const credit = doc.lines.reduce((a, l) => a + num(l.amount_credit), 0);
+        const fmt = (v) => "MVR " + v.toLocaleString(undefined,
+          { maximumFractionDigits: 2 });
+        const gstOf = (v) => v * gstRate / 100;
+        const cell = { padding: "2px 10px", textAlign: "right", fontSize: 13 };
         return (
           <>
-            {untaxed > 0 && (
+            {(cash > 0 || credit > 0) && (
               <table style={{ marginLeft: "auto", borderCollapse: "collapse",
-                              fontSize: 13 }}>
+                              marginTop: 6 }}>
+                <thead><tr>
+                  <th style={{ ...cell, textAlign: "left" }} />
+                  <th style={{ ...cell, color: "var(--sp-navy)" }}>Cash</th>
+                  <th style={{ ...cell, color: "var(--sp-navy)" }}>Credit</th>
+                  <th style={{ ...cell, color: "var(--sp-navy)" }}>Total</th>
+                </tr></thead>
                 <tbody>
-                  <tr><td style={{ padding: "2px 10px" }}>Untaxed Amount</td>
-                      <td style={{ padding: "2px 10px", textAlign: "right" }}>
-                        MVR {untaxed.toLocaleString()}</td></tr>
-                  <tr><td style={{ padding: "2px 10px" }}>GST ({gstRate}%)</td>
-                      <td style={{ padding: "2px 10px", textAlign: "right" }}>
-                        MVR {gst.toLocaleString(undefined,
-                          { maximumFractionDigits: 2 })}</td></tr>
+                  <tr>
+                    <td style={{ ...cell, textAlign: "left" }}>
+                      Untaxed Amount</td>
+                    <td style={cell}>{fmt(cash)}</td>
+                    <td style={cell}>{fmt(credit)}</td>
+                    <td style={cell}>{fmt(cash + credit)}</td>
+                  </tr>
+                  <tr>
+                    <td style={{ ...cell, textAlign: "left" }}>
+                      GST ({gstRate}%)</td>
+                    <td style={cell}>{fmt(gstOf(cash))}</td>
+                    <td style={cell}>{fmt(gstOf(credit))}</td>
+                    <td style={cell}>{fmt(gstOf(cash + credit))}</td>
+                  </tr>
                   <tr style={{ fontWeight: 700 }}>
-                      <td style={{ padding: "4px 10px",
-                                   borderTop: "1px solid var(--sp-navy)" }}>
-                        Total incl. GST</td>
-                      <td style={{ padding: "4px 10px", textAlign: "right",
-                                   borderTop: "1px solid var(--sp-navy)" }}>
-                        MVR {(untaxed + gst).toLocaleString(undefined,
-                          { maximumFractionDigits: 2 })}</td></tr>
+                    <td style={{ ...cell, textAlign: "left",
+                                 borderTop: "1px solid var(--sp-navy)" }}>
+                      Total incl. GST</td>
+                    <td style={{ ...cell,
+                                 borderTop: "1px solid var(--sp-navy)" }}>
+                      {fmt(cash + gstOf(cash))}</td>
+                    <td style={{ ...cell,
+                                 borderTop: "1px solid var(--sp-navy)" }}>
+                      {fmt(credit + gstOf(credit))}</td>
+                    <td style={{ ...cell,
+                                 borderTop: "1px solid var(--sp-navy)" }}>
+                      {fmt(cash + credit + gstOf(cash + credit))}</td>
+                  </tr>
                 </tbody>
               </table>
             )}

@@ -328,16 +328,12 @@ def pr_vendor_payment(request, ref):
         actor=request.user, actor_role=request.user.role,
         comment=f"{line.vendor}: {payment_ref}",
     )
-    # status follows the vendor rows: some settled -> PROCESSING, all -> PAID
-    lines = list(pr.current_revision.lines.all())
-    settled = [ln for ln in lines if ln.action_taken.strip()]
+    # status follows the vendor rows (slip for cash, PO for credit)
+    from .procurement import advance_pr_settlement
+
     old = pr.status
-    if len(settled) == len(lines):
-        pr.status = "PAID_PO_ISSUED"
-    elif pr.status == "APPROVED":
-        pr.status = "PAYMENT_PROCESSING"
-    if pr.status != old:
-        pr.save(update_fields=["status", "updated_at"])
+    advance_pr_settlement(pr, request.user)
+    pr.refresh_from_db()
     audit("document", pr.id, "VENDOR_PAYMENT_RECORDED", actor=request.user,
           from_state=old, to_state=pr.status,
           detail={"ref": pr.ref, "vendor": line.vendor})

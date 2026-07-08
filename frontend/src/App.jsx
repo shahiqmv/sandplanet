@@ -7,6 +7,7 @@ import ItemsPage from "./ItemsPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
+import PayrollPage from "./PayrollPage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
@@ -186,12 +187,14 @@ export default function App() {
           SAND PLANET
         </h1>
         <span style={{ color: "var(--sp-sky)", fontSize: 14 }}>
-          Site Documents</span>
+          Project Management</span>
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
             {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
               ["items", "Items"], ["suppliers", "Suppliers"],
               ["employees", "Employees"],
+              ...(["HO_HR", "FINANCE", "ADMIN"].includes(me.role)
+                ? [["payroll", "Payroll"]] : []),
               ...(me.role === "ADMIN" ? [["users", "Users"]] : [])]
               .map(([key, label]) => (
               <button key={key}
@@ -311,6 +314,11 @@ export default function App() {
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "users" && (
             <UsersPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
+            hoPage === "payroll" && (
+            <PayrollPage sites={sites} />
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />

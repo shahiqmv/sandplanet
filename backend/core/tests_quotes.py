@@ -149,24 +149,33 @@ class PoGenerationTests(QuoteBase):
         assert r.status_code == 200, r.data
         return mr, pr
 
-    def test_approval_generates_po_per_supplier(self):
+    def test_approval_generates_po_for_credit_suppliers_only(self):
+        """Cash purchases settle by slip — no PO (owner, 2026-07-08)."""
         mr, pr = self.full_award()
-        pos = Document.objects.filter(doc_type="PO").order_by("ref")
-        self.assertEqual(pos.count(), 2)
-        self.assertEqual([po.ref for po in pos], ["PO-001", "PO-002"])
-        by_supplier = {po.supplier.name: po for po in pos}
-        hw_po = by_supplier["Male' Hardware Pvt Ltd"]
-        lines = list(hw_po.current_revision.lines.all())
+        pos = Document.objects.filter(doc_type="PO")
+        self.assertEqual(pos.count(), 1)  # steel (credit) only, not hw (COD)
+        po = pos.first()
+        self.assertEqual(po.supplier, self.steel)
+        lines = list(po.current_revision.lines.all())
         self.assertEqual(len(lines), 1)
-        self.assertEqual(lines[0].item_id, self.cement.id)
-        self.assertEqual(float(lines[0].qty_required), 150.0)
-        self.assertEqual(float(lines[0].rate), 120.0)
-        self.assertEqual(float(lines[0].amount), 18000.0)
-        self.assertEqual(hw_po.current_revision.payload["pr_ref"], pr["ref"])
-        # PO refs land in the PR's vendor rows (R3 addendum)
+        self.assertEqual(lines[0].item_id, self.rebar.id)
+        self.assertEqual(float(lines[0].rate), 18.50)
+        self.assertEqual(po.current_revision.payload["pr_ref"], pr["ref"])
+        # PO ref lands in the credit vendor's row; the cash vendor has none,
+        # so the PR sits in PAYMENT_PROCESSING awaiting the cash slip
         fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
         po_refs = {row["vendor"]: row["po_ref"] for row in fresh["lines"]}
-        self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], hw_po.ref)
+        self.assertEqual(po_refs["Maldives Steel Traders"], po.ref)
+        self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], "")
+        self.assertEqual(fresh["status"], "PAYMENT_PROCESSING")
+        # recording the cash vendor's slip settles the PR
+        self.as_user(self.purchasing)
+        hw_line = next(row for row in fresh["lines"]
+                       if row["vendor"] == "Male' Hardware Pvt Ltd")
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": hw_line["id"],
+                              "payment_ref": "TRF-555"})
+        self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
 
     def test_po_issue_generates_pdf_and_lm_prefill(self):
         self.full_award()

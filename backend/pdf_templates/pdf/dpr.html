@@ -115,11 +115,11 @@
   <tr>
     <td>{% for a in approvals %}{% if a.action == "ISSUE" %}
         <span class="stamp">Issued by {{ a.actor.full_name }} — {{ a.actor_role }} —
-        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Site Documents</span>
+        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Project Management App</span>
         {% endif %}{% endfor %}</td>
     <td>{% for a in approvals %}{% if a.action == "VERIFY" %}
         <span class="stamp">Approved by {{ a.actor.full_name }} — {{ a.actor_role }} —
-        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Site Documents</span>
+        {{ a.acted_at|date:"d/m/y H:i" }} — approved electronically via Sand Planet Project Management App</span>
         {% endif %}{% endfor %}</td>
     <td></td>
   </tr>

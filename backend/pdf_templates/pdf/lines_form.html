@@ -74,14 +74,23 @@
 </table>
 
 {% if tax_summary %}
-<table style="width:70mm;margin-left:auto;border-collapse:collapse;margin-top:3mm">
-  {% for row in tax_summary %}
-  <tr><td style="border:none;padding:2px 6px;font-size:8.5pt;
-                 {% if forloop.last %}font-weight:bold;border-top:1px solid #16527E{% endif %}">
-        {{ row.0 }}</td>
-      <td style="border:none;padding:2px 6px;text-align:right;font-size:8.5pt;
-                 {% if forloop.last %}font-weight:bold;border-top:1px solid #16527E{% endif %}">
-        MVR {{ row.1 }}</td></tr>
+<table style="width:120mm;margin-left:auto;border-collapse:collapse;margin-top:3mm">
+  <tr>
+    {% for h in tax_summary.headers %}
+    <th style="border:none;padding:2px 6px;font-size:8.5pt;color:#16527E;
+               text-align:{% if forloop.first %}left{% else %}right{% endif %}">
+      {{ h }}</th>
+    {% endfor %}
+  </tr>
+  {% for row in tax_summary.rows %}
+  <tr>
+    {% for cell in row %}
+    <td style="border:none;padding:2px 6px;font-size:8.5pt;
+               text-align:{% if forloop.first %}left{% else %}right{% endif %};
+               {% if forloop.parentloop.last %}font-weight:bold;border-top:1px solid #16527E{% endif %}">
+      {{ cell }}</td>
+    {% endfor %}
+  </tr>
   {% endfor %}
 </table>
 {% endif %}

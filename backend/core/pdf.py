@@ -139,18 +139,16 @@ LINE_FORMS = {
         "columns": [
             ("Vendor", "vendor", False),
             ("Quotation Ref", "quotation_ref", False),
-            ("Payment Terms", "payment_terms", False),
-            ("Amount Cash/Bank (MVR)", "amount_cash", True),
-            ("Amount Credit (MVR)", "amount_credit", True),
-            ("PO Ref", "po_ref", False),
-            ("Payment (Slip/Voucher)", "action_taken", False),
+            ("Terms", "payment_terms", False),
+            ("Cash (MVR)", "amount_cash", True),
+            ("Credit (MVR)", "amount_credit", True),
+            ("Total (MVR)", "_row_total", True),
+            ("PO / Payment Ref", "_po_or_payment", False),
         ],
-        "header_keys": [("Requested Delivery", "requested_delivery"),
-                        ("Action Taken", "action_taken")],
+        "header_keys": [("Requested Delivery", "requested_delivery")],
         "sigs": [("Prepared By — Purchasing", "SUBMIT"),
                  ("Approved By — Sr PM / Director, Projects", "APPROVE"),
                  ("Finance — Payment / PO Issued", "PAYMENT_RECORDED")],
-        "totals": ["amount_cash", "amount_credit"],
     },
     "LM": {
         "title": "LOADING MANIFEST",
@@ -204,7 +202,7 @@ def _stamp_for(approvals, action):
         if a.action == action:
             return (f"{a.actor.full_name} — {a.actor_role} — "
                     f"{a.acted_at.strftime('%d/%m/%y %H:%M')} — "
-                    f"approved electronically via Sand Planet Site Documents")
+                    f"approved electronically via Sand Planet Project Management App")
     return ""
 
 
@@ -227,6 +225,12 @@ def _lines_context(document, revision):
                     value = ""
                 else:
                     value = _fmt(float(line.qty_received - line.qty_manifest))
+            elif field == "_row_total":
+                value = _fmt(float((line.amount_cash or 0) +
+                                   (line.amount_credit or 0)))
+            elif field == "_po_or_payment":
+                # slip no. for cash, PO no. for credit (owner, 2026-07-08)
+                value = line.action_taken or line.po_ref or ""
             else:
                 value = getattr(line, field, "") or payload.get(field, "")
                 if isinstance(value, Decimal):
@@ -265,18 +269,30 @@ def _lines_context(document, revision):
     for link in document.links_to.select_related("from_document"):
         links.append(link.from_document.ref)
 
-    # GST summary on the PR (owner request; rate = gst_rate parameter)
+    # GST summary on the PR: cash / credit / total columns (owner request)
     tax_summary = None
     if document.doc_type == "PR":
-        untaxed = totals_acc.get("amount_cash", Decimal("0")) + \
-                  totals_acc.get("amount_credit", Decimal("0"))
+        cash = sum((ln.amount_cash or 0)
+                   for ln in revision.lines.all()) or Decimal("0")
+        credit = sum((ln.amount_credit or 0)
+                     for ln in revision.lines.all()) or Decimal("0")
         gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
-        gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
-        tax_summary = [
-            ("Untaxed Amount", _money(untaxed)),
-            (f"GST ({_fmt(float(gst_rate))}%)", _money(gst)),
-            ("Total incl. GST", _money(untaxed + gst)),
-        ]
+
+        def gst_of(value):
+            return (Decimal(value) * gst_rate / 100).quantize(Decimal("0.01"))
+
+        tax_summary = {
+            "headers": ["", "Cash", "Credit", "Total"],
+            "rows": [
+                ["Untaxed Amount", _money(cash), _money(credit),
+                 _money(cash + credit)],
+                [f"GST ({_fmt(float(gst_rate))}%)", _money(gst_of(cash)),
+                 _money(gst_of(credit)), _money(gst_of(cash + credit))],
+                ["Total incl. GST", _money(cash + gst_of(cash)),
+                 _money(credit + gst_of(credit)),
+                 _money(cash + credit + gst_of(cash + credit))],
+            ],
+        }
 
     logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     return {

@@ -229,8 +229,8 @@ def next_item_code():
 
 def generate_pos_for_pr(pr, actor):
     """On Director approval of the PR (award), generate one draft PO per
-    awarded supplier from the awarded quotation lines (R2). Purchasing
-    reviews and issues each PO."""
+    awarded CREDIT supplier from the awarded quotation lines (R2/R3).
+    Cash purchases settle by payment slip — no PO (owner, 2026-07-08)."""
     from .models import DocumentRevision, QuotationLine
     from .numbering import next_ref
     from django.db import transaction
@@ -242,6 +242,8 @@ def generate_pos_for_pr(pr, actor):
     )
     by_supplier = {}
     for ql in awarded:
+        if "credit" not in (ql.quotation.payment_terms or "").lower():
+            continue  # cash purchase — settled by slip, no PO
         by_supplier.setdefault(ql.quotation.supplier, []).append(ql)
 
     created = []
@@ -289,7 +291,23 @@ def generate_pos_for_pr(pr, actor):
         audit("document", po.id, "PO_GENERATED", actor=actor,
               detail={"ref": po.ref, "pr": pr.ref, "supplier": supplier.name})
         created.append(po)
+    advance_pr_settlement(pr, actor)
     return created
+
+
+def advance_pr_settlement(pr, actor):
+    """PR status follows the vendor rows: a row is settled by a payment
+    slip (cash) or a generated PO (credit). All settled -> PAID_PO_ISSUED;
+    some -> PAYMENT_PROCESSING (R3 addendum)."""
+    lines = list(pr.current_revision.lines.all())
+    if not lines:
+        return
+    settled = [ln for ln in lines
+               if ln.action_taken.strip() or ln.po_ref.strip()]
+    if len(settled) == len(lines):
+        set_status(pr, "PAID_PO_ISSUED", actor, "PR_SETTLED")
+    elif settled:
+        set_status(pr, "PAYMENT_PROCESSING", actor, "PR_PARTIALLY_SETTLED")
 
 
 def po_lm_prefill_lines(po):
