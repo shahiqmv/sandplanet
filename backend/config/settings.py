@@ -15,13 +15,19 @@ SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY", "insecure-local-dev-key-change-in-staging"
 )
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
-ALLOWED_HOSTS = os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+# Dev default "*" lets the team-review tunnel (trycloudflare.com) reach the
+# dev server; production always sets DJANGO_ALLOWED_HOSTS explicitly.
+ALLOWED_HOSTS = os.environ.get(
+    "DJANGO_ALLOWED_HOSTS", "*" if DEBUG else "localhost,127.0.0.1"
+).split(",")
 
 # Vite dev server proxies /api same-origin in production builds; in dev the
-# browser origin is the Vite port, so trust it explicitly (dev only).
+# browser origin is the Vite port, so trust it explicitly — plus the
+# Cloudflare quick-tunnel domain used for team review links (dev only).
 CSRF_TRUSTED_ORIGINS = os.environ.get(
     "CSRF_TRUSTED_ORIGINS",
-    "http://localhost:5173,http://127.0.0.1:5173" if DEBUG else "",
+    "http://localhost:5173,http://127.0.0.1:5173,"
+    "https://*.trycloudflare.com" if DEBUG else "",
 ).split(",") if (os.environ.get("CSRF_TRUSTED_ORIGINS") or DEBUG) else []
 
 INSTALLED_APPS = [
@@ -138,8 +144,10 @@ MEDIA_ROOT = BASE_DIR / "media"
 # PDFs block issue when true (staging/production); local dev may lack the
 # WeasyPrint GTK libraries (DECISIONS.md D4).
 PDF_REQUIRED = os.environ.get("PDF_REQUIRED", "0") == "1"
+# Built SPA assets: vite builds with --base=/static/ so index.html points
+# at /static/assets/*; the prefixed entry maps them there.
 STATICFILES_DIRS = (
-    [BASE_DIR.parent / "frontend" / "dist" / "assets"]
+    [("assets", BASE_DIR.parent / "frontend" / "dist" / "assets")]
     if (BASE_DIR.parent / "frontend" / "dist" / "assets").exists()
     else []
 )
