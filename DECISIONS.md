@@ -130,10 +130,16 @@ dashboards) from his design chat. Staged implementation:
   (amber dashed → green rotated issued stamp); Approvals queue = severity
   action cards with age lines; Purchasing dashboard eyebrows + stats with
   context lines; 900px shell, 3px sky header rule, display-font brand.
-- Stage 2 (pending): HR month-lock board + Management portfolio dashboards
-  (new endpoints), boat board grouping.
+- Stage 2 (done same day): HR dashboard (GET /dashboards/hr — month-lock
+  stamp-tile board driving the payroll-ready signal, permit expiries
+  within 60 days, closed-site reallocation alerts, workforce/OT stats;
+  HR's landing page) and Management portfolio (GET /dashboards/portfolio,
+  Director/Admin — per project: value, PM, % time elapsed vs programme
+  progress, open items, on-track/watch/attention health; Portfolio
+  sub-tab beside Approvals).
 - Stage 3 (pending): FormCard restyle of document forms (auto-calc cells
-  in mono on sand tint, inline validation copy).
+  in mono on sand tint, inline validation copy); boat-board grouping on
+  the Purchasing dashboard.
 NOTE: the brief references two mockup JSX files (source of truth for look
 and feel) that were not delivered — implementation follows the written
 brief; reconcile if the owner supplies the mockups.
