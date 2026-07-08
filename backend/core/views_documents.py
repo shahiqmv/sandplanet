@@ -372,7 +372,7 @@ def document_action(request, ref, action_name):
         "issue": _do_issue, "verify": _do_verify, "void": _do_void,
         "submit": _do_submit, "approve": _do_approve, "return": _do_return,
         "send": _do_send, "depart": _do_depart, "count": _do_count,
-        "record-payment": _do_record_payment, "close": _do_close,
+        "close": _do_close,
         "record-result": _do_record_result, "client-verify": _do_client_verify,
         "acknowledge": _do_acknowledge,
     }.get(action_name)
@@ -601,27 +601,8 @@ def _do_verify(request, doc, comment):
     return Response({"detail": "Verify applies to DPR/GRN."}, status=400)
 
 
-def _do_record_payment(request, doc, comment):
-    """PR: Finance records payment status + Action Taken (R3, supersedes
-    the decision-6 stopgap where Purchasing recorded it)."""
-    if doc.doc_type != "PR":
-        return Response({"detail": "record-payment applies to PR."}, status=400)
-    if not _can(request, "PR", {"FINANCE"}):
-        return Response({"detail": "Only Finance records payment."},
-                        status=403)
-    action_taken = (request.data.get("action_taken") or "").strip()
-    if not action_taken:
-        return Response({"detail": "action_taken (slip no. / PO no.) required."},
-                        status=400)
-    err = _apply(request, doc, "PAID_PO_ISSUED", "PAYMENT_RECORDED",
-                 roles={"FINANCE"}, comment=comment)
-    if err is None:
-        payload = doc.current_revision.payload or {}
-        payload["action_taken"] = action_taken
-        doc.current_revision.payload = payload
-        doc.current_revision.save(update_fields=["payload"])
-        _record(doc, "ACTION_TAKEN", request, comment=action_taken)
-    return err
+# PR payments are recorded per vendor row via POST /pr/{ref}/vendor-payment
+# (views_quotes.pr_vendor_payment, R3 addendum) — no PR-level action.
 
 
 def _do_close(request, doc, comment):

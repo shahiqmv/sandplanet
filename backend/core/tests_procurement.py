@@ -241,23 +241,59 @@ class ChainTests(ProcBase):
         self.assertEqual(r.data["status"], "APPROVED")
         self.assertEqual(Document.objects.get(ref=mr_ref).status, "PR_RAISED")
 
-    def test_payment_recording_needs_action_taken(self):
+    def test_vendor_payment_recording(self):
+        """R3 addendum: payments recorded per vendor row; status advances
+        as vendors settle; slip file attaches to the PR."""
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
         mr_ref = self.mr_to_sent()
-        pr = self.make_pr(mr_ref)
+        self.as_user(self.purchasing)
+        pr = self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr_ref],
+            "lines": [
+                {"free_text_desc": "Vendor A", "vendor": "Vendor A",
+                 "amount_cash": 5000},
+                {"free_text_desc": "Vendor B", "vendor": "Vendor B",
+                 "amount_credit": 7000},
+            ],
+        }, format="json").data
         self.act(pr["ref"], "submit")
+        line_a = pr["lines"][0]["id"]
+        line_b = pr["lines"][1]["id"]
+        # blocked before approval
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": line_a, "payment_ref": "TRF-1"})
+        self.assertEqual(r.status_code, 400)
         self.as_user(self.director)
         self.act(pr["ref"], "approve")
-        # Purchasing no longer records payments (R3) — Finance does
-        self.as_user(self.purchasing)
-        r = self.act(pr["ref"], "record-payment",
-                     {"action_taken": "TRF-20260718-01"})
+        # site roles cannot record payments
+        self.as_user(self.sa)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 403)
+        # purchasing settles vendor A with the slip attached
+        self.as_user(self.purchasing)
+        with override_settings(MEDIA_ROOT="test-media"):
+            slip = SimpleUploadedFile("slip.pdf", b"%PDF-1.4 slip",
+                                      content_type="application/pdf")
+            r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                                 {"line_id": line_a, "payment_ref": "TRF-1",
+                                  "file": slip}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "PAYMENT_PROCESSING")  # partial
+        self.assertIsNotNone(r.data["slip_url"])
+        self.assertTrue(any(a["kind"] == "PAYMENT_SLIP" and
+                            a["caption"] == "Vendor A"
+                            for a in r.data["attachments"]))
+        # finance settles vendor B -> fully paid
         self.as_user(self.finance)
-        r = self.act(pr["ref"], "record-payment")
-        self.assertEqual(r.status_code, 400)  # slip/PO no. required
-        r = self.act(pr["ref"], "record-payment", {"action_taken": "TRF-20260718-01"})
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": line_b, "payment_ref": "VCH-9"})
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
-        self.assertEqual(r.data["payload"]["action_taken"], "TRF-20260718-01")
+        refs = {l["vendor"]: l["action_taken"] for l in r.data["lines"]}
+        self.assertEqual(refs, {"Vendor A": "TRF-1", "Vendor B": "VCH-9"})
+
 
     def test_lm_departure_creates_pending_and_updates_mr(self):
         mr_ref = self.mr_to_sent()

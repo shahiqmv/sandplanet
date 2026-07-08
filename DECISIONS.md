@@ -50,3 +50,13 @@ approves site documents, HO Purchasing prepares PR/LM/PO, Director approves
 the PR (award), and FINANCE — a new role — records payment / PO issuance
 (slip no. / PO no.) on approved PRs. Purchasing no longer records payments.
 Finance has HO-wide read scope; basic pay/passport remain HR+Admin only.
+
+## 2026-07-08 — R3 addendum: Finance payroll access; vendor-level payment/PO refs
+Finance also gets payroll export + attendance visibility (basic pay becomes
+visible to Finance; passports/work permits remain HR+Admin). PR "Action
+Taken" is vendor-specific, not a PR-level entry: the PO ref auto-fills into
+each vendor row when POs generate on award approval; the payment ref is
+recorded per vendor (Purchasing on receiving the slip/voucher from Finance,
+or Finance directly) with the slip file attached; the PR page links each
+vendor row to its quote, PO, and payment slip. PR status auto-advances:
+APPROVED -> PAYMENT_PROCESSING (first vendor settled) -> PAID_PO_ISSUED (all).

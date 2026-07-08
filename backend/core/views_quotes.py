@@ -281,6 +281,73 @@ def pr_coverage_data(pr):
     return rows
 
 
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def pr_vendor_payment(request, ref):
+    """Vendor-specific payment recording (R3 addendum): Purchasing enters
+    the slip/voucher ref received from Finance (or Finance directly), with
+    the slip file attached. PR status auto-advances as vendors settle."""
+    pr, err = _get_pr(request, ref)
+    if err:
+        return err
+    if request.user.role not in ("HO_PURCHASING", "FINANCE", "ADMIN"):
+        return Response({"detail": "Purchasing or Finance records vendor "
+                                   "payments."}, status=403)
+    if pr.status not in ("APPROVED", "PAYMENT_PROCESSING"):
+        return Response({"detail": "Payments are recorded after Director "
+                                   "approval."}, status=400)
+    try:
+        line = pr.current_revision.lines.get(pk=request.data.get("line_id"))
+    except (DocumentLine.DoesNotExist, ValueError, TypeError):
+        return Response({"detail": "line_id must be a vendor row of this "
+                                   "PR."}, status=400)
+    payment_ref = (request.data.get("payment_ref") or "").strip()
+    if not payment_ref:
+        return Response({"detail": "payment_ref (slip / voucher no.) "
+                                   "required."}, status=400)
+    line.action_taken = payment_ref
+    line.save(update_fields=["action_taken"])
+
+    slip_url = None
+    upload = request.FILES.get("file")
+    if upload is not None:
+        from .models import Attachment
+
+        attachment = Attachment.objects.create(
+            document=pr, revision=pr.current_revision, kind="PAYMENT_SLIP",
+            file=upload, file_name=upload.name,
+            content_type=upload.content_type or "", size_bytes=upload.size,
+            caption=line.vendor, uploaded_by=request.user,
+        )
+        slip_url = request.build_absolute_uri(attachment.file.url)
+
+    from .models import Approval
+
+    Approval.objects.create(
+        document=pr, revision=pr.current_revision, action="PAYMENT_RECORDED",
+        actor=request.user, actor_role=request.user.role,
+        comment=f"{line.vendor}: {payment_ref}",
+    )
+    # status follows the vendor rows: some settled -> PROCESSING, all -> PAID
+    lines = list(pr.current_revision.lines.all())
+    settled = [ln for ln in lines if ln.action_taken.strip()]
+    old = pr.status
+    if len(settled) == len(lines):
+        pr.status = "PAID_PO_ISSUED"
+    elif pr.status == "APPROVED":
+        pr.status = "PAYMENT_PROCESSING"
+    if pr.status != old:
+        pr.save(update_fields=["status", "updated_at"])
+    audit("document", pr.id, "VENDOR_PAYMENT_RECORDED", actor=request.user,
+          from_state=old, to_state=pr.status,
+          detail={"ref": pr.ref, "vendor": line.vendor})
+    from .serializers_documents import DocumentSerializer
+
+    data = DocumentSerializer(pr, context={"request": request}).data
+    data["slip_url"] = slip_url
+    return Response(data)
+
+
 @api_view(["GET"])
 def pr_coverage(request, ref):
     pr, err = _get_pr(request, ref)

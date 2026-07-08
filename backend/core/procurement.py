@@ -282,6 +282,10 @@ def generate_pos_for_pr(pr, actor):
                     remarks=ql.remarks,
                 )
             link_documents(po, pr, "PR_PO")
+            # PO ref lands in the matching vendor summary row (R3 addendum)
+            pr.current_revision.lines.filter(vendor=supplier.name).update(
+                po_ref=po.ref
+            )
         audit("document", po.id, "PO_GENERATED", actor=actor,
               detail={"ref": po.ref, "pr": pr.ref, "supplier": supplier.name})
         created.append(po)

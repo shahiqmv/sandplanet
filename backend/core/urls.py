@@ -43,6 +43,8 @@ urlpatterns = [
     path("pr/<str:ref>/coverage", quotes.pr_coverage, name="pr-coverage"),
     path("pr/<str:ref>/sync-vendor-rows", quotes.pr_sync_vendor_rows,
          name="pr-sync-vendor-rows"),
+    path("pr/<str:ref>/vendor-payment", quotes.pr_vendor_payment,
+         name="pr-vendor-payment"),
     path("quotations/<int:pk>", quotes.quotation_detail, name="quotation-detail"),
     path("quotations/<int:pk>/file", quotes.quotation_file,
          name="quotation-file"),

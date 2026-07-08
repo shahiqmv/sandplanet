@@ -232,13 +232,24 @@ class PayrollExportTests(HrBase):
         self.assertEqual(float(row["ot_amount"]), 200.0)
         self.assertEqual(float(row["gross"]), 9800.0)
 
-    def test_export_hr_only(self):
+    def test_export_hr_finance_only(self):
         self.as_user(self.sa)
         r = self.client.get("/api/v1/payroll-export/2026/7")
         self.assertEqual(r.status_code, 403)
         self.as_user(self.pm)
         r = self.client.get("/api/v1/payroll-export/2026/7")
         self.assertEqual(r.status_code, 403)
+        finance = make_user("fin1", User.Role.FINANCE)
+        self.as_user(finance)
+        r = self.client.get("/api/v1/payroll-export/2026/7")
+        self.assertEqual(r.status_code, 200)  # R3 addendum
+
+    def test_finance_sees_pay_but_not_passport(self):
+        finance = make_user("fin2", User.Role.FINANCE)
+        self.as_user(finance)
+        r = self.client.get(f"/api/v1/employees/{self.mason.id}")
+        self.assertEqual(str(r.data["basic_pay"]), "9600.00")
+        self.assertNotIn("passport_no", r.data)
 
     def test_xlsx_download(self):
         day = working_day(self.site)

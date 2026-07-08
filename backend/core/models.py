@@ -367,6 +367,7 @@ class Attachment(models.Model):
     KINDS = [
         ("PHOTO", "Photo"), ("ENCLOSURE", "Enclosure"), ("QUOTATION", "Quotation"),
         ("EVIDENCE", "Evidence"), ("GENERATED_PDF", "Generated PDF"),
+        ("PAYMENT_SLIP", "Payment slip / voucher"),
     ]
 
     document = models.ForeignKey(
@@ -449,7 +450,8 @@ class DocumentLine(models.Model):
     vendor = models.TextField(blank=True)
     quotation_ref = models.TextField(blank=True)
     payment_terms = models.TextField(blank=True)
-    action_taken = models.TextField(blank=True)  # slip no. / PO no.
+    action_taken = models.TextField(blank=True)  # payment slip / voucher no.
+    po_ref = models.TextField(blank=True)  # auto-filled at PO generation (R3)
     rate = models.DecimalField(max_digits=14, decimal_places=2,  # PO lines (R2)
                                null=True, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2,

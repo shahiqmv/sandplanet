@@ -78,7 +78,8 @@ export default function SiteDashboard({ site, me, onNewDpr, onNewMr, onNewQa,
           {canMr && (
             <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "ADMIN"]
+            .includes(me.role) && (
             <button onClick={onAttendance}
                     style={{ ...buttonStyle, background: "#1a7f37" }}>
               🕐 Attendance

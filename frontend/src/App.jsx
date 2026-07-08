@@ -242,7 +242,7 @@ export default function App() {
           )}
           {docView?.mode === "line-view" && (
             <LineDocView doc={docView.doc} me={me} onClose={closeDoc}
-                         onChanged={bump}
+                         onChanged={bump} onOpenDoc={openDoc}
                          onOpenMatch={(doc) => setDocView({
                            mode: "pr-match", doc })}
                          onEdit={(doc) => setDocView({

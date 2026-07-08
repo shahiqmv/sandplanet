@@ -26,12 +26,18 @@ from .models import (
 from .permissions import scoped_site_ids
 
 HR_ROLES = ("HO_HR", "ADMIN")
-SENSITIVE_FIELDS = ("passport_no", "basic_pay", "work_permit_no",
-                    "emergency_contact")
+PAYROLL_ROLES = ("HO_HR", "FINANCE", "ADMIN")  # R3 addendum
+# passport/permit/contact: HR+Admin only; basic_pay also visible to Finance
+SENSITIVE_FIELDS = ("passport_no", "work_permit_no", "emergency_contact")
+PAY_FIELDS = ("basic_pay",)
 
 
 def _is_hr(user):
     return user.role in HR_ROLES
+
+
+def _sees_pay(user):
+    return user.role in PAYROLL_ROLES
 
 
 class IsHrOrReadOnly(BasePermission):
@@ -72,6 +78,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if request and not _is_hr(request.user):
             for field in SENSITIVE_FIELDS:
                 data.pop(field, None)
+        if request and not _sees_pay(request.user):
+            for field in PAY_FIELDS:
+                data.pop(field, None)
         return data
 
 
@@ -106,8 +115,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         employee = serializer.save()
         audit("employee", employee.id, "EMPLOYEE_UPDATED",
               actor=self.request.user,
-              detail={"fields": sorted(k for k in self.request.data
-                                       if k not in SENSITIVE_FIELDS)})
+              detail={"fields": sorted(
+                  k for k in self.request.data
+                  if k not in SENSITIVE_FIELDS + PAY_FIELDS)})
 
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):
@@ -361,9 +371,10 @@ def _param_decimal(key, default):
 @api_view(["GET"])
 def payroll_export(request, year, month):
     """Per employee: days worked, absences, hours, approved OT, computed
-    gross = basic + OT x hourly x multiplier. HR/Admin only."""
-    if not _is_hr(request.user):
-        return Response({"detail": "HO HR/Payroll only."}, status=403)
+    gross = basic + OT x hourly x multiplier. HR/Finance/Admin (R3)."""
+    if not _sees_pay(request.user):
+        return Response({"detail": "HO HR/Payroll or Finance only."},
+                        status=403)
     multiplier = _param_decimal("ot_multiplier", 1.25)
     divisor = _param_decimal("hourly_rate_divisor", 240)
 

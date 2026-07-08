@@ -163,6 +163,10 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(float(lines[0].rate), 120.0)
         self.assertEqual(float(lines[0].amount), 18000.0)
         self.assertEqual(hw_po.current_revision.payload["pr_ref"], pr["ref"])
+        # PO refs land in the PR's vendor rows (R3 addendum)
+        fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
+        po_refs = {row["vendor"]: row["po_ref"] for row in fresh["lines"]}
+        self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], hw_po.ref)
 
     def test_po_issue_generates_pdf_and_lm_prefill(self):
         self.full_award()

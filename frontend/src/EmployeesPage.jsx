@@ -15,6 +15,7 @@ export default function EmployeesPage({ me, sites }) {
   const [payrollSite, setPayrollSite] = useState("");
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
+  const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
 
   function load() {
     api("/employees").then(setEmployees);
@@ -59,7 +60,7 @@ export default function EmployeesPage({ me, sites }) {
           <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
             Employees
           </h2>
-          {isHr && (
+          {seesPay && (
             <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <input type="month" value={period}
                      onChange={(e) => setPeriod(e.target.value)}
@@ -124,9 +125,8 @@ export default function EmployeesPage({ me, sites }) {
           <thead><tr>
             <th style={th}>Emp No</th><th style={th}>Name</th>
             <th style={th}>Category</th><th style={th}>Site</th>
-            {isHr && (<>
-              <th style={th}>Basic Pay</th><th style={th}>Passport</th>
-            </>)}
+            {seesPay && <th style={th}>Basic Pay</th>}
+            {isHr && <th style={th}>Passport</th>}
             <th style={th}>Allocate</th>
           </tr></thead>
           <tbody>
@@ -137,10 +137,8 @@ export default function EmployeesPage({ me, sites }) {
                 <td style={td}>{emp.full_name}</td>
                 <td style={td}>{emp.job_category_name}</td>
                 <td style={td}>{emp.site_code || "—"}</td>
-                {isHr && (<>
-                  <td style={td}>{emp.basic_pay}</td>
-                  <td style={td}>{emp.passport_no}</td>
-                </>)}
+                {seesPay && <td style={td}>{emp.basic_pay}</td>}
+                {isHr && <td style={td}>{emp.passport_no}</td>}
                 <td style={td}>
                   {isHr ? (
                     <select value="" style={{ ...inputStyle, width: 130,

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
@@ -555,11 +555,14 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
 }
 
 export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
-                              onOpenMatch }) {
+                              onOpenMatch, onOpenDoc }) {
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
   const [quoteFiles, setQuoteFiles] = useState({});
+  const [payRow, setPayRow] = useState(null);
+  const [payRef, setPayRef] = useState("");
+  const [payFile, setPayFile] = useState(null);
 
   useEffect(() => {
     if (initial.doc_type === "PR") {
@@ -611,6 +614,32 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
 
   const isPR = doc.doc_type === "PR";
   const p = doc.payload || {};
+  const canRecordPay = isPR && !doc.is_void &&
+    ["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role) &&
+    ["APPROVED", "PAYMENT_PROCESSING"].includes(doc.status);
+  const slipByVendor = {};
+  for (const a of doc.attachments || []) {
+    if (a.kind === "PAYMENT_SLIP") slipByVendor[a.caption] = a.url;
+  }
+
+  async function recordPayment(line) {
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("line_id", line.id);
+      fd.append("payment_ref", payRef);
+      if (payFile) fd.append("file", payFile);
+      const fresh = await apiUpload(`/pr/${doc.ref}/vendor-payment`, fd);
+      delete fresh.slip_url;
+      setDoc(fresh);
+      setPayRow(null);
+      setPayRef("");
+      setPayFile(null);
+      onChanged?.();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   return (
     <section style={card}>
@@ -692,7 +721,8 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
               {isPR ? (<>
                 <th style={th}>Vendor</th><th style={th}>Quotation</th>
                 <th style={th}>Terms</th><th style={th}>Cash</th>
-                <th style={th}>Credit</th>
+                <th style={th}>Credit</th><th style={th}>PO</th>
+                <th style={th}>Payment</th>
               </>) : (<>
                 <th style={th}>Description</th><th style={th}>Unit</th>
                 {doc.doc_type === "MR" && (<>
@@ -734,6 +764,57 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   <td style={td}>{line.payment_terms}</td>
                   <td style={td}>{line.amount_cash}</td>
                   <td style={td}>{line.amount_credit}</td>
+                  <td style={td}>
+                    {line.po_ref ? (
+                      <a href="#" style={{ color: "var(--sp-navy)",
+                                           fontWeight: 600 }}
+                         onClick={(e) => { e.preventDefault();
+                                           onOpenDoc?.(line.po_ref); }}>
+                        {line.po_ref}
+                      </a>
+                    ) : "—"}
+                  </td>
+                  <td style={td}>
+                    {line.action_taken ? (
+                      <>
+                        <span style={{ color: "#1a7f37", fontWeight: 600 }}>
+                          {line.action_taken}
+                        </span>
+                        {slipByVendor[line.vendor] && (
+                          <>
+                            {" "}
+                            <a href={slipByVendor[line.vendor]} target="_blank"
+                               rel="noreferrer" title="Payment slip / voucher">
+                              📎 slip
+                            </a>
+                          </>
+                        )}
+                      </>
+                    ) : canRecordPay && payRow !== line.id ? (
+                      <button onClick={() => { setPayRow(line.id);
+                                               setPayRef(""); setPayFile(null); }}
+                              style={{ ...ghostButton, padding: "2px 10px",
+                                       fontSize: 12 }}>
+                        Record payment
+                      </button>
+                    ) : payRow === line.id ? (
+                      <span style={{ display: "flex", gap: 6,
+                                     flexWrap: "wrap" }}>
+                        <input placeholder="Slip / voucher no." value={payRef}
+                               onChange={(e) => setPayRef(e.target.value)}
+                               style={{ ...inputStyle, width: 140 }} />
+                        <input type="file" accept=".pdf,image/*"
+                               onChange={(e) => setPayFile(e.target.files[0])}
+                               style={{ fontSize: 12, maxWidth: 170 }} />
+                        <button onClick={() => recordPayment(line)}
+                                disabled={!payRef.trim()}
+                                style={{ ...buttonStyle, padding: "3px 10px",
+                                         fontSize: 12 }}>
+                          Save
+                        </button>
+                      </span>
+                    ) : "—"}
+                  </td>
                 </>) : (<>
                   <td style={td}>
                     {line.description}
