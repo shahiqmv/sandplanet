@@ -459,6 +459,78 @@ def _do_issue(request, doc, comment):
 
 
 @api_view(["GET"])
+def approvals_pending(request):
+    """The per-role 'waiting on you' queue (owner, 2026-07-08): each
+    approver's landing page lists exactly the documents blocked on them."""
+    user = request.user
+    site_ids = scoped_site_ids(user)
+    groups = []
+
+    def scoped(qs):
+        return qs.filter(site_id__in=site_ids) if site_ids is not None else qs
+
+    def rows(qs, hint):
+        return [{"ref": d.ref, "doc_type": d.doc_type,
+                 "site_code": d.site.code, "project_code":
+                 d.project.code if d.project else None,
+                 "doc_date": d.doc_date, "status": d.status, "hint": hint}
+                for d in qs.select_related("site", "project")[:50]]
+
+    def add(title, items):
+        if items:
+            groups.append({"title": title, "items": items})
+
+    base = Document.objects.filter(is_void=False).order_by("doc_date", "id")
+    if user.role in ("PM", "ADMIN"):
+        mine = [d for d in scoped(base.filter(
+                    doc_type__in=("MR", "IR", "MAR"), status="SUBMITTED"))
+                .select_related("site", "project")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To approve — submitted MR / IR / MAR",
+            [{"ref": d.ref, "doc_type": d.doc_type, "site_code": d.site.code,
+              "project_code": d.project.code if d.project else None,
+              "doc_date": d.doc_date, "status": d.status,
+              "hint": "PM approval"} for d in mine])
+        dprs = [d for d in scoped(base.filter(doc_type="DPR",
+                                              status="ISSUED"))
+                .select_related("site", "project")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To verify — issued DPRs",
+            [{"ref": d.ref, "doc_type": "DPR", "site_code": d.site.code,
+              "project_code": d.project.code if d.project else None,
+              "doc_date": d.doc_date, "status": d.status,
+              "hint": "PM verification"} for d in dprs])
+        dmas = [d for d in scoped(base.filter(doc_type="DMA",
+                                              status="DRAFT"))
+                .select_related("site")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To issue — morning manpower allocations",
+            [{"ref": d.ref, "doc_type": "DMA", "site_code": d.site.code,
+              "project_code": None, "doc_date": d.doc_date,
+              "status": d.status, "hint": "PM issues the allocation"}
+             for d in dmas])
+    if user.role in ("DIRECTOR", "ADMIN"):
+        add("To award — submitted PRs",
+            rows(scoped(base.filter(doc_type="PR", status="SUBMITTED")),
+                 "Director approval awards the suppliers"))
+    if user.role in ("HO_PURCHASING", "ADMIN"):
+        add("To action — MRs sent to Head Office",
+            rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
+                 "Raise PR or plan loading"))
+        add("To issue — draft POs",
+            rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
+                 "Issue to supplier"))
+    if user.role in ("FINANCE", "HO_PURCHASING", "ADMIN"):
+        add("Payments pending — approved PRs",
+            rows(scoped(base.filter(doc_type="PR",
+                                    status__in=("APPROVED",
+                                                "PAYMENT_PROCESSING"))),
+                 "Record vendor payments / PO refs"))
+    return Response({"groups": groups,
+                     "total": sum(len(g["items"]) for g in groups)})
+
+
+@api_view(["GET"])
 def dma_prefill(request):
     """Task rows for the morning allocation, pulled from the TWSs scheduled
     FOR the given day (issued the previous evening, any project) (R5)."""

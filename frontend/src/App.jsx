@@ -14,6 +14,44 @@ import AttendancePage from "./AttendancePage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
+import ApprovalsPage from "./ApprovalsPage.jsx";
+
+// Grouped menu (owner, 2026-07-08): five top-level groups, trimmed by
+// role; approver roles land on the Approvals queue.
+const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"];
+const NAV_GROUPS = [
+  { key: "approvals", label: "Approvals", roles: APPROVERS,
+    subs: [["approvals", "Approvals", null]] },
+  { key: "sitesGrp", label: "Sites", roles: null,
+    subs: [["sites", "Sites", null]] },
+  { key: "procurement", label: "Procurement",
+    roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"],
+    subs: [["dashboard", "Purchasing Dashboard", null],
+           ["items", "Items", null],
+           ["suppliers", "Suppliers", null]] },
+  { key: "people", label: "People",
+    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
+    subs: [["employees", "Employees", null],
+           ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
+           ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
+  { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
+    subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
+           ["users", "Users", ["ADMIN"]],
+           ["company", "Company", ["ADMIN"]]] },
+];
+
+function visibleGroups(me) {
+  const can = (roles) => !roles || roles.includes(me.role);
+  return NAV_GROUPS.filter((g) => can(g.roles)).map((g) => ({
+    ...g, subs: g.subs.filter(([, , roles]) => can(roles)),
+  })).filter((g) => g.subs.length);
+}
+
+function landingPage(me) {
+  if (APPROVERS.includes(me.role)) return "approvals";
+  if (me.role === "HO_HR") return "employees";
+  return "sites";
+}
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
@@ -110,10 +148,21 @@ export default function App() {
   const [addingProject, setAddingProject] = useState(false);
   const [projDraft, setProjDraft] = useState({ code: "", title: "",
                                                start_date: "" });
-  const [hoPage, setHoPage] = useState("dashboard");
+  const [hoPage, setHoPage] = useState("sites");
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    if (me?.authenticated) setHoPage(landingPage(me));
+  }, [me]);
+
+  useEffect(() => {
+    if (!me?.authenticated || !APPROVERS.includes(me.role)) return;
+    api("/approvals/pending").then((d) => setPendingCount(d.total))
+      .catch(() => {});
+  }, [me, refresh]);
 
   useEffect(() => {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
@@ -209,7 +258,21 @@ export default function App() {
 
   if (me === null) return null;
 
-  const showHoNav = me.authenticated && me.is_ho;
+  // PMs get the grouped nav too (Approvals + Sites); site users keep the
+  // plain site view
+  const showHoNav = me.authenticated && (me.is_ho || me.role === "PM");
+  const groups = me.authenticated ? visibleGroups(me) : [];
+  const activeGroup = groups.find((g) =>
+    g.subs.some(([key]) => key === hoPage));
+
+  function openApprovalItem(item) {
+    if (item.doc_type === "DMA") {
+      const site = sites.find((s) => s.code === item.site_code);
+      if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
+      return;
+    }
+    openDoc(item.ref);
+  }
 
   return (
     <div>
@@ -219,7 +282,7 @@ export default function App() {
                        display: "flex", alignItems: "baseline", gap: 16 }}>
         <h1 style={{ margin: 0, fontSize: 20, letterSpacing: 0.5,
                      cursor: "pointer" }}
-            onClick={() => { setDocView(null); setHoPage("dashboard");
+            onClick={() => { setDocView(null); setHoPage(landingPage(me));
                              if (!me.landing_site_id) setOpenSite(null); }}>
           SAND PLANET
         </h1>
@@ -227,22 +290,21 @@ export default function App() {
           Project Management</span>
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
-            {[["dashboard", "Purchasing Dashboard"], ["sites", "Sites"],
-              ["manage", "Site Setup"],
-              ["items", "Items"], ["suppliers", "Suppliers"],
-              ["employees", "Employees"],
-              ...(["HO_HR", "FINANCE", "ADMIN"].includes(me.role)
-                ? [["payroll", "Payroll"]] : []),
-              ...(["DIRECTOR", "ADMIN"].includes(me.role)
-                ? [["pms", "PMs"]] : []),
-              ...(me.role === "ADMIN"
-                ? [["users", "Users"], ["company", "Company"]] : [])]
-              .map(([key, label]) => (
-              <button key={key}
-                      style={navBtn(hoPage === key && !openSite && !docView)}
-                      onClick={() => { setHoPage(key); setOpenSite(null);
+            {groups.map((g) => (
+              <button key={g.key}
+                      style={navBtn(activeGroup?.key === g.key && !openSite
+                                    && !docView)}
+                      onClick={() => { setHoPage(g.subs[0][0]);
+                                       setOpenSite(null);
                                        setDocView(null); }}>
-                {label}
+                {g.label}
+                {g.key === "approvals" && pendingCount > 0 && (
+                  <span style={{ background: "#c0392b", color: "#fff",
+                                 borderRadius: 10, padding: "1px 7px",
+                                 fontSize: 11, marginLeft: 6 }}>
+                    {pendingCount}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
@@ -267,6 +329,29 @@ export default function App() {
       ) : (
         <main style={{ maxWidth: 1000, margin: "32px auto", padding: "0 16px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
+
+          {!docView && !openSite && activeGroup &&
+            activeGroup.subs.length > 1 && (
+            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+              {activeGroup.subs.map(([key, label]) => (
+                <button key={key} onClick={() => setHoPage(key)}
+                        style={{
+                          ...ghostButton, padding: "4px 14px", fontSize: 13,
+                          background: hoPage === key ? "var(--sp-navy)"
+                                                     : "#fff",
+                          color: hoPage === key ? "#fff" : "var(--sp-navy)",
+                        }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {!docView && !openSite && APPROVERS.includes(me.role) &&
+            hoPage === "approvals" && (
+            <ApprovalsPage me={me} refresh={refresh}
+                           onOpen={openApprovalItem} />
+          )}
 
           {docView?.mode === "dpr-form" && (
             <DPRForm site={openSite} existing={docView.doc} project={project}
@@ -453,7 +538,7 @@ export default function App() {
             <CompanyPage />
           )}
           {!docView && !openSite &&
-            (!me.is_ho || hoPage === "sites") && (
+            (!showHoNav || hoPage === "sites") && (
             <SiteList sites={sites} onOpen={setOpenSite} />
           )}
         </main>

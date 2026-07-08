@@ -106,3 +106,15 @@ closes the traced-SVG ring-color issue); Admin can replace it on the new
 Company tab, which also manages legal name, registration no, TIN, address,
 phone, email, website (company_* parameters). Every PDF footer now prints
 the company identity line; the external PO adds reg no + phone.
+
+## 2026-07-08 — R6 addendum: grouped menu + per-role Approvals queue
+Owner: "HO Dashboard" → "Purchasing Dashboard"; menu needed re-arranging.
+Approved option: five role-trimmed top-level groups — Approvals · Sites ·
+Procurement (Purchasing Dashboard / Items / Suppliers) · People (Employees /
+Payroll / PMs) · Admin (Site Setup / Users / Company) — plus a new
+Approvals queue (GET /approvals/pending): each approver's landing page
+lists exactly the documents blocked on them (PM: submitted MR/IR/MAR,
+DPRs to verify, DMAs to issue; Director: submitted PRs; Purchasing: MRs
+sent to HO, draft POs; Finance/Purchasing: approved PRs awaiting payment).
+PMs get the grouped nav too (Approvals + Sites). Nav shows a live pending
+count badge.

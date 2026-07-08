@@ -25,6 +25,7 @@ urlpatterns = [
     path("pms", views.pm_list, name="pm-list"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),
+    path("approvals/pending", docs.approvals_pending, name="approvals-pending"),
     path("documents", docs.document_create, name="document-create"),
     path("documents/list", docs.documents_list, name="documents-list"),
     path("documents/<str:ref>", docs.document_detail, name="document-detail"),
