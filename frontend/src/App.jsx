@@ -22,8 +22,10 @@ import PortfolioPage from "./PortfolioPage.jsx";
 // role; approver roles land on the Approvals queue.
 const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"];
 const NAV_GROUPS = [
-  { key: "approvals", label: "Approvals", roles: APPROVERS,
-    subs: [["approvals", "Approvals", null],
+  // Not everything in the queue is an approval (DMA issues, MRs to
+  // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
+  { key: "approvals", label: "My Tasks", roles: APPROVERS,
+    subs: [["approvals", "My Tasks", null],
            ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
