@@ -450,3 +450,54 @@ def payroll_export(request, year, month):
         "ot_multiplier": multiplier, "hourly_rate_divisor": divisor,
         "rows": rows,
     })
+
+
+@api_view(["GET"])
+def dashboard_hr(request):
+    """HR/Payroll dashboard (spec §7.4): month-lock board, permit-expiry
+    and reallocation alerts, workforce today and OT summaries."""
+    if request.user.role not in PAYROLL_ROLES:
+        return Response({"detail": "HR/Finance/Admin only."}, status=403)
+    today = date.today()
+    sites = Site.objects.exclude(is_head_office=True).order_by("code")
+    locks = {
+        (t.site_id): t for t in TimesheetMonth.objects.filter(
+            year=today.year, month=today.month)
+    }
+    active_sites = [s for s in sites if s.status == "ACTIVE"]
+    board = [{
+        "site_id": s.id, "code": s.code, "name": s.name,
+        "status": locks[s.id].status if s.id in locks else "OPEN",
+        "signed_off_at": locks[s.id].signed_off_at if s.id in locks else None,
+    } for s in active_sites]
+    all_locked = bool(board) and all(b["status"] == "LOCKED" for b in board)
+
+    horizon = today + timedelta(days=60)
+    expiring = list(Employee.objects.filter(
+        is_active=True, work_permit_expiry__isnull=False,
+        work_permit_expiry__lte=horizon,
+    ).order_by("work_permit_expiry").values(
+        "emp_no", "full_name", "work_permit_expiry")[:30])
+
+    closed_ids = sites.filter(status="CLOSED").values_list("id", flat=True)
+    stranded = list(EmployeeSiteAllocation.objects.filter(
+        to_date__isnull=True, site_id__in=closed_ids,
+        employee__is_active=True,
+    ).select_related("employee", "site").values(
+        "employee__emp_no", "employee__full_name", "site__code")[:30])
+
+    todays = Attendance.objects.filter(day=today)
+    present = todays.exclude(remark__in=("ABSENT", "LEAVE", "SICK")).count()
+    ot_pending = Attendance.objects.filter(
+        ot_requested__gt=0, ot_approved__isnull=True).count()
+
+    return Response({
+        "month": f"{today.year}-{today.month:02d}",
+        "lock_board": board,
+        "all_locked": all_locked,
+        "permit_expiries": expiring,
+        "reallocation_alerts": stranded,
+        "workforce_today": present,
+        "ot_pending_approval": ot_pending,
+        "active_employees": Employee.objects.filter(is_active=True).count(),
+    })

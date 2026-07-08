@@ -15,13 +15,16 @@ import DMAPage from "./DMAPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
+import HRDashboard from "./HRDashboard.jsx";
+import PortfolioPage from "./PortfolioPage.jsx";
 
 // Grouped menu (owner, 2026-07-08): five top-level groups, trimmed by
 // role; approver roles land on the Approvals queue.
 const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"];
 const NAV_GROUPS = [
   { key: "approvals", label: "Approvals", roles: APPROVERS,
-    subs: [["approvals", "Approvals", null]] },
+    subs: [["approvals", "Approvals", null],
+           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
@@ -31,7 +34,8 @@ const NAV_GROUPS = [
            ["suppliers", "Suppliers", null]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
-    subs: [["employees", "Employees", null],
+    subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
+           ["employees", "Employees", null],
            ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
   { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
@@ -49,7 +53,7 @@ function visibleGroups(me) {
 
 function landingPage(me) {
   if (APPROVERS.includes(me.role)) return "approvals";
-  if (me.role === "HO_HR") return "employees";
+  if (me.role === "HO_HR") return "hr";
   return "sites";
 }
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
@@ -352,6 +356,16 @@ export default function App() {
             hoPage === "approvals" && (
             <ApprovalsPage me={me} refresh={refresh}
                            onOpen={openApprovalItem} />
+          )}
+          {!docView && !openSite &&
+            ["DIRECTOR", "ADMIN"].includes(me.role) &&
+            hoPage === "portfolio" && (
+            <PortfolioPage refresh={refresh} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
+            hoPage === "hr" && (
+            <HRDashboard refresh={refresh} />
           )}
 
           {docView?.mode === "dpr-form" && (

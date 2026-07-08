@@ -270,3 +270,52 @@ def activity_detail(request, pk):
     audit("programme_activity", activity.id, "ACTIVITY_UPDATED",
           actor=request.user, detail={"fields": sorted(request.data.keys())})
     return Response(serializer.data)
+
+
+@api_view(["GET"])
+def dashboard_portfolio(request):
+    """Senior-management portfolio (spec §7.4): every project with value,
+    % duration elapsed vs programme progress, open-items count, and an
+    on-track / watch / attention classification."""
+    if request.user.role not in ("DIRECTOR", "ADMIN"):
+        return Response({"detail": "Director/Admin only."}, status=403)
+    from datetime import date
+
+    today = date.today()
+    rows = []
+    counts = {"ACTIVE": 0, "ON_HOLD": 0, "CLOSED": 0}
+    projects = Project.objects.select_related("site", "pm") \
+        .prefetch_related("activities").order_by("site__code", "code")
+    serializer = ProjectSerializer(context={"request": request})
+    for p in projects:
+        counts[p.status] = counts.get(p.status, 0) + 1
+        elapsed = None
+        if p.start_date and p.planned_completion \
+                and p.planned_completion > p.start_date:
+            elapsed = round(100 * (today - p.start_date).days
+                            / (p.planned_completion - p.start_date).days, 1)
+            elapsed = max(min(elapsed, 100), 0)
+        progress = serializer.get_overall_progress(p)
+        open_items = p.documents.filter(is_void=False).exclude(
+            status__in=("VERIFIED", "CLOSED", "COMPLETE", "APPROVED",
+                        "ACKNOWLEDGED", "PAID_PO_ISSUED", "RECEIVED",
+                        "LOADED", "REJECTED", "CANCELLED")).count()
+        if p.status != "ACTIVE" or elapsed is None:
+            health = "info"
+        elif progress >= elapsed - 10:
+            health = "on_track"
+        elif progress >= elapsed - 25:
+            health = "watch"
+        else:
+            health = "attention"
+        rows.append({
+            "project_id": p.id, "site_code": p.site.code, "code": p.code,
+            "title": p.title, "status": p.status,
+            "contract_value": p.contract_value, "pm_name":
+            p.pm.full_name if p.pm else None,
+            "start_date": p.start_date,
+            "planned_completion": p.planned_completion,
+            "pct_time_elapsed": elapsed, "overall_progress": progress,
+            "open_items": open_items, "health": health,
+        })
+    return Response({"counts": counts, "projects": rows})

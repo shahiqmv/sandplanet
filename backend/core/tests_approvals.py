@@ -91,3 +91,43 @@ class ApprovalsQueueTests(TestCase):
         self.assertIn("To action — MRs sent to Head Office", self.titles(p))
         self.assertEqual([i["ref"] for i in p["groups"][0]["items"]],
                          [mr["ref"]])
+
+
+class RoleDashboardTests(TestCase):
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.client = APIClient()
+
+    def test_hr_dashboard_gated_and_shaped(self):
+        hr = make_user("hr", User.Role.HO_HR)
+        pm = make_user("pm9", User.Role.PM, site=self.site)
+        self.client.force_authenticate(pm)
+        self.assertEqual(self.client.get("/api/v1/dashboards/hr").status_code,
+                         403)
+        self.client.force_authenticate(hr)
+        r = self.client.get("/api/v1/dashboards/hr")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["lock_board"][0]["code"], "VKR")
+        self.assertFalse(r.data["all_locked"])
+
+    def test_portfolio_gated_and_shaped(self):
+        director = make_user("dir9", User.Role.DIRECTOR)
+        purchasing = make_user("pur9", User.Role.HO_PURCHASING)
+        from core.models import Project
+        from datetime import timedelta
+        Project.objects.create(
+            site=self.site, code="POOLS17", title="17 Pools",
+            start_date=date.today() - timedelta(days=50),
+            planned_completion=date.today() + timedelta(days=50))
+        self.client.force_authenticate(purchasing)
+        self.assertEqual(
+            self.client.get("/api/v1/dashboards/portfolio").status_code, 403)
+        self.client.force_authenticate(director)
+        r = self.client.get("/api/v1/dashboards/portfolio")
+        self.assertEqual(r.status_code, 200)
+        row = r.data["projects"][0]
+        self.assertEqual(row["code"], "POOLS17")
+        self.assertEqual(row["pct_time_elapsed"], 50.0)
+        # zero programme progress at 50% time elapsed = attention
+        self.assertEqual(row["health"], "attention")
