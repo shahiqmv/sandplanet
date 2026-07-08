@@ -140,10 +140,10 @@ LINE_FORMS = {
             ("Vendor", "vendor", False),
             ("Quotation Ref", "quotation_ref", False),
             ("Terms", "payment_terms", False),
+            ("PO / Payment Ref", "_po_or_payment", False),
             ("Cash (MVR)", "amount_cash", True),
             ("Credit (MVR)", "amount_credit", True),
             ("Total (MVR)", "_row_total", True),
-            ("PO / Payment Ref", "_po_or_payment", False),
         ],
         "header_keys": [("Requested Delivery", "requested_delivery")],
         "sigs": [("Prepared By — Purchasing", "SUBMIT"),
@@ -269,34 +269,32 @@ def _lines_context(document, revision):
     for link in document.links_to.select_related("from_document"):
         links.append(link.from_document.ref)
 
-    # GST summary on the PR: cash / credit / total columns (owner request)
-    tax_summary = None
+    # PR totals as footer rows aligned under Cash/Credit/Total; GST is
+    # applied once, on the grand total only (owner, 2026-07-08)
+    tax_footer = None
     if document.doc_type == "PR":
         cash = sum((ln.amount_cash or 0)
                    for ln in revision.lines.all()) or Decimal("0")
         credit = sum((ln.amount_credit or 0)
                      for ln in revision.lines.all()) or Decimal("0")
+        untaxed = cash + credit
         gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
-
-        def gst_of(value):
-            return (Decimal(value) * gst_rate / 100).quantize(Decimal("0.01"))
-
-        tax_summary = {
-            "headers": ["", "Cash", "Credit", "Total"],
+        gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
+        tax_footer = {
+            # No. + Vendor + Quotation + Terms + PO/Payment = 5 label cells
+            "label_colspan": 5,
             "rows": [
                 ["Untaxed Amount", _money(cash), _money(credit),
-                 _money(cash + credit)],
-                [f"GST ({_fmt(float(gst_rate))}%)", _money(gst_of(cash)),
-                 _money(gst_of(credit)), _money(gst_of(cash + credit))],
-                ["Total incl. GST", _money(cash + gst_of(cash)),
-                 _money(credit + gst_of(credit)),
-                 _money(cash + credit + gst_of(cash + credit))],
+                 _money(untaxed), False],
+                [f"GST ({_fmt(float(gst_rate))}%)", "", "", _money(gst),
+                 False],
+                ["Total incl. GST", "", "", _money(untaxed + gst), True],
             ],
         }
 
     logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     return {
-        "tax_summary": tax_summary,
+        "tax_footer": tax_footer,
         "doc": document,
         "rev": revision,
         "site": document.site,

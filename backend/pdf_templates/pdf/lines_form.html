@@ -71,29 +71,20 @@
   {% if totals %}
   <tr>{% for cell in totals %}<th{% if cell.num %} class="num"{% endif %}>{{ cell.value }}</th>{% endfor %}</tr>
   {% endif %}
-</table>
-
-{% if tax_summary %}
-<table style="width:120mm;margin-left:auto;border-collapse:collapse;margin-top:3mm">
+  {% if tax_footer %}
+  {% for row in tax_footer.rows %}
   <tr>
-    {% for h in tax_summary.headers %}
-    <th style="border:none;padding:2px 6px;font-size:8.5pt;color:#16527E;
-               text-align:{% if forloop.first %}left{% else %}right{% endif %}">
-      {{ h }}</th>
-    {% endfor %}
-  </tr>
-  {% for row in tax_summary.rows %}
-  <tr>
-    {% for cell in row %}
-    <td style="border:none;padding:2px 6px;font-size:8.5pt;
-               text-align:{% if forloop.first %}left{% else %}right{% endif %};
-               {% if forloop.parentloop.last %}font-weight:bold;border-top:1px solid #16527E{% endif %}">
-      {{ cell }}</td>
-    {% endfor %}
+    <td colspan="{{ tax_footer.label_colspan }}"
+        style="border:none;text-align:right;
+               {% if row.4 %}font-weight:bold{% endif %}">{{ row.0 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.1 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.2 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.3 }}</td>
   </tr>
   {% endfor %}
+  {% endif %}
 </table>
-{% endif %}
+
 
 {% if notes %}<p style="font-size:8pt;color:#5a6b78">{{ notes }}</p>{% endif %}
 
