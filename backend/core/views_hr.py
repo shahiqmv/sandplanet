@@ -501,3 +501,78 @@ def dashboard_hr(request):
         "ot_pending_approval": ot_pending,
         "active_employees": Employee.objects.filter(is_active=True).count(),
     })
+
+
+def site_manpower_data(site, day=None):
+    """Roster vs attendance per manpower category for one site (R9):
+    the employee DB says who is stationed here; today's attendance says
+    who actually turned up."""
+    day = day or date.today()
+    allocations = EmployeeSiteAllocation.objects.filter(
+        site=site, to_date__isnull=True, employee__is_active=True
+    ).select_related("employee__job_category")
+    cats = {}
+
+    def bucket(category):
+        key = category.id if category else 0
+        if key not in cats:
+            cats[key] = {"id": key,
+                         "name": category.name if category else "Uncategorised",
+                         "grp": category.grp if category else "",
+                         "roster": 0, "present": 0, "absent": 0}
+        return cats[key]
+
+    emp_ids = []
+    for a in allocations:
+        bucket(a.employee.job_category)["roster"] += 1
+        emp_ids.append(a.employee_id)
+    todays = Attendance.objects.filter(
+        site=site, day=day).select_related("employee__job_category")
+    for att in todays:
+        b = bucket(att.employee.job_category)
+        if att.remark in ("ABSENT", "SICK", "LEAVE"):
+            b["absent"] += 1
+        else:
+            b["present"] += 1
+    rows = sorted(cats.values(), key=lambda c: -c["roster"])
+    return {
+        "attendance_entered": todays.exists(),
+        "roster_total": len(emp_ids),
+        "present": sum(c["present"] for c in rows),
+        "absent": sum(c["absent"] for c in rows),
+        "categories": rows,
+    }
+
+
+@api_view(["GET"])
+def site_manpower(request, site_id):
+    """Full manpower breakdown for the site page (R9 'more data' view):
+    every category plus the roster with today's status. Site users see
+    names and categories only — never pay or passports."""
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and site.id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+    today = date.today()
+    data = site_manpower_data(site, today)
+    status_by_emp = {
+        a.employee_id: a.remark
+        for a in Attendance.objects.filter(site=site, day=today)
+    }
+    employees = [{
+        "emp_no": a.employee.emp_no,
+        "full_name": a.employee.full_name,
+        "category": a.employee.job_category.name
+        if a.employee.job_category else "—",
+        "today": status_by_emp.get(a.employee_id, "NOT RECORDED"),
+    } for a in EmployeeSiteAllocation.objects.filter(
+        site=site, to_date__isnull=True, employee__is_active=True,
+    ).select_related("employee__job_category")
+        .order_by("employee__emp_no")]
+    data["employees"] = employees
+    data["date"] = today
+    data["site"] = site.code
+    return Response(data)

@@ -19,3 +19,4 @@ Thumbs.db
 # Generated
 staticfiles/
 media/
+backend/test-media/

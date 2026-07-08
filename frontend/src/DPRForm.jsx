@@ -84,7 +84,16 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                                                               : [{ ...emptyWork }]);
   const [machinery, setMachinery] = useState(p.machinery || []);
   const [materials, setMaterials] = useState(p.materials || []);
-  const [manpower, setManpower] = useState(p.manpower || {});
+  // Manpower entry is dynamic rows (owner, R9): pick a category, put a
+  // count — no more fixed 17-category grid. Stored shape is unchanged
+  // (category id → count), so old DPRs and the PDF are unaffected.
+  const [mpRows, setMpRows] = useState(() => {
+    const rows = Object.entries(p.manpower || {})
+      .filter(([, v]) => parseInt(v, 10) > 0)
+      .map(([id, count]) => ({ category_id: id, count }));
+    return rows.length ? rows : [{ category_id: "", count: "" }];
+  });
+  const [mpNotice, setMpNotice] = useState(null);
   const [matters, setMatters] = useState(p.matters_affecting || "");
   const [visitors, setVisitors] = useState(p.visitors_instructions || "");
   const [incident, setIncident] = useState(p.safety?.incident || false);
@@ -112,8 +121,35 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   }, [projects.map((pr) => pr.id).join(",")]);
 
   const rainy = weatherAm === "Rainy" || weatherPm === "Rainy";
-  const manpowerTotal = Object.values(manpower)
-    .reduce((a, b) => a + (parseInt(b, 10) || 0), 0);
+  const manpowerTotal = mpRows
+    .reduce((a, r) => a + (parseInt(r.count, 10) || 0), 0);
+
+  function manpowerMap() {
+    return Object.fromEntries(mpRows
+      .filter((r) => r.category_id && parseInt(r.count, 10) > 0)
+      .map((r) => [r.category_id, r.count]));
+  }
+
+  async function prefillFromAttendance() {
+    setMpNotice(null);
+    try {
+      const data = await api(`/sites/${site.id}/manpower`);
+      if (!data.attendance_entered) {
+        setMpNotice("Attendance has not been entered for today yet — "
+                    + "record it first, then prefill.");
+        return;
+      }
+      const rows = data.categories
+        .filter((c) => c.id && c.present > 0)
+        .map((c) => ({ category_id: String(c.id), count: c.present }));
+      setMpRows(rows.length ? rows : [{ category_id: "", count: "" }]);
+      setMpNotice(`Loaded from attendance: ${data.present} present across `
+                  + `${rows.length} categor${rows.length === 1 ? "y" : "ies"}`
+                  + ` — adjust if needed.`);
+    } catch (e) {
+      setMpNotice(e.message);
+    }
+  }
 
   function payload() {
     return {
@@ -124,7 +160,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       rain_to: rainy ? rainTo : "",
       work_time_lost: timeLost,
       work_done: workDone.filter((r) => r.activity),
-      manpower,
+      manpower: manpowerMap(),
       machinery: machinery.filter((r) => r.item),
       materials: materials
         .filter((r) => r.material)
@@ -322,24 +358,58 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       />
 
       <SectionTitle>2. Manpower — total {manpowerTotal}</SectionTitle>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-        {[["Staff", staff], ["Trades / Labour", labour]].map(([label, list]) => (
-          <div key={label}>
-            <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>{label}</strong>
-            {list.map((c) => (
-              <div key={c.id} style={{ display: "flex", justifyContent:
-                   "space-between", alignItems: "center", padding: "2px 0" }}>
-                <span style={{ fontSize: 13 }}>{c.name}</span>
-                <input type="number" min="0"
-                       value={manpower[c.id] ?? ""}
-                       onChange={(e) => setManpower({ ...manpower,
-                                                      [c.id]: e.target.value })}
-                       style={{ ...inputStyle, width: 70 }} />
-              </div>
-            ))}
-          </div>
-        ))}
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginBottom: 8 }}>
+        <button type="button" onClick={prefillFromAttendance}
+                style={{ ...ghostButton, padding: "4px 12px", fontSize: 13 }}>
+          ⤵ Prefill from today's attendance
+        </button>
+        {mpNotice && (
+          <span style={{ fontSize: 12, color: mpNotice.startsWith("Loaded")
+                           ? "#1a7f37" : "#b35900" }}>{mpNotice}</span>
+        )}
       </div>
+      {mpRows.map((row, i) => {
+        const used = mpRows.map((r) => r.category_id);
+        return (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center",
+                                marginBottom: 6 }}>
+            <select value={row.category_id}
+                    onChange={(e) => setMpRows(mpRows.map((r, j) =>
+                      j === i ? { ...r, category_id: e.target.value } : r))}
+                    style={{ ...inputStyle, width: 280 }}>
+              <option value="">— category —</option>
+              {[["Staff", staff], ["Trades / Labour", labour]].map(
+                ([label, list]) => (
+                <optgroup key={label} label={label}>
+                  {list.map((c) => (
+                    <option key={c.id} value={String(c.id)}
+                            disabled={used.includes(String(c.id)) &&
+                                      String(c.id) !== row.category_id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
+              ))}
+            </select>
+            <input type="number" min="0" value={row.count}
+                   placeholder="count"
+                   onChange={(e) => setMpRows(mpRows.map((r, j) =>
+                     j === i ? { ...r, count: e.target.value } : r))}
+                   style={{ ...inputStyle, width: 90 }} />
+            <button type="button"
+                    onClick={() => setMpRows(mpRows.filter((_, j) => j !== i))}
+                    style={{ ...ghostButton, padding: "2px 8px",
+                             color: "#c0392b" }}>×</button>
+          </div>
+        );
+      })}
+      <button type="button"
+              onClick={() => setMpRows([...mpRows,
+                                        { category_id: "", count: "" }])}
+              style={{ ...ghostButton, padding: "4px 12px" }}>
+        + Add category
+      </button>
 
       <SectionTitle>3. Machinery &amp; Equipment in Use</SectionTitle>
       <RowTable

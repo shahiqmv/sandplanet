@@ -159,3 +159,20 @@ IR/MAR remain project documents; the site PM verifies the site-wide DPR.
 Existing per-project DPRs/TWSs stay valid history. Confirmed: same
 client entity per site — a different client on the same island would be
 a new site code.
+
+## 2026-07-08 — R9: dynamic manpower (roster ↔ attendance ↔ allocation)
+Owner round. Employee DB already allocates every employee to a site and
+job categories share the DPR manpower list, so:
+- DPR manpower entry: dynamic rows (category dropdown + count) instead of
+  the fixed 17-category grid, plus a "Prefill from today's attendance"
+  BUTTON (owner chose button over auto). Stored shape unchanged
+  (category id → count) — old DPRs and the printed PDF layout untouched.
+- Site dashboard "Manpower today" card: roster / present / absent /
+  allocated-to-tasks headline; IDLE = present − workers in today's DMA
+  (owner-confirmed definition); DPR-vs-attendance mismatch warning; top-4
+  category bars (owner: top 4, click through for more).
+- "Full breakdown" page (GET /sites/{id}/manpower): all categories
+  roster/present/absent + the roster with each person's status today —
+  names and categories only, never pay/passport.
+- Honest-data rule: card says "attendance not entered yet today" instead
+  of pretending zeros; idle only computed when attendance + DMA exist.

@@ -12,6 +12,7 @@ import ProgrammePage from "./ProgrammePage.jsx";
 import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import DMAPage from "./DMAPage.jsx";
+import ManpowerPage from "./ManpowerPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -510,6 +511,7 @@ export default function App() {
                                                    doc: null })}
                 onAttendance={() => setDocView({ mode: "attendance" })}
                 onDma={() => setDocView({ mode: "dma" })}
+                onManpower={() => setDocView({ mode: "manpower" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -547,6 +549,9 @@ export default function App() {
           )}
           {docView?.mode === "dma" && openSite && (
             <DMAPage site={openSite} me={me} onClose={closeDoc} />
+          )}
+          {docView?.mode === "manpower" && openSite && (
+            <ManpowerPage site={openSite} onClose={closeDoc} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (

@@ -1091,7 +1091,47 @@ def dashboard_site(request, site_id):
         "description": p.item.description if p.item else p.free_text_desc,
         "unit": p.unit, "qty": p.qty_pending,
     } for p in pending_qs[:8]]
+    # Manpower today (R9): roster vs attendance, idle = present − workers
+    # allocated in today's DMA, plus the DPR-vs-attendance accuracy check
+    from .views_hr import site_manpower_data
+
+    mp = site_manpower_data(site, today)
+    dma_total = None
+    if dma_today and dma_today.current_revision:
+        dma_total = 0
+        for t in (dma_today.current_revision.payload or {}).get("tasks", []):
+            try:
+                dma_total += int(t.get("workers") or 0)
+            except (TypeError, ValueError):
+                pass
+    idle = None
+    if mp["attendance_entered"] and dma_total is not None:
+        idle = max(mp["present"] - dma_total, 0)
+    dpr_total = None
+    if dpr_today and dpr_today.current_revision:
+        counts = (dpr_today.current_revision.payload or {}) \
+            .get("manpower", {}) or {}
+        try:
+            dpr_total = sum(int(v or 0) for v in counts.values())
+        except (TypeError, ValueError):
+            dpr_total = None
+    manpower = {
+        "attendance_entered": mp["attendance_entered"],
+        "roster_total": mp["roster_total"],
+        "present": mp["present"],
+        "absent": mp["absent"],
+        "allocated": dma_total,
+        "idle": idle,
+        "dpr_total": dpr_total,
+        "dpr_mismatch": (mp["attendance_entered"] and dpr_total is not None
+                         and dpr_total != mp["present"]) or False,
+        "top": [{"name": c["name"], "roster": c["roster"],
+                 "present": c["present"]}
+                for c in mp["categories"][:4]],
+        "others_roster": sum(c["roster"] for c in mp["categories"][4:]),
+    }
     return Response({
+        "manpower": manpower,
         "site": site.code,
         "dpr_today": {"ref": dpr_today.ref, "status": dpr_today.status}
         if dpr_today else None,

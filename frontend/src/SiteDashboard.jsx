@@ -8,7 +8,8 @@ const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 
 export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onNewQa, onAttendance, onDma,
-                                        onCreateGrn, onOpenDoc, refresh }) {
+                                        onManpower, onCreateGrn, onOpenDoc,
+                                        refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -158,6 +159,77 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               ))}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {dash?.manpower && dash.manpower.roster_total > 0 && (
+        <section style={card}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                        flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
+              👷 Manpower today
+            </h2>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              {dash.manpower.roster_total} on roster
+              {dash.manpower.attendance_entered ? (
+                <> · <b style={{ color: "var(--green-fg)" }}>
+                  {dash.manpower.present} present</b>
+                {dash.manpower.absent > 0 && (
+                  <> · <b style={{ color: "var(--red-fg)" }}>
+                    {dash.manpower.absent} absent/leave</b></>
+                )}
+                {dash.manpower.allocated != null && (
+                  <> · {dash.manpower.allocated} allocated to tasks
+                  {dash.manpower.idle > 0 && (
+                    <> · <b style={{ color: "var(--amber-fg)" }}>
+                      {dash.manpower.idle} idle</b></>
+                  )}</>
+                )}</>
+              ) : " · attendance not entered yet today"}
+            </span>
+            <a href="#" onClick={(e) => { e.preventDefault(); onManpower(); }}
+               style={{ marginLeft: "auto", fontSize: 12.5,
+                        color: "var(--navy)" }}>
+              Full breakdown →
+            </a>
+          </div>
+          {dash.manpower.dpr_mismatch && (
+            <p style={{ fontSize: 12, color: "var(--amber-fg)",
+                        margin: "6px 0 0" }}>
+              ⚠ Today's DPR reports {dash.manpower.dpr_total} manpower but
+              attendance shows {dash.manpower.present} present — worth a
+              check before the client asks.
+            </p>
+          )}
+          <div style={{ display: "flex", gap: 18, flexWrap: "wrap",
+                        marginTop: 10 }}>
+            {dash.manpower.top.map((c) => (
+              <div key={c.name} style={{ flex: 1, minWidth: 140 }}>
+                <div style={{ fontSize: 12, marginBottom: 2 }}>
+                  {c.name}{" "}
+                  <span style={{ fontFamily: "var(--font-mono)",
+                                 color: "var(--muted)" }}>
+                    {dash.manpower.attendance_entered
+                      ? `${c.present}/${c.roster}` : c.roster}
+                  </span>
+                </div>
+                <div style={{ background: "var(--row-line)", borderRadius: 4,
+                              height: 9 }}>
+                  <div style={{ height: 9, borderRadius: 4,
+                                width: `${100 * (dash.manpower
+                                  .attendance_entered ? c.present : c.roster)
+                                  / Math.max(c.roster, 1)}%`,
+                                background: "var(--sky)" }} />
+                </div>
+              </div>
+            ))}
+            {dash.manpower.others_roster > 0 && (
+              <div style={{ fontSize: 12, color: "var(--faint)",
+                            alignSelf: "end" }}>
+                +{dash.manpower.others_roster} in other categories
+              </div>
+            )}
+          </div>
         </section>
       )}
 

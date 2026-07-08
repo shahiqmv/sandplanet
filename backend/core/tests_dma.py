@@ -92,3 +92,54 @@ class PmOverviewTests(TestCase):
         row = next(p for p in r.data["pms"] if p["id"] == self.pm.id)
         self.assertEqual(row["sites"][0]["code"], "VKR")
         self.assertEqual(r.data["history"][0]["site_code"], "VKR")
+
+
+class SiteManpowerTests(TestCase):
+    """R9 — roster vs attendance vs allocation on the site dashboard."""
+
+    def setUp(self):
+        from core.models import (Attendance, Employee,
+                                 EmployeeSiteAllocation, ManpowerCategory)
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.se = make_user("se1", User.Role.SITE_ENGINEER, site=self.site)
+        mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=1)
+        today = date.today()
+        for i, (cat, remark) in enumerate([(mason, "PRESENT"),
+                                           (mason, "PRESENT"),
+                                           (mason, "ABSENT")]):
+            e = Employee.objects.create(emp_no=f"EMP-{i:04d}",
+                                        full_name=f"Worker {i}",
+                                        job_category=cat)
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=today)
+            Attendance.objects.create(employee=e, site=self.site, day=today,
+                                      remark=remark)
+        self.client = APIClient()
+        self.client.force_authenticate(self.se)
+
+    def test_dashboard_manpower_block_and_idle(self):
+        # DMA allocating 1 worker → idle = present(2) − allocated(1) = 1
+        self.client.post("/api/v1/documents", {
+            "doc_type": "DMA", "site_id": self.site.id,
+            "payload": {"tasks": [{"task": "Cleanup", "category": "Mason",
+                                   "workers": 1}]},
+        }, format="json")
+        mp = self.client.get(
+            f"/api/v1/dashboards/site/{self.site.id}").data["manpower"]
+        self.assertEqual(mp["roster_total"], 3)
+        self.assertEqual(mp["present"], 2)
+        self.assertEqual(mp["absent"], 1)
+        self.assertEqual(mp["allocated"], 1)
+        self.assertEqual(mp["idle"], 1)
+        self.assertEqual(mp["top"][0]["name"], "Mason")
+
+    def test_full_manpower_page_data(self):
+        r = self.client.get(f"/api/v1/sites/{self.site.id}/manpower")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["attendance_entered"])
+        self.assertEqual(len(r.data["employees"]), 3)
+        self.assertEqual(r.data["employees"][0]["today"], "PRESENT")
+        # site users never see pay/passport on this view
+        self.assertNotIn("basic_pay", r.data["employees"][0])

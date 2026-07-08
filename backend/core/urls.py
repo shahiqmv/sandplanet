@@ -66,6 +66,8 @@ urlpatterns = [
          name="project-programme"),
     path("programme-activities/<int:pk>", projects.activity_detail,
          name="activity-detail"),
+    path("sites/<int:site_id>/manpower", hr.site_manpower,
+         name="site-manpower"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),
     path("attendance/bulk", hr.attendance_bulk, name="attendance-bulk"),
     path("attendance/ot-approve", hr.ot_approve, name="ot-approve"),
