@@ -43,3 +43,10 @@ unquoted/unawarded (explicit override with reason allowed); Director's PR
 approval doubles as the award approval and auto-generates draft POs (global
 PO-NNN numbering) per awarded supplier; LM prefills from POs. An MR line may
 be split across suppliers.
+
+## 2026-07-07 — R3: Finance role activated (supersedes decision 6 deferral)
+Owner wants the full approval ladder for go-live: site users prepare, PM
+approves site documents, HO Purchasing prepares PR/LM/PO, Director approves
+the PR (award), and FINANCE — a new role — records payment / PO issuance
+(slip no. / PO no.) on approved PRs. Purchasing no longer records payments.
+Finance has HO-wide read scope; basic pay/passport remain HR+Admin only.

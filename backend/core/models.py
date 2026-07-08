@@ -11,11 +11,12 @@ class User(AbstractUser):
         PM = "PM", "Project Manager"
         HO_PURCHASING = "HO_PURCHASING", "HO Purchasing"
         DIRECTOR = "DIRECTOR", "Sr PM / Director, Projects"
+        FINANCE = "FINANCE", "Finance"  # payment/PO recording (R3)
         HO_HR = "HO_HR", "HO HR / Payroll"
         ADMIN = "ADMIN", "Admin"
 
-    # Roles with all-site read scope (spec §3)
-    HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "HO_HR", "ADMIN"}
+    # Roles with all-site read scope (spec §3 + R3)
+    HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "FINANCE", "HO_HR", "ADMIN"}
     SINGLE_SITE_ROLES = {"SITE_ENGINEER", "SITE_ADMIN"}
 
     role = models.CharField(max_length=20, choices=Role.choices)

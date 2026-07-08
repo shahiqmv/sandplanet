@@ -44,7 +44,7 @@ const ACTIONS = {
     ["return", "Return with comment", ["SUBMITTED"], ["DIRECTOR", "ADMIN"],
      "comment"],
     ["record-payment", "Record payment / PO", ["APPROVED", "PAYMENT_PROCESSING"],
-     ["HO_PURCHASING", "ADMIN"], "action_taken"],
+     ["FINANCE", "ADMIN"], "action_taken"],
     ["close", "Close", ["PAID_PO_ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   LM: [["depart", "Depart (issue manifest)", ["DRAFT", "LOADING"],

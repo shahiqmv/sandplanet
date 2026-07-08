@@ -22,6 +22,7 @@ class ProcBase(TestCase):
                                      from_date=date.today())
         self.purchasing = make_user("hop1", User.Role.HO_PURCHASING)
         self.director = make_user("dir1", User.Role.DIRECTOR)
+        self.finance = make_user("fin1", User.Role.FINANCE)
         # 9xxxx codes keep clear of the server-issued counter range
         self.cement = Item.objects.create(code="ITM-90001",
                                           description="Cement OPC 50kg bag",
@@ -246,9 +247,14 @@ class ChainTests(ProcBase):
         self.act(pr["ref"], "submit")
         self.as_user(self.director)
         self.act(pr["ref"], "approve")
+        # Purchasing no longer records payments (R3) — Finance does
         self.as_user(self.purchasing)
+        r = self.act(pr["ref"], "record-payment",
+                     {"action_taken": "TRF-20260718-01"})
+        self.assertEqual(r.status_code, 403)
+        self.as_user(self.finance)
         r = self.act(pr["ref"], "record-payment")
-        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.status_code, 400)  # slip/PO no. required
         r = self.act(pr["ref"], "record-payment", {"action_taken": "TRF-20260718-01"})
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
         self.assertEqual(r.data["payload"]["action_taken"], "TRF-20260718-01")

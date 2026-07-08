@@ -6,6 +6,7 @@ import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
+import UsersPage from "./UsersPage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
@@ -190,7 +191,8 @@ export default function App() {
           <nav style={{ display: "flex", gap: 4 }}>
             {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
               ["items", "Items"], ["suppliers", "Suppliers"],
-              ["employees", "Employees"]]
+              ["employees", "Employees"],
+              ...(me.role === "ADMIN" ? [["users", "Users"]] : [])]
               .map(([key, label]) => (
               <button key={key}
                       style={navBtn(hoPage === key && !openSite && !docView)}
@@ -305,6 +307,10 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "employees" && (
             <EmployeesPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite && me.role === "ADMIN" &&
+            hoPage === "users" && (
+            <UsersPage me={me} sites={sites} />
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />

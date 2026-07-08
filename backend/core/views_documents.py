@@ -602,18 +602,19 @@ def _do_verify(request, doc, comment):
 
 
 def _do_record_payment(request, doc, comment):
-    """PR: Purchasing records payment status + Action Taken (decision 6)."""
+    """PR: Finance records payment status + Action Taken (R3, supersedes
+    the decision-6 stopgap where Purchasing recorded it)."""
     if doc.doc_type != "PR":
         return Response({"detail": "record-payment applies to PR."}, status=400)
-    if not _can(request, "PR", {"HO_PURCHASING"}):
-        return Response({"detail": "Only HO Purchasing records payment."},
+    if not _can(request, "PR", {"FINANCE"}):
+        return Response({"detail": "Only Finance records payment."},
                         status=403)
     action_taken = (request.data.get("action_taken") or "").strip()
     if not action_taken:
         return Response({"detail": "action_taken (slip no. / PO no.) required."},
                         status=400)
     err = _apply(request, doc, "PAID_PO_ISSUED", "PAYMENT_RECORDED",
-                 roles={"HO_PURCHASING"}, comment=comment)
+                 roles={"FINANCE"}, comment=comment)
     if err is None:
         payload = doc.current_revision.payload or {}
         payload["action_taken"] = action_taken
