@@ -176,3 +176,13 @@ job categories share the DPR manpower list, so:
   names and categories only, never pay/passport.
 - Honest-data rule: card says "attendance not entered yet today" instead
   of pretending zeros; idle only computed when attendance + DMA exist.
+
+## 2026-07-08 — R9 addendum: DMA connected to attendance; strict categories
+The allocation's availability comes from attendance: the DMA page shows
+"N present today · M allocated · K not yet allocated", each category
+option carries its present count, the Manpower-at-Work table compares
+Allocated vs Present, and over-allocating a category raises a visible
+warning (soft — the PM may still issue). The category field is no longer
+free text: strictly the site's roster categories (full DPR list fallback
+when the site has no roster yet); a legacy/TWS value outside the list
+stays selectable but flagged "(not in category list)" until corrected.

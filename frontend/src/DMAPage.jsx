@@ -19,16 +19,30 @@ export default function DMAPage({ site, me, onClose }) {
   const [hours, setHours] = useState("");
   const [twsRefs, setTwsRefs] = useState([]);
   const [categories, setCategories] = useState([]);
+  const [mp, setMp] = useState(null);  // roster/attendance per category
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api("/manpower-categories").then((list) => {
-      const dpr = list.filter((c) => c.list_type === "DPR");
-      setCategories(dpr.length ? dpr : list);
-    }).catch(() => {});
-  }, []);
+    // Categories come strictly from the manpower list (owner, R9
+    // addendum) — preferring the ones actually on THIS site's roster —
+    // and attendance supplies who is available to allocate.
+    Promise.all([
+      api("/manpower-categories").catch(() => []),
+      api(`/sites/${site.id}/manpower`).catch(() => null),
+    ]).then(([list, manpower]) => {
+      setMp(manpower);
+      const roster = (manpower?.categories || []).filter(
+        (c) => c.id && c.roster > 0);
+      if (roster.length) {
+        setCategories(roster.map((c) => ({ id: c.id, name: c.name })));
+      } else {
+        const dpr = list.filter((c) => c.list_type === "DPR" && c.is_active);
+        setCategories(dpr.length ? dpr : list);
+      }
+    });
+  }, [site.id]);
 
   const load = useCallback(() => {
     setError(null);
@@ -129,6 +143,16 @@ export default function DMAPage({ site, me, onClose }) {
     totals[key] = (totals[key] || 0) + n;
     grandTotal += n;
   }
+  // Attendance is the availability source (owner): present per category
+  const attendanceIn = !!mp?.attendance_entered;
+  const presentByCat = {};
+  for (const c of mp?.categories || []) presentByCat[c.name] = c.present;
+  const overAllocated = attendanceIn
+    ? Object.entries(totals).filter(([cat, n]) =>
+        cat !== "Unassigned" && n > (presentByCat[cat] || 0))
+    : [];
+  const unallocated = attendanceIn
+    ? Math.max((mp?.present || 0) - grandTotal, 0) : null;
   const pdf = doc?.attachments?.filter((a) => a.kind === "GENERATED_PDF")
     .slice(-1)[0];
 
@@ -176,6 +200,29 @@ export default function DMAPage({ site, me, onClose }) {
         )}
       </div>
 
+      {mp && (
+        <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "0 0 10px" }}>
+          {attendanceIn ? (
+            <>
+              <b style={{ color: "#1a7f37" }}>{mp.present} present</b> today
+              (attendance) · {grandTotal} allocated in this sheet
+              {unallocated > 0 && (
+                <> · <b style={{ color: "#b35900" }}>
+                  {unallocated} not yet allocated</b></>
+              )}
+            </>
+          ) : "Attendance has not been entered for today yet — present "
+            + "counts will appear here once it is."}
+        </p>
+      )}
+      {overAllocated.length > 0 && (
+        <p style={{ fontSize: 12.5, color: "#c0392b", margin: "0 0 10px" }}>
+          ⚠ Allocating more than attendance shows present:{" "}
+          {overAllocated.map(([cat, n]) =>
+            `${cat} (${n} allocated, ${presentByCat[cat] || 0} present)`)
+            .join(" · ")}
+        </p>
+      )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
 
@@ -217,10 +264,32 @@ export default function DMAPage({ site, me, onClose }) {
                              style={{ ...inputStyle, width: 120 }} />
                     </td>
                     <td style={td}>
-                      <input value={t.category} list="dma-categories"
-                             onChange={(e) => setTask(i, "category",
-                                                      e.target.value)}
-                             style={{ ...inputStyle, width: 130 }} />
+                      {/* Strictly the site's manpower categories (owner) —
+                          a legacy/TWS value not in the list stays visible
+                          but flagged until corrected */}
+                      <select value={t.category}
+                              onChange={(e) => setTask(i, "category",
+                                                       e.target.value)}
+                              style={{ ...inputStyle, width: 150,
+                                       background: t.category &&
+                                         !categories.some((c) =>
+                                           c.name === t.category)
+                                         ? "#fff8e6" : "#fff" }}>
+                        <option value="">— category —</option>
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.name}>
+                            {c.name}
+                            {attendanceIn && presentByCat[c.name] != null
+                              ? ` (${presentByCat[c.name]} present)` : ""}
+                          </option>
+                        ))}
+                        {t.category && !categories.some((c) =>
+                            c.name === t.category) && (
+                          <option value={t.category}>
+                            {t.category} (not in category list)
+                          </option>
+                        )}
+                      </select>
                     </td>
                     <td style={td}>
                       <input type="number" min="0" value={t.workers}
@@ -258,10 +327,6 @@ export default function DMAPage({ site, me, onClose }) {
           </tbody>
         </table>
       </div>
-      <datalist id="dma-categories">
-        {categories.map((c) => <option key={c.id} value={c.name} />)}
-      </datalist>
-
       {editable && (
         <button onClick={() => setTasks([...tasks, { ...EMPTY_TASK }])}
                 style={{ ...ghostButton, marginTop: 8, fontSize: 13 }}>
@@ -270,22 +335,45 @@ export default function DMAPage({ site, me, onClose }) {
       )}
 
       {grandTotal > 0 && (
-        <div style={{ marginTop: 16, maxWidth: 340 }}>
+        <div style={{ marginTop: 16, maxWidth: 420 }}>
           <h3 style={{ margin: "0 0 6px", fontSize: 14,
                        color: "var(--sp-navy)" }}>
             Manpower at work
           </h3>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={th}>Category</th>
+              <th style={{ ...th, textAlign: "right" }}>Allocated</th>
+              {attendanceIn && (
+                <th style={{ ...th, textAlign: "right" }}>Present</th>
+              )}
+            </tr></thead>
             <tbody>
-              {Object.entries(totals).sort().map(([cat, n]) => (
-                <tr key={cat}>
-                  <td style={td}>{cat}</td>
-                  <td style={{ ...td, textAlign: "right" }}>{n}</td>
-                </tr>
-              ))}
+              {Object.entries(totals).sort().map(([cat, n]) => {
+                const present = presentByCat[cat];
+                const over = attendanceIn && cat !== "Unassigned" &&
+                  n > (present || 0);
+                return (
+                  <tr key={cat}>
+                    <td style={td}>{cat}</td>
+                    <td style={{ ...td, textAlign: "right",
+                                 color: over ? "#c0392b" : undefined,
+                                 fontWeight: over ? 700 : 400 }}>{n}</td>
+                    {attendanceIn && (
+                      <td style={{ ...td, textAlign: "right",
+                                   color: "#5a6b78" }}>
+                        {present ?? "—"}</td>
+                    )}
+                  </tr>
+                );
+              })}
               <tr style={{ fontWeight: 700 }}>
                 <td style={td}>Total</td>
                 <td style={{ ...td, textAlign: "right" }}>{grandTotal}</td>
+                {attendanceIn && (
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {mp.present}</td>
+                )}
               </tr>
             </tbody>
           </table>
