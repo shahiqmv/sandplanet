@@ -1,10 +1,25 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { StatusChip, card, td, th } from "./ui.jsx";
+import { ActionCard, Btn, Eyebrow, StatusChip, card } from "./ui.jsx";
 
 // Per-role "waiting on you" queue (owner, 2026-07-08) — the landing page
-// for approver roles so nothing sits unnoticed: PM approvals/verifications,
-// Director awards, Purchasing actions, Finance payments.
+// for approver roles. Design brief: action cards, severity then age.
+
+const GROUP_SEVERITY = [
+  ["To approve", "warn"], ["To award", "warn"], ["Payments", "warn"],
+  ["To issue — morning", "warn"],
+];
+
+function severityFor(title) {
+  const hit = GROUP_SEVERITY.find(([prefix]) => title.startsWith(prefix));
+  return hit ? hit[1] : "info";
+}
+
+function ageLine(docDate) {
+  const days = Math.floor((Date.now() - new Date(docDate).getTime()) / 864e5);
+  if (days <= 0) return "today";
+  return `${days} day${days === 1 ? "" : "s"} old`;
+}
 
 export default function ApprovalsPage({ me, refresh, onOpen }) {
   const [data, setData] = useState(null);
@@ -18,58 +33,40 @@ export default function ApprovalsPage({ me, refresh, onOpen }) {
   if (!data) return <section style={card}>Loading…</section>;
 
   return (
-    <section style={card}>
-      <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-        Waiting on you
-        {data.total > 0 && (
-          <span style={{ background: "#c0392b", color: "#fff",
-                         borderRadius: 12, padding: "2px 10px", fontSize: 13,
-                         marginLeft: 10 }}>{data.total}</span>
-        )}
-      </h2>
+    <>
       {data.total === 0 && (
-        <p style={{ color: "#1a7f37", fontSize: 14 }}>
-          ✓ Nothing pending — every document that needs your action has been
-          dealt with.
-        </p>
+        <section style={card}>
+          <p style={{ color: "var(--green-fg)", fontSize: 14, margin: 0 }}>
+            ✓ Nothing waiting on you — every document that needs your action
+            has been dealt with.
+          </p>
+        </section>
       )}
       {data.groups.map((g) => (
-        <div key={g.title} style={{ marginBottom: 18 }}>
-          <h3 style={{ fontSize: 14, color: "var(--sp-navy)",
-                       margin: "0 0 6px" }}>
-            {g.title} <span style={{ color: "#5a6b78", fontWeight: 400 }}>
-              · {g.items.length}</span>
-          </h3>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr>
-                <th style={th}>Ref</th><th style={th}>Site</th>
-                <th style={th}>Project</th><th style={th}>Date</th>
-                <th style={th}>Status</th><th style={th}>Action needed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {g.items.map((item) => (
-                <tr key={item.ref}>
-                  <td style={{ ...td, width: 130 }}>
-                    <a href="#" onClick={(e) => { e.preventDefault();
-                                                  onOpen(item); }}
-                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                      {item.ref}
-                    </a>
-                  </td>
-                  <td style={td}>{item.site_code}</td>
-                  <td style={td}>{item.project_code || "—"}</td>
-                  <td style={td}>{item.doc_date}</td>
-                  <td style={td}><StatusChip status={item.status} /></td>
-                  <td style={{ ...td, color: "#5a6b78", fontSize: 12 }}>
-                    {item.hint}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div key={g.title}>
+          <Eyebrow meta={String(g.items.length)}
+                   metaTone={severityFor(g.title) === "warn" ? "alert" : null}>
+            {g.title}
+          </Eyebrow>
+          {g.items.map((item) => (
+            <ActionCard key={item.ref}
+              severity={severityFor(g.title)}
+              refText={item.ref}
+              text={`${item.site_code}${item.project_code
+                ? ` · ${item.project_code}` : ""} — ${item.hint}`}
+              meta={`${item.doc_date} · ${ageLine(item.doc_date)}`}
+              chip={<StatusChip status={item.status} />}
+              button={
+                <Btn variant={severityFor(g.title) === "warn"
+                              ? "navy" : "secondary"}
+                     onClick={() => onOpen(item)}
+                     style={{ padding: "6px 14px", fontSize: 13 }}>
+                  Open {item.doc_type}
+                </Btn>
+              } />
+          ))}
         </div>
       ))}
-    </section>
+    </>
   );
 }

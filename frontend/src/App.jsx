@@ -276,12 +276,13 @@ export default function App() {
 
   return (
     <div>
-      <header style={{ background: "var(--sp-navy)", color: "#fff",
+      <header style={{ background: "var(--navy)", color: "#fff",
                        padding: "14px 28px",
-                       borderBottom: "4px solid var(--sp-sky)",
+                       borderBottom: "3px solid var(--sky)",
                        display: "flex", alignItems: "baseline", gap: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 20, letterSpacing: 0.5,
-                     cursor: "pointer" }}
+        <h1 style={{ margin: 0, fontSize: 22,
+                     fontFamily: "var(--font-display)", fontWeight: 700,
+                     letterSpacing: "0.14em", cursor: "pointer" }}
             onClick={() => { setDocView(null); setHoPage(landingPage(me));
                              if (!me.landing_site_id) setOpenSite(null); }}>
           SAND PLANET
@@ -327,7 +328,7 @@ export default function App() {
       {!me.authenticated ? (
         <Login onLogin={setMe} />
       ) : (
-        <main style={{ maxWidth: 1000, margin: "32px auto", padding: "0 16px" }}>
+        <main style={{ maxWidth: 900, margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
           {!docView && !openSite && activeGroup &&

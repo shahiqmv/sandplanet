@@ -1,100 +1,231 @@
+// Shared components per SP_Design_Brief.md — build screens from these
+// only; tokens live in index.css and are never hard-coded elsewhere.
+
 export const card = {
-  background: "#fff",
-  border: "1px solid var(--sp-border)",
-  borderRadius: 8,
+  background: "var(--paper)",
+  border: "1px solid var(--line)",
+  borderRadius: 12,
+  boxShadow: "0 1px 3px rgba(24,36,48,.05)",
   padding: 24,
-  marginBottom: 24,
+  marginBottom: 20,
 };
 
 export const inputStyle = {
   width: "100%",
   padding: "7px 9px",
-  border: "1px solid var(--sp-border)",
-  borderRadius: 6,
+  border: "1px solid #BFD6E6",
+  borderRadius: 8,
   fontSize: 14,
+  fontFamily: "var(--font-body)",
+  background: "var(--paper)",
   boxSizing: "border-box",
 };
 
-export const buttonStyle = {
+// Buttons — semantic color mapping (brief): sky = create/issue/do,
+// navy = authority (approve/verify), secondary = safe alternative,
+// ghost = navigation, danger = void/remove (never solid red).
+const btnBase = {
   padding: "8px 18px",
-  background: "var(--sp-navy)",
-  color: "#fff",
-  border: "none",
-  borderRadius: 6,
+  borderRadius: 8,
   fontSize: 14,
+  fontWeight: 600,
   cursor: "pointer",
+  border: "1px solid transparent",
+  transition: "background 150ms ease, border-color 150ms ease",
 };
+export const BTN = {
+  primary: { ...btnBase, background: "var(--sky)", color: "#fff" },
+  navy: { ...btnBase, background: "var(--navy)", color: "#fff" },
+  secondary: { ...btnBase, background: "var(--paper)", color: "var(--navy)",
+               border: "1px solid #BFD6E6" },
+  ghost: { ...btnBase, background: "transparent", color: "var(--navy)",
+           border: "1px solid transparent" },
+  danger: { ...btnBase, background: "var(--paper)", color: "var(--red-fg)",
+            border: "1px solid var(--red-fg)" },
+};
+export function Btn({ variant = "primary", style, ...props }) {
+  return <button style={{ ...BTN[variant], ...style }} {...props} />;
+}
 
-export const ghostButton = {
-  ...buttonStyle,
-  background: "#fff",
-  color: "var(--sp-navy)",
-  border: "1px solid var(--sp-border)",
-};
+// Legacy aliases — old screens keep working, now on brief semantics
+export const buttonStyle = BTN.navy;
+export const ghostButton = BTN.secondary;
 
 export const th = {
   textAlign: "left",
   fontSize: 12,
-  color: "var(--sp-navy)",
+  color: "var(--navy)",
+  fontWeight: 600,
   padding: "6px 8px",
-  borderBottom: "2px solid var(--sp-sky)",
+  borderBottom: "2px solid var(--sky)",
 };
 
 export const td = {
   padding: "7px 8px",
   fontSize: 13,
-  borderTop: "1px solid var(--sp-border)",
+  borderTop: "1px solid var(--row-line)",
   verticalAlign: "top",
 };
 
-const STATUS_COLORS = {
-  ACTIVE: "#1a7f37",
-  AWARDED: "#29abe2",
-  ON_HOLD: "#b35900",
-  CLOSED: "#5a6b78",
-  DRAFT: "#b35900",
-  ISSUED: "#29abe2",
-  VERIFIED: "#1a7f37",
-  VOID: "#c0392b",
-  SUBMITTED: "#29abe2",
-  PM_APPROVED: "#1b75bb",
-  SENT_TO_HO: "#1b75bb",
-  PR_RAISED: "#1b75bb",
-  LOADING_PLANNED: "#29abe2",
-  PARTIALLY_LOADED: "#b35900",
-  LOADED: "#1a7f37",
-  DEPARTED: "#29abe2",
-  RECEIVED: "#1a7f37",
-  RECEIVED_WITH_SHORTAGE: "#c0392b",
-  COUNTED: "#29abe2",
-  COMPLETE: "#1a7f37",
-  SHORTAGE_REPORTED: "#c0392b",
-  APPROVED: "#1a7f37",
-  APPROVED_WITH_COMMENTS: "#b35900",
-  REVISE_RESUBMIT: "#b35900",
-  REJECTED: "#c0392b",
-  CLOSED_BY_PM: "#b35900",
-  ACKNOWLEDGED: "#1a7f37",
-  PAYMENT_PROCESSING: "#b35900",
-  PAID_PO_ISSUED: "#1a7f37",
-  CANCELLED: "#5a6b78",
+// Chips — four tones only (brief)
+const CHIP_TONES = {
+  ok: { background: "var(--green-bg)", color: "var(--green-fg)" },
+  warn: { background: "var(--amber-bg)", color: "var(--amber-fg)" },
+  alert: { background: "var(--red-bg)", color: "var(--red-fg)" },
+  info: { background: "var(--sky-soft)", color: "var(--navy)" },
 };
+export function Chip({ tone = "info", children }) {
+  return (
+    <span style={{ ...CHIP_TONES[tone], fontSize: 11.5, fontWeight: 600,
+                   padding: "2px 10px", borderRadius: 999,
+                   whiteSpace: "nowrap", display: "inline-block" }}>
+      {children}
+    </span>
+  );
+}
 
+const STATUS_TONES = {
+  ACTIVE: "ok", VERIFIED: "ok", LOADED: "ok", RECEIVED: "ok",
+  COMPLETE: "ok", APPROVED: "ok", ACKNOWLEDGED: "ok",
+  PAID_PO_ISSUED: "ok", CLOSED: "ok",
+  AWARDED: "info", ISSUED: "info", SUBMITTED: "info", PM_APPROVED: "info",
+  SENT_TO_HO: "info", PR_RAISED: "info", LOADING_PLANNED: "info",
+  DEPARTED: "info", COUNTED: "info",
+  DRAFT: "warn", ON_HOLD: "warn", PARTIALLY_LOADED: "warn",
+  APPROVED_WITH_COMMENTS: "warn", REVISE_RESUBMIT: "warn",
+  CLOSED_BY_PM: "warn", PAYMENT_PROCESSING: "warn", CANCELLED: "warn",
+  VOID: "alert", RECEIVED_WITH_SHORTAGE: "alert",
+  SHORTAGE_REPORTED: "alert", REJECTED: "alert",
+};
 export function StatusChip({ status }) {
   if (!status) return null;
   return (
-    <span
-      style={{
-        fontSize: 11,
-        padding: "2px 9px",
-        borderRadius: 12,
-        background: STATUS_COLORS[status] || "#5a6b78",
-        color: "#fff",
-        whiteSpace: "nowrap",
-      }}
-    >
+    <Chip tone={STATUS_TONES[status] || "info"}>
       {String(status).replace(/_/g, " ")}
+    </Chip>
+  );
+}
+
+// RefStamp — document references never render as plain text (brief)
+export function RefStamp({ children, small }) {
+  return (
+    <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600,
+                   fontSize: small ? 11 : 12.5, color: "var(--navy)",
+                   border: "1.5px solid var(--navy)", borderRadius: 3,
+                   padding: small ? "0px 5px" : "1px 7px",
+                   whiteSpace: "nowrap", display: "inline-block" }}>
+      {children}
     </span>
+  );
+}
+
+// IssuedStamp — green ink stamp once a document is issued
+export function IssuedStamp({ refText, label = "ISSUED" }) {
+  return (
+    <span style={{ fontFamily: "var(--font-mono)", fontWeight: 600,
+                   fontSize: 12, color: "var(--green-fg)",
+                   border: "2px solid var(--green-fg)", borderRadius: 4,
+                   padding: "3px 10px", display: "inline-block",
+                   transform: "rotate(-4deg)", letterSpacing: "0.04em" }}>
+      {refText} · {label}
+    </span>
+  );
+}
+
+// StampTile — daily obligations: amber dashed while due, paper + green
+// stamp when done. Reused for month-lock tiles.
+export function StampTile({ title, done, dueText, doneStamp, action }) {
+  return (
+    <div style={{
+      flex: 1, minWidth: 220, borderRadius: 12, padding: "14px 16px",
+      background: done ? "var(--paper)" : "var(--amber-bg)",
+      border: done ? "1px solid var(--line)"
+                   : "1.5px dashed var(--amber-fg)",
+    }}>
+      <div style={{ fontFamily: "var(--font-display)", fontWeight: 600,
+                    textTransform: "uppercase", letterSpacing: "0.08em",
+                    fontSize: 13, color: done ? "var(--muted)"
+                                              : "var(--amber-fg)" }}>
+        {title}
+      </div>
+      <div style={{ marginTop: 10, minHeight: 34 }}>
+        {done ? doneStamp : (
+          <>
+            {dueText && <div style={{ fontSize: 12, color: "var(--amber-fg)",
+                                      marginBottom: 8 }}>{dueText}</div>}
+            {action}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Eyebrow — display-font uppercase section heading with optional meta
+export function Eyebrow({ children, meta, metaTone }) {
+  return (
+    <div style={{ display: "flex", alignItems: "baseline",
+                  justifyContent: "space-between", margin: "18px 0 8px" }}>
+      <span style={{ fontFamily: "var(--font-display)", fontWeight: 700,
+                     textTransform: "uppercase", letterSpacing: "0.12em",
+                     fontSize: 13.5, color: "var(--navy)" }}>
+        {children}
+      </span>
+      {meta && (
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12,
+                       fontWeight: 600,
+                       color: metaTone === "alert" ? "var(--red-fg)"
+                                                   : "var(--faint)" }}>
+          {meta}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Stat — never a bare count: number + label + one colored context line
+export function Stat({ value, label, context, tone = "info" }) {
+  const toneColor = { ok: "var(--green-fg)", warn: "var(--amber-fg)",
+                      alert: "var(--red-fg)", info: "var(--muted)" }[tone];
+  return (
+    <div style={{ flex: 1, minWidth: 130 }}>
+      <div style={{ fontFamily: "var(--font-display)", fontWeight: 700,
+                    fontSize: 30, color: "var(--ink)", lineHeight: 1 }}>
+        {value}
+      </div>
+      <div style={{ fontSize: 12.5, fontWeight: 700, marginTop: 2 }}>
+        {label}</div>
+      {context && (
+        <div style={{ fontSize: 11.5, color: toneColor, marginTop: 2 }}>
+          {context}</div>
+      )}
+    </div>
+  );
+}
+
+// ActionCard — queue rows: left accent by severity, RefStamp + what/where
+// + age line; right chip + one button. Order queues severity then age.
+const ACCENTS = { alert: "var(--red-fg)", warn: "var(--amber-fg)",
+                  info: "var(--sky)" };
+export function ActionCard({ severity = "info", refText, text, meta, chip,
+                             button }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12,
+                  background: "var(--paper)",
+                  border: "1px solid var(--line)",
+                  borderLeft: `4px solid ${ACCENTS[severity]}`,
+                  borderRadius: 12, padding: "10px 14px", marginBottom: 8,
+                  boxShadow: "0 1px 3px rgba(24,36,48,.05)",
+                  flexWrap: "wrap" }}>
+      <RefStamp>{refText}</RefStamp>
+      <div style={{ flex: 1, minWidth: 180 }}>
+        <div style={{ fontSize: 13.5 }}>{text}</div>
+        {meta && <div style={{ fontSize: 11.5, color: "var(--faint)",
+                               marginTop: 1 }}>{meta}</div>}
+      </div>
+      {chip}
+      {button}
+    </div>
   );
 }
 
@@ -102,9 +233,12 @@ export function SectionTitle({ children }) {
   return (
     <h3
       style={{
-        color: "var(--sp-navy)",
-        fontSize: 14,
-        borderBottom: "1px solid var(--sp-sky)",
+        color: "var(--navy)",
+        fontFamily: "var(--font-display)",
+        textTransform: "uppercase",
+        letterSpacing: "0.1em",
+        fontSize: 15,
+        borderBottom: "1px solid var(--sky)",
         paddingBottom: 4,
         margin: "20px 0 10px",
       }}

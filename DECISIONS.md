@@ -118,3 +118,22 @@ DPRs to verify, DMAs to issue; Director: submitted PRs; Purchasing: MRs
 sent to HO, draft POs; Finance/Purchasing: approved PRs awaiting payment).
 PMs get the grouped nav too (Approvals + Sites). Nav shows a live pending
 count badge.
+
+## 2026-07-08 — R7: SP_Design_Brief.md adopted ("drawing title block, island paper")
+Owner delivered SP_Design_Brief.md + Requirements Spec R1 §7.4 (role
+dashboards) from his design chat. Staged implementation:
+- Stage 1 (done): tokens in index.css (sand canvas, sand-toned hairlines,
+  4-tone chips), self-hosted Barlow Condensed / Inter / IBM Plex Mono
+  (@fontsource), shared components in ui.jsx (Btn semantic variants, Chip,
+  RefStamp, IssuedStamp, StampTile, Eyebrow, Stat-with-context,
+  ActionCard); site dashboard leads with Today's-obligations stamp tiles
+  (amber dashed → green rotated issued stamp); Approvals queue = severity
+  action cards with age lines; Purchasing dashboard eyebrows + stats with
+  context lines; 900px shell, 3px sky header rule, display-font brand.
+- Stage 2 (pending): HR month-lock board + Management portfolio dashboards
+  (new endpoints), boat board grouping.
+- Stage 3 (pending): FormCard restyle of document forms (auto-calc cells
+  in mono on sand tint, inline validation copy).
+NOTE: the brief references two mockup JSX files (source of truth for look
+and feel) that were not delivered — implementation follows the written
+brief; reconcile if the owner supplies the mockups.

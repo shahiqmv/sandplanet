@@ -1,19 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
-import { StatusChip, buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
-
-function Stat({ label, value, warn }) {
-  return (
-    <div style={{ flex: 1, minWidth: 130, textAlign: "center" }}>
-      <div style={{ fontSize: 26, fontWeight: 700,
-                    color: warn && value > 0 ? "#b35900" : "var(--sp-navy)" }}>
-        {value ?? "–"}
-      </div>
-      <div style={{ fontSize: 12, color: "#5a6b78" }}>{label}</div>
-    </div>
-  );
-}
+import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
+         ghostButton, td, th } from "./ui.jsx";
 
 export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
   const [stats, setStats] = useState(null);
@@ -36,17 +25,35 @@ export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
 
   return (
     <>
-      <section style={{ ...card, display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <Stat label="MRs awaiting HO action" value={stats?.mrs_awaiting_action}
-              warn />
-        <Stat label="PRs awaiting approval" value={stats?.prs_awaiting_approval}
-              warn />
-        <Stat label="PRs awaiting payment" value={stats?.prs_awaiting_payment} />
-        <Stat label="Manifests in transit" value={stats?.lms_in_transit} />
-        <Stat label="Pending items open" value={stats?.pending_items_open} warn />
-        <Stat label="GRN shortages" value={stats?.grn_shortages} warn />
+      <Eyebrow>Purchasing overview</Eyebrow>
+      <section style={{ ...card, display: "flex", gap: 18, flexWrap: "wrap" }}>
+        <Stat label="MRs awaiting action" value={stats?.mrs_awaiting_action ?? "–"}
+              tone={stats?.mrs_awaiting_action ? "warn" : "ok"}
+              context={stats?.mrs_awaiting_action
+                ? "process before the next loading" : "queue clear"} />
+        <Stat label="PRs with Director" value={stats?.prs_awaiting_approval ?? "–"}
+              tone={stats?.prs_awaiting_approval ? "warn" : "ok"}
+              context={stats?.prs_awaiting_approval
+                ? "awaiting award approval" : "none waiting"} />
+        <Stat label="PRs awaiting payment" value={stats?.prs_awaiting_payment ?? "–"}
+              tone={stats?.prs_awaiting_payment ? "warn" : "ok"}
+              context={stats?.prs_awaiting_payment
+                ? "Finance to record slips/POs" : "all settled"} />
+        <Stat label="Boats in transit" value={stats?.lms_in_transit ?? "–"}
+              tone="info"
+              context={stats?.lms_in_transit
+                ? "manifests at sea — GRN on arrival" : "none at sea"} />
+        <Stat label="Pending items" value={stats?.pending_items_open ?? "–"}
+              tone={stats?.pending_items_open ? "warn" : "ok"}
+              context={stats?.pending_items_open
+                ? "plan onto the next manifest" : "log clear"} />
+        <Stat label="GRN shortages" value={stats?.grn_shortages ?? "–"}
+              tone={stats?.grn_shortages ? "alert" : "ok"}
+              context={stats?.grn_shortages
+                ? "chase vendors within 24h" : "none open"} />
       </section>
 
+      <Eyebrow>Registers</Eyebrow>
       <section style={card}>
         <div style={{ display: "flex", gap: 8, alignItems: "center",
                       flexWrap: "wrap", marginBottom: 12 }}>
@@ -86,16 +93,13 @@ export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
                   <td style={td}>
                     <a href="#" onClick={(e) => { e.preventDefault();
                                                   onOpenDoc(row.lm_ref); }}
-                       style={{ color: "var(--sp-navy)" }}>{row.lm_ref}</a>
+                       style={{ textDecoration: "none" }}>
+                      <RefStamp small>{row.lm_ref}</RefStamp></a>
                   </td>
                   <td style={td}>{row.reason}</td>
                   <td style={td}>
-                    <span style={{ fontSize: 11, padding: "2px 9px",
-                                   borderRadius: 12, color: "#fff",
-                                   background: row.status === "PENDING"
-                                     ? "#b35900" : "#1a7f37" }}>
-                      {row.status}
-                    </span>
+                    <Chip tone={row.status === "PENDING" ? "warn" : "ok"}>
+                      {row.status}</Chip>
                   </td>
                   <td style={td}>
                     {row.cleared_lm_ref || row.cleared_reason || "—"}
@@ -122,11 +126,13 @@ export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
                   <td style={td}>
                     <a href="#" onClick={(e) => { e.preventDefault();
                                                   onOpenDoc(row.ref); }}
-                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                      {row.ref}
+                       style={{ textDecoration: "none" }}>
+                      <RefStamp small>{row.ref}</RefStamp>
                     </a>
                   </td>
-                  <td style={td}>{row.rev}</td>
+                  <td style={{ ...td, fontFamily: "var(--font-mono)",
+                               color: "var(--faint)", fontSize: 12 }}>
+                    {row.rev}</td>
                   <td style={td}>{row.date}</td>
                   <td style={td}>{row.site_code}</td>
                   <td style={td}><StatusChip status={row.status} /></td>

@@ -1,9 +1,34 @@
+/* Design tokens — SP_Design_Brief.md ("drawing title block, island paper").
+   Define once here; components consume tokens, never hard-code. */
 :root {
-  --sp-navy: #16527e;
-  --sp-sky: #29abe2;
-  --sp-bg: #f4f7fa;
-  --sp-text: #1c2b36;
-  --sp-border: #d6e2ec;
+  --navy: #16527e;
+  --navy-deep: #0e3a5c;
+  --sky: #29abe2;
+  --sky-soft: #dff1fa;
+  --ink: #182430;
+  --sand: #f6f2e9;
+  --paper: #ffffff;
+  --line: #dcd5c6;
+  --row-line: #efeae0;
+  --amber-bg: #fff4de;
+  --amber-fg: #9a5b00;
+  --red-bg: #fce9e7;
+  --red-fg: #a13327;
+  --green-bg: #e6f3ea;
+  --green-fg: #1f6b3a;
+  --muted: #5b6b78;
+  --faint: #77828c;
+
+  --font-display: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, monospace;
+
+  /* Legacy aliases (pre-brief components) — keep pointing at the tokens */
+  --sp-navy: var(--navy);
+  --sp-sky: var(--sky);
+  --sp-bg: var(--sand);
+  --sp-text: var(--ink);
+  --sp-border: var(--line);
 }
 
 * {
@@ -12,7 +37,22 @@
 
 body {
   margin: 0;
-  font-family: "Segoe UI", system-ui, sans-serif;
-  background: var(--sp-bg);
-  color: var(--sp-text);
+  font-family: var(--font-body);
+  background: var(--sand);
+  color: var(--ink);
+}
+
+button {
+  font-family: var(--font-body);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sky);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
 }

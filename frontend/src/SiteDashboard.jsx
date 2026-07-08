@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
-import { StatusChip, buttonStyle, card, td, th } from "./ui.jsx";
+import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
+         buttonStyle, card, td, th } from "./ui.jsx";
 
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
@@ -36,40 +37,62 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const canCreate = CAN_CREATE_DPR.includes(me.role);
   const canMr = CAN_CREATE_MR.includes(me.role);
   const gaps = register?.rows.filter((r) => r.gap).length || 0;
+  // Today's obligations come first (design brief: dashboard order is
+  // priority order) — DPR + TWS as stamp tiles
+  const todayRow = register?.rows.find((r) => r.due_today) ||
+    register?.rows[register.rows.length - 1];
+  const dprIssued = dash?.dpr_today &&
+    ["ISSUED", "VERIFIED"].includes(dash.dpr_today.status);
+  const twsRef = todayRow?.tws_ref;
 
   return (
     <>
+      <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
+                                + "the last two weeks" : null}
+               metaTone="alert">
+        Today's obligations
+      </Eyebrow>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+                    marginBottom: 14 }}>
+        <StampTile title="Daily Progress Report"
+          done={!!dash?.dpr_today}
+          doneStamp={dash?.dpr_today && (
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          onOpenDoc(dash.dpr_today.ref); }}
+               style={{ textDecoration: "none" }}>
+              <IssuedStamp refText={dash.dpr_today.ref}
+                label={dash.dpr_today.status === "VERIFIED" ? "VERIFIED"
+                       : dprIssued ? "ISSUED" : "DRAFT"} />
+            </a>
+          )}
+          dueText="Due by end of working day"
+          action={canCreate && (
+            <Btn variant="primary" onClick={onNewDpr}>Prepare DPR</Btn>
+          )} />
+        <StampTile title="Tomorrow Work Schedule"
+          done={!!twsRef}
+          doneStamp={twsRef && (
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          onOpenDoc(twsRef); }}
+               style={{ textDecoration: "none" }}>
+              <IssuedStamp refText={twsRef} />
+            </a>
+          )}
+          dueText="Issue with today's DPR"
+          action={canCreate && (
+            <Btn variant="primary" onClick={() => onNewQa("TWS")}>
+              Prepare TWS</Btn>
+          )} />
+      </div>
+
       <section style={{ ...card, display: "flex", gap: 24, alignItems: "center",
                         flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          {dash?.dpr_today ? (
-            <span style={{ fontSize: 14 }}>
-              DPR today:{" "}
-              <a href="#" onClick={(e) => { e.preventDefault();
-                                            onOpenDoc(dash.dpr_today.ref); }}
-                 style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                {dash.dpr_today.ref}
-              </a>{" "}
-              <StatusChip status={dash.dpr_today.status} />
-            </span>
-          ) : (
-            <span style={{ color: "#b35900", fontSize: 14, fontWeight: 600 }}>
-              ⚠ No DPR issued today
-            </span>
-          )}
-          <div style={{ fontSize: 12, color: "#5a6b78", marginTop: 4 }}>
-            {dash ? `${dash.unverified_dprs} awaiting PM verification · ` : ""}
-            {gaps} gap day{gaps === 1 ? "" : "s"} in the last two weeks
-          </div>
+        <div style={{ flex: 1, minWidth: 200, fontSize: 12,
+                      color: "var(--muted)" }}>
+          {dash ? `${dash.unverified_dprs} DPR${dash.unverified_dprs === 1
+                    ? "" : "s"} awaiting PM verification` : ""}
         </div>
         <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {canCreate && (
-            <>
-              <button onClick={onNewDpr} style={buttonStyle}>+ DPR</button>
-              <button onClick={() => onNewQa("TWS")} style={buttonStyle}>
-                + TWS</button>
-            </>
-          )}
           {["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
             <>
               <button onClick={() => onNewQa("IR")} style={buttonStyle}>
