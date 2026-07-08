@@ -64,6 +64,8 @@ urlpatterns = [
     path("projects/<int:pk>", projects.project_detail, name="project-detail"),
     path("projects/<int:pk>/programme", projects.project_programme,
          name="project-programme"),
+    path("projects/<int:pk>/documents", projects.project_documents,
+         name="project-documents"),
     path("programme-activities/<int:pk>", projects.activity_detail,
          name="activity-detail"),
     path("sites/<int:site_id>/manpower", hr.site_manpower,

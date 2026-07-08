@@ -83,7 +83,8 @@ class ActivitySerializer(serializers.ModelSerializer):
     class Meta:
         model = ProgrammeActivity
         fields = ["id", "sort_order", "indent", "name", "duration_days",
-                  "start", "finish", "is_milestone", "progress"]
+                  "start", "finish", "is_milestone", "predecessors",
+                  "progress"]
 
 
 @api_view(["GET", "POST"])
@@ -142,6 +143,41 @@ def project_detail(request, pk):
               detail={"fields": sorted(request.data.keys())})
     return Response(ProjectSerializer(project,
                                       context={"request": request}).data)
+
+
+@api_view(["GET"])
+def project_documents(request, pk):
+    """The project workspace's Documents tab (Phase A): the project's own
+    IR/MAR (+ legacy per-project DPR/TWS), and the site-wide daily
+    DPR/TWS that carry rows tagged with this project."""
+    try:
+        project = Project.objects.select_related("site").get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and project.site_id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+    from .models import Document
+
+    def row(d, extra=None):
+        return {"ref": d.ref, "doc_type": d.doc_type, "doc_date": d.doc_date,
+                "status": "VOID" if d.is_void else d.status,
+                "detail": extra or ""}
+
+    own = [row(d) for d in Document.objects.filter(project=project)
+           .order_by("-doc_date", "-id")[:100]]
+    daily = []
+    key = {"DPR": "work_done", "TWS": "activities"}
+    for d in Document.objects.filter(
+            site_id=project.site_id, doc_type__in=("DPR", "TWS"),
+            project__isnull=True, is_void=False,
+    ).select_related("current_revision").order_by("-doc_date", "-id")[:200]:
+        rows = [r for r in (d.current_revision.payload or {})
+                .get(key[d.doc_type], [])
+                if (r.get("project") or "").strip() == project.code]
+        if rows:
+            daily.append(row(d, f"{len(rows)} row(s) for {project.code}"))
+    return Response({"project_docs": own, "daily_docs": daily[:60]})
 
 
 # ===== Programme =====

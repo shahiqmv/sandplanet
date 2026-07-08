@@ -186,3 +186,22 @@ warning (soft — the PM may still issue). The category field is no longer
 free text: strictly the site's roster categories (full DPR list fallback
 when the site has no roster yet); a legacy/TWS value outside the list
 stays selectable but flagged "(not in category list)" until corrected.
+
+## 2026-07-08 — R10 Phase A: dedicated Project workspace + in-app Gantt
+Owner: projects have many components (programme, manpower plan, BOM,
+budget, tender later) — a chip/sub-page is not enough. Phase A delivers
+the PROJECT WORKSPACE page (opened from the site page's "Open project →"
+or the portfolio's project stamp): Overview (progress-vs-time health,
+stats, full detail block) · Programme · Documents, with BOM / Budget /
+Tender tabs visibly reserved for later phases. Programme gains an
+interactive Gantt built on Frappe Gantt (MIT, lightweight — chosen over
+commercial dhtmlx/Bryntum; upgrade path kept open): bars from the
+activities, progress fill from issued DPRs, drag-to-reschedule PATCHes
+the activity (audited), milestones/summary rows styled; NEW
+ProgrammeActivity.predecessors (comma ids) drives dependency arrows,
+editable on the activity row. Documents tab (GET /projects/{id}/documents)
+splits the project's own docs (IR/MAR + legacy per-project DPR/TWS) from
+site-wide daily reports carrying rows tagged to this project.
+Phase B decided: the QS builds the BOM from the BOQ (manual, assisted) —
+no automatic tender-BOQ conversion. Phase C: budget via project-tagged
+procurement; tender module.

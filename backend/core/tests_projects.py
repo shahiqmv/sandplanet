@@ -214,3 +214,45 @@ class ProjectPmRoutingTests(ProjectBase):
         self.client.force_authenticate(self.pm)  # site PM, no project PM set
         r = self.client.post(f"/api/v1/documents/{ir['ref']}/actions/approve")
         self.assertEqual(r.status_code, 200)
+
+
+class ProjectWorkspaceTests(ProjectBase):
+    """Phase A — the project page's Documents tab."""
+
+    def test_project_documents_split(self):
+        # an IR belongs to the project directly
+        ir = self.client.post("/api/v1/documents", {
+            "doc_type": "IR", "site_id": self.site.id,
+            "project_id": self.pools.id,
+            "payload": {"discipline": "Civil", "work_description": "x"},
+        }, format="json").data
+        # a site-wide DPR carries one row tagged to POOLS17, one General
+        day = last_working_days(self.site, 1)[0]
+        dpr = self.make_dpr(None, doc_date=day, work_done=[
+            {"activity": "Footing", "project": "POOLS17",
+             "progress_today": 10},
+            {"activity": "Cleanup", "project": ""},
+        ]).data
+        r = self.client.get(f"/api/v1/projects/{self.pools.id}/documents")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual([d["ref"] for d in r.data["project_docs"]],
+                         [ir["ref"]])
+        self.assertEqual([d["ref"] for d in r.data["daily_docs"]],
+                         [dpr["ref"]])
+        self.assertIn("1 row(s) for POOLS17",
+                      r.data["daily_docs"][0]["detail"])
+        # the OTHER project sees no daily rows
+        r = self.client.get(f"/api/v1/projects/{self.spa.id}/documents")
+        self.assertEqual(r.data["daily_docs"], [])
+
+    def test_activity_predecessors_roundtrip(self):
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/projects/{self.pools.id}/programme", {
+            "activities": [{"name": "Excavation", "duration_days": 3},
+                           {"name": "Blinding", "duration_days": 1}],
+        }, format="json")
+        a, b = list(self.pools.activities.all())
+        r = self.client.patch(f"/api/v1/programme-activities/{b.id}",
+                              {"predecessors": str(a.id)}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["predecessors"], str(a.id))

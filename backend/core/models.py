@@ -774,6 +774,9 @@ class ProgrammeActivity(models.Model):
     start = models.DateField(null=True, blank=True)
     finish = models.DateField(null=True, blank=True)
     is_milestone = models.BooleanField(default=False)  # 0-day items
+    # Comma-separated predecessor activity ids — drives the Gantt's
+    # dependency arrows (Phase A of the project workspace)
+    predecessors = models.CharField(max_length=200, blank=True)
     progress = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     progress_updated_from = models.ForeignKey(  # last DPR that updated it
         Document, on_delete=models.PROTECT, null=True, blank=True,

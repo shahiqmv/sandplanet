@@ -13,6 +13,7 @@ import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import ManpowerPage from "./ManpowerPage.jsx";
+import ProjectPage from "./ProjectPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -363,7 +364,9 @@ export default function App() {
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) &&
             hoPage === "portfolio" && (
-            <PortfolioPage refresh={refresh} />
+            <PortfolioPage refresh={refresh}
+                           onOpenProject={(id) => setDocView({
+                             mode: "project", projectId: id })} />
           )}
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
@@ -419,6 +422,10 @@ export default function App() {
             <ProgrammePage project={docView.project} me={me}
                            onClose={closeDoc} />
           )}
+          {docView?.mode === "project" && (
+            <ProjectPage projectId={docView.projectId} me={me}
+                         onClose={closeDoc} onOpenDoc={openDoc} />
+          )}
 
           {!docView && openSite && (
             <>
@@ -454,11 +461,11 @@ export default function App() {
                   </button>
                 ))}
                 {project && (
-                  <button onClick={() => setDocView({ mode: "programme",
-                                                      project })}
+                  <button onClick={() => setDocView({ mode: "project",
+                                                      projectId: project.id })}
                           style={{ ...ghostButton, padding: "4px 12px",
                                    fontSize: 13 }}>
-                    Programme →
+                    Open project →
                   </button>
                 )}
                 {["PM", "DIRECTOR", "ADMIN"].includes(me.role) &&

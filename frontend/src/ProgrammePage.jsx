@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import GanttChart from "./GanttChart.jsx";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const CAN_MANAGE = ["PM", "DIRECTOR", "ADMIN"];
 
-export default function ProgrammePage({ project, me, onClose }) {
+// Standalone page or embedded as the Programme tab of the project
+// workspace (embedded hides the header/back button).
+export default function ProgrammePage({ project, me, onClose, embedded }) {
   const [activities, setActivities] = useState([]);
   const [detail, setDetail] = useState(project);
   const [paste, setPaste] = useState("");
@@ -96,21 +99,48 @@ export default function ProgrammePage({ project, me, onClose }) {
     }
   }
 
+  const [showGantt, setShowGantt] = useState(true);
+
   return (
-    <section style={card}>
-      <div style={{ display: "flex", justifyContent: "space-between",
-                    alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
-          {detail.code} — {detail.title}
-        </h2>
-        <button onClick={onClose} style={ghostButton}>← Back</button>
-      </div>
+    <section style={embedded ? {} : card}>
+      {!embedded && (
+        <div style={{ display: "flex", justifyContent: "space-between",
+                      alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+          <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
+            {detail.code} — {detail.title}
+          </h2>
+          <button onClick={onClose} style={ghostButton}>← Back</button>
+        </div>
+      )}
       <p style={{ fontSize: 13, color: "#5a6b78", margin: "6px 0 0" }}>
         Programme: {activities.length} activities ·
         overall progress <strong>{detail.overall_progress}%</strong>
         {detail.start_date && ` · ${detail.start_date} → `}
         {detail.planned_completion || ""}
+        {activities.some((a) => a.start) && (
+          <>
+            {" · "}
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          setShowGantt(!showGantt); }}
+               style={{ color: "var(--sp-navy)" }}>
+              {showGantt ? "hide chart" : "show chart"}
+            </a>
+          </>
+        )}
       </p>
+
+      {showGantt && activities.some((a) => a.start) && (
+        <div style={{ margin: "12px 0" }}>
+          <GanttChart activities={activities} canManage={canManage}
+                      onChanged={load} />
+          {canManage && (
+            <p style={{ fontSize: 11.5, color: "#77828c", margin: "4px 0 0" }}>
+              Drag a bar to reschedule (audited); the progress fill comes
+              from issued DPRs.
+            </p>
+          )}
+        </div>
+      )}
 
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
@@ -228,6 +258,13 @@ export default function ProgrammePage({ project, me, onClose }) {
                          onChange={(e) => setEditRow({ ...editRow,
                                                        finish: e.target.value })}
                          style={{ ...inputStyle, width: 135 }} />
+                  <input value={editRow.predecessors || ""}
+                         placeholder="depends on (ids)"
+                         title="Predecessor activity ids, comma-separated —
+draws the dependency arrows on the chart"
+                         onChange={(e) => setEditRow({ ...editRow,
+                           predecessors: e.target.value })}
+                         style={{ ...inputStyle, width: 130 }} />
                 </span>
               </td>
               <td style={{ padding: 4 }}>
@@ -286,7 +323,8 @@ export default function ProgrammePage({ project, me, onClose }) {
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
                   <button onClick={() => setEditRow({ id: a.id, name: a.name,
                             duration_days: a.duration_days, start: a.start,
-                            finish: a.finish, progress: a.progress })}
+                            finish: a.finish, progress: a.progress,
+                            predecessors: a.predecessors || "" })}
                           title="Edit"
                           style={{ ...ghostButton, padding: "2px 8px",
                                    fontSize: 12 }}>✎</button>{" "}

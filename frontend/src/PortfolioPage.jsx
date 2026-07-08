@@ -16,7 +16,7 @@ const HEALTH = {
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-export default function PortfolioPage({ refresh }) {
+export default function PortfolioPage({ refresh, onOpenProject }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -67,7 +67,11 @@ export default function PortfolioPage({ refresh }) {
                   <tr key={p.project_id}
                       style={p.status === "CLOSED" ? { opacity: 0.55 } : {}}>
                     <td style={td}>
-                      <RefStamp small>{p.code}</RefStamp>
+                      <a href="#" onClick={(e) => { e.preventDefault();
+                                    onOpenProject?.(p.project_id); }}
+                         style={{ textDecoration: "none" }}>
+                        <RefStamp small>{p.code}</RefStamp>
+                      </a>
                       <div style={{ fontSize: 11.5, color: "var(--faint)",
                                     marginTop: 2 }}>{p.title}</div>
                     </td>
