@@ -60,3 +60,21 @@ recorded per vendor (Purchasing on receiving the slip/voucher from Finance,
 or Finance directly) with the slip file attached; the PR page links each
 vendor row to its quote, PO, and payment slip. PR status auto-advances:
 APPROVED -> PAYMENT_PROCESSING (first vendor settled) -> PAID_PO_ISSUED (all).
+
+## 2026-07-08 — R4: Projects under sites; programme milestones; DPR progress tracking
+Supersedes the R1 premise "a site IS a project" (§2). Reality: clients keep
+awarding new projects on the same site, each with its own scope, BOQ,
+programme and timeline (e.g. "17 pools" programme at Vakkaru). Changes:
+- New Project entity under Site (title, scope, dates, status, own contract
+  value with the same sensitivity rule). DPR, TWS, IR and MAR now belong to
+  a project; MR/GRN and the HO chain (PR/LM/PO) stay site-wise.
+- Programme per project: activities/milestones (name, duration, start,
+  finish, hierarchy by indent) imported by pasting from MS Project or added
+  manually. DPR "work done" rows link to a programme activity and record
+  today's progress % and cumulative % to date; issuing the DPR updates the
+  activity's progress (audited).
+- One DPR/TWS per PROJECT per working day; gap detection runs per project
+  from the project's start date. Document numbering stays per SITE
+  (TYPE-SITECODE-NNN, §4.1 unchanged) — refs remain unique and gap-free.
+- Existing dev documents keep project=NULL; new documents require a project
+  when the site has one.

@@ -58,6 +58,10 @@ class DocumentLineSerializer(serializers.ModelSerializer):
 class DocumentSerializer(serializers.ModelSerializer):
     site_code = serializers.CharField(source="site.code", read_only=True)
     site_name = serializers.CharField(source="site.name", read_only=True)
+    project_code = serializers.CharField(source="project.code",
+                                         read_only=True, default=None)
+    project_title = serializers.CharField(source="project.title",
+                                          read_only=True, default=None)
     payload = serializers.SerializerMethodField()
     rev_label = serializers.CharField(
         source="current_revision.rev_label", read_only=True
@@ -79,6 +83,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Document
         fields = ["id", "doc_type", "ref", "site", "site_code", "site_name",
+                  "project", "project_code", "project_title",
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
                   "previous_ir_ref", "resubmitted_as", "supplier_name",

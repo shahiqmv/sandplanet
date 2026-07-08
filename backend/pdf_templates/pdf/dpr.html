@@ -47,8 +47,11 @@
 
 <div class="refstamp">{{ doc.ref }}</div>
 <table class="kv">
-  <tr><td class="k">Project / Site</td><td>{{ site.name }} ({{ site.code }})</td>
+  <tr><td class="k">Site</td><td>{{ site.name }} ({{ site.code }})</td>
       <td class="k">Date / Day</td><td>{{ doc.doc_date|date:"d/m/y" }} — {{ doc.doc_date|date:"l" }}</td></tr>
+  {% if doc.project %}
+  <tr><td class="k">Project</td><td colspan="3"><strong>{{ doc.project.title }}</strong> ({{ doc.project.code }})</td></tr>
+  {% endif %}
   <tr><td class="k">Client</td><td><strong>{{ site.client_name }}</strong></td>
       <td class="k">Consultant</td><td>{{ site.consultant_name }}</td></tr>
   <tr><td class="k">Working hours</td><td>{{ payload.working_hours|default:"" }}</td>
@@ -61,11 +64,16 @@
 
 <h2>1. Work Done Today</h2>
 <table>
-  <thead><tr><th style="width:6%">No.</th><th>Activity</th><th style="width:22%">Location/Area/Villa</th>
-             <th style="width:10%">Progress %</th><th style="width:22%">Remarks</th></tr></thead>
+  <thead><tr><th style="width:6%">No.</th><th>Activity / Milestone</th>
+             <th style="width:20%">Location/Area/Villa</th>
+             <th style="width:9%">Today %</th>
+             <th style="width:9%">To-date %</th>
+             <th style="width:20%">Remarks</th></tr></thead>
   {% for row in payload.work_done %}
   <tr><td>{{ forloop.counter }}</td><td>{{ row.activity }}</td><td>{{ row.location }}</td>
-      <td>{{ row.progress_pct }}</td><td>{{ row.remarks }}</td></tr>
+      <td>{{ row.progress_today }}</td>
+      <td>{% if row.progress_todate %}{{ row.progress_todate }}{% else %}{{ row.progress_pct }}{% endif %}</td>
+      <td>{{ row.remarks }}</td></tr>
   {% endfor %}
 </table>
 

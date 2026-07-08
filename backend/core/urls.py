@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views, views_documents as docs, views_hr as hr, \
-    views_quotes as quotes
+    views_projects as projects, views_quotes as quotes
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -51,6 +51,13 @@ urlpatterns = [
     path("dashboards/site/<int:site_id>", docs.dashboard_site,
          name="dashboard-site"),
     path("dashboards/ho", docs.dashboard_ho, name="dashboard-ho"),
+    path("sites/<int:site_id>/projects", projects.site_projects,
+         name="site-projects"),
+    path("projects/<int:pk>", projects.project_detail, name="project-detail"),
+    path("projects/<int:pk>/programme", projects.project_programme,
+         name="project-programme"),
+    path("programme-activities/<int:pk>", projects.activity_detail,
+         name="activity-detail"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),
     path("attendance/bulk", hr.attendance_bulk, name="attendance-bulk"),
     path("attendance/ot-approve", hr.ot_approve, name="ot-approve"),

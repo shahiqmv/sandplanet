@@ -8,6 +8,7 @@ import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollPage from "./PayrollPage.jsx";
+import ProgrammePage from "./ProgrammePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
@@ -100,6 +101,11 @@ export default function App() {
   const [me, setMe] = useState(null);
   const [sites, setSites] = useState([]);
   const [openSite, setOpenSite] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [project, setProject] = useState(null);  // selected project (R4)
+  const [addingProject, setAddingProject] = useState(false);
+  const [projDraft, setProjDraft] = useState({ code: "", title: "",
+                                               start_date: "" });
   const [hoPage, setHoPage] = useState("dashboard");
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
@@ -118,6 +124,33 @@ export default function App() {
       }
     });
   }, [me]);
+
+  useEffect(() => {
+    setProjects([]);
+    setProject(null);
+    if (!openSite) return;
+    api(`/sites/${openSite.id}/projects`).then((list) => {
+      setProjects(list);
+      const active = list.filter((p) => p.status === "ACTIVE");
+      if (active.length === 1) setProject(active[0]);
+    }).catch(() => {});
+  }, [openSite, refresh]);
+
+  async function createProject() {
+    try {
+      const created = await api(`/sites/${openSite.id}/projects`, {
+        method: "POST",
+        body: { ...projDraft,
+                start_date: projDraft.start_date || null },
+      });
+      setAddingProject(false);
+      setProjDraft({ code: "", title: "", start_date: "" });
+      setProjects([...projects, created]);
+      setProject(created);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
 
   async function logoutUser() {
     await api("/auth/logout", { method: "POST" });
@@ -228,7 +261,7 @@ export default function App() {
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
           {docView?.mode === "dpr-form" && (
-            <DPRForm site={openSite} existing={docView.doc}
+            <DPRForm site={openSite} existing={docView.doc} project={project}
                      onSaved={closeDoc} onCancel={closeDoc} />
           )}
           {docView?.mode === "dpr-view" && (
@@ -256,7 +289,7 @@ export default function App() {
                                onClose={() => openDoc(docView.doc.ref)} />
           )}
           {docView?.mode === "qa-form" && (
-            <QAForm docType={docView.docType} site={openSite}
+            <QAForm docType={docView.docType} site={openSite} project={project}
                     existing={docView.doc} prefill={docView.prefill}
                     onSaved={(doc) => { bump();
                       setDocView({ mode: "qa-view", doc }); }}
@@ -269,10 +302,15 @@ export default function App() {
                          mode: "qa-form", docType: doc.doc_type, doc })} />
           )}
 
+          {docView?.mode === "programme" && (
+            <ProgrammePage project={docView.project} me={me}
+                           onClose={closeDoc} />
+          )}
+
           {!docView && openSite && (
             <>
               <div style={{ display: "flex", justifyContent: "space-between",
-                            alignItems: "baseline", marginBottom: 16 }}>
+                            alignItems: "baseline", marginBottom: 10 }}>
                 <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
                   {openSite.code} — {openSite.name}{" "}
                   <StatusChip status={openSite.status} />
@@ -283,8 +321,76 @@ export default function App() {
                   </button>
                 )}
               </div>
+
+              {/* Projects within the site (R4) */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center",
+                            flexWrap: "wrap", marginBottom: 16 }}>
+                {projects.map((p) => (
+                  <button key={p.id}
+                          onClick={() => setProject(
+                            project?.id === p.id ? null : p)}
+                          title={p.title}
+                          style={{
+                            ...ghostButton, padding: "4px 14px", fontSize: 13,
+                            background: project?.id === p.id
+                              ? "var(--sp-navy)" : "#fff",
+                            color: project?.id === p.id ? "#fff"
+                              : "var(--sp-navy)",
+                          }}>
+                    {p.code} · {p.overall_progress}%
+                  </button>
+                ))}
+                {project && (
+                  <button onClick={() => setDocView({ mode: "programme",
+                                                      project })}
+                          style={{ ...ghostButton, padding: "4px 12px",
+                                   fontSize: 13 }}>
+                    Programme →
+                  </button>
+                )}
+                {["PM", "DIRECTOR", "ADMIN"].includes(me.role) &&
+                  !addingProject && (
+                  <button onClick={() => setAddingProject(true)}
+                          style={{ ...ghostButton, padding: "4px 12px",
+                                   fontSize: 13 }}>
+                    + Project
+                  </button>
+                )}
+                {addingProject && (
+                  <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <input placeholder="Code (e.g. POOLS17)"
+                           value={projDraft.code}
+                           onChange={(e) => setProjDraft({ ...projDraft,
+                             code: e.target.value.toUpperCase() })}
+                           style={{ ...inputStyle, width: 130 }} />
+                    <input placeholder="Project title" value={projDraft.title}
+                           onChange={(e) => setProjDraft({ ...projDraft,
+                             title: e.target.value })}
+                           style={{ ...inputStyle, width: 240 }} />
+                    <input type="date" value={projDraft.start_date}
+                           title="Start date"
+                           onChange={(e) => setProjDraft({ ...projDraft,
+                             start_date: e.target.value })}
+                           style={{ ...inputStyle, width: 140 }} />
+                    <button onClick={createProject}
+                            disabled={!projDraft.code || !projDraft.title}
+                            style={{ ...buttonStyle, padding: "4px 12px" }}>
+                      Create
+                    </button>
+                    <button onClick={() => setAddingProject(false)}
+                            style={{ ...ghostButton, padding: "4px 10px" }}>
+                      ×
+                    </button>
+                  </span>
+                )}
+                {projects.length > 0 && !project && (
+                  <span style={{ fontSize: 12, color: "#b35900" }}>
+                    Select a project to create DPR / TWS / IR / MAR.
+                  </span>
+                )}
+              </div>
               <SiteDashboard
-                site={openSite} me={me} refresh={refresh}
+                site={openSite} me={me} refresh={refresh} project={project}
                 onNewDpr={() => setDocView({ mode: "dpr-form", doc: null })}
                 onNewMr={() => setDocView({ mode: "line-form", docType: "MR",
                                             doc: null })}

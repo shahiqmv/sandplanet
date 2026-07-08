@@ -16,6 +16,8 @@ from .models import (
     Holiday,
     Item,
     PendingItem,
+    ProgrammeActivity,
+    Project,
     Site,
     User,
 )
@@ -116,11 +118,32 @@ def document_create(request):
             {"detail": "Site on hold — only PM/HO can create documents."}, status=403
         )
 
+    # DPR/TWS/IR/MAR belong to a project (R4); required once the site has one
+    PROJECT_TYPES = ("DPR", "TWS", "IR", "MAR")
+    project = None
+    if doc_type in PROJECT_TYPES:
+        project_id = request.data.get("project_id")
+        if project_id:
+            try:
+                project = Project.objects.get(pk=project_id, site=site)
+            except Project.DoesNotExist:
+                return Response({"detail": "Unknown project for this site."},
+                                status=400)
+            if project.status == "CLOSED":
+                return Response({"detail": "Project is closed — no new "
+                                           "documents."}, status=400)
+        elif site.projects.filter(status="ACTIVE").exists():
+            return Response({"detail": "Select the project this document "
+                                       "belongs to."}, status=400)
+
     doc_date = request.data.get("doc_date") or date.today().isoformat()
-    if doc_type in ("DPR", "TWS"):  # one per site per working day (§5.1/§5.2)
-        clash = Document.objects.filter(
+    if doc_type in ("DPR", "TWS"):  # one per PROJECT per working day (R4)
+        clash_qs = Document.objects.filter(
             doc_type=doc_type, site=site, doc_date=doc_date, is_void=False
-        ).first()
+        )
+        clash_qs = clash_qs.filter(project=project) if project \
+            else clash_qs.filter(project__isnull=True)
+        clash = clash_qs.first()
         if clash:
             return Response(
                 {"detail": f"{clash.ref} already exists for {doc_date}."}, status=400
@@ -201,6 +224,7 @@ def document_create(request):
         doc = Document.objects.create(
             doc_type=doc_type, ref=ref, site=site, doc_date=doc_date,
             status="DRAFT", created_by=request.user, previous_ir=previous_ir,
+            project=project,
         )
         revision = DocumentRevision.objects.create(
             document=doc, rev_label="R0", payload=payload, created_by=request.user
@@ -397,11 +421,41 @@ def _do_issue(request, doc, comment):
             )
     if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "PO"):
         # DPR/TWS/PO issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
-        return _apply(request, doc, "ISSUED", "ISSUE",
-                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
-                      pdf_milestone="issue", comment=comment)
+        err = _apply(request, doc, "ISSUED", "ISSUE",
+                     roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
+                     pdf_milestone="issue", comment=comment)
+        if err is None and doc.doc_type == "DPR":
+            _update_programme_progress(doc, request.user)
+        return err
     return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO."},
                     status=400)
+
+
+def _update_programme_progress(doc, actor):
+    """Issued DPR work-done rows carry cumulative %-to-date per programme
+    activity — roll them into the project programme (R4)."""
+    if not doc.project_id:
+        return
+    for row in (doc.current_revision.payload or {}).get("work_done", []):
+        activity_id = row.get("activity_id")
+        todate = row.get("progress_todate")
+        if not activity_id or todate in (None, ""):
+            continue
+        try:
+            activity = ProgrammeActivity.objects.get(pk=activity_id,
+                                                     project=doc.project_id)
+        except ProgrammeActivity.DoesNotExist:
+            continue
+        new_value = max(min(float(todate), 100), 0)
+        if float(activity.progress) == new_value:
+            continue
+        old_value = float(activity.progress)
+        activity.progress = new_value
+        activity.progress_updated_from = doc
+        activity.save(update_fields=["progress", "progress_updated_from"])
+        audit("programme_activity", activity.id, "PROGRESS_UPDATED",
+              actor=actor, from_state=str(old_value), to_state=str(new_value),
+              detail={"dpr": doc.ref, "activity": activity.name[:80]})
 
 
 def _do_submit(request, doc, comment):
@@ -702,6 +756,8 @@ def documents_list(request):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("doc_type"):
         qs = qs.filter(doc_type=request.GET["doc_type"])
+    if request.GET.get("project"):
+        qs = qs.filter(project_id=request.GET["project"])
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
     if request.GET.get("open"):
@@ -826,17 +882,33 @@ def register_dpr_tws(request):
         Holiday.objects.filter(site__isnull=True).values_list("day", flat=True)
     ) | set(Holiday.objects.filter(site=site).values_list("day", flat=True))
 
-    docs = {}
-    for d in Document.objects.filter(
+    # Per-project register when a project is selected (R4)
+    project = None
+    if request.GET.get("project"):
+        try:
+            project = Project.objects.get(pk=request.GET["project"], site=site)
+        except Project.DoesNotExist:
+            return Response({"detail": "Unknown project."}, status=400)
+
+    doc_qs = Document.objects.filter(
         site=site, doc_type__in=["DPR", "TWS"],
         doc_date__gte=date_from, doc_date__lte=date_to,
-    ).order_by("id"):
+    )
+    if project:
+        doc_qs = doc_qs.filter(project=project)
+    docs = {}
+    for d in doc_qs.order_by("id"):
         key = (d.doc_type, d.doc_date)
         # Voided rows remain visible (spec §4.1) but never satisfy the day
         if key not in docs or docs[key].is_void:
             docs[key] = d
-    # Gap-flagging runs only for ACTIVE sites from the start date (spec §2.2)
+    # Gap-flagging: ACTIVE site (spec §2.2); per-project window when a
+    # project is selected — from the project's own start date (R4)
     gaps_active = site.status == Site.Status.ACTIVE
+    gap_start = site.start_date
+    if project:
+        gaps_active = gaps_active and project.status == "ACTIVE"
+        gap_start = project.start_date or site.start_date
     rows = []
     day = date_from
     while day <= date_to:
@@ -846,8 +918,8 @@ def register_dpr_tws(request):
             tws = docs.get(("TWS", day))
             dpr_missing = dpr is None or dpr.is_void
             in_gap_window = (
-                gaps_active and site.start_date is not None
-                and day >= site.start_date
+                gaps_active and gap_start is not None
+                and day >= gap_start
             )
             rows.append({
                 "date": day.isoformat(),

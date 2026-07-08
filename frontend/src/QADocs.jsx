@@ -97,7 +97,8 @@ function Field({ def, value, onChange }) {
   );
 }
 
-export function QAForm({ docType, site, existing, prefill, onSaved, onCancel }) {
+export function QAForm({ docType, site, project, existing, prefill, onSaved,
+                         onCancel }) {
   const [payload, setPayload] = useState(existing?.payload ||
                                          prefill?.payload || {});
   const [docDate, setDocDate] = useState(
@@ -141,7 +142,7 @@ export function QAForm({ docType, site, existing, prefill, onSaved, onCancel }) 
         });
       } else {
         const req = { doc_type: docType, site_id: site.id, doc_date: docDate,
-                      payload: body };
+                      project_id: project?.id || null, payload: body };
         if (prefill?.previous_ir_ref) {
           req.previous_ir_ref = prefill.previous_ir_ref;
         }

@@ -282,6 +282,10 @@ class Document(models.Model):
     doc_type = models.CharField(max_length=3, choices=Type.choices)
     ref = models.CharField(max_length=20, unique=True)  # DPR-SJR-001 / PR-014
     site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="documents")
+    project = models.ForeignKey(  # DPR/TWS/IR/MAR are project-wise (R4)
+        "Project", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="documents",
+    )
     doc_date = models.DateField()  # the form's principal date
     status = models.CharField(max_length=30, default="DRAFT")
     current_revision = models.ForeignKey(
@@ -706,3 +710,67 @@ class Attendance(models.Model):
                                     name="uniq_attendance_day")
         ]
         ordering = ["day"]
+
+
+# ===== Projects & programmes (DECISIONS.md R4) =====
+
+
+class Project(models.Model):
+    """A client award within a site. Sites host multiple projects, each
+    with its own scope, BOQ, programme and timeline (R4). DPR/TWS/IR/MAR
+    belong to a project; MR/GRN and the HO chain stay site-wise."""
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE"
+        ON_HOLD = "ON_HOLD"
+        CLOSED = "CLOSED"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="projects")
+    code = models.CharField(max_length=12)  # short label, e.g. OWV-POOLS
+    title = models.TextField()
+    scope = models.TextField(blank=True)
+    boq_ref = models.TextField(blank=True)
+    contract_value = models.DecimalField(  # same sensitivity rule as sites
+        max_digits=14, decimal_places=2, null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    planned_completion = models.DateField(null=True, blank=True)
+    actual_completion = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.ACTIVE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["site", "code"],
+                                    name="uniq_project_code_per_site")
+        ]
+        ordering = ["site", "code"]
+
+    def __str__(self):
+        return f"{self.site.code}/{self.code} — {self.title[:40]}"
+
+
+class ProgrammeActivity(models.Model):
+    """A row of the project programme (task or milestone). Progress is
+    cumulative %-complete to date, updated from issued DPRs (R4)."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="activities")
+    sort_order = models.IntegerField()
+    indent = models.IntegerField(default=0)  # outline level (0 = top)
+    name = models.TextField()
+    duration_days = models.IntegerField(null=True, blank=True)
+    start = models.DateField(null=True, blank=True)
+    finish = models.DateField(null=True, blank=True)
+    is_milestone = models.BooleanField(default=False)  # 0-day items
+    progress = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    progress_updated_from = models.ForeignKey(  # last DPR that updated it
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order"]
+        verbose_name_plural = "programme activities"

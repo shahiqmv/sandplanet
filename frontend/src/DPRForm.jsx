@@ -4,7 +4,8 @@ import { SectionTitle, buttonStyle, card, ghostButton, inputStyle } from "./ui.j
 
 const WEATHER = ["Sunny", "Cloudy", "Rainy"];
 
-const emptyWork = { activity: "", location: "", progress_pct: "", remarks: "" };
+const emptyWork = { activity_id: "", activity: "", location: "",
+                    progress_today: "", progress_todate: "", remarks: "" };
 const emptyMachine = { item: "", nos: "", remarks: "" };
 const emptyMaterial = {
   material: "", unit: "", opening: "", received: "", consumed: "", remarks: "",
@@ -61,7 +62,8 @@ function cell(value, onChange, width, type = "text") {
   );
 }
 
-export default function DPRForm({ site, existing, onSaved, onCancel }) {
+export default function DPRForm({ site, project, existing, onSaved,
+                                  onCancel }) {
   const p = existing?.payload || {};
   const [docDate, setDocDate] = useState(
     existing?.doc_date || new Date().toISOString().slice(0, 10)
@@ -85,6 +87,7 @@ export default function DPRForm({ site, existing, onSaved, onCancel }) {
   const [incident, setIncident] = useState(p.safety?.incident || false);
   const [incidentDetails, setIncidentDetails] = useState(p.safety?.details || "");
   const [categories, setCategories] = useState([]);
+  const [activities, setActivities] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [doc, setDoc] = useState(existing || null);
@@ -95,7 +98,12 @@ export default function DPRForm({ site, existing, onSaved, onCancel }) {
     api("/manpower-categories").then((all) =>
       setCategories(all.filter((c) => c.list_type === "DPR" && c.is_active))
     );
-  }, []);
+    const projectId = project?.id || existing?.project;
+    if (projectId) {
+      api(`/projects/${projectId}/programme`).then((rows) =>
+        setActivities(rows.filter((a) => !a.is_milestone && a.indent > 0)));
+    }
+  }, [project?.id, existing?.project]);
 
   const rainy = weatherAm === "Rainy" || weatherPm === "Rainy";
   const manpowerTotal = Object.values(manpower)
@@ -140,7 +148,7 @@ export default function DPRForm({ site, existing, onSaved, onCancel }) {
         saved = await api("/documents", {
           method: "POST",
           body: { doc_type: "DPR", site_id: site.id, doc_date: docDate,
-                  payload: payload() },
+                  project_id: project?.id || null, payload: payload() },
         });
       }
       setDoc(saved);
@@ -238,16 +246,57 @@ export default function DPRForm({ site, existing, onSaved, onCancel }) {
         )}
       </div>
 
-      <SectionTitle>1. Work Done Today</SectionTitle>
+      <SectionTitle>
+        1. Work Done Today
+        {activities.length > 0 &&
+          " — link each work item to a programme activity"}
+      </SectionTitle>
       <RowTable
-        headers={["Activity", "Location/Area/Villa", "Progress %", "Remarks"]}
+        headers={["Activity / Milestone", "Location/Area/Villa",
+                  "Today %", "To-date %", "Remarks"]}
         rows={workDone} setRows={setWorkDone} empty={emptyWork}
         render={(row, set) => (
           <>
-            {cell(row.activity, (v) => set({ activity: v }))}
-            {cell(row.location, (v) => set({ location: v }), 140)}
-            {cell(row.progress_pct, (v) => set({ progress_pct: v }), 70)}
-            {cell(row.remarks, (v) => set({ remarks: v }), 140)}
+            <td style={{ padding: 3, minWidth: 220 }}>
+              {activities.length > 0 ? (
+                <>
+                  <select value={row.activity_id || ""}
+                          onChange={(e) => {
+                            const act = activities.find(
+                              (a) => String(a.id) === e.target.value);
+                            set({ activity_id: act ? act.id : "",
+                                  activity: act ? act.name : row.activity,
+                                  progress_todate: act && !row.progress_todate
+                                    ? act.progress : row.progress_todate });
+                          }}
+                          style={{ ...inputStyle,
+                                   background: row.activity_id
+                                     ? "#effaf1" : "#fff8e6" }}>
+                    <option value="">— other / not in programme —</option>
+                    {activities.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({Number(a.progress)}%)
+                      </option>
+                    ))}
+                  </select>
+                  {!row.activity_id && (
+                    <input value={row.activity} placeholder="Describe the work"
+                           onChange={(e) => set({ activity: e.target.value })}
+                           style={{ ...inputStyle, marginTop: 4 }} />
+                  )}
+                </>
+              ) : (
+                <input value={row.activity} placeholder="Activity"
+                       onChange={(e) => set({ activity: e.target.value })}
+                       style={inputStyle} />
+              )}
+            </td>
+            {cell(row.location, (v) => set({ location: v }), 130)}
+            {cell(row.progress_today, (v) => set({ progress_today: v }), 70,
+                  "number")}
+            {cell(row.progress_todate, (v) => set({ progress_todate: v }), 70,
+                  "number")}
+            {cell(row.remarks, (v) => set({ remarks: v }), 130)}
           </>
         )}
       />

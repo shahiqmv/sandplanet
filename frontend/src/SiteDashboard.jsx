@@ -5,28 +5,31 @@ import { StatusChip, buttonStyle, card, td, th } from "./ui.jsx";
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 
-export default function SiteDashboard({ site, me, onNewDpr, onNewMr, onNewQa,
-                                        onAttendance, onCreateGrn, onOpenDoc,
-                                        refresh }) {
+export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
+                                        onNewQa, onAttendance, onCreateGrn,
+                                        onOpenDoc, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
   const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
 
+  const projectParam = project ? `&project=${project.id}` : "";
+
   const load = useCallback(() => {
     api(`/dashboards/site/${site.id}`).then(setDash);
-    api(`/registers/dpr-tws?site=${site.id}`).then(setRegister);
+    api(`/registers/dpr-tws?site=${site.id}${projectParam}`)
+      .then(setRegister);
     api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
     Promise.all([
-      api(`/documents/list?site=${site.id}&doc_type=IR`),
-      api(`/documents/list?site=${site.id}&doc_type=MAR`),
+      api(`/documents/list?site=${site.id}&doc_type=IR${projectParam}`),
+      api(`/documents/list?site=${site.id}&doc_type=MAR${projectParam}`),
     ]).then(([irs, mars]) => setQaDocs(
       [...irs, ...mars].sort((a, b) => b.created_at.localeCompare(a.created_at))
     ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
-  }, [site.id]);
+  }, [site.id, projectParam]);
 
   useEffect(load, [load, refresh]);
 
@@ -178,6 +181,10 @@ export default function SiteDashboard({ site, me, onNewDpr, onNewMr, onNewQa,
       <section style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
           DPR &amp; TWS Register — last 14 days
+          {project && (
+            <span style={{ color: "#5a6b78", fontWeight: 400 }}>
+              {" "}· {project.code}</span>
+          )}
         </h2>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
