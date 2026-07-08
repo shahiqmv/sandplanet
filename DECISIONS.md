@@ -220,7 +220,7 @@ not a numbered document. WeasyPrint quirk: no `inset` shorthand.
 ## 2026-07-08 — R10 fix round: manpower REQUIREMENT per category; full creation form
 Owner corrections: (1) the manpower plan is not a monthly total and not a
 free-text summary — it is the REQUIREMENT per category, PM down to
-unskilled workers, and the histogram is drawn from那 numbers only.
+unskilled workers, and the histogram is drawn from those numbers only.
 manpower_plan is now [{category, workers}] with categories strictly from
 the company manpower list (Staff/Trades optgroups, each once); the PDF
 page reads "MANPOWER REQUIREMENT — BY CATEGORY" with total planned
