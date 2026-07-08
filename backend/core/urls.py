@@ -21,6 +21,7 @@ urlpatterns = [
     path("auth/logout", views.auth_logout, name="auth-logout"),
     path("auth/me", views.auth_me, name="auth-me"),
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
+    path("company/logo", views.company_logo, name="company-logo"),
     path("pms", views.pm_list, name="pm-list"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),

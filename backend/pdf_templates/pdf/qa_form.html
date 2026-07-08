@@ -2,54 +2,29 @@
 <html>
 <head>
 <meta charset="utf-8">
+{% include "pdf/_styles.html" %}
 <style>
-  @page { size: A4 portrait; margin: 14mm 12mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt; color: #1c2b36; }
-  .letterhead { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-  .letterhead td { border: none; padding: 0; vertical-align: middle; }
-  .letterhead .logo img { height: 11mm; }
-  .letterhead .title { text-align: right; font-size: 17pt; font-weight: 800;
-                       color: #000; letter-spacing: 0.5px; }
-  .band-navy { height: 1.6mm; background: #16527E; }
-  .band-sky { height: 0.9mm; background: #1B75BB; margin-top: 0.5mm;
-              margin-bottom: 6px; }
-  .formno { text-align: right; font-size: 8pt; color: #5a6b78; margin: 2px 0 6px; }
-  .refstamp { float: right; border: 1.5px solid #16527E; color: #16527E;
-              padding: 2px 8px; font-weight: bold; font-size: 10pt; }
-  h2 { font-size: 9.5pt; color: #16527E; border-bottom: 1px solid #29ABE2;
-       padding-bottom: 2px; margin: 10px 0 4px; }
-  table { width: 100%; border-collapse: collapse; margin-bottom: 4px; }
-  td, th { padding: 2px 4px; font-size: 8.5pt; text-align: left; }
-  .kv td { border: none; }
-  .kv .k { color: #5a6b78; width: 24%; }
-  .box { border: 0.8px solid #9db4c5; padding: 6px 8px; margin-bottom: 6px;
-         min-height: 30px; }
   .result { font-size: 11pt; font-weight: 800; }
   .result.ok { color: #1a7f37; }
   .result.warn { color: #b35900; }
   .result.bad { color: #c0392b; }
-  .encl { display: inline-block; border: 0.7px solid #9db4c5; border-radius: 3px;
-          padding: 2px 8px; margin: 0 4px 4px 0; font-size: 8pt; }
-  .encl.yes { background: #e8f0f7; font-weight: 700; color: #16527E; }
-  .sig { width: 100%; margin-top: 12px; border-collapse: collapse; }
-  .sig td { border: 0.6px solid #9db4c5; height: 48px; vertical-align: bottom;
-            width: 33%; padding: 4px 6px; }
-  .sig .t { font-weight: bold; color: #16527E; vertical-align: top; height: auto; }
-  .stamp { color: #1a7f37; font-size: 7.5pt; }
-  .void { position: fixed; top: 40%; left: 15%; font-size: 60pt;
-          color: rgba(192,57,43,.25); transform: rotate(-25deg); }
+  .encl { display: inline-block; border: 0.6px solid #A9B6C0;
+          border-radius: 3px; padding: 2px 8px; margin: 0 4px 4px 0;
+          font-size: 8pt; }
+  .encl.yes { background: #EAF1F6; font-weight: 700; color: #10344F; }
 </style>
 </head>
 <body>
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
+{% include "pdf/_footer.html" with footer_doc=doc.doc_type %}
 {% include "pdf/_letterhead.html" with title=form_title subline=form_subline %}
 
-<div class="refstamp">{{ doc.ref }}{% if rev.rev_label != "R0" %} · {{ rev.rev_label }}{% endif %}</div>
 <table class="kv">
-  <tr><td class="k">Project / Site</td><td><strong>{{ site.name }} ({{ site.code }})</strong></td>
-      <td class="k">Date</td><td>{{ doc.doc_date|date:"d/m/y" }}</td></tr>
-  <tr><td class="k">Client</td><td><strong>{{ site.client_name }}</strong></td>
-      <td class="k">Consultant / Engineer</td><td>{{ site.consultant_name }}</td></tr>
+  <tr><td class="k">Doc No.</td><td>{{ doc.ref }}{% if rev.rev_label != "R0" %} · {{ rev.rev_label }}{% endif %}</td>
+      <td class="k">Date</td><td>{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
+  <tr><td class="k">Project / Site</td><td>{% if doc.project %}{{ doc.project.title }} — {% endif %}{{ site.name }} ({{ site.code }})</td>
+      <td class="k">Client</td><td>{{ site.client_name }}</td></tr>
+  <tr><td class="k">Consultant</td><td colspan="3">{{ site.consultant_name }}</td></tr>
   {% for row in header_rows %}
   <tr><td class="k">{{ row.0 }}</td><td>{{ row.1 }}</td>
       <td class="k">{{ row.2 }}</td><td>{{ row.3 }}</td></tr>
@@ -80,10 +55,10 @@
   {% if section.by %}<br><span style="color:#5a6b78">{{ section.by }}</span>{% endif %}
 </div>
 {% elif section.kind == "table" %}
-<table style="border-collapse:collapse">
-  <thead><tr>{% for h in section.headers %}<th style="border:0.6px solid #9db4c5;background:#e8f0f7;color:#16527E">{{ h }}</th>{% endfor %}</tr></thead>
+<table>
+  <thead><tr>{% for h in section.headers %}<th>{{ h }}</th>{% endfor %}</tr></thead>
   {% for row in section.rows %}
-  <tr>{% for cell in row %}<td style="border:0.6px solid #9db4c5">{{ cell }}</td>{% endfor %}</tr>
+  <tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>
   {% endfor %}
 </table>
 {% endif %}

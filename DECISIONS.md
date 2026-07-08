@@ -93,3 +93,16 @@ programme and timeline (e.g. "17 pools" programme at Vakkaru). Changes:
   document totals manpower at work by category. SE may prepare; only the
   PM issues. Internal document — printable PDF on the letterhead, not
   sent to the client.
+
+## 2026-07-08 — R6: PDF stationery restyle to the owner's printed forms; Company page
+Owner shared his real printed DPR ("neat and colors are very printer
+friendly") and asked to apply the same look to all report PDFs. Done:
+shared _styles.html/_footer.html/_letterhead.html includes with the exact
+palette extracted from his PDF (sky #29ABE2, navy #16527E, bars #BFD3E3,
+label fill #EAF1F6); dpr.html rebuilt to his form section-for-section
+(fixed filler rows, Staff|Trades manpower split, photos sheet). The logo
+is now a real IMAGE extracted from his stationery (assets/sp-logo.png —
+closes the traced-SVG ring-color issue); Admin can replace it on the new
+Company tab, which also manages legal name, registration no, TIN, address,
+phone, email, website (company_* parameters). Every PDF footer now prints
+the company identity line; the external PO adds reg no + phone.

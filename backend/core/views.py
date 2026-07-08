@@ -292,13 +292,49 @@ def pm_overview(request):
     })
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def company_logo(request):
+    """Company logo image used on every PDF letterhead (owner: 'logo we
+    should add image file'). Stored at media/company/logo.png|jpg; PDFs
+    fall back to the bundled stationery logo when nothing is uploaded."""
+    from pathlib import Path
+
+    from django.conf import settings
+
+    folder = Path(settings.MEDIA_ROOT) / "company"
+    if request.method == "POST":
+        if request.user.role != User.Role.ADMIN:
+            return Response({"detail": "Admin only."}, status=403)
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "Attach the logo as 'file'."}, status=400)
+        ext = {"image/png": "png", "image/jpeg": "jpg"}.get(file.content_type)
+        if not ext:
+            return Response({"detail": "PNG or JPEG only."}, status=400)
+        folder.mkdir(parents=True, exist_ok=True)
+        for old in ("logo.png", "logo.jpg"):  # one logo at a time
+            (folder / old).unlink(missing_ok=True)
+        with open(folder / f"logo.{ext}", "wb") as out:
+            for chunk in file.chunks():
+                out.write(chunk)
+        audit("parameter", 0, "COMPANY_LOGO_UPDATED", actor=request.user,
+              detail={"file_name": file.name, "size": file.size})
+    for name in ("logo.png", "logo.jpg"):
+        if (folder / name).exists():
+            return Response({"url": f"{settings.MEDIA_URL}company/{name}",
+                             "uploaded": True})
+    return Response({"url": None, "uploaded": False})
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def parameter_detail(request, key):
     if request.method == "PUT":
         if request.user.role != User.Role.ADMIN:
             return Response({"detail": "Admin only."}, status=403)
-        param, _ = CompanyParameter.objects.get_or_create(key=key, defaults={"value": None})
+        param, _ = CompanyParameter.objects.get_or_create(
+            key=key, defaults={"value": ""})
         serializer = ParameterSerializer(param, data={**request.data, "key": key})
         serializer.is_valid(raise_exception=True)
         serializer.save()

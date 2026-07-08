@@ -3,9 +3,8 @@ Rendered through pdf_templates/pdf/qa_form.html on the shared letterhead."""
 
 from datetime import date
 
-from django.conf import settings
-
 from .models import ManpowerCategory
+from .pdf import company_info, logo_src as _logo_src
 
 RESULT_LABELS = {
     "APPROVED": ("Approved", "ok"),
@@ -13,11 +12,6 @@ RESULT_LABELS = {
     "REVISE_RESUBMIT": ("Revise & Resubmit", "warn"),
     "REJECTED": ("Rejected", "bad"),
 }
-
-
-def _logo_src():
-    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
-    return f"file:///{logo}"
 
 
 def _yesno(value):
@@ -87,9 +81,9 @@ def ir_context(document, revision):
     prev = document.previous_ir.ref if document.previous_ir else "—"
     return {
         "doc": document, "rev": revision, "site": document.site,
-        "logo_src": _logo_src(),
+        "logo_src": _logo_src(), "co": company_info(),
         "form_title": "INSPECTION REQUEST",
-        "form_subline": f"FRM-PRJ-02 · R0 · Rev {revision.rev_label}",
+        "form_subline": f"Form No: FRM-PRJ-02  |  Rev: {revision.rev_label}",
         "header_rows": [
             ["Discipline", payload.get("discipline", ""), "Previous IR", prev],
             ["Inspection requested",
@@ -144,9 +138,9 @@ def mar_context(document, revision):
     sections += _result_section(payload, "4. Client / Consultant Review")
     return {
         "doc": document, "rev": revision, "site": document.site,
-        "logo_src": _logo_src(),
+        "logo_src": _logo_src(), "co": company_info(),
         "form_title": "MATERIAL APPROVAL REQUEST",
-        "form_subline": f"FRM-PRJ-03 · R0 · Rev {revision.rev_label}",
+        "form_subline": f"Form No: FRM-PRJ-03  |  Rev: {revision.rev_label}",
         "header_rows": [
             ["Attention To", payload.get("attention_to", ""),
              "Revision", revision.rev_label],
@@ -198,9 +192,9 @@ def dma_context(document, revision):
     tws_refs = payload.get("tws_refs") or []
     return {
         "doc": document, "rev": revision, "site": document.site,
-        "logo_src": _logo_src(),
+        "logo_src": _logo_src(), "co": company_info(),
         "form_title": "DAILY MANPOWER ALLOCATION",
-        "form_subline": "FRM-PRJ-06 · R0 · Internal",
+        "form_subline": "Form No: FRM-PRJ-06  |  Internal",
         "header_rows": [
             ["Allocation For", document.doc_date.strftime("%d/%m/%y"),
              "Based on TWS", ", ".join(tws_refs) or "—"],
@@ -244,9 +238,9 @@ def tws_context(document, revision):
     ack = payload.get("acknowledgement") or {}
     return {
         "doc": document, "rev": revision, "site": document.site,
-        "logo_src": _logo_src(),
+        "logo_src": _logo_src(), "co": company_info(),
         "form_title": "TOMORROW WORK SCHEDULE",
-        "form_subline": "FRM-PRJ-04 · R0",
+        "form_subline": "Form No: FRM-PRJ-04  |  Rev: R0",
         "header_rows": [
             ["Schedule For",
              f"{document.doc_date.strftime('%d/%m/%y')}",

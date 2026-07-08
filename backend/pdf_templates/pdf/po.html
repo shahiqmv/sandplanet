@@ -52,8 +52,8 @@
 
 <div class="footer">
   <div class="right">{{ company.tagline }}</div>
-  {{ company.address }} | TIN: {{ company.tin }}<br>
-  {{ company.email }} | {{ company.website }}
+  {{ company.address }}{% if company.reg_no %} | Reg No: {{ company.reg_no }}{% endif %} | TIN: {{ company.tin }}<br>
+  {% if company.phone %}{{ company.phone }} | {% endif %}{{ company.email }} | {{ company.website }}
 </div>
 
 <div class="masthead">

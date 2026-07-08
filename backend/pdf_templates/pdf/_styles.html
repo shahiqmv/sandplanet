@@ -1,0 +1,66 @@
+<style>
+  /* Shared stationery styles — matched to the owner's printed DPR
+     (owner sample, 2026-07-08): white background, light-blue label
+     cells, thin steel borders, numbered section bars, double sky/navy
+     rule under the header, mirrored bands above the page footer.
+     Palette extracted from the sample PDF itself. */
+  @page { size: A4 portrait; margin: 12mm 12mm 24mm 12mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt;
+         color: #1c1c1c; }
+
+  /* Letterhead */
+  .letterhead { width: 100%; border-collapse: collapse; margin-bottom: 5px; }
+  .letterhead td { border: none; padding: 0; vertical-align: middle; }
+  .letterhead .logo img { height: 12mm; }
+  .letterhead .title { text-align: right; font-size: 16pt; font-weight: 800;
+                       color: #000; }
+  .letterhead .formno { text-align: right; font-size: 7.5pt; color: #6a7681;
+                        padding-top: 1px; }
+  .rule-sky { height: 1.8mm; background: #29ABE2; }
+  .rule-navy { height: 0.8mm; background: #16527E; margin-top: 0.5mm;
+               margin-bottom: 4mm; }
+
+  /* Page footer (repeats on every page) + top edge line */
+  .topband { position: fixed; top: -7mm; left: 0; right: 0; height: 0.8mm;
+             background: #29ABE2; }
+  .pagefoot { position: fixed; bottom: -19mm; left: 0; right: 0;
+              text-align: center; font-size: 7pt; color: #6a7681; }
+  .pagefoot .bands { margin-top: 2mm; }
+  .pagefoot .b1 { height: 1.4mm; background: #29ABE2; }
+  .pagefoot .b2 { height: 0.7mm; background: #16527E; margin-top: 0.4mm; }
+
+  /* Meta grid: bordered cells, light-blue bold label cells */
+  table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
+  th, td { border: 0.6px solid #A9B6C0; padding: 3px 6px; text-align: left;
+           font-size: 8.5pt; height: 13px; } /* height = min: keeps blank
+           filler rows as tall as filled ones, like the printed form */
+  th { background: #EAF1F6; font-weight: 700; text-align: center; }
+  thead { display: table-header-group; }
+  .lbl { background: #EAF1F6; font-weight: 700; }
+  .kv .k { background: #EAF1F6; font-weight: 700; width: 16%; }
+
+  /* Numbered section bars */
+  h2 { font-size: 9.5pt; font-weight: 800; color: #10344F;
+       background: #BFD3E3; border: 0.6px solid #A9B6C0;
+       padding: 3px 7px; margin: 9px 0 0; page-break-after: avoid; }
+  h2 + table, h2 + .box { margin-top: -0.6px; } /* butt against the bar */
+  .box { border: 0.6px solid #A9B6C0; padding: 6px 8px; margin-bottom: 6px;
+         min-height: 26px; font-size: 8.5pt; }
+  .note { font-size: 7.5pt; color: #6a7681; font-style: italic;
+          margin: 2px 0 6px; }
+  .num { text-align: right; }
+  .ctr { text-align: center; }
+
+  /* Signature strip */
+  .sig { width: 100%; margin-top: 10px; border-collapse: collapse;
+         page-break-inside: avoid; }
+  .sig td { border: 0.6px solid #A9B6C0; width: 33%; padding: 4px 6px;
+            height: 46px; vertical-align: top; }
+  .sig .t { background: #EAF1F6; font-weight: 700; text-align: center;
+            height: auto; font-size: 8pt; }
+  .stamp { color: #1a7f37; font-size: 7.5pt; }
+
+  .pagebreak { page-break-before: always; }
+  .void { position: fixed; top: 40%; left: 15%; font-size: 60pt;
+          color: rgba(192,57,43,.25); transform: rotate(-25deg); }
+</style>

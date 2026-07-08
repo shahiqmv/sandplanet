@@ -13,6 +13,7 @@ import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import PmsPage from "./PmsPage.jsx";
+import CompanyPage from "./CompanyPage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
@@ -234,7 +235,8 @@ export default function App() {
                 ? [["payroll", "Payroll"]] : []),
               ...(["DIRECTOR", "ADMIN"].includes(me.role)
                 ? [["pms", "PMs"]] : []),
-              ...(me.role === "ADMIN" ? [["users", "Users"]] : [])]
+              ...(me.role === "ADMIN"
+                ? [["users", "Users"], ["company", "Company"]] : [])]
               .map(([key, label]) => (
               <button key={key}
                       style={navBtn(hoPage === key && !openSite && !docView)}
@@ -445,6 +447,10 @@ export default function App() {
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (
             <PmsPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite && me.role === "ADMIN" &&
+            hoPage === "company" && (
+            <CompanyPage />
           )}
           {!docView && !openSite &&
             (!me.is_ho || hoPage === "sites") && (

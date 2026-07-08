@@ -31,6 +31,42 @@ from .models import Attachment, ManpowerCategory
 logger = logging.getLogger(__name__)
 
 
+def logo_src():
+    """Company logo for all PDFs: the file uploaded on the Company page
+    when present, else the bundled image (extracted from the owner's
+    printed stationery)."""
+    from pathlib import Path
+
+    for name in ("logo.png", "logo.jpg"):
+        # Path(): tests override MEDIA_ROOT with a plain string
+        uploaded = Path(settings.MEDIA_ROOT) / "company" / name
+        if uploaded.exists():
+            return f"file:///{uploaded}"
+    asset = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.png"
+    return f"file:///{asset}"
+
+
+def company_info():
+    """Company identity block shown on every PDF footer (owner request:
+    tax info, registration no, address on the reports)."""
+    return {
+        "legal_name": _param("company_legal_name", "Sand Planet Pvt Ltd"),
+        "reg_no": _param("company_reg_no", ""),
+        "tin": _param("company_tin", ""),
+        "address": _param("company_address", ""),
+        "phone": _param("company_phone", ""),
+        "email": _param("company_email", ""),
+        "website": _param("company_website", "www.sandplanet.mv"),
+        "tagline": _param("company_tagline", ""),
+    }
+
+
+def _pad(rows, minimum, keys):
+    """Blank filler rows so the printed grid matches the owner's fixed-row
+    form layout."""
+    return rows + [{k: "" for k in keys} for _ in range(minimum - len(rows))]
+
+
 def _dpr_context(document, revision):
     site = document.site
     payload = revision.payload or {}
@@ -38,14 +74,43 @@ def _dpr_context(document, revision):
         c.id: c
         for c in ManpowerCategory.objects.filter(list_type="DPR")
     }
-    manpower_rows = []
+    staff, labour = [], []
     total = 0
     counts = payload.get("manpower", {}) or {}
     for cat in sorted(categories.values(), key=lambda c: (c.grp, c.sort_order)):
         count = int(counts.get(str(cat.id), 0) or 0)
         total += count
-        manpower_rows.append({"grp": cat.grp, "name": cat.name, "count": count})
-    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
+        row = (cat.name, count if count else "-")
+        (staff if cat.grp == "STAFF" else labour).append(row)
+    # Staff | Trades/Labour side by side, as on the owner's printed form
+    depth = max(len(staff), len(labour), 1)
+    staff += [("", "")] * (depth - len(staff))
+    labour += [("", "")] * (depth - len(labour))
+    manpower_pairs = [(s[0], s[1], t[0], t[1]) for s, t in zip(staff, labour)]
+
+    def norm(row, keys):
+        return {k: row.get(k, "") for k in keys}
+
+    work_keys = ("activity", "location", "progress_today", "progress_todate",
+                 "remarks")
+    work_rows = []
+    for row in payload.get("work_done", []):
+        r = norm(row, work_keys)
+        if not r["progress_todate"]:
+            r["progress_todate"] = row.get("progress_pct", "")
+        work_rows.append(r)
+    work_rows = _pad(work_rows, 8, work_keys)
+
+    machinery_keys = ("item", "nos", "remarks")
+    machinery_rows = _pad(
+        [norm(r, machinery_keys) for r in payload.get("machinery", [])],
+        4, machinery_keys)
+    material_keys = ("material", "unit", "opening", "received", "consumed",
+                     "balance", "remarks")
+    material_rows = _pad(
+        [norm(r, material_keys) for r in payload.get("materials", [])],
+        5, material_keys)
+
     photos = []
     for p in document.attachments.filter(kind="PHOTO").order_by("id"):
         try:
@@ -56,12 +121,18 @@ def _dpr_context(document, revision):
     approvals = list(document.approvals.select_related("actor").all())
     return {
         "doc": document,
-        "logo_src": f"file:///{logo}",
+        "logo_src": logo_src(),
+        "co": company_info(),
         "site": site,
         "payload": payload,
-        "manpower_rows": manpower_rows,
+        "form_subline": f"Form No: FRM-PRJ-01  |  Rev: {revision.rev_label}",
+        "work_rows": work_rows,
+        "manpower_pairs": manpower_pairs,
         "manpower_total": total,
+        "machinery_rows": machinery_rows,
+        "material_rows": material_rows,
         "photos": photos,
+        "photo_date": document.doc_date.strftime("%d.%m.%Y"),
         "approvals": approvals,
         "rev": revision,
     }
@@ -293,15 +364,16 @@ def _lines_context(document, revision):
             ],
         }
 
-    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     return {
         "tax_footer": tax_footer,
         "doc": document,
         "rev": revision,
         "site": document.site,
-        "logo_src": f"file:///{logo}",
+        "logo_src": logo_src(),
+        "co": company_info(),
         "form_title": config["title"],
-        "form_subline": f"{config['form_no']} · Rev {revision.rev_label}",
+        "form_subline": f"Form No: {config['form_no'].split(' ·')[0]}  |  "
+                        f"Rev: {revision.rev_label}",
         "columns": [{"label": c[0], "num": c[2]} for c in config["columns"]],
         "header_rows": header_rows,
         "links_line": " · ".join(sorted(set(links))),
@@ -362,12 +434,11 @@ def _po_context(document, revision):
                            f"{a.acted_at.strftime('%d/%m/%Y %H:%M')} — "
                            f"issued electronically via Sand Planet Site "
                            f"Documents")
-    logo = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.svg"
     return {
         "doc": document,
         "payload": payload,
         "supplier": supplier,
-        "logo_src": f"file:///{logo}",
+        "logo_src": logo_src(),
         "lines": lines,
         "totals": {
             "untaxed": _money(untaxed),
@@ -376,12 +447,5 @@ def _po_context(document, revision):
             "total": _money(untaxed + gst),
         },
         "issue_stamp": issue_stamp,
-        "company": {
-            "legal_name": _param("company_legal_name", "Sand Planet Pvt Ltd"),
-            "tin": _param("company_tin", ""),
-            "address": _param("company_address", ""),
-            "email": _param("company_email", ""),
-            "website": _param("company_website", ""),
-            "tagline": _param("company_tagline", ""),
-        },
+        "company": company_info(),
     }
