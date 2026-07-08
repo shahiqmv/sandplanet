@@ -143,3 +143,19 @@ dashboards) from his design chat. Staged implementation:
 NOTE: the brief references two mockup JSX files (source of truth for look
 and feel) that were not delivered — implementation follows the written
 brief; reconcile if the owner supplies the mockups.
+
+## 2026-07-08 — R8: DPR and TWS are SITE-WIDE; rows tagged per project
+Supersedes R4's one-DPR-per-project rule after owner review. A site has
+ONE client, so the client gets ONE daily report: DPR and TWS are one per
+SITE per working day. Each Work Done / Planned Activity row is tagged
+with its project (or General for untagged works — cleaning, unloading),
+and DPR rows may link to that project's programme activity; issuing the
+DPR rolls each row's to-date % into ITS OWN project's programme, so
+per-project progress and the portfolio are unchanged. The DPR PDF groups
+the task list PROJECT-WISE (owner: easier for the client to read); the
+TWS PDF gains a Project column. Register/gap detection returns to
+per-site (gap window from the earliest active project's start date).
+IR/MAR remain project documents; the site PM verifies the site-wide DPR.
+Existing per-project DPRs/TWSs stay valid history. Confirmed: same
+client entity per site — a different client on the same island would be
+a new site code.

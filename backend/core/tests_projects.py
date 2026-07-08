@@ -87,29 +87,32 @@ class ProjectTests(ProjectBase):
                              {"code": "X", "title": "X"}, format="json")
         self.assertEqual(r.status_code, 403)
 
-    def test_project_required_when_site_has_active_projects(self):
+    def test_dpr_is_site_wide_no_project_needed(self):
+        """R8: the DPR is one per SITE per day even when the site runs
+        active projects — work rows carry the project tags instead."""
         r = self.make_dpr(None)
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("project", r.data["detail"].lower())
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertIsNone(r.data["project"])
 
-    def test_one_dpr_per_project_per_day(self):
+    def test_one_dpr_per_site_per_day(self):
         day = last_working_days(self.site, 1)[0]
         r1 = self.make_dpr(self.pools, doc_date=day)
         self.assertEqual(r1.status_code, 201, r1.data)
-        # the OTHER project on the same site, same day, is fine
-        r2 = self.make_dpr(self.spa, doc_date=day)
-        self.assertEqual(r2.status_code, 201, r2.data)
-        # but a second DPR for the same project is blocked
-        r3 = self.make_dpr(self.pools, doc_date=day)
-        self.assertEqual(r3.status_code, 400)
-        # numbering stays per site — sequential across both projects
         self.assertEqual(r1.data["ref"], "DPR-VKR-001")
-        self.assertEqual(r2.data["ref"], "DPR-VKR-002")
+        # a second DPR the same day is blocked — even quoting another
+        # project (R8 site-wide daily report; supersedes R4)
+        r2 = self.make_dpr(self.spa, doc_date=day)
+        self.assertEqual(r2.status_code, 400)
+        self.assertIn("DPR-VKR-001", r2.data["detail"])
 
-    def test_closed_project_blocks_documents(self):
+    def test_closed_project_blocks_project_documents(self):
         self.pools.status = "CLOSED"
         self.pools.save()
-        r = self.make_dpr(self.pools)
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "IR", "site_id": self.site.id,
+            "project_id": self.pools.id,
+            "payload": {"discipline": "Civil", "work_description": "x"},
+        }, format="json")
         self.assertEqual(r.status_code, 400)
 
 
@@ -157,21 +160,17 @@ class ProgrammeTests(ProjectBase):
         r = self.client.get(f"/api/v1/projects/{self.pools.id}")
         self.assertGreater(r.data["overall_progress"], 0)
 
-    def test_register_gap_is_per_project(self):
+    def test_register_is_site_wide(self):
+        """R8: one register row per working day per SITE; the day is
+        satisfied by the single site-wide DPR."""
         day = last_working_days(self.site, 1)[0]
-        # DPR only for POOLS17; SPA has none
         r = self.make_dpr(self.pools, doc_date=day)
         self.assertEqual(r.status_code, 201)
-        pools_reg = self.client.get(
+        reg = self.client.get(
             f"/api/v1/registers/dpr-tws?site={self.site.id}"
-            f"&project={self.pools.id}&from={day.isoformat()}"
-            f"&to={day.isoformat()}").data
-        spa_reg = self.client.get(
-            f"/api/v1/registers/dpr-tws?site={self.site.id}"
-            f"&project={self.spa.id}&from={day.isoformat()}"
-            f"&to={day.isoformat()}").data
-        self.assertIsNotNone(pools_reg["rows"][0]["dpr_ref"])
-        self.assertTrue(spa_reg["rows"][0]["gap"])
+            f"&from={day.isoformat()}&to={day.isoformat()}").data
+        self.assertEqual(reg["rows"][0]["dpr_ref"], r.data["ref"])
+        self.assertFalse(reg["rows"][0]["gap"])
 
 
 class ProjectPmRoutingTests(ProjectBase):

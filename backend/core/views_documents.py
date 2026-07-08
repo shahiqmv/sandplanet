@@ -130,8 +130,10 @@ def document_create(request):
             {"detail": "Site on hold — only PM/HO can create documents."}, status=403
         )
 
-    # DPR/TWS/IR/MAR belong to a project (R4); required once the site has one
-    PROJECT_TYPES = ("DPR", "TWS", "IR", "MAR")
+    # IR/MAR belong to a project (R4). DPR/TWS are SITE-WIDE — one daily
+    # report to the one client per site, each work/planned row tagged with
+    # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
+    PROJECT_TYPES = ("IR", "MAR")
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")
@@ -149,21 +151,10 @@ def document_create(request):
                                        "belongs to."}, status=400)
 
     doc_date = request.data.get("doc_date") or date.today().isoformat()
-    if doc_type == "DMA":  # one allocation per SITE per day, site-wide (R5)
+    if doc_type in ("DPR", "TWS", "DMA"):  # one per SITE per day (R8/R5)
         clash = Document.objects.filter(
-            doc_type="DMA", site=site, doc_date=doc_date, is_void=False
-        ).first()
-        if clash:
-            return Response(
-                {"detail": f"{clash.ref} already exists for {doc_date}."}, status=400
-            )
-    if doc_type in ("DPR", "TWS"):  # one per PROJECT per working day (R4)
-        clash_qs = Document.objects.filter(
             doc_type=doc_type, site=site, doc_date=doc_date, is_void=False
-        )
-        clash_qs = clash_qs.filter(project=project) if project \
-            else clash_qs.filter(project__isnull=True)
-        clash = clash_qs.first()
+        ).first()
         if clash:
             return Response(
                 {"detail": f"{clash.ref} already exists for {doc_date}."}, status=400
@@ -545,12 +536,13 @@ def dma_prefill(request):
         status__in=("ISSUED", "ACKNOWLEDGED"),
     ).select_related("project", "current_revision")
     for tws in tws_qs:
-        code = tws.project.code if tws.project else ""
+        fallback = tws.project.code if tws.project else ""  # legacy TWS
         for a in (tws.current_revision.payload or {}).get("activities", []):
             rows.append({
                 "task": a.get("activity", ""), "location": a.get("location", ""),
                 "category": a.get("trade", ""), "workers": "",
-                "remarks": "", "project": code, "source": tws.ref,
+                "remarks": "", "project": a.get("project") or fallback,
+                "source": tws.ref,
             })
     return Response({
         "tasks": rows,
@@ -560,17 +552,16 @@ def dma_prefill(request):
 
 def _update_programme_progress(doc, actor):
     """Issued DPR work-done rows carry cumulative %-to-date per programme
-    activity — roll them into the project programme (R4)."""
-    if not doc.project_id:
-        return
+    activity — roll each row into ITS OWN project's programme (R8: the
+    DPR is site-wide; rows are tagged per project)."""
     for row in (doc.current_revision.payload or {}).get("work_done", []):
         activity_id = row.get("activity_id")
         todate = row.get("progress_todate")
         if not activity_id or todate in (None, ""):
             continue
         try:
-            activity = ProgrammeActivity.objects.get(pk=activity_id,
-                                                     project=doc.project_id)
+            activity = ProgrammeActivity.objects.select_related("project") \
+                .get(pk=activity_id, project__site_id=doc.site_id)
         except ProgrammeActivity.DoesNotExist:
             continue
         new_value = max(min(float(todate), 100), 0)
@@ -1009,33 +1000,25 @@ def register_dpr_tws(request):
         Holiday.objects.filter(site__isnull=True).values_list("day", flat=True)
     ) | set(Holiday.objects.filter(site=site).values_list("day", flat=True))
 
-    # Per-project register when a project is selected (R4)
-    project = None
-    if request.GET.get("project"):
-        try:
-            project = Project.objects.get(pk=request.GET["project"], site=site)
-        except Project.DoesNotExist:
-            return Response({"detail": "Unknown project."}, status=400)
-
+    # DPR/TWS are site-wide (R8) — the register is one row per working
+    # day per SITE; the old per-project filter is ignored.
     doc_qs = Document.objects.filter(
         site=site, doc_type__in=["DPR", "TWS"],
         doc_date__gte=date_from, doc_date__lte=date_to,
     )
-    if project:
-        doc_qs = doc_qs.filter(project=project)
     docs = {}
     for d in doc_qs.order_by("id"):
         key = (d.doc_type, d.doc_date)
         # Voided rows remain visible (spec §4.1) but never satisfy the day
         if key not in docs or docs[key].is_void:
             docs[key] = d
-    # Gap-flagging: ACTIVE site (spec §2.2); per-project window when a
-    # project is selected — from the project's own start date (R4)
+    # Gap-flagging: ACTIVE site (spec §2.2), from the earliest active
+    # project's start date (dates live on projects — owner), falling back
+    # to the site's legacy start date.
     gaps_active = site.status == Site.Status.ACTIVE
-    gap_start = site.start_date
-    if project:
-        gaps_active = gaps_active and project.status == "ACTIVE"
-        gap_start = project.start_date or site.start_date
+    starts = [p.start_date for p in site.projects.filter(status="ACTIVE")
+              if p.start_date]
+    gap_start = min(starts) if starts else site.start_date
     rows = []
     day = date_from
     while day <= date_to:

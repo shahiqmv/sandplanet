@@ -92,14 +92,40 @@ def _dpr_context(document, revision):
         return {k: row.get(k, "") for k in keys}
 
     work_keys = ("activity", "location", "progress_today", "progress_todate",
-                 "remarks")
+                 "remarks", "project")
     work_rows = []
     for row in payload.get("work_done", []):
         r = norm(row, work_keys)
         if not r["progress_todate"]:
             r["progress_todate"] = row.get("progress_pct", "")
         work_rows.append(r)
-    work_rows = _pad(work_rows, 8, work_keys)
+    # Group project-wise so the client reads each award separately
+    # (owner, R8); untagged rows collect under General Works, last.
+    titles = {p.code: p.title for p in site.projects.all()}
+    grouped, order = {}, []
+    for r in work_rows:
+        key = (r.get("project") or "").strip()
+        if key not in grouped:
+            grouped[key] = []
+            order.append(key)
+        grouped[key].append(r)
+    order.sort(key=lambda k: k == "")  # General Works last
+    show_group_headers = any(k for k in order)
+    work_groups, number = [], 0
+    for key in order:
+        for r in grouped[key]:
+            number += 1
+            r["no"] = number
+        label = f"{key} — {titles[key]}" if key in titles else \
+            (key or "General Works")
+        work_groups.append({"label": label, "rows": grouped[key]})
+    filler = _pad([], max(0, 8 - number), work_keys)
+    for r in filler:
+        r["no"] = ""
+    if filler:
+        if not work_groups:
+            work_groups.append({"label": "", "rows": []})
+        work_groups[-1]["rows"] += filler
 
     machinery_keys = ("item", "nos", "remarks")
     machinery_rows = _pad(
@@ -126,7 +152,8 @@ def _dpr_context(document, revision):
         "site": site,
         "payload": payload,
         "form_subline": f"Form No: FRM-PRJ-01  |  Rev: {revision.rev_label}",
-        "work_rows": work_rows,
+        "work_groups": work_groups,
+        "show_group_headers": show_group_headers,
         "manpower_pairs": manpower_pairs,
         "manpower_total": total,
         "machinery_rows": machinery_rows,

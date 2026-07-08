@@ -49,10 +49,12 @@ class DmaTests(ProjectBase):
         day = date.today()
         tws = self.client.post("/api/v1/documents", {
             "doc_type": "TWS", "site_id": self.site.id,
-            "project_id": self.pools.id, "doc_date": day.isoformat(),
+            "doc_date": day.isoformat(),
+            # TWS is site-wide (R8): rows carry their own project tag
             "payload": {"activities": [
                 {"activity": "Footing rebar", "location": "Pool 3",
-                 "trade": "Steel Fixer", "remarks": ""},
+                 "trade": "Steel Fixer", "remarks": "",
+                 "project": "POOLS17"},
             ]},
         }, format="json").data
         self.client.post(f"/api/v1/documents/{tws['ref']}/actions/issue")

@@ -25,7 +25,7 @@
   <tr><td class="lbl">Client</td><td>{{ site.client_name }}</td>
       <td class="lbl">Consultant</td><td colspan="3">{{ site.consultant_name }}</td></tr>
   <tr><td class="lbl">Project / Site</td><td>{% if doc.project %}{{ doc.project.title }} — {% endif %}{{ site.name }}</td>
-      <td class="lbl">Site Code</td><td colspan="3">{{ site.code }}{% if doc.project %} · {{ doc.project.code }}{% endif %}</td></tr>
+      <td class="lbl">Site Code</td><td colspan="3">{{ site.code }}</td></tr>
   <tr><td class="lbl">Working Hours</td><td>{{ payload.working_hours|default:"" }}</td>
       <td class="lbl">Weather AM</td><td class="ctr" style="width:11%">{{ payload.weather_am|default:"—" }}</td>
       <td class="lbl" style="width:12%">Weather PM</td><td class="ctr" style="width:11%">{{ payload.weather_pm|default:"—" }}</td></tr>
@@ -41,12 +41,18 @@
              <th style="width:8%">Today %</th>
              <th style="width:8%">To-date %</th>
              <th style="width:22%">Remarks</th></tr></thead>
-  {% for row in work_rows %}
-  <tr><td class="ctr">{{ forloop.counter }}</td><td>{{ row.activity }}</td>
+  {# Rows grouped project-wise so the client reads each award separately (owner, R8) #}
+  {% for group in work_groups %}
+  {% if show_group_headers and group.label %}
+  <tr><td colspan="6" class="lbl" style="font-size:8pt">{{ group.label }}</td></tr>
+  {% endif %}
+  {% for row in group.rows %}
+  <tr><td class="ctr">{{ row.no }}</td><td>{{ row.activity }}</td>
       <td class="ctr">{{ row.location }}</td>
       <td class="ctr">{% if row.progress_today != "" %}{{ row.progress_today }}%{% endif %}</td>
       <td class="ctr">{% if row.progress_todate != "" %}{{ row.progress_todate }}%{% endif %}</td>
       <td>{{ row.remarks }}</td></tr>
+  {% endfor %}
   {% endfor %}
 </table>
 

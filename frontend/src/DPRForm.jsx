@@ -4,8 +4,11 @@ import { SectionTitle, buttonStyle, card, ghostButton, inputStyle } from "./ui.j
 
 const WEATHER = ["Sunny", "Cloudy", "Rainy"];
 
-const emptyWork = { activity_id: "", activity: "", location: "",
-                    progress_today: "", progress_todate: "", remarks: "" };
+// Site-wide DPR (R8): every work row is tagged with its project (or
+// General) and may link to that project's programme activity
+const emptyWork = { project: "", activity_id: "", activity: "",
+                    location: "", progress_today: "", progress_todate: "",
+                    remarks: "" };
 const emptyMachine = { item: "", nos: "", remarks: "" };
 const emptyMaterial = {
   material: "", unit: "", opening: "", received: "", consumed: "", remarks: "",
@@ -62,7 +65,7 @@ function cell(value, onChange, width, type = "text") {
   );
 }
 
-export default function DPRForm({ site, project, existing, onSaved,
+export default function DPRForm({ site, projects = [], existing, onSaved,
                                   onCancel }) {
   const p = existing?.payload || {};
   const [docDate, setDocDate] = useState(
@@ -87,23 +90,26 @@ export default function DPRForm({ site, project, existing, onSaved,
   const [incident, setIncident] = useState(p.safety?.incident || false);
   const [incidentDetails, setIncidentDetails] = useState(p.safety?.details || "");
   const [categories, setCategories] = useState([]);
-  const [activities, setActivities] = useState([]);
+  const [programmes, setProgrammes] = useState({});  // project code → acts
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [doc, setDoc] = useState(existing || null);
   const [caption, setCaption] = useState("");
   const [file, setFile] = useState(null);
 
+  const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
+
   useEffect(() => {
     api("/manpower-categories").then((all) =>
       setCategories(all.filter((c) => c.list_type === "DPR" && c.is_active))
     );
-    const projectId = project?.id || existing?.project;
-    if (projectId) {
-      api(`/projects/${projectId}/programme`).then((rows) =>
-        setActivities(rows.filter((a) => !a.is_milestone && a.indent > 0)));
-    }
-  }, [project?.id, existing?.project]);
+    Promise.all(activeProjects.map((pr) =>
+      api(`/projects/${pr.id}/programme`).then((rows) => [
+        pr.code, rows.filter((a) => !a.is_milestone && a.indent > 0),
+      ]).catch(() => [pr.code, []])
+    )).then((pairs) => setProgrammes(Object.fromEntries(pairs)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects.map((pr) => pr.id).join(",")]);
 
   const rainy = weatherAm === "Rainy" || weatherPm === "Rainy";
   const manpowerTotal = Object.values(manpower)
@@ -148,7 +154,7 @@ export default function DPRForm({ site, project, existing, onSaved,
         saved = await api("/documents", {
           method: "POST",
           body: { doc_type: "DPR", site_id: site.id, doc_date: docDate,
-                  project_id: project?.id || null, payload: payload() },
+                  payload: payload() },
         });
       }
       setDoc(saved);
@@ -248,21 +254,34 @@ export default function DPRForm({ site, project, existing, onSaved,
 
       <SectionTitle>
         1. Work Done Today
-        {activities.length > 0 &&
-          " — link each work item to a programme activity"}
+        {activeProjects.length > 0 &&
+          " — tag each row with its project and programme activity"}
       </SectionTitle>
       <RowTable
-        headers={["Activity / Milestone", "Location/Area/Villa",
+        headers={["Project", "Activity / Milestone", "Location/Area/Villa",
                   "Today %", "To-date %", "Remarks"]}
         rows={workDone} setRows={setWorkDone} empty={emptyWork}
-        render={(row, set) => (
+        render={(row, set) => {
+          const acts = programmes[row.project] || [];
+          return (
           <>
-            <td style={{ padding: 3, minWidth: 220 }}>
-              {activities.length > 0 ? (
+            <td style={{ padding: 3 }}>
+              <select value={row.project || ""}
+                      onChange={(e) => set({ project: e.target.value,
+                                             activity_id: "" })}
+                      style={{ ...inputStyle, width: 110 }}>
+                <option value="">General</option>
+                {activeProjects.map((pr) => (
+                  <option key={pr.id} value={pr.code}>{pr.code}</option>
+                ))}
+              </select>
+            </td>
+            <td style={{ padding: 3, minWidth: 200 }}>
+              {acts.length > 0 ? (
                 <>
                   <select value={row.activity_id || ""}
                           onChange={(e) => {
-                            const act = activities.find(
+                            const act = acts.find(
                               (a) => String(a.id) === e.target.value);
                             set({ activity_id: act ? act.id : "",
                                   activity: act ? act.name : row.activity,
@@ -273,7 +292,7 @@ export default function DPRForm({ site, project, existing, onSaved,
                                    background: row.activity_id
                                      ? "#effaf1" : "#fff8e6" }}>
                     <option value="">— other / not in programme —</option>
-                    {activities.map((a) => (
+                    {acts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.name} ({Number(a.progress)}%)
                       </option>
@@ -291,14 +310,15 @@ export default function DPRForm({ site, project, existing, onSaved,
                        style={inputStyle} />
               )}
             </td>
-            {cell(row.location, (v) => set({ location: v }), 130)}
-            {cell(row.progress_today, (v) => set({ progress_today: v }), 70,
+            {cell(row.location, (v) => set({ location: v }), 120)}
+            {cell(row.progress_today, (v) => set({ progress_today: v }), 65,
                   "number")}
-            {cell(row.progress_todate, (v) => set({ progress_todate: v }), 70,
+            {cell(row.progress_todate, (v) => set({ progress_todate: v }), 65,
                   "number")}
-            {cell(row.remarks, (v) => set({ remarks: v }), 130)}
+            {cell(row.remarks, (v) => set({ remarks: v }), 110)}
           </>
-        )}
+          );
+        }}
       />
 
       <SectionTitle>2. Manpower — total {manpowerTotal}</SectionTitle>

@@ -224,10 +224,12 @@ def tws_context(document, revision):
             manpower_rows.append([cat.grp, cat.name, count])
             total += count
     sections = [
+        # TWS is site-wide; each planned row is tagged per project (R8)
         {"kind": "table", "title": "1. Planned Activities",
-         "headers": ["No.", "Planned Activity", "Location/Area/Villa", "Trade",
-                     "Remarks"],
-         "rows": [[i + 1, a.get("activity", ""), a.get("location", ""),
+         "headers": ["No.", "Planned Activity", "Project",
+                     "Location/Area/Villa", "Trade", "Remarks"],
+         "rows": [[i + 1, a.get("activity", ""),
+                   a.get("project") or "General", a.get("location", ""),
                    a.get("trade", ""), a.get("remarks", "")]
                   for i, a in enumerate(payload.get("activities", []))]},
         {"kind": "table", "title": f"2. Planned Manpower — total {total}",

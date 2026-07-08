@@ -83,6 +83,7 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
           <SectionTitle>1. Work Done Today</SectionTitle>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
+              <th style={th}>Project</th>
               <th style={th}>Activity / Milestone</th>
               <th style={th}>Location</th>
               <th style={th}>Today %</th><th style={th}>To-date %</th>
@@ -91,6 +92,7 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
             <tbody>
               {p.work_done.map((r, i) => (
                 <tr key={i}>
+                  <td style={td}>{r.project || "General"}</td>
                   <td style={td}>
                     {r.activity}
                     {r.activity_id && (

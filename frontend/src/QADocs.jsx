@@ -97,8 +97,11 @@ function Field({ def, value, onChange }) {
   );
 }
 
-export function QAForm({ docType, site, project, existing, prefill, onSaved,
-                         onCancel }) {
+export function QAForm({ docType, site, project, projects = [], existing,
+                         prefill, onSaved, onCancel }) {
+  // TWS is SITE-WIDE (R8): planned rows are tagged per project; IR/MAR
+  // remain project documents.
+  const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
   const [payload, setPayload] = useState(existing?.payload ||
                                          prefill?.payload || {});
   const [docDate, setDocDate] = useState(
@@ -142,7 +145,9 @@ export function QAForm({ docType, site, project, existing, prefill, onSaved,
         });
       } else {
         const req = { doc_type: docType, site_id: site.id, doc_date: docDate,
-                      project_id: project?.id || null, payload: body };
+                      project_id: docType === "TWS" ? null
+                                  : project?.id || null,
+                      payload: body };
         if (prefill?.previous_ir_ref) {
           req.previous_ir_ref = prefill.previous_ir_ref;
         }
@@ -204,6 +209,7 @@ export function QAForm({ docType, site, project, existing, prefill, onSaved,
           <SectionTitle>1. Planned Activities</SectionTitle>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
+              <th style={th}>Project</th>
               <th style={th}>Planned Activity</th>
               <th style={th}>Location/Area/Villa</th>
               <th style={th}>Trade</th><th style={th}>Remarks</th><th />
@@ -211,6 +217,18 @@ export function QAForm({ docType, site, project, existing, prefill, onSaved,
             <tbody>
               {activities.map((row, i) => (
                 <tr key={i}>
+                  <td style={{ padding: 3 }}>
+                    <select value={row.project || ""}
+                            onChange={(e) => setActivities(activities.map(
+                              (r, j) => j === i
+                                ? { ...r, project: e.target.value } : r))}
+                            style={{ ...inputStyle, width: 105 }}>
+                      <option value="">General</option>
+                      {activeProjects.map((pr) => (
+                        <option key={pr.id} value={pr.code}>{pr.code}</option>
+                      ))}
+                    </select>
+                  </td>
                   {["activity", "location", "trade", "remarks"].map((f) => (
                     <td key={f} style={{ padding: 3 }}>
                       <input value={row[f] || ""}
@@ -487,12 +505,14 @@ export function QADocView({ doc: initial, me, onClose, onChanged, onEdit,
           <SectionTitle>Planned Activities</SectionTitle>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
+              <th style={th}>Project</th>
               <th style={th}>Activity</th><th style={th}>Location</th>
               <th style={th}>Trade</th><th style={th}>Remarks</th>
             </tr></thead>
             <tbody>
               {p.activities.map((a, i) => (
                 <tr key={i}>
+                  <td style={td}>{a.project || "General"}</td>
                   <td style={td}>{a.activity}</td><td style={td}>{a.location}</td>
                   <td style={td}>{a.trade}</td><td style={td}>{a.remarks}</td>
                 </tr>

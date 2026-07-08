@@ -371,7 +371,8 @@ export default function App() {
           )}
 
           {docView?.mode === "dpr-form" && (
-            <DPRForm site={openSite} existing={docView.doc} project={project}
+            <DPRForm site={openSite} existing={docView.doc}
+                     projects={projects}
                      onSaved={closeDoc} onCancel={closeDoc} />
           )}
           {docView?.mode === "dpr-view" && (
@@ -400,6 +401,7 @@ export default function App() {
           )}
           {docView?.mode === "qa-form" && (
             <QAForm docType={docView.docType} site={openSite} project={project}
+                    projects={projects}
                     existing={docView.doc} prefill={docView.prefill}
                     onSaved={(doc) => { bump();
                       setDocView({ mode: "qa-view", doc }); }}
@@ -495,7 +497,7 @@ export default function App() {
                 )}
                 {projects.length > 0 && !project && (
                   <span style={{ fontSize: 12, color: "#b35900" }}>
-                    Select a project to create DPR / TWS / IR / MAR.
+                    Select a project to create IR / MAR.
                   </span>
                 )}
               </div>
