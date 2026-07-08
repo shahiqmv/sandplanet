@@ -3,6 +3,8 @@ import { api } from "./api.js";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
+// Sites carry the client & location identity only — all dates (LOA,
+// start, finish) live on projects (owner, 2026-07-08)
 const SITE_FIELDS = [
   ["name", "Site name", "text"],
   ["client_name", "Client name", "text"],
@@ -13,13 +15,18 @@ const SITE_FIELDS = [
   ["client_email", "Client email", "text"],
   ["consultant_name", "Consultant", "text"],
   ["consultant_contact", "Consultant contact", "text"],
-  ["award_date", "Award date", "date"],
-  ["start_date", "Start date", "date"],
-  ["planned_completion", "Planned completion", "date"],
 ];
 
 const PROJECT_EMPTY = { code: "", title: "", loa_date: "", start_date: "",
-                        scope: "", pm: "", manpower_summary: "" };
+                        planned_completion: "", scope: "", pm: "",
+                        manpower_summary: "" };
+
+const SITE_TRANSITIONS = {
+  AWARDED: ["ACTIVE", "ON_HOLD"],
+  ACTIVE: ["ON_HOLD", "CLOSED"],
+  ON_HOLD: ["ACTIVE", "CLOSED"],
+  CLOSED: ["ACTIVE"],
+};
 
 export default function SitesManagePage({ me, onChanged }) {
   const [sites, setSites] = useState([]);
@@ -32,6 +39,9 @@ export default function SitesManagePage({ me, onChanged }) {
   const [editProj, setEditProj] = useState(null);
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
+  const [addingSite, setAddingSite] = useState(false);
+  const [siteDraft, setSiteDraft] = useState({ code: "", name: "",
+                                               client_name: "" });
 
   const canEditSite = ["ADMIN", "DIRECTOR"].includes(me.role);
   const canEditProject = ["ADMIN", "DIRECTOR", "PM"].includes(me.role);
@@ -54,13 +64,44 @@ export default function SitesManagePage({ me, onChanged }) {
     api(`/sites/${site.id}/projects`).then(setSiteProjects);
   }, []);
 
+  async function createSite() {
+    setError(null);
+    try {
+      const created = await api("/sites", { method: "POST",
+                                            body: siteDraft });
+      setAddingSite(false);
+      setSiteDraft({ code: "", name: "", client_name: "" });
+      loadSites();
+      openSite(created);
+      setNotice(`Site ${created.code} created (status: Awarded — activate `
+                + "it below once work begins).");
+      onChanged?.();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function changeStatus(newStatus) {
+    const reason = window.prompt(
+      `Reason for moving ${selected.code} to ${newStatus} (required):`);
+    if (!reason) return;
+    setError(null);
+    try {
+      const fresh = await api(`/sites/${selected.id}/status`,
+                              { method: "POST",
+                                body: { status: newStatus, reason } });
+      setSelected(fresh);
+      loadSites();
+      onChanged?.();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   async function saveSite() {
     setError(null);
     try {
       const body = { ...form };
-      for (const [key, , kind] of SITE_FIELDS) {
-        if (kind === "date" && !body[key]) body[key] = null;
-      }
       const fresh = await api(`/sites/${selected.id}`,
                               { method: "PATCH", body });
       setNotice("Site details saved.");
@@ -90,7 +131,8 @@ export default function SitesManagePage({ me, onChanged }) {
     setError(null);
     const body = { ...projDraft, pm: projDraft.pm || null,
                    loa_date: projDraft.loa_date || null,
-                   start_date: projDraft.start_date || null };
+                   start_date: projDraft.start_date || null,
+                   planned_completion: projDraft.planned_completion || null };
     try {
       if (editProj) {
         await api(`/projects/${editProj}`, { method: "PATCH", body });
@@ -111,9 +153,48 @@ export default function SitesManagePage({ me, onChanged }) {
   return (
     <>
       <section style={card}>
-        <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-          Sites &amp; Projects
-        </h2>
+        <div style={{ display: "flex", justifyContent: "space-between",
+                      alignItems: "baseline" }}>
+          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+            Sites &amp; Projects
+          </h2>
+          {canEditSite && !addingSite && (
+            <button onClick={() => setAddingSite(true)} style={buttonStyle}>
+              + New site
+            </button>
+          )}
+        </div>
+        {addingSite && (
+          <div style={{ border: "1px dashed var(--sp-border)", borderRadius: 8,
+                        padding: 14, margin: "0 0 12px", display: "flex",
+                        gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <input placeholder="Site code (max 6, e.g. KNH)"
+                   value={siteDraft.code} maxLength={6}
+                   onChange={(e) => setSiteDraft({ ...siteDraft,
+                     code: e.target.value.toUpperCase() })}
+                   style={{ ...inputStyle, width: 170 }} />
+            <input placeholder="Site name (resort / island)"
+                   value={siteDraft.name}
+                   onChange={(e) => setSiteDraft({ ...siteDraft,
+                                                   name: e.target.value })}
+                   style={{ ...inputStyle, flex: 1, minWidth: 200 }} />
+            <input placeholder="Client name" value={siteDraft.client_name}
+                   onChange={(e) => setSiteDraft({ ...siteDraft,
+                     client_name: e.target.value })}
+                   style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
+            <button onClick={createSite}
+                    disabled={!siteDraft.code || !siteDraft.name}
+                    style={buttonStyle}>Create site</button>
+            <button onClick={() => setAddingSite(false)} style={ghostButton}>
+              Cancel</button>
+            <span style={{ fontSize: 12, color: "#5a6b78", width: "100%" }}>
+              The site code goes into every document reference
+              (DPR-CODE-001) and cannot change after the first document —
+              choose carefully. Full client details can be completed below
+              after creation.
+            </span>
+          </div>
+        )}
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>
             <th style={th}>Code</th><th style={th}>Site</th>
@@ -143,9 +224,22 @@ export default function SitesManagePage({ me, onChanged }) {
 
       {selected && (
         <section style={card}>
-          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 16 }}>
-            {selected.code} — site details
-          </h2>
+          <div style={{ display: "flex", gap: 10, alignItems: "baseline",
+                        flexWrap: "wrap" }}>
+            <h2 style={{ marginTop: 0, color: "var(--sp-navy)",
+                         fontSize: 16 }}>
+              {selected.code} — site details
+            </h2>
+            <StatusChip status={selected.status} />
+            {canEditSite && (SITE_TRANSITIONS[selected.status] || [])
+              .map((next) => (
+                <button key={next} onClick={() => changeStatus(next)}
+                        style={{ ...ghostButton, padding: "2px 10px",
+                                 fontSize: 12 }}>
+                  → {next.replace("_", " ")}
+                </button>
+              ))}
+          </div>
           {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
           {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
           <div style={{ display: "grid",
@@ -190,6 +284,7 @@ export default function SitesManagePage({ me, onChanged }) {
             <thead><tr>
               <th style={th}>Code</th><th style={th}>Project</th>
               <th style={th}>LOA date</th><th style={th}>Start</th>
+              <th style={th}>Finish</th>
               <th style={th}>Project PM</th><th style={th}>Manpower</th>
               <th style={th}>Progress</th><th style={th}>Status</th>
               {canEditProject && <th style={th} />}
@@ -202,6 +297,7 @@ export default function SitesManagePage({ me, onChanged }) {
                   <td style={td} title={p.scope}>{p.title}</td>
                   <td style={td}>{p.loa_date || "—"}</td>
                   <td style={td}>{p.start_date || "—"}</td>
+                  <td style={td}>{p.planned_completion || "—"}</td>
                   <td style={td}>{p.pm_name || "—"}</td>
                   <td style={td}>
                     {p.manpower_summary || "—"}
@@ -219,6 +315,7 @@ export default function SitesManagePage({ me, onChanged }) {
                           setProjDraft({ code: p.code, title: p.title,
                             loa_date: p.loa_date || "",
                             start_date: p.start_date || "",
+                            planned_completion: p.planned_completion || "",
                             scope: p.scope || "", pm: p.pm || "",
                             manpower_summary: p.manpower_summary || "" }); }}
                               style={{ ...ghostButton, padding: "2px 8px",
@@ -228,7 +325,7 @@ export default function SitesManagePage({ me, onChanged }) {
                 </tr>
               ))}
               {siteProjects.length === 0 && (
-                <tr><td style={td} colSpan={9}>No projects yet.</td></tr>
+                <tr><td style={td} colSpan={10}>No projects yet.</td></tr>
               )}
             </tbody>
           </table>
@@ -269,6 +366,12 @@ export default function SitesManagePage({ me, onChanged }) {
                 <input type="date" value={projDraft.start_date}
                        onChange={(e) => setProjDraft({ ...projDraft,
                          start_date: e.target.value })}
+                       style={inputStyle} />
+              </label>
+              <label style={{ fontSize: 13 }}>Finish date (planned)
+                <input type="date" value={projDraft.planned_completion}
+                       onChange={(e) => setProjDraft({ ...projDraft,
+                         planned_completion: e.target.value })}
                        style={inputStyle} />
               </label>
               <label style={{ fontSize: 13 }}>Project PM
