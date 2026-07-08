@@ -78,3 +78,18 @@ programme and timeline (e.g. "17 pools" programme at Vakkaru). Changes:
   (TYPE-SITECODE-NNN, §4.1 unchanged) — refs remain unique and gap-free.
 - Existing dev documents keep project=NULL; new documents require a project
   when the site has one.
+
+## 2026-07-08 — R5: PM assignments page; Daily Manpower Allocation (DMA)
+- PM accounts continue to be created under Users (one place for
+  credentials), but PM ASSIGNMENTS get a dedicated management page: every
+  PM with the sites they are site PM of, the projects they are project PM
+  of, assignment history, and reassignment controls (Admin/Director).
+- New internal document: Daily Manpower Allocation (DMA-SITECODE-NNN,
+  one per SITE per day, site-wide — not per project). Early morning the
+  PM allocates the day's tasks based on the TWSs issued the previous day;
+  rows may come from any project's TWS or be GENERAL tasks not tied to a
+  programme scope (site cleaning, material unloading, housekeeping).
+  Each row: task, location, manpower category, workers, remarks; the
+  document totals manpower at work by category. SE may prepare; only the
+  PM issues. Internal document — printable PDF on the letterhead, not
+  sent to the client.

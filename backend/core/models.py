@@ -223,6 +223,7 @@ class Document(models.Model):
         PR = "PR"
         LM = "LM"
         PO = "PO"  # purchase order (R2)
+        DMA = "DMA"  # daily manpower allocation (R5, internal)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -278,6 +279,8 @@ class Document(models.Model):
             "DRAFT": {"ISSUED"},
             "ISSUED": {"CLOSED"},
         },
+        # Morning allocation off the previous day's TWSs; internal only (R5)
+        "DMA": {"DRAFT": {"ISSUED"}},
     }
 
     doc_type = models.CharField(max_length=3, choices=Type.choices)

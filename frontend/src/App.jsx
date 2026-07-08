@@ -11,6 +11,8 @@ import PayrollPage from "./PayrollPage.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
+import DMAPage from "./DMAPage.jsx";
+import PmsPage from "./PmsPage.jsx";
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
@@ -230,6 +232,8 @@ export default function App() {
               ["employees", "Employees"],
               ...(["HO_HR", "FINANCE", "ADMIN"].includes(me.role)
                 ? [["payroll", "Payroll"]] : []),
+              ...(["DIRECTOR", "ADMIN"].includes(me.role)
+                ? [["pms", "PMs"]] : []),
               ...(me.role === "ADMIN" ? [["users", "Users"]] : [])]
               .map(([key, label]) => (
               <button key={key}
@@ -399,6 +403,7 @@ export default function App() {
                 onNewQa={(docType) => setDocView({ mode: "qa-form", docType,
                                                    doc: null })}
                 onAttendance={() => setDocView({ mode: "attendance" })}
+                onDma={() => setDocView({ mode: "dma" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -433,6 +438,13 @@ export default function App() {
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />
+          )}
+          {docView?.mode === "dma" && openSite && (
+            <DMAPage site={openSite} me={me} onClose={closeDoc} />
+          )}
+          {!docView && !openSite &&
+            ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (
+            <PmsPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
             (!me.is_ho || hoPage === "sites") && (

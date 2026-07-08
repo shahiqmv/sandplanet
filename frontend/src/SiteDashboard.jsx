@@ -6,8 +6,8 @@ const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 
 export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
-                                        onNewQa, onAttendance, onCreateGrn,
-                                        onOpenDoc, refresh }) {
+                                        onNewQa, onAttendance, onDma,
+                                        onCreateGrn, onOpenDoc, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -80,6 +80,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           )}
           {canMr && (
             <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
+          )}
+          {["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+            <button onClick={onDma}
+                    style={{ ...buttonStyle, background: "#b35900" }}>
+              ☀ Manpower
+            </button>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "ADMIN"]
             .includes(me.role) && (

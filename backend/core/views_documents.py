@@ -54,6 +54,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "PR": {"HO_PURCHASING"},             # Head Office documents
     "LM": {"HO_PURCHASING"},
     "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
+    "DMA": {"SITE_ENGINEER", "PM"},      # SE may prepare; PM issues (R5)
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
 RESULTS = {  # client results per type (spec §5.3/§5.4)
@@ -148,6 +149,14 @@ def document_create(request):
                                        "belongs to."}, status=400)
 
     doc_date = request.data.get("doc_date") or date.today().isoformat()
+    if doc_type == "DMA":  # one allocation per SITE per day, site-wide (R5)
+        clash = Document.objects.filter(
+            doc_type="DMA", site=site, doc_date=doc_date, is_void=False
+        ).first()
+        if clash:
+            return Response(
+                {"detail": f"{clash.ref} already exists for {doc_date}."}, status=400
+            )
     if doc_type in ("DPR", "TWS"):  # one per PROJECT per working day (R4)
         clash_qs = Document.objects.filter(
             doc_type=doc_type, site=site, doc_date=doc_date, is_void=False
@@ -431,6 +440,12 @@ def _do_issue(request, doc, comment):
                            f"to issue ({captioned} attached)."},
                 status=400,
             )
+    if doc.doc_type == "DMA":
+        # The morning allocation is the PM's call — SE may prepare it,
+        # but only the project/site PM issues (R5).
+        return _apply(request, doc, "ISSUED", "ISSUE", pm_gate=True,
+                      lock_revision=True, pdf_milestone="issue",
+                      comment=comment)
     if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "PO"):
         # DPR/TWS/PO issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         err = _apply(request, doc, "ISSUED", "ISSUE",
@@ -439,8 +454,36 @@ def _do_issue(request, doc, comment):
         if err is None and doc.doc_type == "DPR":
             _update_programme_progress(doc, request.user)
         return err
-    return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO."},
+    return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO/DMA."},
                     status=400)
+
+
+@api_view(["GET"])
+def dma_prefill(request):
+    """Task rows for the morning allocation, pulled from the TWSs scheduled
+    FOR the given day (issued the previous evening, any project) (R5)."""
+    site_id = request.GET.get("site")
+    day = request.GET.get("date") or date.today().isoformat()
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and int(site_id or 0) not in site_ids:
+        return Response({"detail": "Not allocated to this site."}, status=403)
+    rows = []
+    tws_qs = Document.objects.filter(
+        doc_type="TWS", site_id=site_id, doc_date=day, is_void=False,
+        status__in=("ISSUED", "ACKNOWLEDGED"),
+    ).select_related("project", "current_revision")
+    for tws in tws_qs:
+        code = tws.project.code if tws.project else ""
+        for a in (tws.current_revision.payload or {}).get("activities", []):
+            rows.append({
+                "task": a.get("activity", ""), "location": a.get("location", ""),
+                "category": a.get("trade", ""), "workers": "",
+                "remarks": "", "project": code, "source": tws.ref,
+            })
+    return Response({
+        "tasks": rows,
+        "tws_refs": [t.ref for t in tws_qs],
+    })
 
 
 def _update_programme_progress(doc, actor):

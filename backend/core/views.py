@@ -249,6 +249,49 @@ def pm_list(request):
     return Response([{"id": u.id, "full_name": u.full_name} for u in pms])
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def pm_overview(request):
+    """PM assignments board (R5): every active PM with the sites they run
+    (current site PM), the projects they run (project PM), and the site-PM
+    history. Site PM is a special duty — managed on its own page."""
+    if request.user.role not in ("ADMIN", "DIRECTOR"):
+        return Response({"detail": "Admin/Director only."}, status=403)
+    from .models import Project
+
+    pms = list(User.objects.filter(role=User.Role.PM).order_by("full_name"))
+    current = SitePmHistory.objects.filter(to_date__isnull=True) \
+        .select_related("site")
+    sites_by_pm = {}
+    for h in current:
+        sites_by_pm.setdefault(h.pm_user_id, []).append(
+            {"site_id": h.site_id, "code": h.site.code, "name": h.site.name,
+             "since": h.from_date}
+        )
+    projects_by_pm = {}
+    for p in Project.objects.filter(pm__isnull=False).select_related("site"):
+        projects_by_pm.setdefault(p.pm_id, []).append(
+            {"project_id": p.id, "code": p.code, "title": p.title,
+             "site_code": p.site.code, "status": p.status}
+        )
+    history = [
+        {"pm_id": h.pm_user_id, "pm_name": h.pm_user.full_name,
+         "site_code": h.site.code, "site_name": h.site.name,
+         "from_date": h.from_date, "to_date": h.to_date}
+        for h in SitePmHistory.objects.select_related("site", "pm_user")
+        .order_by("-from_date")[:100]
+    ]
+    return Response({
+        "pms": [{
+            "id": u.id, "username": u.username, "full_name": u.full_name,
+            "email": u.email, "is_active": u.is_active,
+            "sites": sites_by_pm.get(u.id, []),
+            "projects": projects_by_pm.get(u.id, []),
+        } for u in pms],
+        "history": history,
+    })
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def parameter_detail(request, key):

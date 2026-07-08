@@ -163,6 +163,59 @@ def mar_context(document, revision):
     }
 
 
+def dma_context(document, revision):
+    """Daily Manpower Allocation (R5) — internal notice-board sheet: the
+    PM's morning task assignments off the previous day's TWSs, with the
+    manpower at work totalled by category."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    tasks = payload.get("tasks", [])
+    totals, total = {}, 0
+    for t in tasks:
+        try:
+            count = int(t.get("workers") or 0)
+        except (TypeError, ValueError):
+            count = 0
+        if count:
+            key = (t.get("category") or "Unassigned").strip() or "Unassigned"
+            totals[key] = totals.get(key, 0) + count
+            total += count
+    sections = [
+        {"kind": "table", "title": "1. Task Allocation",
+         "headers": ["No.", "Task", "Project", "Location/Area", "Category",
+                     "Workers", "Remarks"],
+         "rows": [[i + 1, t.get("task", ""), t.get("project", "") or "General",
+                   t.get("location", ""), t.get("category", ""),
+                   t.get("workers", ""), t.get("remarks", "")]
+                  for i, t in enumerate(tasks)]},
+        {"kind": "table", "title": f"2. Manpower at Work — total {total}",
+         "headers": ["Category", "Workers"],
+         "rows": sorted(totals.items())},
+    ]
+    if payload.get("notes"):
+        sections.append({"kind": "text", "title": "3. Notes / Instructions",
+                         "text": payload["notes"]})
+    tws_refs = payload.get("tws_refs") or []
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(),
+        "form_title": "DAILY MANPOWER ALLOCATION",
+        "form_subline": "FRM-PRJ-06 · R0 · Internal",
+        "header_rows": [
+            ["Allocation For", document.doc_date.strftime("%d/%m/%y"),
+             "Based on TWS", ", ".join(tws_refs) or "—"],
+            ["Working Hours", payload.get("working_hours", ""), "", ""],
+        ],
+        "sections": sections,
+        "sig_blocks": [
+            {"title": "Allocated By — Project Manager",
+             "stamp": _stamp_for(approvals, "ISSUE")},
+            {"title": ""},
+            {"title": ""},
+        ],
+    }
+
+
 def tws_context(document, revision):
     payload = revision.payload or {}
     approvals = list(document.approvals.select_related("actor"))

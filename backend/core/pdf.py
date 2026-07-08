@@ -77,11 +77,12 @@ def generate_pdf(document, revision, milestone):
         template, context = "po.html", _po_context(document, revision)
     elif document.doc_type in LINE_FORMS:
         template, context = "lines_form.html", _lines_context(document, revision)
-    elif document.doc_type in ("IR", "MAR", "TWS"):
+    elif document.doc_type in ("IR", "MAR", "TWS", "DMA"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
-                   "TWS": pdf_qa.tws_context}[document.doc_type]
+                   "TWS": pdf_qa.tws_context,
+                   "DMA": pdf_qa.dma_context}[document.doc_type]
         template, context = "qa_form.html", builder(document, revision)
     else:
         return None
