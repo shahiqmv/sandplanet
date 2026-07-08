@@ -142,10 +142,11 @@ export function StampTile({ title, done, dueText, doneStamp, action }) {
       border: done ? "1px solid var(--line)"
                    : "1.5px dashed var(--amber-fg)",
     }}>
-      <div style={{ fontFamily: "var(--font-display)", fontWeight: 600,
-                    textTransform: "uppercase", letterSpacing: "0.08em",
-                    fontSize: 13, color: done ? "var(--muted)"
-                                              : "var(--amber-fg)" }}>
+      {/* Owner (2026-07-08): condensed uppercase was hard on the eye —
+          headings use the body face, gently tracked */}
+      <div style={{ fontWeight: 700, letterSpacing: "0.02em",
+                    fontSize: 13.5, color: done ? "var(--muted)"
+                                                : "var(--amber-fg)" }}>
         {title}
       </div>
       <div style={{ marginTop: 10, minHeight: 34 }}>
@@ -166,9 +167,8 @@ export function Eyebrow({ children, meta, metaTone }) {
   return (
     <div style={{ display: "flex", alignItems: "baseline",
                   justifyContent: "space-between", margin: "18px 0 8px" }}>
-      <span style={{ fontFamily: "var(--font-display)", fontWeight: 700,
-                     textTransform: "uppercase", letterSpacing: "0.12em",
-                     fontSize: 13.5, color: "var(--navy)" }}>
+      <span style={{ fontWeight: 700, letterSpacing: "0.02em",
+                     fontSize: 15, color: "var(--navy)" }}>
         {children}
       </span>
       {meta && (
@@ -234,10 +234,7 @@ export function SectionTitle({ children }) {
     <h3
       style={{
         color: "var(--navy)",
-        fontFamily: "var(--font-display)",
-        textTransform: "uppercase",
-        letterSpacing: "0.1em",
-        fontSize: 15,
+        fontSize: 14.5,
         borderBottom: "1px solid var(--sky)",
         paddingBottom: 4,
         margin: "20px 0 10px",

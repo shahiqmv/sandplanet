@@ -83,6 +83,22 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
             <Btn variant="primary" onClick={() => onNewQa("TWS")}>
               Prepare TWS</Btn>
           )} />
+        <StampTile title="Manpower Allocation"
+          done={dash?.dma_today?.status === "ISSUED"}
+          doneStamp={dash?.dma_today && (
+            <a href="#" onClick={(e) => { e.preventDefault(); onDma(); }}
+               style={{ textDecoration: "none" }}>
+              <IssuedStamp refText={dash.dma_today.ref} />
+            </a>
+          )}
+          dueText={dash?.dma_today
+            ? "Drafted — PM issues the allocation"
+            : "Allocate the crew from yesterday's TWS"}
+          action={["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+            <Btn variant="primary" onClick={onDma}>
+              {dash?.dma_today ? "Open allocation" : "Allocate manpower"}
+            </Btn>
+          )} />
       </div>
 
       <section style={{ ...card, display: "flex", gap: 24, alignItems: "center",
@@ -103,12 +119,6 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           )}
           {canMr && (
             <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
-          )}
-          {["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
-            <button onClick={onDma}
-                    style={{ ...buttonStyle, background: "#b35900" }}>
-              ☀ Manpower
-            </button>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "ADMIN"]
             .includes(me.role) && (
@@ -151,31 +161,107 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         </section>
       )}
 
-      {incomingLms.length > 0 && (
-        <section style={{ ...card, background: "#fff8e6" }}>
-          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
-            🚤 Incoming boats — manifests in transit
+      {/* Receiving goods is a site responsibility — the boats/GRN section
+          is always visible, never lost behind an empty list (owner,
+          2026-07-08). The GRN prefills its lines from the manifest. */}
+      <section style={{ ...card,
+                        background: incomingLms.length ? "#fff8e6"
+                                                       : "var(--paper)" }}>
+        <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
+          🚤 Incoming boats &amp; goods receiving
+        </h2>
+        {incomingLms.map((lm) => (
+          <div key={lm.ref} style={{ display: "flex", gap: 12,
+                                     alignItems: "center", padding: "4px 0",
+                                     flexWrap: "wrap" }}>
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          onOpenDoc(lm.ref); }}
+               style={{ textDecoration: "none" }}>
+              <RefStamp>{lm.ref}</RefStamp>
+            </a>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>
+              {lm.payload?.vessel} · expected {lm.payload?.expected_arrival}
+            </span>
+            {canMr && (
+              <Btn variant="navy" onClick={() => onCreateGrn(lm.ref)}
+                   style={{ marginLeft: "auto", padding: "4px 12px",
+                            fontSize: 13 }}>
+                Receive → New GRN
+              </Btn>
+            )}
+          </div>
+        ))}
+        {incomingLms.length === 0 && (
+          <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+            No manifests in transit right now. When Head Office despatches a
+            boat, it appears here — receiving it creates the GRN with the
+            manifest's lines pre-filled.
+          </p>
+        )}
+      </section>
+
+      {(dash?.materials_in_transit_count > 0 ||
+        dash?.pending_materials_count > 0) && (
+        <section style={card}>
+          <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
+            📦 Materials yet to reach the site
           </h2>
-          {incomingLms.map((lm) => (
-            <div key={lm.ref} style={{ display: "flex", gap: 12,
-                                       alignItems: "center", padding: "4px 0" }}>
-              <a href="#" onClick={(e) => { e.preventDefault();
-                                            onOpenDoc(lm.ref); }}
-                 style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                {lm.ref}
-              </a>
-              <span style={{ fontSize: 13, color: "#5a6b78" }}>
-                {lm.payload?.vessel} · expected {lm.payload?.expected_arrival}
-              </span>
-              {canMr && (
-                <button onClick={() => onCreateGrn(lm.ref)}
-                        style={{ ...buttonStyle, marginLeft: "auto",
-                                 padding: "4px 12px", fontSize: 13 }}>
-                  Receive → New GRN
-                </button>
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700,
+                            color: "var(--navy)", marginBottom: 4 }}>
+                On the water · {dash.materials_in_transit_count}
+              </div>
+              {dash.materials_in_transit.map((m, i) => (
+                <div key={i} style={{ fontSize: 12.5, padding: "2px 0",
+                                      borderTop: "1px solid var(--row-line)",
+                                      display: "flex", gap: 8 }}>
+                  <span style={{ flex: 1 }}>{m.description}</span>
+                  <span style={{ fontFamily: "var(--font-mono)",
+                                 color: "var(--muted)" }}>
+                    {m.qty} {m.unit}</span>
+                </div>
+              ))}
+              {dash.materials_in_transit_count >
+                dash.materials_in_transit.length && (
+                <div style={{ fontSize: 11.5, color: "var(--faint)" }}>
+                  … and {dash.materials_in_transit_count
+                         - dash.materials_in_transit.length} more lines
+                </div>
+              )}
+              {dash.materials_in_transit_count === 0 && (
+                <div style={{ fontSize: 12, color: "var(--faint)" }}>
+                  nothing in transit</div>
               )}
             </div>
-          ))}
+            <div style={{ flex: 1, minWidth: 240 }}>
+              <div style={{ fontSize: 12.5, fontWeight: 700,
+                            color: "var(--amber-fg)", marginBottom: 4 }}>
+                Pending with Head Office · {dash.pending_materials_count}
+              </div>
+              {dash.pending_materials.map((m, i) => (
+                <div key={i} style={{ fontSize: 12.5, padding: "2px 0",
+                                      borderTop: "1px solid var(--row-line)",
+                                      display: "flex", gap: 8 }}>
+                  <span style={{ flex: 1 }}>{m.description}</span>
+                  <span style={{ fontFamily: "var(--font-mono)",
+                                 color: "var(--muted)" }}>
+                    {m.qty} {m.unit}</span>
+                </div>
+              ))}
+              {dash.pending_materials_count >
+                dash.pending_materials.length && (
+                <div style={{ fontSize: 11.5, color: "var(--faint)" }}>
+                  … and {dash.pending_materials_count
+                         - dash.pending_materials.length} more lines
+                </div>
+              )}
+              {dash.pending_materials_count === 0 && (
+                <div style={{ fontSize: 12, color: "var(--faint)" }}>
+                  nothing outstanding</div>
+              )}
+            </div>
+          </div>
         </section>
       )}
 

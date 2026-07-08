@@ -1085,13 +1085,42 @@ def dashboard_site(request, site_id):
     incoming_lms = Document.objects.filter(
         doc_type="LM", site=site, status="DEPARTED", is_void=False
     ).count()
+    # Morning manpower allocation is a daily site obligation too (owner,
+    # 2026-07-08) — surface today's DMA next to the DPR/TWS tiles
+    dma_today = Document.objects.filter(
+        doc_type="DMA", site=site, doc_date=today, is_void=False
+    ).first()
+    # Materials snapshot: what is on the water (departed manifests) and
+    # what HO still owes the site (open pending items) — headline, not
+    # the full detail (owner, 2026-07-08)
+    in_transit = []
+    for lm in Document.objects.filter(
+            doc_type="LM", site=site, status="DEPARTED", is_void=False
+    ).select_related("current_revision"):
+        for line in lm.current_revision.lines.all():
+            in_transit.append({
+                "description": line.description, "unit": line.unit,
+                "qty": line.qty_loaded, "lm_ref": lm.ref,
+            })
+    pending_qs = PendingItem.objects.filter(
+        site=site, status="PENDING").select_related("item")
+    pending_materials = [{
+        "description": p.item.description if p.item else p.free_text_desc,
+        "unit": p.unit, "qty": p.qty_pending,
+    } for p in pending_qs[:8]]
     return Response({
         "site": site.code,
         "dpr_today": {"ref": dpr_today.ref, "status": dpr_today.status}
         if dpr_today else None,
+        "dma_today": {"ref": dma_today.ref, "status": dma_today.status}
+        if dma_today else None,
         "unverified_dprs": unverified,
         "open_drafts": drafts,
         "incoming_lms": incoming_lms,
+        "materials_in_transit": in_transit[:8],
+        "materials_in_transit_count": len(in_transit),
+        "pending_materials": pending_materials,
+        "pending_materials_count": pending_qs.count(),
     })
 
 
