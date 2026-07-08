@@ -154,8 +154,10 @@ export default function App() {
   const [projects, setProjects] = useState([]);
   const [project, setProject] = useState(null);  // selected project (R4)
   const [addingProject, setAddingProject] = useState(false);
-  const [projDraft, setProjDraft] = useState({ code: "", title: "",
-                                               start_date: "" });
+  const [pms, setPms] = useState([]);
+  const PROJ_EMPTY = { code: "", title: "", loa_date: "", start_date: "",
+                       planned_completion: "", pm: "", scope: "" };
+  const [projDraft, setProjDraft] = useState(PROJ_EMPTY);
   const [hoPage, setHoPage] = useState("sites");
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
@@ -201,13 +203,18 @@ export default function App() {
     try {
       const created = await api(`/sites/${openSite.id}/projects`, {
         method: "POST",
-        body: { ...projDraft,
-                start_date: projDraft.start_date || null },
+        body: { code: projDraft.code, title: projDraft.title,
+                scope: projDraft.scope,
+                loa_date: projDraft.loa_date || null,
+                start_date: projDraft.start_date || null,
+                planned_completion: projDraft.planned_completion || null,
+                pm: projDraft.pm || null },
       });
       setAddingProject(false);
-      setProjDraft({ code: "", title: "", start_date: "" });
+      setProjDraft(PROJ_EMPTY);
       setProjects([...projects, created]);
       setProject(created);
+      setDocView({ mode: "project", projectId: created.id });
     } catch (e) {
       setError(e.message);
     }
@@ -470,38 +477,12 @@ export default function App() {
                 )}
                 {["PM", "DIRECTOR", "ADMIN"].includes(me.role) &&
                   !addingProject && (
-                  <button onClick={() => setAddingProject(true)}
+                  <button onClick={() => { setAddingProject(true);
+                            api("/pms").then(setPms).catch(() => {}); }}
                           style={{ ...ghostButton, padding: "4px 12px",
                                    fontSize: 13 }}>
                     + Project
                   </button>
-                )}
-                {addingProject && (
-                  <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    <input placeholder="Code (e.g. POOLS17)"
-                           value={projDraft.code}
-                           onChange={(e) => setProjDraft({ ...projDraft,
-                             code: e.target.value.toUpperCase() })}
-                           style={{ ...inputStyle, width: 130 }} />
-                    <input placeholder="Project title" value={projDraft.title}
-                           onChange={(e) => setProjDraft({ ...projDraft,
-                             title: e.target.value })}
-                           style={{ ...inputStyle, width: 240 }} />
-                    <input type="date" value={projDraft.start_date}
-                           title="Start date"
-                           onChange={(e) => setProjDraft({ ...projDraft,
-                             start_date: e.target.value })}
-                           style={{ ...inputStyle, width: 140 }} />
-                    <button onClick={createProject}
-                            disabled={!projDraft.code || !projDraft.title}
-                            style={{ ...buttonStyle, padding: "4px 12px" }}>
-                      Create
-                    </button>
-                    <button onClick={() => setAddingProject(false)}
-                            style={{ ...ghostButton, padding: "4px 10px" }}>
-                      ×
-                    </button>
-                  </span>
                 )}
                 {projects.length > 0 && !project && (
                   <span style={{ fontSize: 12, color: "#b35900" }}>
@@ -509,6 +490,92 @@ export default function App() {
                   </span>
                 )}
               </div>
+
+              {/* Full project creation (owner: a project deserves more
+                  than a one-line form) — dates, PM and scope up front */}
+              {addingProject && (
+                <section style={{ background: "var(--paper)",
+                                  border: "1px dashed var(--line)",
+                                  borderRadius: 12, padding: 18,
+                                  marginBottom: 16 }}>
+                  <h3 style={{ margin: "0 0 12px", color: "var(--navy)",
+                               fontSize: 15 }}>
+                    New project at {openSite.code}
+                  </h3>
+                  <div style={{ display: "grid", gap: 10,
+                                gridTemplateColumns: "1fr 2fr" }}>
+                    <label style={{ fontSize: 13 }}>Project code
+                      <input placeholder="e.g. MPOOL" value={projDraft.code}
+                             onChange={(e) => setProjDraft({ ...projDraft,
+                               code: e.target.value.toUpperCase() })}
+                             style={inputStyle} />
+                    </label>
+                    <label style={{ fontSize: 13 }}>Project title
+                      <input placeholder="e.g. Restaurant Pool"
+                             value={projDraft.title}
+                             onChange={(e) => setProjDraft({ ...projDraft,
+                               title: e.target.value })}
+                             style={inputStyle} />
+                    </label>
+                  </div>
+                  <div style={{ display: "grid", gap: 10, marginTop: 10,
+                                gridTemplateColumns: "1fr 1fr 1fr 1fr" }}>
+                    <label style={{ fontSize: 13 }}>LOA date
+                      <input type="date" value={projDraft.loa_date}
+                             onChange={(e) => setProjDraft({ ...projDraft,
+                               loa_date: e.target.value })}
+                             style={inputStyle} />
+                    </label>
+                    <label style={{ fontSize: 13 }}>Start date
+                      <input type="date" value={projDraft.start_date}
+                             onChange={(e) => setProjDraft({ ...projDraft,
+                               start_date: e.target.value })}
+                             style={inputStyle} />
+                    </label>
+                    <label style={{ fontSize: 13 }}>Planned finish
+                      <input type="date"
+                             value={projDraft.planned_completion}
+                             onChange={(e) => setProjDraft({ ...projDraft,
+                               planned_completion: e.target.value })}
+                             style={inputStyle} />
+                    </label>
+                    <label style={{ fontSize: 13 }}>Project PM
+                      <select value={projDraft.pm}
+                              onChange={(e) => setProjDraft({ ...projDraft,
+                                pm: e.target.value })}
+                              style={inputStyle}>
+                        <option value="">— site PM handles it —</option>
+                        {pms.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.full_name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label style={{ fontSize: 13, display: "block",
+                                  marginTop: 10 }}>
+                    Scope / general summary
+                    <textarea rows={2} value={projDraft.scope}
+                              onChange={(e) => setProjDraft({ ...projDraft,
+                                scope: e.target.value })}
+                              style={{ ...inputStyle, resize: "vertical" }} />
+                  </label>
+                  <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+                    <button onClick={createProject}
+                            disabled={!projDraft.code || !projDraft.title}
+                            style={buttonStyle}>
+                      Create project
+                    </button>
+                    <button onClick={() => setAddingProject(false)}
+                            style={ghostButton}>Cancel</button>
+                    <span style={{ fontSize: 12, color: "var(--faint)",
+                                   alignSelf: "center" }}>
+                      Programme, manpower requirement and documents are
+                      added on the project page after creation.
+                    </span>
+                  </div>
+                </section>
+              )}
               <SiteDashboard
                 site={openSite} me={me} refresh={refresh} project={project}
                 onNewDpr={() => setDocView({ mode: "dpr-form", doc: null })}

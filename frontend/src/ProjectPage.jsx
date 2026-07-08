@@ -128,7 +128,12 @@ manpower histogram, on the letterhead — send to the client"
                   ["Actual completion", project.actual_completion || "—"],
                   ["BOQ ref", project.boq_ref || "—"],
                   ["Scope", project.scope || "—"],
-                  ["Manpower summary", project.manpower_summary || "—"],
+                  ["Planned manpower",
+                   project.manpower_plan?.length
+                     ? `${project.manpower_plan.reduce((a, r) =>
+                         a + (parseInt(r.workers, 10) || 0), 0)} across `
+                       + `${project.manpower_plan.length} categories`
+                     : "—"],
                 ].map(([k, v]) => (
                   <tr key={k}>
                     <td style={{ ...td, width: 170, color: "var(--muted)",
@@ -179,17 +184,26 @@ manpower histogram, on the letterhead — send to the client"
   );
 }
 
-// Planned manpower per month — feeds the histogram sent to the client
-// with the programme upon award (owner).
+// Manpower REQUIREMENT per category, PM down to unskilled (owner) —
+// the histogram sent to the client with the programme is drawn from
+// these numbers. Categories come strictly from the company manpower list.
 function ManpowerPlanTab({ project, me, onSaved }) {
   const [rows, setRows] = useState(
     project.manpower_plan?.length ? project.manpower_plan
-      : [{ month: "", workers: "" }]);
+      : [{ category: "", workers: "" }]);
+  const [categories, setCategories] = useState([]);
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
   const canManage = ["PM", "DIRECTOR", "ADMIN"].includes(me.role);
-  const clean = rows.filter((r) => r.month && parseInt(r.workers, 10) > 0);
+  const clean = rows.filter((r) => r.category &&
+                            parseInt(r.workers, 10) > 0);
   const peak = Math.max(...clean.map((r) => parseInt(r.workers, 10)), 1);
+  const total = clean.reduce((a, r) => a + parseInt(r.workers, 10), 0);
+
+  useEffect(() => {
+    api("/manpower-categories").then((all) => setCategories(
+      all.filter((c) => c.list_type === "DPR" && c.is_active)));
+  }, []);
 
   async function save() {
     setError(null);
@@ -197,19 +211,24 @@ function ManpowerPlanTab({ project, me, onSaved }) {
       await api(`/projects/${project.id}`, {
         method: "PATCH",
         body: { manpower_plan: clean.map((r) => ({
-          month: r.month, workers: parseInt(r.workers, 10) })) },
+          category: r.category, workers: parseInt(r.workers, 10) })) },
       });
-      setNotice("Manpower plan saved — it prints on the Programme PDF.");
+      setNotice("Manpower requirement saved — it prints with the "
+                + "Programme PDF.");
       onSaved();
     } catch (e) {
       setError(e.message);
     }
   }
 
+  const staff = categories.filter((c) => c.grp === "STAFF");
+  const labour = categories.filter((c) => c.grp === "LABOUR");
+  const used = rows.map((r) => r.category);
+
   return (
     <section style={card}>
-      <Eyebrow meta={clean.length ? `peak ${peak}` : null}>
-        Planned manpower by month
+      <Eyebrow meta={clean.length ? `total ${total}` : null}>
+        Manpower requirement — by category
       </Eyebrow>
       {clean.length > 0 && (
         <div style={{ display: "flex", alignItems: "flex-end", gap: 6,
@@ -235,8 +254,8 @@ function ManpowerPlanTab({ project, me, onSaved }) {
                       padding: "0 6px", marginBottom: 14 }}>
           {clean.map((r, i) => (
             <span key={i} style={{ flex: 1, textAlign: "center",
-                                   fontSize: 10.5,
-                                   color: "var(--faint)" }}>{r.month}</span>
+                                   fontSize: 10,
+                                   color: "var(--faint)" }}>{r.category}</span>
           ))}
         </div>
       )}
@@ -245,11 +264,25 @@ function ManpowerPlanTab({ project, me, onSaved }) {
           {rows.map((r, i) => (
             <div key={i} style={{ display: "flex", gap: 8,
                                   alignItems: "center", marginBottom: 6 }}>
-              <input type="month" value={r.month}
-                     onChange={(e) => setRows(rows.map((x, j) =>
-                       j === i ? { ...x, month: e.target.value } : x))}
-                     style={{ padding: "6px 8px", borderRadius: 8,
-                              border: "1px solid #BFD6E6" }} />
+              <select value={r.category}
+                      onChange={(e) => setRows(rows.map((x, j) =>
+                        j === i ? { ...x, category: e.target.value } : x))}
+                      style={{ width: 260, padding: "6px 8px",
+                               borderRadius: 8,
+                               border: "1px solid #BFD6E6" }}>
+                <option value="">— category —</option>
+                {[["Staff", staff], ["Trades / Labour", labour]].map(
+                  ([label, list]) => (
+                  <optgroup key={label} label={label}>
+                    {list.map((c) => (
+                      <option key={c.id} value={c.name}
+                              disabled={used.includes(c.name) &&
+                                        c.name !== r.category}>
+                        {c.name}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
               <input type="number" min="0" value={r.workers}
                      placeholder="workers"
                      onChange={(e) => setRows(rows.map((x, j) =>
@@ -264,9 +297,9 @@ function ManpowerPlanTab({ project, me, onSaved }) {
           ))}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button onClick={() => setRows([...rows,
-                                            { month: "", workers: "" }])}
+                                            { category: "", workers: "" }])}
                     style={{ ...ghostButton, padding: "4px 12px" }}>
-              + Add month
+              + Add category
             </button>
             <button onClick={save} disabled={!clean.length}
                     style={{ background: "var(--navy)", color: "#fff",
@@ -280,8 +313,8 @@ function ManpowerPlanTab({ project, me, onSaved }) {
       ) : (
         !clean.length && (
           <p style={{ fontSize: 13, color: "var(--muted)" }}>
-            No manpower plan yet — the PM enters the planned workers per
-            month here.</p>
+            No manpower requirement yet — the PM enters the planned
+            numbers per category (PM down to unskilled) here.</p>
         )
       )}
       {notice && <p style={{ color: "var(--green-fg)", fontSize: 13 }}>

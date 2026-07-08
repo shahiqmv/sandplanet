@@ -416,16 +416,15 @@ def programme_pdf(request, pk):
                 row["bar"] = {"offset": round(offset, 3),
                               "width": max(round(width, 3), 0.4)}
             rows.append(row)
+    # Manpower REQUIREMENT per category, PM down to unskilled (owner) —
+    # the histogram is drawn from these numbers
     plan = []
     counts = [int(p.get("workers") or 0) for p in project.manpower_plan or []]
     peak = max(counts, default=0)
+    total = sum(counts)
     for p in project.manpower_plan or []:
         w = int(p.get("workers") or 0)
-        try:
-            label = datetime.strptime(p.get("month", ""), "%Y-%m") \
-                .strftime("%b %y")
-        except ValueError:
-            label = p.get("month", "")
+        label = p.get("category") or p.get("month", "")
         plan.append({"label": label, "workers": w,
                      "height": round(100 * w / peak, 1) if peak else 0})
 
@@ -433,6 +432,7 @@ def programme_pdf(request, pk):
         "project": project, "site": project.site,
         "logo_src": logo_src(), "co": company_info(),
         "rows": rows, "months": months, "plan": plan, "peak": peak,
+        "plan_total": total,
         "generated": date.today().strftime("%d.%m.%Y"),
     })
     try:

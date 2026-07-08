@@ -36,7 +36,8 @@
   .histo .fill { background: #29ABE2; border-radius: 2px 2px 0 0; }
   .histo-labels { display: flex; gap: 4px; padding: 0 4px; }
   .histo-labels span { flex: 1; text-align: center; font-size: 6.5pt;
-                       color: #6a7681; }
+                       color: #6a7681; white-space: normal;
+                       word-wrap: break-word; }
 </style>
 </head>
 <body>
@@ -107,10 +108,10 @@
 <table class="meta">
   <tr><td class="lbl" style="width:12%">Project</td>
       <td style="width:38%">{{ project.title }} ({{ project.code }})</td>
-      <td class="lbl" style="width:12%">Peak manpower</td>
-      <td>{{ peak }}</td></tr>
+      <td class="lbl" style="width:16%">Total planned manpower</td>
+      <td>{{ plan_total }}</td></tr>
 </table>
-<h2>2.&nbsp; PLANNED MANPOWER — BY MONTH</h2>
+<h2>2.&nbsp; MANPOWER REQUIREMENT — BY CATEGORY</h2>
 <div class="histo">
   {% for p in plan %}
   <div class="col">
@@ -122,9 +123,6 @@
 <div class="histo-labels">
   {% for p in plan %}<span>{{ p.label }}</span>{% endfor %}
 </div>
-{% if project.manpower_summary %}
-<p class="note" style="margin-top:6mm">{{ project.manpower_summary }}</p>
-{% endif %}
 {% endif %}
 </body>
 </html>

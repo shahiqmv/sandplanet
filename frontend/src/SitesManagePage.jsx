@@ -300,7 +300,10 @@ export default function SitesManagePage({ me, onChanged }) {
                   <td style={td}>{p.planned_completion || "—"}</td>
                   <td style={td}>{p.pm_name || "—"}</td>
                   <td style={td}>
-                    {p.manpower_summary || "—"}
+                    {p.manpower_plan?.length
+                      ? p.manpower_plan.reduce((a, r) =>
+                          a + (parseInt(r.workers, 10) || 0), 0)
+                      : "—"}
                     {p.latest_manpower != null && (
                       <span style={{ color: "#5a6b78", fontSize: 12 }}>
                         {" "}(last DPR: {p.latest_manpower})</span>
@@ -392,14 +395,9 @@ export default function SitesManagePage({ me, onChanged }) {
                             scope: e.target.value })}
                           style={{ ...inputStyle, resize: "vertical" }} />
               </label>
-              <label style={{ fontSize: 13 }}>
-                Manpower summary
-                <input value={projDraft.manpower_summary}
-                       placeholder="e.g. 1 SE, 2 masons, 12 labour"
-                       onChange={(e) => setProjDraft({ ...projDraft,
-                         manpower_summary: e.target.value })}
-                       style={inputStyle} />
-              </label>
+              {/* Manpower REQUIREMENT (per category) is entered on the
+                  project page's Manpower tab — no free-text summary
+                  (owner, 2026-07-08) */}
               <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
                 <button onClick={saveProject}
                         disabled={!projDraft.code || !projDraft.title}

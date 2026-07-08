@@ -216,3 +216,17 @@ summary bars, sky task bars with progress fill, milestone diamonds) and
 a MANPOWER HISTOGRAM page (bars per month, peak, manpower summary note).
 Downloaded via "⬇ Programme PDF" on the project page; a one-off export,
 not a numbered document. WeasyPrint quirk: no `inset` shorthand.
+
+## 2026-07-08 — R10 fix round: manpower REQUIREMENT per category; full creation form
+Owner corrections: (1) the manpower plan is not a monthly total and not a
+free-text summary — it is the REQUIREMENT per category, PM down to
+unskilled workers, and the histogram is drawn from那 numbers only.
+manpower_plan is now [{category, workers}] with categories strictly from
+the company manpower list (Staff/Trades optgroups, each once); the PDF
+page reads "MANPOWER REQUIREMENT — BY CATEGORY" with total planned
+manpower in the header; the free-text manpower summary is dropped from
+the forms (DB column retained for history). (2) Project creation on the
+site page is a proper card — code, title, LOA, start, planned finish,
+project PM, scope — replacing the one-line chip form; creating opens the
+project workspace directly. The 500 he hit was the stale detached dev
+server, not the code.
