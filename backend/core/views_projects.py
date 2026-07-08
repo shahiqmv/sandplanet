@@ -217,7 +217,8 @@ def project_programme(request, pk):
                 duration_days=row.get("duration_days"),
                 start=row.get("start") or None,
                 finish=row.get("finish") or None,
-                is_milestone=bool(row.get("is_milestone")),
+                is_milestone=bool(row.get("is_milestone")) or
+                row.get("duration_days") == 0,
             ))
         audit("project", project.id, "PROGRAMME_IMPORTED", actor=request.user,
               detail={"count": len(created)})
@@ -227,7 +228,7 @@ def project_programme(request, pk):
                                        many=True).data)
 
 
-@api_view(["PATCH"])
+@api_view(["PATCH", "DELETE"])
 def activity_detail(request, pk):
     try:
         activity = ProgrammeActivity.objects.select_related(
@@ -237,6 +238,15 @@ def activity_detail(request, pk):
     if request.user.role not in PROJECT_ADMIN_ROLES:
         return Response({"detail": "Admin/Director/PM edit activities."},
                         status=403)
+    if request.method == "DELETE":
+        if activity.progress_updated_from_id:
+            return Response({"detail": "This activity has DPR progress "
+                                       "recorded against it — it cannot be "
+                                       "deleted."}, status=400)
+        audit("programme_activity", pk, "ACTIVITY_DELETED",
+              actor=request.user, detail={"name": activity.name[:80]})
+        activity.delete()
+        return Response(status=204)
     serializer = ActivitySerializer(activity, data=request.data, partial=True)
     serializer.is_valid(raise_exception=True)
     serializer.save()
