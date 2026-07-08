@@ -16,18 +16,18 @@
                        color: #000; }
   .letterhead .formno { text-align: right; font-size: 7.5pt; color: #6a7681;
                         padding-top: 1px; }
-  .rule-sky { height: 1.8mm; background: #29ABE2; }
-  .rule-navy { height: 0.8mm; background: #16527E; margin-top: 0.5mm;
+  /* Owner (2026-07-08): no band at the page top edge; the rule under the
+     header is sky with a THIN navy line — keep the pair proportionate */
+  .rule-sky { height: 1.5mm; background: #29ABE2; }
+  .rule-navy { height: 0.4mm; background: #16527E; margin-top: 0.5mm;
                margin-bottom: 4mm; }
 
-  /* Page footer (repeats on every page) + top edge line */
-  .topband { position: fixed; top: -7mm; left: 0; right: 0; height: 0.8mm;
-             background: #29ABE2; }
+  /* Page footer (repeats on every page) */
   .pagefoot { position: fixed; bottom: -19mm; left: 0; right: 0;
               text-align: center; font-size: 7pt; color: #6a7681; }
   .pagefoot .bands { margin-top: 2mm; }
-  .pagefoot .b1 { height: 1.4mm; background: #29ABE2; }
-  .pagefoot .b2 { height: 0.7mm; background: #16527E; margin-top: 0.4mm; }
+  .pagefoot .b1 { height: 1.2mm; background: #29ABE2; }
+  .pagefoot .b2 { height: 0.4mm; background: #16527E; margin-top: 0.4mm; }
 
   /* Meta grid: bordered cells, light-blue bold label cells */
   table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }

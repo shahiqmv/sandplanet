@@ -16,7 +16,8 @@
 <body>
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
 {% include "pdf/_footer.html" with footer_doc="DPR" %}
-{% include "pdf/_letterhead.html" with title="DAILY PROGRESS REPORT" subline=form_subline %}
+{# form-version info stays off the print (owner, 2026-07-08) #}
+{% include "pdf/_letterhead.html" with title="DAILY PROGRESS REPORT" %}
 
 <table>
   <tr><td class="lbl" style="width:19%">DPR No.</td><td style="width:31%">{{ doc.ref }}</td>

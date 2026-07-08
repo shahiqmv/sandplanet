@@ -227,7 +227,7 @@ export default function App() {
           Project Management</span>
         {showHoNav && (
           <nav style={{ display: "flex", gap: 4 }}>
-            {[["dashboard", "HO Dashboard"], ["sites", "Sites"],
+            {[["dashboard", "Purchasing Dashboard"], ["sites", "Sites"],
               ["manage", "Site Setup"],
               ["items", "Items"], ["suppliers", "Suppliers"],
               ["employees", "Employees"],

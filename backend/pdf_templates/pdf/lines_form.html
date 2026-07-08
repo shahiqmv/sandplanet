@@ -11,7 +11,8 @@
 <body>
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
 {% include "pdf/_footer.html" with footer_doc=doc.doc_type %}
-{% include "pdf/_letterhead.html" with title=form_title subline=form_subline %}
+{# form-version info stays off the print (owner, 2026-07-08) #}
+{% include "pdf/_letterhead.html" with title=form_title %}
 
 <table class="kv">
   <tr><td class="k">Doc No.</td><td>{{ doc.ref }}{% if rev.rev_label != "R0" %} · {{ rev.rev_label }}{% endif %}</td>
