@@ -71,11 +71,17 @@ docker compose -f docker-compose.prod.yml up -d
 
 ## 6. Updates
 
+One command on the droplet, from `~/sandplanet`:
+```sh
+bash update.sh
+```
+It pulls the latest code and rebuilds/restarts. Equivalent to:
 ```sh
 git pull
 docker compose -f docker-compose.prod.yml up -d --build
 ```
-Migrations and `collectstatic` run automatically on container start.
+Migrations and `collectstatic` run automatically on container start; the
+database volume and Spaces files are untouched.
 
 ## 7. Notes
 

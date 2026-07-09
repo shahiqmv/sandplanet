@@ -57,7 +57,14 @@
       "Bash(docker info *)",
       "PowerShell(cd \"C:/Users/96079/OneDrive/SandPlanet Projects/siteapp/backend\"; $env:DJANGO_DEBUG=\"0\"; $env:DJANGO_SECRET_KEY=\"test-prod-key-for-check-only-not-real\"; $env:DJANGO_ALLOWED_HOSTS=\"app.sandplanet.mv\"; .\\\\.venv\\\\Scripts\\\\python.exe manage.py check --deploy 2>&1 | Select-Object -Last 25; Remove-Item Env:DJANGO_DEBUG; Remove-Item Env:DJANGO_SECRET_KEY; Remove-Item Env:DJANGO_ALLOWED_HOSTS)",
       "Bash(npm run *)",
-      "PowerShell($p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \"runserver 127.0.0.1:8001\" }; if \\($p\\) { $p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; \"killed leftover\" } else { \"8001 clean\" })"
+      "PowerShell($p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \"runserver 127.0.0.1:8001\" }; if \\($p\\) { $p | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; \"killed leftover\" } else { \"8001 clean\" })",
+      "WebSearch",
+      "Bash(git push *)",
+      "Bash(git config *)",
+      "Bash(GIT_TERMINAL_PROMPT=0 timeout 15 git ls-remote https://github.com/sandplanetmv/sandplanet.git)",
+      "Bash(nslookup sandplanet.159.223.35.180.sslip.io)",
+      "Bash(git add *)",
+      "Bash(git commit -m 'M8: one-command update.sh + wire RUN_SEED through to the web container *)"
     ]
   }
 }

@@ -28,6 +28,7 @@ services:
     env_file: .env
     environment:
       POSTGRES_HOST: db           # in-network hostname, overrides .env
+      RUN_SEED: ${RUN_SEED:-0}    # first deploy: RUN_SEED=1 docker compose …
     depends_on:
       db:
         condition: service_healthy
