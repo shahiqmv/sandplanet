@@ -230,7 +230,16 @@ class ManpowerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = ManpowerCategorySerializer
     permission_classes = [IsAdminOrReadOnly]
     queryset = ManpowerCategory.objects.all()
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def perform_destroy(self, instance):
+        # Deactivate rather than delete if the category is referenced by an
+        # employee — history must survive (spec §6A.1)
+        if instance.employees.exists():
+            instance.is_active = False
+            instance.save(update_fields=["is_active"])
+        else:
+            instance.delete()
 
 
 class HolidayViewSet(viewsets.ModelViewSet):
@@ -365,6 +374,26 @@ class IsPurchasingOrReadOnly(BasePermission):
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return True  # sites need the catalog for MR autocomplete
         return request.user.role in ("HO_PURCHASING", "ADMIN")
+
+
+class ItemCategoryViewSet(viewsets.ModelViewSet):
+    """Controlled item categories, managed by HO Purchasing on their own
+    page (owner, 2026-07-08)."""
+    from .models import ItemCategory
+    from .serializers import ItemCategorySerializer
+
+    serializer_class = ItemCategorySerializer
+    permission_classes = [IsPurchasingOrReadOnly]
+    queryset = ItemCategory.objects.all()
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def perform_destroy(self, instance):
+        # Keep categories still in use by items — deactivate instead
+        if Item.objects.filter(category=instance.name).exists():
+            instance.is_active = False
+            instance.save(update_fields=["is_active"])
+        else:
+            instance.delete()
 
 
 class ItemViewSet(viewsets.ModelViewSet):

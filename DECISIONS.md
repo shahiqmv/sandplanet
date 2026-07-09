@@ -230,3 +230,22 @@ site page is a proper card — code, title, LOA, start, planned finish,
 project PM, scope — replacing the one-line chip form; creating opens the
 project workspace directly. The 500 he hit was the stale detached dev
 server, not the code.
+
+## 2026-07-08 — R11: controlled categories + item create-on-the-fly
+Owner: item categories, worker categories and item selection should all
+be controlled lists, with a way to create a new item inline when one is
+genuinely missing. Done:
+- New ItemCategory model (migration 0014 seeds trade defaults + any
+  categories existing items already used). Item.category is validated
+  against the active list on save; ItemsPage category is a dropdown;
+  managed on a new "Item Categories" page under Procurement (HO
+  Purchasing/Admin). Deleting a category still in use deactivates it.
+- Worker (manpower) categories finally get a UI: "Worker Categories"
+  page under People (Admin) — the one company-wide list already driving
+  DPR/DMA/project requirement/roster, split by DPR vs TWS list and
+  Staff vs Trades. manpower-categories viewset gains delete (deactivate
+  if used by an employee).
+- MR/PR/LM/GRN item picker: when Purchasing/Admin types a description
+  with no catalog match, an inline "+ Add … to catalog" button prompts
+  for unit + category, creates the Item, and selects it — the flagged
+  free-text path stays for site users who can't edit the catalog.

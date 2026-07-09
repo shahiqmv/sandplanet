@@ -10,6 +10,18 @@ class ItemSerializer(serializers.ModelSerializer):
                   "spec_ref", "notes", "is_active", "merged_into"]
         read_only_fields = ["code", "merged_into"]
 
+    def validate_category(self, value):
+        # Category is a controlled list (owner, 2026-07-08): must be blank
+        # or an active ItemCategory managed on its own page.
+        from .models import ItemCategory
+
+        if value and not ItemCategory.objects.filter(
+                name=value, is_active=True).exists():
+            raise serializers.ValidationError(
+                f"'{value}' is not a known item category — add it on the "
+                "Item Categories page first.")
+        return value
+
 
 class AttachmentSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()

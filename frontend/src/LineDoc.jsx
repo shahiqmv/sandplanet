@@ -61,10 +61,10 @@ const ACTIONS = {
 
 function useItems() {
   const [items, setItems] = useState([]);
-  useEffect(() => {
+  const reload = () =>
     api("/items").then(setItems).catch(() => setItems([]));
-  }, []);
-  return items;
+  useEffect(() => { reload(); }, []);
+  return { items, reload };
 }
 
 // Pick references from a dropdown instead of typing them (owner UX request)
@@ -110,8 +110,9 @@ function RefPicker({ label, refs, setRefs, options, hint }) {
   );
 }
 
-function ItemCell({ items, row, set }) {
+function ItemCell({ items, row, set, me, onItemCreated }) {
   const label = (it) => `${it.code} — ${it.description}`;
+  const canCreate = ["HO_PURCHASING", "ADMIN"].includes(me?.role);
   if (row.free_text) {
     return (
       <input value={row.free_text_desc || ""} placeholder="New item description"
@@ -120,21 +121,53 @@ function ItemCell({ items, row, set }) {
     );
   }
   const selected = items.find((it) => it.id === row.item_id);
+  const text = row._itemText ?? (selected ? label(selected) : "");
+  // Purchasing/Admin typed something with no catalog match → offer to
+  // create it in the catalog on the spot (owner)
+  const typedNoMatch = canCreate && text.trim() && !row.item_id &&
+    !items.some((it) => label(it) === text);
+
+  async function createFromText() {
+    const description = text.trim();
+    const unit = window.prompt(`Create "${description}" in the catalog.\n\n`
+                               + "Unit (nos, kg, ltr, bag, m, m2, m3…):", "");
+    if (unit === null) return;
+    const category = window.prompt("Category (leave blank if unsure):", "");
+    if (category === null) return;
+    try {
+      const item = await api("/items", { method: "POST",
+        body: { description, unit: unit.trim(),
+                category: category.trim() } });
+      await onItemCreated?.();
+      set({ item_id: item.id, _itemText: label(item), unit: item.unit });
+    } catch (e) {
+      window.alert(e.message);
+    }
+  }
+
   return (
     <>
-      <input list="sp-items" value={row._itemText ?? (selected ? label(selected) : "")}
+      <input list="sp-items" value={text}
              placeholder="Search catalog…"
              onChange={(e) => {
-               const text = e.target.value;
-               const match = items.find((it) => label(it) === text);
-               set(match ? { item_id: match.id, _itemText: text,
+               const v = e.target.value;
+               const match = items.find((it) => label(it) === v);
+               set(match ? { item_id: match.id, _itemText: v,
                              unit: match.unit }
-                         : { item_id: null, _itemText: text });
+                         : { item_id: null, _itemText: v });
              }}
              style={inputStyle} />
       <datalist id="sp-items">
         {items.map((it) => <option key={it.id} value={label(it)} />)}
       </datalist>
+      {typedNoMatch && (
+        <button type="button" onClick={createFromText}
+                style={{ ...ghostButton, padding: "2px 8px", fontSize: 11.5,
+                         marginTop: 3, color: "var(--sp-navy)" }}>
+          + Add "{text.trim().slice(0, 24)}
+          {text.trim().length > 24 ? "…" : ""}" to catalog
+        </button>
+      )}
     </>
   );
 }
@@ -153,7 +186,7 @@ function num(v) {
 
 export function LineDocForm({ docType, site, sites, me, existing, onSaved,
                               onCancel }) {
-  const items = useItems();
+  const { items, reload: reloadItems } = useItems();
   const [payload, setPayload] = useState(existing?.payload ||
     (docType === "LM" ? { departure_point: "Male'" } : {}));
   const [siteId, setSiteId] = useState(existing?.site || site?.id || "");
@@ -441,7 +474,8 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
                 ) : (
                   <>
                     <td style={{ padding: 3 }}>
-                      <ItemCell items={items} row={row}
+                      <ItemCell items={items} row={row} me={me}
+                                onItemCreated={reloadItems}
                                 set={(patch) => setRow(i, patch)} />
                     </td>
                     <td style={{ padding: 3, textAlign: "center" }}>

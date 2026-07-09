@@ -4,6 +4,8 @@ import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
+import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
+import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -35,11 +37,14 @@ const NAV_GROUPS = [
     roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"],
     subs: [["dashboard", "Purchasing Dashboard", null],
            ["items", "Items", null],
+           ["item-categories", "Item Categories",
+            ["HO_PURCHASING", "ADMIN"]],
            ["suppliers", "Suppliers", null]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
            ["employees", "Employees", null],
+           ["worker-categories", "Worker Categories", ["ADMIN"]],
            ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
   { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
@@ -603,11 +608,20 @@ export default function App() {
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />
           )}
+          {!docView && !openSite &&
+            ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
+            hoPage === "item-categories" && (
+            <ItemCategoriesPage me={me} />
+          )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "employees" && (
             <EmployeesPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite && me.role === "ADMIN" &&
+            hoPage === "worker-categories" && (
+            <WorkerCategoriesPage me={me} />
           )}
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "users" && (

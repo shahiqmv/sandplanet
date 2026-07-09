@@ -11,6 +11,8 @@ router.register(
     "manpower-categories", views.ManpowerCategoryViewSet, basename="manpowercategory"
 )
 router.register("holidays", views.HolidayViewSet, basename="holiday")
+router.register("item-categories", views.ItemCategoryViewSet,
+                basename="itemcategory")
 router.register("items", views.ItemViewSet, basename="item")
 router.register("suppliers", quotes.SupplierViewSet, basename="supplier")
 router.register("employees", hr.EmployeeViewSet, basename="employee")

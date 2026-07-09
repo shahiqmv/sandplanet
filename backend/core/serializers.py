@@ -109,6 +109,14 @@ class ManpowerCategorySerializer(serializers.ModelSerializer):
         fields = ["id", "list_type", "grp", "name", "sort_order", "is_active"]
 
 
+class ItemCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import ItemCategory
+
+        model = ItemCategory
+        fields = ["id", "name", "sort_order", "is_active"]
+
+
 class HolidaySerializer(serializers.ModelSerializer):
     class Meta:
         model = Holiday

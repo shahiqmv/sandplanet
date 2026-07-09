@@ -6,6 +6,7 @@ const EMPTY = { description: "", unit: "", category: "", brand: "" };
 
 export default function ItemsPage({ me }) {
   const [items, setItems] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
@@ -16,6 +17,10 @@ export default function ItemsPage({ me }) {
     api(`/items?search=${encodeURIComponent(search)}`).then(setItems);
   }
   useEffect(load, [search]);
+  useEffect(() => {
+    api("/item-categories").then((c) =>
+      setCategories(c.filter((x) => x.is_active))).catch(() => {});
+  }, []);
 
   async function add() {
     setError(null);
@@ -57,9 +62,15 @@ export default function ItemsPage({ me }) {
           <input placeholder="Unit" value={draft.unit}
                  onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
                  style={{ ...inputStyle, width: 70 }} />
-          <input placeholder="Category" value={draft.category}
-                 onChange={(e) => setDraft({ ...draft, category: e.target.value })}
-                 style={{ ...inputStyle, width: 110 }} />
+          <select value={draft.category}
+                  onChange={(e) => setDraft({ ...draft,
+                                              category: e.target.value })}
+                  style={{ ...inputStyle, width: 140 }}>
+            <option value="">Category…</option>
+            {categories.map((c) => (
+              <option key={c.id} value={c.name}>{c.name}</option>
+            ))}
+          </select>
           <input placeholder="Brand" value={draft.brand}
                  onChange={(e) => setDraft({ ...draft, brand: e.target.value })}
                  style={{ ...inputStyle, width: 110 }} />

@@ -505,6 +505,23 @@ class DocumentLink(models.Model):
         ]
 
 
+class ItemCategory(models.Model):
+    """Controlled list of item categories/trades (owner, 2026-07-08) —
+    the Item Master's category field selects from these; managed on its
+    own page by HO Purchasing."""
+
+    name = models.CharField(max_length=60, unique=True)
+    sort_order = models.IntegerField(default=100)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+        verbose_name_plural = "item categories"
+
+    def __str__(self):
+        return self.name
+
+
 class PendingItem(models.Model):
     """Pending Items Log (spec §6): auto-created from LM lines with
     qty_pending > 0; cleared automatically when a later LM ships the item."""
