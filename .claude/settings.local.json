@@ -53,7 +53,9 @@
       "PowerShell(Stop-Process -Id 27004 -Force -ErrorAction SilentlyContinue; Start-Sleep -Milliseconds 500; $still = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match \"runserver\" }; if \\($still\\) { $still | ForEach-Object { \"PID $\\($_.ProcessId\\): $\\($_.CommandLine\\)\" } } else { \"no runserver processes remain\" })",
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:8000/api/v1/payment-vouchers)",
       "Bash(./.venv/Scripts/python.exe -c ' *)",
-      "mcp__claude-in-chrome__tabs_context_mcp"
+      "mcp__claude-in-chrome__tabs_context_mcp",
+      "Bash(docker info *)",
+      "PowerShell(cd \"C:/Users/96079/OneDrive/SandPlanet Projects/siteapp/backend\"; $env:DJANGO_DEBUG=\"0\"; $env:DJANGO_SECRET_KEY=\"test-prod-key-for-check-only-not-real\"; $env:DJANGO_ALLOWED_HOSTS=\"app.sandplanet.mv\"; .\\\\.venv\\\\Scripts\\\\python.exe manage.py check --deploy 2>&1 | Select-Object -Last 25; Remove-Item Env:DJANGO_DEBUG; Remove-Item Env:DJANGO_SECRET_KEY; Remove-Item Env:DJANGO_ALLOWED_HOSTS)"
     ]
   }
 }
