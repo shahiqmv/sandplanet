@@ -55,6 +55,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "LM": {"HO_PURCHASING"},
     "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
     "DMA": {"SITE_ENGINEER", "PM"},      # SE may prepare; PM issues (R5)
+    "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # payment request (M6)
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
 RESULTS = {  # client results per type (spec §5.3/§5.4)
@@ -252,6 +253,14 @@ def document_create(request):
             link_documents(doc, po, "PO_LM")
         if lm is not None:
             link_documents(doc, lm, "LM_GRN")
+        if doc_type == "PYR":  # typed payment-request row alongside (§5.9)
+            from .payments import create_payment_request
+
+            pr, pyr_err = create_payment_request(doc, request.data,
+                                                 request.user)
+            if pyr_err:
+                transaction.set_rollback(True)
+                return Response({"detail": pyr_err}, status=400)
     audit("document", doc.id, "DOC_CREATED", actor=request.user,
           to_state="DRAFT", detail={"ref": ref})
     return Response(_serialize(doc, request), status=201)
@@ -404,6 +413,14 @@ def document_action(request, ref, action_name):
         return err
     if doc.is_void:
         return Response({"detail": "Document is void."}, status=400)
+    if doc.doc_type == "PYR":  # dedicated payment-request workflow (§5.9)
+        from .payments import pyr_action
+
+        result = pyr_action(request, doc, action_name)
+        if isinstance(result, Response):
+            return result
+        doc.refresh_from_db()
+        return Response(_serialize(doc, request))
     handler = {
         "issue": _do_issue, "verify": _do_verify, "void": _do_void,
         "submit": _do_submit, "approve": _do_approve, "return": _do_return,
@@ -482,6 +499,14 @@ def approvals_pending(request):
               "project_code": d.project.code if d.project else None,
               "doc_date": d.doc_date, "status": d.status,
               "hint": "PM approval"} for d in mine])
+        pyrs = [d for d in scoped(base.filter(doc_type="PYR",
+                                              status="SUBMITTED"))
+                .select_related("site")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To approve — submitted payment requests",
+            [{"ref": d.ref, "doc_type": "PYR", "site_code": d.site.code,
+              "project_code": None, "doc_date": d.doc_date,
+              "status": d.status, "hint": "PM approval"} for d in pyrs])
         dprs = [d for d in scoped(base.filter(doc_type="DPR",
                                               status="ISSUED"))
                 .select_related("site", "project")
@@ -504,6 +529,14 @@ def approvals_pending(request):
         add("To award — submitted PRs",
             rows(scoped(base.filter(doc_type="PR", status="SUBMITTED")),
                  "Director approval awards the suppliers"))
+        add("To approve — PM-approved payment requests",
+            rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
+                 "Director approval of the requisition"))
+    if user.role in ("SIGNATORY", "ADMIN"):
+        add("To authorise — payment requests",
+            rows(scoped(base.filter(doc_type="PYR",
+                                    status="DIRECTOR_APPROVED")),
+                 "Signatory authorisation — the commitment point"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To action — MRs sent to Head Office",
             rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
@@ -517,6 +550,16 @@ def approvals_pending(request):
                                     status__in=("APPROVED",
                                                 "PAYMENT_PROCESSING"))),
                  "Record vendor payments / PO refs"))
+    if user.role in ("FINANCE", "ADMIN"):
+        # Below the signatory threshold Finance may authorise too
+        threshold_note = "Authorise (if below threshold) or await signatory"
+        add("To authorise / pay — payment requests",
+            rows(scoped(base.filter(doc_type="PYR",
+                                    status="DIRECTOR_APPROVED")),
+                 threshold_note))
+        add("To pay — authorised payment requests",
+            rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
+                 "Execute payment and record the reference"))
     return Response({"groups": groups,
                      "total": sum(len(g["items"]) for g in groups)})
 

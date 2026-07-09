@@ -91,6 +91,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source="supplier.name",
                                           read_only=True, default=None)
     resubmitted_as = serializers.SerializerMethodField()
+    payment_request = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -99,7 +100,34 @@ class DocumentSerializer(serializers.ModelSerializer):
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
                   "previous_ir_ref", "resubmitted_as", "supplier_name",
+                  "payment_request",
                   "attachments", "approvals", "created_by_name", "created_at"]
+
+    def get_payment_request(self, obj):
+        if obj.doc_type != "PYR" or not hasattr(obj, "payment_request"):
+            return None
+        pr = obj.payment_request
+        return {
+            "payment_type": pr.payment_type, "cost_head": pr.cost_head.name,
+            "cost_head_id": pr.cost_head_id, "payee": pr.payee,
+            "payment_method": pr.payment_method,
+            "payee_account": pr.payee_account, "currency": pr.currency,
+            "amount_requested": pr.amount_requested,
+            "required_by": pr.required_by, "purpose": pr.purpose,
+            "is_urgent": pr.is_urgent, "urgent_reason": pr.urgent_reason,
+            "has_supporting_doc": pr.has_supporting_doc,
+            "no_doc_reason": pr.no_doc_reason,
+            "authorised_by": pr.authorised_by.full_name
+            if pr.authorised_by else None,
+            "authorised_at": pr.authorised_at,
+            "authorised_under_threshold": pr.authorised_under_threshold,
+            "returned_reason": pr.returned_reason,
+            "returned_note": pr.returned_note,
+            "amount_paid": pr.amount_paid, "paid_date": pr.paid_date,
+            "payment_ref": pr.payment_ref,
+            "variance_reason": pr.variance_reason,
+            "withdrawn_reason": pr.withdrawn_reason,
+        }
 
     def get_resubmitted_as(self, obj):
         if obj.doc_type != "IR":

@@ -226,6 +226,7 @@ class Document(models.Model):
         LM = "LM"
         PO = "PO"  # purchase order (R2)
         DMA = "DMA"  # daily manpower allocation (R5, internal)
+        PYR = "PYR"  # payment request (§5.9, M6)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -283,6 +284,17 @@ class Document(models.Model):
         },
         # Morning allocation off the previous day's TWSs; internal only (R5)
         "DMA": {"DRAFT": {"ISSUED"}},
+        # Payment Request (§5.9, §7.1). Commitment posts at AUTHORISED;
+        # any approver may Return to DRAFT (§7.5a); Finance may Withdraw
+        # authorisation back to DRAFT (§7.5b). CANCELLED/REJECTED terminal.
+        "PYR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT", "REJECTED"},
+            "PM_APPROVED": {"DIRECTOR_APPROVED", "DRAFT", "REJECTED"},
+            "DIRECTOR_APPROVED": {"AUTHORISED", "DRAFT", "REJECTED"},
+            "AUTHORISED": {"PAID", "DRAFT"},  # DRAFT = withdrawal (§7.5b)
+            "PAID": {"CLOSED"},
+        },
     }
 
     doc_type = models.CharField(max_length=3, choices=Type.choices)
@@ -883,3 +895,76 @@ class CostPosting(models.Model):
             models.Index(fields=["site", "state", "cost_head", "posted_on"]),
             models.Index(fields=["document"]),
         ]
+
+
+class PaymentRequest(models.Model):
+    """PYR cost-bearing fields, typed for querying (§5.9, Technical Design
+    §2). The form's descriptive content lives in the document revision
+    payload; the money and workflow fields live here. One row per PYR
+    document."""
+
+    class Type(models.TextChoices):
+        DIRECT = "DIRECT", "Direct payment"
+        ADVANCE = "ADVANCE", "Advance"
+        REIMBURSEMENT = "REIMBURSEMENT", "Reimbursement"
+        PETTY_CASH_REPLENISH = "PETTY_CASH_REPLENISH", "Petty cash replenishment"
+
+    class Method(models.TextChoices):
+        BANK = "BANK", "Bank transfer"
+        CASH = "CASH", "Cash"
+        CHEQUE = "CHEQUE", "Cheque"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    primary_key=True,
+                                    related_name="payment_request")
+    payment_type = models.CharField(max_length=24, choices=Type.choices,
+                                    default=Type.DIRECT)
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  related_name="payment_requests")
+    payee = models.TextField()
+    payment_method = models.CharField(max_length=16, choices=Method.choices,
+                                      default=Method.BANK)
+    payee_account = models.TextField(blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    amount_requested = models.DecimalField(max_digits=14, decimal_places=2)
+    required_by = models.DateField(null=True, blank=True)
+    purpose = models.TextField()
+    is_urgent = models.BooleanField(default=False)
+    urgent_reason = models.TextField(blank=True)
+    has_supporting_doc = models.BooleanField(default=False)
+    no_doc_reason = models.TextField(blank=True)  # mandatory when no doc
+    override_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    # Signatory gate (§7.5) — the commitment point
+    authorised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    authorised_at = models.DateTimeField(null=True, blank=True)
+    authorise_note = models.TextField(blank=True)
+    authorised_under_threshold = models.BooleanField(default=False)
+    # Return for review (§7.5a) — before commitment, posts nothing
+    returned_reason = models.CharField(max_length=24, blank=True)
+    returned_note = models.TextField(blank=True)
+    returned_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    returned_at = models.DateTimeField(null=True, blank=True)
+    # Withdrawal of authorisation (§7.5b) — Finance only, posts reversals
+    withdrawn_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    withdrawn_at = models.DateTimeField(null=True, blank=True)
+    withdrawn_reason = models.TextField(blank=True)
+    # Finance execution
+    amount_paid = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)
+    paid_date = models.DateField(null=True, blank=True)
+    payment_ref = models.TextField(blank=True)
+    variance_reason = models.TextField(blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    # Advances settlement
+    is_settled = models.BooleanField(null=True, blank=True)
+    settled_at = models.DateTimeField(null=True, blank=True)
+    settlement_note = models.TextField(blank=True)
+    # petty_cash_cycle FK added with the petty cash module (M6d)
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.payee}"
