@@ -261,8 +261,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                       {pv.settled ? "✓ all paid"
                         : `${pv.paid_count}/${pv.approved_count} paid`}</span>
                   )}
-                  <span style={{ marginLeft: "auto",
-                                 fontFamily: "var(--font-mono)", fontSize: 14 }}>
+                  <a href={`/api/v1/payment-vouchers/${pv.ref}/pdf`}
+                     target="_blank" rel="noreferrer"
+                     onClick={(e) => e.stopPropagation()}
+                     style={{ marginLeft: "auto", fontSize: 12 }}>
+                    📄 PDF</a>
+                  <span style={{ fontFamily: "var(--font-mono)",
+                                 fontSize: 14 }}>
                     MVR {money(pv.total)}</span>
                 </div>
 

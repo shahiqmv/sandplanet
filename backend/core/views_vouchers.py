@@ -1,5 +1,8 @@
 """Payment Voucher API (M6d). Finance builds and submits vouchers; a
 signatory approves or queries them."""
+from datetime import date
+from decimal import Decimal
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -116,6 +119,70 @@ def payment_voucher_detail(request, ref):
     if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
         return Response({"detail": "Finance / signatory only."}, status=403)
     return Response(_voucher_info(pv))
+
+
+def _pay_str(li):
+    """The payment reference(s) recorded on a line, for the filing PDF."""
+    if li["doc_type"] == "PYR":
+        return li.get("payment_ref") or ("paid" if li["paid"] else "")
+    if li["doc_type"] == "PR":
+        refs = [r["payment_ref"] for r in li.get("vendor_rows", [])
+                if r.get("paid") and r.get("payment_ref")]
+        return ", ".join(refs)
+    return ""
+
+
+def _pv_pdf_context(pv):
+    from .pdf import _money, _stamp_for, company_info, logo_src
+
+    approvals = list(pv.approvals.select_related("actor"))
+    rows, total = [], Decimal("0")
+    info = _voucher_info(pv)
+    for i, li in enumerate(info["lines"], 1):
+        queried = li["status"] == "QUERIED"
+        if not queried:
+            total += Decimal(str(li["amount"] or 0))
+        rows.append({
+            "no": i, "ref": li["ref"], "site": li["site_code"],
+            "payee": li.get("payee", ""), "purpose": li.get("purpose", ""),
+            "cost_head": li.get("cost_head", ""),
+            "amount": _money(li["amount"] or 0),
+            "payment": _pay_str(li), "queried": queried})
+    return {
+        "doc": pv, "logo_src": logo_src(), "co": company_info(),
+        "lines": rows, "total": _money(total), "settled": info["settled"],
+        "prepared_by": pv.created_by.full_name if pv.created_by else "",
+        "submit_stamp": _stamp_for(approvals, "SUBMIT"),
+        "approve_stamp": _stamp_for(approvals, "APPROVE"),
+        "generated": date.today().strftime("%d.%m.%Y"),
+    }
+
+
+@api_view(["GET"])
+def payment_voucher_pdf(request, ref):
+    """Letterhead PDF of the voucher for accounting filing (opens inline)."""
+    try:
+        pv = Document.objects.get(ref=ref, doc_type="PV")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+        return Response({"detail": "Finance / signatory only."}, status=403)
+    from django.conf import settings
+    from django.http import HttpResponse
+    from django.template.loader import render_to_string
+
+    html = render_to_string("pdf/payment_voucher.html", _pv_pdf_context(pv))
+    try:
+        from weasyprint import HTML
+
+        pdf_bytes = HTML(string=html,
+                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:
+        return Response({"detail": "PDF engine unavailable on this "
+                                   "server."}, status=503)
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{pv.ref}.pdf"'
+    return resp
 
 
 @api_view(["POST"])

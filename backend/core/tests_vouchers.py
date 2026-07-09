@@ -103,6 +103,24 @@ class VoucherHappyPathTests(VoucherBase):
         r = self.voucher_action(pv, "approve", self.finance)
         self.assertEqual(r.status_code, 403)
 
+    def test_filing_pdf(self):
+        a = self.director_approved_pyr(amount=3000, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)
+        self.voucher_action(pv, "approve", self.signatory)
+        # a site user may not pull the filing PDF
+        self.client.force_authenticate(self.sa)
+        self.assertEqual(
+            self.client.get(f"/api/v1/payment-vouchers/{pv}/pdf").status_code,
+            403)
+        # Finance gets a PDF (200) or a graceful 503 where the engine is
+        # unavailable — never a 500
+        self.client.force_authenticate(self.finance)
+        r = self.client.get(f"/api/v1/payment-vouchers/{pv}/pdf")
+        self.assertIn(r.status_code, (200, 503))
+        if r.status_code == 200:
+            self.assertEqual(r["Content-Type"], "application/pdf")
+
 
 class VoucherQueryTests(VoucherBase):
     def test_queried_line_returns_source_others_commit(self):

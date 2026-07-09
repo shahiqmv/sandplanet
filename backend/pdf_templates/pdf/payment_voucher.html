@@ -1,0 +1,60 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .queried { color: #b35900; }
+  .muted { color: #5a6b78; font-size: 8pt; }
+</style>
+</head>
+<body>
+{% if doc.is_void %}<div class="void">VOID</div>{% endif %}
+{% include "pdf/_footer.html" with footer_doc="PAYMENT VOUCHER" %}
+{% include "pdf/_letterhead.html" with title="PAYMENT VOUCHER" subline="Form No: FRM-FIN-01" %}
+
+<table class="kv">
+  <tr><td class="k">Voucher No.</td><td><strong>{{ doc.ref }}</strong></td>
+      <td class="k">Date</td><td>{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
+  <tr><td class="k">Prepared By</td><td>{{ prepared_by }}</td>
+      <td class="k">Status</td><td>{{ doc.status }}{% if settled %} · fully paid{% endif %}</td></tr>
+</table>
+
+<table>
+  <thead><tr>
+    <th style="width:4%">No.</th>
+    <th>Requisition</th><th>Site</th><th>Payee</th>
+    <th>Purpose</th><th>Cost Head</th>
+    <th class="num">Amount (MVR)</th><th>Payment Ref</th>
+  </tr></thead>
+  {% for l in lines %}
+  <tr{% if l.queried %} class="queried"{% endif %}>
+    <td>{{ l.no }}</td>
+    <td>{{ l.ref }}</td><td>{{ l.site }}</td><td>{{ l.payee }}</td>
+    <td>{{ l.purpose }}</td><td>{{ l.cost_head }}</td>
+    <td class="num">{{ l.amount }}</td>
+    <td>{% if l.queried %}QUERIED — returned to raiser{% else %}{{ l.payment }}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  <tr>
+    <th colspan="6" class="num">Total Authorised (MVR)</th>
+    <th class="num">{{ total }}</th><th></th>
+  </tr>
+</table>
+
+<table class="sig">
+  <tr><td class="t">Prepared / Submitted By — Finance</td>
+      <td class="t">Authorised By — Signatory (Executive Director)</td></tr>
+  <tr>
+    <td>{% if submit_stamp %}<span class="stamp">{{ submit_stamp }}</span>{% endif %}</td>
+    <td>{% if approve_stamp %}<span class="stamp">{{ approve_stamp }}</span>{% endif %}</td>
+  </tr>
+</table>
+
+<p class="muted">
+  A queried line is returned to its raiser and is not authorised on this
+  voucher. Disbursement is made against each requisition; the Payment Ref is
+  the transfer / cheque number recorded by Finance on release. Bank release
+  requires the two authorised signatories per the company mandate.</p>
+</body>
+</html>
