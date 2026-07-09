@@ -284,15 +284,16 @@ def pr_coverage_data(pr):
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 def pr_vendor_payment(request, ref):
-    """Vendor-specific payment recording (R3 addendum): Purchasing enters
-    the slip/voucher ref received from Finance (or Finance directly), with
-    the slip file attached. PR status auto-advances as vendors settle."""
+    """Vendor-specific payment recording (M6d): Finance records the
+    slip/voucher ref + slip file, from the Payment Voucher's disbursement
+    panel. Disbursement is Finance's role, not Purchasing's. PR status
+    auto-advances as vendors settle."""
     pr, err = _get_pr(request, ref)
     if err:
         return err
-    if request.user.role not in ("HO_PURCHASING", "FINANCE", "ADMIN"):
-        return Response({"detail": "Purchasing or Finance records vendor "
-                                   "payments."}, status=403)
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance records vendor payments "
+                                   "(on the Payment Voucher)."}, status=403)
     if pr.status not in ("AUTHORISED", "PAYMENT_PROCESSING"):
         return Response({"detail": "Payments are recorded after a signatory "
                                    "has authorised the PR."}, status=400)

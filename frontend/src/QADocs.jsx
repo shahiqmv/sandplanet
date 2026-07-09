@@ -114,7 +114,13 @@ export function QAForm({ docType, site, project, projects = [], existing,
     ? payload.activities : [{ activity: "", location: "", trade: "",
                               remarks: "" }]);
   const [categories, setCategories] = useState([]);
-  const [manpower, setManpower] = useState(payload.manpower || {});
+  // Manpower as dynamic rows (like the DPR form) — only the categories in
+  // use are shown, no wasted grid space (owner)
+  const [mpRows, setMpRows] = useState(
+    Object.entries(payload.manpower || {})
+      .filter(([, n]) => +n > 0)
+      .map(([category_id, count]) => ({ category_id: String(category_id),
+                                        count: String(count) })));
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
 
@@ -136,7 +142,9 @@ export function QAForm({ docType, site, project, projects = [], existing,
     const body = { ...payload };
     if (docType === "TWS") {
       body.activities = activities.filter((a) => a.activity);
-      body.manpower = manpower;
+      body.manpower = Object.fromEntries(
+        mpRows.filter((r) => r.category_id && +r.count > 0)
+          .map((r) => [r.category_id, +r.count]));
     }
     try {
       let doc;
@@ -255,29 +263,49 @@ export function QAForm({ docType, site, project, projects = [], existing,
           </button>
 
           <SectionTitle>2. Planned Manpower — total{" "}
-            {Object.values(manpower).reduce((a, b) => a + (+b || 0), 0)}
+            {mpRows.reduce((a, r) => a + (+r.count || 0), 0)}
           </SectionTitle>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
-                        gap: 20 }}>
-            {[["Staff", "STAFF"], ["Trades / Labour", "LABOUR"]].map(
-              ([label, grp]) => (
-              <div key={grp}>
-                <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
-                  {label}</strong>
-                {categories.filter((c) => c.grp === grp).map((c) => (
-                  <div key={c.id} style={{ display: "flex",
-                       justifyContent: "space-between", alignItems: "center",
-                       padding: "2px 0" }}>
-                    <span style={{ fontSize: 13 }}>{c.name}</span>
-                    <input type="number" min="0" value={manpower[c.id] ?? ""}
-                           onChange={(e) => setManpower({ ...manpower,
-                                                          [c.id]: e.target.value })}
-                           style={{ ...inputStyle, width: 70 }} />
-                  </div>
-                ))}
+          {mpRows.map((row, i) => {
+            const used = mpRows.map((r) => r.category_id);
+            return (
+              <div key={i} style={{ display: "flex", gap: 8,
+                   alignItems: "center", marginBottom: 6 }}>
+                <select value={row.category_id}
+                        onChange={(e) => setMpRows(mpRows.map((r, j) =>
+                          j === i ? { ...r, category_id: e.target.value } : r))}
+                        style={{ ...inputStyle, width: 280 }}>
+                  <option value="">— category —</option>
+                  {[["Staff", "STAFF"], ["Trades / Labour", "LABOUR"]].map(
+                    ([label, grp]) => (
+                    <optgroup key={grp} label={label}>
+                      {categories.filter((c) => c.grp === grp).map((c) => (
+                        <option key={c.id} value={String(c.id)}
+                                disabled={used.includes(String(c.id)) &&
+                                          String(c.id) !== row.category_id}>
+                          {c.name}</option>
+                      ))}
+                    </optgroup>
+                  ))}
+                </select>
+                <input type="number" min="0" value={row.count}
+                       placeholder="count"
+                       onChange={(e) => setMpRows(mpRows.map((r, j) =>
+                         j === i ? { ...r, count: e.target.value } : r))}
+                       style={{ ...inputStyle, width: 90 }} />
+                <button type="button"
+                        onClick={() => setMpRows(mpRows.filter((_, j) =>
+                          j !== i))}
+                        style={{ ...ghostButton, padding: "2px 8px",
+                                 color: "#c0392b" }}>×</button>
               </div>
-            ))}
-          </div>
+            );
+          })}
+          <button type="button"
+                  onClick={() => setMpRows([...mpRows,
+                                            { category_id: "", count: "" }])}
+                  style={{ ...ghostButton, padding: "4px 12px" }}>
+            + Add category
+          </button>
 
           <SectionTitle>3. Access / Support Required from Client</SectionTitle>
           <textarea value={payload.access_support || ""} rows={3}

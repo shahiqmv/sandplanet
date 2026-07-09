@@ -262,14 +262,15 @@ class ChainTests(ProcBase):
         self.act(pr["ref"], "submit")
         line_a = pr["lines"][0]["id"]
         line_b = pr["lines"][1]["id"]
-        # blocked before authorisation
+        # blocked before authorisation (Finance, so it is the status gate)
+        self.as_user(self.finance)
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 400)
         self.as_user(self.director)
         self.act(pr["ref"], "approve")
         # still blocked after Director approval — needs signatory (§6C.2)
-        self.as_user(self.purchasing)
+        self.as_user(self.finance)
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 400)
@@ -290,8 +291,13 @@ class ChainTests(ProcBase):
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 403)
-        # purchasing settles vendor A with the slip attached
+        # purchasing can no longer record payments — that is Finance's role
         self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": line_a, "payment_ref": "X"})
+        self.assertEqual(r.status_code, 403)
+        # Finance settles vendor A with the slip attached
+        self.as_user(self.finance)
         with override_settings(MEDIA_ROOT="test-media"):
             slip = SimpleUploadedFile("slip.pdf", b"%PDF-1.4 slip",
                                       content_type="application/pdf")

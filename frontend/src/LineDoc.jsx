@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { api, apiUpload } from "./api.js";
+import { api } from "./api.js";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
@@ -48,9 +48,8 @@ const ACTIONS = {
      ["DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN"], "comment"],
     ["withdraw-authorisation", "Withdraw authorisation", ["AUTHORISED"],
      ["FINANCE", "ADMIN"], "comment"],
-    ["record-payment", "Record payment / PO",
-     ["AUTHORISED", "PAYMENT_PROCESSING"],
-     ["FINANCE", "ADMIN"], "action_taken"],
+    // Vendor payments are recorded on the Payment Voucher (M6d), not here —
+    // Finance's disbursement panel, not a per-document action.
     ["close", "Close", ["PAID_PO_ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   LM: [["depart", "Depart (issue manifest)", ["DRAFT", "LOADING"],
@@ -603,9 +602,6 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
   const [quoteFiles, setQuoteFiles] = useState({});
-  const [payRow, setPayRow] = useState(null);
-  const [payRef, setPayRef] = useState("");
-  const [payFile, setPayFile] = useState(null);
 
   useEffect(() => {
     if (initial.doc_type === "PR") {
@@ -657,31 +653,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
 
   const isPR = doc.doc_type === "PR";
   const p = doc.payload || {};
-  const canRecordPay = isPR && !doc.is_void &&
-    ["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role) &&
-    ["AUTHORISED", "PAYMENT_PROCESSING"].includes(doc.status);
+  // Vendor payments are recorded on the Payment Voucher (M6d); this view is
+  // read-only for the PO / payment references.
   const slipByVendor = {};
   for (const a of doc.attachments || []) {
     if (a.kind === "PAYMENT_SLIP") slipByVendor[a.caption] = a.url;
-  }
-
-  async function recordPayment(line) {
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("line_id", line.id);
-      fd.append("payment_ref", payRef);
-      if (payFile) fd.append("file", payFile);
-      const fresh = await apiUpload(`/pr/${doc.ref}/vendor-payment`, fd);
-      delete fresh.slip_url;
-      setDoc(fresh);
-      setPayRow(null);
-      setPayRef("");
-      setPayFile(null);
-      onChanged?.();
-    } catch (e) {
-      setError(e.message);
-    }
   }
 
   return (
@@ -831,29 +807,6 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                                            onOpenDoc?.(line.po_ref); }}>
                         {line.po_ref}
                       </a>
-                    ) : canRecordPay && payRow !== line.id ? (
-                      <button onClick={() => { setPayRow(line.id);
-                                               setPayRef(""); setPayFile(null); }}
-                              style={{ ...ghostButton, padding: "2px 10px",
-                                       fontSize: 12 }}>
-                        Record payment
-                      </button>
-                    ) : payRow === line.id ? (
-                      <span style={{ display: "flex", gap: 6,
-                                     flexWrap: "wrap" }}>
-                        <input placeholder="Slip / voucher no." value={payRef}
-                               onChange={(e) => setPayRef(e.target.value)}
-                               style={{ ...inputStyle, width: 140 }} />
-                        <input type="file" accept=".pdf,image/*"
-                               onChange={(e) => setPayFile(e.target.files[0])}
-                               style={{ fontSize: 12, maxWidth: 170 }} />
-                        <button onClick={() => recordPayment(line)}
-                                disabled={!payRef.trim()}
-                                style={{ ...buttonStyle, padding: "3px 10px",
-                                         fontSize: 12 }}>
-                          Save
-                        </button>
-                      </span>
                     ) : "—"}
                   </td>
                   <td style={{ ...td, textAlign: "right" }}>

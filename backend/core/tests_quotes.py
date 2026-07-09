@@ -187,8 +187,8 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(po_refs["Maldives Steel Traders"], po.ref)
         self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], "")
         self.assertEqual(fresh["status"], "PAYMENT_PROCESSING")
-        # recording the cash vendor's slip settles the PR
-        self.as_user(self.purchasing)
+        # recording the cash vendor's slip settles the PR (Finance's role)
+        self.as_user(self.finance)
         hw_line = next(row for row in fresh["lines"]
                        if row["vendor"] == "Male' Hardware Pvt Ltd")
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
