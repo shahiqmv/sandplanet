@@ -213,8 +213,10 @@ def dma_context(document, revision):
 def tws_context(document, revision):
     payload = revision.payload or {}
     approvals = list(document.approvals.select_related("actor"))
+    # One company-wide worker list for both DPR and TWS (owner) — the same
+    # list the DPR form/PDF use.
     categories = {
-        c.id: c for c in ManpowerCategory.objects.filter(list_type="TWS")
+        c.id: c for c in ManpowerCategory.objects.filter(list_type="DPR")
     }
     counts = payload.get("manpower", {}) or {}
     manpower_rows, total = [], 0

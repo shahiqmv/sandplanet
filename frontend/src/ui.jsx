@@ -47,6 +47,32 @@ export function Btn({ variant = "primary", style, ...props }) {
   return <button style={{ ...BTN[variant], ...style }} {...props} />;
 }
 
+// Dropdown of controlled options that still lets the user type a value not
+// on the list ("Other…"). value/onChange behave like a plain input.
+export function SelectOrOther({ value, onChange, options, placeholder,
+                               width, style }) {
+  const OTHER = "__other__";
+  const known = options.includes(value) || value === "";
+  const sel = known ? value : OTHER;
+  const box = { ...inputStyle, width: width || "100%", ...style };
+  return (
+    <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap" }}>
+      <select value={sel} style={box}
+              onChange={(e) => onChange(
+                e.target.value === OTHER ? " " : e.target.value)}>
+        <option value="">{placeholder || "Select…"}</option>
+        {options.map((o) => <option key={o} value={o}>{o}</option>)}
+        <option value={OTHER}>Other…</option>
+      </select>
+      {sel === OTHER && (
+        <input autoFocus value={value.trim() === "" ? "" : value}
+               placeholder="Specify" style={box}
+               onChange={(e) => onChange(e.target.value)} />
+      )}
+    </span>
+  );
+}
+
 // Legacy aliases — old screens keep working, now on brief semantics
 export const buttonStyle = BTN.navy;
 export const ghostButton = BTN.secondary;

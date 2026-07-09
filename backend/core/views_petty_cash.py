@@ -16,13 +16,18 @@ LIVE = ("RECORDED", "APPROVED")
 
 
 def _custodian_candidates(site):
-    """Site admins currently allocated to the site — eligible custodians."""
+    """Site-based staff currently allocated to the site who could hold the
+    float — the Site Admin (§6B.1), or the Site Engineer / PM where no admin
+    is allocated yet."""
     ids = UserSiteAllocation.objects.filter(
         site=site, to_date__isnull=True,
-        user__role="SITE_ADMIN").values_list("user_id", flat=True)
-    return [{"id": u.id, "full_name": u.full_name or u.username}
+        user__role__in=("SITE_ADMIN", "SITE_ENGINEER", "PM")).values_list(
+        "user_id", flat=True)
+    rows = [{"id": u.id, "full_name": u.full_name or u.username,
+             "role": u.role}
             for u in User.objects.filter(id__in=ids, is_active=True)
-            .order_by("full_name")]
+            .order_by("role", "full_name")]
+    return rows
 
 
 def _get_site(request, site_id):

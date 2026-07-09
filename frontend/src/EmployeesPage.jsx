@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import { NATIONALITIES } from "./constants.js";
+import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
+  from "./ui.jsx";
 
 const EMPTY = { full_name: "", nationality: "", job_category: "",
                 basic_pay: "", passport_no: "", join_date: "" };
@@ -62,10 +64,10 @@ export default function EmployeesPage({ me, sites }) {
                    onChange={(e) => setDraft({ ...draft,
                                                full_name: e.target.value })}
                    style={{ ...inputStyle, flex: 1.5, minWidth: 160 }} />
-            <input placeholder="Nationality" value={draft.nationality}
-                   onChange={(e) => setDraft({ ...draft,
-                                               nationality: e.target.value })}
-                   style={{ ...inputStyle, width: 110 }} />
+            <SelectOrOther value={draft.nationality} options={NATIONALITIES}
+                           placeholder="Nationality…" width={140}
+                           onChange={(v) => setDraft({ ...draft,
+                                                       nationality: v })} />
             <select value={draft.job_category}
                     onChange={(e) => setDraft({ ...draft,
                                                 job_category: e.target.value })}

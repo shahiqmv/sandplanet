@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import { UNITS } from "./constants.js";
+import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
+  from "./ui.jsx";
 
 const EMPTY = { description: "", unit: "", category: "", brand: "" };
 
@@ -59,9 +61,9 @@ export default function ItemsPage({ me }) {
                  onChange={(e) => setDraft({ ...draft,
                                              description: e.target.value })}
                  style={{ ...inputStyle, flex: 2, minWidth: 240 }} />
-          <input placeholder="Unit" value={draft.unit}
-                 onChange={(e) => setDraft({ ...draft, unit: e.target.value })}
-                 style={{ ...inputStyle, width: 70 }} />
+          <SelectOrOther value={draft.unit} options={UNITS}
+                         placeholder="Unit…" width={90}
+                         onChange={(v) => setDraft({ ...draft, unit: v })} />
           <select value={draft.category}
                   onChange={(e) => setDraft({ ...draft,
                                               category: e.target.value })}

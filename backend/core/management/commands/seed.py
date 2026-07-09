@@ -90,16 +90,16 @@ class Command(BaseCommand):
             )
             self.stdout.write("  admin user created (change the password!)")
 
-        for list_type, groups in (("DPR", DPR_CATEGORIES), ("TWS", TWS_CATEGORIES)):
-            order = 0
-            for grp, names in groups.items():
-                for name in names:
-                    order += 10
-                    ManpowerCategory.objects.get_or_create(
-                        list_type=list_type,
-                        name=name,
-                        defaults={"grp": grp, "sort_order": order},
-                    )
+        # One company-wide worker list (owner: the DPR/TWS split is retired).
+        # Stored under list_type="DPR" for the existing unique constraint.
+        order = 0
+        for grp, names in DPR_CATEGORIES.items():
+            for name in names:
+                order += 10
+                ManpowerCategory.objects.get_or_create(
+                    list_type="DPR", name=name,
+                    defaults={"grp": grp, "sort_order": order},
+                )
 
         for key, value, description in PARAMETERS:
             CompanyParameter.objects.get_or_create(

@@ -120,8 +120,9 @@ export function QAForm({ docType, site, project, projects = [], existing,
 
   useEffect(() => {
     if (docType === "TWS") {
+      // One company-wide worker list for both DPR and TWS (owner)
       api("/manpower-categories").then((all) =>
-        setCategories(all.filter((c) => c.list_type === "TWS" && c.is_active)));
+        setCategories(all.filter((c) => c.list_type === "DPR" && c.is_active)));
     }
   }, [docType]);
 

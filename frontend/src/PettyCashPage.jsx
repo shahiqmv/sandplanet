@@ -344,7 +344,8 @@ function SetupForm({ setupF, setSetupF, onSave, busy, candidates = [] }) {
                   onChange={(e) => set("custodian_id", e.target.value)}>
             <option value="">— select —</option>
             {candidates.map((u) => <option key={u.id} value={u.id}>
-              {u.full_name}</option>)}
+              {u.full_name}{u.role ? ` (${u.role.replace("_", " ")
+                .toLowerCase()})` : ""}</option>)}
           </select>
         </label>
         <label style={lbl}>Replenish trigger (%)
