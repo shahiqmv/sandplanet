@@ -79,6 +79,28 @@ class PyrHappyPathTests(PyrBase):
         self.assertEqual(CostPosting.objects.filter(
             document=doc, state="PAID").count(), 1)
 
+    def test_finance_attaches_payment_slip(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+
+        ref = self.raise_pyr(amount=3000).data["ref"]
+        self.act(ref, "submit", self.sa)
+        self.act(ref, "approve", self.pm)
+        self.act(ref, "approve", self.director)
+        self.act(ref, "authorise", self.signatory)
+        self.client.force_authenticate(self.finance)
+        with override_settings(MEDIA_ROOT="test-media"):
+            slip = SimpleUploadedFile("trf.pdf", b"%PDF slip",
+                                      content_type="application/pdf")
+            r = self.client.post(
+                f"/api/v1/documents/{ref}/actions/pay",
+                {"amount_paid": 3000, "payment_ref": "TRF-77", "file": slip},
+                format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "PAID")
+        self.assertTrue(any(a["kind"] == "PAYMENT_SLIP"
+                            for a in r.data["attachments"]))
+
     def test_pay_variance_requires_reason(self):
         ref = self.raise_pyr(amount=3000).data["ref"]
         self.act(ref, "submit", self.sa)

@@ -31,6 +31,17 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
 
   async function save() {
+    // Explicit validation with a clear message — a disabled button reads
+    // as "broken" (owner: site admin "can't save")
+    const missing = [];
+    if (!f.cost_head_id) missing.push("cost head");
+    if (!f.payee.trim()) missing.push("payee");
+    if (!f.amount_requested) missing.push("amount");
+    if (!f.purpose.trim()) missing.push("purpose");
+    if (missing.length) {
+      setError(`Please fill in: ${missing.join(", ")}.`);
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -161,11 +172,12 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
       <div style={{ marginTop: 14 }}>
-        <Btn variant="primary" onClick={save}
-             disabled={busy || !f.cost_head_id || !f.payee ||
-                       !f.amount_requested || !f.purpose}>
-          Save draft
+        <Btn variant="primary" onClick={save} disabled={busy}>
+          {busy ? "Saving…" : "Save draft"}
         </Btn>
+        <span style={{ fontSize: 12, color: "var(--faint)", marginLeft: 12 }}>
+          Saves a draft — submit it for approval on the next screen.
+        </span>
       </div>
     </section>
   );

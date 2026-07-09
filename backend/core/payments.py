@@ -202,6 +202,16 @@ def pyr_action(request, doc, action_name):
         pr.paid_by = user
         pr.save(update_fields=["amount_paid", "paid_date", "payment_ref",
                                "payment_method", "variance_reason", "paid_by"])
+        # Finance attaches the transfer slip / cheque copy (owner request)
+        slip = getattr(request, "FILES", {}).get("file")
+        if slip is not None:
+            from .models import Attachment
+
+            Attachment.objects.create(
+                document=doc, revision=doc.current_revision,
+                kind="PAYMENT_SLIP", file=slip, file_name=slip.name,
+                content_type=slip.content_type or "", size_bytes=slip.size,
+                caption=pr.payment_ref or "payment slip", uploaded_by=user)
         # Petty-cash replenishment posts PAID only — its expenses were
         # already INCURRED when approved, so never double-count (§4A)
         costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",

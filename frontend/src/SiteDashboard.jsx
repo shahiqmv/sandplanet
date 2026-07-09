@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
-         buttonStyle, card, td, th } from "./ui.jsx";
+         buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
@@ -15,6 +15,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const [mrs, setMrs] = useState([]);
   const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
+  const [pyrs, setPyrs] = useState([]);
 
   const projectParam = project ? `&project=${project.id}` : "";
 
@@ -23,6 +24,8 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
     api(`/registers/dpr-tws?site=${site.id}${projectParam}`)
       .then(setRegister);
     api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
+    api(`/documents/list?site=${site.id}&doc_type=PYR`).then(setPyrs)
+      .catch(() => setPyrs([]));
     Promise.all([
       api(`/documents/list?site=${site.id}&doc_type=IR${projectParam}`),
       api(`/documents/list?site=${site.id}&doc_type=MAR${projectParam}`),
@@ -368,6 +371,11 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         </section>
       )}
 
+      {(pyrs.length > 0 ||
+        ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role)) && (
+        <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc} onNewPyr={onNewPyr} />
+      )}
+
       <section style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
           DPR &amp; TWS Register — last 14 days
@@ -416,5 +424,88 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         </div>
       </section>
     </>
+  );
+}
+
+
+// Payment Requests register + pending payments for the site (§5.9, §7.4).
+// Site users see their own PYRs; amounts are their own requests.
+const PYR_PENDING = ["DRAFT", "SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED",
+                     "AUTHORISED"];
+const money = (v) => v == null ? "—"
+  : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
+
+function PyrRegister({ pyrs, onOpenDoc, onNewPyr }) {
+  const pending = pyrs.filter((p) => PYR_PENDING.includes(p.status));
+  const pendingTotal = pending.reduce(
+    (a, p) => a + Number(p.payment_request?.amount_requested || 0), 0);
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
+          💳 Payment Requests
+        </h2>
+        {pending.length > 0 && (
+          <span style={{ fontSize: 12.5, color: "var(--amber-fg)" }}>
+            {pending.length} pending · MVR {money(pendingTotal)} awaiting
+            approval / payment
+          </span>
+        )}
+        {onNewPyr && (
+          <button onClick={onNewPyr}
+                  style={{ ...ghostButton, marginLeft: "auto",
+                           padding: "4px 12px", fontSize: 13 }}>
+            + Payment
+          </button>
+        )}
+      </div>
+      {pyrs.length === 0 ? (
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: "8px 0 0" }}>
+          No payment requests yet — raise one for boat hire, a
+          subcontractor, permits or other non-purchase spend.
+        </p>
+      ) : (
+        <div style={{ overflowX: "auto", marginTop: 8 }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={th}>Ref</th><th style={th}>Date</th>
+              <th style={th}>Cost head</th><th style={th}>Payee</th>
+              <th style={{ ...th, textAlign: "right" }}>Requested</th>
+              <th style={{ ...th, textAlign: "right" }}>Paid</th>
+              <th style={th}>Status</th>
+            </tr></thead>
+            <tbody>
+              {pyrs.slice(0, 12).map((p) => {
+                const pr = p.payment_request || {};
+                return (
+                  <tr key={p.ref}>
+                    <td style={{ ...td, width: 120 }}>
+                      <a href="#" onClick={(e) => { e.preventDefault();
+                                                    onOpenDoc(p.ref); }}
+                         style={{ textDecoration: "none" }}>
+                        <RefStamp small>{p.ref}</RefStamp></a>
+                    </td>
+                    <td style={td}>{p.doc_date}</td>
+                    <td style={td}>{pr.cost_head}</td>
+                    <td style={td}>{pr.payee}</td>
+                    <td style={{ ...td, textAlign: "right",
+                                 fontFamily: "var(--font-mono)" }}>
+                      {money(pr.amount_requested)}</td>
+                    <td style={{ ...td, textAlign: "right",
+                                 fontFamily: "var(--font-mono)",
+                                 color: "var(--muted)" }}>
+                      {pr.amount_paid != null ? money(pr.amount_paid) : "—"}</td>
+                    <td style={td}>
+                      <StatusChip status={p.is_void ? "VOID" : p.status} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }

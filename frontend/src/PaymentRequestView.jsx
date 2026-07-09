@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, StatusChip, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
@@ -25,6 +25,7 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
   const [note, setNote] = useState("");
   const [pay, setPay] = useState({ amount_paid: "", payment_ref: "",
                                    variance_reason: "" });
+  const [slip, setSlip] = useState(null);
 
   const pr = doc.payment_request || {};
   const st = doc.status;
@@ -55,10 +56,32 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
     if (!note.trim()) { setError("A note to the raiser is required."); return; }
     act("return", { reason_category: reason, note });
   }
-  function doPay() {
-    act("pay", { amount_paid: pay.amount_paid || pr.amount_requested,
-                 payment_ref: pay.payment_ref,
-                 variance_reason: pay.variance_reason });
+  async function doPay() {
+    setBusy(true);
+    setError(null);
+    try {
+      // Multipart when a slip is attached; JSON otherwise
+      if (slip) {
+        const fd = new FormData();
+        fd.append("amount_paid", pay.amount_paid || pr.amount_requested);
+        fd.append("payment_ref", pay.payment_ref);
+        fd.append("variance_reason", pay.variance_reason);
+        fd.append("file", slip);
+        await apiUpload(`/documents/${doc.ref}/actions/pay`, fd);
+      } else {
+        await api(`/documents/${doc.ref}/actions/pay`, { method: "POST",
+          body: { amount_paid: pay.amount_paid || pr.amount_requested,
+                  payment_ref: pay.payment_ref,
+                  variance_reason: pay.variance_reason } });
+      }
+      setPanel(null);
+      setSlip(null);
+      onChanged();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
 
   // Available actions per stage
@@ -76,6 +99,7 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
   const pdf = doc.attachments?.filter((a) => a.kind === "GENERATED_PDF")
     .slice(-1)[0];
   const evidence = doc.attachments?.filter((a) => a.kind === "EVIDENCE") || [];
+  const slips = doc.attachments?.filter((a) => a.kind === "PAYMENT_SLIP") || [];
 
   return (
     <section style={card}>
@@ -141,6 +165,14 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
           {evidence.map((a) => (
             <a key={a.id} href={a.url} target="_blank" rel="noreferrer"
                style={{ marginRight: 12 }}>📎 {a.file_name}</a>
+          ))}
+        </p>
+      )}
+      {slips.length > 0 && (
+        <p style={{ fontSize: 13, marginTop: 4 }}>
+          {slips.map((a) => (
+            <a key={a.id} href={a.url} target="_blank" rel="noreferrer"
+               style={{ marginRight: 12 }}>🧾 payment slip ({a.file_name})</a>
           ))}
         </p>
       )}
@@ -221,6 +253,12 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
                    onChange={(e) => setPay({ ...pay,
                      variance_reason: e.target.value })}
                    style={inputStyle} />
+          </label>
+          <label style={{ fontSize: 13, display: "block", marginTop: 8 }}>
+            Payment slip (transfer copy / cheque) — recommended
+            <input type="file"
+                   onChange={(e) => setSlip(e.target.files[0] || null)}
+                   style={{ display: "block", marginTop: 4 }} />
           </label>
           <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
             <Btn variant="navy" onClick={doPay} disabled={busy}>
