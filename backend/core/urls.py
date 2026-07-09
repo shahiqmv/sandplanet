@@ -25,6 +25,7 @@ urlpatterns = [
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
     path("company/logo", views.company_logo, name="company-logo"),
     path("pms", views.pm_list, name="pm-list"),
+    path("cost-heads", views.cost_heads, name="cost-heads"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),
     path("approvals/pending", docs.approvals_pending, name="approvals-pending"),

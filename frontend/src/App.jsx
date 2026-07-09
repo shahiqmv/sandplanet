@@ -16,6 +16,8 @@ import AttendancePage from "./AttendancePage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import ManpowerPage from "./ManpowerPage.jsx";
 import ProjectPage from "./ProjectPage.jsx";
+import PaymentRequestForm from "./PaymentRequestForm.jsx";
+import PaymentRequestView from "./PaymentRequestView.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -24,7 +26,8 @@ import PortfolioPage from "./PortfolioPage.jsx";
 
 // Grouped menu (owner, 2026-07-08): five top-level groups, trimmed by
 // role; approver roles land on the Approvals queue.
-const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"];
+const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
+                   "FINANCE", "ADMIN"];
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
@@ -239,6 +242,7 @@ export default function App() {
       const doc = await api(`/documents/${ref}`);
       const mode = doc.doc_type === "DPR" ? "dpr-view"
                  : ["IR", "MAR", "TWS"].includes(doc.doc_type) ? "qa-view"
+                 : doc.doc_type === "PYR" ? "pyr-view"
                  : "line-view";
       setDocView({ mode, doc });
     } catch (e) {
@@ -591,6 +595,7 @@ export default function App() {
                 onAttendance={() => setDocView({ mode: "attendance" })}
                 onDma={() => setDocView({ mode: "dma" })}
                 onManpower={() => setDocView({ mode: "manpower" })}
+                onNewPyr={() => setDocView({ mode: "pyr-form" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -640,6 +645,15 @@ export default function App() {
           )}
           {docView?.mode === "manpower" && openSite && (
             <ManpowerPage site={openSite} onClose={closeDoc} />
+          )}
+          {docView?.mode === "pyr-form" && openSite && (
+            <PaymentRequestForm site={openSite}
+              onSaved={(ref) => { bump(); openDoc(ref); }}
+              onCancel={closeDoc} />
+          )}
+          {docView?.mode === "pyr-view" && (
+            <PaymentRequestView doc={docView.doc} me={me} onClose={closeDoc}
+              onChanged={() => openDoc(docView.doc.ref)} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (

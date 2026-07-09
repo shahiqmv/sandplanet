@@ -251,6 +251,20 @@ class HolidayViewSet(viewsets.ModelViewSet):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def cost_heads(request):
+    """Cost heads for PYR / petty cash pickers (§6C.1). Project heads only
+    by default; ?pools=1 includes the three HO pools."""
+    from .models import CostHead
+
+    qs = CostHead.objects.filter(is_active=True)
+    if request.GET.get("pools") != "1":
+        qs = qs.filter(is_pool=False)
+    return Response([{"id": c.id, "name": c.name, "is_pool": c.is_pool}
+                     for c in qs])
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def pm_list(request):
     """Active PM users, for site/project PM assignment pick-lists."""
     pms = User.objects.filter(role=User.Role.PM, is_active=True) \
