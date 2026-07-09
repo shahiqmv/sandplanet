@@ -7,8 +7,8 @@ import { Btn, RefStamp, StatusChip, card, ghostButton, td, th } from "./ui.jsx";
 
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
-const PENDING = ["DRAFT", "SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED",
-                 "AUTHORISED"];
+// Pending = approved and awaiting payment (owner) — from PM approval on
+const PENDING = ["PM_APPROVED", "DIRECTOR_APPROVED", "AUTHORISED"];
 
 export default function PaymentRegisterPage({ site, me, onOpenDoc, onNewPyr,
                                              onClose }) {

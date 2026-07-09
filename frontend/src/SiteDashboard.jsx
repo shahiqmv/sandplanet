@@ -373,7 +373,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
 
       {(pyrs.length > 0 ||
         ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role)) && (
-        <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc} onNewPyr={onNewPyr}
+        <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc}
                      onOpenRegister={onPyrRegister} />
       )}
 
@@ -430,15 +430,16 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
 
 
 // Payment Requests register + pending payments for the site (§5.9, §7.4).
-// Site users see their own PYRs; amounts are their own requests.
-const PYR_PENDING = ["DRAFT", "SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED",
-                     "AUTHORISED"];
+// "Pending" = approved and on its way to payment (owner): a payment
+// becomes pending once the site PM approves it — drafts and requests
+// still awaiting PM review are not counted.
+const PYR_PENDING = ["PM_APPROVED", "DIRECTOR_APPROVED", "AUTHORISED"];
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
 
 // Dashboard card: PENDING payments only (owner). The full list lives on
 // the Payment register page, reached by the link.
-function PyrRegister({ pyrs, onOpenDoc, onNewPyr, onOpenRegister }) {
+function PyrRegister({ pyrs, onOpenDoc, onOpenRegister }) {
   const pending = pyrs.filter((p) => PYR_PENDING.includes(p.status));
   const pendingTotal = pending.reduce(
     (a, p) => a + Number(p.payment_request?.amount_requested || 0), 0);
@@ -455,19 +456,10 @@ function PyrRegister({ pyrs, onOpenDoc, onNewPyr, onOpenRegister }) {
             {" "}{money(pendingTotal)}
           </span>
         )}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 12,
-                       alignItems: "center" }}>
-          <a href="#" onClick={(e) => { e.preventDefault(); onOpenRegister(); }}
-             style={{ fontSize: 12.5, color: "var(--navy)" }}>
-            Payment register →</a>
-          {onNewPyr && (
-            <button onClick={onNewPyr}
-                    style={{ ...ghostButton, padding: "4px 12px",
-                             fontSize: 13 }}>
-              + Payment
-            </button>
-          )}
-        </span>
+        <a href="#" onClick={(e) => { e.preventDefault(); onOpenRegister(); }}
+           style={{ marginLeft: "auto", fontSize: 12.5,
+                    color: "var(--navy)" }}>
+          Payment register →</a>
       </div>
       {pending.length === 0 ? (
         <p style={{ fontSize: 13, color: "var(--muted)", margin: "8px 0 0" }}>
