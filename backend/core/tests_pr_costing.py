@@ -124,9 +124,13 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(r.status_code, 200, r.data)
         pr.refresh_from_db()
         self.assertEqual(pr.status, "AUTHORISED")
-        # COMMITTED per vendor line, netting to the grand total
-        committed = costing.document_net(pr, state="COMMITTED")
-        self.assertEqual(committed, Decimal("12000"))
+        # COMMITTED per vendor line, netting to the grand total; materials
+        # are also INCURRED at PV authorisation (owner decision, M7 — no
+        # inventory system, so no GRN cost event)
+        self.assertEqual(costing.document_net(pr, state="COMMITTED"),
+                         Decimal("12000"))
+        self.assertEqual(costing.document_net(pr, state="INCURRED"),
+                         Decimal("12000"))
         # a payable was created for the credit vendor only
         self.assertEqual(Payable.objects.filter(document=pr).count(), 1)
         self.assertEqual(Payable.objects.get(document=pr).amount,
@@ -156,7 +160,11 @@ class PrAuthorisationTests(PrCostingBase):
     def test_withdrawal_reverses_commitment(self):
         pr = self.make_pr()
         self.authorise(pr.ref)
-        self.assertEqual(costing.document_net(pr), Decimal("12000"))
+        # committed + incurred both posted at authorisation (12000 each)
+        self.assertEqual(costing.document_net(pr, state="COMMITTED"),
+                         Decimal("12000"))
+        self.assertEqual(costing.document_net(pr, state="INCURRED"),
+                         Decimal("12000"))
         r = self.act(pr.ref, "withdraw-authorisation", self.finance,
                      comment="wrong vendor account")
         self.assertEqual(r.status_code, 200, r.data)

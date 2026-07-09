@@ -363,10 +363,17 @@ def pr_grand_total(pr):
 
 
 def authorise_pr(pr, actor):
-    """Signatory authorisation of a PR (§6C.2 — the commitment point):
-    post COMMITTED per vendor line (cost head from the line, default
-    Materials), create payables for credit vendors, and generate the
-    credit POs (moved here from Director approval)."""
+    """Signatory authorisation of a PR on a Payment Voucher (§6C.2 — the
+    commitment point): post COMMITTED and INCURRED per vendor line (cost
+    head from the line, default Materials), create payables for credit
+    vendors, and generate the credit POs.
+
+    Owner decision (M7): materials are Incurred at PV authorisation, not at
+    GRN receipt. The spec (§6C.3.1) puts the Incurred trigger at the GRN,
+    but that requires a landed-cost/inventory valuation the business does
+    not yet run; until an inventory system exists, ordering a material on an
+    authorised voucher is treated as consuming it. The GRN stays a delivery/
+    QA record with no cost event. Paid still posts at vendor payment."""
     from datetime import timedelta
 
     from . import costing
@@ -377,9 +384,13 @@ def authorise_pr(pr, actor):
         amount = (ln.amount_cash or 0) + (ln.amount_credit or 0)
         if amount <= 0:
             continue
-        costing.post(site=pr.site, cost_head=ln.cost_head or materials,
-                     state="COMMITTED", source="PR", amount=amount,
-                     document=pr, document_line=ln, actor=actor)
+        head = ln.cost_head or materials
+        costing.post(site=pr.site, cost_head=head, state="COMMITTED",
+                     source="PR", amount=amount, document=pr,
+                     document_line=ln, actor=actor)
+        costing.post(site=pr.site, cost_head=head, state="INCURRED",
+                     source="PR", amount=amount, document=pr,
+                     document_line=ln, actor=actor)
         if (ln.amount_credit or 0) > 0:
             Payable.objects.create(
                 document=pr, document_line=ln, site=pr.site,

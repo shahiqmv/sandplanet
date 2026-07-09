@@ -296,3 +296,16 @@ recorded vendor payments directly — R2/R3) is reworked to the R5 model:
 DEFERRED: the INCURRED-at-GRN leg for materials (§4A) — it needs reliable
 GRN→PR line valuation through the MR→PR→LM→GRN chain; scoped as its own
 task. Until then PR materials show Committed + Paid, not yet Incurred.
+
+### M7 (owner decision): materials Incurred at PV authorisation, not at GRN
+The spec (§6C.3.1) puts the Incurred trigger for materials at the GRN
+(goods received on site). The owner decided to Incur at the Payment
+Voucher authorisation point instead: when a signatory approves the PV, a
+PR's materials post COMMITTED and INCURRED together (Paid still posts at
+vendor payment). Reason: the business does not yet run an inventory /
+landed-cost system, so a GRN-based valuation (tracing the MR→PR→PO→LM→GRN
+chain, partial receipts, cash vs credit) would be fragile and premature.
+Ordering a material on an authorised voucher is treated as consuming it;
+the GRN remains a delivery/QA record with no cost event. This retires the
+INCURRED-at-GRN task deferred at M6c. Revisit when the HO store / inventory
+module (Phase 1B §6D) lands — then Incurred can move to receipt.
