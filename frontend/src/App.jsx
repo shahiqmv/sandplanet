@@ -19,6 +19,7 @@ import ProjectPage from "./ProjectPage.jsx";
 import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
+import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
@@ -38,7 +39,8 @@ const NAV_GROUPS = [
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
   { key: "approvals", label: "My Tasks", roles: APPROVERS,
     subs: [["approvals", "My Tasks", null],
-           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN"]]] },
+           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN"]],
+           ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
@@ -390,6 +392,11 @@ export default function App() {
             hoPage === "approvals" && (
             <ApprovalsPage me={me} refresh={refresh}
                            onOpen={openApprovalItem} />
+          )}
+          {!docView && !openSite &&
+            ["DIRECTOR", "FINANCE", "ADMIN"].includes(me.role) &&
+            hoPage === "cost" && (
+            <CostControlPage onOpenDoc={openDoc} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) &&
