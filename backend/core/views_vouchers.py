@@ -159,6 +159,51 @@ def _pv_pdf_context(pv):
 
 
 @api_view(["GET"])
+def finance_dashboard(request):
+    """Money in motion for Finance (M6f, operational): what needs a voucher,
+    vouchers in flight, what is waiting to be paid, outstanding payables, and
+    petty-cash floats below their replenishment trigger."""
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance only."}, status=403)
+    from .models import Payable, PettyCashFloat
+    from .petty_cash import cash_in_hand
+
+    aw = vouchers.awaiting_voucher()
+    aw_total = sum((vouchers._source_amount(d) for d in aw), Decimal("0"))
+    pvs = Document.objects.filter(doc_type="PV")
+    to_pay = []          # approved vouchers still carrying unpaid lines
+    for pv in pvs.filter(status="APPROVED"):
+        info = _voucher_info(pv)
+        if not info["settled"]:
+            to_pay.append({"ref": pv.ref, "total": info["total"],
+                           "paid": info["paid_count"],
+                           "lines": info["approved_count"]})
+    pyr_pay = Document.objects.filter(doc_type="PYR", status="AUTHORISED")
+    pyr_total = sum((d.payment_request.amount_requested for d in pyr_pay
+                     if hasattr(d, "payment_request")), Decimal("0"))
+    payables = Payable.objects.filter(status="OUTSTANDING")
+    pay_total = sum((p.amount for p in payables), Decimal("0"))
+    floats = []
+    for fl in PettyCashFloat.objects.filter(
+            is_active=True).select_related("site", "custodian"):
+        cih = cash_in_hand(fl)
+        trigger = fl.imprest_amount * fl.trigger_pct / 100
+        floats.append({"site": fl.site.code, "cash_in_hand": cih,
+                       "imprest": fl.imprest_amount,
+                       "below_trigger": cih <= trigger,
+                       "custodian": fl.custodian.full_name})
+    return Response({
+        "awaiting_voucher": {"count": len(aw), "total": aw_total},
+        "vouchers": {"draft": pvs.filter(status="DRAFT").count(),
+                     "submitted": pvs.filter(status="SUBMITTED").count(),
+                     "to_pay": to_pay},
+        "pyr_to_pay": {"count": pyr_pay.count(), "total": pyr_total},
+        "payables": {"count": payables.count(), "total": pay_total},
+        "petty_cash": floats,
+    })
+
+
+@api_view(["GET"])
 def payment_voucher_pdf(request, ref):
     """Letterhead PDF of the voucher for accounting filing (opens inline)."""
     try:

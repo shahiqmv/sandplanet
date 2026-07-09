@@ -202,6 +202,21 @@ class VoucherDisbursementTests(VoucherBase):
         self.assertEqual(info["paid_count"], 1)
 
 
+class FinanceDashboardTests(VoucherBase):
+    def test_dashboard_aggregates(self):
+        a = self.director_approved_pyr(amount=3000, payee="A")
+        self.client.force_authenticate(self.finance)
+        r = self.client.get("/api/v1/finance/dashboard")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["awaiting_voucher"]["count"], 1)
+        self.assertEqual(r.data["awaiting_voucher"]["total"], Decimal("3000"))
+        self.assertIn("petty_cash", r.data)
+        # a site user cannot see the finance dashboard
+        self.client.force_authenticate(self.sa)
+        self.assertEqual(
+            self.client.get("/api/v1/finance/dashboard").status_code, 403)
+
+
 class VoucherGuardTests(VoucherBase):
     def test_cannot_add_non_approved_requisition(self):
         # a PYR only PM-approved is not eligible

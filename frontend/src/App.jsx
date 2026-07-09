@@ -19,6 +19,7 @@ import ProjectPage from "./ProjectPage.jsx";
 import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
+import FinanceDashboard from "./FinanceDashboard.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import PmsPage from "./PmsPage.jsx";
@@ -48,7 +49,8 @@ const NAV_GROUPS = [
            ["suppliers", "Suppliers", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN"],
-    subs: [["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
+    subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
+           ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
@@ -71,6 +73,8 @@ function visibleGroups(me) {
 }
 
 function landingPage(me) {
+  if (me.role === "FINANCE") return "finance-dash";
+  if (me.role === "SIGNATORY") return "vouchers";
   if (APPROVERS.includes(me.role)) return "approvals";
   if (me.role === "HO_HR") return "hr";
   return "sites";
@@ -615,6 +619,10 @@ export default function App() {
             <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "finance-dash" && (
+            <FinanceDashboard me={me}
+              onVouchers={() => setHoPage("vouchers")} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
             <PaymentVouchersPage me={me} onOpenDoc={openDoc} />

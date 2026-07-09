@@ -29,6 +29,8 @@ urlpatterns = [
     path("cost-heads", views.cost_heads, name="cost-heads"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
          name="awaiting-voucher"),
+    path("finance/dashboard", vouchers.finance_dashboard,
+         name="finance-dashboard"),
     path("payment-vouchers", vouchers.payment_vouchers,
          name="payment-vouchers"),
     path("payment-vouchers/<str:ref>/pdf", vouchers.payment_voucher_pdf,
