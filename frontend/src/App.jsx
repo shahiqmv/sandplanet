@@ -18,6 +18,7 @@ import ManpowerPage from "./ManpowerPage.jsx";
 import ProjectPage from "./ProjectPage.jsx";
 import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
+import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -596,6 +597,7 @@ export default function App() {
                 onDma={() => setDocView({ mode: "dma" })}
                 onManpower={() => setDocView({ mode: "manpower" })}
                 onNewPyr={() => setDocView({ mode: "pyr-form" })}
+                onPyrRegister={() => setDocView({ mode: "pyr-register" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -654,6 +656,11 @@ export default function App() {
           {docView?.mode === "pyr-view" && (
             <PaymentRequestView doc={docView.doc} me={me} onClose={closeDoc}
               onChanged={() => openDoc(docView.doc.ref)} />
+          )}
+          {docView?.mode === "pyr-register" && openSite && (
+            <PaymentRegisterPage site={openSite} me={me} onOpenDoc={openDoc}
+              onNewPyr={() => setDocView({ mode: "pyr-form" })}
+              onClose={closeDoc} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (
