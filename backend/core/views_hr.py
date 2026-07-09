@@ -333,6 +333,11 @@ def timesheet_lock(request, site_id, year, month):
     row.signed_off_by = request.user
     row.signed_off_at = timezone.now()
     row.save()
+    # Staff cost is Incurred at month lock (§6C.3.5) — one Labour & Staff
+    # posting per site for the period
+    from . import staff_cost
+
+    staff_cost.post_staff_cost(site, year, month, request.user)
     audit("timesheet", row.id, "TIMESHEET_LOCKED", actor=request.user,
           detail={"site": site.code, "period": f"{year}-{month:02d}"})
     return Response({"status": "LOCKED",
@@ -356,6 +361,10 @@ def timesheet_reopen(request, site_id, year, month):
     row.reopened_by = request.user
     row.reopen_reason = reason
     row.save()
+    # Reverse the month's staff cost so it can be recomputed at the next lock
+    from . import staff_cost
+
+    staff_cost.reverse_staff_cost(row.site, year, month, request.user)
     audit("timesheet", row.id, "TIMESHEET_REOPENED", actor=request.user,
           detail={"reason": reason, "period": f"{year}-{month:02d}"})
     return Response({"status": "OPEN"})

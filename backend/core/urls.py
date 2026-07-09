@@ -1,8 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_documents as docs, views_hr as hr, \
-    views_petty_cash as petty, views_projects as projects, \
+from . import views, views_cost as cost, views_documents as docs, \
+    views_hr as hr, views_petty_cash as petty, views_projects as projects, \
     views_quotes as quotes, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -51,6 +51,10 @@ urlpatterns = [
          name="petty-cash-reconcile"),
     path("petty-cash/<int:site_id>/cycles", petty.petty_cash_cycles,
          name="petty-cash-cycles"),
+    path("staff-cost/current", cost.staff_cost_current,
+         name="staff-cost-current"),
+    path("staff-cost/history", cost.staff_cost_history,
+         name="staff-cost-history"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),
     path("approvals/pending", docs.approvals_pending, name="approvals-pending"),

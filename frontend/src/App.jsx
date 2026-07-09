@@ -22,6 +22,7 @@ import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
+import StaffCostPage from "./StaffCostPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -58,6 +59,8 @@ const NAV_GROUPS = [
            ["employees", "Employees", null],
            ["worker-categories", "Worker Categories", ["ADMIN"]],
            ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
+           ["staff-cost", "Staff Cost",
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
   { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
@@ -656,6 +659,11 @@ export default function App() {
             ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
             hoPage === "payroll" && (
             <PayrollPage sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"].includes(me.role) &&
+            hoPage === "staff-cost" && (
+            <StaffCostPage />
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />
