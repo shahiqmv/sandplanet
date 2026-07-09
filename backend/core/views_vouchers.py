@@ -11,27 +11,53 @@ def _line_info(line):
     src = line.source_document
     info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
             "site_code": src.site.code, "amount": line.amount,
-            "status": line.status, "query_note": line.query_note}
+            "status": line.status, "query_note": line.query_note,
+            "source_status": src.status, "paid": False}
     if src.doc_type == "PYR" and hasattr(src, "payment_request"):
         pr = src.payment_request
         info.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
                      "purpose": pr.purpose, "payment_type": pr.payment_type,
-                     "has_supporting_doc": pr.has_supporting_doc})
+                     "has_supporting_doc": pr.has_supporting_doc,
+                     "currency": pr.currency,
+                     "payment_method": pr.payment_method,
+                     "amount_paid": pr.amount_paid,
+                     "payment_ref": pr.payment_ref,
+                     "paid": src.status == "PAID"})
     if src.doc_type == "PR":
-        vendors = [ln.vendor or ln.free_text_desc
-                   for ln in src.current_revision.lines.all()]
-        info.update({"payee": ", ".join(v for v in vendors if v),
-                     "cost_head": "Materials", "purpose": "Procurement"})
+        rows = []
+        for ln in src.current_revision.lines.all():
+            cash = ln.amount_cash or 0
+            credit = ln.amount_credit or 0
+            if cash <= 0 and credit <= 0:
+                continue
+            # action_taken holds the slip/voucher ref once actually paid;
+            # po_ref alone means ordered-not-yet-paid (credit vendors)
+            rows.append({"line_id": ln.id,
+                         "vendor": ln.vendor or ln.free_text_desc,
+                         "amount_cash": cash, "amount_credit": credit,
+                         "is_credit": credit > 0, "po_ref": ln.po_ref,
+                         "payment_ref": ln.action_taken,
+                         "paid": bool((ln.action_taken or "").strip())})
+        info.update({
+            "payee": ", ".join(r["vendor"] for r in rows if r["vendor"])
+                     or "(procurement)",
+            "cost_head": "Materials", "purpose": "Procurement",
+            "vendor_rows": rows,
+            "paid": bool(rows) and all(r["paid"] for r in rows)})
     return info
 
 
 def _voucher_info(pv):
     lines = [_line_info(ln) for ln in pv.voucher_lines.select_related(
         "source_document__site").order_by("id")]
+    approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     return {
         "ref": pv.ref, "status": pv.status, "doc_date": pv.doc_date,
         "prepared_by": pv.created_by.full_name if pv.created_by else None,
         "total": sum(ln["amount"] for ln in lines),
+        "paid_count": sum(1 for ln in approved if ln["paid"]),
+        "approved_count": len(approved),
+        "settled": bool(approved) and all(ln["paid"] for ln in approved),
         "lines": lines,
         "approvals": [{"action": a.action, "by": a.actor.full_name,
                        "role": a.actor_role, "at": a.acted_at,

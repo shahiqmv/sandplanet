@@ -152,6 +152,38 @@ class VoucherQueryTests(VoucherBase):
         self.assertEqual(r.status_code, 201, r.data)
 
 
+class VoucherDisbursementTests(VoucherBase):
+    """After approval Finance records the actual payments; the voucher
+    surfaces paid/settled state (M6d disbursement)."""
+
+    def _approved_voucher(self, amount=3000):
+        a = self.director_approved_pyr(amount=amount, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)
+        self.voucher_action(pv, "approve", self.signatory)
+        return pv, a
+
+    def test_line_paid_flag_and_settled_progress(self):
+        pv, a = self._approved_voucher(3000)
+        info = self.client.get(f"/api/v1/payment-vouchers/{pv}").data
+        line = info["lines"][0]
+        self.assertFalse(line["paid"])
+        self.assertFalse(info["settled"])
+        self.assertEqual(info["approved_count"], 1)
+        self.assertEqual(info["paid_count"], 0)
+        # Finance records the payment on the PYR via the reused endpoint
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(f"/api/v1/documents/{a}/actions/pay",
+                             {"amount_paid": 3000, "payment_ref": "TRF-1"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        info = self.client.get(f"/api/v1/payment-vouchers/{pv}").data
+        self.assertTrue(info["lines"][0]["paid"])
+        self.assertEqual(info["lines"][0]["payment_ref"], "TRF-1")
+        self.assertTrue(info["settled"])
+        self.assertEqual(info["paid_count"], 1)
+
+
 class VoucherGuardTests(VoucherBase):
     def test_cannot_add_non_approved_requisition(self):
         # a PYR only PM-approved is not eligible
