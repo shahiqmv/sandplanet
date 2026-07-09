@@ -20,6 +20,7 @@ import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
+import PettyCashPage from "./PettyCashPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -603,6 +604,7 @@ export default function App() {
                 onManpower={() => setDocView({ mode: "manpower" })}
                 onNewPyr={() => setDocView({ mode: "pyr-form" })}
                 onPyrRegister={() => setDocView({ mode: "pyr-register" })}
+                onPettyCash={() => setDocView({ mode: "petty-cash" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -668,6 +670,10 @@ export default function App() {
           {docView?.mode === "pyr-register" && openSite && (
             <PaymentRegisterPage site={openSite} me={me} onOpenDoc={openDoc}
               onNewPyr={() => setDocView({ mode: "pyr-form" })}
+              onClose={closeDoc} />
+          )}
+          {docView?.mode === "petty-cash" && openSite && (
+            <PettyCashPage site={openSite} me={me} onOpenDoc={openDoc}
               onClose={closeDoc} />
           )}
           {!docView && !openSite &&

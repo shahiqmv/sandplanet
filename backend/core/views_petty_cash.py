@@ -8,10 +8,21 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from . import petty_cash
-from .models import CostHead, PettyCashFloat, Site, User
+from .models import (CostHead, PettyCashFloat, Site, User,
+                     UserSiteAllocation)
 from .permissions import scoped_site_ids
 
 LIVE = ("RECORDED", "APPROVED")
+
+
+def _custodian_candidates(site):
+    """Site admins currently allocated to the site — eligible custodians."""
+    ids = UserSiteAllocation.objects.filter(
+        site=site, to_date__isnull=True,
+        user__role="SITE_ADMIN").values_list("user_id", flat=True)
+    return [{"id": u.id, "full_name": u.full_name or u.username}
+            for u in User.objects.filter(id__in=ids, is_active=True)
+            .order_by("full_name")]
 
 
 def _get_site(request, site_id):
@@ -92,12 +103,13 @@ def petty_cash_float(request, site_id):
             site, imprest, custodian,
             trigger_pct=request.data.get("trigger_pct", 30),
             per_txn_cap=request.data.get("per_txn_cap", 1500))
-        return Response(_float_summary(fl))
+        return Response({"configured": True, **_float_summary(fl)})
     if fl is None:
-        return Response({"detail": "No petty cash float set up for this "
-                                   "site yet.", "configured": False},
-                        status=404)
-    return Response(_float_summary(fl))
+        return Response({"configured": False,
+                         "custodian_candidates": _custodian_candidates(site)})
+    return Response({"configured": True,
+                     "custodian_candidates": _custodian_candidates(site),
+                     **_float_summary(fl)})
 
 
 @api_view(["GET", "POST"])
