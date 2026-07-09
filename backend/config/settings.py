@@ -134,8 +134,11 @@ if os.environ.get("S3_ENDPOINT_URL"):
                 "bucket_name": os.environ.get("S3_BUCKET", "sandplanet-local"),
             },
         },
+        # Compression only, no manifest re-hashing — Vite already
+        # content-hashes its bundles, and the manifest post-processor trips
+        # over Vite's asset references during collectstatic.
         "staticfiles": {
-            "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage"
+            "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage"
         },
     }
 MEDIA_URL = "media/"

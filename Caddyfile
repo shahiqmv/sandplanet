@@ -1,0 +1,7 @@
+# Caddy reverse proxy — automatic HTTPS (Let's Encrypt) for the domain in
+# $DOMAIN. Terminates TLS and forwards to the app; Caddy sets
+# X-Forwarded-Proto, which Django trusts via SECURE_PROXY_SSL_HEADER.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy web:8000
+}

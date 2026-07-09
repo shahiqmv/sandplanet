@@ -1,0 +1,6 @@
+# Shell scripts and container files must stay LF — a CRLF in entrypoint.sh
+# breaks the `#!/bin/sh` shebang inside the Linux image.
+*.sh            text eol=lf
+entrypoint.sh   text eol=lf
+Dockerfile      text eol=lf
+Caddyfile       text eol=lf
