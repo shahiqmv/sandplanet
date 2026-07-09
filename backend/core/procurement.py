@@ -346,7 +346,71 @@ def sync_pr_vendor_rows(pr):
             vendor=quotation.supplier.name,
             quotation_ref=quotation.quote_ref,
             payment_terms=quotation.payment_terms,
+            purchase_type="CREDIT" if is_credit else "CASH",
             amount_cash=None if is_credit else total,
             amount_credit=total if is_credit else None,
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
         )
+
+
+# ===== PR signatory authorisation + cost postings (M6c) =====
+
+def pr_grand_total(pr):
+    total = Decimal("0")
+    for ln in pr.current_revision.lines.all():
+        total += (ln.amount_cash or 0) + (ln.amount_credit or 0)
+    return total
+
+
+def authorise_pr(pr, actor):
+    """Signatory authorisation of a PR (§6C.2 — the commitment point):
+    post COMMITTED per vendor line (cost head from the line, default
+    Materials), create payables for credit vendors, and generate the
+    credit POs (moved here from Director approval)."""
+    from datetime import timedelta
+
+    from . import costing
+    from .models import CostHead, Payable
+
+    materials = CostHead.objects.get(name="Materials")
+    for ln in pr.current_revision.lines.all():
+        amount = (ln.amount_cash or 0) + (ln.amount_credit or 0)
+        if amount <= 0:
+            continue
+        costing.post(site=pr.site, cost_head=ln.cost_head or materials,
+                     state="COMMITTED", source="PR", amount=amount,
+                     document=pr, document_line=ln, actor=actor)
+        if (ln.amount_credit or 0) > 0:
+            Payable.objects.create(
+                document=pr, document_line=ln, site=pr.site,
+                vendor=ln.vendor or ln.free_text_desc,
+                terms=ln.payment_terms or "", amount=ln.amount_credit,
+                due_date=date.today() + timedelta(days=30))
+    generate_pos_for_pr(pr, actor)
+
+
+def reverse_pr_authorisation(pr, actor):
+    """Finance withdrawal (§7.5b): reverse the PR's COMMITTED postings and
+    cancel its outstanding payables. Issued POs are flagged to Purchasing
+    for manual withdrawal."""
+    from . import costing
+
+    costing.reverse_document(pr, actor=actor)
+    pr.payables.filter(status="OUTSTANDING").update(status="CANCELLED")
+
+
+def post_pr_vendor_paid(pr, line, actor, ref):
+    """PAID leg when Finance records a vendor payment / settlement (§4A).
+    Settles the vendor's payable if credit."""
+    from . import costing
+    from .models import CostHead, Payable
+
+    amount = (line.amount_cash or 0) + (line.amount_credit or 0)
+    if amount > 0:
+        materials = CostHead.objects.get(name="Materials")
+        costing.post(site=pr.site, cost_head=line.cost_head or materials,
+                     state="PAID", source="PR", amount=amount, document=pr,
+                     document_line=line, actor=actor)
+    Payable.objects.filter(document=pr, document_line=line,
+                           status="OUTSTANDING").update(
+        status="SETTLED", settled_on=date.today(), settled_ref=ref)

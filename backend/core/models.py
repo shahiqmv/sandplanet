@@ -262,9 +262,13 @@ class Document(models.Model):
             "LOADED": {"CLOSED"},
         },
         "PR": {
+            # Director approves (award) -> Signatory authorises (commitment,
+            # §6C.2) -> POs issue + payables + payment. Return to DRAFT
+            # before authorisation (§7.5a); Finance withdrawal after (§7.5b).
             "DRAFT": {"SUBMITTED", "CANCELLED"},
             "SUBMITTED": {"APPROVED", "DRAFT", "REJECTED", "CANCELLED"},
-            "APPROVED": {"PAYMENT_PROCESSING", "PAID_PO_ISSUED"},
+            "APPROVED": {"AUTHORISED", "DRAFT", "REJECTED"},
+            "AUTHORISED": {"PAYMENT_PROCESSING", "PAID_PO_ISSUED", "DRAFT"},
             "PAYMENT_PROCESSING": {"PAID_PO_ISSUED"},
             "PAID_PO_ISSUED": {"CLOSED"},
         },
@@ -474,6 +478,10 @@ class DocumentLine(models.Model):
     payment_terms = models.TextField(blank=True)
     action_taken = models.TextField(blank=True)  # payment slip / voucher no.
     po_ref = models.TextField(blank=True)  # auto-filled at PO generation (R3)
+    cost_head = models.ForeignKey(  # PR vendor lines carry a cost head (§6C.1)
+        "CostHead", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+")
+    purchase_type = models.CharField(max_length=6, blank=True)  # CASH|CREDIT
     rate = models.DecimalField(max_digits=14, decimal_places=2,  # PO lines (R2)
                                null=True, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2,
@@ -968,3 +976,27 @@ class PaymentRequest(models.Model):
 
     def __str__(self):
         return f"{self.document.ref} — {self.payee}"
+
+
+class Payable(models.Model):
+    """A credit-purchase obligation created at signatory authorisation of a
+    PR, cleared when Finance settles it on terms (§4A). One per credit
+    vendor row."""
+
+    document = models.ForeignKey(Document, on_delete=models.PROTECT,
+                                 related_name="payables")
+    document_line = models.ForeignKey(DocumentLine, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="payables")
+    vendor = models.TextField()
+    terms = models.TextField(blank=True)  # e.g. '30 days'
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, default="OUTSTANDING")  # /SETTLED
+    settled_on = models.DateField(null=True, blank=True)
+    settled_ref = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [models.Index(fields=["status", "due_date"])]

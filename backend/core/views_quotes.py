@@ -293,9 +293,9 @@ def pr_vendor_payment(request, ref):
     if request.user.role not in ("HO_PURCHASING", "FINANCE", "ADMIN"):
         return Response({"detail": "Purchasing or Finance records vendor "
                                    "payments."}, status=403)
-    if pr.status not in ("APPROVED", "PAYMENT_PROCESSING"):
-        return Response({"detail": "Payments are recorded after Director "
-                                   "approval."}, status=400)
+    if pr.status not in ("AUTHORISED", "PAYMENT_PROCESSING"):
+        return Response({"detail": "Payments are recorded after a signatory "
+                                   "has authorised the PR."}, status=400)
     try:
         line = pr.current_revision.lines.get(pk=request.data.get("line_id"))
     except (DocumentLine.DoesNotExist, ValueError, TypeError):
@@ -328,9 +328,11 @@ def pr_vendor_payment(request, ref):
         actor=request.user, actor_role=request.user.role,
         comment=f"{line.vendor}: {payment_ref}",
     )
-    # status follows the vendor rows (slip for cash, PO for credit)
-    from .procurement import advance_pr_settlement
+    # Post the PAID cost leg for this vendor + settle its payable (M6c)
+    from .procurement import advance_pr_settlement, post_pr_vendor_paid
 
+    post_pr_vendor_paid(pr, line, request.user, payment_ref)
+    # status follows the vendor rows (slip for cash, PO for credit)
     old = pr.status
     advance_pr_settlement(pr, request.user)
     pr.refresh_from_db()

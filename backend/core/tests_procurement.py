@@ -22,6 +22,7 @@ class ProcBase(TestCase):
                                      from_date=date.today())
         self.purchasing = make_user("hop1", User.Role.HO_PURCHASING)
         self.director = make_user("dir1", User.Role.DIRECTOR)
+        self.signatory = make_user("sig1", User.Role.SIGNATORY)
         self.finance = make_user("fin1", User.Role.FINANCE)
         # 9xxxx codes keep clear of the server-issued counter range
         self.cement = Item.objects.create(code="ITM-90001",
@@ -261,12 +262,19 @@ class ChainTests(ProcBase):
         self.act(pr["ref"], "submit")
         line_a = pr["lines"][0]["id"]
         line_b = pr["lines"][1]["id"]
-        # blocked before approval
+        # blocked before authorisation
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 400)
         self.as_user(self.director)
         self.act(pr["ref"], "approve")
+        # still blocked after Director approval — needs signatory (§6C.2)
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": line_a, "payment_ref": "TRF-1"})
+        self.assertEqual(r.status_code, 400)
+        self.as_user(self.signatory)
+        self.act(pr["ref"], "authorise")
         # site roles cannot record payments
         self.as_user(self.sa)
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",

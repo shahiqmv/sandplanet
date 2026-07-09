@@ -19,6 +19,7 @@ class QuoteBase(TestCase):
                                      from_date=date.today())
         self.purchasing = make_user("hop1", User.Role.HO_PURCHASING)
         self.director = make_user("dir1", User.Role.DIRECTOR)
+        self.signatory = make_user("sig1", User.Role.SIGNATORY)
         self.cement = Item.objects.create(code="ITM-90001",
                                           description="Cement OPC 50kg bag",
                                           unit="bag")
@@ -146,6 +147,10 @@ class PoGenerationTests(QuoteBase):
         self.act(pr["ref"], "submit")
         self.as_user(self.director)
         r = self.act(pr["ref"], "approve")
+        assert r.status_code == 200, r.data
+        # Signatory authorises — POs + payables + COMMITTED post here now
+        self.as_user(self.signatory)
+        r = self.act(pr["ref"], "authorise")
         assert r.status_code == 200, r.data
         return mr, pr
 

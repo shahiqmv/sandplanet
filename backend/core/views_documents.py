@@ -424,6 +424,8 @@ def document_action(request, ref, action_name):
     handler = {
         "issue": _do_issue, "verify": _do_verify, "void": _do_void,
         "submit": _do_submit, "approve": _do_approve, "return": _do_return,
+        "authorise": _do_authorise,
+        "withdraw-authorisation": _do_withdraw,
         "send": _do_send, "depart": _do_depart, "count": _do_count,
         "close": _do_close,
         "record-result": _do_record_result, "client-verify": _do_client_verify,
@@ -537,6 +539,9 @@ def approvals_pending(request):
             rows(scoped(base.filter(doc_type="PYR",
                                     status="DIRECTOR_APPROVED")),
                  "Signatory authorisation — the commitment point"))
+        add("To authorise — approved PRs",
+            rows(scoped(base.filter(doc_type="PR", status="APPROVED")),
+                 "Signatory authorisation commits the purchase"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To action — MRs sent to Head Office",
             rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
@@ -545,9 +550,9 @@ def approvals_pending(request):
             rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
                  "Issue to supplier"))
     if user.role in ("FINANCE", "HO_PURCHASING", "ADMIN"):
-        add("Payments pending — approved PRs",
+        add("Payments pending — authorised PRs",
             rows(scoped(base.filter(doc_type="PR",
-                                    status__in=("APPROVED",
+                                    status__in=("AUTHORISED",
                                                 "PAYMENT_PROCESSING"))),
                  "Record vendor payments / PO refs"))
     if user.role in ("FINANCE", "ADMIN"):
@@ -556,6 +561,9 @@ def approvals_pending(request):
         add("To authorise / pay — payment requests",
             rows(scoped(base.filter(doc_type="PYR",
                                     status="DIRECTOR_APPROVED")),
+                 threshold_note))
+        add("To authorise / pay — approved PRs",
+            rows(scoped(base.filter(doc_type="PR", status="APPROVED")),
                  threshold_note))
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
@@ -652,26 +660,73 @@ def _do_approve(request, doc, comment):
     if doc.doc_type in ("MR", "IR", "MAR"):  # PM gate (spec §5.3–§5.5)
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
-    if doc.doc_type == "PR":  # Director approval = award approval (§5.7, R2)
+    if doc.doc_type == "PR":  # Director approval = award (§5.7); NO
+        # commitment or PO here — a signatory authorises next (§6C.2, M6c)
         err = _apply(request, doc, "APPROVED", "APPROVE",
                      roles={"DIRECTOR"}, lock_revision=True,
                      pdf_milestone="approved", comment=comment)
         if err is None:
             on_pr_approved(doc, request.user)
-            generate_pos_for_pr(doc, request.user)
         return err
     return Response({"detail": "Approve applies to MR/PR/IR/MAR."}, status=400)
 
 
+def _do_authorise(request, doc, comment):
+    """Signatory authorisation of an approved PR (§6C.2 commitment point).
+    Posts COMMITTED per vendor line, generates credit POs, creates
+    payables. Finance may authorise below the signatory threshold (SoD)."""
+    from . import costing
+    from .procurement import authorise_pr, pr_grand_total
+
+    if doc.doc_type != "PR":
+        return Response({"detail": "Authorise applies to PR (PYR uses its "
+                                   "own flow)."}, status=400)
+    if doc.status != "APPROVED":
+        return Response({"detail": f"Cannot authorise from {doc.status}."},
+                        status=400)
+    if not costing.can_authorise(request.user, pr_grand_total(doc)):
+        return Response({"detail": "Above the signatory threshold, only a "
+                                   "signatory may authorise — Finance "
+                                   "verifies and disburses."}, status=403)
+    err = _apply(request, doc, "AUTHORISED", "AUTHORISE",
+                 roles={"SIGNATORY", "FINANCE"}, comment=comment)
+    if err is None:
+        authorise_pr(doc, request.user)
+    return err
+
+
+def _do_withdraw(request, doc, comment):
+    """Finance withdrawal of a PR's authorisation (§7.5b) — reverses the
+    COMMITTED postings, cancels payables, returns to Draft."""
+    from .procurement import reverse_pr_authorisation
+
+    if doc.doc_type != "PR":
+        return Response({"detail": "Withdraw applies to PR."}, status=400)
+    if doc.status != "AUTHORISED":
+        return Response({"detail": "Only an authorised, unpaid PR can have "
+                                   "its authorisation withdrawn."}, status=400)
+    if not comment.strip():
+        return Response({"detail": "A reason is required."}, status=400)
+    err = _apply(request, doc, "DRAFT", "WITHDRAW_AUTHORISATION",
+                 roles={"FINANCE"}, comment=comment)
+    if err is None:
+        reverse_pr_authorisation(doc, request.user)
+    return err
+
+
 def _do_return(request, doc, comment):
-    """Return with comment → back to Draft (spec §7.2)."""
+    """Return with comment → back to Draft (spec §7.2 / §7.5a)."""
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
     if doc.doc_type in ("MR", "IR", "MAR"):
         return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PR":
-        return _apply(request, doc, "DRAFT", "RETURN", roles={"DIRECTOR"},
+        # Director returns before authorisation; signatory/Finance return
+        # an approved PR (no commitment yet, so nothing to reverse)
+        roles = {"DIRECTOR", "SIGNATORY", "FINANCE"} if doc.status == \
+            "APPROVED" else {"DIRECTOR"}
+        return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
     return Response({"detail": "Return applies to MR/PR/IR/MAR."}, status=400)
 

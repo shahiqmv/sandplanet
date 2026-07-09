@@ -41,9 +41,16 @@ const ACTIONS = {
   PR: [
     ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
     ["approve", "Approve (Director)", ["SUBMITTED"], ["DIRECTOR", "ADMIN"]],
-    ["return", "Return with comment", ["SUBMITTED"], ["DIRECTOR", "ADMIN"],
-     "comment"],
-    ["record-payment", "Record payment / PO", ["APPROVED", "PAYMENT_PROCESSING"],
+    // Signatory authorisation is the commitment point (§6C.2); Finance
+    // may authorise below the threshold
+    ["authorise", "Authorise", ["APPROVED"],
+     ["SIGNATORY", "FINANCE", "ADMIN"], "comment"],
+    ["return", "Return for review", ["SUBMITTED", "APPROVED"],
+     ["DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN"], "comment"],
+    ["withdraw-authorisation", "Withdraw authorisation", ["AUTHORISED"],
+     ["FINANCE", "ADMIN"], "comment"],
+    ["record-payment", "Record payment / PO",
+     ["AUTHORISED", "PAYMENT_PROCESSING"],
      ["FINANCE", "ADMIN"], "action_taken"],
     ["close", "Close", ["PAID_PO_ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
@@ -650,7 +657,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const p = doc.payload || {};
   const canRecordPay = isPR && !doc.is_void &&
     ["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role) &&
-    ["APPROVED", "PAYMENT_PROCESSING"].includes(doc.status);
+    ["AUTHORISED", "PAYMENT_PROCESSING"].includes(doc.status);
   const slipByVendor = {};
   for (const a of doc.attachments || []) {
     if (a.kind === "PAYMENT_SLIP") slipByVendor[a.caption] = a.url;

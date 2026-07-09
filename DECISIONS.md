@@ -276,3 +276,23 @@ accounts pending).
   can_authorise() (SoD: FINANCE blocked at/above threshold, SIGNATORY
   always). 6 invariant tests (append-only, reversal nets to zero,
   idempotent reversal, threshold-disabled default, Finance blocked).
+
+### M6c (done): PR rework — signatory gate + cost ledger
+The existing PR flow (Director approval auto-generated POs; Finance
+recorded vendor payments directly — R2/R3) is reworked to the R5 model:
+- PR state machine inserts AUTHORISED between APPROVED and payment.
+  Director approval is now commercial approval only — no PO, no cost.
+- Signatory authorisation (or Finance below the threshold) is the
+  commitment point: posts COMMITTED per vendor line (cost head from the
+  line, default Materials), generates the credit POs (moved here from
+  approval), and creates a Payable per credit vendor.
+- Finance recording a vendor payment posts PAID for that line and settles
+  its payable. Payment is blocked until AUTHORISED (was: after approval).
+- Return (Director/Signatory/Finance) before authorisation posts nothing;
+  Finance withdraw-authorisation (§7.5b) reverses the COMMITTED postings
+  and cancels payables.
+- DocumentLine gains cost_head + purchase_type; new Payable model
+  (migration 0017). SoD enforced on the PR authorise action.
+DEFERRED: the INCURRED-at-GRN leg for materials (§4A) — it needs reliable
+GRN→PR line valuation through the MR→PR→LM→GRN chain; scoped as its own
+task. Until then PR materials show Committed + Paid, not yet Incurred.
