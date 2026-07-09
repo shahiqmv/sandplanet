@@ -784,29 +784,35 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   </td>
                   <td style={td}>{line.payment_terms}</td>
                   <td style={td}>
-                    {/* slip no. for cash, PO no. for credit */}
-                    {line.action_taken ? (
-                      <>
-                        <span style={{ color: "#1a7f37", fontWeight: 600 }}>
-                          {line.action_taken}
-                        </span>
-                        {slipByVendor[line.vendor] && (
-                          <>
-                            {" "}
-                            <a href={slipByVendor[line.vendor]} target="_blank"
-                               rel="noreferrer" title="Payment slip / voucher">
-                              📎 slip
-                            </a>
-                          </>
+                    {/* PO for a credit vendor (from authorisation) and the
+                        transfer slip once Finance records payment on the
+                        voucher — both visible here for Purchasing */}
+                    {(line.po_ref || line.action_taken) ? (
+                      <span style={{ display: "flex", flexDirection: "column",
+                                     gap: 2 }}>
+                        {line.po_ref && (
+                          <a href="#" title="Purchase Order"
+                             style={{ color: "var(--sp-navy)",
+                                      fontWeight: 600 }}
+                             onClick={(e) => { e.preventDefault();
+                                               onOpenDoc?.(line.po_ref); }}>
+                            {line.po_ref}
+                          </a>
                         )}
-                      </>
-                    ) : line.po_ref ? (
-                      <a href="#" style={{ color: "var(--sp-navy)",
-                                           fontWeight: 600 }}
-                         onClick={(e) => { e.preventDefault();
-                                           onOpenDoc?.(line.po_ref); }}>
-                        {line.po_ref}
-                      </a>
+                        {line.action_taken && (
+                          <span style={{ color: "#1a7f37", fontWeight: 600 }}>
+                            {line.action_taken}
+                            {slipByVendor[line.vendor] && (
+                              <>{" "}
+                                <a href={slipByVendor[line.vendor]}
+                                   target="_blank" rel="noreferrer"
+                                   title="Payment slip / transfer copy">
+                                  📎 slip</a>
+                              </>
+                            )}
+                          </span>
+                        )}
+                      </span>
                     ) : "—"}
                   </td>
                   <td style={{ ...td, textAlign: "right" }}>
