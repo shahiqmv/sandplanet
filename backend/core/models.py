@@ -11,12 +11,14 @@ class User(AbstractUser):
         PM = "PM", "Project Manager"
         HO_PURCHASING = "HO_PURCHASING", "HO Purchasing"
         DIRECTOR = "DIRECTOR", "Sr PM / Director, Projects"
-        FINANCE = "FINANCE", "Finance"  # payment/PO recording (R3)
+        SIGNATORY = "SIGNATORY", "Signatory (Executive Director)"  # R4/M6
+        FINANCE = "FINANCE", "Finance"  # verifies & disburses (R4)
         HO_HR = "HO_HR", "HO HR / Payroll"
         ADMIN = "ADMIN", "Admin"
 
-    # Roles with all-site read scope (spec §3 + R3)
-    HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "FINANCE", "HO_HR", "ADMIN"}
+    # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6)
+    HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",
+                "HO_HR", "ADMIN"}
     SINGLE_SITE_ROLES = {"SITE_ENGINEER", "SITE_ADMIN"}
 
     role = models.CharField(max_length=20, choices=Role.choices)
@@ -806,3 +808,78 @@ class ProgrammeActivity(models.Model):
     class Meta:
         ordering = ["sort_order"]
         verbose_name_plural = "programme activities"
+
+
+# ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
+
+
+class CostHead(models.Model):
+    """Company-wide cost head master (§6C.1). is_pool marks the three HO
+    pools (General Stock, Foreign Exchange, Stock Adjustment) that are
+    never charged to a project — a small, enforceable deviation from the
+    Technical Design schema, recorded in DECISIONS.md (M6)."""
+
+    name = models.CharField(max_length=60, unique=True)
+    sort_order = models.IntegerField(default=100)
+    is_pool = models.BooleanField(default=False)  # HO pool, never a project
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class CostPosting(models.Model):
+    """One row per cost event, per state (§6C.2, Technical Design §4A).
+    Append-only: never edited; a correction is a new reversal row with a
+    negative amount and reversal_of set. The posting service in
+    core/costing.py is the ONLY writer."""
+
+    class State(models.TextChoices):
+        COMMITTED = "COMMITTED"
+        INCURRED = "INCURRED"
+        PAID = "PAID"
+
+    class Source(models.TextChoices):
+        PR = "PR"
+        PYR = "PYR"
+        PETTY_CASH = "PETTY_CASH"
+        STAFF = "STAFF"
+        IPR = "IPR"            # Phase 1B
+        STORE_ISSUE = "STORE_ISSUE"  # Phase 1B
+        FX = "FX"             # Phase 1B
+        STOCK_ADJ = "STOCK_ADJ"      # Phase 1B
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="cost_postings")
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  related_name="postings")
+    state = models.CharField(max_length=10, choices=State.choices)
+    source = models.CharField(max_length=12, choices=Source.choices)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)  # -ve = rev
+    currency = models.CharField(max_length=3, default="MVR")
+    posted_on = models.DateField()
+    # Provenance — exactly one of these identifies the source event
+    document = models.ForeignKey(Document, on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="+")
+    document_line = models.ForeignKey(DocumentLine, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    # petty_cash_entry / ipr_line / sin_line FKs added with their modules
+    is_stock_pool = models.BooleanField(default=False)  # HO pool posting
+    staff_year = models.IntegerField(null=True, blank=True)
+    staff_month = models.IntegerField(null=True, blank=True)
+    work_package = models.TextField(blank=True)  # Phase 2 BOQ dimension
+    reversal_of = models.ForeignKey("self", on_delete=models.PROTECT,
+                                    null=True, blank=True,
+                                    related_name="reversals")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=["site", "state", "cost_head", "posted_on"]),
+            models.Index(fields=["document"]),
+        ]

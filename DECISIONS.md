@@ -249,3 +249,30 @@ genuinely missing. Done:
   with no catalog match, an inline "+ Add … to catalog" button prompts
   for unit + category, creates the Item, and selects it — the flagged
   free-text path stays for site users who can't edit the catalog.
+
+## 2026-07-09 — M6 begins: financial spine (PYR, Signatory, petty cash, cost ledger)
+Owner delivered the R5 spec + updated Build Brief + Technical Design,
+adding the money layer that R1–R4 deferred. Building in the brief's
+order: M6 (financial spine) → M7 (project cost control) → M8 (deploy),
+then Phase 1B (international procurement & store). Financial parameters
+use the documented defaults until the owner sets real values
+(signatory_threshold DISABLED per decision 24; per-txn cap MVR 1,500;
+PYR supporting-doc threshold MVR 5,000; two executive-director SIGNATORY
+accounts pending).
+
+### M6a (done): foundation
+- 9th role SIGNATORY (executive directors), in HO_ROLES; distinct from
+  DIRECTOR — authorisation (commitment) is separated from Finance's
+  disbursement, server-enforced.
+- CostHead master (migration 0015 seeds the 8 §6C.1 heads + the 3 HO
+  pools). DEVIATION from Technical Design §2 (which has no is_pool
+  column): added CostHead.is_pool so "the three pools are never charged
+  to a project" is an enforceable flag, not a name convention.
+- CostPosting ledger (Committed/Incurred/Paid; source enum incl. the
+  Phase-1B sources; provenance FKs document/document_line now, petty-cash/
+  ipr/sin added with their modules). Append-only.
+- core/costing.py = the ONLY writer: post(), reverse_document() (negative
+  mirror rows, reversal_of set, idempotent), signatory_threshold(),
+  can_authorise() (SoD: FINANCE blocked at/above threshold, SIGNATORY
+  always). 6 invariant tests (append-only, reversal nets to zero,
+  idempotent reversal, threshold-disabled default, Finance blocked).
