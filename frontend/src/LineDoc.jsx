@@ -208,8 +208,11 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   useEffect(() => {
     if (!isRefForm) return;
     const params = siteId ? `&site=${siteId}` : "";
-    api(`/documents/list?doc_type=MR&open=1${params}`).then(setOpenMrs);
-  }, [isRefForm, siteId]);
+    // A new PR offers only MRs at HO with no active PR yet; the LM loader
+    // offers MRs through the loading stages.
+    const filter = docType === "PR" ? "for_pr=1" : "open=1";
+    api(`/documents/list?doc_type=MR&${filter}${params}`).then(setOpenMrs);
+  }, [isRefForm, siteId, docType]);
 
   useEffect(() => {
     if (docType !== "LM" || existing) return;

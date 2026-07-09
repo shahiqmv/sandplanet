@@ -58,6 +58,48 @@ class PrCostingBase(TestCase):
         return Document.objects.get(ref=pr["ref"])
 
 
+class PrMrPickerTests(PrCostingBase):
+    """A new PR offers only MRs at HO with no active PR (owner workflow
+    fix, 2026-07-09)."""
+
+    def make_mr(self, sent=True):
+        self.client.force_authenticate(self.sa)
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id, "payload": {},
+            "lines": [{"free_text_desc": "Sand", "unit": "m3",
+                       "qty_required": 10, "qty_to_order": 10}],
+        }, format="json").data
+        if sent:
+            self.act(mr["ref"], "submit", self.sa)
+            self.act(mr["ref"], "approve", self.pm)
+            self.act(mr["ref"], "send", self.sa)
+        return mr
+
+    def for_pr(self):
+        self.client.force_authenticate(self.purchasing)
+        return [m["ref"] for m in self.client.get(
+            "/api/v1/documents/list?doc_type=MR&for_pr=1").data]
+
+    def test_unsent_mr_not_offered(self):
+        draft_mr = self.make_mr(sent=False)  # still DRAFT
+        sent_mr = self.make_mr(sent=True)
+        refs = self.for_pr()
+        self.assertIn(sent_mr["ref"], refs)
+        self.assertNotIn(draft_mr["ref"], refs)
+
+    def test_mr_with_ongoing_draft_pr_drops_out(self):
+        mr = self.make_mr(sent=True)
+        self.assertIn(mr["ref"], self.for_pr())
+        # a draft PR against it links MR_PR immediately
+        self.client.force_authenticate(self.purchasing)
+        self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr["ref"]],
+            "lines": [{"free_text_desc": "V", "vendor": "V",
+                       "amount_cash": 100}],
+        }, format="json")
+        self.assertNotIn(mr["ref"], self.for_pr())
+
+
 class PrAuthorisationTests(PrCostingBase):
     def test_commit_posts_at_authorisation_not_approval(self):
         pr = self.make_pr()

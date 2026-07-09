@@ -980,6 +980,20 @@ def documents_list(request):
         statuses = OPEN_STATUSES.get(request.GET.get("doc_type", ""), None)
         if statuses:
             qs = qs.filter(status__in=statuses, is_void=False)
+    if request.GET.get("for_pr"):
+        # MRs ready to raise a PR against: reached HO (SENT_TO_HO) and NOT
+        # already covered by an active PR — a draft PR links MR_PR the
+        # moment it is saved, so an MR with an ongoing PR drops out here.
+        from .models import DocumentLink
+
+        covered = DocumentLink.objects.filter(
+            link_type="MR_PR", from_document__doc_type="PR",
+            from_document__is_void=False,
+        ).exclude(
+            from_document__status__in=["CANCELLED", "REJECTED"]
+        ).values_list("to_document_id", flat=True)
+        qs = qs.filter(doc_type="MR", status="SENT_TO_HO",
+                       is_void=False).exclude(id__in=covered)
     return Response(
         DocumentSerializer(qs[:200], many=True,
                            context={"request": request}).data
