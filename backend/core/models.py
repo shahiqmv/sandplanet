@@ -894,7 +894,10 @@ class CostPosting(models.Model):
                                  null=True, blank=True, related_name="+")
     document_line = models.ForeignKey(DocumentLine, on_delete=models.PROTECT,
                                       null=True, blank=True, related_name="+")
-    # petty_cash_entry / ipr_line / sin_line FKs added with their modules
+    petty_cash_entry = models.ForeignKey("PettyCashEntry",
+                                         on_delete=models.PROTECT, null=True,
+                                         blank=True, related_name="+")
+    # ipr_line / sin_line FKs added with their Phase 1B modules
     is_stock_pool = models.BooleanField(default=False)  # HO pool posting
     staff_year = models.IntegerField(null=True, blank=True)
     staff_month = models.IntegerField(null=True, blank=True)
@@ -980,7 +983,12 @@ class PaymentRequest(models.Model):
     is_settled = models.BooleanField(null=True, blank=True)
     settled_at = models.DateTimeField(null=True, blank=True)
     settlement_note = models.TextField(blank=True)
-    # petty_cash_cycle FK added with the petty cash module (M6d)
+    # The cycle a petty-cash replenishment PYR restores (M6e); null for a
+    # normal PYR
+    petty_cash_cycle = models.ForeignKey("PettyCashCycle",
+                                         on_delete=models.PROTECT, null=True,
+                                         blank=True,
+                                         related_name="replenishments")
 
     def __str__(self):
         return f"{self.document.ref} — {self.payee}"
@@ -1036,3 +1044,119 @@ class PaymentVoucherLine(models.Model):
             models.UniqueConstraint(fields=["voucher", "source_document"],
                                     name="uniq_voucher_source")
         ]
+
+
+# ===== Petty cash — imprest system (§6B, M6e) =============================
+
+class PettyCashFloat(models.Model):
+    """One imprest float per site (§6B.1): a fixed amount held by a named
+    custodian, replenished by an auto-generated PYR when it runs low."""
+
+    site = models.OneToOneField(Site, on_delete=models.PROTECT,
+                                related_name="petty_cash")
+    imprest_amount = models.DecimalField(max_digits=12, decimal_places=2)
+    custodian = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="petty_cash_floats")
+    # replenish when cash in hand falls below this % of the imprest
+    trigger_pct = models.IntegerField(default=30)
+    per_txn_cap = models.DecimalField(max_digits=10, decimal_places=2,
+                                      default=1500)  # larger spend → PYR
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Petty cash — {self.site.code}"
+
+
+class PettyCashCycle(models.Model):
+    """A closed, immutable imprest cycle (§6B.3): opening float, its
+    expenses, the replenishment PYR that restored it, closing float."""
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN"
+        REQUESTED = "REQUESTED"      # replenishment PYR raised, awaiting pay
+        REPLENISHED = "REPLENISHED"  # float restored, cycle closed & immutable
+
+    float = models.ForeignKey(PettyCashFloat, on_delete=models.PROTECT,
+                              related_name="cycles")
+    cycle_no = models.IntegerField()
+    opening_float = models.DecimalField(max_digits=12, decimal_places=2)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.OPEN)
+    closing_float = models.DecimalField(max_digits=12, decimal_places=2,
+                                        null=True, blank=True)
+    opened_at = models.DateTimeField(auto_now_add=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["float", "cycle_no"],
+                                    name="uniq_float_cycle")
+        ]
+        ordering = ["-cycle_no"]
+
+    def __str__(self):
+        return f"{self.float.site.code} cycle {self.cycle_no}"
+
+
+class PettyCashEntry(models.Model):
+    """A single petty-cash expense (§6B.2), recorded by the custodian,
+    PM-approved (posts Incurred), then reimbursed when the cycle's
+    replenishment PYR is paid."""
+
+    class Status(models.TextChoices):
+        RECORDED = "RECORDED"          # entered, not yet PM-approved
+        APPROVED = "APPROVED"          # PM approved → posted to Incurred cost
+        REIMBURSED = "REIMBURSED"      # closed by a paid replenishment PYR
+        VOID = "VOID"                  # reversed before reimbursement
+
+    cycle = models.ForeignKey(PettyCashCycle, on_delete=models.PROTECT,
+                              related_name="entries")
+    entry_date = models.DateField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
+                                  related_name="petty_cash_entries")
+    payee = models.TextField()
+    purpose = models.TextField(blank=True)
+    receipt = models.FileField(upload_to="petty_cash/", null=True, blank=True)
+    has_receipt = models.BooleanField(default=False)
+    no_receipt_reason = models.TextField(blank=True)  # mandatory when none
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.RECORDED)
+    entered_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    approved_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-entry_date", "-id"]
+
+
+class PettyCashReconciliation(models.Model):
+    """A physical cash count against the system balance (§6B.4), with a
+    mandatory variance explanation. A custodian handover records both
+    outgoing and incoming custodians."""
+
+    float = models.ForeignKey(PettyCashFloat, on_delete=models.PROTECT,
+                              related_name="reconciliations")
+    recon_date = models.DateField()
+    counted_cash = models.DecimalField(max_digits=12, decimal_places=2)
+    system_balance = models.DecimalField(max_digits=12, decimal_places=2)
+    variance = models.DecimalField(max_digits=12, decimal_places=2)
+    explanation = models.TextField(blank=True)
+    is_handover = models.BooleanField(default=False)
+    outgoing_custodian = models.ForeignKey(User, on_delete=models.PROTECT,
+                                           null=True, blank=True,
+                                           related_name="+")
+    incoming_custodian = models.ForeignKey(User, on_delete=models.PROTECT,
+                                           null=True, blank=True,
+                                           related_name="+")
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-recon_date", "-id"]

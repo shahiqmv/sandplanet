@@ -2,8 +2,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views, views_documents as docs, views_hr as hr, \
-    views_projects as projects, views_quotes as quotes, \
-    views_vouchers as vouchers
+    views_petty_cash as petty, views_projects as projects, \
+    views_quotes as quotes, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -37,6 +37,18 @@ urlpatterns = [
          name="payment-voucher-detail"),
     path("payment-vouchers/<str:ref>/actions/<str:action>",
          vouchers.payment_voucher_action, name="payment-voucher-action"),
+    path("petty-cash/<int:site_id>", petty.petty_cash_float,
+         name="petty-cash-float"),
+    path("petty-cash/<int:site_id>/entries", petty.petty_cash_entries,
+         name="petty-cash-entries"),
+    path("petty-cash/<int:site_id>/entries/approve", petty.petty_cash_approve,
+         name="petty-cash-approve"),
+    path("petty-cash/<int:site_id>/replenish", petty.petty_cash_replenish,
+         name="petty-cash-replenish"),
+    path("petty-cash/<int:site_id>/reconcile", petty.petty_cash_reconcile,
+         name="petty-cash-reconcile"),
+    path("petty-cash/<int:site_id>/cycles", petty.petty_cash_cycles,
+         name="petty-cash-cycles"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),
     path("approvals/pending", docs.approvals_pending, name="approvals-pending"),

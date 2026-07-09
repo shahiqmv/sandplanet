@@ -197,12 +197,18 @@ def pyr_action(request, doc, action_name):
                 kind="PAYMENT_SLIP", file=slip, file_name=slip.name,
                 content_type=slip.content_type or "", size_bytes=slip.size,
                 caption=pr.payment_ref or "payment slip", uploaded_by=user)
-        # Petty-cash replenishment posts PAID only — its expenses were
-        # already INCURRED when approved, so never double-count (§4A)
-        costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
-                     source="PYR", amount=amount_paid, currency=pr.currency,
-                     document=doc, actor=user, posted_on=pr.paid_date)
-        if pr.payment_type != "PETTY_CASH_REPLENISH":
+        if pr.payment_type == "PETTY_CASH_REPLENISH":
+            # The Paid leg is posted per expense (under each entry's cost
+            # head) and the float restored — never double-counting the
+            # already-Incurred expenses (§6B.3.4, §6C.3.3)
+            from . import petty_cash
+
+            petty_cash.on_replenish_paid(doc, user)
+        else:
+            costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
+                         source="PYR", amount=amount_paid,
+                         currency=pr.currency, document=doc, actor=user,
+                         posted_on=pr.paid_date)
             costing.post(site=doc.site, cost_head=pr.cost_head,
                          state="INCURRED", source="PYR", amount=amount_paid,
                          currency=pr.currency, document=doc, actor=user,

@@ -43,9 +43,9 @@ def can_authorise(user, amount):
 
 
 def post(*, site, cost_head, state, source, amount, posted_on=None,
-         document=None, document_line=None, is_stock_pool=False,
-         staff_year=None, staff_month=None, work_package="",
-         reversal_of=None, actor=None, currency="MVR"):
+         document=None, document_line=None, petty_cash_entry=None,
+         is_stock_pool=False, staff_year=None, staff_month=None,
+         work_package="", reversal_of=None, actor=None, currency="MVR"):
     """Append one cost posting. The single low-level writer — callers are
     the typed trigger functions below, never views directly."""
     return CostPosting.objects.create(
@@ -53,10 +53,30 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
         amount=Decimal(str(amount)), currency=currency,
         posted_on=posted_on or date.today(),
         document=document, document_line=document_line,
+        petty_cash_entry=petty_cash_entry,
         is_stock_pool=is_stock_pool, staff_year=staff_year,
         staff_month=staff_month, work_package=work_package,
         reversal_of=reversal_of, created_by=actor,
     )
+
+
+def reverse_petty_cash_entry(entry, actor=None):
+    """Reverse the INCURRED posting of an approved petty-cash entry that is
+    voided before reimbursement (§4A: negative mirror, never a delete)."""
+    reversals = []
+    already = set(CostPosting.objects.filter(
+        reversal_of__petty_cash_entry=entry)
+        .values_list("reversal_of_id", flat=True))
+    for original in CostPosting.objects.filter(petty_cash_entry=entry,
+                                               reversal_of__isnull=True):
+        if original.id in already:
+            continue
+        reversals.append(post(
+            site=original.site, cost_head=original.cost_head,
+            state=original.state, source=original.source,
+            amount=-original.amount, currency=original.currency,
+            petty_cash_entry=entry, reversal_of=original, actor=actor))
+    return reversals
 
 
 def reverse_document(document, actor=None, states=None):
