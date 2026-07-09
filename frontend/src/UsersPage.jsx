@@ -4,11 +4,12 @@ import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const ROLES = [
   ["SITE_ENGINEER", "Site Engineer — prepares DPR/TWS, submits IR & MAR"],
-  ["SITE_ADMIN", "Site Admin / Storekeeper — DPR, MR, GRN, attendance"],
+  ["SITE_ADMIN", "Site Admin / Storekeeper — DPR, MR, GRN, attendance, petty cash"],
   ["PM", "Project Manager — approves site documents, OT, month sign-off"],
   ["HO_PURCHASING", "HO Purchasing — PR, LM, PO, item & supplier masters"],
-  ["DIRECTOR", "Sr PM / Director — approves PRs (award)"],
-  ["FINANCE", "Finance — records payment / PO issuance on approved PRs"],
+  ["DIRECTOR", "Sr PM / Director — approves PRs & payment requests"],
+  ["SIGNATORY", "Signatory (Executive Director) — authorises Payment Vouchers"],
+  ["FINANCE", "Finance — builds payment vouchers, records payments & slips"],
   ["HO_HR", "HO HR / Payroll — employees, timesheet reopen, payroll export"],
   ["ADMIN", "Admin — user management, site configuration, full access"],
 ];
