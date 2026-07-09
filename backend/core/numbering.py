@@ -2,7 +2,9 @@ from django.db import IntegrityError, transaction
 
 from .models import DocCounter
 
-GLOBAL_TYPES = {"PR", "LM", "PO"}  # global numbering, no site code (§4.1, R2)
+# Global numbering, no site code (§4.1, R2). PV = Payment Voucher (M6d),
+# an HO instrument batching requisitions from many sites.
+GLOBAL_TYPES = {"PR", "LM", "PO", "PV"}
 
 
 def next_ref(doc_type, site):

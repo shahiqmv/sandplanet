@@ -2,7 +2,8 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views, views_documents as docs, views_hr as hr, \
-    views_projects as projects, views_quotes as quotes
+    views_projects as projects, views_quotes as quotes, \
+    views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -26,6 +27,14 @@ urlpatterns = [
     path("company/logo", views.company_logo, name="company-logo"),
     path("pms", views.pm_list, name="pm-list"),
     path("cost-heads", views.cost_heads, name="cost-heads"),
+    path("finance/awaiting-voucher", vouchers.awaiting_voucher,
+         name="awaiting-voucher"),
+    path("payment-vouchers", vouchers.payment_vouchers,
+         name="payment-vouchers"),
+    path("payment-vouchers/<str:ref>", vouchers.payment_voucher_detail,
+         name="payment-voucher-detail"),
+    path("payment-vouchers/<str:ref>/actions/<str:action>",
+         vouchers.payment_voucher_action, name="payment-voucher-action"),
     path("pm-overview", views.pm_overview, name="pm-overview"),
     path("dma-prefill", docs.dma_prefill, name="dma-prefill"),
     path("approvals/pending", docs.approvals_pending, name="approvals-pending"),

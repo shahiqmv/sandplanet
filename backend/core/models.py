@@ -227,6 +227,7 @@ class Document(models.Model):
         PO = "PO"  # purchase order (R2)
         DMA = "DMA"  # daily manpower allocation (R5, internal)
         PYR = "PYR"  # payment request (§5.9, M6)
+        PV = "PV"    # payment voucher — batch authorisation (M6d)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -298,6 +299,13 @@ class Document(models.Model):
             "DIRECTOR_APPROVED": {"AUTHORISED", "DRAFT", "REJECTED"},
             "AUTHORISED": {"PAID", "DRAFT"},  # DRAFT = withdrawal (§7.5b)
             "PAID": {"CLOSED"},
+        },
+        # Payment Voucher (M6d): Finance batches Director-approved PR/PYR;
+        # a signatory approves the voucher (or queries lines). Approval is
+        # the commitment point — replaces the per-document authorise step.
+        "PV": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"APPROVED", "DRAFT"},  # DRAFT = returned to Finance
         },
     }
 
@@ -1000,3 +1008,31 @@ class Payable(models.Model):
 
     class Meta:
         indexes = [models.Index(fields=["status", "due_date"])]
+
+
+class PaymentVoucherLine(models.Model):
+    """One requisition on a Payment Voucher (M6d). The signatory approves
+    the voucher line by line: approved lines commit their source
+    requisition; queried lines return it to its raiser."""
+
+    class Status(models.TextChoices):
+        INCLUDED = "INCLUDED"   # on the voucher, awaiting the signatory
+        APPROVED = "APPROVED"   # signatory approved → source authorised
+        QUERIED = "QUERIED"     # signatory queried → source returned
+
+    voucher = models.ForeignKey(Document, on_delete=models.CASCADE,
+                                related_name="voucher_lines")  # the PV
+    source_document = models.ForeignKey(
+        Document, on_delete=models.PROTECT,
+        related_name="voucher_lines_as_source")  # the PR / PYR
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.INCLUDED)
+    query_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["voucher", "source_document"],
+                                    name="uniq_voucher_source")
+        ]

@@ -19,6 +19,7 @@ import ProjectPage from "./ProjectPage.jsx";
 import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
+import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -44,6 +45,10 @@ const NAV_GROUPS = [
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN"]],
            ["suppliers", "Suppliers", null]] },
+  { key: "finance", label: "Finance",
+    roles: ["FINANCE", "SIGNATORY", "ADMIN"],
+    subs: [["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
+                                             "ADMIN"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
@@ -608,6 +613,9 @@ export default function App() {
             <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
+            <PaymentVouchersPage me={me} onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "manage" && (
             <SitesManagePage me={me} onChanged={bump} />

@@ -41,10 +41,9 @@ const ACTIONS = {
   PR: [
     ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
     ["approve", "Approve (Director)", ["SUBMITTED"], ["DIRECTOR", "ADMIN"]],
-    // Signatory authorisation is the commitment point (§6C.2); Finance
-    // may authorise below the threshold
-    ["authorise", "Authorise", ["APPROVED"],
-     ["SIGNATORY", "FINANCE", "ADMIN"], "comment"],
+    // Authorisation is no longer per-document (M6d): a Director-approved PR
+    // is batched onto a Payment Voucher that a signatory approves. See the
+    // Payment Vouchers page.
     ["return", "Return for review", ["SUBMITTED", "APPROVED"],
      ["DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN"], "comment"],
     ["withdraw-authorisation", "Withdraw authorisation", ["AUTHORISED"],

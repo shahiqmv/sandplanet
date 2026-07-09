@@ -68,13 +68,14 @@ class ApprovalsQueueTests(TestCase):
 
         self.client.force_authenticate(self.director)
         self.client.post(f"/api/v1/documents/{pr['ref']}/actions/approve")
-        # After Director approval the PR awaits SIGNATORY authorisation
-        # (M6c) — Finance may authorise below threshold or await the
-        # signatory, not pay directly
+        # After Director approval the PR awaits a payment voucher (M6d):
+        # Finance batches it, a signatory approves the voucher. Finance sees
+        # it in "Awaiting a payment voucher"; the signatory sees nothing yet
+        # (no submitted voucher), only PVs once Finance submits one.
         f = self.pending(self.finance)
-        self.assertIn("To authorise / pay — approved PRs", self.titles(f))
+        self.assertIn("Awaiting a payment voucher", self.titles(f))
         sig = self.pending(make_user("sig", User.Role.SIGNATORY))
-        self.assertIn("To authorise — approved PRs", self.titles(sig))
+        self.assertNotIn("To authorise — approved PRs", self.titles(sig))
         self.assertEqual(self.pending(self.director)["total"], 0)
 
     def test_purchasing_sees_mr_sent_to_ho(self):

@@ -157,26 +157,11 @@ def pyr_action(request, doc, action_name):
                         status=400)
 
     if action_name == "authorise":
-        if doc.status != "DIRECTOR_APPROVED":
-            return Response({"detail": f"Cannot authorise from {doc.status}."},
-                            status=400)
-        if not costing.can_authorise(user, pr.amount_requested):
-            return Response({
-                "detail": "Above the signatory threshold, only a signatory "
-                          "(executive director) may authorise — Finance "
-                          "verifies and disburses."}, status=403)
-        pr.authorised_by = user
-        pr.authorised_at = timezone.now()
-        pr.authorise_note = comment
-        pr.authorised_under_threshold = (user.role == "FINANCE")
-        pr.save(update_fields=["authorised_by", "authorised_at",
-                               "authorise_note", "authorised_under_threshold"])
-        # Commitment posts here — the single commitment point (§6C.2)
-        costing.post(site=doc.site, cost_head=pr.cost_head, state="COMMITTED",
-                     source="PYR", amount=pr.amount_requested,
-                     currency=pr.currency, document=doc, actor=user)
-        _set_status(doc, "AUTHORISED", "AUTHORISE", user, comment)
-        return None
+        # Authorisation now happens ONLY on a Payment Voucher (M6d) — a
+        # signatory approves a batch, not each PYR individually.
+        return Response({"detail": "Payment requests are authorised on a "
+                                   "Payment Voucher (Finance builds it, a "
+                                   "signatory approves it)."}, status=400)
 
     if action_name == "pay":
         if doc.status != "AUTHORISED":

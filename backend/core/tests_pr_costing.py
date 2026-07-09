@@ -6,8 +6,8 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import costing
-from .models import (CompanyParameter, CostPosting, Document, Payable,
-                     Site, SitePmHistory, User)
+from .models import (CostPosting, Document, Payable, Site, SitePmHistory,
+                     User)
 from .tests import make_user
 
 
@@ -31,6 +31,21 @@ class PrCostingBase(TestCase):
         self.client.force_authenticate(user)
         return self.client.post(f"/api/v1/documents/{ref}/actions/{action}",
                                 body, format="json")
+
+    def authorise(self, ref, approver=None):
+        """Authorise a Director-approved PR the M6d way: Finance builds a
+        payment voucher, a signatory approves it."""
+        self.client.force_authenticate(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [ref]}, format="json")
+        assert pv.status_code == 201, pv.data
+        pref = pv.data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/submit",
+                         {}, format="json")
+        self.client.force_authenticate(approver or self.signatory)
+        return self.client.post(
+            f"/api/v1/payment-vouchers/{pref}/actions/approve", {},
+            format="json")
 
     def make_pr(self):
         # MR first (a PR answers an MR)
@@ -105,7 +120,7 @@ class PrAuthorisationTests(PrCostingBase):
         pr = self.make_pr()
         # Director-approved: nothing committed yet
         self.assertEqual(CostPosting.objects.filter(document=pr).count(), 0)
-        r = self.act(pr.ref, "authorise", self.signatory)
+        r = self.authorise(pr.ref)
         self.assertEqual(r.status_code, 200, r.data)
         pr.refresh_from_db()
         self.assertEqual(pr.status, "AUTHORISED")
@@ -119,21 +134,28 @@ class PrAuthorisationTests(PrCostingBase):
         # POs generated at authorisation (none here — free-text vendors,
         # no quotes) but the flow ran without error
 
-    def test_finance_cannot_authorise_when_threshold_disabled(self):
+    def test_direct_authorise_action_is_retired(self):
         pr = self.make_pr()
-        r = self.act(pr.ref, "authorise", self.finance)
-        self.assertEqual(r.status_code, 403)
+        r = self.act(pr.ref, "authorise", self.signatory)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("payment voucher", r.data["detail"].lower())
 
-    def test_finance_authorises_below_threshold(self):
-        CompanyParameter.objects.create(key="signatory_threshold",
-                                        value=20000)
-        pr = self.make_pr()  # total 12000 < 20000
-        r = self.act(pr.ref, "authorise", self.finance)
-        self.assertEqual(r.status_code, 200, r.data)
+    def test_finance_cannot_approve_own_voucher(self):
+        pr = self.make_pr()
+        self.client.force_authenticate(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [pr.ref]},
+                              format="json").data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
+                         format="json")
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+            format="json")
+        self.assertEqual(r.status_code, 403)
 
     def test_withdrawal_reverses_commitment(self):
         pr = self.make_pr()
-        self.act(pr.ref, "authorise", self.signatory)
+        self.authorise(pr.ref)
         self.assertEqual(costing.document_net(pr), Decimal("12000"))
         r = self.act(pr.ref, "withdraw-authorisation", self.finance,
                      comment="wrong vendor account")
@@ -145,7 +167,7 @@ class PrAuthorisationTests(PrCostingBase):
 
     def test_payment_posts_paid_and_settles_payable(self):
         pr = self.make_pr()
-        self.act(pr.ref, "authorise", self.signatory)
+        self.authorise(pr.ref)
         lines = list(pr.current_revision.lines.all())
         credit_line = next(l for l in lines if (l.amount_credit or 0) > 0)
         self.client.force_authenticate(self.finance)

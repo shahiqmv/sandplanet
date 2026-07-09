@@ -20,6 +20,7 @@ class QuoteBase(TestCase):
         self.purchasing = make_user("hop1", User.Role.HO_PURCHASING)
         self.director = make_user("dir1", User.Role.DIRECTOR)
         self.signatory = make_user("sig1", User.Role.SIGNATORY)
+        self.finance = make_user("fin1", User.Role.FINANCE)
         self.cement = Item.objects.create(code="ITM-90001",
                                           description="Cement OPC 50kg bag",
                                           unit="bag")
@@ -148,11 +149,24 @@ class PoGenerationTests(QuoteBase):
         self.as_user(self.director)
         r = self.act(pr["ref"], "approve")
         assert r.status_code == 200, r.data
-        # Signatory authorises — POs + payables + COMMITTED post here now
-        self.as_user(self.signatory)
-        r = self.act(pr["ref"], "authorise")
-        assert r.status_code == 200, r.data
+        # Authorisation now runs on a payment voucher (M6d): Finance batches
+        # the approved PR, a signatory approves it → POs + payables + COMMITTED
+        self.authorise_via_voucher(pr["ref"])
         return mr, pr
+
+    def authorise_via_voucher(self, pr_ref):
+        self.as_user(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [pr_ref]}, format="json")
+        assert pv.status_code == 201, pv.data
+        ref = pv.data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{ref}/actions/submit", {},
+                         format="json")
+        self.as_user(self.signatory)
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{ref}/actions/approve", {},
+            format="json")
+        assert r.status_code == 200, r.data
 
     def test_approval_generates_po_for_credit_suppliers_only(self):
         """Cash purchases settle by slip — no PO (owner, 2026-07-08)."""

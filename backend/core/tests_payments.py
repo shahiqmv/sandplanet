@@ -5,8 +5,8 @@ from decimal import Decimal
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import (CompanyParameter, CostHead, CostPosting, Document,
-                     Site, SitePmHistory, User)
+from .models import (CostHead, CostPosting, Document, Site, SitePmHistory,
+                     User)
 from .tests import make_user
 
 
@@ -41,6 +41,22 @@ class PyrBase(TestCase):
         return self.client.post(f"/api/v1/documents/{ref}/actions/{action}",
                                 data, format="json")
 
+    def authorise(self, ref, approver=None):
+        """Authorise a Director-approved PYR the M6d way: Finance builds a
+        payment voucher, a signatory approves it. Returns the approve
+        response."""
+        self.client.force_authenticate(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [ref]}, format="json")
+        assert pv.status_code == 201, pv.data
+        pref = pv.data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/submit",
+                         {}, format="json")
+        self.client.force_authenticate(approver or self.signatory)
+        return self.client.post(
+            f"/api/v1/payment-vouchers/{pref}/actions/approve", {},
+            format="json")
+
     def committed(self, doc_id):
         return CostPosting.objects.filter(document_id=doc_id,
                                           state="COMMITTED",
@@ -62,10 +78,11 @@ class PyrHappyPathTests(PyrBase):
         doc = Document.objects.get(ref=ref)
         self.assertEqual(CostPosting.objects.filter(document=doc).count(), 0)
 
-        r = self.act(ref, "authorise", self.signatory, comment="ok")
+        r = self.authorise(ref)
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(r.data["status"], "AUTHORISED")
-        # COMMITTED posted at authorisation
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, "AUTHORISED")
+        # COMMITTED posted at authorisation (on the voucher)
         c = self.committed(doc.id)
         self.assertEqual(c.count(), 1)
         self.assertEqual(c.first().amount, Decimal("3000"))
@@ -87,7 +104,7 @@ class PyrHappyPathTests(PyrBase):
         self.act(ref, "submit", self.sa)
         self.act(ref, "approve", self.pm)
         self.act(ref, "approve", self.director)
-        self.act(ref, "authorise", self.signatory)
+        self.authorise(ref)
         self.client.force_authenticate(self.finance)
         with override_settings(MEDIA_ROOT="test-media"):
             slip = SimpleUploadedFile("trf.pdf", b"%PDF slip",
@@ -106,7 +123,7 @@ class PyrHappyPathTests(PyrBase):
         self.act(ref, "submit", self.sa)
         self.act(ref, "approve", self.pm)
         self.act(ref, "approve", self.director)
-        self.act(ref, "authorise", self.signatory)
+        self.authorise(ref)
         r = self.act(ref, "pay", self.finance, amount_paid=2500)
         self.assertEqual(r.status_code, 400)
         r = self.act(ref, "pay", self.finance, amount_paid=2500,
@@ -114,7 +131,10 @@ class PyrHappyPathTests(PyrBase):
         self.assertEqual(r.status_code, 200, r.data)
 
 
-class PyrSegregationTests(PyrBase):
+class PyrVoucherAuthTests(PyrBase):
+    """M6d — authorisation happens only on a payment voucher, and Finance
+    cannot approve its own voucher (no self-authorisation)."""
+
     def _to_director_approved(self, amount):
         ref = self.raise_pyr(amount=amount).data["ref"]
         self.act(ref, "submit", self.sa)
@@ -122,22 +142,31 @@ class PyrSegregationTests(PyrBase):
         self.act(ref, "approve", self.director)
         return ref
 
-    def test_finance_cannot_authorise_when_threshold_disabled(self):
+    def test_direct_authorise_action_is_retired(self):
         ref = self._to_director_approved(3000)
-        r = self.act(ref, "authorise", self.finance)
-        self.assertEqual(r.status_code, 403)
+        r = self.act(ref, "authorise", self.signatory)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("payment voucher", r.data["detail"].lower())
 
-    def test_finance_authorises_below_threshold_only(self):
-        CompanyParameter.objects.create(key="signatory_threshold", value=2000)
-        below = self._to_director_approved(1500)
-        self.assertEqual(self.act(below, "authorise",
-                                  self.finance).status_code, 200)
-        above = self._to_director_approved(5000)
-        self.assertEqual(self.act(above, "authorise",
-                                  self.finance).status_code, 403)
-        # a signatory still authorises the large one
-        self.assertEqual(self.act(above, "authorise",
-                                  self.signatory).status_code, 200)
+    def test_finance_cannot_approve_own_voucher(self):
+        ref = self._to_director_approved(3000)
+        self.client.force_authenticate(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [ref]}, format="json").data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
+                         format="json")
+        # Finance cannot approve — that is the signatory's job
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+            format="json")
+        self.assertEqual(r.status_code, 403)
+        # a signatory approves → the PYR commits and becomes payable
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
 
 
 class PyrReturnPathTests(PyrBase):
@@ -162,7 +191,7 @@ class PyrReturnPathTests(PyrBase):
         self.act(ref, "submit", self.sa)
         self.act(ref, "approve", self.pm)
         self.act(ref, "approve", self.director)
-        self.act(ref, "authorise", self.signatory)
+        self.authorise(ref)
         doc = Document.objects.get(ref=ref)
         self.assertEqual(costing.document_net(doc), Decimal("3000"))
         r = self.act(ref, "withdraw-authorisation", self.finance,
@@ -175,7 +204,7 @@ class PyrReturnPathTests(PyrBase):
         self.act(ref, "submit", self.sa)
         self.act(ref, "approve", self.pm)
         self.act(ref, "approve", self.director)
-        self.act(ref, "authorise", self.signatory)
+        self.authorise(ref)
         self.assertEqual(self.act(ref, "withdraw-authorisation",
                                   self.pm, note="x").status_code, 403)
 

@@ -273,8 +273,18 @@ class ChainTests(ProcBase):
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_a, "payment_ref": "TRF-1"})
         self.assertEqual(r.status_code, 400)
+        # authorisation runs on a payment voucher (M6d)
+        self.as_user(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [pr["ref"]]},
+                              format="json").data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
+                         format="json")
         self.as_user(self.signatory)
-        self.act(pr["ref"], "authorise")
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
         # site roles cannot record payments
         self.as_user(self.sa)
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",

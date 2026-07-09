@@ -535,13 +535,13 @@ def approvals_pending(request):
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
     if user.role in ("SIGNATORY", "ADMIN"):
-        add("To authorise — payment requests",
-            rows(scoped(base.filter(doc_type="PYR",
-                                    status="DIRECTOR_APPROVED")),
-                 "Signatory authorisation — the commitment point"))
-        add("To authorise — approved PRs",
-            rows(scoped(base.filter(doc_type="PR", status="APPROVED")),
-                 "Signatory authorisation commits the purchase"))
+        # Signatory approves whole Payment Vouchers (M6d), not each doc
+        add("To approve — payment vouchers",
+            [{"ref": pv.ref, "doc_type": "PV", "site_code": "—",
+              "project_code": None, "doc_date": pv.doc_date,
+              "status": pv.status,
+              "hint": "Approve the batch or query lines"}
+             for pv in base.filter(doc_type="PV", status="SUBMITTED")[:50]])
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To action — MRs sent to Head Office",
             rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
@@ -556,15 +556,18 @@ def approvals_pending(request):
                                                 "PAYMENT_PROCESSING"))),
                  "Record vendor payments / PO refs"))
     if user.role in ("FINANCE", "ADMIN"):
-        # Below the signatory threshold Finance may authorise too
-        threshold_note = "Authorise (if below threshold) or await signatory"
-        add("To authorise / pay — payment requests",
-            rows(scoped(base.filter(doc_type="PYR",
-                                    status="DIRECTOR_APPROVED")),
-                 threshold_note))
-        add("To authorise / pay — approved PRs",
-            rows(scoped(base.filter(doc_type="PR", status="APPROVED")),
-                 threshold_note))
+        # Finance builds vouchers from Director-approved requisitions and
+        # pays authorised ones (M6d)
+        from .vouchers import awaiting_voucher
+
+        awaiting = awaiting_voucher()
+        if awaiting:
+            add("Awaiting a payment voucher",
+                [{"ref": d.ref, "doc_type": d.doc_type,
+                  "site_code": d.site.code, "project_code": None,
+                  "doc_date": d.doc_date, "status": d.status,
+                  "hint": "Add to a payment voucher for the signatory"}
+                 for d in awaiting[:50]])
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
                  "Execute payment and record the reference"))
@@ -672,27 +675,11 @@ def _do_approve(request, doc, comment):
 
 
 def _do_authorise(request, doc, comment):
-    """Signatory authorisation of an approved PR (§6C.2 commitment point).
-    Posts COMMITTED per vendor line, generates credit POs, creates
-    payables. Finance may authorise below the signatory threshold (SoD)."""
-    from . import costing
-    from .procurement import authorise_pr, pr_grand_total
-
-    if doc.doc_type != "PR":
-        return Response({"detail": "Authorise applies to PR (PYR uses its "
-                                   "own flow)."}, status=400)
-    if doc.status != "APPROVED":
-        return Response({"detail": f"Cannot authorise from {doc.status}."},
-                        status=400)
-    if not costing.can_authorise(request.user, pr_grand_total(doc)):
-        return Response({"detail": "Above the signatory threshold, only a "
-                                   "signatory may authorise — Finance "
-                                   "verifies and disburses."}, status=403)
-    err = _apply(request, doc, "AUTHORISED", "AUTHORISE",
-                 roles={"SIGNATORY", "FINANCE"}, comment=comment)
-    if err is None:
-        authorise_pr(doc, request.user)
-    return err
+    """Retired at M6d — a PR is authorised on a Payment Voucher (a
+    signatory approves a batch, not each PR individually)."""
+    return Response({"detail": "PRs are authorised on a Payment Voucher "
+                               "(Finance builds it, a signatory approves "
+                               "it)."}, status=400)
 
 
 def _do_withdraw(request, doc, comment):

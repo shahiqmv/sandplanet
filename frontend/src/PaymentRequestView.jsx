@@ -88,8 +88,9 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
   const canSubmit = st === "DRAFT" && (isRaiser || isAdmin);
   const canPmApprove = st === "SUBMITTED" && (isPmHere || isAdmin);
   const canDirApprove = st === "PM_APPROVED" && (isDirector || isAdmin);
-  const canAuthorise = st === "DIRECTOR_APPROVED" &&
-    (isSignatory || isFinance || isAdmin);
+  // A Director-approved PYR is authorised on a Payment Voucher (M6d), not
+  // here — Finance batches it and a signatory approves the batch.
+  const awaitingVoucher = st === "DIRECTOR_APPROVED";
   const canPay = st === "AUTHORISED" && (isFinance || isAdmin);
   const canWithdraw = st === "AUTHORISED" && (isFinance || isAdmin);
   const canReturn = ["SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED"]
@@ -278,9 +279,10 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
                               disabled={busy}>PM approve</Btn>}
         {canDirApprove && <Btn variant="navy" onClick={() => act("approve")}
                                disabled={busy}>Director approve</Btn>}
-        {canAuthorise && (
-          <Btn variant="navy" onClick={() => act("authorise")} disabled={busy}>
-            Authorise{isFinance ? " (below threshold)" : ""}</Btn>
+        {awaitingVoucher && (
+          <span className="text-sm text-slate-500">
+            Awaiting a payment voucher — Finance batches this for a
+            signatory to approve.</span>
         )}
         {canPay && <Btn variant="navy" onClick={() => setPanel("pay")}
                         disabled={busy}>Record payment</Btn>}

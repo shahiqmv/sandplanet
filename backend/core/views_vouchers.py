@@ -1,0 +1,127 @@
+"""Payment Voucher API (M6d). Finance builds and submits vouchers; a
+signatory approves or queries them."""
+from rest_framework.decorators import api_view
+from rest_framework.response import Response
+
+from . import vouchers
+from .models import Document, PaymentVoucherLine
+
+
+def _line_info(line):
+    src = line.source_document
+    info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
+            "site_code": src.site.code, "amount": line.amount,
+            "status": line.status, "query_note": line.query_note}
+    if src.doc_type == "PYR" and hasattr(src, "payment_request"):
+        pr = src.payment_request
+        info.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
+                     "purpose": pr.purpose, "payment_type": pr.payment_type,
+                     "has_supporting_doc": pr.has_supporting_doc})
+    if src.doc_type == "PR":
+        vendors = [ln.vendor or ln.free_text_desc
+                   for ln in src.current_revision.lines.all()]
+        info.update({"payee": ", ".join(v for v in vendors if v),
+                     "cost_head": "Materials", "purpose": "Procurement"})
+    return info
+
+
+def _voucher_info(pv):
+    lines = [_line_info(ln) for ln in pv.voucher_lines.select_related(
+        "source_document__site").order_by("id")]
+    return {
+        "ref": pv.ref, "status": pv.status, "doc_date": pv.doc_date,
+        "prepared_by": pv.created_by.full_name if pv.created_by else None,
+        "total": sum(ln["amount"] for ln in lines),
+        "lines": lines,
+        "approvals": [{"action": a.action, "by": a.actor.full_name,
+                       "role": a.actor_role, "at": a.acted_at,
+                       "comment": a.comment}
+                      for a in pv.approvals.select_related("actor")
+                      .order_by("acted_at")],
+    }
+
+
+@api_view(["GET"])
+def awaiting_voucher(request):
+    """Director-approved PR/PYR awaiting authorisation on a voucher."""
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance builds vouchers."}, status=403)
+    out = []
+    for doc in vouchers.awaiting_voucher():
+        row = {"ref": doc.ref, "doc_type": doc.doc_type,
+               "site_code": doc.site.code, "doc_date": doc.doc_date,
+               "amount": vouchers._source_amount(doc)}
+        if doc.doc_type == "PYR" and hasattr(doc, "payment_request"):
+            pr = doc.payment_request
+            row.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
+                        "purpose": pr.purpose,
+                        "has_supporting_doc": pr.has_supporting_doc})
+        else:
+            row.update({"payee": "(procurement)", "cost_head": "Materials"})
+        out.append(row)
+    return Response(out)
+
+
+@api_view(["GET", "POST"])
+def payment_vouchers(request):
+    if request.method == "POST":
+        if request.user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance builds vouchers."},
+                            status=403)
+        pv, err = vouchers.create_voucher(
+            request.data.get("source_refs") or [], request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(_voucher_info(pv), status=201)
+    if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+        return Response({"detail": "Finance / signatory only."}, status=403)
+    qs = Document.objects.filter(doc_type="PV").order_by("-id")
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+    return Response([_voucher_info(pv) for pv in qs[:100]])
+
+
+@api_view(["GET"])
+def payment_voucher_detail(request, ref):
+    try:
+        pv = Document.objects.get(ref=ref, doc_type="PV")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+        return Response({"detail": "Finance / signatory only."}, status=403)
+    return Response(_voucher_info(pv))
+
+
+@api_view(["POST"])
+def payment_voucher_action(request, ref, action):
+    try:
+        pv = Document.objects.get(ref=ref, doc_type="PV")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    user = request.user
+    if action == "submit":
+        if user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance submits vouchers."},
+                            status=403)
+        err = vouchers.submit_voucher(pv, user)
+    elif action == "approve":
+        if user.role not in ("SIGNATORY", "ADMIN"):
+            return Response({"detail": "Only a signatory approves a "
+                                       "voucher — Finance prepares it."},
+                            status=403)
+        err = vouchers.approve_voucher(
+            pv, user, queried_ids=request.data.get("queried_ids") or [],
+            note=request.data.get("note", ""))
+    elif action == "cancel":
+        if user.role not in ("FINANCE", "ADMIN") or pv.status != "DRAFT":
+            return Response({"detail": "Only Finance can cancel a draft "
+                                       "voucher."}, status=400)
+        pv.status = "CANCELLED"
+        pv.save(update_fields=["status", "updated_at"])
+        err = None
+    else:
+        return Response({"detail": f"Unknown action '{action}'."}, status=400)
+    if err:
+        return Response({"detail": err}, status=400)
+    pv.refresh_from_db()
+    return Response(_voucher_info(pv))
