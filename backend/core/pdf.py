@@ -81,8 +81,9 @@ def _dpr_context(document, revision):
     for cat in sorted(categories.values(), key=lambda c: (c.grp, c.sort_order)):
         count = int(counts.get(str(cat.id), 0) or 0)
         total += count
-        row = (cat.name, count if count else "-")
-        (staff if cat.grp == "STAFF" else labour).append(row)
+        if count <= 0:
+            continue  # only the categories actually on site today (owner)
+        (staff if cat.grp == "STAFF" else labour).append((cat.name, count))
     # Staff | Trades/Labour side by side, as on the owner's printed form
     depth = max(len(staff), len(labour), 1)
     staff += [("", "")] * (depth - len(staff))
@@ -120,23 +121,16 @@ def _dpr_context(document, revision):
         label = f"{key} — {titles[key]}" if key in titles else \
             (key or "General Works")
         work_groups.append({"label": label, "rows": grouped[key]})
-    filler = _pad([], max(0, 8 - number), work_keys)
-    for r in filler:
-        r["no"] = ""
-    if filler:
-        if not work_groups:
-            work_groups.append({"label": "", "rows": []})
-        work_groups[-1]["rows"] += filler
+    # No blank filler rows — the report shows only the day's actual work
+    # (owner: fixed-grid padding looked empty for a digital report).
 
     machinery_keys = ("item", "nos", "remarks")
-    machinery_rows = _pad(
-        [norm(r, machinery_keys) for r in payload.get("machinery", [])],
-        4, machinery_keys)
+    machinery_rows = [norm(r, machinery_keys)
+                      for r in payload.get("machinery", [])]
     material_keys = ("material", "unit", "opening", "received", "consumed",
                      "balance", "remarks")
-    material_rows = _pad(
-        [norm(r, material_keys) for r in payload.get("materials", [])],
-        5, material_keys)
+    material_rows = [norm(r, material_keys)
+                     for r in payload.get("materials", [])]
 
     photos = []
     for p in document.attachments.filter(kind="PHOTO").order_by("id"):

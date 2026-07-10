@@ -53,6 +53,8 @@
       <td class="ctr">{% if row.progress_todate != "" %}{{ row.progress_todate }}%{% endif %}</td>
       <td>{{ row.remarks }}</td></tr>
   {% endfor %}
+  {% empty %}
+  <tr><td colspan="6" class="ctr" style="color:#8a97a0">No activities recorded.</td></tr>
   {% endfor %}
 </table>
 
@@ -74,6 +76,8 @@
              <th style="width:45%">Remarks (working / idle / breakdown)</th></tr></thead>
   {% for row in machinery_rows %}
   <tr><td>{{ row.item }}</td><td class="ctr">{{ row.nos }}</td><td>{{ row.remarks }}</td></tr>
+  {% empty %}
+  <tr><td colspan="3" class="ctr" style="color:#8a97a0">None in use / reported.</td></tr>
   {% endfor %}
 </table>
 
@@ -88,6 +92,8 @@
       <td class="ctr">{{ row.opening }}</td><td class="ctr">{{ row.received }}</td>
       <td class="ctr">{{ row.consumed }}</td><td class="ctr">{{ row.balance }}</td>
       <td>{{ row.remarks }}</td></tr>
+  {% empty %}
+  <tr><td colspan="7" class="ctr" style="color:#8a97a0">No key materials reported.</td></tr>
   {% endfor %}
 </table>
 <p class="note">Balance auto-calculates: Opening + Received − Consumed. Report only key / bulk materials daily; full stock lives in the site stock book.</p>
