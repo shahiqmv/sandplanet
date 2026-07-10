@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, td, th }
   from "./ui.jsx";
@@ -6,7 +6,23 @@ import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, td, th }
 export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }) {
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
+  const [categories, setCategories] = useState([]);
   const p = doc.payload || {};
+
+  useEffect(() => {
+    api("/manpower-categories").then((all) =>
+      setCategories(all.filter((c) => c.list_type === "DPR")))
+      .catch(() => {});
+  }, []);
+
+  // Manpower resolved to category names; zero counts hidden; grouped/ordered
+  const catById = Object.fromEntries(categories.map((c) => [String(c.id), c]));
+  const manpowerRows = Object.entries(p.manpower || {})
+    .map(([id, n]) => ({ cat: catById[id], count: +n || 0 }))
+    .filter((r) => r.count > 0)
+    .sort((a, b) => (a.cat?.grp || "").localeCompare(b.cat?.grp || "")
+                    || (a.cat?.sort_order || 0) - (b.cat?.sort_order || 0));
+  const manpowerTotal = manpowerRows.reduce((s, r) => s + r.count, 0);
 
   async function act(action, body) {
     setError(null);
@@ -111,10 +127,72 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
         </>
       )}
 
+      {manpowerRows.length > 0 && (
+        <>
+          <SectionTitle>2. Manpower — total {manpowerTotal}</SectionTitle>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr><th style={th}>Category</th>
+              <th style={{ ...th, textAlign: "right" }}>Count</th></tr></thead>
+            <tbody>
+              {manpowerRows.map((r, i) => (
+                <tr key={i}>
+                  <td style={td}>{r.cat?.name || "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {p.machinery?.length > 0 && (
+        <>
+          <SectionTitle>3. Machinery &amp; Equipment in Use</SectionTitle>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr><th style={th}>Item</th><th style={th}>Nos</th>
+              <th style={th}>Remarks</th></tr></thead>
+            <tbody>
+              {p.machinery.map((m, i) => (
+                <tr key={i}><td style={td}>{m.item}</td>
+                  <td style={td}>{m.nos}</td><td style={td}>{m.remarks}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
+      {p.materials?.length > 0 && (
+        <>
+          <SectionTitle>4. Key Materials at Site</SectionTitle>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr><th style={th}>Material</th><th style={th}>Unit</th>
+              <th style={th}>Opening</th><th style={th}>Received</th>
+              <th style={th}>Consumed</th><th style={th}>Balance</th>
+              <th style={th}>Remarks</th></tr></thead>
+            <tbody>
+              {p.materials.map((m, i) => (
+                <tr key={i}><td style={td}>{m.material}</td>
+                  <td style={td}>{m.unit}</td><td style={td}>{m.opening}</td>
+                  <td style={td}>{m.received}</td><td style={td}>{m.consumed}</td>
+                  <td style={td}>{m.balance}</td><td style={td}>{m.remarks}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+
       {p.matters_affecting && (
         <>
           <SectionTitle>5. Matters Affecting Progress</SectionTitle>
           <p style={{ fontSize: 13 }}>{p.matters_affecting}</p>
+        </>
+      )}
+
+      {p.visitors_instructions && (
+        <>
+          <SectionTitle>6. Visitors / Special Events / Instructions</SectionTitle>
+          <p style={{ fontSize: 13 }}>{p.visitors_instructions}</p>
         </>
       )}
 
