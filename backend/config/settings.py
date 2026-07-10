@@ -124,6 +124,14 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 # Files: Spaces/MinIO when configured (design §1); local-disk fallback for
 # dev without Docker only (DECISIONS.md D3). Production must set S3_* env.
 if os.environ.get("S3_ENDPOINT_URL"):
+    import re as _re
+
+    # SigV4 needs a region; DigitalOcean Spaces derives it from the endpoint
+    # subdomain (e.g. https://sgp1.digitaloceanspaces.com -> "sgp1").
+    _s3_region = os.environ.get("S3_REGION")
+    if not _s3_region:
+        _m = _re.match(r"https?://([^.]+)\.", os.environ["S3_ENDPOINT_URL"])
+        _s3_region = _m.group(1) if _m else "us-east-1"
     STORAGES = {
         "default": {
             "BACKEND": "storages.backends.s3.S3Storage",
@@ -132,6 +140,7 @@ if os.environ.get("S3_ENDPOINT_URL"):
                 "access_key": os.environ.get("S3_ACCESS_KEY"),
                 "secret_key": os.environ.get("S3_SECRET_KEY"),
                 "bucket_name": os.environ.get("S3_BUCKET", "sandplanet-local"),
+                "region_name": _s3_region,
             },
         },
         # Compression only, no manifest re-hashing — Vite already

@@ -64,7 +64,25 @@
       "Bash(GIT_TERMINAL_PROMPT=0 timeout 15 git ls-remote https://github.com/sandplanetmv/sandplanet.git)",
       "Bash(nslookup sandplanet.159.223.35.180.sslip.io)",
       "Bash(git add *)",
-      "Bash(git commit -m 'M8: one-command update.sh + wire RUN_SEED through to the web container *)"
+      "Bash(git commit -m 'M8: one-command update.sh + wire RUN_SEED through to the web container *)",
+      "Bash(find /c/Users/96079 -iname \"*Planet_User_Guide*\" 2>/dev/null | head; echo \"---broader---\"; find /c/Users/96079 -iname \"*user_guide*.pdf\" -o -iname \"*user guide*.pdf\" 2>/dev/null | head -20)",
+      "Bash(python -c ' *)",
+      "Bash('/c/Users/96079/OneDrive/SandPlanet Projects/siteapp/backend/.venv/Scripts/python.exe' - /c/Users/96079/AppData/Roaming/Claude/local-agent-mode-sessions/d06fb97e-a004-4b80-bbcf-916a6cffa1ac/3fa01689-74fa-4f72-864d-4b3a761af86e/agent/local_ditto_3fa01689-74fa-4f72-864d-4b3a761af86e/uploads/1cfb0fb3-Planet_User_Guide.pdf)",
+      "Bash('/c/Users/96079/OneDrive/SandPlanet Projects/siteapp/backend/.venv/Scripts/python.exe' - /c/Users/96079/AppData/Roaming/Claude/local-agent-mode-sessions/d06fb97e-a004-4b80-bbcf-916a6cffa1ac/3fa01689-74fa-4f72-864d-4b3a761af86e/agent/local_ditto_3fa01689-74fa-4f72-864d-4b3a761af86e/uploads/1cfb0fb3-Planet_User_Guide.pdf /c/Users/96079/AppData/Local/Temp/claude/C--Users-96079-OneDrive-SandPlanet-Projects-siteapp/37985e8b-e6dc-40ea-b2ca-a6fa28d811b7/scratchpad/guide.txt)",
+      "Bash(grep -nA18 \"def auth_login\" core/views.py)",
+      "Bash(grep -nA25 \"def auth_me\" core/views.py)",
+      "Bash(grep -nA14 \"class Role\" backend/core/models.py)",
+      "Bash(ls pdf_templates/pdf/)",
+      "Bash(grep -c \"def \" core/pdf.py)",
+      "Bash(grep -nA6 \"project\" core/views_documents.py)",
+      "Bash(grep -nA8 \"ot-approve\\\\|/lock\\\\\"\\\\|payroll-export\" core/tests_hr.py)",
+      "Bash(grep -nA12 \"def company_logo\" core/views.py)",
+      "Bash(bash regen_demo.sh)",
+      "Bash(node capture.mjs --only=eng)",
+      "Bash(rm -f screenshots/*.png)",
+      "Bash(node capture.mjs)",
+      "Bash(node capture.mjs --only=purchasing)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://127.0.0.1:8000/api/v1/health)"
     ]
   }
 }

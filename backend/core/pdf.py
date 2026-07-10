@@ -35,13 +35,14 @@ def logo_src():
     """Company logo for all PDFs: the file uploaded on the Company page
     when present, else the bundled image (extracted from the owner's
     printed stationery)."""
-    from pathlib import Path
+    from django.core.files.storage import default_storage
 
-    for name in ("logo.png", "logo.jpg"):
-        # Path(): tests override MEDIA_ROOT with a plain string
-        uploaded = Path(settings.MEDIA_ROOT) / "company" / name
-        if uploaded.exists():
-            return f"file:///{uploaded}"
+    for name in ("company/logo.png", "company/logo.jpg"):
+        if default_storage.exists(name):
+            try:
+                return f"file:///{default_storage.path(name)}"  # local disk
+            except NotImplementedError:
+                return default_storage.url(name)                # Spaces URL
     asset = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-logo.png"
     return f"file:///{asset}"
 

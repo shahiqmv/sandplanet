@@ -1,0 +1,14 @@
+{
+  "name": "planet-user-guide",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Screenshot capture + assembly for the Planet User Guide (PLANET-UG-01).",
+  "scripts": {
+    "capture": "node capture.mjs",
+    "shots": "node capture.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

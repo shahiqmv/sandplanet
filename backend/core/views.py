@@ -318,14 +318,14 @@ def pm_overview(request):
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def company_logo(request):
-    """Company logo image used on every PDF letterhead (owner: 'logo we
-    should add image file'). Stored at media/company/logo.png|jpg; PDFs
-    fall back to the bundled stationery logo when nothing is uploaded."""
-    from pathlib import Path
+    """Company logo image used on every PDF letterhead. Stored via the
+    configured storage — Spaces in production, local disk in dev — at
+    company/logo.png|jpg; PDFs fall back to the bundled stationery logo when
+    nothing is uploaded."""
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
 
-    from django.conf import settings
-
-    folder = Path(settings.MEDIA_ROOT) / "company"
+    names = ("company/logo.png", "company/logo.jpg")
     if request.method == "POST":
         if request.user.role != User.Role.ADMIN:
             return Response({"detail": "Admin only."}, status=403)
@@ -335,18 +335,15 @@ def company_logo(request):
         ext = {"image/png": "png", "image/jpeg": "jpg"}.get(file.content_type)
         if not ext:
             return Response({"detail": "PNG or JPEG only."}, status=400)
-        folder.mkdir(parents=True, exist_ok=True)
-        for old in ("logo.png", "logo.jpg"):  # one logo at a time
-            (folder / old).unlink(missing_ok=True)
-        with open(folder / f"logo.{ext}", "wb") as out:
-            for chunk in file.chunks():
-                out.write(chunk)
+        for old in names:  # one logo at a time
+            if default_storage.exists(old):
+                default_storage.delete(old)
+        default_storage.save(f"company/logo.{ext}", ContentFile(file.read()))
         audit("parameter", 0, "COMPANY_LOGO_UPDATED", actor=request.user,
               detail={"file_name": file.name, "size": file.size})
-    for name in ("logo.png", "logo.jpg"):
-        if (folder / name).exists():
-            return Response({"url": f"{settings.MEDIA_URL}company/{name}",
-                             "uploaded": True})
+    for name in names:
+        if default_storage.exists(name):
+            return Response({"url": default_storage.url(name), "uploaded": True})
     return Response({"url": None, "uploaded": False})
 
 
