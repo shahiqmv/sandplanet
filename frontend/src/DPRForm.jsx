@@ -530,18 +530,37 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         )}
       </div>
       <RowTable
-        headers={["Material", "Unit", "Opening", "Received", "Consumed", "Remarks"]}
+        headers={["Material", "Unit", "Opening", "Received", "Consumed",
+                  "Balance", "Remarks"]}
         rows={materials} setRows={setMaterials} empty={emptyMaterial}
-        render={(row, set) => (
+        render={(row, set) => {
+          const bal = (parseFloat(row.opening) || 0)
+                    + (parseFloat(row.received) || 0)
+                    - (parseFloat(row.consumed) || 0);
+          const over = bal < 0;  // consumed more than on-hand + received
+          return (
           <>
             {cell(row.material, (v) => set({ material: v }))}
             {cell(row.unit, (v) => set({ unit: v }), 60)}
             {cell(row.opening, (v) => set({ opening: v }), 70, "number")}
             {cell(row.received, (v) => set({ received: v }), 70, "number")}
-            {cell(row.consumed, (v) => set({ consumed: v }), 70, "number")}
+            <td style={{ padding: 3 }}>
+              <input type="number" value={row.consumed}
+                     onChange={(e) => set({ consumed: e.target.value })}
+                     style={{ ...inputStyle, width: 70,
+                              border: over ? "1.5px solid #c0392b"
+                                           : inputStyle.border }} />
+            </td>
+            <td style={{ padding: 3, textAlign: "right", fontWeight: 600,
+                         color: over ? "#c0392b" : "var(--sp-navy)",
+                         whiteSpace: "nowrap" }}
+                title={over ? "Consumed exceeds stock on hand" : ""}>
+              {row.material ? bal : ""}{over ? " ⚠" : ""}
+            </td>
             {cell(row.remarks, (v) => set({ remarks: v }), 120)}
           </>
-        )}
+          );
+        }}
       />
 
       <SectionTitle>5. Matters Affecting Progress</SectionTitle>

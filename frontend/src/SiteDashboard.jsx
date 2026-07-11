@@ -17,6 +17,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
   const [pyrs, setPyrs] = useState([]);
+  const [stock, setStock] = useState(null);
 
   const projectParam = project ? `&project=${project.id}` : "";
 
@@ -35,6 +36,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
     ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
+    api(`/stock/${site.id}`).then(setStock).catch(() => setStock(null));
   }, [site.id, projectParam]);
 
   useEffect(load, [load, refresh]);
@@ -349,6 +351,54 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           </div>
         </section>
       )}
+
+      {stock?.balances?.length > 0 && (() => {
+        const low = stock.balances.filter((b) => Number(b.on_hand) <= 0);
+        return (
+          <section style={card}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                          flexWrap: "wrap" }}>
+              <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
+                📦 Site stock</h2>
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                {stock.balances.length} item
+                {stock.balances.length === 1 ? "" : "s"} on hand</span>
+              <button onClick={onStock}
+                      style={{ ...ghostButton, marginLeft: "auto",
+                               padding: "2px 12px", fontSize: 12 }}>
+                View stock →</button>
+            </div>
+            {low.length > 0 ? (
+              <div style={{ marginTop: 8 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 700,
+                              color: "var(--red-fg)", marginBottom: 4 }}>
+                  ⚠ {low.length} item{low.length === 1 ? "" : "s"} at or below
+                  zero — reconcile or replenish
+                </div>
+                {low.slice(0, 6).map((b) => (
+                  <div key={b.item_id}
+                       style={{ fontSize: 12.5, padding: "2px 0",
+                                borderTop: "1px solid var(--row-line)",
+                                display: "flex", gap: 8 }}>
+                    <span style={{ flex: 1 }}>{b.description}</span>
+                    <span style={{ fontFamily: "var(--font-mono)",
+                                   color: Number(b.on_hand) < 0
+                                     ? "var(--red-fg)" : "var(--muted)" }}>
+                      {b.on_hand} {b.unit}</span>
+                  </div>
+                ))}
+                {low.length > 6 && (
+                  <div style={{ fontSize: 11.5, color: "var(--faint)" }}>
+                    … and {low.length - 6} more</div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "var(--faint)", marginTop: 6 }}>
+                All balances positive.</div>
+            )}
+          </section>
+        );
+      })()}
 
       {mrs.length > 0 && (
         <section style={card}>

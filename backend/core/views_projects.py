@@ -279,13 +279,20 @@ def project_programme(request, pk):
 
     acts = list(project.activities.all())
     data = ActivitySerializer(acts, many=True).data
-    # Trade/discipline = the nearest top-level (indent 0) heading above each
-    # row in the outline — the "MEP / Civil / Finishes" grouping the owner
-    # wants carried onto the DPR. Derived, so no schema change needed.
+    # Trade/discipline = the top-level WORK SECTION each row sits under — the
+    # "MEP / Civil / Finishes" grouping the owner wants on the DPR. Derived
+    # from the outline (no schema change) and adaptive to how the programme is
+    # structured: a single indent-0 row is treated as the overall project
+    # title, so the trade level is indent 1; when several sections sit at
+    # indent 0, those are the trades. Editable on the DPR either way.
+    root_count = sum(1 for a in acts if a.indent == 0)
+    trade_level = 1 if root_count == 1 else 0
     current_trade = ""
     for act, row in zip(acts, data):
-        if act.indent == 0:
+        if act.indent == trade_level:
             current_trade = act.name
+        elif act.indent < trade_level:
+            current_trade = ""  # back above the trade level (the title row)
         row["trade"] = current_trade
     return Response(data)
 
