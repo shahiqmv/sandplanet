@@ -10,7 +10,7 @@ import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
-import PayrollPage from "./PayrollPage.jsx";
+import PayrollRunPage from "./PayrollRunPage.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
@@ -674,7 +674,7 @@ export default function App() {
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
             hoPage === "payroll" && (
-            <PayrollPage sites={sites} />
+            <PayrollRunPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"].includes(me.role) &&

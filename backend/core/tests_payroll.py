@@ -135,3 +135,76 @@ class SalaryAdvanceTests(TestCase):
                              Decimal("2000.00"))
         self.assertEqual(payroll.deductions_for(self.e2, 2026, 9)["loan"],
                          Decimal("0"))
+
+
+class PayrollRunTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        from .models import CostPosting, EmployeeSiteAllocation
+        self.CostPosting = CostPosting
+        self.hr = make_user("hr1", User.Role.HO_HR)
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        OvertimeRate.objects.create(category=self.mason, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-0001", full_name="Kumar", job_category=self.mason,
+            basic_pay=Decimal("6200"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_generate_prefills_line(self):
+        r = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "currency": "MVR",
+            "year": 2026, "month": 5, "working_days": 31}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        line = r.data["lines"][0]
+        self.assertEqual(float(line["basic_pay"]), 6200.0)
+        self.assertEqual(float(line["ot_rate"]), 25.0)
+        self.assertEqual(float(line["days_worked"]), 31.0)  # no absences
+        self.assertEqual(float(line["earned_basic"]), 6200.0)
+
+    def test_edit_and_compute(self):
+        run = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        line_id = run["lines"][0]["id"]
+        r = self.client.patch(f"/api/v1/payroll/lines/{line_id}", {
+            "days_worked": 19, "ot_hours": 49, "allowance": 2000,
+            "penalty": 500, "fridays_worked": 2}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d = r.data
+        self.assertEqual(float(d["earned_basic"]), 3800.0)   # 6200*19/31
+        self.assertEqual(float(d["friday_pay"]), 400.0)      # 2 * 200 daily
+        self.assertEqual(float(d["ot_pay"]), 1225.0)         # 49 * 25
+        self.assertEqual(float(d["gross"]), 7425.0)          # 3800+400+1225+2000
+        self.assertEqual(float(d["net"]), 6925.0)            # gross - 500
+
+    def test_lock_posts_labour_cost(self):
+        run = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        r = self.client.post(f"/api/v1/payroll/runs/{run['id']}", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "LOCKED")
+        posted = self.CostPosting.objects.filter(
+            site=self.site, source="STAFF", staff_year=2026, staff_month=5)
+        self.assertTrue(posted.exists())
+        # gross for a full month = full basic 6200
+        self.assertEqual(float(sum(p.amount for p in posted)), 6200.0)
+
+    def test_locked_line_is_immutable(self):
+        run = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        line_id = run["lines"][0]["id"]
+        self.client.post(f"/api/v1/payroll/runs/{run['id']}", {}, format="json")
+        r = self.client.patch(f"/api/v1/payroll/lines/{line_id}",
+                             {"allowance": 100}, format="json")
+        self.assertEqual(r.status_code, 400)

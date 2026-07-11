@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 
 from . import views, views_cost as cost, views_documents as docs, \
     views_hr as hr, views_petty_cash as petty, views_projects as projects, \
-    views_quotes as quotes, views_stock as stock, views_vouchers as vouchers
+    views_payroll as payroll_api, views_quotes as quotes, \
+    views_stock as stock, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -126,5 +127,10 @@ urlpatterns = [
     path("payroll-export/<int:year>/<int:month>", hr.payroll_export,
          name="payroll-export"),
     path("overtime-rates", hr.overtime_rates, name="overtime-rates"),
+    path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
+    path("payroll/runs/<int:pk>", payroll_api.payroll_run_detail,
+         name="payroll-run-detail"),
+    path("payroll/lines/<int:pk>", payroll_api.payroll_line,
+         name="payroll-line"),
     path("", include(router.urls)),
 ]

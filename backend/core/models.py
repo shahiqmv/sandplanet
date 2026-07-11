@@ -776,6 +776,74 @@ class SalaryAdvance(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class PayrollRun(models.Model):
+    """A monthly salary run. MVR runs are per site; the USD run is a single
+    combined run across all sites (site=NULL) — middle management and above."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        LOCKED = "LOCKED", "Locked"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="payroll_runs")
+    currency = models.CharField(max_length=3, default="MVR")
+    year = models.IntegerField()
+    month = models.IntegerField()
+    working_days = models.IntegerField()  # divisor for pro-rating
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.DRAFT)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    locked_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    locked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["site", "currency", "year",
+                                            "month"], name="uniq_payroll_run")
+        ]
+        ordering = ["-year", "-month"]
+
+
+class PayrollLine(models.Model):
+    """One worker on a run. Inputs are stored; money is derived (see
+    core.payroll) so the run screen and payslip agree. basic_pay and ot_rate
+    are snapshotted so a later profile change doesn't rewrite history."""
+
+    run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE,
+                            related_name="lines")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="payroll_lines")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")  # worker's site
+    basic_pay = models.DecimalField(max_digits=12, decimal_places=2,
+                                    default=0)
+    ot_rate = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    days_worked = models.DecimalField(max_digits=5, decimal_places=1,
+                                      default=0)
+    fridays_worked = models.IntegerField(default=0)
+    ot_hours = models.DecimalField(max_digits=7, decimal_places=1, default=0)
+    allowance = models.DecimalField(max_digits=12, decimal_places=2,
+                                    default=0)  # adhoc allowance / air ticket
+    penalty = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    advance = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    loan = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    amount_to_site = models.DecimalField(max_digits=12, decimal_places=2,
+                                         null=True, blank=True)
+    amount_to_office = models.DecimalField(max_digits=12, decimal_places=2,
+                                           null=True, blank=True)
+    remarks = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["employee__emp_no"]
+        constraints = [
+            models.UniqueConstraint(fields=["run", "employee"],
+                                    name="uniq_payroll_line")
+        ]
+
+
 class TimesheetMonth(models.Model):
     """Month close: PM sign-off locks the site's timesheet; corrections
     need an audited HR reopen (spec §6A.3)."""
