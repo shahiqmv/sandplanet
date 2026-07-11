@@ -34,12 +34,29 @@ One row per employee.
 | work_permit_expiry | | `YYYY-MM-DD` |
 | emergency_contact | | |
 
+## tools_template.csv
+One row per **physical tool** already on a site (existing register / mobilised
+tools). Tools received later via GRN are added automatically.
+
+| column | required | notes |
+|--------|----------|-------|
+| site_code | ✅ | the site the tool is at, e.g. `CNR`, `SJR`, `MLE` |
+| name | ✅ | tool name, e.g. `Battery drill` — keep spelling consistent so the DPR summary groups them |
+| category | | e.g. `Tools & Equipment`, `Machinery` |
+| serial_no | | used to avoid duplicate imports |
+| model | | |
+| brand | | |
+| state | | `IN_USE` (default) / `FAULTY` / `UNDER_REPAIR` / `RETIRED` |
+| notes | | |
+
 ## Loading (we'll run these together)
 ```
 python manage.py import_items     items.csv     --dry-run   # preview
 python manage.py import_items     items.csv                 # commit
 python manage.py import_employees staff.csv     --dry-run
 python manage.py import_employees staff.csv
+python manage.py import_tools     tools.csv     --dry-run
+python manage.py import_tools     tools.csv
 ```
 Re-running the same file is safe — existing items (by description) and
 employees (by passport no.) are skipped, not duplicated.

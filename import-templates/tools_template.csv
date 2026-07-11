@@ -1,0 +1,6 @@
+site_code,name,category,serial_no,model,brand,state,notes
+CNR,Battery drill,Tools & Equipment,BD-0012,DHP482,Makita,IN_USE,
+CNR,Battery drill,Tools & Equipment,BD-0013,DHP482,Makita,IN_USE,
+CNR,Circular saw,Tools & Equipment,CS-0007,HS7601,Makita,IN_USE,
+CNR,Angle grinder,Tools & Equipment,AG-0021,GA9020,Makita,FAULTY,switch faulty
+SJR,Concrete mixer,Machinery,,,,IN_USE,

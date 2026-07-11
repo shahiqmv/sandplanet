@@ -68,7 +68,7 @@ class Command(BaseCommand):
         created = skipped = 0
         with fh:
             reader = csv.DictReader(fh)
-            reader.fieldnames = [(f or "").strip().lower()
+            reader.fieldnames = [(f or "").split("(")[0].strip().lower()
                                  for f in (reader.fieldnames or [])]
             if "full_name" not in reader.fieldnames:
                 raise CommandError("CSV needs a 'full_name' column.")
