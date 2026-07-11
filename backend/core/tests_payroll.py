@@ -300,3 +300,57 @@ class GenerateMonthTests(TestCase):
             format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "LOCKED")
+
+
+class FridayPrefillTests(TestCase):
+    def setUp(self):
+        from datetime import date, timedelta
+
+        from .models import (Attendance, EmployeeSiteAllocation, SitePmHistory)
+        self.hr = make_user("hr1", User.Role.HO_HR)
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.emp = Employee.objects.create(emp_no="EMP-0001", full_name="A",
+                                           basic_pay=6000, currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        # May 2026: 1st is Friday; mark it PRESENT (a worked rest day)
+        self.friday = date(2026, 5, 1)
+        assert self.friday.isoweekday() == 5
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=self.friday, remark="PRESENT")
+        # a normal absent day (Sat 2 May)
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 2), remark="ABSENT")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_friday_present_prefills_fridays_worked(self):
+        from core import payroll
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(line.fridays_worked, 1)     # the worked Friday
+        self.assertEqual(float(line.days_worked), 30.0)  # 31 - 1 absent
+
+    def test_register_shows_friday_code_and_totals(self):
+        r = self.client.get(
+            f"/api/v1/attendance/register?site={self.site.id}&year=2026&month=5")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = r.data["rows"][0]
+        self.assertEqual(row["days"]["1"], "F")   # Friday worked
+        self.assertEqual(row["days"]["2"], "A")   # absent
+        self.assertEqual(row["fridays"], 1)
+        self.assertEqual(row["absent"], 1)
+        self.assertEqual(r.data["totals"]["fridays"], 1)
+
+    def test_rest_day_off_clears_record(self):
+        # marking OFF on the Friday removes the record
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": "2026-05-01",
+            "rows": [{"employee_id": self.emp.id, "remark": "OFF"}]},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        from .models import Attendance
+        self.assertFalse(Attendance.objects.filter(
+            employee=self.emp, day=self.friday).exists())

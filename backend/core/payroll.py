@@ -41,16 +41,31 @@ def month_days(year, month):
 
 
 def _attendance_prefill(employee, site, year, month, working_days):
-    """Days worked (working_days − absences) and approved OT hours for a worker
-    in a month, from attendance. Falls back to full attendance when none."""
+    """Days worked (working_days − absences), approved OT hours, and Fridays
+    (rest days) worked for a worker in a month, from attendance. A rest day is
+    any weekday not in the site's working week; being PRESENT on one is the
+    7th-day work paid as an extra day."""
+    from .models import Site
+
     qs = Attendance.objects.filter(employee=employee, day__year=year,
                                    day__month=month)
     if site is not None:
         qs = qs.filter(site=site)
-    absents = sum(1 for a in qs if a.remark in ABSENT_MARKS)
-    ot = sum((a.ot_approved or 0 for a in qs), Decimal("0"))
+    site_obj = site
+    if site_obj is None:  # combined run — use the worker's current site
+        sid = employee.current_site_id()
+        site_obj = Site.objects.filter(pk=sid).first() if sid else None
+    work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
+    absents = ot = fridays = 0
+    ot = Decimal("0")
+    for a in qs:
+        if a.remark in ABSENT_MARKS:
+            absents += 1
+        ot += a.ot_approved or 0
+        if a.remark == "PRESENT" and a.day.isoweekday() not in work_week:
+            fridays += 1
     days = max(working_days - absents, 0)
-    return Decimal(days), ot
+    return Decimal(days), ot, fridays
 
 
 def generate_run(*, site, currency, year, month, working_days, actor):
@@ -74,12 +89,13 @@ def generate_run(*, site, currency, year, month, working_days, actor):
             workers = Employee.objects.filter(is_active=True,
                                               currency=currency)
         for emp in workers.select_related("job_category").order_by("emp_no"):
-            days, ot = _attendance_prefill(emp, site, year, month, working_days)
+            days, ot, fridays = _attendance_prefill(emp, site, year, month,
+                                                    working_days)
             ded = deductions_for(emp, year, month)
             PayrollLine.objects.create(
                 run=run, employee=emp, site_id=emp.current_site_id(),
                 basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
-                days_worked=days, ot_hours=ot,
+                days_worked=days, ot_hours=ot, fridays_worked=fridays,
                 advance=ded["advance"], loan=ded["loan"])
     return run
 

@@ -212,6 +212,10 @@ def attendance_grid(request):
     if not _site_scope_ok(request, site):
         return Response({"detail": "Not found."}, status=404)
 
+    # A rest day is any weekday outside the site's working week (usually
+    # Friday). Working it is the 7th-day work paid as an extra day, so the grid
+    # defaults everyone to OFF and only marks those who actually worked.
+    is_rest_day = day.isoweekday() not in site.working_days
     roster = Employee.objects.filter(
         is_active=True, site_allocations__site=site,
         site_allocations__to_date__isnull=True,
@@ -221,6 +225,7 @@ def attendance_grid(request):
     rows = []
     for employee in roster:
         att = existing.get(employee.id)
+        default_remark = "OFF" if is_rest_day else "PRESENT"
         rows.append({
             "attendance_id": att.id if att else None,
             "employee_id": employee.id,
@@ -232,13 +237,101 @@ def attendance_grid(request):
             "check_out": att.check_out if att else site.working_hours_to,
             "ot_requested": att.ot_requested if att else 0,
             "ot_approved": att.ot_approved if att else None,
-            "remark": att.remark if att else "PRESENT",
+            "remark": att.remark if att else default_remark,
             "saved": att is not None,
         })
     return Response({
         "site": site.code, "date": day.isoformat(),
+        "is_rest_day": is_rest_day,
         "locked": _month_locked(site.id, day),
         "rows": rows,
+    })
+
+
+@api_view(["GET"])
+def attendance_register(request):
+    """Whole-month attendance for a site: a per-worker day grid plus totals
+    (present / absent / leave / OT hours / Fridays worked) and a site summary.
+    Site team + HR/Finance/Admin. Also serves 'as of today' for the current
+    month, since days beyond today simply carry no record yet."""
+    import calendar
+
+    try:
+        site = Site.objects.get(pk=request.GET.get("site"))
+        year = int(request.GET.get("year"))
+        month = int(request.GET.get("month"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "site, year, month required."}, status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+
+    ndays = calendar.monthrange(year, month)[1]
+    work_week = set(site.working_days)
+    days = []
+    for d in range(1, ndays + 1):
+        wd = date(year, month, d).isoweekday()
+        days.append({"day": d, "dow": ["Mon", "Tue", "Wed", "Thu", "Fri",
+                     "Sat", "Sun"][wd - 1], "rest": wd not in work_week})
+    today = date.today()
+    today_day = today.day if (today.year == year and today.month == month) \
+        else None
+
+    roster = Employee.objects.filter(
+        is_active=True, site_allocations__site=site,
+        site_allocations__to_date__isnull=True).select_related(
+        "job_category").order_by("emp_no").distinct()
+    att = {}
+    for a in Attendance.objects.filter(site=site, day__year=year,
+                                       day__month=month):
+        att[(a.employee_id, a.day.day)] = a
+
+    def code(a, is_rest):
+        if a is None:
+            return ""
+        if a.remark == "PRESENT":
+            return "F" if is_rest else "P"
+        return {"ABSENT": "A", "SICK": "S", "LEAVE": "L",
+                "HALF_DAY": "½"}.get(a.remark, "")
+
+    rest_days = {d["day"] for d in days if d["rest"]}
+    rows, sums = [], {"present": 0, "absent": 0, "leave": 0, "sick": 0,
+                      "ot_hours": Decimal("0"), "fridays": 0}
+    for emp in roster:
+        cells, t = {}, {"present": 0, "absent": 0, "leave": 0, "sick": 0,
+                        "half": 0, "ot_hours": Decimal("0"), "fridays": 0}
+        for d in range(1, ndays + 1):
+            a = att.get((emp.id, d))
+            c = code(a, d in rest_days)
+            if c:
+                cells[str(d)] = c
+            if a is None:
+                continue
+            t["ot_hours"] += a.ot_approved or 0
+            if a.remark == "PRESENT":
+                if d in rest_days:
+                    t["fridays"] += 1
+                else:
+                    t["present"] += 1
+            elif a.remark == "HALF_DAY":
+                t["half"] += 1
+            elif a.remark == "ABSENT":
+                t["absent"] += 1
+            elif a.remark == "SICK":
+                t["sick"] += 1
+            elif a.remark == "LEAVE":
+                t["leave"] += 1
+        rows.append({
+            "emp_no": emp.emp_no, "full_name": emp.full_name,
+            "category": emp.job_category.name if emp.job_category_id else "",
+            "days": cells, **t})
+        for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays"):
+            sums[k] += t[k]
+    return Response({
+        "site": site.code, "year": year, "month": month,
+        "days": days, "today": today_day,
+        "locked": TimesheetMonth.objects.filter(
+            site=site, year=year, month=month, status="LOCKED").exists(),
+        "rows": rows, "totals": sums,
     })
 
 
@@ -278,9 +371,13 @@ def attendance_bulk(request):
                                             is_active=True)
         except Employee.DoesNotExist:
             continue
+        remark = row.get("remark") or "PRESENT"
+        if remark == "OFF":
+            # Rest day, not worked — clear any existing record, create none
+            Attendance.objects.filter(employee=employee, day=day).delete()
+            continue
         check_in = parse_time(row.get("check_in"))
         check_out = parse_time(row.get("check_out"))
-        remark = row.get("remark") or "PRESENT"
         record, _created = Attendance.objects.update_or_create(
             employee=employee, day=day,
             defaults={
