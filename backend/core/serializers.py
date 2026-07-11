@@ -119,7 +119,7 @@ class ItemCategorySerializer(serializers.ModelSerializer):
         from .models import ItemCategory
 
         model = ItemCategory
-        fields = ["id", "name", "sort_order", "is_active"]
+        fields = ["id", "name", "sort_order", "is_active", "is_tool"]
 
 
 class HolidaySerializer(serializers.ModelSerializer):

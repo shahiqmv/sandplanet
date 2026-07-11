@@ -4,7 +4,7 @@ from rest_framework.routers import DefaultRouter
 from . import views, views_cost as cost, views_documents as docs, \
     views_hr as hr, views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
-    views_stock as stock, views_vouchers as vouchers
+    views_stock as stock, views_tools as tools_api, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -62,6 +62,13 @@ urlpatterns = [
          name="stock-reconcile"),
     path("stock/<int:site_id>/<int:item_id>/history", stock.stock_history,
          name="stock-history"),
+    path("tools/<int:site_id>", tools_api.tools_register,
+         name="tools-register"),
+    path("tools/<int:site_id>/summary", tools_api.tools_summary,
+         name="tools-summary"),
+    path("tools/asset/<int:pk>", tools_api.tool_detail, name="tool-detail"),
+    path("tools/asset/<int:pk>/state", tools_api.tool_state,
+         name="tool-state"),
     path("staff-cost/current", cost.staff_cost_current,
          name="staff-cost-current"),
     path("staff-cost/history", cost.staff_cost_history,

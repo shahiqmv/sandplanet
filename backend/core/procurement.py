@@ -193,9 +193,10 @@ def on_lm_departed(lm, actor):
 
 
 def on_grn_verified(grn, actor):
-    """GRN verify: complete/shortage result + LM status (spec §5.6), and add
-    the received quantities to site inventory (Phase 1A)."""
-    from . import stock  # local import to avoid a cycle at module load
+    """GRN verify: complete/shortage result + LM status (spec §5.6), and route
+    received quantities — tool-category items become individual assets on the
+    site Tools & Equipment register; everything else adds to site stock."""
+    from . import stock, tools  # local import to avoid a cycle at module load
 
     lines = list(grn.current_revision.lines.all())
     shortage = any(
@@ -205,9 +206,12 @@ def on_grn_verified(grn, actor):
         set_status(lm, "RECEIVED_WITH_SHORTAGE" if shortage else "RECEIVED",
                    actor, "LM_RECEIVED")
 
-    # Inventory: one RECEIPT per catalog line actually received.
     for line in lines:
-        if line.item_id and (line.qty_received or 0) > 0:
+        if not (line.item_id and (line.qty_received or 0) > 0):
+            continue
+        if tools.is_tool_item(line.item):
+            tools.create_from_grn(grn, line, line.qty_received, actor)
+        else:
             stock.record_receipt(grn.site, line.item, line.qty_received,
                                  document=grn, actor=actor,
                                  movement_date=grn.doc_date)

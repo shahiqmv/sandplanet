@@ -555,6 +555,9 @@ class ItemCategory(models.Model):
     name = models.CharField(max_length=60, unique=True)
     sort_order = models.IntegerField(default=100)
     is_active = models.BooleanField(default=True)
+    # Items in a tool category go to the site Tools & Equipment register on GRN
+    # (as individual assets), not the consumable stock ledger.
+    is_tool = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "name"]
@@ -1342,3 +1345,53 @@ class StockMovement(models.Model):
     class Meta:
         ordering = ["-movement_date", "-id"]
         indexes = [models.Index(fields=["site", "item"])]
+
+
+class ToolAsset(models.Model):
+    """One physical tool / machine / piece of equipment at a site. Created on
+    site mobilisation (manual) or when a GRN receives an item in a tool
+    category (one asset per unit). Site admin fills serial/model and manages
+    its condition through the faulty → repair → in-use cycle."""
+
+    class State(models.TextChoices):
+        IN_USE = "IN_USE", "In use"
+        FAULTY = "FAULTY", "Faulty"
+        UNDER_REPAIR = "UNDER_REPAIR", "Under repair"
+        RETIRED = "RETIRED", "Retired"
+
+    class Source(models.TextChoices):
+        MOBILISATION = "MOBILISATION", "Mobilisation"
+        GRN = "GRN", "Received (GRN)"
+        MANUAL = "MANUAL", "Added manually"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="tools")
+    item = models.ForeignKey(  # the catalog item it came from (null = free)
+        Item, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="tool_assets")
+    name = models.TextField()               # snapshot / free-text name
+    category = models.TextField(blank=True)  # snapshot of the item category
+    serial_no = models.CharField(max_length=80, blank=True)
+    model = models.CharField(max_length=80, blank=True)
+    brand = models.CharField(max_length=80, blank=True)
+    notes = models.TextField(blank=True)
+    state = models.CharField(max_length=12, choices=State.choices,
+                             default=State.IN_USE)
+    state_note = models.TextField(blank=True)  # last fault/repair note
+    state_changed_at = models.DateTimeField(null=True, blank=True)
+    source = models.CharField(max_length=12, choices=Source.choices,
+                              default=Source.MANUAL)
+    document = models.ForeignKey(  # the GRN it arrived on
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+")
+    added_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                 blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name", "id"]
+        indexes = [models.Index(fields=["site", "state"])]
+
+    def __str__(self):
+        return f"{self.name} @ {self.site.code}"

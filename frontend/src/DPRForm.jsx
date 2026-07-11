@@ -133,6 +133,27 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       .map((r) => [r.category_id, r.count]));
   }
 
+  const [toolsNotice, setToolsNotice] = useState(null);
+  async function loadTools() {
+    setToolsNotice(null);
+    try {
+      const { machinery: rows } = await api(`/tools/${site.id}/summary`);
+      if (!rows.length) {
+        setToolsNotice("No tools on this site's register yet.");
+        return;
+      }
+      const have = new Set(machinery.map((r) =>
+        (r.item || "").trim().toLowerCase()));
+      const added = rows
+        .filter((r) => !have.has(r.item.trim().toLowerCase()))
+        .map((r) => ({ item: r.item, nos: String(r.nos),
+                       remarks: r.remarks || "" }));
+      setMachinery([...machinery.filter((r) => r.item), ...added]);
+      setToolsNotice(`Loaded ${added.length} from the tools register `
+                     + `(in-use counts).`);
+    } catch (e) { setToolsNotice(e.message); }
+  }
+
   const [matNotice, setMatNotice] = useState(null);
   async function loadMajorMaterials() {
     setMatNotice(null);
@@ -505,6 +526,17 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       </button>
 
       <SectionTitle>3. Machinery &amp; Equipment in Use</SectionTitle>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginBottom: 8 }}>
+        <button type="button" onClick={loadTools}
+                style={{ ...ghostButton, padding: "4px 12px", fontSize: 13 }}>
+          ⤵ Load from tools register
+        </button>
+        {toolsNotice && (
+          <span style={{ fontSize: 12, color: toolsNotice.startsWith("Loaded")
+                           ? "#1a7f37" : "#b35900" }}>{toolsNotice}</span>
+        )}
+      </div>
       <RowTable
         headers={["Item", "Nos", "Remarks (working/idle/breakdown)"]}
         rows={machinery} setRows={setMachinery} empty={emptyMachine}

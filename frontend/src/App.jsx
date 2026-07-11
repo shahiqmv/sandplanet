@@ -26,6 +26,7 @@ import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
 import StockPage from "./StockPage.jsx";
+import ToolsPage from "./ToolsPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
@@ -679,6 +680,7 @@ export default function App() {
                 onPyrRegister={() => setDocView({ mode: "pyr-register" })}
                 onPettyCash={() => setDocView({ mode: "petty-cash" })}
                 onStock={() => setDocView({ mode: "stock" })}
+                onTools={() => setDocView({ mode: "tools" })}
                 onCreateGrn={createGrn}
                 onOpenDoc={openDoc}
               />
@@ -766,6 +768,9 @@ export default function App() {
           )}
           {docView?.mode === "stock" && openSite && (
             <StockPage site={openSite} me={me} onClose={closeDoc} />
+          )}
+          {docView?.mode === "tools" && openSite && (
+            <ToolsPage site={openSite} me={me} onClose={closeDoc} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (

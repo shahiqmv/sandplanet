@@ -35,6 +35,12 @@ export default function ItemCategoriesPage({ me }) {
     load();
   }
 
+  async function toggleTool(c) {
+    await api(`/item-categories/${c.id}`, { method: "PATCH",
+                                            body: { is_tool: !c.is_tool } });
+    load();
+  }
+
   async function remove(c) {
     if (!window.confirm(`Remove category "${c.name}"? If items still use `
                         + "it, it is kept but deactivated.")) return;
@@ -63,15 +69,27 @@ export default function ItemCategoriesPage({ me }) {
       )}
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
 
+      <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 6px" }}>
+        Tick <b>Tool</b> for equipment/machinery categories — items received in
+        them go to the site Tools &amp; Equipment register (as assets), not the
+        consumable stock ledger.
+      </p>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead><tr>
-          <th style={th}>Category</th><th style={th}>Status</th>
+          <th style={th}>Category</th>
+          <th style={{ ...th, textAlign: "center" }}>Tool</th>
+          <th style={th}>Status</th>
           {canEdit && <th style={th} />}
         </tr></thead>
         <tbody>
           {rows.map((c) => (
             <tr key={c.id} style={c.is_active ? {} : { opacity: 0.5 }}>
               <td style={td}>{c.name}</td>
+              <td style={{ ...td, textAlign: "center" }}>
+                <input type="checkbox" checked={!!c.is_tool}
+                       disabled={!canEdit}
+                       onChange={() => toggleTool(c)} />
+              </td>
               <td style={td}>{c.is_active ? "Active" : "Inactive"}</td>
               {canEdit && (
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
