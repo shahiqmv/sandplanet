@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 
@@ -672,6 +674,8 @@ class Employee(models.Model):
 
     emp_no = models.CharField(max_length=10, unique=True)  # EMP-0231, server-issued
     full_name = models.TextField()
+    photo = models.FileField(upload_to="employees/", null=True, blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
     passport_no = models.TextField(blank=True)          # sensitive
     nationality = models.TextField(blank=True)
     job_category = models.ForeignKey(  # company-wide DPR list (spec §6A.1)
@@ -680,6 +684,9 @@ class Employee(models.Model):
     )
     basic_pay = models.DecimalField(max_digits=12, decimal_places=2,  # sensitive
                                     null=True, blank=True)
+    currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
+    # NULL = inherit the category's OT default; True/False overrides per worker
+    ot_applies = models.BooleanField(null=True, blank=True)
     work_permit_no = models.TextField(blank=True)
     work_permit_expiry = models.DateField(null=True, blank=True)
     emergency_contact = models.TextField(blank=True)
@@ -694,6 +701,21 @@ class Employee(models.Model):
     def current_site_id(self):
         row = self.site_allocations.filter(to_date__isnull=True).first()
         return row.site_id if row else None
+
+    def ot_rate(self):
+        """The OT rate that applies to this worker (0 if none / not eligible):
+        the category+currency rate from the OT master, gated by the per-worker
+        override which falls back to the category default."""
+        if not self.job_category_id:
+            return Decimal("0")
+        rate = OvertimeRate.objects.filter(
+            category_id=self.job_category_id, currency=self.currency).first()
+        if rate is None:
+            return Decimal("0")
+        applies = self.ot_applies
+        if applies is None:
+            applies = rate.applies_by_default
+        return rate.rate_per_hour if applies else Decimal("0")
 
 
 class EmployeeSiteAllocation(models.Model):
@@ -710,6 +732,25 @@ class EmployeeSiteAllocation(models.Model):
 
     class Meta:
         ordering = ["-from_date"]
+
+
+class OvertimeRate(models.Model):
+    """Managed OT rates (owner: no hardcoding). One flat rate per hour per job
+    category and currency; `applies_by_default` sets whether workers in that
+    category get OT unless individually overridden (Employee.ot_applies)."""
+
+    category = models.ForeignKey(ManpowerCategory, on_delete=models.CASCADE,
+                                 related_name="ot_rates")
+    currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
+    rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2)
+    applies_by_default = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["category", "currency"],
+                                    name="uniq_ot_rate")
+        ]
 
 
 class TimesheetMonth(models.Model):

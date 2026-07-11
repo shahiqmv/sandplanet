@@ -125,5 +125,6 @@ urlpatterns = [
          hr.timesheet_reopen, name="timesheet-reopen"),
     path("payroll-export/<int:year>/<int:month>", hr.payroll_export,
          name="payroll-export"),
+    path("overtime-rates", hr.overtime_rates, name="overtime-rates"),
     path("", include(router.urls)),
 ]

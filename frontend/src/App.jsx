@@ -6,6 +6,7 @@ import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
+import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -61,6 +62,7 @@ const NAV_GROUPS = [
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
            ["employees", "Employees", null],
            ["worker-categories", "Worker Categories", ["ADMIN"]],
+           ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN"]],
            ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
            ["staff-cost", "Staff Cost",
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"]],
@@ -659,6 +661,11 @@ export default function App() {
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "worker-categories" && (
             <WorkerCategoriesPage me={me} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "ADMIN"].includes(me.role) &&
+            hoPage === "overtime-rates" && (
+            <OvertimeRatesPage me={me} />
           )}
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "users" && (

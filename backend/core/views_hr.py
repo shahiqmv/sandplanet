@@ -19,6 +19,8 @@ from .models import (
     CompanyParameter,
     Employee,
     EmployeeSiteAllocation,
+    ManpowerCategory,
+    OvertimeRate,
     Site,
     TimesheetMonth,
     User,
@@ -309,6 +311,61 @@ def ot_approve(request):
     audit("attendance", rows[0].site_id, "OT_APPROVED", actor=request.user,
           detail={"count": len(rows)})
     return Response({"approved": len(rows)})
+
+
+# ===== Overtime rate master (owner: managed, not hardcoded) =====
+
+
+@api_view(["GET", "POST"])
+def overtime_rates(request):
+    """GET: every DPR job category with its MVR/USD OT rate (if set) so the
+    management page can show and fill them. POST: upsert one category+currency
+    rate. HR/Admin only."""
+    if request.method == "POST":
+        if not _is_hr(request.user):
+            return Response({"detail": "HO HR/Admin manage OT rates."},
+                            status=403)
+        try:
+            cat = ManpowerCategory.objects.get(pk=request.data.get("category_id"))
+        except ManpowerCategory.DoesNotExist:
+            return Response({"detail": "Unknown category."}, status=400)
+        currency = request.data.get("currency", "MVR")
+        try:
+            rate = Decimal(str(request.data.get("rate_per_hour") or 0))
+        except (TypeError, ValueError):
+            return Response({"detail": "Rate is invalid."}, status=400)
+        row, _ = OvertimeRate.objects.update_or_create(
+            category=cat, currency=currency,
+            defaults={"rate_per_hour": rate,
+                      "applies_by_default": bool(
+                          request.data.get("applies_by_default", True))})
+        audit("overtime_rate", row.id, "OT_RATE_SET", actor=request.user,
+              detail={"category": cat.name, "currency": currency,
+                      "rate": str(rate)})
+        return Response(_ot_rate_info(row), status=200)
+
+    cats = ManpowerCategory.objects.filter(
+        list_type="DPR", is_active=True).order_by("grp", "sort_order")
+    rates = {(r.category_id, r.currency): r
+             for r in OvertimeRate.objects.all()}
+    out = []
+    for cat in cats:
+        row = {"category_id": cat.id, "category_name": cat.name,
+               "grp": cat.grp, "rates": {}}
+        for cur in ("MVR", "USD"):
+            r = rates.get((cat.id, cur))
+            row["rates"][cur] = {
+                "rate_per_hour": r.rate_per_hour if r else None,
+                "applies_by_default": r.applies_by_default if r else True,
+            } if r else None
+        out.append(row)
+    return Response(out)
+
+
+def _ot_rate_info(r):
+    return {"id": r.id, "category_id": r.category_id, "currency": r.currency,
+            "rate_per_hour": r.rate_per_hour,
+            "applies_by_default": r.applies_by_default}
 
 
 # ===== Month close & payroll (spec §6A.3) =====
