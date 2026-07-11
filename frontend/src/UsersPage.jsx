@@ -15,7 +15,8 @@ const ROLES = [
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];
 
-const EMPTY = { username: "", full_name: "", role: "", password: "" };
+const EMPTY = { username: "", full_name: "", email: "", role: "",
+                password: "" };
 
 export default function UsersPage({ me, sites }) {
   const [users, setUsers] = useState([]);
@@ -35,7 +36,9 @@ export default function UsersPage({ me, sites }) {
     setError(null);
     setNotice(null);
     try {
-      const user = await api("/users", { method: "POST", body: draft });
+      const body = { ...draft };
+      if (!body.password) delete body.password;  // triggers the invite flow
+      const user = await api("/users", { method: "POST", body });
       if (draftSite && SITE_ROLES.includes(draft.role)) {
         await api(`/users/${user.id}/allocate`,
                   { method: "POST", body: { site_id: +draftSite } });
@@ -46,7 +49,12 @@ export default function UsersPage({ me, sites }) {
                     { method: "POST", body: { pm_user_id: user.id } });
         }
       }
-      setNotice(`User ${user.username} created.`);
+      setNotice(user.invite_sent
+        ? `User ${user.username} created — login details emailed to ${draft.email}.`
+        : user.invite_error
+          ? `User ${user.username} created, but the email failed: `
+            + `${user.invite_error}`
+          : `User ${user.username} created.`);
       setDraft(EMPTY);
       setDraftSite("");
       load();
@@ -68,6 +76,14 @@ export default function UsersPage({ me, sites }) {
               { method: "POST", body: { pm_user_id: user.id } });
     setNotice(`${user.full_name} is now the Project PM there.`);
     load();
+  }
+
+  async function resendInvite(user) {
+    setError(null); setNotice(null);
+    try {
+      await api(`/users/${user.id}/resend_invite`, { method: "POST" });
+      setNotice(`Login details re-sent to ${user.email}.`);
+    } catch (e) { setError(e.message); }
   }
 
   async function deactivate(user) {
@@ -99,7 +115,11 @@ export default function UsersPage({ me, sites }) {
         <input placeholder="Full name" value={draft.full_name}
                onChange={(e) => setDraft({ ...draft,
                                            full_name: e.target.value })}
-               style={{ ...inputStyle, flex: 1, minWidth: 150 }} />
+               style={{ ...inputStyle, flex: 1, minWidth: 130 }} />
+        <input placeholder="Email (for login details)" type="email"
+               value={draft.email}
+               onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+               style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
         <select value={draft.role}
                 onChange={(e) => setDraft({ ...draft, role: e.target.value })}
                 style={{ ...inputStyle, flex: 2, minWidth: 260 }}>
@@ -118,19 +138,24 @@ export default function UsersPage({ me, sites }) {
             ))}
           </select>
         )}
-        <input placeholder="Initial password" type="text"
+        <input placeholder="Password (blank = email a temp one)" type="text"
                value={draft.password}
                onChange={(e) => setDraft({ ...draft,
                                            password: e.target.value })}
-               style={{ ...inputStyle, width: 140 }} />
+               style={{ ...inputStyle, width: 220 }} />
         <button onClick={add} style={buttonStyle}
                 disabled={!draft.username || !draft.full_name || !draft.role ||
-                          !draft.password ||
+                          (!draft.password && !draft.email) ||
                           (SITE_ROLES.includes(draft.role) && !draftSite &&
                            draft.role !== "PM")}>
           Create user
         </button>
       </div>
+      <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 4px" }}>
+        Leave the password blank and give an email — the app generates a
+        temporary password and emails the login details; the user sets their
+        own password on first sign-in.
+      </p>
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
@@ -175,11 +200,20 @@ export default function UsersPage({ me, sites }) {
                   </select>
                 ) : "—"}
               </td>
-              <td style={td}>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>
+                {user.is_active && user.email && (
+                  <button onClick={() => resendInvite(user)}
+                          title={`Re-send login details to ${user.email}`}
+                          style={{ ...ghostButton, padding: "2px 10px",
+                                   fontSize: 12 }}>
+                    Resend invite
+                  </button>
+                )}
                 {user.is_active && user.id !== me.id && (
                   <button onClick={() => deactivate(user)}
                           style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12, color: "#c0392b" }}>
+                                   fontSize: 12, color: "#c0392b",
+                                   marginLeft: 6 }}>
                     Deactivate
                   </button>
                 )}

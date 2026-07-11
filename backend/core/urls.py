@@ -23,6 +23,8 @@ urlpatterns = [
     path("health", views.health, name="health"),
     path("auth/login", views.auth_login, name="auth-login"),
     path("auth/logout", views.auth_logout, name="auth-logout"),
+    path("auth/change-password", views.auth_change_password,
+         name="auth-change-password"),
     path("auth/me", views.auth_me, name="auth-me"),
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
     path("company/logo", views.company_logo, name="company-logo"),

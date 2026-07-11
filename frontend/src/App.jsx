@@ -93,6 +93,59 @@ import { MatchingWorkspace } from "./QuotationsPanel.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
+function ChangePassword({ forced, onDone }) {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e) {
+    e.preventDefault();
+    if (next !== confirm) { setError("The two new passwords don't match."); return; }
+    setBusy(true); setError(null);
+    try {
+      await api("/auth/change-password", { method: "POST",
+        body: { current_password: current, new_password: next } });
+      onDone();
+    } catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ maxWidth: 380, margin: "10vh auto", padding: "0 16px" }}>
+      <form onSubmit={submit} style={card}>
+        <h2 style={{ marginTop: 0, color: "var(--sp-navy)" }}>
+          {forced ? "Set your password" : "Change password"}</h2>
+        {forced && (
+          <p style={{ fontSize: 13, color: "#5a6b78", marginTop: 0 }}>
+            You signed in with a temporary password. Choose your own to
+            continue.
+          </p>
+        )}
+        <label style={{ display: "block", fontSize: 13, marginBottom: 4 }}>
+          {forced ? "Temporary password" : "Current password"}</label>
+        <input type="password" value={current} autoFocus
+               onChange={(e) => setCurrent(e.target.value)} style={inputStyle} />
+        <label style={{ display: "block", fontSize: 13, margin: "12px 0 4px" }}>
+          New password (min 8 characters)</label>
+        <input type="password" value={next}
+               onChange={(e) => setNext(e.target.value)} style={inputStyle} />
+        <label style={{ display: "block", fontSize: 13, margin: "12px 0 4px" }}>
+          Confirm new password</label>
+        <input type="password" value={confirm}
+               onChange={(e) => setConfirm(e.target.value)} style={inputStyle} />
+        {error && <p style={{ color: "#c0392b", fontSize: 13,
+                              margin: "12px 0 0" }}>{error}</p>}
+        <button type="submit" disabled={busy || !current || next.length < 8}
+                style={{ ...buttonStyle, width: "100%", marginTop: 16 }}>
+          {busy ? "Saving…" : "Save password"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
 function Login({ onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -370,6 +423,9 @@ export default function App() {
 
       {!me.authenticated ? (
         <Login onLogin={setMe} />
+      ) : me.must_change_password ? (
+        <ChangePassword forced onDone={() =>
+          api("/auth/me").then(setMe)} />
       ) : (
         <main style={{ maxWidth: 900, margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}

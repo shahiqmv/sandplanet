@@ -156,6 +156,26 @@ MEDIA_ROOT = BASE_DIR / "media"
 # PDFs block issue when true (staging/production); local dev may lack the
 # WeasyPrint GTK libraries (DECISIONS.md D4).
 PDF_REQUIRED = os.environ.get("PDF_REQUIRED", "0") == "1"
+
+# Email (SMTP) — set EMAIL_HOST etc. in production (e.g. Zoho:
+# smtp.zoho.com, port 465, SSL, an app-specific password). Without it, dev
+# prints emails to the console instead of sending.
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+if EMAIL_HOST:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "465"))
+    EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+    EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+    EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "1") == "1"
+    EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "0") == "1"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+DEFAULT_FROM_EMAIL = os.environ.get(
+    "DEFAULT_FROM_EMAIL", os.environ.get("EMAIL_HOST_USER",
+                                         "no-reply@sandplanet.mv"))
+# The login link put in invite emails.
+APP_BASE_URL = os.environ.get(
+    "APP_BASE_URL", "https://sandplanet.159.223.35.180.sslip.io")
 # Built SPA assets: vite builds with --base=/static/ so index.html points
 # at /static/assets/*; the prefixed entry maps them there.
 STATICFILES_DIRS = (

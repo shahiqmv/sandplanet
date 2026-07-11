@@ -75,22 +75,27 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "username", "full_name", "role", "is_active",
-            "last_login", "password", "allocations",
+            "id", "username", "full_name", "email", "role", "is_active",
+            "last_login", "password", "allocations", "must_change_password",
         ]
-        read_only_fields = ["last_login", "is_active"]
+        read_only_fields = ["last_login", "is_active", "must_change_password"]
 
     def get_allocations(self, user):
         qs = user.site_allocations.filter(to_date__isnull=True).select_related("site")
         return AllocationSerializer(qs, many=True).data
 
     def create(self, validated_data):
+        from .invites import make_temp_password
+
         password = validated_data.pop("password", None)
-        if not password:
-            raise serializers.ValidationError({"password": "Required on create."})
+        temp = None
+        if not password:  # invite flow — issue a temporary password to email
+            temp = password = make_temp_password()
         user = User(**validated_data)
         user.set_password(password)
+        user.must_change_password = bool(temp)
         user.save()
+        user._temp_password = temp   # picked up by the viewset to email
         return user
 
     def update(self, instance, validated_data):

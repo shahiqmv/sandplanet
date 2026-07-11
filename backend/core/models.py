@@ -25,6 +25,9 @@ class User(AbstractUser):
 
     role = models.CharField(max_length=20, choices=Role.choices)
     full_name = models.TextField()
+    # Set when an admin issues a temporary password by invite email; the user
+    # must choose their own password before using the app.
+    must_change_password = models.BooleanField(default=False)
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]

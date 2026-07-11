@@ -94,7 +94,30 @@ def _me_payload(user):
         "is_ho": user.is_ho,
         "allocations": allocations,
         "landing_site_id": landing_site,
+        "must_change_password": user.must_change_password,
     }
+
+
+@api_view(["POST"])
+def auth_change_password(request):
+    """Any signed-in user sets a new password (also clears the
+    must-change flag from an invite)."""
+    current = request.data.get("current_password", "")
+    new = request.data.get("new_password", "")
+    user = request.user
+    if not user.check_password(current):
+        return Response({"detail": "Current password is incorrect."},
+                        status=400)
+    if len(new) < 8:
+        return Response({"detail": "New password must be at least 8 "
+                                   "characters."}, status=400)
+    user.set_password(new)
+    user.must_change_password = False
+    user.save(update_fields=["password", "must_change_password"])
+    from django.contrib.auth import update_session_auth_hash
+    update_session_auth_hash(request, user)  # keep the session alive
+    audit("user", user.id, "PASSWORD_CHANGED", actor=user)
+    return Response({"detail": "Password updated."})
 
 
 # ===== Sites =====
@@ -183,15 +206,60 @@ class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all().order_by("username")
     http_method_names = ["get", "post", "patch", "head", "options"]
 
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        # Report whether the welcome email went out (set on the instance in
+        # perform_create) so the admin sees it immediately.
+        response.data["invite_sent"] = getattr(self, "_invite_sent", False)
+        if getattr(self, "_invite_error", None):
+            response.data["invite_error"] = self._invite_error
+        return response
+
     def perform_create(self, serializer):
         user = serializer.save()
         audit("user", user.id, "USER_CREATED", actor=self.request.user,
               detail={"username": user.username, "role": user.role})
+        self._invite_sent, self._invite_error = self._maybe_invite(
+            user, getattr(user, "_temp_password", None))
+
+    def _maybe_invite(self, user, temp_password):
+        """Email login details if a temp password was issued and an address is
+        on file. Returns (sent, error)."""
+        if not temp_password or not user.email:
+            return False, None
+        from .invites import send_user_invite
+        try:
+            send_user_invite(user, temp_password)
+            audit("user", user.id, "USER_INVITE_SENT", actor=self.request.user,
+                  detail={"email": user.email})
+            return True, None
+        except Exception as exc:  # noqa: BLE001 — surface send failures to admin
+            return False, str(exc)
 
     def perform_update(self, serializer):
         user = serializer.save()
         audit("user", user.id, "USER_UPDATED", actor=self.request.user,
               detail={"fields": sorted(self.request.data.keys())})
+
+    @action(detail=True, methods=["post"])
+    def resend_invite(self, request, pk=None):
+        """Re-issue a temporary password and email it (e.g. lost invite)."""
+        from .invites import make_temp_password, send_user_invite
+        user = self.get_object()
+        if not user.email:
+            return Response({"detail": "This user has no email address."},
+                            status=400)
+        temp = make_temp_password()
+        user.set_password(temp)
+        user.must_change_password = True
+        user.save(update_fields=["password", "must_change_password"])
+        try:
+            send_user_invite(user, temp)
+        except Exception as exc:  # noqa: BLE001
+            return Response({"detail": f"Email failed: {exc}"}, status=502)
+        audit("user", user.id, "USER_INVITE_RESENT", actor=request.user,
+              detail={"email": user.email})
+        return Response({"invite_sent": True})
 
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
