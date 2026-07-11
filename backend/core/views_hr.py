@@ -245,8 +245,10 @@ def attendance_grid(request):
 @api_view(["PUT"])
 def attendance_bulk(request):
     """Day-grid upsert by Site Admin / SE; late edits audited (spec §6A.2)."""
-    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"):
-        return Response({"detail": "Site team records attendance."}, status=403)
+    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM",
+                                 "HO_HR", "ADMIN"):
+        return Response({"detail": "Site team or HR records attendance."},
+                        status=403)
     try:
         site = Site.objects.get(pk=request.data.get("site"))
         day = date.fromisoformat(request.data.get("date"))
@@ -309,9 +311,9 @@ def ot_approve(request):
         return Response({"detail": "ids required."}, status=400)
     for row in rows:
         pm = row.site.current_pm()
-        if not (request.user.role == "ADMIN" or
+        if not (request.user.role in ("ADMIN", "HO_HR") or
                 (request.user.role == "PM" and pm and pm.id == request.user.id)):
-            return Response({"detail": f"Only the site PM approves OT "
+            return Response({"detail": f"Only the site PM or HR approves OT "
                                        f"({row.site.code})."}, status=403)
         if _month_locked(row.site_id, row.day):
             return Response({"detail": "Month is locked."}, status=400)
@@ -393,9 +395,11 @@ def timesheet_lock(request, site_id, year, month):
     except Site.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
     pm = site.current_pm()
-    if not (request.user.role == "ADMIN" or
+    # HR can sign off any month (needed for Head Office, which has no PM, and
+    # for corrections); otherwise the site PM signs off (spec §6A.3).
+    if not (request.user.role in ("ADMIN", "HO_HR") or
             (request.user.role == "PM" and pm and pm.id == request.user.id)):
-        return Response({"detail": "The site PM signs off the month."},
+        return Response({"detail": "The site PM or HR signs off the month."},
                         status=403)
     row, _ = TimesheetMonth.objects.get_or_create(site=site, year=year,
                                                   month=month)

@@ -208,9 +208,17 @@ class OtAndLockTests(HrBase):
 
     def test_lock_is_pm_gated(self):
         day = working_day(self.site)
+        self.as_user(self.sa)  # a site admin cannot sign off the month
         r = self.client.post(f"/api/v1/timesheets/{self.site.id}/"
-                             f"{day.year}/{day.month}/lock")  # site admin
+                             f"{day.year}/{day.month}/lock")
         self.assertEqual(r.status_code, 403)
+
+    def test_hr_can_lock_month(self):
+        day = working_day(self.site)
+        self.as_user(self.hr)  # HR signs off (Head Office / corrections)
+        r = self.client.post(f"/api/v1/timesheets/{self.site.id}/"
+                             f"{day.year}/{day.month}/lock")
+        self.assertEqual(r.status_code, 200, r.data)
 
 
 class PayrollExportTests(HrBase):

@@ -4,18 +4,20 @@
 <meta charset="utf-8">
 {% include "pdf/_styles.html" %}
 <style>
-  .slip { max-width: 520px; }
+  @page { size: A5; margin: 10mm; }
+  body { font-size: 8pt; }
+  table.kv td { padding: 2px 4px; }
   .row { display: flex; justify-content: space-between;
-         padding: 3px 0; font-size: 9.5pt; }
+         padding: 1.5px 0; font-size: 8pt; }
   .row .lbl { color: #3a4750; }
-  .grp { margin-top: 10px; }
-  .grp h3 { font-size: 9.5pt; color: #1f3a52; margin: 0 0 4px;
+  .grp { margin-top: 6px; }
+  .grp h3 { font-size: 8pt; color: #1f3a52; margin: 0 0 3px;
             border-bottom: 0.6px solid #A9B6C0; padding-bottom: 2px; }
   .tot { font-weight: 700; border-top: 0.8px solid #1f3a52;
-         margin-top: 4px; padding-top: 4px; }
-  .net { font-size: 12pt; font-weight: 700; color: #1f3a52;
-         background: #eef2f5; padding: 6px 10px; border-radius: 4px;
-         margin-top: 12px; }
+         margin-top: 3px; padding-top: 3px; }
+  .net { font-size: 10pt; font-weight: 700; color: #1f3a52;
+         background: #eef2f5; padding: 5px 8px; border-radius: 4px;
+         margin-top: 8px; }
 </style>
 </head>
 <body>

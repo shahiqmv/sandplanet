@@ -99,6 +99,58 @@ def payroll_runs(request):
     return Response([_run_info(r, lines=False) for r in qs])
 
 
+@api_view(["POST"])
+def payroll_generate(request):
+    """Generate all runs for a month (MVR per locked site + HO, plus USD)."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    try:
+        year = int(request.data["year"])
+        month = int(request.data["month"])
+    except (KeyError, TypeError, ValueError):
+        return Response({"detail": "year and month are required."}, status=400)
+    result = payroll.generate_month(year, month, request.user)
+    audit("payroll_run", 0, "PAYROLL_MONTH_GENERATED", actor=request.user,
+          detail={"period": f"{year}-{month:02d}",
+                  "created": len(result["created"])})
+    return Response(result)
+
+
+@api_view(["GET"])
+def payroll_readiness(request):
+    """Per-site attendance-lock status for a month, so HR sees what's ready to
+    run and what still needs its month locked."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    from .models import (Employee, EmployeeSiteAllocation, TimesheetMonth)
+    year = int(request.GET.get("year") or 0)
+    month = int(request.GET.get("month") or 0)
+    rows = []
+    for site in Site.objects.filter(status=Site.Status.ACTIVE).order_by("code"):
+        emp_ids = EmployeeSiteAllocation.objects.filter(
+            site=site, to_date__isnull=True).values_list("employee_id",
+                                                          flat=True)
+        mvr = Employee.objects.filter(id__in=emp_ids, is_active=True,
+                                      currency="MVR").count()
+        if not mvr:
+            continue
+        rows.append({
+            "site_code": site.code, "is_head_office": site.is_head_office,
+            "mvr_staff": mvr,
+            "locked": TimesheetMonth.objects.filter(
+                site=site, year=year, month=month, status="LOCKED").exists(),
+            "has_run": PayrollRun.objects.filter(
+                site=site, currency="MVR", year=year, month=month).exists(),
+        })
+    return Response({
+        "sites": rows,
+        "usd_staff": Employee.objects.filter(is_active=True,
+                                             currency="USD").count(),
+        "usd_has_run": PayrollRun.objects.filter(
+            site__isnull=True, currency="USD", year=year, month=month).exists(),
+    })
+
+
 @api_view(["GET", "POST"])
 def payroll_run_detail(request, pk):
     if not _guard(request):

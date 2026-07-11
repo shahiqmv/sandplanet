@@ -222,3 +222,65 @@ class PayrollRunTests(TestCase):
             if resp.status_code == 200:
                 self.assertEqual(resp["Content-Type"], "application/pdf")
                 self.assertTrue(resp.content[:4] == b"%PDF")
+
+
+class GenerateMonthTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        from .models import (EmployeeSiteAllocation, TimesheetMonth)
+        self.hr = make_user("hr1", User.Role.HO_HR)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.locked = Site.objects.create(code="VKR", name="Vakkaru",
+                                          status=Site.Status.ACTIVE)
+        self.open_site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                             status=Site.Status.ACTIVE)
+        self.ho = Site.objects.create(code="MLE", name="Head Office",
+                                      status=Site.Status.ACTIVE,
+                                      is_head_office=True)
+        for i, site in enumerate((self.locked, self.open_site, self.ho), 1):
+            e = Employee.objects.create(emp_no=f"EMP-000{i}", full_name=f"W{i}",
+                                        job_category=self.cat,
+                                        basic_pay=6000, currency="MVR")
+            EmployeeSiteAllocation.objects.create(employee=e, site=site,
+                                                  from_date=date(2026, 1, 1))
+        self.usd = Employee.objects.create(emp_no="EMP-0009", full_name="Mgr",
+                                           job_category=self.cat,
+                                           basic_pay=2000, currency="USD")
+        EmployeeSiteAllocation.objects.create(employee=self.usd,
+                                              site=self.locked,
+                                              from_date=date(2026, 1, 1))
+        TimesheetMonth.objects.create(site=self.locked, year=2026, month=5,
+                                      status="LOCKED")
+        TimesheetMonth.objects.create(site=self.ho, year=2026, month=5,
+                                      status="LOCKED")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_generate_month_respects_lock_and_includes_ho_and_usd(self):
+        r = self.client.post("/api/v1/payroll/generate",
+                             {"year": 2026, "month": 5}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        made = {c["site"] for c in r.data["created"]}
+        self.assertIn("VKR", made)              # locked site
+        self.assertIn("MLE", made)              # Head Office included
+        self.assertIn("USD — all sites", made)  # combined USD run
+        skipped = {s["site"]: s["reason"] for s in r.data["skipped"]}
+        self.assertEqual(skipped.get("SJR"), "attendance not locked")
+
+    def test_generate_month_is_idempotent(self):
+        self.client.post("/api/v1/payroll/generate",
+                        {"year": 2026, "month": 5}, format="json")
+        r = self.client.post("/api/v1/payroll/generate",
+                            {"year": 2026, "month": 5}, format="json")
+        self.assertEqual(len(r.data["created"]), 0)
+        reasons = {s["reason"] for s in r.data["skipped"]}
+        self.assertIn("already generated", reasons)
+
+    def test_hr_can_lock_attendance(self):
+        r = self.client.post(
+            f"/api/v1/timesheets/{self.open_site.id}/2026/5/lock", {},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "LOCKED")

@@ -14,31 +14,34 @@ export default function PayrollRunPage({ me, sites }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);  // last month is common
   const [runs, setRuns] = useState([]);
+  const [ready, setReady] = useState(null);
   const [openRun, setOpenRun] = useState(null);
-  const [siteId, setSiteId] = useState("");
   const [error, setError] = useState(null);
+  const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const siteList = sites.filter((s) => !s.is_head_office);
+  const canGenerate = ["HO_HR", "ADMIN"].includes(me.role);
 
   function loadRuns() {
     api(`/payroll/runs?year=${year}&month=${month}`).then(setRuns)
       .catch((e) => setError(e.message));
+    api(`/payroll/readiness?year=${year}&month=${month}`).then(setReady)
+      .catch(() => setReady(null));
   }
   useEffect(() => { if (!openRun) loadRuns(); },
     [year, month, openRun]); // eslint-disable-line
 
-  async function create(currency) {
-    setBusy(true); setError(null);
+  async function generate() {
+    setBusy(true); setError(null); setNotice(null);
     try {
-      const body = { currency, year, month };
-      if (currency === "MVR") {
-        if (!siteId) { setError("Pick a site for an MVR run."); setBusy(false);
-                       return; }
-        body.site_id = +siteId;
-      }
-      const run = await api("/payroll/runs", { method: "POST", body });
-      setOpenRun(run);
+      const r = await api("/payroll/generate",
+                          { method: "POST", body: { year, month } });
+      const made = r.created.length;
+      const skips = r.skipped.filter((s) => s.reason !== "already generated");
+      setNotice(`${made} run${made === 1 ? "" : "s"} generated.`
+        + (skips.length ? ` Not ready: ${skips.map((s) =>
+            `${s.site} (${s.reason})`).join(", ")}.` : ""));
+      loadRuns();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -47,6 +50,8 @@ export default function PayrollRunPage({ me, sites }) {
     return <RunDetail runId={openRun.id} onBack={() => setOpenRun(null)}
                       me={me} />;
   }
+
+  const pending = (ready?.sites || []).filter((s) => !s.locked);
 
   return (
     <section style={card}>
@@ -68,23 +73,26 @@ export default function PayrollRunPage({ me, sites }) {
             ))}
           </select>
         </label>
+        {canGenerate && (
+          <Btn onClick={generate} disabled={busy} style={{ marginLeft: "auto" }}>
+            {busy ? "Generating…" : "Generate payroll"}</Btn>
+        )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center",
-                    margin: "14px 0", flexWrap: "wrap" }}>
-        <select value={siteId} onChange={(e) => setSiteId(e.target.value)}
-                style={{ ...inputStyle, width: 200 }}>
-          <option value="">— site for MVR run —</option>
-          {siteList.map((s) => (
-            <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
-          ))}
-        </select>
-        <Btn onClick={() => create("MVR")} disabled={busy}>
-          Generate MVR run</Btn>
-        <button onClick={() => create("USD")} disabled={busy}
-                style={buttonStyle}>Generate USD run (all sites)</button>
-      </div>
+      {ready && pending.length > 0 && (
+        <p style={{ fontSize: 12.5, color: "#b35900", margin: "10px 0 0" }}>
+          ⚠ Attendance not locked yet (won't run): {pending.map((s) =>
+            s.site_code + (s.is_head_office ? " (HO)" : "")).join(", ")}.
+          {" "}Lock the month on Attendance first.
+        </p>
+      )}
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
+        Generating creates one MVR run per site with locked attendance
+        (Head Office included) plus the combined USD run. Runs already made are
+        left as-is.
+      </p>
 
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>
