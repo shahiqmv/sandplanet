@@ -46,33 +46,95 @@ def create_payment_request(doc, data, user):
         return None, "A valid cost head is required."
     if cost_head.is_pool:
         return None, "That cost head is a Head Office pool, not a project head."
-    try:
-        amount = Decimal(str(data.get("amount_requested") or 0))
-    except (TypeError, ValueError):
-        return None, "Amount is invalid."
+    # Salary advance/loan: a worker breakdown drives the amount and payee
+    salary_lines = data.get("salary_lines") or []
+    payee = (data.get("payee") or "").strip()
+    purpose = (data.get("purpose") or "").strip()
+    if salary_lines:
+        parsed, err = _parse_salary_lines(salary_lines)
+        if err:
+            return None, err
+        amount = sum((ln["amount"] for ln in parsed), Decimal("0"))
+        payee = payee or f"Salary advances — {doc.site.code}"
+        purpose = purpose or "Staff salary advance / loan"
+    else:
+        try:
+            amount = Decimal(str(data.get("amount_requested") or 0))
+        except (TypeError, ValueError):
+            return None, "Amount is invalid."
     if amount <= 0:
         return None, "Amount must be greater than zero."
-    if not (data.get("payee") or "").strip():
+    if not payee:
         return None, "Payee is required."
-    if not (data.get("purpose") or "").strip():
+    if not purpose:
         return None, "Purpose is required."
     pr = PaymentRequest.objects.create(
         document=doc,
-        payment_type=data.get("payment_type", "DIRECT"),
+        payment_type="ADVANCE" if salary_lines
+        else data.get("payment_type", "DIRECT"),
         cost_head=cost_head,
-        payee=data.get("payee", "").strip(),
+        payee=payee,
         payment_method=data.get("payment_method", "BANK"),
         payee_account=data.get("payee_account", ""),
         currency=data.get("currency", "MVR"),
         amount_requested=amount,
         required_by=data.get("required_by") or None,
-        purpose=data.get("purpose", "").strip(),
+        purpose=purpose,
         is_urgent=bool(data.get("is_urgent")),
         urgent_reason=data.get("urgent_reason", ""),
         has_supporting_doc=bool(data.get("has_supporting_doc")),
         no_doc_reason=data.get("no_doc_reason", ""),
     )
+    if salary_lines:
+        _create_salary_advances(doc, parsed, data)
     return pr, None
+
+
+def _parse_salary_lines(raw):
+    """Validate advance/loan lines: {employee_id, kind, amount, months}."""
+    from .models import Employee
+
+    out = []
+    for ln in raw:
+        try:
+            emp = Employee.objects.get(pk=ln.get("employee_id"))
+        except Employee.DoesNotExist:
+            return None, "Unknown employee in a salary-advance line."
+        try:
+            amt = Decimal(str(ln.get("amount") or 0))
+        except (TypeError, ValueError):
+            return None, "A salary-advance amount is invalid."
+        if amt <= 0:
+            return None, "Salary-advance amounts must be positive."
+        kind = "LOAN" if ln.get("kind") == "LOAN" else "ADVANCE"
+        months = int(ln.get("months") or 1) if kind == "LOAN" else 1
+        if months < 1:
+            months = 1
+        out.append({"employee": emp, "amount": amt, "kind": kind,
+                    "months": months})
+    if not out:
+        return None, "Add at least one worker."
+    return out, None
+
+
+def _create_salary_advances(doc, parsed, data):
+    from datetime import date
+
+    from .models import SalaryAdvance
+
+    # First deduction period: caller may name it; else the month after the PYR
+    y = data.get("deduct_year")
+    m = data.get("deduct_month")
+    if not (y and m):
+        base = doc.doc_date or date.today()
+        m = base.month + 1
+        y = base.year + (1 if m > 12 else 0)
+        m = 1 if m > 12 else m
+    for ln in parsed:
+        SalaryAdvance.objects.create(
+            document=doc, employee=ln["employee"], kind=ln["kind"],
+            amount=ln["amount"], months=ln["months"],
+            period_year=int(y), period_month=int(m))
 
 
 def _transition(doc, new_status):
@@ -204,6 +266,11 @@ def pyr_action(request, doc, action_name):
             from . import petty_cash
 
             petty_cash.on_replenish_paid(doc, user)
+        elif doc.salary_advances.exists():
+            # A salary advance/loan is a prepayment recouped from payroll — the
+            # labour expense is recognised in the payroll month-lock, so this
+            # PYR posts nothing to the cost ledger to avoid double counting.
+            pass
         else:
             costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
                          source="PYR", amount=amount_paid,

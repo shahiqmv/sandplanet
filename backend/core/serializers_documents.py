@@ -146,6 +146,13 @@ class DocumentSerializer(serializers.ModelSerializer):
             "payment_ref": pr.payment_ref,
             "variance_reason": pr.variance_reason,
             "withdrawn_reason": pr.withdrawn_reason,
+            "salary_advances": [
+                {"employee": a.employee.full_name,
+                 "emp_no": a.employee.emp_no, "kind": a.kind,
+                 "amount": a.amount, "months": a.months,
+                 "period": f"{a.period_year}-{a.period_month:02d}"}
+                for a in obj.salary_advances.select_related("employee").all()
+            ],
         }
 
     def get_resubmitted_as(self, obj):

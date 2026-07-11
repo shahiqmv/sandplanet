@@ -161,6 +161,32 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
         </tbody>
       </table>
 
+      {pr.salary_advances?.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: "var(--navy)",
+                        marginBottom: 4 }}>Salary advances / loans</div>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 12.5 }}>
+            <thead><tr>
+              <th style={th}>Worker</th><th style={th}>Type</th>
+              <th style={{ ...th, textAlign: "right" }}>Amount</th>
+              <th style={th}>Deduct from</th>
+            </tr></thead>
+            <tbody>
+              {pr.salary_advances.map((a, i) => (
+                <tr key={i}>
+                  <td style={td}>{a.emp_no} — {a.employee}</td>
+                  <td style={td}>{a.kind === "LOAN"
+                    ? `Loan (${a.months} mo)` : "Advance"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{money(a.amount)}</td>
+                  <td style={td}>{a.period}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {evidence.length > 0 && (
         <p style={{ fontSize: 13, marginTop: 8 }}>
           {evidence.map((a) => (

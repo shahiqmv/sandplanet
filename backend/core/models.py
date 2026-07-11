@@ -753,6 +753,29 @@ class OvertimeRate(models.Model):
         ]
 
 
+class SalaryAdvance(models.Model):
+    """A salary advance or loan for one worker, raised at site inside a PYR
+    (payment_type=ADVANCE). Once Finance pays that PYR it becomes a payroll
+    deduction — an advance in one hit, a loan spread over `months` installments
+    from (period_year, period_month)."""
+
+    class Kind(models.TextChoices):
+        ADVANCE = "ADVANCE", "Advance"
+        LOAN = "LOAN", "Loan"
+
+    document = models.ForeignKey(Document, on_delete=models.CASCADE,
+                                 related_name="salary_advances")  # the PYR
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="salary_advances")
+    kind = models.CharField(max_length=8, choices=Kind.choices,
+                            default=Kind.ADVANCE)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)  # total
+    months = models.IntegerField(default=1)  # installments (1 = advance)
+    period_year = models.IntegerField()   # first deduction period
+    period_month = models.IntegerField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+
 class TimesheetMonth(models.Model):
     """Month close: PM sign-off locks the site's timesheet; corrections
     need an audited HR reopen (spec §6A.3)."""
