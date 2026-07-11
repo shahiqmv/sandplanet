@@ -4,11 +4,18 @@ from .models import Approval, Attachment, Document, DocumentLine, Item, PendingI
 
 
 class ItemSerializer(serializers.ModelSerializer):
+    photo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Item
         fields = ["id", "code", "description", "unit", "category", "brand",
-                  "spec_ref", "notes", "is_active", "merged_into"]
-        read_only_fields = ["code", "merged_into"]
+                  "spec_ref", "notes", "is_active", "is_major", "photo",
+                  "photo_url", "merged_into"]
+        read_only_fields = ["code", "merged_into", "photo_url"]
+        extra_kwargs = {"photo": {"write_only": True, "required": False}}
+
+    def get_photo_url(self, obj):
+        return obj.photo.url if obj.photo else None
 
     def validate_category(self, value):
         # Category is a controlled list (owner, 2026-07-08): must be blank
@@ -51,11 +58,15 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                                       default=None)
     description = serializers.CharField(read_only=True)
     is_free_text = serializers.SerializerMethodField()
+    item_photo_url = serializers.SerializerMethodField()
+    item_is_major = serializers.BooleanField(source="item.is_major",
+                                             read_only=True, default=False)
 
     class Meta:
         model = DocumentLine
         fields = ["id", "line_no", "item", "item_code", "description",
                   "free_text_desc", "is_free_text", "unit",
+                  "item_photo_url", "item_is_major",
                   "qty_required", "qty_stock", "qty_to_order",
                   "qty_loaded", "qty_pending", "qty_manifest", "qty_received",
                   "priority", "urgent_reason", "rate", "amount",
@@ -65,6 +76,9 @@ class DocumentLineSerializer(serializers.ModelSerializer):
 
     def get_is_free_text(self, obj):
         return obj.item_id is None  # flagged "new item — not in catalog"
+
+    def get_item_photo_url(self, obj):
+        return obj.item.photo.url if obj.item_id and obj.item.photo else None
 
 
 class DocumentSerializer(serializers.ModelSerializer):

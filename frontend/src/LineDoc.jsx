@@ -602,6 +602,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
   const [quoteFiles, setQuoteFiles] = useState({});
+  const [preview, setPreview] = useState(null);   // item photo lightbox
 
   useEffect(() => {
     if (initial.doc_type === "PR") {
@@ -826,15 +827,33 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                       .toLocaleString()}</td>
                 </>) : (<>
                   <td style={td}>
-                    {line.description}
-                    {line.is_free_text && (
-                      <span style={{ color: "#b35900", fontSize: 11,
-                                     fontWeight: 700 }}> NEW ITEM</span>
-                    )}
-                    {line.is_changed && (
-                      <span style={{ color: "#b35900", fontSize: 11,
-                                     fontWeight: 700 }}> CHANGED</span>
-                    )}
+                    <span style={{ display: "flex", alignItems: "center",
+                                   gap: 8 }}>
+                      {line.item_photo_url && (
+                        <img src={line.item_photo_url} alt=""
+                             onClick={() => setPreview(line.item_photo_url)}
+                             title="Click to enlarge"
+                             style={{ width: 34, height: 34, flexShrink: 0,
+                                      objectFit: "cover", borderRadius: 4,
+                                      cursor: "pointer",
+                                      border: "1px solid var(--sp-border)" }} />
+                      )}
+                      <span>
+                        {line.description}
+                        {line.item_is_major && (
+                          <span title="Major material"
+                                style={{ color: "#e0a52a" }}> ★</span>
+                        )}
+                        {line.is_free_text && (
+                          <span style={{ color: "#b35900", fontSize: 11,
+                                         fontWeight: 700 }}> NEW ITEM</span>
+                        )}
+                        {line.is_changed && (
+                          <span style={{ color: "#b35900", fontSize: 11,
+                                         fontWeight: 700 }}> CHANGED</span>
+                        )}
+                      </span>
+                    </span>
                   </td>
                   <td style={td}>{line.unit}</td>
                   {doc.doc_type === "MR" && (<>
@@ -935,6 +954,17 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
             </p>
           ))}
         </>
+      )}
+
+      {preview && (
+        <div onClick={() => setPreview(null)}
+             style={{ position: "fixed", inset: 0,
+                      background: "rgba(0,0,0,.6)", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      zIndex: 60, padding: 24 }}>
+          <img src={preview} alt="" style={{ maxWidth: "90%",
+                 maxHeight: "90%", borderRadius: 8 }} />
+        </div>
       )}
     </section>
   );

@@ -439,6 +439,9 @@ class Item(models.Model):
     spec_ref = models.TextField(blank=True)
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
+    is_major = models.BooleanField(  # a key project material (shows on DPR)
+        default=False)
+    photo = models.FileField(upload_to="items/", null=True, blank=True)
     merged_into = models.ForeignKey(  # duplicate resolution
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )

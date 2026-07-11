@@ -3,9 +3,9 @@ function getCookie(name) {
   return match ? decodeURIComponent(match[2]) : null;
 }
 
-export async function apiUpload(path, formData) {
+export async function apiUpload(path, formData, method = "POST") {
   const res = await fetch(`/api/v1${path}`, {
-    method: "POST",
+    method,
     headers: { "X-CSRFToken": getCookie("csrftoken") },
     credentials: "same-origin",
     body: formData,
