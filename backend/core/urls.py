@@ -130,7 +130,11 @@ urlpatterns = [
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/runs/<int:pk>", payroll_api.payroll_run_detail,
          name="payroll-run-detail"),
+    path("payroll/runs/<int:pk>/report.pdf", payroll_api.payroll_report_pdf,
+         name="payroll-report-pdf"),
     path("payroll/lines/<int:pk>", payroll_api.payroll_line,
          name="payroll-line"),
+    path("payroll/lines/<int:pk>/payslip.pdf", payroll_api.payslip_pdf,
+         name="payroll-payslip-pdf"),
     path("", include(router.urls)),
 ]

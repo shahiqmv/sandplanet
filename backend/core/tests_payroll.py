@@ -208,3 +208,17 @@ class PayrollRunTests(TestCase):
         r = self.client.patch(f"/api/v1/payroll/lines/{line_id}",
                              {"allowance": 100}, format="json")
         self.assertEqual(r.status_code, 400)
+
+    def test_report_and_payslip_pdf(self):
+        run = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        line_id = run["lines"][0]["id"]
+        r = self.client.get(f"/api/v1/payroll/runs/{run['id']}/report.pdf")
+        p = self.client.get(f"/api/v1/payroll/lines/{line_id}/payslip.pdf")
+        # 200 with a PDF, or 503 if WeasyPrint is absent on this box
+        for resp in (r, p):
+            self.assertIn(resp.status_code, (200, 503))
+            if resp.status_code == 200:
+                self.assertEqual(resp["Content-Type"], "application/pdf")
+                self.assertTrue(resp.content[:4] == b"%PDF")

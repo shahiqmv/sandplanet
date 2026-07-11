@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .slip { max-width: 520px; }
+  .row { display: flex; justify-content: space-between;
+         padding: 3px 0; font-size: 9.5pt; }
+  .row .lbl { color: #3a4750; }
+  .grp { margin-top: 10px; }
+  .grp h3 { font-size: 9.5pt; color: #1f3a52; margin: 0 0 4px;
+            border-bottom: 0.6px solid #A9B6C0; padding-bottom: 2px; }
+  .tot { font-weight: 700; border-top: 0.8px solid #1f3a52;
+         margin-top: 4px; padding-top: 4px; }
+  .net { font-size: 12pt; font-weight: 700; color: #1f3a52;
+         background: #eef2f5; padding: 6px 10px; border-radius: 4px;
+         margin-top: 12px; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="PAYSLIP" %}
+{% include "pdf/_letterhead.html" with title="SALARY SLIP" subline=period %}
+
+<table class="kv">
+  <tr><td class="k">Employee</td><td>{{ line.employee.emp_no }} — {{ line.employee.full_name }}</td>
+      <td class="k">Site</td><td>{{ i.site_code }}</td></tr>
+  <tr><td class="k">Designation</td><td>{{ i.job_title }}</td>
+      <td class="k">Nationality</td><td>{{ line.employee.nationality }}</td></tr>
+  <tr><td class="k">Period</td><td>{{ period }}</td>
+      <td class="k">Currency</td><td>{{ currency }}</td></tr>
+</table>
+
+<div class="slip">
+  <div class="grp">
+    <h3>Earnings</h3>
+    <div class="row"><span class="lbl">Basic salary (monthly)</span><span>{{ i.f_basic_pay }}</span></div>
+    <div class="row"><span class="lbl">Days worked / {{ run.working_days }} · daily {{ i.f_daily_rate }}</span><span>{{ i.days_worked }}</span></div>
+    <div class="row"><span class="lbl">Earned basic</span><span>{{ i.f_earned_basic }}</span></div>
+    {% if line.fridays_worked %}<div class="row"><span class="lbl">Friday work ({{ line.fridays_worked }} day/s)</span><span>{{ i.f_friday_pay }}</span></div>{% endif %}
+    {% if line.ot_hours %}<div class="row"><span class="lbl">Overtime ({{ line.ot_hours }} h × {{ line.ot_rate }})</span><span>{{ i.f_ot_pay }}</span></div>{% endif %}
+    {% if line.allowance %}<div class="row"><span class="lbl">Allowance / air ticket</span><span>{{ i.f_allowance }}</span></div>{% endif %}
+    <div class="row tot"><span>Gross pay</span><span>{{ i.f_gross }}</span></div>
+  </div>
+
+  <div class="grp">
+    <h3>Deductions</h3>
+    <div class="row"><span class="lbl">Salary advance</span><span>{{ i.f_advance }}</span></div>
+    <div class="row"><span class="lbl">Loan installment</span><span>{{ i.f_loan }}</span></div>
+    <div class="row"><span class="lbl">Penalty</span><span>{{ i.f_penalty }}</span></div>
+    <div class="row tot"><span>Total deductions</span><span>{{ i.f_deductions }}</span></div>
+  </div>
+
+  <div class="net"><div class="row" style="padding:0">
+    <span>NET PAY ({{ currency }})</span><span>{{ i.f_net }}</span></div></div>
+
+  {% if line.amount_to_site or line.amount_to_office %}
+  <div class="grp">
+    <h3>Payment</h3>
+    <div class="row"><span class="lbl">Paid at site</span><span>{{ i.f_amount_to_site }}</span></div>
+    <div class="row"><span class="lbl">Paid at office</span><span>{{ i.f_amount_to_office }}</span></div>
+  </div>
+  {% endif %}
+</div>
+
+<table class="sig" style="margin-top:28px">
+  <tr><td class="t">EMPLOYEE SIGNATURE</td>
+      <td class="t">PREPARED BY (HR / PAYROLL)</td></tr>
+  <tr><td>&nbsp;</td><td>&nbsp;</td></tr>
+</table>
+</body>
+</html>

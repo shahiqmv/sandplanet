@@ -1,0 +1,104 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  @page { size: A4 landscape; }
+  table { font-size: 7.5pt; }
+  th, td { padding: 2px 3px; }
+  .num { text-align: right; }
+  .ctr { text-align: center; }
+  .sub td { font-weight: 700; background: #eef2f5; }
+  .grand td { font-weight: 700; background: #dbe4ea;
+              border-top: 1.2px solid #1f3a52; }
+  .sect { font-weight: 700; color: #1f3a52; font-size: 9pt;
+          margin: 10px 0 3px; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="PAYROLL" %}
+{% include "pdf/_letterhead.html" with title="SALARY REPORT" subline=period %}
+
+<table class="kv">
+  <tr><td class="k">Period</td><td>{{ period }}</td>
+      <td class="k">Currency</td><td>{{ currency }}</td>
+      <td class="k">Working days</td><td>{{ run.working_days }}</td>
+      <td class="k">Status</td><td>{{ run.status }}</td></tr>
+</table>
+
+{% for g in groups %}
+{% if multi_site %}<div class="sect">{{ g.site_code }}</div>{% endif %}
+<table>
+  <thead><tr>
+    <th style="width:3%">No.</th><th>Name</th><th>Nat.</th><th>Title</th>
+    <th class="num">Basic</th><th class="num">Days</th><th class="num">Fri</th>
+    <th class="num">OT h</th><th class="num">Earned</th>
+    <th class="num">Allow.</th><th class="num">OT pay</th>
+    <th class="num">Gross</th><th class="num">Adv</th><th class="num">Pen</th>
+    <th class="num">Loan</th><th class="num">Net</th>
+    <th class="num">To site</th><th class="num">Office</th>
+  </tr></thead>
+  {% for r in g.rows %}
+  <tr>
+    <td class="ctr">{{ r.no }}</td><td>{{ r.full_name }}</td>
+    <td>{{ r.nationality }}</td><td>{{ r.job_title }}</td>
+    <td class="num">{{ r.f_basic_pay }}</td>
+    <td class="num">{{ r.days_worked }}</td>
+    <td class="num">{% if r.fridays_worked %}{{ r.fridays_worked }}{% endif %}</td>
+    <td class="num">{% if r.ot_hours %}{{ r.ot_hours }}{% endif %}</td>
+    <td class="num">{{ r.f_earned_basic }}</td>
+    <td class="num">{{ r.f_allowance }}</td>
+    <td class="num">{{ r.f_ot_pay }}</td>
+    <td class="num">{{ r.f_gross }}</td>
+    <td class="num">{{ r.f_advance }}</td>
+    <td class="num">{{ r.f_penalty }}</td>
+    <td class="num">{{ r.f_loan }}</td>
+    <td class="num">{{ r.f_net }}</td>
+    <td class="num">{{ r.f_amount_to_site }}</td>
+    <td class="num">{{ r.f_amount_to_office }}</td>
+  </tr>
+  {% endfor %}
+  <tr class="sub">
+    <td colspan="4">Subtotal — {{ g.site_code }}</td>
+    <td class="num">{{ g.totals.basic_pay }}</td><td></td><td></td><td></td>
+    <td class="num">{{ g.totals.earned_basic }}</td>
+    <td class="num">{{ g.totals.allowance }}</td>
+    <td class="num">{{ g.totals.ot_pay }}</td>
+    <td class="num">{{ g.totals.gross }}</td>
+    <td class="num">{{ g.totals.advance }}</td>
+    <td class="num">{{ g.totals.penalty }}</td>
+    <td class="num">{{ g.totals.loan }}</td>
+    <td class="num">{{ g.totals.net }}</td>
+    <td class="num">{{ g.totals.amount_to_site }}</td>
+    <td class="num">{{ g.totals.amount_to_office }}</td>
+  </tr>
+</table>
+{% endfor %}
+
+<div class="sect">Summary</div>
+<table>
+  <tr class="grand">
+    <td colspan="4">GRAND TOTAL ({{ currency }})</td>
+    <td class="num">{{ grand.basic_pay }}</td><td></td><td></td><td></td>
+    <td class="num">{{ grand.earned_basic }}</td>
+    <td class="num">{{ grand.allowance }}</td>
+    <td class="num">{{ grand.ot_pay }}</td>
+    <td class="num">{{ grand.gross }}</td>
+    <td class="num">{{ grand.advance }}</td>
+    <td class="num">{{ grand.penalty }}</td>
+    <td class="num">{{ grand.loan }}</td>
+    <td class="num">{{ grand.net }}</td>
+    <td class="num">{{ grand.amount_to_site }}</td>
+    <td class="num">{{ grand.amount_to_office }}</td>
+  </tr>
+</table>
+
+<table class="sig" style="margin-top:24px">
+  <tr><td class="t">PREPARED BY (HR / PAYROLL)</td>
+      <td class="t">CHECKED BY (FINANCE)</td>
+      <td class="t">APPROVED BY</td></tr>
+  <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+</table>
+</body>
+</html>

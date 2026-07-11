@@ -116,6 +116,109 @@ def payroll_run_detail(request, pk):
     return Response(_run_info(run))
 
 
+def _money(v):
+    return f"{Decimal(v):,.2f}"
+
+
+def _pdf_response(html, filename):
+    from django.conf import settings
+    from django.http import HttpResponse
+    from rest_framework.response import Response as R
+
+    try:
+        from weasyprint import HTML
+        pdf = HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:
+        return R({"detail": "PDF engine unavailable on this server."},
+                 status=503)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{filename}"'
+    return resp
+
+
+def _month_name(m):
+    import calendar
+    return calendar.month_name[m]
+
+
+@api_view(["GET"])
+def payroll_report_pdf(request, pk):
+    """The salary sheet for a run — grouped site-wise (a USD run spans sites)
+    with a totals summary. HR / Finance / Admin."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    try:
+        run = PayrollRun.objects.select_related("site").get(pk=pk)
+    except PayrollRun.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    from collections import OrderedDict
+
+    from django.template.loader import render_to_string
+
+    from .pdf import company_info, logo_src
+
+    lines = [_line_info(ln) for ln in
+             run.lines.select_related("employee__job_category", "site").all()]
+    groups = OrderedDict()
+    for ln in lines:
+        groups.setdefault(ln["site_code"] or "—", []).append(ln)
+
+    def totals(rows):
+        keys = ("basic_pay", "earned_basic", "allowance", "ot_pay", "gross",
+                "advance", "penalty", "loan", "net", "amount_to_site",
+                "amount_to_office")
+        return {k: _money(sum(Decimal(r[k] or 0) for r in rows)) for k in keys}
+
+    group_list = []
+    for site_code, rows in groups.items():
+        for i, r in enumerate(rows, 1):
+            r["no"] = i
+            for k in ("basic_pay", "earned_basic", "allowance", "ot_pay",
+                      "gross", "advance", "penalty", "loan", "net",
+                      "amount_to_site", "amount_to_office"):
+                r["f_" + k] = _money(r[k] or 0) if r[k] not in (None, "") else ""
+        group_list.append({"site_code": site_code, "rows": rows,
+                           "totals": totals(rows)})
+    html = render_to_string("pdf/payroll_report.html", {
+        "run": run, "currency": run.currency,
+        "period": f"{_month_name(run.month)} {run.year}",
+        "groups": group_list, "grand": totals(lines),
+        "multi_site": run.site_id is None,
+        "logo_src": logo_src(), "co": company_info(),
+    })
+    return _pdf_response(html, f"payroll-{run.currency}-{run.year}-"
+                               f"{run.month:02d}.pdf")
+
+
+@api_view(["GET"])
+def payslip_pdf(request, pk):
+    """One worker's salary slip for a run. HR / Finance / Admin."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    try:
+        line = PayrollLine.objects.select_related(
+            "run", "employee__job_category", "site").get(pk=pk)
+    except PayrollLine.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    from django.template.loader import render_to_string
+
+    from .pdf import company_info, logo_src
+
+    info = _line_info(line)
+    for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
+              "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
+              "deductions", "net", "amount_to_site", "amount_to_office"):
+        info["f_" + k] = _money(info[k] or 0) if info.get(k) not in (None, "") \
+            else "0.00"
+    html = render_to_string("pdf/payslip.html", {
+        "line": line, "run": line.run, "i": info, "currency": line.run.currency,
+        "period": f"{_month_name(line.run.month)} {line.run.year}",
+        "logo_src": logo_src(), "co": company_info(),
+    })
+    return _pdf_response(html, f"payslip-{line.employee.emp_no}-"
+                               f"{line.run.year}-{line.run.month:02d}.pdf")
+
+
 @api_view(["PATCH"])
 def payroll_line(request, pk):
     if not _guard(request):

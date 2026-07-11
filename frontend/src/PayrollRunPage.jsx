@@ -265,6 +265,11 @@ function Row({ line, locked, showSite, onSave }) {
       {cell("advance", 70)}{cell("penalty", 65)}{cell("loan", 70)}
       {ro(line.net)}
       {cell("amount_to_site", 75)}{cell("amount_to_office", 75)}
+      <td style={{ ...td, whiteSpace: "nowrap" }}>
+        <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
+           target="_blank" rel="noreferrer" title="Salary slip"
+           style={{ textDecoration: "none" }}>🧾</a>
+      </td>
     </tr>
   );
 }
