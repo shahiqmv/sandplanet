@@ -52,6 +52,8 @@ urlpatterns = [
     path("petty-cash/<int:site_id>/cycles", petty.petty_cash_cycles,
          name="petty-cash-cycles"),
     path("stock/<int:site_id>", stock.stock_balances, name="stock-balances"),
+    path("stock/<int:site_id>/major", stock.stock_major_materials,
+         name="stock-major-materials"),
     path("stock/<int:site_id>/issue", stock.stock_issue, name="stock-issue"),
     path("stock/<int:site_id>/reconcile", stock.stock_reconcile,
          name="stock-reconcile"),

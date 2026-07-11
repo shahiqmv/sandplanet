@@ -106,6 +106,25 @@ class StockTests(StockBase):
         self.assertEqual(float(hist[0]["running"]), 110.0)
         self.assertEqual(float(hist[1]["running"]), 150.0)
 
+    def test_major_materials_endpoint(self):
+        self.grn_to_verified()  # cement +150 on hand
+        self.cement.is_major = True
+        self.cement.save(update_fields=["is_major"])
+        self.as_user(self.sa)
+        r = self.client.get(f"/api/v1/stock/{self.site.id}/major")
+        self.assertEqual(r.status_code, 200)
+        rows = {m["code"]: float(m["on_hand"]) for m in r.data["materials"]}
+        self.assertEqual(rows, {"ITM-90001": 150.0})  # only the major item
+
+    def test_major_material_with_no_stock_still_listed(self):
+        # A key material belongs on the DPR even at zero on-hand.
+        self.rebar.is_major = True
+        self.rebar.save(update_fields=["is_major"])
+        self.as_user(self.sa)
+        r = self.client.get(f"/api/v1/stock/{self.site.id}/major")
+        codes = {m["code"]: float(m["on_hand"]) for m in r.data["materials"]}
+        self.assertEqual(codes.get("ITM-90002"), 0.0)
+
     def test_issue_forbidden_for_non_site_staff(self):
         self.grn_to_verified()
         stranger = make_user("hop2", User.Role.HO_PURCHASING)

@@ -93,6 +93,17 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
           </tr>
         </tbody>
       </table>
+      {p.work_time_lost && (p.time_lost_cause || p.time_lost_reason) && (
+        <p style={{ fontSize: 13, margin: "8px 0 0",
+                    padding: "6px 10px", borderRadius: 6,
+                    background: /client|consultant/i.test(p.time_lost_cause || "")
+                      ? "#fff1e0" : "#f2f6f9",
+                    borderLeft: /client|consultant/i.test(p.time_lost_cause || "")
+                      ? "3px solid #d98324" : "3px solid var(--sp-border)" }}>
+          <strong>Time lost — {p.time_lost_cause || "cause not stated"}</strong>
+          {p.time_lost_reason && `: ${p.time_lost_reason}`}
+        </p>
+      )}
 
       {p.work_done?.length > 0 && (
         <>
@@ -101,27 +112,35 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
             <thead><tr>
               <th style={th}>Project</th>
               <th style={th}>Activity / Milestone</th>
+              <th style={th}>Trade</th>
               <th style={th}>Location</th>
               <th style={th}>Today %</th><th style={th}>To-date %</th>
               <th style={th}>Remarks</th>
             </tr></thead>
             <tbody>
-              {p.work_done.map((r, i) => (
+              {p.work_done.map((r, i) => {
+                const offProgramme = r.project && r.activity && !r.activity_id;
+                return (
                 <tr key={i}>
                   <td style={td}>{r.project || "General"}</td>
                   <td style={td}>
                     {r.activity}
-                    {r.activity_id && (
+                    {r.activity_id ? (
                       <span style={{ color: "#1a7f37", fontSize: 11 }}>
                         {" "}◆ programme</span>
+                    ) : offProgramme && (
+                      <span style={{ color: "#b35900", fontSize: 11 }}>
+                        {" "}⚠ off-programme</span>
                     )}
                   </td>
+                  <td style={td}>{r.trade}</td>
                   <td style={td}>{r.location}</td>
                   <td style={td}>{r.progress_today ?? ""}</td>
                   <td style={td}>{r.progress_todate ?? r.progress_pct ?? ""}</td>
                   <td style={td}>{r.remarks}</td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </>

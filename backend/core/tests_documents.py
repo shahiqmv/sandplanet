@@ -114,13 +114,14 @@ class NumberingConcurrencyTests(TransactionTestCase):
 
 @override_settings(MEDIA_ROOT="test-media")
 class DprLifecycleTests(DocBase):
-    def test_issue_blocked_below_4_captioned_photos(self):
+    def test_issue_no_longer_requires_min_photos(self):
+        # Owner (Phase C): the photo floor was removed — a DPR issues with any
+        # number of photos, including fewer than the old minimum of four.
         ref = self.create_dpr().data["ref"]
-        self.add_photos(ref, 3)
-        self.add_photos(ref, 1, captioned=False)  # 4 files, only 3 captioned
+        self.add_photos(ref, 1)
         r = self.client.post(f"/api/v1/documents/{ref}/actions/issue")
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("captioned", r.data["detail"])
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["status"], "ISSUED")
 
     def test_issue_then_verify_flow(self):
         ref = self.create_dpr().data["ref"]

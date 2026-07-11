@@ -32,29 +32,41 @@
   <tr><td class="lbl">If Rained: From / To</td><td>{% if payload.rain_from or payload.rain_to %}{{ payload.rain_from }} – {{ payload.rain_to }}{% endif %}</td>
       <td class="lbl">Rain Duration (hrs)</td><td class="ctr">{{ payload.rain_duration|default:"" }}</td>
       <td class="lbl">Work Time Lost (hrs)</td><td class="ctr">{{ payload.work_time_lost|default:"" }}</td></tr>
+  {% if payload.work_time_lost and payload.time_lost_cause %}
+  {% if "instruction" in payload.time_lost_cause or "Client" in payload.time_lost_cause %}
+  <tr><td class="lbl" style="background:#fbe9d3">Time Lost — Cause</td>
+      <td colspan="5" style="background:#fff1e0"><strong>{{ payload.time_lost_cause }}</strong>{% if payload.time_lost_reason %} — {{ payload.time_lost_reason }}{% endif %}</td></tr>
+  {% else %}
+  <tr><td class="lbl">Time Lost — Cause</td>
+      <td colspan="5">{{ payload.time_lost_cause }}{% if payload.time_lost_reason %} — {{ payload.time_lost_reason }}{% endif %}</td></tr>
+  {% endif %}
+  {% endif %}
 </table>
 
 <h2>1.&nbsp; WORK DONE TODAY</h2>
 <table>
   <thead><tr><th style="width:5%">No.</th><th>Activity</th>
-             <th style="width:24%">Location / Area / Villa</th>
-             <th style="width:8%">Today %</th>
-             <th style="width:8%">To-date %</th>
-             <th style="width:22%">Remarks</th></tr></thead>
+             <th style="width:12%">Trade</th>
+             <th style="width:20%">Location / Area / Villa</th>
+             <th style="width:7%">Today %</th>
+             <th style="width:7%">To-date %</th>
+             <th style="width:20%">Remarks</th></tr></thead>
   {# Rows grouped project-wise so the client reads each award separately (owner, R8) #}
   {% for group in work_groups %}
   {% if show_group_headers and group.label %}
-  <tr><td colspan="6" class="lbl" style="font-size:8pt">{{ group.label }}</td></tr>
+  <tr><td colspan="7" class="lbl" style="font-size:8pt">{{ group.label }}</td></tr>
   {% endif %}
   {% for row in group.rows %}
-  <tr><td class="ctr">{{ row.no }}</td><td>{{ row.activity }}</td>
+  <tr><td class="ctr">{{ row.no }}</td>
+      <td>{{ row.activity }}{% if row.off_programme %} <span style="color:#b35900;font-size:7.5pt">(off-programme)</span>{% endif %}</td>
+      <td class="ctr">{{ row.trade }}</td>
       <td class="ctr">{{ row.location }}</td>
       <td class="ctr">{% if row.progress_today != "" %}{{ row.progress_today }}%{% endif %}</td>
       <td class="ctr">{% if row.progress_todate != "" %}{{ row.progress_todate }}%{% endif %}</td>
       <td>{{ row.remarks }}</td></tr>
   {% endfor %}
   {% empty %}
-  <tr><td colspan="6" class="ctr" style="color:#8a97a0">No activities recorded.</td></tr>
+  <tr><td colspan="7" class="ctr" style="color:#8a97a0">No activities recorded.</td></tr>
   {% endfor %}
 </table>
 
@@ -112,7 +124,7 @@
       <td>{% if payload.safety.incident %}{{ payload.safety.details }}{% endif %}</td></tr>
 </table>
 
-<p class="note">Attach progress photos using the Progress Photos sheet (minimum 4 photos with captions).</p>
+<p class="note">Progress photos with captions follow on the Progress Photos sheet.</p>
 
 <table class="sig">
   <tr><td class="t">PREPARED BY (SITE ENGINEER / ADMIN)</td>

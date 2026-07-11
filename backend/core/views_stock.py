@@ -58,6 +58,16 @@ def stock_history(request, site_id, item_id):
     })
 
 
+@api_view(["GET"])
+def stock_major_materials(request, site_id):
+    """Major-material catalog items with this site's on-hand — the DPR's
+    'load key materials from stock' source."""
+    site, err = _get_site(request, site_id)
+    if err:
+        return err
+    return Response({"materials": stock.major_materials(site)})
+
+
 @api_view(["POST"])
 def stock_issue(request, site_id):
     site, err = _get_site(request, site_id)

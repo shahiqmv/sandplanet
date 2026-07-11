@@ -6,7 +6,7 @@ const WEATHER = ["Sunny", "Cloudy", "Rainy"];
 
 // Site-wide DPR (R8): every work row is tagged with its project (or
 // General) and may link to that project's programme activity
-const emptyWork = { project: "", activity_id: "", activity: "",
+const emptyWork = { project: "", activity_id: "", activity: "", trade: "",
                     location: "", progress_today: "", progress_todate: "",
                     remarks: "" };
 const emptyMachine = { item: "", nos: "", remarks: "" };
@@ -80,6 +80,9 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   const [rainFrom, setRainFrom] = useState(p.rain_from || "");
   const [rainTo, setRainTo] = useState(p.rain_to || "");
   const [timeLost, setTimeLost] = useState(p.work_time_lost || "");
+  const [timeLostCause, setTimeLostCause] = useState(p.time_lost_cause || "");
+  const [timeLostReason, setTimeLostReason] = useState(
+    p.time_lost_reason || "");
   const [workDone, setWorkDone] = useState(p.work_done?.length ? p.work_done
                                                               : [{ ...emptyWork }]);
   const [machinery, setMachinery] = useState(p.machinery || []);
@@ -130,6 +133,31 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       .map((r) => [r.category_id, r.count]));
   }
 
+  const [matNotice, setMatNotice] = useState(null);
+  async function loadMajorMaterials() {
+    setMatNotice(null);
+    try {
+      const { materials: major } = await api(`/stock/${site.id}/major`);
+      if (!major.length) {
+        setMatNotice("No items are flagged as major materials yet — set the "
+                     + "★ flag on the Item Master.");
+        return;
+      }
+      const have = new Set(materials.map((r) =>
+        (r.material || "").trim().toLowerCase()));
+      const added = major
+        .filter((m) => !have.has(m.description.trim().toLowerCase()))
+        .map((m) => ({ material: m.description, unit: m.unit,
+                       opening: String(m.on_hand), received: "", consumed: "",
+                       remarks: "" }));
+      setMaterials([...materials.filter((r) => r.material), ...added]);
+      setMatNotice(`Loaded ${added.length} major material(s) with current `
+                   + `stock as opening balance.`);
+    } catch (e) {
+      setMatNotice(e.message);
+    }
+  }
+
   async function prefillFromAttendance() {
     setMpNotice(null);
     try {
@@ -159,6 +187,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       rain_from: rainy ? rainFrom : "",
       rain_to: rainy ? rainTo : "",
       work_time_lost: timeLost,
+      time_lost_cause: timeLost ? timeLostCause : "",
+      time_lost_reason: timeLost ? timeLostReason : "",
       work_done: workDone.filter((r) => r.activity),
       manpower: manpowerMap(),
       machinery: machinery.filter((r) => r.item),
@@ -221,7 +251,20 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
     }
   }
 
+  function offProgrammeMissingRemark() {
+    return workDone.some((r) => {
+      const acts = programmes[r.project] || [];
+      return r.activity && r.project && acts.length > 0 && !r.activity_id &&
+             !String(r.remarks || "").trim();
+    });
+  }
+
   async function issue() {
+    if (offProgrammeMissingRemark()) {
+      setError("An activity not in its project's programme needs a remark "
+               + "explaining it before the DPR can be issued.");
+      return;
+    }
     const saved = await saveDraft();
     if (!saved) return;
     setBusy(true);
@@ -264,6 +307,29 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
           <input value={timeLost} onChange={(e) => setTimeLost(e.target.value)}
                  style={inputStyle} />
         </label>
+        {timeLost && (
+          <label style={{ fontSize: 13 }}>Time lost — cause
+            <select value={timeLostCause}
+                    onChange={(e) => setTimeLostCause(e.target.value)}
+                    style={inputStyle}>
+              <option value="">— select —</option>
+              <option value="Rain / weather">Rain / weather</option>
+              <option value="Client / consultant instruction">
+                Client / consultant instruction</option>
+              <option value="Power / utility outage">Power / utility outage</option>
+              <option value="Material shortage">Material shortage</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+        )}
+        {timeLost && (
+          <label style={{ fontSize: 13 }}>Time lost — details
+            <input value={timeLostReason}
+                   onChange={(e) => setTimeLostReason(e.target.value)}
+                   placeholder="e.g. resort asked to suspend 10:00–12:00 for guest arrival"
+                   style={inputStyle} />
+          </label>
+        )}
         <label style={{ fontSize: 13 }}>Weather AM
           <select value={weatherAm} onChange={(e) => setWeatherAm(e.target.value)}
                   style={inputStyle}>
@@ -294,17 +360,22 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
           " — tag each row with its project and programme activity"}
       </SectionTitle>
       <RowTable
-        headers={["Project", "Activity / Milestone", "Location/Area/Villa",
-                  "Today %", "To-date %", "Remarks"]}
+        headers={["Project", "Activity / Milestone", "Trade",
+                  "Location/Area/Villa", "Today %", "To-date %", "Remarks"]}
         rows={workDone} setRows={setWorkDone} empty={emptyWork}
         render={(row, set) => {
           const acts = programmes[row.project] || [];
+          // Off-programme = a project is chosen but the row isn't linked to
+          // one of its programme activities. The owner wants this flagged with
+          // a caution and an explanatory remark made mandatory.
+          const offProgramme = row.project && acts.length > 0 &&
+                               !row.activity_id;
           return (
           <>
-            <td style={{ padding: 3 }}>
+            <td style={{ padding: 3, verticalAlign: "top" }}>
               <select value={row.project || ""}
                       onChange={(e) => set({ project: e.target.value,
-                                             activity_id: "" })}
+                                             activity_id: "", trade: "" })}
                       style={{ ...inputStyle, width: 110 }}>
                 <option value="">General</option>
                 {activeProjects.map((pr) => (
@@ -312,7 +383,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                 ))}
               </select>
             </td>
-            <td style={{ padding: 3, minWidth: 200 }}>
+            <td style={{ padding: 3, minWidth: 200, verticalAlign: "top" }}>
               {acts.length > 0 ? (
                 <>
                   <select value={row.activity_id || ""}
@@ -321,6 +392,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                               (a) => String(a.id) === e.target.value);
                             set({ activity_id: act ? act.id : "",
                                   activity: act ? act.name : row.activity,
+                                  trade: act ? (act.trade || row.trade)
+                                             : row.trade,
                                   progress_todate: act && !row.progress_todate
                                     ? act.progress : row.progress_todate });
                           }}
@@ -339,6 +412,13 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                            onChange={(e) => set({ activity: e.target.value })}
                            style={{ ...inputStyle, marginTop: 4 }} />
                   )}
+                  {offProgramme && (
+                    <p style={{ margin: "4px 0 0", fontSize: 11,
+                                color: "#b35900" }}>
+                      ⚠ Not in {row.project}'s programme — add a remark
+                      explaining this work.
+                    </p>
+                  )}
                 </>
               ) : (
                 <input value={row.activity} placeholder="Activity"
@@ -346,12 +426,21 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                        style={inputStyle} />
               )}
             </td>
+            {cell(row.trade, (v) => set({ trade: v }), 90)}
             {cell(row.location, (v) => set({ location: v }), 120)}
             {cell(row.progress_today, (v) => set({ progress_today: v }), 65,
                   "number")}
             {cell(row.progress_todate, (v) => set({ progress_todate: v }), 65,
                   "number")}
-            {cell(row.remarks, (v) => set({ remarks: v }), 110)}
+            <td style={{ padding: 3, verticalAlign: "top" }}>
+              <input value={row.remarks}
+                     onChange={(e) => set({ remarks: e.target.value })}
+                     placeholder={offProgramme ? "Required — why off-programme"
+                                               : ""}
+                     style={{ ...inputStyle, width: 110,
+                              border: offProgramme && !row.remarks
+                                ? "1.5px solid #d98324" : inputStyle.border }} />
+            </td>
           </>
           );
         }}
@@ -425,6 +514,17 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       />
 
       <SectionTitle>4. Key Materials at Site</SectionTitle>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginBottom: 8 }}>
+        <button type="button" onClick={loadMajorMaterials}
+                style={{ ...ghostButton, padding: "4px 12px", fontSize: 13 }}>
+          ⤵ Load major materials from stock
+        </button>
+        {matNotice && (
+          <span style={{ fontSize: 12, color: matNotice.startsWith("Loaded")
+                           ? "#1a7f37" : "#b35900" }}>{matNotice}</span>
+        )}
+      </div>
       <RowTable
         headers={["Material", "Unit", "Opening", "Received", "Consumed", "Remarks"]}
         rows={materials} setRows={setMaterials} empty={emptyMaterial}
@@ -461,7 +561,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       )}
 
       <SectionTitle>
-        Progress Photos — {captioned} of 4 required captioned photos
+        Progress Photos — {photos.length} attached
+        {photos.length > 0 && ` (${captioned} captioned)`}
       </SectionTitle>
       {!doc && (
         <p style={{ fontSize: 13, color: "#5a6b78" }}>
@@ -502,8 +603,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         <button onClick={saveDraft} disabled={busy} style={ghostButton}>
           Save draft
         </button>
-        <button onClick={issue} disabled={busy || captioned < 4} style={buttonStyle}
-                title={captioned < 4 ? "Needs 4 captioned photos" : ""}>
+        <button onClick={issue} disabled={busy} style={buttonStyle}>
           Issue to client
         </button>
       </div>

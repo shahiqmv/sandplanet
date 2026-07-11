@@ -49,6 +49,23 @@ def balances(site):
     return out
 
 
+def major_materials(site):
+    """Every catalog item flagged as a major material, with this site's current
+    on-hand (0 when it has never moved here). Feeds the DPR key-materials
+    loader — a key material still belongs on the report at zero stock."""
+    on_hand = {r["item"]: (r["on_hand"] or ZERO) for r in
+               StockMovement.objects.filter(site=site)
+               .values("item").annotate(on_hand=Sum("qty"))}
+    out = []
+    for it in Item.objects.filter(is_major=True, is_active=True,
+                                  merged_into__isnull=True).order_by("code"):
+        out.append({
+            "item_id": it.id, "code": it.code, "description": it.description,
+            "unit": it.unit, "on_hand": on_hand.get(it.id, ZERO),
+        })
+    return out
+
+
 def history(site, item):
     """Movement rows for one (site, item), newest first, with running balance
     computed oldest→newest so each row shows the on-hand *after* it applied."""

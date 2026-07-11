@@ -63,7 +63,7 @@ RESULTS = {  # client results per type (spec §5.3/§5.4)
     "MAR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN"}
-MIN_DPR_PHOTOS = 4  # decision 8 — hard block
+MIN_DPR_PHOTOS = 0  # owner (Phase C): no photo floor — attach any number
 
 
 def _serialize(doc, request):
@@ -442,7 +442,7 @@ def document_action(request, ref, action_name):
 
 
 def _do_issue(request, doc, comment):
-    if doc.doc_type == "DPR":
+    if doc.doc_type == "DPR" and MIN_DPR_PHOTOS:
         captioned = doc.attachments.filter(kind="PHOTO").exclude(caption="").count()
         if captioned < MIN_DPR_PHOTOS:
             return Response(

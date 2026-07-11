@@ -93,13 +93,15 @@ def _dpr_context(document, revision):
     def norm(row, keys):
         return {k: row.get(k, "") for k in keys}
 
-    work_keys = ("activity", "location", "progress_today", "progress_todate",
-                 "remarks", "project")
+    work_keys = ("activity", "trade", "location", "progress_today",
+                 "progress_todate", "remarks", "project")
     work_rows = []
     for row in payload.get("work_done", []):
         r = norm(row, work_keys)
         if not r["progress_todate"]:
             r["progress_todate"] = row.get("progress_pct", "")
+        # Flag rows the site logged against a project but outside its programme
+        r["off_programme"] = bool(r["project"]) and not row.get("activity_id")
         work_rows.append(r)
     # Group project-wise so the client reads each award separately
     # (owner, R8); untagged rows collect under General Works, last.

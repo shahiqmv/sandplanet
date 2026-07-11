@@ -277,8 +277,17 @@ def project_programme(request, pk):
               detail={"count": len(created)})
         return Response({"imported": len(created)}, status=201)
 
-    return Response(ActivitySerializer(project.activities.all(),
-                                       many=True).data)
+    acts = list(project.activities.all())
+    data = ActivitySerializer(acts, many=True).data
+    # Trade/discipline = the nearest top-level (indent 0) heading above each
+    # row in the outline — the "MEP / Civil / Finishes" grouping the owner
+    # wants carried onto the DPR. Derived, so no schema change needed.
+    current_trade = ""
+    for act, row in zip(acts, data):
+        if act.indent == 0:
+            current_trade = act.name
+        row["trade"] = current_trade
+    return Response(data)
 
 
 @api_view(["PATCH", "DELETE"])
