@@ -69,3 +69,40 @@ class ItemFieldTests(TestCase):
             line = mr.data["lines"][0]
         self.assertTrue(line["item_is_major"])
         self.assertIsNotNone(line["item_photo_url"])
+
+
+@override_settings(MEDIA_ROOT="test-media")
+class MrLinePhotoTests(TestCase):
+    def setUp(self):
+        from datetime import date, timedelta
+
+        from .models import Site, SitePmHistory
+        self.site = Site.objects.create(
+            code="SJR", name="Soneva Jani", status=Site.Status.ACTIVE,
+            start_date=date.today() - timedelta(days=5))
+        self.sa = make_user("sa", User.Role.SITE_ADMIN, site=self.site)
+        pm = make_user("pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def test_free_text_line_photo_surfaces_on_line(self):
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "payload": {"required_by": "2026-08-01", "stock_attested": True},
+            "lines": [{"item_id": None, "free_text_desc": "Special gasket 3in",
+                       "unit": "nos", "qty_required": 4, "qty_to_order": 4,
+                       "priority": "NORMAL"}],
+        }, format="json")
+        self.assertEqual(mr.status_code, 201, mr.data)
+        line_id = mr.data["lines"][0]["id"]
+        self.assertIsNone(mr.data["lines"][0]["item_photo_url"])
+        photo = SimpleUploadedFile("g.png", PNG, content_type="image/png")
+        r = self.client.post(
+            f"/api/v1/documents/{mr.data['ref']}/attachments",
+            {"file": photo, "kind": "PHOTO", "line_id": line_id},
+            format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        fresh = self.client.get(f"/api/v1/documents/{mr.data['ref']}")
+        self.assertIsNotNone(fresh.data["lines"][0]["item_photo_url"])

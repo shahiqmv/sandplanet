@@ -412,6 +412,10 @@ class Attachment(models.Model):
         DocumentRevision, on_delete=models.PROTECT, null=True, blank=True,
         related_name="attachments",
     )
+    line = models.ForeignKey(  # a photo tied to one line (free-text MR items)
+        "DocumentLine", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="attachments",
+    )
     kind = models.CharField(max_length=20, choices=KINDS)
     file = models.FileField(upload_to=attachment_path)
     file_name = models.TextField(blank=True)

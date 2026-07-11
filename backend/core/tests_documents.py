@@ -123,6 +123,37 @@ class DprLifecycleTests(DocBase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["status"], "ISSUED")
 
+    def test_dpr_consumption_posts_stock_issue(self):
+        # Closing the inventory loop: a key-material 'Consumed' figure on an
+        # issued DPR draws that quantity down from site stock.
+        from core import stock
+
+        from .models import Item, StockMovement
+        item = Item.objects.create(code="ITM-70001", description="Cement",
+                                   unit="bag", is_major=True)
+        stock.record_receipt(self.site, item, 100, actor=self.engineer)
+        ref = self.create_dpr(payload={"weather_am": "Sunny", "materials": [
+            {"item_id": item.id, "material": "Cement", "unit": "bag",
+             "opening": "100", "received": "", "consumed": "15",
+             "remarks": ""}]}).data["ref"]
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/issue")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(float(stock.balance(self.site, item)), 85.0)
+        mv = StockMovement.objects.get(document__ref=ref, kind="ISSUE")
+        self.assertEqual(float(mv.qty), -15.0)
+
+    def test_dpr_consumption_ignores_free_text_rows(self):
+        from core import stock
+
+        from .models import StockMovement
+        ref = self.create_dpr(payload={"weather_am": "Sunny", "materials": [
+            {"material": "Random sand", "unit": "bag", "consumed": "5"}]}
+        ).data["ref"]
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/issue")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(StockMovement.objects.filter(
+            document__ref=ref).exists())  # no item_id → nothing posted
+
     def test_issue_then_verify_flow(self):
         ref = self.create_dpr().data["ref"]
         self.add_photos(ref, 4)

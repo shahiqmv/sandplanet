@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { api } from "./api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, apiUpload } from "./api.js";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
@@ -603,6 +603,20 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [gstRate, setGstRate] = useState(8);
   const [quoteFiles, setQuoteFiles] = useState({});
   const [preview, setPreview] = useState(null);   // item photo lightbox
+  const lineFileRefs = useRef({});                // per-line hidden inputs
+
+  async function uploadLinePhoto(line, file) {
+    if (!file) return;
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", "PHOTO");
+      fd.append("line_id", line.id);
+      await apiUpload(`/documents/${doc.ref}/attachments`, fd);
+      setDoc(await api(`/documents/${doc.ref}`));
+    } catch (e) { setError(e.message); }
+  }
 
   useEffect(() => {
     if (initial.doc_type === "PR") {
@@ -851,6 +865,26 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                         {line.is_changed && (
                           <span style={{ color: "#b35900", fontSize: 11,
                                          fontWeight: 700 }}> CHANGED</span>
+                        )}
+                        {/* Photo for a free-text item so Purchasing can see
+                            what's meant — added while the MR is still a draft */}
+                        {doc.doc_type === "MR" && doc.status === "DRAFT" &&
+                         !doc.is_void && line.is_free_text && (
+                          <>
+                            <input type="file" accept="image/*"
+                              ref={(el) => (lineFileRefs.current[line.id] = el)}
+                              style={{ display: "none" }}
+                              onChange={(e) => uploadLinePhoto(line,
+                                                               e.target.files[0])} />
+                            <button
+                              onClick={() =>
+                                lineFileRefs.current[line.id]?.click()}
+                              style={{ ...ghostButton, padding: "1px 8px",
+                                       fontSize: 11, marginLeft: 6 }}>
+                              {line.item_photo_url ? "Replace photo"
+                                                   : "📷 Add photo"}
+                            </button>
+                          </>
                         )}
                       </span>
                     </span>

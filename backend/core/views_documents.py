@@ -463,6 +463,7 @@ def _do_issue(request, doc, comment):
                      pdf_milestone="issue", comment=comment)
         if err is None and doc.doc_type == "DPR":
             _update_programme_progress(doc, request.user)
+            _post_dpr_consumption(doc, request.user)
         return err
     return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO/DMA."},
                     status=400)
@@ -628,6 +629,36 @@ def _update_programme_progress(doc, actor):
         audit("programme_activity", activity.id, "PROGRESS_UPDATED",
               actor=actor, from_state=str(old_value), to_state=str(new_value),
               detail={"dpr": doc.ref, "activity": activity.name[:80]})
+
+
+def _post_dpr_consumption(doc, actor):
+    """Issued DPR key-material rows loaded from stock carry an item_id and a
+    'consumed' figure — post each as an ISSUE so the site stock balance stays
+    live from daily reporting. Idempotent: skips if this DPR already posted."""
+    from . import stock
+    from .models import Item, StockMovement
+
+    if StockMovement.objects.filter(document=doc,
+                                    kind=StockMovement.Kind.ISSUE).exists():
+        return  # already posted (guards a re-run of the issue transition)
+    for row in (doc.current_revision.payload or {}).get("materials", []):
+        item_id = row.get("item_id")
+        consumed = row.get("consumed")
+        if not item_id or consumed in (None, "", 0, "0"):
+            continue
+        try:
+            qty = float(consumed)
+        except (TypeError, ValueError):
+            continue
+        if qty <= 0:
+            continue
+        try:
+            item = Item.objects.get(pk=item_id)
+        except Item.DoesNotExist:
+            continue
+        stock.consume(doc.site, item, qty, project=doc.project, document=doc,
+                      actor=actor, movement_date=doc.doc_date,
+                      reason=f"Consumed — DPR {doc.ref}")
 
 
 def _do_submit(request, doc, comment):
@@ -924,8 +955,15 @@ def document_attachments(request, ref):
     upload = request.FILES.get("file")
     if upload is None:
         return Response({"detail": "file is required."}, status=400)
+    line = None
+    line_id = request.data.get("line_id")
+    if line_id:  # a photo for one specific line (free-text MR items)
+        line = doc.current_revision.lines.filter(pk=line_id).first()
+        if line is None:
+            return Response({"detail": "Unknown line for this document."},
+                            status=400)
     attachment = Attachment.objects.create(
-        document=doc, revision=doc.current_revision,
+        document=doc, revision=doc.current_revision, line=line,
         kind=request.data.get("kind", "PHOTO"),
         file=upload, file_name=upload.name,
         content_type=upload.content_type or "",

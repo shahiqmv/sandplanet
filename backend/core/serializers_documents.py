@@ -78,6 +78,11 @@ class DocumentLineSerializer(serializers.ModelSerializer):
         return obj.item_id is None  # flagged "new item — not in catalog"
 
     def get_item_photo_url(self, obj):
+        # A photo attached to THIS line (free-text items) wins; otherwise the
+        # catalog item's own photo.
+        line_photo = obj.attachments.filter(kind="PHOTO").order_by("-id").first()
+        if line_photo:
+            return line_photo.file.url
         return obj.item.photo.url if obj.item_id and obj.item.photo else None
 
 

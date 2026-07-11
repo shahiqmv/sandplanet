@@ -137,7 +137,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   async function loadMajorMaterials() {
     setMatNotice(null);
     try {
-      const { materials: major } = await api(`/stock/${site.id}/major`);
+      const { materials: major } = await api(
+        `/stock/${site.id}/major?date=${docDate}`);
       if (!major.length) {
         setMatNotice("No items are flagged as major materials yet — set the "
                      + "★ flag on the Item Master.");
@@ -147,12 +148,15 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         (r.material || "").trim().toLowerCase()));
       const added = major
         .filter((m) => !have.has(m.description.trim().toLowerCase()))
-        .map((m) => ({ material: m.description, unit: m.unit,
-                       opening: String(m.on_hand), received: "", consumed: "",
-                       remarks: "" }));
+        .map((m) => ({ item_id: m.item_id, material: m.description,
+                       unit: m.unit, opening: String(m.on_hand),
+                       received: m.received_today
+                         ? String(m.received_today) : "",
+                       consumed: "", remarks: "" }));
       setMaterials([...materials.filter((r) => r.material), ...added]);
-      setMatNotice(`Loaded ${added.length} major material(s) with current `
-                   + `stock as opening balance.`);
+      setMatNotice(`Loaded ${added.length} major material(s). Opening = current `
+                   + `stock; today's GRN receipts prefilled. Enter Consumed to `
+                   + `draw it down — issuing the DPR posts that to stock.`);
     } catch (e) {
       setMatNotice(e.message);
     }

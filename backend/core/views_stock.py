@@ -61,11 +61,20 @@ def stock_history(request, site_id, item_id):
 @api_view(["GET"])
 def stock_major_materials(request, site_id):
     """Major-material catalog items with this site's on-hand — the DPR's
-    'load key materials from stock' source."""
+    'load key materials from stock' source. Pass ?date=YYYY-MM-DD to also get
+    that day's received (GRN) quantity per item."""
     site, err = _get_site(request, site_id)
     if err:
         return err
-    return Response({"materials": stock.major_materials(site)})
+    on_date = None
+    raw = request.GET.get("date")
+    if raw:
+        from datetime import date as _date
+        try:
+            on_date = _date.fromisoformat(raw)
+        except ValueError:
+            on_date = None
+    return Response({"materials": stock.major_materials(site, on_date=on_date)})
 
 
 @api_view(["POST"])

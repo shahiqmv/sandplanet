@@ -49,21 +49,48 @@ def balances(site):
     return out
 
 
-def major_materials(site):
+def received_on(site, item, on_date):
+    """Total received (RECEIPT qty) for one item at one site on a given date —
+    lets the DPR show today's GRN intake without re-entering it."""
+    return StockMovement.objects.filter(
+        site=site, item=item, kind=StockMovement.Kind.RECEIPT,
+        movement_date=on_date).aggregate(t=Sum("qty"))["t"] or ZERO
+
+
+def major_materials(site, on_date=None):
     """Every catalog item flagged as a major material, with this site's current
     on-hand (0 when it has never moved here). Feeds the DPR key-materials
-    loader — a key material still belongs on the report at zero stock."""
+    loader — a key material still belongs on the report at zero stock. When
+    `on_date` is given, also reports that day's received (GRN) quantity."""
     on_hand = {r["item"]: (r["on_hand"] or ZERO) for r in
                StockMovement.objects.filter(site=site)
                .values("item").annotate(on_hand=Sum("qty"))}
     out = []
     for it in Item.objects.filter(is_major=True, is_active=True,
                                   merged_into__isnull=True).order_by("code"):
-        out.append({
+        row = {
             "item_id": it.id, "code": it.code, "description": it.description,
             "unit": it.unit, "on_hand": on_hand.get(it.id, ZERO),
-        })
+        }
+        if on_date is not None:
+            row["received_today"] = received_on(site, it, on_date)
+        out.append(row)
     return out
+
+
+def consume(site, item, qty, *, project=None, document=None, actor=None,
+            movement_date=None, reason=""):
+    """Record reported consumption as an ISSUE movement. Unlike issue(), this
+    does NOT guard against overdrawing — a DPR reports what was actually used,
+    and a resulting negative balance is the signal that the ledger needs a
+    reconciliation rather than a reason to reject the report."""
+    qty = _dec(qty)
+    if qty <= ZERO:
+        return None
+    return StockMovement.objects.create(
+        site=site, item=item, kind=StockMovement.Kind.ISSUE, qty=-qty,
+        project=project, document=document, reason=reason,
+        movement_date=movement_date or date.today(), created_by=actor)
 
 
 def history(site, item):
