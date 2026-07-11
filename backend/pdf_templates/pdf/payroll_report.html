@@ -76,21 +76,25 @@
 </table>
 {% endfor %}
 
-<div class="sect">Summary</div>
-<table>
+<div class="sect">Payroll summary — by site ({{ currency }})</div>
+<table style="width:70%">
+  <thead><tr>
+    <th>Site</th><th class="num">Basic</th><th class="num">Overtime</th>
+    <th class="num">Net Salary</th>
+  </tr></thead>
+  {% for g in groups %}
+  <tr>
+    <td>{{ g.site_code }}</td>
+    <td class="num">{{ g.totals.basic_pay }}</td>
+    <td class="num">{{ g.totals.ot_pay }}</td>
+    <td class="num">{{ g.totals.net }}</td>
+  </tr>
+  {% endfor %}
   <tr class="grand">
-    <td colspan="4">GRAND TOTAL ({{ currency }})</td>
-    <td class="num">{{ grand.basic_pay }}</td><td></td><td></td><td></td>
-    <td class="num">{{ grand.earned_basic }}</td>
-    <td class="num">{{ grand.allowance }}</td>
+    <td>GRAND TOTAL ({{ currency }})</td>
+    <td class="num">{{ grand.basic_pay }}</td>
     <td class="num">{{ grand.ot_pay }}</td>
-    <td class="num">{{ grand.gross }}</td>
-    <td class="num">{{ grand.advance }}</td>
-    <td class="num">{{ grand.penalty }}</td>
-    <td class="num">{{ grand.loan }}</td>
     <td class="num">{{ grand.net }}</td>
-    <td class="num">{{ grand.amount_to_site }}</td>
-    <td class="num">{{ grand.amount_to_office }}</td>
   </tr>
 </table>
 

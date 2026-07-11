@@ -110,6 +110,11 @@ def payroll_generate(request):
     except (KeyError, TypeError, ValueError):
         return Response({"detail": "year and month are required."}, status=400)
     result = payroll.generate_month(year, month, request.user)
+    if result.get("blocked"):
+        return Response({
+            "detail": "Lock attendance for every site first — still open: "
+                      + ", ".join(result["unlocked"]) + ".",
+            "unlocked": result["unlocked"]}, status=400)
     audit("payroll_run", 0, "PAYROLL_MONTH_GENERATED", actor=request.user,
           detail={"period": f"{year}-{month:02d}",
                   "created": len(result["created"])})

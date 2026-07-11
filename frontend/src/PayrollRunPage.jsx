@@ -83,15 +83,16 @@ export default function PayrollRunPage({ me, sites }) {
 
       {ready && pending.length > 0 && (
         <p style={{ fontSize: 12.5, color: "#b35900", margin: "10px 0 0" }}>
-          ⚠ Attendance not locked yet (won't run): {pending.map((s) =>
+          ⚠ Attendance not locked yet for: {pending.map((s) =>
             s.site_code + (s.is_head_office ? " (HO)" : "")).join(", ")}.
-          {" "}Lock the month on Attendance first.
+          {" "}Lock the month on Attendance so their days/OT are final before
+          you generate.
         </p>
       )}
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
-        Generating creates one MVR run per site with locked attendance
-        (Head Office included) plus the combined USD run. Runs already made are
-        left as-is.
+        Generating creates one all-sites MVR run and one all-sites USD run for
+        the month — each report lists workers site-wise with a per-site summary.
+        Runs already made are left as-is.
       </p>
 
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>

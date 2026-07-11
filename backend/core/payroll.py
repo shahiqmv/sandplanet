@@ -84,51 +84,51 @@ def generate_run(*, site, currency, year, month, working_days, actor):
     return run
 
 
+def unlocked_sites(year, month):
+    """Active, staffed sites whose attendance is NOT locked for the month —
+    payroll can only be generated once every one of these is locked."""
+    from .models import EmployeeSiteAllocation, Site, TimesheetMonth
+
+    staffed = set(EmployeeSiteAllocation.objects.filter(
+        to_date__isnull=True, employee__is_active=True).values_list(
+        "site_id", flat=True))
+    out = []
+    for site in Site.objects.filter(status=Site.Status.ACTIVE,
+                                    id__in=staffed).order_by("code"):
+        if not TimesheetMonth.objects.filter(site=site, year=year, month=month,
+                                             status="LOCKED").exists():
+            out.append(site.code)
+    return out
+
+
 def generate_month(year, month, actor):
-    """Generate every payroll run for a month in one go: one MVR run per ACTIVE
-    site (Head Office included) whose attendance is locked, plus the combined
-    USD run. Sites without locked attendance or already generated are skipped
-    with a reason so HR can see what's outstanding."""
-    from .models import (Employee, EmployeeSiteAllocation, PayrollRun, Site,
-                         TimesheetMonth)
+    """Generate the month's payroll: one all-sites MVR run and one all-sites USD
+    run, each grouped site-wise on its report. Hard-gated — every active,
+    staffed site must have locked attendance first; otherwise nothing is
+    generated and the unlocked sites are returned."""
+    from .models import Employee, PayrollRun
+
+    pending = unlocked_sites(year, month)
+    if pending:
+        return {"blocked": True, "unlocked": pending,
+                "created": [], "skipped": []}
 
     working_days = month_days(year, month)
     created, skipped = [], []
-
-    for site in Site.objects.filter(status=Site.Status.ACTIVE).order_by("code"):
-        emp_ids = EmployeeSiteAllocation.objects.filter(
-            site=site, to_date__isnull=True).values_list("employee_id",
-                                                          flat=True)
-        if not Employee.objects.filter(id__in=emp_ids, is_active=True,
-                                       currency="MVR").exists():
-            continue  # no MVR staff here — nothing to run
-        if not TimesheetMonth.objects.filter(site=site, year=year, month=month,
-                                             status="LOCKED").exists():
-            skipped.append({"site": site.code, "reason": "attendance not locked"})
+    for currency in ("MVR", "USD"):
+        if not Employee.objects.filter(is_active=True,
+                                       currency=currency).exists():
             continue
-        if PayrollRun.objects.filter(site=site, currency="MVR", year=year,
-                                     month=month).exists():
-            skipped.append({"site": site.code, "reason": "already generated"})
-            continue
-        run = generate_run(site=site, currency="MVR", year=year, month=month,
-                           working_days=working_days, actor=actor)
-        created.append({"site": site.code, "currency": "MVR",
-                        "run_id": run.id})
-
-    # Combined USD run across all sites (middle management and above)
-    if Employee.objects.filter(is_active=True, currency="USD").exists():
-        if PayrollRun.objects.filter(site__isnull=True, currency="USD",
+        label = f"{currency} — all sites"
+        if PayrollRun.objects.filter(site__isnull=True, currency=currency,
                                      year=year, month=month).exists():
-            skipped.append({"site": "USD — all sites", "reason":
-                            "already generated"})
-        else:
-            run = generate_run(site=None, currency="USD", year=year,
-                               month=month, working_days=working_days,
-                               actor=actor)
-            created.append({"site": "USD — all sites", "currency": "USD",
-                            "run_id": run.id})
-    return {"created": created, "skipped": skipped,
-            "working_days": working_days}
+            skipped.append({"site": label, "reason": "already generated"})
+            continue
+        run = generate_run(site=None, currency=currency, year=year,
+                           month=month, working_days=working_days, actor=actor)
+        created.append({"site": label, "currency": currency, "run_id": run.id})
+    return {"blocked": False, "unlocked": [], "created": created,
+            "skipped": skipped, "working_days": working_days}
 
 
 def lock_run(run, actor):

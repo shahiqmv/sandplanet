@@ -258,18 +258,34 @@ class GenerateMonthTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
 
-    def test_generate_month_respects_lock_and_includes_ho_and_usd(self):
+    def _lock(self, site):
+        from .models import TimesheetMonth
+        TimesheetMonth.objects.get_or_create(site=site, year=2026, month=5,
+                                             defaults={"status": "LOCKED"})
+
+    def test_blocked_until_every_site_locked(self):
+        # SJR is still open -> generation is blocked and lists it
+        r = self.client.post("/api/v1/payroll/generate",
+                             {"year": 2026, "month": 5}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(r.data["unlocked"], ["SJR"])
+
+    def test_generate_all_sites_when_locked(self):
+        self._lock(self.open_site)  # now every staffed site is locked
         r = self.client.post("/api/v1/payroll/generate",
                              {"year": 2026, "month": 5}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         made = {c["site"] for c in r.data["created"]}
-        self.assertIn("VKR", made)              # locked site
-        self.assertIn("MLE", made)              # Head Office included
-        self.assertIn("USD — all sites", made)  # combined USD run
-        skipped = {s["site"]: s["reason"] for s in r.data["skipped"]}
-        self.assertEqual(skipped.get("SJR"), "attendance not locked")
+        # one combined MVR run + one combined USD run — all sites in each
+        self.assertEqual(made, {"MVR — all sites", "USD — all sites"})
+        from .models import PayrollLine, PayrollRun
+        mvr = PayrollRun.objects.get(site__isnull=True, currency="MVR")
+        sites = set(PayrollLine.objects.filter(run=mvr)
+                    .values_list("site__code", flat=True))
+        self.assertEqual(sites, {"VKR", "SJR", "MLE"})  # grouped site-wise
 
     def test_generate_month_is_idempotent(self):
+        self._lock(self.open_site)
         self.client.post("/api/v1/payroll/generate",
                         {"year": 2026, "month": 5}, format="json")
         r = self.client.post("/api/v1/payroll/generate",
