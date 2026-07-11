@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 
 from . import views, views_cost as cost, views_documents as docs, \
     views_hr as hr, views_petty_cash as petty, views_projects as projects, \
-    views_quotes as quotes, views_vouchers as vouchers
+    views_quotes as quotes, views_stock as stock, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -51,6 +51,12 @@ urlpatterns = [
          name="petty-cash-reconcile"),
     path("petty-cash/<int:site_id>/cycles", petty.petty_cash_cycles,
          name="petty-cash-cycles"),
+    path("stock/<int:site_id>", stock.stock_balances, name="stock-balances"),
+    path("stock/<int:site_id>/issue", stock.stock_issue, name="stock-issue"),
+    path("stock/<int:site_id>/reconcile", stock.stock_reconcile,
+         name="stock-reconcile"),
+    path("stock/<int:site_id>/<int:item_id>/history", stock.stock_history,
+         name="stock-history"),
     path("staff-cost/current", cost.staff_cost_current,
          name="staff-cost-current"),
     path("staff-cost/history", cost.staff_cost_history,

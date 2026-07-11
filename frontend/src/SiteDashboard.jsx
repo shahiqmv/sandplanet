@@ -9,7 +9,7 @@ const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
 export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onNewQa, onAttendance, onDma,
                                         onManpower, onNewPyr, onPyrRegister,
-                                        onPettyCash,
+                                        onPettyCash, onStock,
                                         onCreateGrn, onOpenDoc, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
@@ -130,6 +130,9 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           )}
           {["SITE_ADMIN", "PM", "FINANCE", "ADMIN"].includes(me.role) && (
             <button onClick={onPettyCash} style={buttonStyle}>💰 Petty Cash</button>
+          )}
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+            <button onClick={onStock} style={buttonStyle}>📦 Stock</button>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "ADMIN"]
             .includes(me.role) && (

@@ -1160,3 +1160,43 @@ class PettyCashReconciliation(models.Model):
 
     class Meta:
         ordering = ["-recon_date", "-id"]
+
+
+# ===== Site inventory (Phase 1A — simple quantity ledger) =====
+
+
+class StockMovement(models.Model):
+    """Append-only site-level inventory ledger. On-hand for a (site, item) is
+    the sum of its movement qtys; the movement list is the history. No costing
+    or lot tracking — quantities only (that is deferred to Phase 1B).
+
+    RECEIPT (+, raised automatically when a GRN is verified),
+    ISSUE   (−, stock handed out to a project),
+    ADJUST  (±, a physical-count reconciliation)."""
+
+    class Kind(models.TextChoices):
+        RECEIPT = "RECEIPT", "GRN receipt"
+        ISSUE = "ISSUE", "Issue to project"
+        ADJUST = "ADJUST", "Reconciliation"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="stock_movements")
+    item = models.ForeignKey(Item, on_delete=models.PROTECT,
+                             related_name="stock_movements")
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    qty = models.DecimalField(max_digits=12, decimal_places=2)  # signed
+    project = models.ForeignKey(  # set on ISSUE
+        Project, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="stock_issues")
+    document = models.ForeignKey(  # the GRN, on RECEIPT
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+")
+    reason = models.TextField(blank=True)  # issue purpose / adjust explanation
+    movement_date = models.DateField()
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-movement_date", "-id"]
+        indexes = [models.Index(fields=["site", "item"])]
