@@ -56,14 +56,29 @@ class EmployeeSerializer(serializers.ModelSerializer):
     site_code = serializers.SerializerMethodField()
     job_category_name = serializers.CharField(source="job_category.name",
                                               read_only=True, default=None)
+    photo_url = serializers.SerializerMethodField()
+    ot_rate = serializers.SerializerMethodField()
+    ot_effective = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
-        fields = ["id", "emp_no", "full_name", "passport_no", "nationality",
-                  "job_category", "job_category_name", "basic_pay",
+        fields = ["id", "emp_no", "full_name", "photo", "photo_url",
+                  "date_of_birth", "passport_no", "nationality",
+                  "job_category", "job_category_name", "basic_pay", "currency",
+                  "ot_applies", "ot_rate", "ot_effective",
                   "work_permit_no", "work_permit_expiry", "emergency_contact",
                   "join_date", "is_active", "site_id", "site_code"]
-        read_only_fields = ["emp_no"]
+        read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective"]
+        extra_kwargs = {"photo": {"write_only": True, "required": False}}
+
+    def get_photo_url(self, obj):
+        return obj.photo.url if obj.photo else None
+
+    def get_ot_rate(self, obj):
+        return obj.ot_rate()
+
+    def get_ot_effective(self, obj):
+        return obj.ot_rate() > 0
 
     def get_site_id(self, obj):
         return obj.current_site_id()
@@ -81,7 +96,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             for field in SENSITIVE_FIELDS:
                 data.pop(field, None)
         if request and not _sees_pay(request.user):
-            for field in PAY_FIELDS:
+            for field in PAY_FIELDS + ("ot_rate", "currency"):
                 data.pop(field, None)
         return data
 
