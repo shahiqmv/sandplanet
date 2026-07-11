@@ -141,7 +141,7 @@ def authorise_source(doc, actor):
     Approval.objects.create(document=doc, revision=doc.current_revision,
                             action="AUTHORISE", actor=actor,
                             actor_role=actor.role,
-                            comment=f"Authorised on voucher")
+                            comment="Authorised on voucher")
     audit("document", doc.id, "AUTHORISE", actor=actor,
           to_state="AUTHORISED", detail={"ref": doc.ref})
 

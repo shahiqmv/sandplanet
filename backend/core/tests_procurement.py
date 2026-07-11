@@ -315,7 +315,7 @@ class ChainTests(ProcBase):
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
                              {"line_id": line_b, "payment_ref": "VCH-9"})
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
-        refs = {l["vendor"]: l["action_taken"] for l in r.data["lines"]}
+        refs = {ln["vendor"]: ln["action_taken"] for ln in r.data["lines"]}
         self.assertEqual(refs, {"Vendor A": "TRF-1", "Vendor B": "VCH-9"})
 
 

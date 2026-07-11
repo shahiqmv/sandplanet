@@ -9,7 +9,6 @@ from .models import (
     AuditLog,
     CompanyParameter,
     Employee,
-    EmployeeSiteAllocation,
     ManpowerCategory,
     Site,
     SitePmHistory,

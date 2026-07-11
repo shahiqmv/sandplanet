@@ -6,7 +6,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from .models import (CostHead, CostPosting, Document, PettyCashCycle,
-                     PettyCashEntry, PettyCashFloat, Site, SitePmHistory, User)
+                     PettyCashEntry, Site, SitePmHistory, User)
 from .tests import make_user
 
 

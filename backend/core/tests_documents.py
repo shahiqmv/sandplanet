@@ -6,7 +6,7 @@ from django.db import connection
 from django.test import TestCase, TransactionTestCase, override_settings
 from rest_framework.test import APIClient
 
-from .models import Document, Site, SitePmHistory, User, UserSiteAllocation
+from .models import Document, Site, SitePmHistory, User
 from .numbering import next_ref
 from .tests import make_user
 
@@ -143,7 +143,6 @@ class DprLifecycleTests(DocBase):
         self.assertEqual(float(mv.qty), -15.0)
 
     def test_dpr_consumption_ignores_free_text_rows(self):
-        from core import stock
 
         from .models import StockMovement
         ref = self.create_dpr(payload={"weather_am": "Sunny", "materials": [

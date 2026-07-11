@@ -8,7 +8,7 @@ from django.db.models import Sum
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from . import costing, staff_cost
+from . import staff_cost
 from .costing import DEFAULT_HEADS
 from .models import CostPosting, Project, Site
 

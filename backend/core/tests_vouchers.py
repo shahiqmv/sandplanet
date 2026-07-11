@@ -7,8 +7,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import costing
-from .models import (CostHead, CostPosting, Document, PaymentVoucherLine,
-                     Site, SitePmHistory, User)
+from .models import (CostHead, CostPosting, Document, Site, SitePmHistory, User)
 from .tests import make_user
 
 
@@ -127,10 +126,10 @@ class VoucherQueryTests(VoucherBase):
         a = self.director_approved_pyr(amount=3000, payee="A")
         b = self.director_approved_pyr(amount=1500, payee="B")
         pv = self.create_voucher([a, b]).data["ref"]
-        detail = self.voucher_action(pv, "submit", self.finance)
+        self.voucher_action(pv, "submit", self.finance)
         # find the line id for source a
         info = self.client.get(f"/api/v1/payment-vouchers/{pv}").data
-        line_a = next(l["line_id"] for l in info["lines"] if l["ref"] == a)
+        line_a = next(ln["line_id"] for ln in info["lines"] if ln["ref"] == a)
 
         r = self.voucher_action(pv, "approve", self.signatory,
                                 queried_ids=[line_a],
@@ -204,7 +203,7 @@ class VoucherDisbursementTests(VoucherBase):
 
 class FinanceDashboardTests(VoucherBase):
     def test_dashboard_aggregates(self):
-        a = self.director_approved_pyr(amount=3000, payee="A")
+        self.director_approved_pyr(amount=3000, payee="A")
         self.client.force_authenticate(self.finance)
         r = self.client.get("/api/v1/finance/dashboard")
         self.assertEqual(r.status_code, 200, r.data)

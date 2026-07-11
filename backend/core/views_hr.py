@@ -23,7 +23,6 @@ from .models import (
     OvertimeRate,
     Site,
     TimesheetMonth,
-    User,
 )
 from .permissions import scoped_site_ids
 

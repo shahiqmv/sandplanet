@@ -1,7 +1,6 @@
 from datetime import date, timedelta
 
 from django.db import transaction
-from django.db.models import Q
 from django.utils import timezone
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -25,7 +24,6 @@ from .numbering import next_ref
 from .pdf import generate_pdf
 from .permissions import scoped_site_ids
 from .procurement import (
-    generate_pos_for_pr,
     sync_pr_vendor_rows,
     grn_lines_from_lm,
     link_documents,
@@ -636,7 +634,7 @@ def _post_dpr_consumption(doc, actor):
     'consumed' figure — post each as an ISSUE so the site stock balance stays
     live from daily reporting. Idempotent: skips if this DPR already posted."""
     from . import stock
-    from .models import Item, StockMovement
+    from .models import StockMovement
 
     if StockMovement.objects.filter(document=doc,
                                     kind=StockMovement.Kind.ISSUE).exists():

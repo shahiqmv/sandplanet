@@ -7,7 +7,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import vouchers
-from .models import Document, PaymentVoucherLine
+from .models import Document
 
 
 def _line_info(line):

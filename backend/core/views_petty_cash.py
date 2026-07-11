@@ -8,7 +8,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from . import petty_cash
-from .models import (CostHead, PettyCashFloat, Site, User,
+from .models import (PettyCashFloat, Site, User,
                      UserSiteAllocation)
 from .permissions import scoped_site_ids
 

@@ -177,7 +177,7 @@ class PrAuthorisationTests(PrCostingBase):
         pr = self.make_pr()
         self.authorise(pr.ref)
         lines = list(pr.current_revision.lines.all())
-        credit_line = next(l for l in lines if (l.amount_credit or 0) > 0)
+        credit_line = next(ln for ln in lines if (ln.amount_credit or 0) > 0)
         self.client.force_authenticate(self.finance)
         r = self.client.post(f"/api/v1/pr/{pr.ref}/vendor-payment",
                              {"line_id": credit_line.id,

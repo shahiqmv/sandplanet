@@ -1,5 +1,4 @@
 """Site inventory (Phase 1A): GRN verify feeds stock; issue/reconcile/history."""
-from datetime import date
 
 from .models import Project, StockMovement, User
 from .tests import make_user

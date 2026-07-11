@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Document, Site, SitePmHistory, User
+from .models import Site, SitePmHistory, User
 from .tests import make_user
 
 

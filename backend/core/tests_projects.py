@@ -6,8 +6,6 @@ from rest_framework.test import APIClient
 
 from .models import (
     AuditLog,
-    Document,
-    ProgrammeActivity,
     Project,
     Site,
     SitePmHistory,

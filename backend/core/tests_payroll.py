@@ -304,9 +304,9 @@ class GenerateMonthTests(TestCase):
 
 class FridayPrefillTests(TestCase):
     def setUp(self):
-        from datetime import date, timedelta
+        from datetime import date
 
-        from .models import (Attendance, EmployeeSiteAllocation, SitePmHistory)
+        from .models import (Attendance, EmployeeSiteAllocation)
         self.hr = make_user("hr1", User.Role.HO_HR)
         self.site = Site.objects.create(code="VKR", name="Vakkaru",
                                         status=Site.Status.ACTIVE)

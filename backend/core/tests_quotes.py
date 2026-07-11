@@ -92,7 +92,6 @@ class CoverageTests(QuoteBase):
         mr = self.sent_mr()
         pr = self.draft_pr(mr)
         cement_line = mr["lines"][0]["id"]
-        rebar_line = mr["lines"][1]["id"]
         # quote covers cement only, awarded
         self.add_quote(pr["ref"], self.hw, [
             {"supplier_desc": "OPC cement 50kg (Fuji brand)", "unit": "bag",

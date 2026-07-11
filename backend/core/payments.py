@@ -13,7 +13,7 @@ from rest_framework.response import Response
 
 from . import costing
 from .audit import audit
-from .models import Approval, CostHead, Document, PaymentRequest, User
+from .models import Approval, CostHead, Document, PaymentRequest
 
 RAISER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"}
 RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",

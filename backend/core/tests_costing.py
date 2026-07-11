@@ -40,7 +40,7 @@ class PostingLedgerTests(TestCase):
         self.assertEqual(p.amount, Decimal("1000"))
 
     def test_reversal_nets_to_zero(self):
-        from .models import Document, DocumentRevision
+        from .models import Document
         doc = Document.objects.create(
             doc_type="PYR", ref="PYR-VKR-001", site=self.site,
             doc_date=date.today(), status="PAID", created_by=self.actor)
