@@ -54,13 +54,14 @@ CREATE_ROLES = {  # spec §3 "can create"
     "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
     "DMA": {"SITE_ENGINEER", "PM"},      # SE may prepare; PM issues (R5)
     "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # payment request (M6)
+    "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},  # import requirement (§5.10)
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
 RESULTS = {  # client results per type (spec §5.3/§5.4)
     "IR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REJECTED"},
     "MAR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
 }
-LINE_TYPES = {"MR", "PR", "LM", "GRN"}
+LINE_TYPES = {"MR", "PR", "LM", "GRN", "PMR"}
 MIN_DPR_PHOTOS = 0  # owner (Phase C): no photo floor — attach any number
 
 
@@ -132,7 +133,7 @@ def document_create(request):
     # IR/MAR belong to a project (R4). DPR/TWS are SITE-WIDE — one daily
     # report to the one client per site, each work/planned row tagged with
     # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
-    PROJECT_TYPES = ("IR", "MAR")
+    PROJECT_TYPES = ("IR", "MAR", "PMR")  # PMR imports are raised per project
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")
@@ -433,6 +434,8 @@ def document_action(request, ref, action_name):
         "close": _do_close,
         "record-result": _do_record_result, "client-verify": _do_client_verify,
         "acknowledge": _do_acknowledge,
+        "ho-review": _do_ho_review, "size-release": _do_size_release,
+        "cancel": _do_cancel,
     }.get(action_name)
     if handler is None:
         return Response({"detail": f"Unknown action '{action_name}'."}, status=400)
@@ -513,6 +516,15 @@ def approvals_pending(request):
             [{"ref": d.ref, "doc_type": "PYR", "site_code": d.site.code,
               "project_code": None, "doc_date": d.doc_date,
               "status": d.status, "hint": "PM approval"} for d in pyrs])
+        pmrs = [d for d in scoped(base.filter(doc_type="PMR",
+                                              status="SUBMITTED"))
+                .select_related("site", "project")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To approve — submitted import requests (PMR)",
+            [{"ref": d.ref, "doc_type": "PMR", "site_code": d.site.code,
+              "project_code": d.project.code if d.project else None,
+              "doc_date": d.doc_date, "status": d.status,
+              "hint": "PM approval"} for d in pmrs])
         dprs = [d for d in scoped(base.filter(doc_type="DPR",
                                               status="ISSUED"))
                 .select_related("site", "project")
@@ -538,6 +550,9 @@ def approvals_pending(request):
         add("To approve — PM-approved payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
+        add("To size & release — reviewed import requests (PMR)",
+            rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
+                 "Size the order (MOQ) and release to sourcing"))
     if user.role in ("SIGNATORY", "ADMIN"):
         # Signatory approves whole Payment Vouchers (M6d), not each doc
         add("To approve — payment vouchers",
@@ -553,6 +568,9 @@ def approvals_pending(request):
         add("To issue — draft POs",
             rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
                  "Issue to supplier"))
+        add("To review — PM-approved import requests (PMR)",
+            rows(scoped(base.filter(doc_type="PMR", status="PM_APPROVED")),
+                 "Review the requirement before the Director sizes it"))
     if user.role in ("FINANCE", "HO_PURCHASING", "ADMIN"):
         add("Payments pending — authorised PRs",
             rows(scoped(base.filter(doc_type="PR",
@@ -667,9 +685,11 @@ def _post_dpr_consumption(doc, actor):
 def _do_submit(request, doc, comment):
     roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"},
              "IR": {"SITE_ENGINEER", "PM"},
-             "MAR": {"SITE_ENGINEER", "PM"}}.get(doc.doc_type)
+             "MAR": {"SITE_ENGINEER", "PM"},
+             "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Submit applies to MR/PR/IR/MAR."}, status=400)
+        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR."},
+                        status=400)
     if doc.doc_type == "PR" and doc.quotations.exists():
         # Coverage tally (R2): every MR line quoted AND awarded, or an
         # explicit override with a reason.
@@ -694,7 +714,7 @@ def _do_submit(request, doc, comment):
 
 
 def _do_approve(request, doc, comment):
-    if doc.doc_type in ("MR", "IR", "MAR"):  # PM gate (spec §5.3–§5.5)
+    if doc.doc_type in ("MR", "IR", "MAR", "PMR"):  # PM gate (spec §5.3–§5.5)
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PR":  # Director approval = award (§5.7); NO
@@ -741,6 +761,15 @@ def _do_return(request, doc, comment):
         return Response({"detail": "A comment is required to return."}, status=400)
     if doc.doc_type in ("MR", "IR", "MAR"):
         return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
+                      comment=comment)
+    if doc.doc_type == "PMR":
+        # Whoever holds it can send it back for rework: PM at Submitted,
+        # HO staff at PM-Approved, Director at HO-Reviewed/Sized.
+        roles = {"SUBMITTED": {"PM"},
+                 "PM_APPROVED": {"HO_PURCHASING"},
+                 "HO_REVIEWED": {"DIRECTOR"},
+                 "SIZED_RELEASED": {"DIRECTOR"}}.get(doc.status, set())
+        return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
     if doc.doc_type == "PR":
         # Director returns before authorisation; signatory/Finance return
@@ -921,6 +950,42 @@ def _do_close(request, doc, comment):
     if roles is None:
         return Response({"detail": "Close applies to MR/PR/PO/IR."}, status=400)
     return _apply(request, doc, "CLOSED", "CLOSE", roles=roles, comment=comment)
+
+
+def _do_ho_review(request, doc, comment):
+    """PMR: HO project staff review a PM-approved requirement (§5.10.3)."""
+    if doc.doc_type != "PMR":
+        return Response({"detail": "ho-review applies to PMR."}, status=400)
+    return _apply(request, doc, "HO_REVIEWED", "HO_REVIEW",
+                  roles={"HO_PURCHASING"}, comment=comment)
+
+
+def _do_size_release(request, doc, comment):
+    """PMR: the Director sizes the requirement (order qty may exceed what the
+    project asked for, MOQ) and releases it to sourcing (§5.10.3). The per-line
+    order sizing + surplus-to-general-stock happens on the IPR (later slice);
+    here we record the Director's sizing note and advance the thread."""
+    if doc.doc_type != "PMR":
+        return Response({"detail": "size-release applies to PMR."}, status=400)
+    err = _apply(request, doc, "SIZED_RELEASED", "SIZE_RELEASE",
+                 roles={"DIRECTOR"}, comment=comment)
+    if err is None and comment.strip():
+        _set_workflow_payload(doc.current_revision, "sizing", {
+            "note": comment, "by": request.user.full_name,
+            "date": date.today().isoformat(),
+        })
+    return err
+
+
+def _do_cancel(request, doc, comment):
+    """PMR/PR/PYR cancellation from an early state (a requirement no longer
+    needed). PMR: the raising team or the project PM cancels before ordering."""
+    if doc.doc_type != "PMR":
+        return Response({"detail": "cancel applies to PMR here."}, status=400)
+    if not comment.strip():
+        return Response({"detail": "A reason is required to cancel."}, status=400)
+    return _apply(request, doc, "CANCELLED", "CANCEL",
+                  roles={"SITE_ENGINEER", "SITE_ADMIN", "PM"}, comment=comment)
 
 
 def _do_void(request, doc, comment):

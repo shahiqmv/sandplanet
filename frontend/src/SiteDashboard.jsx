@@ -10,10 +10,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onNewQa, onAttendance, onDma,
                                         onManpower, onNewPyr, onPyrRegister,
                                         onPettyCash, onStock, onTools,
-                                        onCreateGrn, onOpenDoc, refresh }) {
+                                        onCreateGrn, onNewPmr, onOpenDoc,
+                                        refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
+  const [pmrs, setPmrs] = useState([]);
   const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
   const [pyrs, setPyrs] = useState([]);
@@ -26,6 +28,8 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
     api(`/registers/dpr-tws?site=${site.id}${projectParam}`)
       .then(setRegister);
     api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
+    api(`/documents/list?site=${site.id}&doc_type=PMR`).then(setPmrs)
+      .catch(() => setPmrs([]));
     api(`/documents/list?site=${site.id}&doc_type=PYR`).then(setPyrs)
       .catch(() => setPyrs([]));
     Promise.all([
@@ -126,6 +130,11 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           )}
           {canMr && (
             <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
+          )}
+          {["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"].includes(me.role) && (
+            <button onClick={onNewPmr} style={buttonStyle}
+                    title="Project Material Requisition — request imported material">
+              🌍 Import request</button>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
             <button onClick={onNewPyr} style={buttonStyle}>+ Payment</button>
@@ -435,6 +444,34 @@ that adds your existing quantities to the system"
                   <td style={td}>{mr.payload?.planned_loading}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     <StatusChip status={mr.is_void ? "VOID" : mr.status} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      {pmrs.length > 0 && (
+        <section style={card}>
+          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+            🌍 Import requests (PMR)
+          </h2>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <tbody>
+              {pmrs.slice(0, 8).map((pmr) => (
+                <tr key={pmr.ref}>
+                  <td style={{ ...td, width: 130 }}>
+                    <a href="#" onClick={(e) => { e.preventDefault();
+                                                  onOpenDoc(pmr.ref); }}
+                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                      {pmr.ref}
+                    </a>
+                  </td>
+                  <td style={td}>{pmr.doc_date}</td>
+                  <td style={td}>{pmr.payload?.discipline}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    <StatusChip status={pmr.is_void ? "VOID" : pmr.status} />
                   </td>
                 </tr>
               ))}

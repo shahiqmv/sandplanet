@@ -22,11 +22,23 @@ class IsPurchasingOrReadOnly(BasePermission):
         return request.user.role in ("HO_PURCHASING", "ADMIN")
 
 
+BANK_ROLES = ("HO_PURCHASING", "FINANCE", "ADMIN")  # see bank/remittance detail
+
+
 class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
-        fields = ["id", "name", "contact_person", "phone", "email", "address",
-                  "notes", "is_active"]
+        fields = ["id", "name", "category", "country", "default_currency",
+                  "default_incoterm", "contact_person", "phone", "email",
+                  "address", "bank_details", "notes", "is_active"]
+
+    def to_representation(self, obj):
+        data = super().to_representation(obj)
+        request = self.context.get("request")
+        # Bank/remittance details are sensitive (§5.10.2) — HO/Finance/Admin only
+        if not request or request.user.role not in BANK_ROLES:
+            data.pop("bank_details", None)
+        return data
 
 
 class SupplierViewSet(viewsets.ModelViewSet):
@@ -39,6 +51,8 @@ class SupplierViewSet(viewsets.ModelViewSet):
         search = self.request.GET.get("search")
         if search:
             qs = qs.filter(name__icontains=search)
+        if self.request.GET.get("category"):
+            qs = qs.filter(category=self.request.GET["category"])
         if self.request.GET.get("active") != "all":
             qs = qs.filter(is_active=True)
         return qs

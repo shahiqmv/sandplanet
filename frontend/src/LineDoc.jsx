@@ -10,6 +10,7 @@ export const DOC_LABELS = {
   LM: "Loading Manifest",
   GRN: "Goods Received Note",
   PO: "Purchase Order",
+  PMR: "Project Material Requisition",
 };
 
 const HEADER_FIELDS = {
@@ -26,6 +27,12 @@ const HEADER_FIELDS = {
     ["trip_no", "Trip / Load No.", "text"],
   ],
   GRN: [["date_received", "Date Received", "date"]],
+  PMR: [
+    ["required_by", "Required On Site By", "date"],
+    ["discipline", "Discipline / Trade", "text"],
+    ["bom_ref", "BOM / Drawing Ref", "text"],
+    ["justification", "Justification", "text"],
+  ],
 };
 
 // Which actions the UI offers; the server is the authority.
@@ -62,7 +69,57 @@ const ACTIONS = {
     ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "ADMIN"]],
     ["verify", "Verify (SE/PM)", ["COUNTED"], ["SITE_ENGINEER", "PM", "ADMIN"]],
   ],
+  PMR: [
+    ["submit", "Submit", ["DRAFT"], ["SITE_ENGINEER", "SITE_ADMIN", "PM",
+                                     "ADMIN"]],
+    ["approve", "Approve (PM)", ["SUBMITTED"], ["PM", "ADMIN"]],
+    ["ho-review", "HO reviewed", ["PM_APPROVED"], ["HO_PURCHASING", "ADMIN"]],
+    ["size-release", "Size & release (Director)", ["HO_REVIEWED"],
+     ["DIRECTOR", "ADMIN"], "comment"],
+    ["return", "Return with comment",
+     ["SUBMITTED", "PM_APPROVED", "HO_REVIEWED", "SIZED_RELEASED"],
+     ["PM", "HO_PURCHASING", "DIRECTOR", "ADMIN"], "comment"],
+    ["cancel", "Cancel", ["DRAFT", "SUBMITTED"],
+     ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"], "comment"],
+  ],
 };
+
+// PMR status thread (§5.10.11): the requirement's journey, shown on the doc
+// and (later slices) on the project dashboard. Early steps are driven here;
+// Sourcing→Received fill in as the IPR/IRN/SIN lifecycle progresses.
+const PMR_STEPS = [
+  ["DRAFT", "Draft"], ["SUBMITTED", "Submitted"],
+  ["PM_APPROVED", "PM approved"], ["HO_REVIEWED", "HO reviewed"],
+  ["SIZED_RELEASED", "Sized & released"], ["SOURCING", "Sourcing"],
+  ["ORDERED", "Ordered"], ["RECEIVED", "Received"], ["CLOSED", "Closed"],
+];
+
+function PmrThread({ status }) {
+  if (status === "CANCELLED") {
+    return (
+      <p style={{ fontSize: 12, color: "#c0392b", fontWeight: 600,
+                  margin: "6px 0 12px" }}>This requirement was cancelled.</p>
+    );
+  }
+  const at = PMR_STEPS.findIndex(([s]) => s === status);
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6,
+                  margin: "6px 0 14px" }}>
+      {PMR_STEPS.map(([s, label], i) => {
+        const done = i < at, here = i === at;
+        return (
+          <span key={s} style={{ fontSize: 11.5, padding: "3px 9px",
+            borderRadius: 12, whiteSpace: "nowrap",
+            background: here ? "var(--sp-navy)" : done ? "#e6f0e8" : "#eef1f4",
+            color: here ? "#fff" : done ? "#1a7f37" : "#8a97a1",
+            fontWeight: here ? 700 : 500 }}>
+            {done ? "✓ " : ""}{label}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
 
 function useItems() {
   const [items, setItems] = useState([]);
@@ -185,6 +242,7 @@ const LINE_DEFAULTS = {
   PR: {},
   LM: {},
   GRN: {},
+  PMR: { free_text: true },
 };
 
 function num(v) {
@@ -193,11 +251,14 @@ function num(v) {
 }
 
 export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
-                              onSaved, onCancel }) {
+                              project, projects, onSaved, onCancel }) {
   const { items, reload: reloadItems } = useItems();
   const [payload, setPayload] = useState(existing?.payload ||
     (docType === "LM" ? { departure_point: "Male'" } : {}));
   const [siteId, setSiteId] = useState(existing?.site || site?.id || "");
+  // PMR is raised for a specific project (§5.10.3)
+  const [projectId, setProjectId] = useState(
+    existing?.project || project?.id || "");
   const [mrRefs, setMrRefs] = useState("");
   const [prRefs, setPrRefs] = useState("");
   const [poRefs, setPoRefs] = useState("");
@@ -330,6 +391,10 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       setError("Add at least one item before saving this GRN.");
       return;
     }
+    if (!existing && docType === "PMR" && !projectId) {
+      setError("Choose the project this import request is for.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -355,6 +420,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         if (prRefs.trim()) body.pr_refs = prRefs.split(",").map((s) => s.trim());
         if (poRefs.trim()) body.po_refs = poRefs.split(",").map((s) => s.trim());
         if (docType === "GRN" && grnLmRef) body.lm_ref = grnLmRef;
+        if (docType === "PMR" && projectId) body.project_id = projectId;
         doc = await api("/documents", { method: "POST", body });
       }
       onSaved(doc);
@@ -385,6 +451,18 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
               <option value="">Select site…</option>
               {(sites || []).filter((s) => !s.is_head_office).map((s) => (
                 <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {docType === "PMR" && !existing && (
+          <label style={{ fontSize: 13 }}>Project
+            <select value={projectId}
+                    onChange={(e) => setProjectId(+e.target.value)}
+                    style={inputStyle}>
+              <option value="">Select project…</option>
+              {(projects || []).map((pr) => (
+                <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
               ))}
             </select>
           </label>
@@ -476,6 +554,11 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                   </>)}
                   {docType === "GRN" && (<>
                     <th style={th}>Manifest</th><th style={th}>Received</th>
+                  </>)}
+                  {docType === "PMR" && (<>
+                    <th style={th}>Required</th>
+                    <th style={th}>Spec / model / brand</th>
+                    <th style={th}>MAR ref</th>
                   </>)}
                 </>
               )}
@@ -579,6 +662,27 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                         value={row.qty_received ?? ""}
                         onChange={(e) => setRow(i, { qty_received: e.target.value })}
                         style={{ ...inputStyle, width: 80 }} /></td>
+                    </>)}
+                    {docType === "PMR" && (<>
+                      <td style={{ padding: 3 }}><input type="number"
+                        value={row.qty_required ?? ""}
+                        onChange={(e) => setRow(i, { qty_required: e.target.value })}
+                        style={{ ...inputStyle, width: 80 }} /></td>
+                      <td style={{ padding: 3 }}><input value={row.spec || ""}
+                        placeholder="size / model / brand"
+                        onChange={(e) => setRow(i, { spec: e.target.value })}
+                        style={{ ...inputStyle, width: 170 }} /></td>
+                      <td style={{ padding: 3 }}>
+                        <input value={row.mar_ref || ""} placeholder="MAR-…"
+                          onChange={(e) => setRow(i, { mar_ref: e.target.value })}
+                          style={{ ...inputStyle, width: 110,
+                            background: (row.mar_ref || "").trim()
+                              ? undefined : "#fff8e6" }} />
+                        {!(row.mar_ref || "").trim() && (
+                          <div style={{ fontSize: 10, color: "#b35900" }}>
+                            no approved MAR</div>
+                        )}
+                      </td>
                     </>)}
                   </>
                 )}
@@ -755,6 +859,8 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
+      {doc.doc_type === "PMR" && <PmrThread status={doc.status} />}
+
       {Object.keys(p).length > 0 && (
         <table style={{ borderCollapse: "collapse", fontSize: 13,
                         marginBottom: 8 }}>
@@ -801,6 +907,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                 {doc.doc_type === "PO" && (<>
                   <th style={th}>Qty</th><th style={th}>Rate</th>
                   <th style={th}>Amount</th>
+                </>)}
+                {doc.doc_type === "PMR" && (<>
+                  <th style={th}>Required</th>
+                  <th style={th}>Spec / model / brand</th>
+                  <th style={th}>MAR ref</th>
                 </>)}
               </>)}
               {!isPR && <th style={th}>Remarks</th>}
@@ -943,6 +1054,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                     <td style={td}>{line.rate}</td>
                     <td style={td}>
                       {Number(line.amount || 0).toLocaleString()}</td>
+                  </>)}
+                  {doc.doc_type === "PMR" && (<>
+                    <td style={td}>{line.qty_required}</td>
+                    <td style={td}>{line.spec}</td>
+                    <td style={{ ...td, color: (line.mar_ref || "").trim()
+                                   ? "inherit" : "#b35900" }}>
+                      {line.mar_ref || "no approved MAR"}</td>
                   </>)}
                 </>)}
                 {!isPR && <td style={td}>{line.remarks}</td>}

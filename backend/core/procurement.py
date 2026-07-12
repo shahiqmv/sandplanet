@@ -79,6 +79,8 @@ def save_lines(revision, lines_data, previous_revision=None):
             payment_terms=data.get("payment_terms") or "",
             action_taken=data.get("action_taken") or "",
             is_changed=is_changed,
+            spec=data.get("spec") or "",
+            mar_ref=data.get("mar_ref") or "",
             remarks=data.get("remarks") or "",
         ))
     return created

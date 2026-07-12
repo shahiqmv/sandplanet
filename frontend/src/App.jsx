@@ -481,6 +481,7 @@ export default function App() {
             <LineDocForm docType={docView.docType} site={openSite}
                          sites={sites} me={me} existing={docView.doc}
                          grnLmRef={docView.grnLmRef}
+                         project={project} projects={projects}
                          onSaved={(doc) => { bump();
                            setDocView({ mode: "line-view", doc }); }}
                          onCancel={closeDoc} />
@@ -679,6 +680,8 @@ export default function App() {
                 onStock={() => setDocView({ mode: "stock" })}
                 onTools={() => setDocView({ mode: "tools" })}
                 onCreateGrn={createGrn}
+                onNewPmr={() => setDocView({ mode: "line-form",
+                                            docType: "PMR", doc: null })}
                 onOpenDoc={openDoc}
               />
             </>

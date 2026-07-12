@@ -235,6 +235,7 @@ class Document(models.Model):
         DMA = "DMA"  # daily manpower allocation (R5, internal)
         PYR = "PYR"  # payment request (§5.9, M6)
         PV = "PV"    # payment voucher — batch authorisation (M6d)
+        PMR = "PMR"  # project material requisition — imports (§5.10, P1B)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -313,6 +314,20 @@ class Document(models.Model):
         "PV": {
             "DRAFT": {"SUBMITTED", "CANCELLED"},
             "SUBMITTED": {"APPROVED", "DRAFT"},  # DRAFT = returned to Finance
+        },
+        # Project Material Requisition — the import demand raised at project
+        # level, tracked end to end (§5.10.3). Early steps (Site→PM→HO→Director)
+        # are manual; the later ladder (Sourcing→Ordered→Received→Closed) is
+        # driven by the IPR/IRN/SIN lifecycle in later slices. DRAFT = returned.
+        "PMR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT", "CANCELLED"},
+            "PM_APPROVED": {"HO_REVIEWED", "DRAFT"},
+            "HO_REVIEWED": {"SIZED_RELEASED", "DRAFT"},
+            "SIZED_RELEASED": {"SOURCING", "DRAFT"},
+            "SOURCING": {"ORDERED"},
+            "ORDERED": {"RECEIVED"},
+            "RECEIVED": {"CLOSED"},
         },
     }
 
@@ -512,6 +527,10 @@ class DocumentLine(models.Model):
     amount = models.DecimalField(max_digits=14, decimal_places=2,
                                  null=True, blank=True)
     is_changed = models.BooleanField(default=False)  # MR amendment flag (§5.5 r3)
+    # PMR (imports, §5.10.3): free-text spec / model / brand, and the approved
+    # MAR reference the line relies on (a blank one raises a soft warning).
+    spec = models.TextField(blank=True)
+    mar_ref = models.CharField(max_length=20, blank=True)
     remarks = models.TextField(blank=True)
 
     class Meta:
@@ -605,13 +624,31 @@ class PendingItem(models.Model):
 
 
 class Supplier(models.Model):
-    """Supplier contact database, owned by HO Purchasing (R2)."""
+    """Supplier contact database, owned by HO Purchasing (R2). Phase 1B adds
+    the category/country/currency/incoterm/bank fields the international
+    procurement flow needs (§5.10.2); the category filters the supplier
+    picker (local purchase vs an overseas order vs a forwarder/clearing agent).
+    """
+
+    class Category(models.TextChoices):
+        LOCAL = "LOCAL", "Local supplier"
+        INTERNATIONAL = "INTERNATIONAL", "International supplier"
+        FORWARDER = "FORWARDER", "Freight forwarder"
+        CLEARING_AGENT = "CLEARING_AGENT", "Clearing agent"
 
     name = models.TextField()
+    category = models.CharField(max_length=15, choices=Category.choices,
+                                default=Category.LOCAL)
+    country = models.CharField(max_length=60, blank=True)
+    default_currency = models.CharField(max_length=3, blank=True)   # e.g. USD
+    default_incoterm = models.CharField(max_length=12, blank=True)  # e.g. FOB
     contact_person = models.TextField(blank=True)
     phone = models.TextField(blank=True)
     email = models.TextField(blank=True)
     address = models.TextField(blank=True)
+    # Bank / remittance details for TT payments — sensitive, shown only to
+    # HO Purchasing / Finance / Admin (§5.10.2).
+    bank_details = models.TextField(blank=True)
     # payment terms live per quotation, not per supplier — terms vary by
     # goods/volume (owner, 2026-07-07)
     notes = models.TextField(blank=True)

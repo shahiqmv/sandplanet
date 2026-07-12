@@ -42,8 +42,15 @@ shippable and testable. Recommended order is P1B-a → P1B-g.
 
 ## Sub-milestones
 
-### P1B-a — Suppliers + PMR (the "requirement never disappears" slice)
+### P1B-a — Suppliers + PMR (the "requirement never disappears" slice) — DONE 2026-07-12
 Standalone value first: a project requirement raised and tracked end to end.
+Shipped: Supplier category/country/currency/incoterm/bank fields (bank hidden
+from non-HO); PMR document (per-site `PMR-SJR-001`, project-scoped) with the
+Site→PM→HO-review→Director-size-release workflow, return/cancel paths, spec +
+MAR-ref line fields (soft "no approved MAR" warning), the status-thread ladder
+on the doc, "🌍 Import request" button + PMR list on the site dashboard, and
+PMR entries in each approver's "waiting on you" queue. NOT yet: per-line order
+sizing / surplus-to-general-stock (that lands on the IPR in P1B-b).
 - **Supplier/forwarder DB** (§5.10.2): add to `Supplier` — `category`
   (LOCAL / INTERNATIONAL / FORWARDER / CLEARING_AGENT), country, default
   currency, default incoterm, bank details (sensitive: HO/Finance/Admin),
@@ -142,23 +149,21 @@ Standalone value first: a project requirement raised and tracked end to end.
 
 ---
 
-## Decisions needed before / during the build
+## Decisions — RESOLVED (owner, 2026-07-12)
 
-- **D1 — IPR authorisation path.** Route IPR signatory authorisation through
-  the **Payment Voucher** (extend the PV to accept IPR sources) for one
-  consistent authorisation path? *(Recommended: yes.)*
-- **D2 — Imports Incurred at GRN/landed cost** while local purchase stays
-  Incurred-at-PV? *(Recommended: yes — the store gives the valuation the
-  earlier decision lacked. Local purchase unchanged.)*
-- **D3 — First-cut scope trims.** Ship the order→pay→ship→clear→receive→
-  issue→GRN **spine** first (P1B-a..f) and treat **stock-take (§6D.4)** and
-  the fuller **reporting (§6D.5)** as a fast-follow (part of P1B-g)? *(Keeps
-  the critical path short.)*
-- **D4 — FX rate source.** Manual entry per payment/authorisation (simplest,
-  matches "agreed exchange-rate basis"), vs a stored rate table. *(Recommended:
-  manual per transaction, recorded on the posting.)*
-- **D5 — Numbering.** Add PMR (per-site), IPR / IRN / SIN (global) to the
-  numbering config.
+- **D1 — IPR authorisation path → YES.** Route IPR signatory authorisation
+  through the **Payment Voucher** (extend the PV to accept IPR sources) for one
+  consistent authorisation path.
+- **D2 — Imports Incurred at GRN/landed cost → YES**, while local purchase
+  stays Incurred-at-PV. The store gives the valuation the earlier decision
+  lacked. Local purchase unchanged.
+- **D3 — Ship the spine first → YES.** Deliver order→pay→ship→clear→receive→
+  issue→GRN (P1B-a..f); **stock-take (§6D.4)** and fuller **reporting (§6D.5)**
+  are a fast-follow (P1B-g).
+- **D4 — FX rate source → MANUAL per transaction**, recorded on the posting
+  (matches the "agreed exchange-rate basis"); no stored rate table.
+- **D5 — Numbering → YES.** PMR per-site (`PMR-SJR-004`), IPR / IRN / SIN
+  global (`IPR-018`).
 
 ## Rough sizing
 Seven sub-milestones; P1B-a is the smallest and a good standalone start
