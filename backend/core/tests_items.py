@@ -29,22 +29,16 @@ class ItemFieldTests(TestCase):
         self.item.refresh_from_db()
         self.assertTrue(self.item.is_major)
 
-    def test_site_team_creates_provisional_item(self):
+    def test_site_team_adds_item_directly(self):
+        # Approval gate is off for now — site-created items are not provisional
         sa = make_user("sa9", User.Role.SITE_ADMIN)
         self.client.force_authenticate(sa)
         r = self.client.post("/api/v1/items",
                              {"description": "New Chemical Anchor 12mm",
                               "unit": "nos"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertTrue(r.data["is_provisional"])
-        self.assertTrue(r.data["code"].startswith("ITM-"))
-
-    def test_ho_created_item_is_not_provisional(self):
-        r = self.client.post("/api/v1/items",
-                             {"description": "Gate Valve 40mm", "unit": "nos"},
-                             format="json")
-        self.assertEqual(r.status_code, 201, r.data)
         self.assertFalse(r.data["is_provisional"])
+        self.assertTrue(r.data["code"].startswith("ITM-"))
 
     def test_site_team_cannot_edit_existing_item(self):
         sa = make_user("sa8", User.Role.SITE_ADMIN)
