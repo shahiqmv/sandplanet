@@ -11,6 +11,7 @@ const ROLES = [
   ["SIGNATORY", "Signatory (Executive Director) — authorises Payment Vouchers"],
   ["FINANCE", "Finance — builds payment vouchers, records payments & slips"],
   ["HO_HR", "HO HR / Payroll — employees, timesheet reopen, payroll export"],
+  ["QS", "Quantity Surveyor — tenders, contracts, project financials (USD)"],
   ["ADMIN", "Admin — user management, site configuration, full access"],
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];

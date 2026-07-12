@@ -75,6 +75,7 @@ urlpatterns = [
     path("staff-cost/history", cost.staff_cost_history,
          name="staff-cost-history"),
     path("cost/portfolio", cost.cost_portfolio, name="cost-portfolio"),
+    path("fx/usd-rate", cost.usd_rate, name="usd-rate"),
     path("cost/site/<int:site_id>", cost.site_cost, name="site-cost"),
     path("cost/site/<int:site_id>/postings", cost.site_cost_postings,
          name="site-cost-postings"),

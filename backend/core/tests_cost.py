@@ -6,12 +6,16 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import costing
-from .models import CostHead, Site, SitePmHistory, User
+from .models import CompanyParameter, CostHead, Site, SitePmHistory, User
 from .tests import make_user
 
 
 class CostViewTests(TestCase):
     def setUp(self):
+        # rate 1 → USD figures equal the MVR postings, so these aggregation
+        # tests stay about the maths; conversion is checked separately below.
+        CompanyParameter.objects.update_or_create(
+            key="usd_mvr_rate", defaults={"value": "1"})
         self.site = Site.objects.create(
             code="SJR", name="Soneva Jani", status=Site.Status.ACTIVE,
             contract_value=Decimal("1000000"),
@@ -31,6 +35,25 @@ class CostViewTests(TestCase):
         costing.post(site=self.site, cost_head=self.materials,
                      state="PAID", source="PR", amount=100000)
         self.client = APIClient()
+
+    def test_costs_convert_to_usd(self):
+        CompanyParameter.objects.update_or_create(
+            key="usd_mvr_rate", defaults={"value": "10"})
+        self.client.force_authenticate(self.director)
+        r = self.client.get(f"/api/v1/cost/site/{self.site.id}")
+        self.assertEqual(r.data["currency"], "USD")
+        self.assertEqual(r.data["committed"], Decimal("20000.00"))  # 200k / 10
+        self.assertEqual(r.data["incurred"], Decimal("15000.00"))
+
+    def test_qs_can_set_rate_and_see_cost(self):
+        qs = make_user("qs1", User.Role.QS)
+        self.client.force_authenticate(qs)
+        r = self.client.put("/api/v1/fx/usd-rate", {"rate": "16.5"},
+                            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(str(r.data["rate"]), "16.5")
+        r = self.client.get(f"/api/v1/cost/site/{self.site.id}")
+        self.assertEqual(r.status_code, 200)  # QS may see cost
 
     def test_site_cost_aggregation(self):
         self.client.force_authenticate(self.director)

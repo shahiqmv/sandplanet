@@ -11,7 +11,16 @@ from .audit import audit
 from .models import ProgrammeActivity, Project, Site, User
 from .permissions import scoped_site_ids
 
-PROJECT_ADMIN_ROLES = ("ADMIN", "DIRECTOR", "PM")
+PROJECT_ADMIN_ROLES = ("ADMIN", "DIRECTOR", "PM", "QS")
+
+# Contract terms + value are commercial data — shown only to those who may see
+# the contract value (HO roles incl. QS, and the assigned PM).
+CONTRACT_FIELDS = (
+    "contract_value", "contract_type", "payment_terms", "advance_payment_pct",
+    "retention_pct", "retention_release_terms", "defects_liability_months",
+    "liquidated_damages", "price_escalation", "performance_bond_pct",
+    "advance_guarantee", "insurance_details",
+)
 
 
 def _can_view_value(user, project):
@@ -37,7 +46,13 @@ class ProjectSerializer(serializers.ModelSerializer):
                   "boq_ref", "contract_value", "loa_date", "pm", "pm_name",
                   "manpower_summary", "manpower_plan", "start_date",
                   "planned_completion", "actual_completion", "status",
-                  "activity_count", "overall_progress", "latest_manpower"]
+                  "activity_count", "overall_progress", "latest_manpower",
+                  # contract terms (QS)
+                  "contract_type", "payment_terms", "advance_payment_pct",
+                  "retention_pct", "retention_release_terms",
+                  "defects_liability_months", "liquidated_damages",
+                  "price_escalation", "performance_bond_pct",
+                  "advance_guarantee", "insurance_details"]
         read_only_fields = ["site", "status"]
 
     def get_latest_manpower(self, obj):
@@ -75,7 +90,8 @@ class ProjectSerializer(serializers.ModelSerializer):
         data = super().to_representation(instance)
         request = self.context.get("request")
         if request and not _can_view_value(request.user, instance):
-            data.pop("contract_value", None)
+            for f in CONTRACT_FIELDS:
+                data.pop(f, None)
         return data
 
 
@@ -343,8 +359,8 @@ def dashboard_portfolio(request):
     """Senior-management portfolio (spec §7.4): every project with value,
     % duration elapsed vs programme progress, open-items count, and an
     on-track / watch / attention classification."""
-    if request.user.role not in ("DIRECTOR", "ADMIN"):
-        return Response({"detail": "Director/Admin only."}, status=403)
+    if request.user.role not in ("DIRECTOR", "ADMIN", "QS"):
+        return Response({"detail": "Director / Admin / QS only."}, status=403)
     from datetime import date
 
     today = date.today()

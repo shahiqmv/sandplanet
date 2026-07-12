@@ -10,16 +10,35 @@ const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
 const pct = (v) => v == null ? "—" : `${v}%`;
 
-export default function CostControlPage({ onOpenDoc }) {
+export default function CostControlPage({ onOpenDoc, me }) {
   const [pf, setPf] = useState(null);
   const [openSite, setOpenSite] = useState(null);
   const [detail, setDetail] = useState(null);
   const [drill, setDrill] = useState(null);   // {head, state, rows}
+  const [rate, setRate] = useState(null);
   const [error, setError] = useState(null);
 
+  const canSetRate = ["ADMIN", "FINANCE", "QS"].includes(me?.role);
+
+  function loadRate() {
+    api("/fx/usd-rate").then(setRate).catch(() => {});
+  }
   useEffect(() => {
     api("/cost/portfolio").then(setPf).catch((e) => setError(e.message));
+    loadRate();
   }, []);
+
+  async function editRate() {
+    const v = window.prompt("MVR per 1 USD (rate used to convert site costs "
+      + "to USD):", rate ? String(rate.rate) : "15.42");
+    if (v === null) return;
+    try {
+      await api("/fx/usd-rate", { method: "PUT", body: { rate: Number(v) } });
+      loadRate();
+      api("/cost/portfolio").then(setPf);   // refresh figures at the new rate
+      if (openSite) api(`/cost/site/${openSite}`).then(setDetail);
+    } catch (e) { setError(e.message); }
+  }
 
   const openDetail = (siteId) => {
     if (openSite === siteId) { setOpenSite(null); setDetail(null); return; }
@@ -42,8 +61,23 @@ export default function CostControlPage({ onOpenDoc }) {
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 18 }}>
-        Project cost control</h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 18 }}>
+          Project cost control</h2>
+        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          all figures in USD
+          {rate && ` · MVR costs @ ${rate.rate}/USD`}
+          {canSetRate && (
+            <button onClick={editRate}
+                    style={{ background: "none", border: "none",
+                             color: "var(--navy)", cursor: "pointer",
+                             textDecoration: "underline", fontSize: 12.5,
+                             marginLeft: 6, padding: 0 }}>
+              change rate</button>
+          )}
+        </span>
+      </div>
 
       <div style={card}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -107,9 +141,9 @@ export default function CostControlPage({ onOpenDoc }) {
             <h3 style={{ margin: 0, fontSize: 15, color: "var(--navy)" }}>
               {detail.site_code} — {detail.site_name}</h3>
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              Contract MVR {money(detail.contract_value)}
+              Contract USD {money(detail.contract_value)}
               {detail.remaining != null &&
-                ` · remaining MVR ${money(detail.remaining)}`}</span>
+                ` · remaining USD ${money(detail.remaining)}`}</span>
             <span style={{ marginLeft: "auto", fontSize: 13 }}>
               consumed <strong>{pct(detail.pct_consumed)}</strong>
               {" "}vs elapsed {pct(detail.pct_elapsed)}</span>
@@ -123,7 +157,7 @@ export default function CostControlPage({ onOpenDoc }) {
               <div key={k}>
                 <div style={{ fontSize: 12, color: "var(--muted)" }}>{k}</div>
                 <div style={{ fontSize: 18, fontFamily: "var(--font-mono)",
-                              color: "var(--navy)" }}>MVR {money(v)}</div>
+                              color: "var(--navy)" }}>USD {money(v)}</div>
               </div>
             ))}
           </div>
@@ -181,7 +215,12 @@ export default function CostControlPage({ onOpenDoc }) {
                                      color: "var(--muted)" }}>
                           {r.source}{r.is_reversal ? " · reversal" : ""}</td>
                         <td style={td}>{r.posted_on}</td>
-                        <td style={num}>{money(r.amount)}</td>
+                        <td style={num}>{money(r.amount)}
+                          {r.currency_original === "MVR" && (
+                            <div style={{ fontSize: 10, color: "var(--muted)" }}>
+                              MVR {money(r.amount_original)}</div>
+                          )}
+                        </td>
                       </tr>
                     ))}
                     {drill.rows.length === 0 && (

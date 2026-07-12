@@ -16,11 +16,13 @@ class User(AbstractUser):
         SIGNATORY = "SIGNATORY", "Signatory (Executive Director)"  # R4/M6
         FINANCE = "FINANCE", "Finance"  # verifies & disburses (R4)
         HO_HR = "HO_HR", "HO HR / Payroll"
+        QS = "QS", "Quantity Surveyor"  # tenders, contracts, project financials
         ADMIN = "ADMIN", "Admin"
 
-    # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6)
+    # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6; QS sees
+    # the whole project portfolio)
     HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",
-                "HO_HR", "ADMIN"}
+                "HO_HR", "QS", "ADMIN"}
     SINGLE_SITE_ROLES = {"SITE_ENGINEER", "SITE_ADMIN"}
 
     role = models.CharField(max_length=20, choices=Role.choices)
@@ -967,9 +969,40 @@ class Project(models.Model):
     title = models.TextField()
     scope = models.TextField(blank=True)  # general summary
     boq_ref = models.TextField(blank=True)
-    contract_value = models.DecimalField(  # same sensitivity rule as sites
+    # Contract value is in USD (resort contracts are USD); site MVR costs are
+    # converted to USD for the project P&L. Sensitivity rule as for sites.
+    contract_value = models.DecimalField(
         max_digits=14, decimal_places=2, null=True, blank=True)
     loa_date = models.DateField(null=True, blank=True)  # letter of award
+
+    # --- Contract terms (owner: QS records these) -----------------------
+    class ContractType(models.TextChoices):
+        LUMP_SUM = "LUMP_SUM", "Lump sum"
+        REMEASUREMENT = "REMEASUREMENT", "Re-measurement"
+        COST_PLUS = "COST_PLUS", "Cost plus"
+
+    contract_type = models.CharField(max_length=16,
+                                     choices=ContractType.choices, blank=True)
+    # payment & money terms
+    payment_terms = models.TextField(blank=True)
+    advance_payment_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                              null=True, blank=True)
+    retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                        null=True, blank=True)
+    retention_release_terms = models.TextField(blank=True)
+    # time & penalties
+    defects_liability_months = models.PositiveIntegerField(null=True,
+                                                           blank=True)
+    liquidated_damages = models.TextField(blank=True)  # e.g. 0.5%/week, cap 10%
+    # contract type & basis
+    price_escalation = models.TextField(blank=True)
+    # bonds & insurance
+    performance_bond_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                               null=True, blank=True)
+    advance_guarantee = models.TextField(blank=True)
+    insurance_details = models.TextField(blank=True)
+    # --------------------------------------------------------------------
+
     pm = models.ForeignKey(  # Project PM — approval routing prefers this
         User, on_delete=models.PROTECT, null=True, blank=True,
         related_name="pm_projects")

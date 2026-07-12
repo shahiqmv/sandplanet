@@ -40,10 +40,10 @@ const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
-  { key: "approvals", label: "My Tasks", roles: APPROVERS,
-    subs: [["approvals", "My Tasks", null],
-           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN"]],
-           ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN"]]] },
+  { key: "approvals", label: "My Tasks", roles: [...APPROVERS, "QS"],
+    subs: [["approvals", "My Tasks", APPROVERS],
+           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS"]],
+           ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
@@ -86,6 +86,7 @@ function landingPage(me) {
   if (me.role === "SIGNATORY") return "vouchers";
   if (APPROVERS.includes(me.role)) return "approvals";
   if (me.role === "HO_HR") return "hr";
+  if (me.role === "QS") return "portfolio";
   return "sites";
 }
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
@@ -454,12 +455,12 @@ export default function App() {
                            onOpen={openApprovalItem} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "FINANCE", "ADMIN"].includes(me.role) &&
+            ["DIRECTOR", "FINANCE", "ADMIN", "QS"].includes(me.role) &&
             hoPage === "cost" && (
-            <CostControlPage onOpenDoc={openDoc} />
+            <CostControlPage onOpenDoc={openDoc} me={me} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "ADMIN"].includes(me.role) &&
+            ["DIRECTOR", "ADMIN", "QS"].includes(me.role) &&
             hoPage === "portfolio" && (
             <PortfolioPage refresh={refresh}
                            onOpenProject={(id) => setDocView({

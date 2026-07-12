@@ -35,7 +35,7 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
   }, [projectId]);
   useEffect(load, [load]);
 
-  const canEdit = ["PM", "ADMIN", "DIRECTOR"].includes(me.role);
+  const canEdit = ["PM", "ADMIN", "DIRECTOR", "QS"].includes(me.role);
   const canDelete = ["ADMIN", "DIRECTOR"].includes(me.role);
 
   async function deleteProject() {
@@ -144,8 +144,8 @@ manpower histogram, on the letterhead — send to the client"
                   context="reported at site" />
             {money(project.contract_value) && (
               <Stat label="Contract value"
-                    value={money(project.contract_value)} tone="info"
-                    context="MVR" />
+                    value={`$${money(project.contract_value)}`} tone="info"
+                    context="USD" />
             )}
           </section>
           <section style={card}>
@@ -173,11 +173,14 @@ manpower histogram, on the letterhead — send to the client"
                 ))}
               </tbody>
             </table>
-            <p style={{ fontSize: 12, color: "var(--faint)",
-                        margin: "10px 0 0" }}>
-              Project details are edited under Admin → Site Setup.
-            </p>
+            {canEdit && (
+              <p style={{ fontSize: 12, color: "var(--faint)",
+                          margin: "10px 0 0" }}>
+                Use ✎ Edit above to update the value, dates and contract terms.
+              </p>
+            )}
           </section>
+          {"contract_type" in project && <ContractTermsCard project={project} />}
         </>
       )}
 
@@ -356,38 +359,102 @@ function ManpowerPlanTab({ project, me, onSaved }) {
 }
 
 const PROJECT_STATUSES = ["AWARDED", "ACTIVE", "ON_HOLD", "CLOSED"];
+const CONTRACT_TYPES = [["", "—"], ["LUMP_SUM", "Lump sum"],
+                        ["REMEASUREMENT", "Re-measurement"],
+                        ["COST_PLUS", "Cost plus"]];
+const CONTRACT_TYPE_LABEL = Object.fromEntries(CONTRACT_TYPES);
 
-// PM/Admin can fix project details — wrong code, title, dates, value or
-// status. Admin/Director may also delete an empty project (no documents).
+// Read-only contract-terms summary on the overview (shown to those who may see
+// the contract value — HO roles incl. QS, and the assigned PM).
+function ContractTermsCard({ project }) {
+  const pct = (v) => (v == null || v === "" ? null : `${v}%`);
+  const rows = [
+    ["Contract type", CONTRACT_TYPE_LABEL[project.contract_type] || "—"],
+    ["Payment terms", project.payment_terms],
+    ["Advance payment", pct(project.advance_payment_pct)],
+    ["Advance guarantee", project.advance_guarantee],
+    ["Retention", pct(project.retention_pct)],
+    ["Retention release", project.retention_release_terms],
+    ["Defects liability", project.defects_liability_months
+      ? `${project.defects_liability_months} months` : null],
+    ["Liquidated damages", project.liquidated_damages],
+    ["Price escalation", project.price_escalation],
+    ["Performance bond", pct(project.performance_bond_pct)],
+    ["Insurance / CAR", project.insurance_details],
+  ].filter(([, v]) => v && v !== "—");
+  return (
+    <section style={card}>
+      <Eyebrow>Contract terms</Eyebrow>
+      {rows.length ? (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <tbody>
+            {rows.map(([k, v]) => (
+              <tr key={k}>
+                <td style={{ ...td, width: 170, color: "var(--muted)",
+                             fontWeight: 600, verticalAlign: "top" }}>{k}</td>
+                <td style={{ ...td, whiteSpace: "pre-wrap" }}>{v}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p style={{ fontSize: 13, color: "var(--muted)" }}>
+          No contract terms recorded yet — the QS enters these via ✎ Edit.</p>
+      )}
+    </section>
+  );
+}
+
+// PM / QS / Admin edit project details, value (USD), dates and contract terms.
+// Admin/Director may also delete an empty project (no documents).
 function EditProjectModal({ project, onClose, onSaved }) {
   const [form, setForm] = useState({
-    code: project.code || "",
-    title: project.title || "",
+    code: project.code || "", title: project.title || "",
     start_date: project.start_date || "",
     planned_completion: project.planned_completion || "",
     actual_completion: project.actual_completion || "",
     loa_date: project.loa_date || "",
     contract_value: project.contract_value ?? "",
     status: project.status || "ACTIVE",
+    contract_type: project.contract_type || "",
+    payment_terms: project.payment_terms || "",
+    advance_payment_pct: project.advance_payment_pct ?? "",
+    advance_guarantee: project.advance_guarantee || "",
+    retention_pct: project.retention_pct ?? "",
+    retention_release_terms: project.retention_release_terms || "",
+    defects_liability_months: project.defects_liability_months ?? "",
+    liquidated_damages: project.liquidated_damages || "",
+    price_escalation: project.price_escalation || "",
+    performance_bond_pct: project.performance_bond_pct ?? "",
+    insurance_details: project.insurance_details || "",
   });
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const num = (v) => (v === "" || v == null ? null : Number(v));
 
   async function save() {
     setError(null);
     setSaving(true);
     try {
       const body = {
-        code: form.code.trim(),
-        title: form.title.trim(),
+        code: form.code.trim(), title: form.title.trim(),
         start_date: form.start_date || null,
         planned_completion: form.planned_completion || null,
         actual_completion: form.actual_completion || null,
         loa_date: form.loa_date || null,
-        contract_value: form.contract_value === "" ? null
-          : Number(form.contract_value),
-        status: form.status,
+        contract_value: num(form.contract_value), status: form.status,
+        contract_type: form.contract_type,
+        payment_terms: form.payment_terms,
+        advance_payment_pct: num(form.advance_payment_pct),
+        advance_guarantee: form.advance_guarantee,
+        retention_pct: num(form.retention_pct),
+        retention_release_terms: form.retention_release_terms,
+        defects_liability_months: num(form.defects_liability_months),
+        liquidated_damages: form.liquidated_damages,
+        price_escalation: form.price_escalation,
+        performance_bond_pct: num(form.performance_bond_pct),
+        insurance_details: form.insurance_details,
       };
       await api(`/projects/${project.id}`, { method: "PATCH", body });
       onSaved();
@@ -399,12 +466,17 @@ function EditProjectModal({ project, onClose, onSaved }) {
 
   const field = { display: "flex", flexDirection: "column", gap: 4,
                   fontSize: 12, color: "var(--muted)" };
+  const full = { ...field, gridColumn: "1 / -1" };
+  const ta = { ...inputStyle, minHeight: 40, resize: "vertical" };
+  const heading = { gridColumn: "1 / -1", margin: "8px 0 0", fontSize: 13,
+                    fontWeight: 700, color: "var(--navy)" };
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)",
                   display: "flex", alignItems: "flex-start",
-                  justifyContent: "center", padding: "6vh 16px", zIndex: 50 }}
+                  justifyContent: "center", padding: "5vh 16px", zIndex: 50 }}
          onClick={onClose}>
-      <div style={{ ...card, maxWidth: 520, width: "100%", margin: 0 }}
+      <div style={{ ...card, maxWidth: 680, width: "100%", margin: 0,
+                    maxHeight: "90vh", overflow: "auto" }}
            onClick={(e) => e.stopPropagation()}>
         <h3 style={{ marginTop: 0, color: "var(--navy)", fontSize: 16 }}>
           Edit project</h3>
@@ -420,7 +492,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
                 <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
               ))}
             </select></label>
-          <label style={{ ...field, gridColumn: "1 / -1" }}>Title
+          <label style={full}>Title
             <input value={form.title} onChange={set("title")}
                    style={inputStyle} /></label>
           <label style={field}>Start date
@@ -437,11 +509,53 @@ function EditProjectModal({ project, onClose, onSaved }) {
           <label style={field}>LOA date
             <input type="date" value={form.loa_date}
                    onChange={set("loa_date")} style={inputStyle} /></label>
-          <label style={{ ...field, gridColumn: "1 / -1" }}>
-            Contract value (MVR)
+
+          <div style={heading}>Contract</div>
+          <label style={field}>Contract value (USD)
             <input type="number" min="0" value={form.contract_value}
                    onChange={set("contract_value")}
                    style={inputStyle} /></label>
+          <label style={field}>Contract type
+            <select value={form.contract_type} onChange={set("contract_type")}
+                    style={inputStyle}>
+              {CONTRACT_TYPES.map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select></label>
+          <label style={full}>Payment terms
+            <textarea value={form.payment_terms} rows={2}
+                      onChange={set("payment_terms")} style={ta} /></label>
+          <label style={field}>Advance payment %
+            <input type="number" min="0" value={form.advance_payment_pct}
+                   onChange={set("advance_payment_pct")}
+                   style={inputStyle} /></label>
+          <label style={field}>Retention %
+            <input type="number" min="0" value={form.retention_pct}
+                   onChange={set("retention_pct")} style={inputStyle} /></label>
+          <label style={full}>Retention release terms
+            <textarea value={form.retention_release_terms} rows={2}
+                      onChange={set("retention_release_terms")}
+                      style={ta} /></label>
+          <label style={field}>Defects liability (months)
+            <input type="number" min="0" value={form.defects_liability_months}
+                   onChange={set("defects_liability_months")}
+                   style={inputStyle} /></label>
+          <label style={field}>Performance bond %
+            <input type="number" min="0" value={form.performance_bond_pct}
+                   onChange={set("performance_bond_pct")}
+                   style={inputStyle} /></label>
+          <label style={full}>Liquidated damages (penalty)
+            <textarea value={form.liquidated_damages} rows={2}
+                      onChange={set("liquidated_damages")} style={ta} /></label>
+          <label style={full}>Price escalation
+            <textarea value={form.price_escalation} rows={2}
+                      onChange={set("price_escalation")} style={ta} /></label>
+          <label style={full}>Advance-payment guarantee
+            <textarea value={form.advance_guarantee} rows={2}
+                      onChange={set("advance_guarantee")} style={ta} /></label>
+          <label style={full}>Insurance / CAR policy
+            <textarea value={form.insurance_details} rows={2}
+                      onChange={set("insurance_details")} style={ta} /></label>
         </div>
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end",

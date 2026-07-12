@@ -53,7 +53,7 @@ export default function PortfolioPage({ refresh, onOpenProject }) {
             <thead><tr>
               <th style={th}>Project</th><th style={th}>Site</th>
               <th style={th}>PM</th>
-              <th style={{ ...th, textAlign: "right" }}>Value (MVR)</th>
+              <th style={{ ...th, textAlign: "right" }}>Value (USD)</th>
               <th style={th}>Finish</th>
               <th style={{ ...th, textAlign: "right" }}>Time</th>
               <th style={{ ...th, textAlign: "right" }}>Progress</th>

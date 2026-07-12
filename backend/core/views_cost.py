@@ -2,27 +2,58 @@
 sensitive (§6C.5): Admin, HO roles, Senior Management, and the assigned PM
 for their own sites. Site-level users see no cost data."""
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db.models import Sum
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
-from . import staff_cost
+from . import fx, staff_cost
+from .audit import audit
 from .costing import DEFAULT_HEADS
-from .models import CostPosting, Project, Site
+from .models import CompanyParameter, CostPosting, Project, Site
 
-COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "HO_HR")
+# QS is the project-financial role and sees all project costing (in USD).
+COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "HO_HR", "QS")
+SENIOR_COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "QS")
 STATES = ("COMMITTED", "INCURRED", "PAID")
+
+
+def _usd(v):
+    return Decimal(str(v or 0)).quantize(Decimal("0.01"))
 
 
 def _can_see_cost(user):
     return user.role in COST_ROLES
 
 
+@api_view(["GET", "PUT"])
+def usd_rate(request):
+    """The MVR-per-USD rate used to convert site/project costs to USD.
+    Everyone who can see cost may read it; Admin / Finance / QS may set it."""
+    if request.method == "PUT":
+        if request.user.role not in ("ADMIN", "FINANCE", "QS"):
+            return Response({"detail": "Admin / Finance / QS set the rate."},
+                            status=403)
+        try:
+            rate = Decimal(str(request.data.get("rate")))
+        except (TypeError, ValueError, InvalidOperation):
+            return Response({"detail": "Enter a valid number."}, status=400)
+        if rate <= 0:
+            return Response({"detail": "Rate must be greater than zero."},
+                            status=400)
+        CompanyParameter.objects.update_or_create(
+            key=fx.PARAM_KEY, defaults={"value": str(rate)})
+        audit("parameter", 0, "USD_RATE_UPDATED", actor=request.user,
+              detail={"rate": str(rate)})
+    if not _can_see_cost(request.user):
+        return Response({"detail": "Cost data is restricted."}, status=403)
+    return Response({"rate": fx.usd_rate(), "default": fx.DEFAULT_RATE})
+
+
 def _can_see_site_cost(user, site):
-    """Full cost view: Admin/Director/Finance, or the site's current PM."""
-    if user.role in ("ADMIN", "DIRECTOR", "FINANCE"):
+    """Full cost view: Admin/Director/Finance/QS, or the site's current PM."""
+    if user.role in SENIOR_COST_ROLES:
         return True
     if user.role == "PM":
         pm = site.current_pm()
@@ -48,30 +79,34 @@ def _contract_value(site):
 
 
 def _site_cost(site):
-    """Net committed / incurred / paid for a site, by cost head and total."""
+    """Net committed / incurred / paid for a site, in USD (MVR postings are
+    converted at the company rate; contract values are already USD)."""
+    rate = fx.usd_rate()
     agg = CostPosting.objects.filter(site=site).values(
-        "cost_head__name", "state").annotate(t=Sum("amount"))
+        "cost_head__name", "state", "currency").annotate(t=Sum("amount"))
     heads = {name: {s: Decimal("0") for s in STATES} for name in DEFAULT_HEADS}
     totals = {s: Decimal("0") for s in STATES}
     for r in agg:
-        name, st, val = r["cost_head__name"], r["state"], r["t"] or Decimal("0")
+        name, st = r["cost_head__name"], r["state"]
+        val = fx.to_usd(r["t"] or 0, r["currency"], rate)
         heads.setdefault(name, {s: Decimal("0") for s in STATES})
-        heads[name][st] = val
+        heads[name][st] += val
         if st in totals:
             totals[st] += val
     contract = _contract_value(site)
     incurred = totals["INCURRED"]
     return {
         "site_id": site.id, "site_code": site.code, "site_name": site.name,
-        "contract_value": contract,
-        "committed": totals["COMMITTED"], "incurred": incurred,
-        "paid": totals["PAID"],
-        "remaining": (contract - incurred) if contract else None,
+        "currency": "USD", "usd_rate": rate,
+        "contract_value": _usd(contract),
+        "committed": _usd(totals["COMMITTED"]), "incurred": _usd(incurred),
+        "paid": _usd(totals["PAID"]),
+        "remaining": _usd(contract - incurred) if contract else None,
         "pct_consumed": (round(float(incurred / contract * 100), 1)
                          if contract else None),
         "pct_elapsed": _pct_elapsed(site.start_date, site.planned_completion),
-        "by_cost_head": [{"cost_head": name, **{s.lower(): heads[name][s]
-                                                for s in STATES}}
+        "by_cost_head": [{"cost_head": name,
+                          **{s.lower(): _usd(heads[name][s]) for s in STATES}}
                          for name in heads if any(heads[name].values())],
     }
 
@@ -124,11 +159,14 @@ def site_cost_postings(request, site_id):
         qs = qs.filter(cost_head__name=request.GET["head"])
     if request.GET.get("state"):
         qs = qs.filter(state=request.GET["state"])
+    rate = fx.usd_rate()
     out = []
     for p in qs.order_by("-posted_on", "-id")[:200]:
         out.append({
             "id": p.id, "state": p.state, "source": p.source,
-            "cost_head": p.cost_head.name, "amount": p.amount,
+            "cost_head": p.cost_head.name,
+            "amount": _usd(fx.to_usd(p.amount, p.currency, rate)),
+            "amount_original": p.amount, "currency_original": p.currency,
             "posted_on": p.posted_on,
             "ref": p.document.ref if p.document_id else (
                 f"{p.source} {p.staff_year}-{p.staff_month:02d}"
@@ -142,12 +180,13 @@ def site_cost_postings(request, site_id):
 def cost_portfolio(request):
     """Cost roll-up across all sites (§6C.4): contract vs consumed, with a
     flag where cost consumption outpaces time elapsed."""
-    if request.user.role not in ("ADMIN", "DIRECTOR", "FINANCE"):
-        return Response({"detail": "Senior management / Finance only."},
+    if request.user.role not in SENIOR_COST_ROLES:
+        return Response({"detail": "Senior management / Finance / QS only."},
                         status=403)
     rows = []
     tot = {"contract": Decimal("0"), "committed": Decimal("0"),
-           "incurred": Decimal("0"), "paid": Decimal("0")}
+           "incurred": Decimal("0"), "paid": Decimal("0"),
+           "currency": "USD"}
     for site in Site.objects.filter(is_head_office=False).order_by("code"):
         c = _site_cost(site)
         # a site with no contract and no cost is noise — skip
