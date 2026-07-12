@@ -214,7 +214,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       work_time_lost: timeLost,
       time_lost_cause: timeLost ? timeLostCause : "",
       time_lost_reason: timeLost ? timeLostReason : "",
-      work_done: workDone.filter((r) => r.activity),
+      work_done: workDone.filter((r) => r.activity)
+        .map(({ _baseline, ...r }) => r),   // drop the UI-only baseline
       manpower: manpowerMap(),
       machinery: machinery.filter((r) => r.item),
       materials: materials
@@ -415,10 +416,15 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                           onChange={(e) => {
                             const act = acts.find(
                               (a) => String(a.id) === e.target.value);
+                            // remember the activity's cumulative % so today's %
+                            // can accumulate onto it (baseline + today)
+                            const base = act ? Number(act.progress) || 0
+                                             : (row._baseline ?? 0);
                             set({ activity_id: act ? act.id : "",
                                   activity: act ? act.name : row.activity,
                                   trade: act ? (act.trade || row.trade)
                                              : row.trade,
+                                  _baseline: base,
                                   progress_todate: act && !row.progress_todate
                                     ? act.progress : row.progress_todate });
                           }}
@@ -453,8 +459,16 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
             </td>
             {cell(row.trade, (v) => set({ trade: v }), 90)}
             {cell(row.location, (v) => set({ location: v }), 120)}
-            {cell(row.progress_today, (v) => set({ progress_today: v }), 65,
-                  "number")}
+            {cell(row.progress_today, (v) => {
+              // to-date accumulates: previous cumulative (baseline) + today %,
+              // capped at 100. Still editable below for corrections.
+              const base = Number(row._baseline ?? 0) || 0;
+              const t = v === "" ? 0 : Number(v) || 0;
+              set(row.activity_id
+                ? { progress_today: v,
+                    progress_todate: String(Math.min(base + t, 100)) }
+                : { progress_today: v });
+            }, 65, "number")}
             {cell(row.progress_todate, (v) => set({ progress_todate: v }), 65,
                   "number")}
             <td style={{ padding: 3, verticalAlign: "top" }}>
