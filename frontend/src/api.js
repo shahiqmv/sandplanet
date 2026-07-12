@@ -3,6 +3,34 @@ function getCookie(name) {
   return match ? decodeURIComponent(match[2]) : null;
 }
 
+function prettyField(key) {
+  if (key === "non_field_errors" || key === "detail") return "";
+  return key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+}
+
+// Turn any API error body into a message a person can act on. Handles
+// {detail: "..."}, DRF field errors {field: ["msg", ...]}, plain strings,
+// and nested shapes — so users see "Code: no more than 6 characters" instead
+// of "Request failed (400)".
+function readError(data, status) {
+  if (data == null) return `Request failed (${status})`;
+  if (typeof data === "string") return data;
+  if (typeof data.detail === "string") return data.detail;
+  const parts = [];
+  const walk = (val, label) => {
+    if (val == null) return;
+    if (typeof val === "string") {
+      parts.push(label ? `${label}: ${val}` : val);
+    } else if (Array.isArray(val)) {
+      val.forEach((v) => walk(v, label));
+    } else if (typeof val === "object") {
+      Object.entries(val).forEach(([k, v]) => walk(v, prettyField(k) || label));
+    }
+  };
+  walk(data, "");
+  return parts.filter(Boolean).join(" · ") || `Request failed (${status})`;
+}
+
 export async function apiUpload(path, formData, method = "POST") {
   const res = await fetch(`/api/v1${path}`, {
     method,
@@ -11,7 +39,7 @@ export async function apiUpload(path, formData, method = "POST") {
     body: formData,
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(data?.detail || `Upload failed (${res.status})`);
+  if (!res.ok) throw new Error(readError(data, res.status));
   return data;
 }
 
@@ -27,7 +55,7 @@ export async function api(path, { method = "GET", body } = {}) {
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(data?.detail || `Request failed (${res.status})`);
+    throw new Error(readError(data, res.status));
   }
   return data;
 }
