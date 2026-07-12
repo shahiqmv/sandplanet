@@ -78,3 +78,22 @@ class UserInviteTests(TestCase):
         u.refresh_from_db()
         self.assertTrue(u.must_change_password)
         self.assertEqual(len(mail.outbox), 1)
+
+    def test_admin_resets_password(self):
+        u = make_user("frank", User.Role.FINANCE)
+        r = self.client.patch(f"/api/v1/users/{u.id}",
+                              {"password": "brandNew99"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        u.refresh_from_db()
+        self.assertTrue(u.check_password("brandNew99"))
+
+    def test_admin_deletes_user(self):
+        u = make_user("gary", User.Role.FINANCE)
+        r = self.client.delete(f"/api/v1/users/{u.id}")
+        self.assertEqual(r.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=u.id).exists())
+
+    def test_cannot_delete_self(self):
+        r = self.client.delete(f"/api/v1/users/{self.admin.id}")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(User.objects.filter(pk=self.admin.id).exists())

@@ -118,7 +118,7 @@ def site_projects(request, site_id):
                                       context={"request": request}).data)
 
 
-@api_view(["GET", "PATCH"])
+@api_view(["GET", "PATCH", "DELETE"])
 def project_detail(request, pk):
     try:
         project = Project.objects.select_related("site").get(pk=pk)
@@ -127,6 +127,20 @@ def project_detail(request, pk):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None and project.site_id not in site_ids:
         return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        if request.user.role not in ("ADMIN", "DIRECTOR"):
+            return Response({"detail": "Admin/Director delete projects."},
+                            status=403)
+        if project.documents.exists():
+            return Response(
+                {"detail": "This project has documents recorded against it — "
+                           "it can't be deleted. Close it (set status Closed) "
+                           "instead."}, status=400)
+        code = project.code
+        project.delete()  # cascades the programme activities
+        audit("project", pk, "PROJECT_DELETED", actor=request.user,
+              detail={"code": code, "site": project.site.code})
+        return Response(status=204)
     if request.method == "PATCH":
         if request.user.role not in PROJECT_ADMIN_ROLES:
             return Response({"detail": "Admin/Director/PM edit projects."},

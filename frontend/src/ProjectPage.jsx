@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import ProgrammePage from "./ProgrammePage.jsx";
-import { Chip, Eyebrow, RefStamp, Stat, StatusChip, card, ghostButton, td,
-         th } from "./ui.jsx";
+import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
+         ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 // Dedicated project workspace (owner, Phase A): a project has many
 // components — programme, documents, and later manpower plan, BOM
@@ -27,12 +27,28 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
   const [tab, setTab] = useState("overview");
   const [docs, setDocs] = useState(null);
   const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(false);
 
   const load = useCallback(() => {
     api(`/projects/${projectId}`).then(setProject)
       .catch((e) => setError(e.message));
   }, [projectId]);
   useEffect(load, [load]);
+
+  const canEdit = ["PM", "ADMIN", "DIRECTOR"].includes(me.role);
+  const canDelete = ["ADMIN", "DIRECTOR"].includes(me.role);
+
+  async function deleteProject() {
+    if (!window.confirm(
+          `Delete project ${project.code} — ${project.title}? This removes `
+          + "the programme and all its activities. It can only be done while "
+          + "the project has no documents. This can't be undone.")) return;
+    setError(null);
+    try {
+      await api(`/projects/${projectId}`, { method: "DELETE" });
+      onClose();
+    } catch (e) { setError(e.message); }
+  }
 
   useEffect(() => {
     if (tab === "documents") {
@@ -75,6 +91,15 @@ manpower histogram, on the letterhead — send to the client"
                       color: "var(--navy)", fontWeight: 600 }}>
             ⬇ Programme PDF
           </a>
+          {canEdit && (
+            <button onClick={() => setEditing(true)} style={ghostButton}>
+              ✎ Edit</button>
+          )}
+          {canDelete && (
+            <button onClick={deleteProject}
+                    style={{ ...ghostButton, color: "#c0392b" }}>
+              Delete</button>
+          )}
           <button onClick={onClose} style={ghostButton}>← Back</button>
         </div>
         <div style={{ display: "flex", gap: 6, marginTop: 14,
@@ -95,6 +120,11 @@ manpower histogram, on the letterhead — send to the client"
           ))}
         </div>
       </section>
+
+      {editing && (
+        <EditProjectModal project={project} onClose={() => setEditing(false)}
+                          onSaved={() => { setEditing(false); load(); }} />
+      )}
 
       {tab === "overview" && (
         <>
@@ -322,6 +352,108 @@ function ManpowerPlanTab({ project, me, onSaved }) {
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>
         {error}</p>}
     </section>
+  );
+}
+
+const PROJECT_STATUSES = ["AWARDED", "ACTIVE", "ON_HOLD", "CLOSED"];
+
+// PM/Admin can fix project details — wrong code, title, dates, value or
+// status. Admin/Director may also delete an empty project (no documents).
+function EditProjectModal({ project, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    code: project.code || "",
+    title: project.title || "",
+    start_date: project.start_date || "",
+    planned_completion: project.planned_completion || "",
+    actual_completion: project.actual_completion || "",
+    loa_date: project.loa_date || "",
+    contract_value: project.contract_value ?? "",
+    status: project.status || "ACTIVE",
+  });
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+
+  async function save() {
+    setError(null);
+    setSaving(true);
+    try {
+      const body = {
+        code: form.code.trim(),
+        title: form.title.trim(),
+        start_date: form.start_date || null,
+        planned_completion: form.planned_completion || null,
+        actual_completion: form.actual_completion || null,
+        loa_date: form.loa_date || null,
+        contract_value: form.contract_value === "" ? null
+          : Number(form.contract_value),
+        status: form.status,
+      };
+      await api(`/projects/${project.id}`, { method: "PATCH", body });
+      onSaved();
+    } catch (e) {
+      setError(e.message);
+      setSaving(false);
+    }
+  }
+
+  const field = { display: "flex", flexDirection: "column", gap: 4,
+                  fontSize: 12, color: "var(--muted)" };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.35)",
+                  display: "flex", alignItems: "flex-start",
+                  justifyContent: "center", padding: "6vh 16px", zIndex: 50 }}
+         onClick={onClose}>
+      <div style={{ ...card, maxWidth: 520, width: "100%", margin: 0 }}
+           onClick={(e) => e.stopPropagation()}>
+        <h3 style={{ marginTop: 0, color: "var(--navy)", fontSize: 16 }}>
+          Edit project</h3>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
+                      gap: 12 }}>
+          <label style={field}>Project code
+            <input value={form.code} onChange={set("code")}
+                   style={inputStyle} /></label>
+          <label style={field}>Status
+            <select value={form.status} onChange={set("status")}
+                    style={inputStyle}>
+              {PROJECT_STATUSES.map((s) => (
+                <option key={s} value={s}>{s.replace(/_/g, " ")}</option>
+              ))}
+            </select></label>
+          <label style={{ ...field, gridColumn: "1 / -1" }}>Title
+            <input value={form.title} onChange={set("title")}
+                   style={inputStyle} /></label>
+          <label style={field}>Start date
+            <input type="date" value={form.start_date}
+                   onChange={set("start_date")} style={inputStyle} /></label>
+          <label style={field}>Planned completion
+            <input type="date" value={form.planned_completion}
+                   onChange={set("planned_completion")}
+                   style={inputStyle} /></label>
+          <label style={field}>Actual completion
+            <input type="date" value={form.actual_completion}
+                   onChange={set("actual_completion")}
+                   style={inputStyle} /></label>
+          <label style={field}>LOA date
+            <input type="date" value={form.loa_date}
+                   onChange={set("loa_date")} style={inputStyle} /></label>
+          <label style={{ ...field, gridColumn: "1 / -1" }}>
+            Contract value (MVR)
+            <input type="number" min="0" value={form.contract_value}
+                   onChange={set("contract_value")}
+                   style={inputStyle} /></label>
+        </div>
+        {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end",
+                      marginTop: 16 }}>
+          <button onClick={onClose} style={ghostButton}>Cancel</button>
+          <button onClick={save} disabled={saving || !form.code.trim()
+                                           || !form.title.trim()}
+                  style={buttonStyle}>
+            {saving ? "Saving…" : "Save changes"}</button>
+        </div>
+      </div>
+    </div>
   );
 }
 

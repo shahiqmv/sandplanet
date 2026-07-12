@@ -113,6 +113,48 @@ class ProjectTests(ProjectBase):
         }, format="json")
         self.assertEqual(r.status_code, 400)
 
+    def test_pm_can_edit_project_details(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}", {
+            "code": "POOLS17B", "title": "17 Pools (rev)",
+            "planned_completion": (date.today()
+                                   + timedelta(days=200)).isoformat(),
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.pools.refresh_from_db()
+        self.assertEqual(self.pools.code, "POOLS17B")
+        self.assertEqual(self.pools.title, "17 Pools (rev)")
+
+    def test_site_engineer_cannot_edit_project(self):
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}",
+                              {"title": "hack"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_admin_deletes_empty_project(self):
+        admin = make_user("adm1", User.Role.ADMIN)
+        self.client.force_authenticate(admin)
+        r = self.client.delete(f"/api/v1/projects/{self.spa.id}")
+        self.assertEqual(r.status_code, 204, getattr(r, "data", None))
+        self.assertFalse(Project.objects.filter(pk=self.spa.id).exists())
+
+    def test_delete_blocked_when_project_has_documents(self):
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "IR", "site_id": self.site.id,
+            "project_id": self.pools.id,
+            "payload": {"discipline": "Civil", "work_description": "x"},
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        admin = make_user("adm2", User.Role.ADMIN)
+        self.client.force_authenticate(admin)
+        r = self.client.delete(f"/api/v1/projects/{self.pools.id}")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(Project.objects.filter(pk=self.pools.id).exists())
+
+    def test_pm_cannot_delete_project(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.delete(f"/api/v1/projects/{self.spa.id}")
+        self.assertEqual(r.status_code, 403)
+
 
 class ProgrammeTests(ProjectBase):
     def import_programme(self):

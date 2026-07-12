@@ -86,6 +86,31 @@ export default function UsersPage({ me, sites }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function resetPassword(user) {
+    const pw = window.prompt(
+      `Set a new password for ${user.username} (min 8 characters). `
+      + "You'll need to tell them the new password.");
+    if (pw === null) return;
+    if (pw.length < 8) { setError("Password must be at least 8 characters."); return; }
+    setError(null); setNotice(null);
+    try {
+      await api(`/users/${user.id}`, { method: "PATCH", body: { password: pw } });
+      setNotice(`Password reset for ${user.username}.`);
+    } catch (e) { setError(e.message); }
+  }
+
+  async function remove(user) {
+    if (!window.confirm(`Permanently delete ${user.username}? This can't be `
+                        + "undone. (Users with history can't be deleted — "
+                        + "deactivate those instead.)")) return;
+    setError(null); setNotice(null);
+    try {
+      await api(`/users/${user.id}`, { method: "DELETE" });
+      setNotice(`${user.username} deleted.`);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function deactivate(user) {
     if (!window.confirm(`Deactivate ${user.username}? Their history is `
                         + "preserved; the account can no longer sign in.")) {
@@ -201,22 +226,29 @@ export default function UsersPage({ me, sites }) {
                 ) : "—"}
               </td>
               <td style={{ ...td, whiteSpace: "nowrap" }}>
-                {user.is_active && user.email && (
-                  <button onClick={() => resendInvite(user)}
-                          title={`Re-send login details to ${user.email}`}
+                <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <button onClick={() => resetPassword(user)}
                           style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12 }}>
-                    Resend invite
-                  </button>
-                )}
-                {user.is_active && user.id !== me.id && (
-                  <button onClick={() => deactivate(user)}
-                          style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12, color: "#c0392b",
-                                   marginLeft: 6 }}>
-                    Deactivate
-                  </button>
-                )}
+                                   fontSize: 12 }}>Reset password</button>
+                  {user.is_active && user.email && (
+                    <button onClick={() => resendInvite(user)}
+                            title={`Re-send login details to ${user.email}`}
+                            style={{ ...ghostButton, padding: "2px 10px",
+                                     fontSize: 12 }}>Resend invite</button>
+                  )}
+                  {user.is_active && user.id !== me.id && (
+                    <button onClick={() => deactivate(user)}
+                            style={{ ...ghostButton, padding: "2px 10px",
+                                     fontSize: 12, color: "#b35900" }}>
+                      Deactivate</button>
+                  )}
+                  {user.id !== me.id && (
+                    <button onClick={() => remove(user)}
+                            style={{ ...ghostButton, padding: "2px 8px",
+                                     fontSize: 12, color: "#c0392b" }}>
+                      Delete</button>
+                  )}
+                </span>
               </td>
             </tr>
           ))}

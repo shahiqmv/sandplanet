@@ -204,7 +204,25 @@ class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAdmin]
     queryset = User.objects.all().order_by("username")
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def destroy(self, request, *args, **kwargs):
+        from django.db.models import ProtectedError
+        user = self.get_object()
+        if user.id == request.user.id:
+            return Response({"detail": "You can't delete your own account."},
+                            status=400)
+        username = user.username
+        try:
+            user.delete()
+        except ProtectedError:
+            return Response(
+                {"detail": "This user has records (documents, approvals, "
+                           "payments) and can't be deleted — deactivate them "
+                           "instead."}, status=400)
+        audit("user", 0, "USER_DELETED", actor=request.user,
+              detail={"username": username})
+        return Response(status=204)
 
     def create(self, request, *args, **kwargs):
         response = super().create(request, *args, **kwargs)
