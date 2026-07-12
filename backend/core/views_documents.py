@@ -1031,13 +1031,14 @@ def documents_list(request):
 @api_view(["GET"])
 def register_generic(request, doc_type):
     """Registers are views over document data (spec §6) — one row per
-    document (MR: one per revision)."""
+    document, showing its current revision (older revisions are history you
+    see by opening the document, not separate register rows)."""
     doc_type = doc_type.upper()
     if doc_type not in Document.TRANSITIONS:
         return Response({"detail": "Unknown register."}, status=404)
     qs = Document.objects.filter(doc_type=doc_type).select_related(
         "site", "current_revision", "created_by"
-    ).order_by("-id")
+    ).prefetch_related("revisions").order_by("-id")
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None:
         qs = qs.filter(site_id__in=site_ids)
@@ -1048,8 +1049,10 @@ def register_generic(request, doc_type):
 
     rows = []
     for doc in qs[:300]:
-        revisions = list(doc.revisions.order_by("id")) if doc_type in ("MR", "MAR") \
-            else [doc.current_revision]
+        # the current revision (prefer the is_current flag; fall back to the FK)
+        current = next((r for r in doc.revisions.all() if r.is_current),
+                       doc.current_revision)
+        revisions = [current]
         links = {}
         for link in doc.links_from.select_related("to_document"):
             links.setdefault(link.link_type, []).append(link.to_document.ref)

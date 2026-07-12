@@ -214,13 +214,14 @@ class MRFlowTests(ProcBase):
         self.assertEqual([rev["rev_label"] for rev in r.data["revisions"]],
                          ["R0", "R1"])
 
-    def test_one_row_per_revision_in_register(self):
+    def test_register_shows_one_row_per_mr_current_revision(self):
         ref = self.mr_to_sent()
-        self.client.post(f"/api/v1/documents/{ref}/revisions")
+        self.client.post(f"/api/v1/documents/{ref}/revisions")  # revise -> R1
         self.as_user(self.purchasing)
         r = self.client.get("/api/v1/registers/mr")
         rows = [row for row in r.data["rows"] if row["ref"] == ref]
-        self.assertEqual([row["rev"] for row in rows], ["R0", "R1"])
+        self.assertEqual(len(rows), 1)         # one row per MR, not per revision
+        self.assertEqual(rows[0]["rev"], "R1")  # showing the current revision
 
 
 class ChainTests(ProcBase):
