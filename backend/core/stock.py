@@ -36,6 +36,7 @@ def balances(site):
             .values("item").annotate(on_hand=Sum("qty")))
     by_item = {r["item"]: (r["on_hand"] or ZERO) for r in rows}
     items = Item.objects.filter(id__in=by_item).order_by("code")
+    major_ids = _site_major_ids(site)
     out = []
     for it in items:
         out.append({
@@ -45,8 +46,25 @@ def balances(site):
             "unit": it.unit,
             "category": it.category,
             "on_hand": by_item[it.id],
+            "is_major": it.id in major_ids,
         })
     return out
+
+
+def _site_major_ids(site):
+    from .models import SiteMajorMaterial
+    return set(SiteMajorMaterial.objects.filter(site=site)
+              .values_list("item_id", flat=True))
+
+
+def set_major(site, item, major, actor=None):
+    """Mark/unmark a catalogue item as a major material for this site."""
+    from .models import SiteMajorMaterial
+    if major:
+        SiteMajorMaterial.objects.get_or_create(
+            site=site, item=item, defaults={"added_by": actor})
+    else:
+        SiteMajorMaterial.objects.filter(site=site, item=item).delete()
 
 
 def received_on(site, item, on_date):
@@ -66,7 +84,8 @@ def major_materials(site, on_date=None):
                StockMovement.objects.filter(site=site)
                .values("item").annotate(on_hand=Sum("qty"))}
     out = []
-    for it in Item.objects.filter(is_major=True, is_active=True,
+    # per-site major materials (owner: major varies by the site's work)
+    for it in Item.objects.filter(id__in=_site_major_ids(site), is_active=True,
                                   merged_into__isnull=True).order_by("code"):
         row = {
             "item_id": it.id, "code": it.code, "description": it.description,

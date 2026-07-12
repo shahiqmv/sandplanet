@@ -11,9 +11,12 @@ const qty = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 
 const CAN_ISSUE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
+const CAN_MAJOR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN",
+                   "HO_PURCHASING"];
 
 export default function StockPage({ site, me, onClose }) {
   const [data, setData] = useState(null);       // { balances, can_issue }
+  const [majors, setMajors] = useState([]);     // site's major materials
   const [projects, setProjects] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -21,14 +24,24 @@ export default function StockPage({ site, me, onClose }) {
   const [history, setHistory] = useState(null); // { item, on_hand, history }
   const [recon, setRecon] = useState(null);     // item row being reconciled
 
+  const canMajor = CAN_MAJOR.includes(me.role);
+
   const load = () => {
     setError(null);
     api(`/stock/${site.id}`).then(setData).catch((e) => setError(e.message));
+    api(`/stock/${site.id}/major`).then((r) => setMajors(r.materials))
+      .catch(() => {});
   };
   useEffect(() => {
     load();
     api(`/sites/${site.id}/projects`).then(setProjects).catch(() => {});
   }, [site.id]);
+
+  const toggleMajor = (itemId, major) => run(async () => {
+    await api(`/stock/${site.id}/major/${itemId}`,
+              { method: "POST", body: { major } });
+    load();
+  });
 
   const run = async (fn) => {
     setBusy(true); setError(null);
@@ -71,11 +84,48 @@ export default function StockPage({ site, me, onClose }) {
                    onError={setError} />
       )}
 
+      <div style={{ background: "#fff8e6", border: "1px solid #f0dca8",
+                    borderRadius: 8, padding: "10px 12px", margin: "12px 0" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)" }}>
+          ★ Major materials for this site
+          <span style={{ fontWeight: 400, color: "var(--muted)" }}>
+            {" "}— what the DPR loads as key materials (varies by the site's
+            work)</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                      margin: "8px 0 0" }}>
+          {majors.map((m) => (
+            <span key={m.item_id}
+                  style={{ background: "#fff", border: "1px solid #e0cfa0",
+                           borderRadius: 12, padding: "2px 8px", fontSize: 12,
+                           display: "inline-flex", gap: 6, alignItems: "center" }}>
+              {m.description}
+              {canMajor && (
+                <a href="#" title="Remove from major list"
+                   onClick={(e) => { e.preventDefault();
+                     toggleMajor(m.item_id, false); }}
+                   style={{ color: "#c0392b", textDecoration: "none" }}>×</a>
+              )}
+            </span>
+          ))}
+          {majors.length === 0 && (
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              None marked yet — ★ a material in the list below, or search to
+              add one that isn't in stock.</span>
+          )}
+        </div>
+        {canMajor && (
+          <AddMajorSearch majorIds={majors.map((m) => m.item_id)}
+                          onAdd={(id) => toggleMajor(id, true)} />
+        )}
+      </div>
+
       <p style={{ color: "var(--muted)", fontSize: 13, margin: "14px 0 6px" }}>
         On-hand balances. Click a balance to see its movement history.
       </p>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>
+          {canMajor && <th style={{ ...th, textAlign: "center" }}>★</th>}
           <th style={th}>Code</th><th style={th}>Material</th>
           <th style={th}>Category</th>
           <th style={{ ...th, textAlign: "right" }}>On hand</th>
@@ -85,6 +135,17 @@ export default function StockPage({ site, me, onClose }) {
         <tbody>
           {balances.map((r) => (
             <tr key={r.item_id}>
+              {canMajor && (
+                <td style={{ ...td, textAlign: "center" }}>
+                  <button title={r.is_major ? "Major material for this site"
+                                            : "Mark major for this site"}
+                          onClick={() => toggleMajor(r.item_id, !r.is_major)}
+                          style={{ background: "none", border: "none",
+                                   cursor: "pointer", fontSize: 16, padding: 0,
+                                   color: r.is_major ? "#e0a52a" : "#ccd4da" }}>
+                    {r.is_major ? "★" : "☆"}</button>
+                </td>
+              )}
               <td style={td}>{r.code}</td>
               <td style={td}>{r.description}</td>
               <td style={td}>{r.category || "—"}</td>
@@ -110,8 +171,9 @@ export default function StockPage({ site, me, onClose }) {
             </tr>
           ))}
           {balances.length === 0 && (
-            <tr><td colSpan={canIssue ? 6 : 5} style={{ ...td,
-                    color: "var(--muted)", textAlign: "center" }}>
+            <tr><td colSpan={5 + (canMajor ? 1 : 0) + (canIssue ? 1 : 0)}
+                    style={{ ...td, color: "var(--muted)",
+                             textAlign: "center" }}>
               No stock recorded yet. Verified GRNs add stock automatically.
             </td></tr>
           )}
@@ -128,6 +190,49 @@ export default function StockPage({ site, me, onClose }) {
                         onError={setError} />
       )}
     </section>
+  );
+}
+
+// Flag a catalogue item as major even if it's not in stock yet.
+function AddMajorSearch({ majorIds, onAdd }) {
+  const [q, setQ] = useState("");
+  const [results, setResults] = useState([]);
+
+  useEffect(() => {
+    const term = q.trim();
+    if (term.length < 2) { setResults([]); return; }
+    let live = true;
+    api(`/items?search=${encodeURIComponent(term)}`)
+      .then((items) => { if (live) setResults(items.slice(0, 8)); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [q]);
+
+  return (
+    <div style={{ marginTop: 8, position: "relative", maxWidth: 340 }}>
+      <input value={q} onChange={(e) => setQ(e.target.value)}
+             placeholder="Add a material not in stock… (search catalogue)"
+             style={{ ...inputStyle, width: "100%" }} />
+      {results.length > 0 && (
+        <div style={{ position: "absolute", zIndex: 5, background: "#fff",
+                      border: "1px solid var(--sp-border)", borderRadius: 6,
+                      width: "100%", maxHeight: 220, overflow: "auto",
+                      boxShadow: "0 4px 14px rgba(0,0,0,.12)" }}>
+          {results.map((it) => (
+            <div key={it.id}
+                 onClick={() => { if (!majorIds.includes(it.id)) onAdd(it.id);
+                                  setQ(""); setResults([]); }}
+                 style={{ padding: "6px 10px", fontSize: 12.5,
+                          cursor: "pointer",
+                          color: majorIds.includes(it.id) ? "#9fb0bc"
+                                                          : "inherit" }}>
+              {it.code} — {it.description}
+              {majorIds.includes(it.id) && " (already major)"}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

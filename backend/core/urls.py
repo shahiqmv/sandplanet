@@ -57,6 +57,8 @@ urlpatterns = [
     path("stock/<int:site_id>", stock.stock_balances, name="stock-balances"),
     path("stock/<int:site_id>/major", stock.stock_major_materials,
          name="stock-major-materials"),
+    path("stock/<int:site_id>/major/<int:item_id>", stock.stock_set_major,
+         name="stock-set-major"),
     path("stock/<int:site_id>/issue", stock.stock_issue, name="stock-issue"),
     path("stock/<int:site_id>/reconcile", stock.stock_reconcile,
          name="stock-reconcile"),

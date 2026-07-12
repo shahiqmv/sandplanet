@@ -123,24 +123,31 @@ class StockTests(StockBase):
         self.assertEqual(float(hist[0]["running"]), 110.0)
         self.assertEqual(float(hist[1]["running"]), 150.0)
 
-    def test_major_materials_endpoint(self):
+    def test_major_materials_are_per_site(self):
+        from .models import SiteMajorMaterial
         self.grn_to_verified()  # cement +150 on hand
-        self.cement.is_major = True
-        self.cement.save(update_fields=["is_major"])
+        # major is now marked per site, not on the catalogue item
+        SiteMajorMaterial.objects.create(site=self.site, item=self.cement)
         self.as_user(self.sa)
         r = self.client.get(f"/api/v1/stock/{self.site.id}/major")
         self.assertEqual(r.status_code, 200)
         rows = {m["code"]: float(m["on_hand"]) for m in r.data["materials"]}
-        self.assertEqual(rows, {"ITM-90001": 150.0})  # only the major item
+        self.assertEqual(rows, {"ITM-90001": 150.0})  # only this site's major
 
-    def test_major_material_with_no_stock_still_listed(self):
-        # A key material belongs on the DPR even at zero on-hand.
-        self.rebar.is_major = True
-        self.rebar.save(update_fields=["is_major"])
+    def test_set_major_toggle_and_zero_stock_listed(self):
+        # Site staff flag a material major (even at zero stock) via the endpoint
         self.as_user(self.sa)
+        r = self.client.post(f"/api/v1/stock/{self.site.id}/major/"
+                             f"{self.rebar.id}", {"major": True}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
         r = self.client.get(f"/api/v1/stock/{self.site.id}/major")
         codes = {m["code"]: float(m["on_hand"]) for m in r.data["materials"]}
-        self.assertEqual(codes.get("ITM-90002"), 0.0)
+        self.assertEqual(codes.get("ITM-90002"), 0.0)   # listed at zero on-hand
+        # unmark
+        self.client.post(f"/api/v1/stock/{self.site.id}/major/{self.rebar.id}",
+                         {"major": False}, format="json")
+        r = self.client.get(f"/api/v1/stock/{self.site.id}/major")
+        self.assertEqual(r.data["materials"], [])
 
     def test_issue_forbidden_for_non_site_staff(self):
         self.grn_to_verified()

@@ -12,10 +12,12 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import stock
+from .audit import audit
 from .models import Item, Project, Site
 from .permissions import scoped_site_ids
 
 ISSUE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM")
+MAJOR_ROLES = ISSUE_ROLES + ("HO_PURCHASING",)
 
 
 def _get_site(request, site_id):
@@ -75,6 +77,27 @@ def stock_major_materials(request, site_id):
         except ValueError:
             on_date = None
     return Response({"materials": stock.major_materials(site, on_date=on_date)})
+
+
+@api_view(["POST"])
+def stock_set_major(request, site_id, item_id):
+    """Mark/unmark a catalogue item as a MAJOR material for this site (drives
+    the DPR key-materials loader). Body: {major: true|false}."""
+    site, err = _get_site(request, site_id)
+    if err:
+        return err
+    if request.user.role not in MAJOR_ROLES:
+        return Response({"detail": "Site staff / HO set major materials."},
+                        status=403)
+    try:
+        item = Item.objects.get(pk=item_id)
+    except Item.DoesNotExist:
+        return Response({"detail": "Unknown item."}, status=400)
+    major = bool(request.data.get("major", True))
+    stock.set_major(site, item, major, actor=request.user)
+    audit("site", site.id, "MAJOR_MATERIAL_SET", actor=request.user,
+          detail={"item": item.code, "major": major})
+    return Response({"item_id": item.id, "is_major": major})
 
 
 @api_view(["POST"])

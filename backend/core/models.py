@@ -1429,6 +1429,25 @@ class StockMovement(models.Model):
         indexes = [models.Index(fields=["site", "item"])]
 
 
+class SiteMajorMaterial(models.Model):
+    """Which catalogue items a SITE treats as major (key) materials for its
+    DPR. Major varies with the work a site does — pipe fittings matter on an
+    MEP job, not a civil one (owner) — so this is per-site, not a global flag."""
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="major_materials")
+    item = models.ForeignKey(Item, on_delete=models.CASCADE, related_name="+")
+    added_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                 blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["site", "item"],
+                                    name="uniq_site_major_material")
+        ]
+
+
 class ToolAsset(models.Model):
     """One physical tool / machine / piece of equipment at a site. Created on
     site mobilisation (manual) or when a GRN receives an item in a tool
