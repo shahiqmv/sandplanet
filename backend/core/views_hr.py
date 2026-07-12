@@ -2,7 +2,7 @@
 passport_no) are serialized only for HO HR / Admin, never logged, and
 excluded from site-level responses."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction
@@ -58,20 +58,32 @@ class EmployeeSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
     ot_rate = serializers.SerializerMethodField()
     ot_effective = serializers.SerializerMethodField()
+    permit_state = serializers.SerializerMethodField()
+    permit_days = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",
                   "date_of_birth", "passport_no", "nationality",
                   "job_category", "job_category_name", "basic_pay", "currency",
-                  "ot_applies", "ot_rate", "ot_effective",
-                  "work_permit_no", "work_permit_expiry", "emergency_contact",
+                  "ot_applies", "ot_rate", "ot_effective", "employment_type",
+                  "work_permit_no", "work_permit_expiry", "permit_state",
+                  "permit_days", "emergency_contact",
                   "join_date", "is_active", "site_id", "site_code"]
-        read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective"]
+        read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
+                            "permit_state", "permit_days"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
 
     def get_photo_url(self, obj):
         return obj.photo.url if obj.photo else None
+
+    def get_permit_state(self, obj):
+        from . import permits
+        return permits.permit_status(obj)[0]
+
+    def get_permit_days(self, obj):
+        from . import permits
+        return permits.permit_status(obj)[1]
 
     def get_ot_rate(self, obj):
         return obj.ot_rate()
@@ -162,6 +174,57 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         audit("employee", employee.id, "EMPLOYEE_DEACTIVATED",
               actor=request.user)
         return Response(self.get_serializer(employee).data)
+
+    @action(detail=True, methods=["post"], url_path="renew-permit")
+    def renew_permit(self, request, pk=None):
+        """HR renews the work permit: choose a number of months and the
+        expiry moves forward by that much (from the current expiry, or today
+        if none). Optionally record a new permit no. and a note."""
+        from . import permits
+        if not _is_hr(request.user):
+            return Response({"detail": "HR/Admin only."}, status=403)
+        employee = self.get_object()
+        try:
+            months = int(request.data.get("months") or 0)
+        except (TypeError, ValueError):
+            return Response({"detail": "Months must be a whole number."},
+                            status=400)
+        try:
+            permits.renew(employee, months,
+                          (request.data.get("permit_no") or "").strip(),
+                          (request.data.get("note") or "").strip(),
+                          request.user)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        return Response(self.get_serializer(employee).data)
+
+    @action(detail=True, methods=["get"], url_path="permit-renewals")
+    def permit_renewals(self, request, pk=None):
+        """Renewal history for a worker (HR/Admin)."""
+        if not _is_hr(request.user):
+            return Response({"detail": "HR/Admin only."}, status=403)
+        employee = self.get_object()
+        rows = [{
+            "months": r.months, "previous_expiry": r.previous_expiry,
+            "new_expiry": r.new_expiry, "permit_no": r.permit_no,
+            "note": r.note, "by": r.created_by.full_name,
+            "at": r.created_at,
+        } for r in employee.permit_renewals.select_related("created_by")]
+        return Response(rows)
+
+
+@api_view(["GET"])
+def permit_alerts(request):
+    """Work permits expiring within 30 days (or already expired), for the HR
+    view. Site users see their own roster; HR/Admin see everyone."""
+    from . import permits
+    site_ids = scoped_site_ids(request.user)
+    rows = permits.alerts(site_ids=site_ids)
+    return Response({
+        "within_days": permits.ALERT_DAYS,
+        "expired": [r for r in rows if r["state"] == "EXPIRED"],
+        "expiring": [r for r in rows if r["state"] == "EXPIRING"],
+    })
 
 
 # ===== Attendance =====
@@ -653,12 +716,8 @@ def dashboard_hr(request):
     } for s in active_sites]
     all_locked = bool(board) and all(b["status"] == "LOCKED" for b in board)
 
-    horizon = today + timedelta(days=60)
-    expiring = list(Employee.objects.filter(
-        is_active=True, work_permit_expiry__isnull=False,
-        work_permit_expiry__lte=horizon,
-    ).order_by("work_permit_expiry").values(
-        "emp_no", "full_name", "work_permit_expiry")[:30])
+    from . import permits
+    expiring = permits.alerts()[:30]  # permanent workers, permit ≤30 days
 
     closed_ids = sites.filter(status="CLOSED").values_list("id", flat=True)
     stranded = list(EmployeeSiteAllocation.objects.filter(

@@ -693,6 +693,16 @@ class Employee(models.Model):
     currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
     # NULL = inherit the category's OT default; True/False overrides per worker
     ot_applies = models.BooleanField(null=True, blank=True)
+
+    class EmploymentType(models.TextChoices):
+        PERMANENT = "PERMANENT", "Permanent"    # on the company work permit
+        CONTRACT = "CONTRACT", "Contract"       # temporary hire, no permit
+
+    # Permanent workers (local or foreign) are on the company work permit and
+    # get expiry tracking; contract workers are temporary and are not.
+    employment_type = models.CharField(
+        max_length=10, choices=EmploymentType.choices,
+        default=EmploymentType.PERMANENT)
     work_permit_no = models.TextField(blank=True)
     work_permit_expiry = models.DateField(null=True, blank=True)
     emergency_contact = models.TextField(blank=True)
@@ -738,6 +748,26 @@ class EmployeeSiteAllocation(models.Model):
 
     class Meta:
         ordering = ["-from_date"]
+
+
+class WorkPermitRenewal(models.Model):
+    """One record per work-permit renewal — HR picks a number of months and
+    the employee's expiry is pushed forward by that much. Keeps an audit
+    trail of who renewed, for how long, and the resulting expiry."""
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE,
+                                 related_name="permit_renewals")
+    months = models.PositiveIntegerField()
+    previous_expiry = models.DateField(null=True, blank=True)
+    new_expiry = models.DateField()
+    permit_no = models.TextField(blank=True)   # new permit no, if it changed
+    note = models.TextField(blank=True)        # e.g. the PYR ref that paid it
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
 
 
 class OvertimeRate(models.Model):

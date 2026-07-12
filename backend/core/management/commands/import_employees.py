@@ -118,13 +118,17 @@ class Command(BaseCommand):
                 if currency not in ("MVR", "USD"):
                     currency = "MVR"
 
+                etype = g("employment_type").upper()
+                if etype not in Employee.EmploymentType.values:
+                    etype = Employee.EmploymentType.PERMANENT
+
                 if not opts["dry_run"]:
                     with transaction.atomic():
                         emp = Employee.objects.create(
                             emp_no=f"EMP-{int(next_ref('EMP', None).split('-')[1]):04d}",
                             full_name=name, nationality=g("nationality"),
                             job_category=cat, basic_pay=pay, currency=currency,
-                            passport_no=passport,
+                            passport_no=passport, employment_type=etype,
                             date_of_birth=dates["date_of_birth"],
                             join_date=dates["join_date"],
                             work_permit_no=g("work_permit_no"),

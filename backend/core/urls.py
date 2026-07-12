@@ -112,6 +112,7 @@ urlpatterns = [
          name="dashboard-site"),
     path("dashboards/ho", docs.dashboard_ho, name="dashboard-ho"),
     path("dashboards/hr", hr.dashboard_hr, name="dashboard-hr"),
+    path("permits/alerts", hr.permit_alerts, name="permit-alerts"),
     path("dashboards/portfolio", projects.dashboard_portfolio,
          name="dashboard-portfolio"),
     path("sites/<int:site_id>/projects", projects.site_projects,
