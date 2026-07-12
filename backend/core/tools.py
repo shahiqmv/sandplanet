@@ -19,6 +19,24 @@ def tool_category_names():
             ItemCategory.objects.filter(is_tool=True)}
 
 
+def tool_categories():
+    """Tool-flagged item categories as stored — for display and filtering."""
+    return list(ItemCategory.objects.filter(is_tool=True)
+                .order_by("name").values_list("name", flat=True))
+
+
+def tool_items():
+    """Catalog items in a tool category — the controlled source of tool
+    names for the register (same names GRN uses, so the DPR summary groups
+    manual and received tools together)."""
+    from .models import Item
+    names = tool_categories()
+    if not names:
+        return Item.objects.none()
+    return Item.objects.filter(category__in=names).order_by(
+        "category", "description")
+
+
 def is_tool_item(item):
     return bool(item and item.category
                and item.category.lower() in tool_category_names())

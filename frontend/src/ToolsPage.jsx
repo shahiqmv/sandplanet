@@ -14,11 +14,11 @@ const STATE_TONE = { IN_USE: "#1a7f37", FAULTY: "#c0392b",
 const FILTERS = [["", "All"], ["IN_USE", "In use"], ["FAULTY", "Faulty"],
                  ["UNDER_REPAIR", "Under repair"], ["RETIRED", "Retired"]];
 
-const EMPTY = { name: "", category: "", serial_no: "", model: "", brand: "",
-                notes: "" };
+const EMPTY = { item_id: "", serial_no: "", model: "", brand: "", notes: "" };
 
 export default function ToolsPage({ site, me, onClose }) {
   const [data, setData] = useState(null);
+  const [catalog, setCatalog] = useState(null);
   const [filter, setFilter] = useState("");
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -34,6 +34,10 @@ export default function ToolsPage({ site, me, onClose }) {
       .then(setData).catch((e) => setError(e.message));
   }
   useEffect(load, [site.id, filter]); // eslint-disable-line
+  useEffect(() => {
+    api("/tool-catalog").then(setCatalog).catch(() => setCatalog(
+      { categories: [], items: [] }));
+  }, []);
 
   async function run(fn) {
     setError(null);
@@ -41,7 +45,7 @@ export default function ToolsPage({ site, me, onClose }) {
   }
 
   const addTool = () => run(async () => {
-    if (!draft.name.trim()) { setError("Tool name is required."); return; }
+    if (!draft.item_id) { setError("Choose a tool from the catalog."); return; }
     await api(`/tools/${site.id}`, { method: "POST", body: draft });
     setDraft(EMPTY); setAdding(false);
   });
@@ -104,25 +108,42 @@ export default function ToolsPage({ site, me, onClose }) {
       {adding && (
         <div style={{ background: "var(--sp-tint,#f5f8fb)", borderRadius: 8,
                       padding: 12, margin: "10px 0", display: "flex", gap: 8,
-                      flexWrap: "wrap" }}>
-          <input placeholder="Tool name" value={draft.name}
-                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-                 style={{ ...inputStyle, flex: "1 1 200px" }} />
-          <input placeholder="Category" value={draft.category}
-                 onChange={(e) => setDraft({ ...draft,
-                                             category: e.target.value })}
-                 style={{ ...inputStyle, width: 130 }} />
-          <input placeholder="Serial no." value={draft.serial_no}
-                 onChange={(e) => setDraft({ ...draft,
-                                             serial_no: e.target.value })}
-                 style={{ ...inputStyle, width: 120 }} />
-          <input placeholder="Model" value={draft.model}
-                 onChange={(e) => setDraft({ ...draft, model: e.target.value })}
-                 style={{ ...inputStyle, width: 110 }} />
-          <input placeholder="Brand" value={draft.brand}
-                 onChange={(e) => setDraft({ ...draft, brand: e.target.value })}
-                 style={{ ...inputStyle, width: 110 }} />
-          <Btn onClick={addTool}>Add</Btn>
+                      flexWrap: "wrap", alignItems: "center" }}>
+          {catalog && catalog.items.length === 0 ? (
+            <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
+              No tool types in the catalog yet. Add them in the Item Register
+              under a category flagged as a tool, then they'll appear here.
+            </p>
+          ) : (
+            <>
+              <select value={draft.item_id}
+                      onChange={(e) => setDraft({ ...draft,
+                                                  item_id: e.target.value })}
+                      style={{ ...inputStyle, flex: "1 1 240px" }}>
+                <option value="">— choose tool —</option>
+                {(catalog?.categories || []).map((cat) => (
+                  <optgroup key={cat} label={cat}>
+                    {catalog.items.filter((i) => i.category === cat).map((i) => (
+                      <option key={i.id} value={i.id}>{i.description}</option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              <input placeholder="Serial no." value={draft.serial_no}
+                     onChange={(e) => setDraft({ ...draft,
+                                                 serial_no: e.target.value })}
+                     style={{ ...inputStyle, width: 120 }} />
+              <input placeholder="Model" value={draft.model}
+                     onChange={(e) => setDraft({ ...draft,
+                                                 model: e.target.value })}
+                     style={{ ...inputStyle, width: 110 }} />
+              <input placeholder="Brand" value={draft.brand}
+                     onChange={(e) => setDraft({ ...draft,
+                                                 brand: e.target.value })}
+                     style={{ ...inputStyle, width: 110 }} />
+              <Btn onClick={addTool}>Add</Btn>
+            </>
+          )}
         </div>
       )}
 
@@ -187,7 +208,7 @@ export default function ToolsPage({ site, me, onClose }) {
 function EditModal({ asset, onClose, onSaved, onError }) {
   const [f, setF] = useState({ serial_no: asset.serial_no || "",
     model: asset.model || "", brand: asset.brand || "",
-    category: asset.category || "", notes: asset.notes || "" });
+    notes: asset.notes || "" });
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
 
@@ -221,11 +242,13 @@ function EditModal({ asset, onClose, onSaved, onError }) {
           <button onClick={onClose}
                   style={{ ...ghostButton, marginLeft: "auto" }}>Close</button>
         </div>
-        <div style={{ marginTop: 12 }}>
+        <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 0 10px" }}>
+          {asset.category || "—"} · tool type is controlled from the catalog
+        </p>
+        <div style={{ marginTop: 4 }}>
           <L label="Serial no." k="serial_no" />
           <L label="Model" k="model" />
           <L label="Brand" k="brand" />
-          <L label="Category" k="category" />
           <label style={{ fontSize: 12.5, display: "block" }}>
             <span style={{ color: "#5a6b78" }}>Notes</span>
             <textarea value={f.notes} rows={2}

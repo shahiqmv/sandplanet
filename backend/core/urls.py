@@ -62,6 +62,7 @@ urlpatterns = [
          name="stock-reconcile"),
     path("stock/<int:site_id>/<int:item_id>/history", stock.stock_history,
          name="stock-history"),
+    path("tool-catalog", tools_api.tool_catalog, name="tool-catalog"),
     path("tools/<int:site_id>", tools_api.tools_register,
          name="tools-register"),
     path("tools/<int:site_id>/summary", tools_api.tools_summary,

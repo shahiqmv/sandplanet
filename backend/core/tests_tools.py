@@ -73,13 +73,16 @@ class ToolsRoutingTests(ToolsBase):
 
 class ToolsApiTests(ToolsBase):
     def test_add_edit_and_state_cycle(self):
-        # manual add (mobilisation)
+        saw = Item.objects.create(code="ITM-90006", description="Circular saw",
+                                  unit="nos", category="Tools & Equipment")
+        # manual add (mobilisation) — name/category come from the catalog item
         r = self.client.post(f"/api/v1/tools/{self.site.id}", {
-            "name": "Circular saw", "category": "Tools & Equipment",
-            "serial_no": "CS-01"}, format="json")
+            "item_id": saw.id, "serial_no": "CS-01"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         aid = r.data["id"]
         self.assertEqual(r.data["source"], "MOBILISATION")
+        self.assertEqual(r.data["name"], "Circular saw")
+        self.assertEqual(r.data["category"], "Tools & Equipment")
         # edit details
         r = self.client.patch(f"/api/v1/tools/asset/{aid}",
                              {"model": "HS7601", "serial_no": "CS-02"},
@@ -109,3 +112,33 @@ class ToolsApiTests(ToolsBase):
         self.assertEqual(len(r.data["tools"]), 2)
         self.assertEqual(r.data["counts"].get("IN_USE"), 2)
         self.assertTrue(r.data["can_manage"])
+
+    def test_catalog_lists_only_tool_items(self):
+        r = self.client.get("/api/v1/tool-catalog")
+        self.assertEqual(r.status_code, 200)
+        names = [i["description"] for i in r.data["items"]]
+        self.assertIn("Battery drill", names)     # tool category
+        self.assertNotIn("Cement", names)         # Civil, not a tool
+        self.assertIn("Tools & Equipment", r.data["categories"])
+
+    def test_manual_add_requires_a_catalog_tool(self):
+        # free-text name with no catalog item is rejected (controlled)
+        r = self.client.post(f"/api/v1/tools/{self.site.id}",
+                             {"name": "Anglegrinder"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # a non-tool item (cement) is also rejected
+        r = self.client.post(f"/api/v1/tools/{self.site.id}",
+                             {"item_id": self.cement.id}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_manual_add_name_matches_grn_for_summary(self):
+        """Manual + GRN units of the same tool item share one exact name so
+        the DPR summary groups them together."""
+        self.verified_grn([(self.drill, 1)])
+        r = self.client.post(f"/api/v1/tools/{self.site.id}",
+                             {"item_id": self.drill.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        rows = tools.summary(self.site)
+        drill_rows = [x for x in rows if x["item"] == "Battery drill"]
+        self.assertEqual(len(drill_rows), 1)      # one grouped row
+        self.assertEqual(drill_rows[0]["nos"], 2)  # GRN unit + manual unit

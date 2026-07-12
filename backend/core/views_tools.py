@@ -15,7 +15,9 @@ from .models import Item, Site, ToolAsset
 from .permissions import scoped_site_ids
 
 MANAGE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM")
-DETAIL_FIELDS = ("name", "category", "serial_no", "model", "brand", "notes")
+# Per-unit details are free text; name/category are controlled (from the
+# catalog item), so the DPR summary never fragments on spelling variants.
+DETAIL_FIELDS = ("serial_no", "model", "brand", "notes")
 
 
 def _get_site(request, site_id):
@@ -48,18 +50,23 @@ def tools_register(request, site_id):
         if request.user.role not in MANAGE_ROLES:
             return Response({"detail": "Only site staff manage tools."},
                             status=403)
-        if not (request.data.get("name") or "").strip():
-            return Response({"detail": "A tool name is required."}, status=400)
+        # Tool name/category are controlled — pick a catalog item in a tool
+        # category so every unit of the same tool shares one exact name.
         item = None
         if request.data.get("item_id"):
             item = Item.objects.filter(pk=request.data["item_id"]).first()
+        if not item or not tools_svc.is_tool_item(item):
+            return Response(
+                {"detail": "Choose a tool from the catalog. Tool types are "
+                           "controlled — add a new one in the Item Register "
+                           "under a tool category first."}, status=400)
         asset = ToolAsset.objects.create(
             site=site, item=item,
-            name=request.data["name"].strip(),
-            category=request.data.get("category", ""),
+            name=item.description.strip(),
+            category=item.category,
             serial_no=request.data.get("serial_no", ""),
             model=request.data.get("model", ""),
-            brand=request.data.get("brand", ""),
+            brand=(request.data.get("brand") or item.brand or ""),
             notes=request.data.get("notes", ""),
             source=ToolAsset.Source.MOBILISATION, added_by=request.user)
         audit("tool_asset", asset.id, "TOOL_ADDED", actor=request.user,
@@ -78,6 +85,18 @@ def tools_register(request, site_id):
         "counts": counts,
         "tools": [_asset_info(t) for t in qs],
     })
+
+
+@api_view(["GET"])
+def tool_catalog(request):
+    """Controlled tool name/category source: catalog items in tool categories.
+    The Add-tool form and edit reselection pick from these so names stay
+    consistent for the DPR machinery summary."""
+    items = [{"id": i.id, "description": i.description, "category": i.category,
+              "brand": i.brand, "unit": i.unit}
+             for i in tools_svc.tool_items()]
+    return Response({"categories": tools_svc.tool_categories(),
+                     "items": items})
 
 
 @api_view(["GET"])
