@@ -15,19 +15,24 @@ const EMPLOYMENT = [["PERMANENT", "Permanent"], ["CONTRACT", "Contract"]];
 const PERMIT_TONE = { EXPIRED: "#c0392b", EXPIRING: "#b35900",
                       OK: "#1a7f37" };
 function PermitBadge({ emp }) {
-  if (!emp.permit_state || emp.permit_state === "NA") return "—";
+  const pending = emp.permit_pending
+    ? <span style={{ color: "#b35900", fontSize: 11 }}> · renewal pending</span>
+    : null;
+  if (!emp.permit_state || emp.permit_state === "NA") {
+    return pending ? <span>—{pending}</span> : "—";
+  }
   if (emp.permit_state === "OK") {
     return <span style={{ color: "#5a6b78", fontSize: 12 }}>
-      {emp.work_permit_expiry}</span>;
+      {emp.work_permit_expiry}{pending}</span>;
   }
   const label = emp.permit_state === "EXPIRED"
     ? `Expired ${Math.abs(emp.permit_days)}d ago`
     : `${emp.permit_days}d left`;
   return (
-    <span style={{ color: PERMIT_TONE[emp.permit_state], fontWeight: 600,
-                   fontSize: 12 }}
+    <span style={{ fontSize: 12 }}
           title={`Permit ${emp.work_permit_no || ""} · ${emp.work_permit_expiry}`}>
-      ⚠ {label}</span>
+      <span style={{ color: PERMIT_TONE[emp.permit_state], fontWeight: 600 }}>
+        ⚠ {label}</span>{pending}</span>
   );
 }
 
@@ -83,6 +88,10 @@ export default function EmployeesPage({ me, sites }) {
           <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
             Employees
           </h2>
+          {isHr && (
+            <button onClick={() => setBatch(true)} style={ghostButton}>
+              🪪 Renew work permits</button>
+          )}
         </div>
 
         {alerts && (alerts.expired.length > 0 || alerts.expiring.length > 0) && (
@@ -258,9 +267,12 @@ export default function EmployeesPage({ me, sites }) {
           onSaved={() => { setEditing(null); load(); }} />
       )}
 
-      {batch && alerts && (
+      {batch && (
         <BatchRenewModal
-          candidates={[...alerts.expired, ...alerts.expiring]}
+          candidates={employees
+            .filter((e) => e.employment_type === "PERMANENT" && e.is_active)
+            .sort((a, b) => (a.work_permit_expiry || "9999")
+              .localeCompare(b.work_permit_expiry || "9999"))}
           onClose={() => setBatch(false)}
           onDone={() => { setBatch(false); load(); }} />
       )}
@@ -268,14 +280,17 @@ export default function EmployeesPage({ me, sites }) {
   );
 }
 
-// Batch permit renewal: pick workers off the alert list, set months + fee
-// each, and raise ONE PYR (Permits & Fees, Head Office) to pay the total.
-// Expiries extend now; the PYR then runs the normal payment workflow.
+// Batch permit renewal: pick permanent workers, set months + fee each, and
+// raise ONE PYR (Permits & Fees, Head Office) for the total. Each expiry
+// extends only once Finance pays that PYR. Workers expiring soon / expired
+// are pre-ticked; those with a renewal already pending payment are shown.
 function BatchRenewModal({ candidates, onClose, onDone }) {
   const [rows, setRows] = useState(candidates.map((c) => ({
     id: c.id, emp_no: c.emp_no, full_name: c.full_name,
-    expiry: c.work_permit_expiry, permit_no: c.work_permit_no || "",
-    sel: true, months: "12", fee: "" })));
+    expiry: c.work_permit_expiry, state: c.permit_state,
+    pending: c.permit_pending,
+    sel: ["EXPIRING", "EXPIRED"].includes(c.permit_state) && !c.permit_pending,
+    months: "12", fee: "" })));
   const [payee, setPayee] = useState("Immigration Maldives");
   const [currency, setCurrency] = useState("MVR");
   const [busy, setBusy] = useState(false);
@@ -298,8 +313,7 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
       const res = await api("/permits/batch-renew", { method: "POST", body: {
         payee, currency,
         lines: chosen.map((r) => ({ employee_id: r.id,
-          months: parseInt(r.months, 10), fee: parseFloat(r.fee) || 0,
-          permit_no: r.permit_no })),
+          months: parseInt(r.months, 10), fee: parseFloat(r.fee) || 0 })),
       } });
       setDone(res);
     } catch (e) { setError(e.message); }
@@ -324,17 +338,18 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
         {done ? (
           <div style={{ marginTop: 16 }}>
             <p style={{ color: "#1a7f37", fontSize: 14 }}>
-              Renewed {done.count} permit(s). Raised <strong>{done.ref}</strong>
-              {" "}for {done.currency} {Number(done.amount).toLocaleString()} —
-              it now runs the normal payment approval workflow.
+              Raised <strong>{done.ref}</strong> for {done.count} permit(s),
+              {" "}{done.currency} {Number(done.amount).toLocaleString()}. The
+              expiries extend automatically once Finance pays this PYR; it now
+              runs the normal payment approval workflow.
             </p>
             <button onClick={onDone} style={buttonStyle}>Done</button>
           </div>
         ) : (
           <>
             <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0 10px" }}>
-              Each worker's expiry extends by the months set below now; one PYR
-              is raised for the total fee (Permits &amp; Fees, Head Office).
+              One PYR is raised for the total fee (Permits &amp; Fees, Head
+              Office). Each expiry moves forward only when Finance pays it.
             </p>
             <table style={{ width: "100%", borderCollapse: "collapse",
                             fontSize: 13 }}>
@@ -342,17 +357,23 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                 <th style={th} />
                 <th style={th}>Worker</th><th style={th}>Current expiry</th>
                 <th style={th}>Months</th><th style={th}>Fee</th>
-                <th style={th}>New permit no.</th>
               </tr></thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} style={{ opacity: r.sel ? 1 : 0.5 }}>
+                  <tr key={r.id} style={{ opacity: r.sel ? 1 : 0.55 }}>
                     <td style={td}>
                       <input type="checkbox" checked={r.sel}
                              onChange={(e) => setRow(r.id,
                                { sel: e.target.checked })} /></td>
-                    <td style={td}>{r.emp_no} {r.full_name}</td>
-                    <td style={td}>{r.expiry}</td>
+                    <td style={td}>{r.emp_no} {r.full_name}
+                      {r.pending && (
+                        <span style={{ fontSize: 11, color: "#b35900",
+                                       marginLeft: 6 }}>· renewal pending</span>
+                      )}</td>
+                    <td style={{ ...td,
+                                 color: ["EXPIRED", "EXPIRING"].includes(r.state)
+                                   ? "#c0392b" : "inherit" }}>
+                      {r.expiry || "—"}</td>
                     <td style={td}>
                       <select value={r.months}
                               onChange={(e) => setRow(r.id,
@@ -368,11 +389,6 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                              onChange={(e) => setRow(r.id,
                                { fee: e.target.value })}
                              style={{ ...inputStyle, width: 90 }} /></td>
-                    <td style={td}>
-                      <input value={r.permit_no} placeholder="(optional)"
-                             onChange={(e) => setRow(r.id,
-                               { permit_no: e.target.value })}
-                             style={{ ...inputStyle, width: 130 }} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -430,9 +446,6 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
   const [photoUrl, setPhotoUrl] = useState(employee.photo_url);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const [renewal, setRenewal] = useState({ months: "12", permit_no: "",
-                                           note: "" });
-  const [renewMsg, setRenewMsg] = useState(null);
   const [history, setHistory] = useState(null);
 
   const set = (patch) => setF((s) => ({ ...s, ...patch }));
@@ -445,24 +458,6 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
         .then(setHistory).catch(() => setHistory([]));
     }
   }, [employee.id, isHr]);
-
-  async function doRenew() {
-    setRenewMsg(null); setError(null);
-    const m = parseInt(renewal.months, 10);
-    if (!m || m <= 0) { setError("Enter a number of months."); return; }
-    try {
-      const up = await api(`/employees/${employee.id}/renew-permit`,
-        { method: "POST", body: { months: m, permit_no: renewal.permit_no,
-                                  note: renewal.note } });
-      set({ work_permit_expiry: up.work_permit_expiry,
-            work_permit_no: up.work_permit_no ?? f.work_permit_no,
-            employment_type: up.employment_type });
-      setRenewMsg(`Renewed — new expiry ${up.work_permit_expiry}.`);
-      setRenewal({ months: "12", permit_no: "", note: "" });
-      api(`/employees/${employee.id}/permit-renewals`).then(setHistory);
-      onChanged && onChanged();
-    } catch (e) { setError(e.message); }
-  }
 
   async function save() {
     setBusy(true); setError(null);
@@ -619,51 +614,29 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
                    style={inputStyle} /></L>
         </div>
 
-        {isHr && f.employment_type === "PERMANENT" && (
+        {isHr && f.employment_type === "PERMANENT" && history
+          && history.length > 0 && (
           <div style={{ marginTop: 16, borderTop: "1px solid var(--sp-border)",
                         paddingTop: 12 }}>
             <div style={{ fontSize: 13, fontWeight: 600,
                           color: "var(--sp-navy)" }}>
-              Renew work permit</div>
+              Work-permit renewals</div>
             <p style={{ fontSize: 11.5, color: "#5a6b78", margin: "2px 0 8px" }}>
-              Choose how many months to extend — the expiry moves forward from
-              {" "}{f.work_permit_expiry || "today"}.
+              Renew from the People page (raises a PYR); each extends when
+              Finance pays it.
             </p>
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                          alignItems: "center" }}>
-              <select value={renewal.months}
-                      onChange={(e) => setRenewal({ ...renewal,
-                                                    months: e.target.value })}
-                      style={{ ...inputStyle, width: 110 }}>
-                {[3, 6, 12, 24].map((m) => (
-                  <option key={m} value={m}>{m} months</option>
-                ))}
-              </select>
-              <input placeholder="New permit no. (optional)"
-                     value={renewal.permit_no}
-                     onChange={(e) => setRenewal({ ...renewal,
-                                                   permit_no: e.target.value })}
-                     style={{ ...inputStyle, width: 170 }} />
-              <input placeholder="Note / PYR ref (optional)" value={renewal.note}
-                     onChange={(e) => setRenewal({ ...renewal,
-                                                   note: e.target.value })}
-                     style={{ ...inputStyle, flex: 1, minWidth: 140 }} />
-              <button onClick={doRenew} style={ghostButton}>Renew</button>
+            <div style={{ fontSize: 12, color: "#5a6b78" }}>
+              {history.map((h, i) => (
+                <div key={i}>
+                  {String(h.at).slice(0, 10)} · +{h.months}m ·{" "}
+                  {h.applied
+                    ? <>→ <strong>{h.new_expiry}</strong></>
+                    : <span style={{ color: "#b35900" }}>
+                        pending payment{h.pyr ? ` (${h.pyr})` : ""}</span>}
+                  {h.fee ? ` · fee ${h.fee}` : ""} · {h.by}
+                </div>
+              ))}
             </div>
-            {renewMsg && <p style={{ color: "#1a7f37", fontSize: 12.5,
-                                     margin: "6px 0 0" }}>{renewMsg}</p>}
-            {history && history.length > 0 && (
-              <div style={{ marginTop: 8, fontSize: 12, color: "#5a6b78" }}>
-                {history.map((h, i) => (
-                  <div key={i}>
-                    {String(h.at).slice(0, 10)} · +{h.months}m →{" "}
-                    <strong>{h.new_expiry}</strong>
-                    {h.permit_no ? ` · ${h.permit_no}` : ""}
-                    {h.note ? ` · ${h.note}` : ""} · {h.by}
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         )}
 

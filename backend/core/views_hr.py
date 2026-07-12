@@ -60,6 +60,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     ot_effective = serializers.SerializerMethodField()
     permit_state = serializers.SerializerMethodField()
     permit_days = serializers.SerializerMethodField()
+    permit_pending = serializers.SerializerMethodField()
 
     class Meta:
         model = Employee
@@ -68,10 +69,10 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "job_category", "job_category_name", "basic_pay", "currency",
                   "ot_applies", "ot_rate", "ot_effective", "employment_type",
                   "work_permit_no", "work_permit_expiry", "permit_state",
-                  "permit_days", "emergency_contact",
+                  "permit_days", "permit_pending", "emergency_contact",
                   "join_date", "is_active", "site_id", "site_code"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
-                            "permit_state", "permit_days"]
+                            "permit_state", "permit_days", "permit_pending"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
 
     def get_photo_url(self, obj):
@@ -84,6 +85,9 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def get_permit_days(self, obj):
         from . import permits
         return permits.permit_status(obj)[1]
+
+    def get_permit_pending(self, obj):
+        return obj.permit_renewals.filter(applied=False).exists()
 
     def get_ot_rate(self, obj):
         return obj.ot_rate()
@@ -175,40 +179,19 @@ class EmployeeViewSet(viewsets.ModelViewSet):
               actor=request.user)
         return Response(self.get_serializer(employee).data)
 
-    @action(detail=True, methods=["post"], url_path="renew-permit")
-    def renew_permit(self, request, pk=None):
-        """HR renews the work permit: choose a number of months and the
-        expiry moves forward by that much (from the current expiry, or today
-        if none). Optionally record a new permit no. and a note."""
-        from . import permits
-        if not _is_hr(request.user):
-            return Response({"detail": "HR/Admin only."}, status=403)
-        employee = self.get_object()
-        try:
-            months = int(request.data.get("months") or 0)
-        except (TypeError, ValueError):
-            return Response({"detail": "Months must be a whole number."},
-                            status=400)
-        try:
-            permits.renew(employee, months,
-                          (request.data.get("permit_no") or "").strip(),
-                          (request.data.get("note") or "").strip(),
-                          request.user)
-        except ValueError as exc:
-            return Response({"detail": str(exc)}, status=400)
-        return Response(self.get_serializer(employee).data)
-
     @action(detail=True, methods=["get"], url_path="permit-renewals")
     def permit_renewals(self, request, pk=None):
-        """Renewal history for a worker (HR/Admin)."""
+        """Renewal history for a worker (HR/Admin). Pending rows (PYR not yet
+        paid) have no new_expiry and applied=False."""
         if not _is_hr(request.user):
             return Response({"detail": "HR/Admin only."}, status=403)
         employee = self.get_object()
         rows = [{
             "months": r.months, "previous_expiry": r.previous_expiry,
-            "new_expiry": r.new_expiry, "permit_no": r.permit_no,
+            "new_expiry": r.new_expiry, "applied": r.applied,
             "note": r.note, "fee": r.fee, "by": r.created_by.full_name,
             "pyr": r.document.ref if r.document_id else None,
+            "pyr_status": r.document.status if r.document_id else None,
             "at": r.created_at,
         } for r in employee.permit_renewals.select_related(
             "created_by", "document")]

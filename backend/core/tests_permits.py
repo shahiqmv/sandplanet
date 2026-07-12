@@ -5,7 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import permits
-from .models import Employee, User, WorkPermitRenewal
+from .models import Employee, User
 from .tests import make_user
 
 
@@ -44,37 +44,46 @@ class PermitStatusTests(TestCase):
                          date(2027, 2, 15))
 
 
-class PermitRenewTests(TestCase):
+class PermitScheduleApplyTests(TestCase):
     def setUp(self):
         self.hr = make_user("hr", User.Role.HO_HR)
 
-    def test_renew_extends_from_current_expiry(self):
+    def test_schedule_does_not_change_expiry(self):
         e = emp("R", work_permit_expiry=date(2026, 8, 1))
-        permits.renew(e, 12, "WP-999", "PYR-HO-014", self.hr,
-                      today=date(2026, 7, 12))
+        row = permits.schedule(e, 12, 350, "PYR-x", self.hr)
+        e.refresh_from_db()
+        self.assertEqual(e.work_permit_expiry, date(2026, 8, 1))  # unchanged
+        self.assertFalse(row.applied)
+        self.assertIsNone(row.new_expiry)
+
+    def test_apply_extends_from_current_expiry(self):
+        e = emp("R", work_permit_expiry=date(2026, 8, 1))
+        row = permits.schedule(e, 12, 350, "", self.hr)
+        permits.apply(row, self.hr, today=date(2026, 7, 12))
+        e.refresh_from_db()
+        row.refresh_from_db()
+        self.assertEqual(e.work_permit_expiry, date(2027, 8, 1))
+        self.assertTrue(row.applied)
+        self.assertEqual(row.new_expiry, date(2027, 8, 1))
+
+    def test_apply_is_idempotent(self):
+        e = emp("R", work_permit_expiry=date(2026, 8, 1))
+        row = permits.schedule(e, 12, 350, "", self.hr)
+        permits.apply(row, self.hr)
+        permits.apply(row, self.hr)   # second call is a no-op
         e.refresh_from_db()
         self.assertEqual(e.work_permit_expiry, date(2027, 8, 1))
-        self.assertEqual(e.work_permit_no, "WP-999")
-        row = WorkPermitRenewal.objects.get(employee=e)
-        self.assertEqual(row.months, 12)
-        self.assertEqual(row.previous_expiry, date(2026, 8, 1))
 
-    def test_renew_without_prior_expiry_uses_today(self):
-        e = emp("N")
-        permits.renew(e, 6, "", "", self.hr, today=date(2026, 7, 12))
-        e.refresh_from_db()
-        self.assertEqual(e.work_permit_expiry, date(2027, 1, 12))
-
-    def test_renew_flips_contract_to_permanent(self):
+    def test_schedule_flips_contract_to_permanent(self):
         e = emp("F", employment_type=Employee.EmploymentType.CONTRACT)
-        permits.renew(e, 3, "", "", self.hr, today=date(2026, 7, 12))
+        permits.schedule(e, 3, 350, "", self.hr)
         e.refresh_from_db()
         self.assertEqual(e.employment_type, "PERMANENT")
 
     def test_zero_months_rejected(self):
         e = emp("Z", work_permit_expiry=date(2026, 8, 1))
         with self.assertRaises(ValueError):
-            permits.renew(e, 0, "", "", self.hr)
+            permits.schedule(e, 0, 350, "", self.hr)
 
 
 class PermitApiTests(TestCase):
@@ -82,16 +91,6 @@ class PermitApiTests(TestCase):
         self.hr = make_user("hr", User.Role.HO_HR)
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
-
-    def test_renew_endpoint(self):
-        e = emp("A", work_permit_expiry=date(2026, 8, 1))
-        r = self.client.post(f"/api/v1/employees/{e.id}/renew-permit",
-                             {"months": 12, "permit_no": "WP-1"},
-                             format="json")
-        self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(r.data["permit_state"] in ("OK", "EXPIRING"), True)
-        hist = self.client.get(f"/api/v1/employees/{e.id}/permit-renewals")
-        self.assertEqual(len(hist.data), 1)
 
     def test_alerts_lists_permanent_only(self):
         emp("P1", work_permit_expiry=date.today() + timedelta(days=10))
@@ -104,14 +103,6 @@ class PermitApiTests(TestCase):
         self.assertIn("P1", names)
         self.assertNotIn("C1", names)      # contract excluded
         self.assertNotIn("OK1", names)     # not within 30 days
-
-    def test_site_user_cannot_renew(self):
-        e = emp("S", work_permit_expiry=date(2026, 8, 1))
-        se = make_user("se", User.Role.SITE_ENGINEER)
-        self.client.force_authenticate(se)
-        r = self.client.post(f"/api/v1/employees/{e.id}/renew-permit",
-                             {"months": 12}, format="json")
-        self.assertEqual(r.status_code, 403)
 
 
 class PermitBatchRenewTests(TestCase):
@@ -128,7 +119,10 @@ class PermitBatchRenewTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
 
-    def test_batch_renew_raises_pyr_and_extends_all(self):
+    def test_batch_renew_raises_pyr_pending_until_paid(self):
+        from decimal import Decimal
+
+        from . import permits
         from .models import Document, WorkPermitRenewal
         e1 = emp("B1", work_permit_expiry=date(2026, 8, 1))
         e2 = emp("B2", work_permit_expiry=date(2026, 8, 15))
@@ -139,23 +133,26 @@ class PermitBatchRenewTests(TestCase):
                 {"employee_id": e2.id, "months": 6, "fee": 350},
             ]}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        from decimal import Decimal
         self.assertEqual(r.data["count"], 2)
         self.assertEqual(Decimal(r.data["amount"]), Decimal("700"))
+        doc = Document.objects.get(ref=r.data["ref"])
+        self.assertEqual(doc.doc_type, "PYR")
+        self.assertEqual(doc.payment_request.payment_type, "PERMIT_RENEWAL")
+        # Renewals are recorded but PENDING — expiries unchanged until paid
+        linked = WorkPermitRenewal.objects.filter(document=doc)
+        self.assertEqual(linked.count(), 2)
+        self.assertFalse(linked.filter(applied=True).exists())
+        e1.refresh_from_db()
+        e2.refresh_from_db()
+        self.assertEqual(e1.work_permit_expiry, date(2026, 8, 1))   # unchanged
+        self.assertEqual(e2.work_permit_expiry, date(2026, 8, 15))  # unchanged
+        # Simulate Finance paying the PYR → expiries now extend
+        permits.apply_for_document(doc, self.hr)
         e1.refresh_from_db()
         e2.refresh_from_db()
         self.assertEqual(e1.work_permit_expiry, date(2027, 8, 1))
         self.assertEqual(e2.work_permit_expiry, date(2027, 2, 15))
-        doc = Document.objects.get(ref=r.data["ref"])
-        self.assertEqual(doc.doc_type, "PYR")
-        self.assertEqual(doc.status, "DRAFT")
-        self.assertEqual(doc.payment_request.payment_type, "PERMIT_RENEWAL")
-        self.assertEqual(doc.payment_request.amount_requested,
-                         __import__("decimal").Decimal("700.00"))
-        linked = WorkPermitRenewal.objects.filter(document=doc)
-        self.assertEqual(linked.count(), 2)
-        self.assertEqual(linked.get(employee=e1).fee,
-                         __import__("decimal").Decimal("350"))
+        self.assertEqual(linked.filter(applied=True).count(), 2)
 
     def test_batch_renew_needs_lines(self):
         r = self.client.post("/api/v1/permits/batch-renew", {"lines": []},

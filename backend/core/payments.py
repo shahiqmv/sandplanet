@@ -151,21 +151,20 @@ def _parse_permit_lines(raw):
             return None, "A renewal fee is invalid."
         if fee < 0:
             return None, "Renewal fees cannot be negative."
-        out.append({"employee": emp, "months": months, "fee": fee,
-                    "permit_no": (ln.get("permit_no") or "").strip()})
+        out.append({"employee": emp, "months": months, "fee": fee})
     if not out:
         return None, "Select at least one worker to renew."
     return out, None
 
 
 def _create_permit_renewals(doc, parsed, user):
-    """Extend each selected worker's permit and link the renewal to this PYR."""
+    """Record each renewal as PENDING against this PYR — the expiries move
+    forward only when Finance pays it (see permits.apply_for_document)."""
     from . import permits
 
     for ln in parsed:
-        permits.renew(ln["employee"], ln["months"], ln["permit_no"],
-                      f"Batch renewal {doc.ref}", user, document=doc,
-                      fee=ln["fee"])
+        permits.schedule(ln["employee"], ln["months"], ln["fee"],
+                         f"Batch renewal {doc.ref}", user, document=doc)
 
 
 def _create_salary_advances(doc, parsed, data):
@@ -331,6 +330,11 @@ def pyr_action(request, doc, action_name):
                          state="INCURRED", source="PYR", amount=amount_paid,
                          currency=pr.currency, document=doc, actor=user,
                          posted_on=pr.paid_date)
+        # Work-permit renewals extend the expiries only now, on payment
+        if pr.payment_type == "PERMIT_RENEWAL":
+            from . import permits
+
+            permits.apply_for_document(doc, user)
         _set_status(doc, "PAID", "PAY", user, comment)
         return None
 

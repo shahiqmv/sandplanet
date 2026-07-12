@@ -759,16 +759,19 @@ class WorkPermitRenewal(models.Model):
                                  related_name="permit_renewals")
     months = models.PositiveIntegerField()
     previous_expiry = models.DateField(null=True, blank=True)
-    new_expiry = models.DateField()
-    permit_no = models.TextField(blank=True)   # new permit no, if it changed
+    # Set only once the renewal is applied (i.e. the PYR is paid); null while
+    # the renewal is pending payment.
+    new_expiry = models.DateField(null=True, blank=True)
     note = models.TextField(blank=True)        # e.g. the PYR ref that paid it
     fee = models.DecimalField(max_digits=12, decimal_places=2, null=True,
                               blank=True)       # renewal fee, for the PYR
-    # The PYR raised to pay this renewal's fee (batch renewals). Null for a
-    # plain single renewal with no payment attached.
+    # The PYR raised to pay this renewal's fee. The expiry only moves forward
+    # once Finance pays that PYR (applied=True).
     document = models.ForeignKey(Document, on_delete=models.SET_NULL,
                                  null=True, blank=True,
                                  related_name="permit_renewals")
+    applied = models.BooleanField(default=False)  # expiry actually extended
+    applied_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

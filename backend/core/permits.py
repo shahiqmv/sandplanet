@@ -9,6 +9,8 @@ within 30 days (or already expired).
 import calendar
 from datetime import date, timedelta
 
+from django.utils import timezone
+
 from .audit import audit
 from .models import Employee, WorkPermitRenewal
 
@@ -40,38 +42,61 @@ def permit_status(emp, today=None):
     return "OK", days
 
 
-def renew(emp, months, permit_no, note, actor, today=None, document=None,
-          fee=None):
-    """Extend the permit expiry by `months`, from the current expiry (or today
-    if none/blank), record it, and audit. `document` links the PYR raised to
-    pay the fee (batch renewals). Returns the renewal row."""
-    today = today or date.today()
+def schedule(emp, months, fee, note, actor, document=None):
+    """Record a PENDING renewal for `months` linked to the PYR that pays its
+    fee. The expiry is NOT touched yet — it only moves forward once Finance
+    pays the PYR (see apply). Returns the renewal row."""
     months = int(months)
     if months <= 0:
         raise ValueError("Choose a number of months greater than zero.")
-    previous = emp.work_permit_expiry
-    base = previous if previous else today
-    new_expiry = add_months(base, months)
-    emp.work_permit_expiry = new_expiry
-    fields = ["work_permit_expiry", "updated_at"]
-    if permit_no:
-        emp.work_permit_no = permit_no
-        fields.append("work_permit_no")
     # a renewal implies the worker is on the permit
     if emp.employment_type != Employee.EmploymentType.PERMANENT:
         emp.employment_type = Employee.EmploymentType.PERMANENT
-        fields.append("employment_type")
-    emp.save(update_fields=fields)
+        emp.save(update_fields=["employment_type", "updated_at"])
     row = WorkPermitRenewal.objects.create(
-        employee=emp, months=months, previous_expiry=previous,
-        new_expiry=new_expiry, permit_no=permit_no or "", note=note or "",
-        fee=fee, document=document, created_by=actor)
-    audit("employee", emp.id, "PERMIT_RENEWED", actor=actor,
+        employee=emp, months=months, previous_expiry=emp.work_permit_expiry,
+        note=note or "", fee=fee, document=document, created_by=actor)
+    audit("employee", emp.id, "PERMIT_RENEWAL_SCHEDULED", actor=actor,
           detail={"emp_no": emp.emp_no, "months": months,
-                  "previous_expiry": previous.isoformat() if previous else None,
-                  "new_expiry": new_expiry.isoformat(),
                   "pyr": document.ref if document else None})
     return row
+
+
+def apply(row, actor, today=None):
+    """Extend the worker's permit for an already-scheduled renewal — called
+    when its PYR is paid. Idempotent: does nothing if already applied."""
+    if row.applied:
+        return row
+    today = today or date.today()
+    emp = row.employee
+    base = emp.work_permit_expiry if emp.work_permit_expiry else today
+    new_expiry = add_months(base, row.months)
+    emp.work_permit_expiry = new_expiry
+    emp.save(update_fields=["work_permit_expiry", "updated_at"])
+    row.previous_expiry = base
+    row.new_expiry = new_expiry
+    row.applied = True
+    row.applied_at = timezone.now()
+    row.save(update_fields=["previous_expiry", "new_expiry", "applied",
+                            "applied_at"])
+    audit("employee", emp.id, "PERMIT_RENEWED", actor=actor,
+          detail={"emp_no": emp.emp_no, "months": row.months,
+                  "previous_expiry": base.isoformat(),
+                  "new_expiry": new_expiry.isoformat(),
+                  "pyr": row.document.ref if row.document_id else None})
+    return row
+
+
+def apply_for_document(doc, actor):
+    """Apply every pending renewal attached to a paid PYR."""
+    for row in doc.permit_renewals.filter(applied=False).select_related(
+            "employee"):
+        apply(row, actor)
+
+
+def has_pending(emp):
+    """True if the worker has a renewal awaiting payment."""
+    return emp.permit_renewals.filter(applied=False).exists()
 
 
 def alerts(within_days=ALERT_DAYS, today=None, site_ids=None):
