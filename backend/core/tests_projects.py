@@ -155,6 +155,35 @@ class ProjectTests(ProjectBase):
         r = self.client.delete(f"/api/v1/projects/{self.spa.id}")
         self.assertEqual(r.status_code, 403)
 
+    def test_qs_edits_but_cannot_create(self):
+        qs = make_user("qs1", User.Role.QS)
+        self.client.force_authenticate(qs)
+        # QS may NOT create a project
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/projects",
+                             {"code": "NEW", "title": "New"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        # but QS may edit an existing one (financials/terms)
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}",
+                             {"contract_value": 3000000, "retention_pct": 5},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.pools.refresh_from_db()
+        self.assertEqual(self.pools.retention_pct, 5)
+
+    def test_director_assigns_qs(self):
+        qs = make_user("qs2", User.Role.QS)
+        self.client.force_authenticate(self.pm)   # PM in edit roles
+        r = self.client.get("/api/v1/assignable/qs")
+        self.assertIn(qs.id, [u["id"] for u in r.data])
+        self.client.force_authenticate(make_user("dir9", User.Role.DIRECTOR))
+        r = self.client.patch(f"/api/v1/projects/{self.pools.id}",
+                             {"qs": qs.id, "status": "POTENTIAL"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.pools.refresh_from_db()
+        self.assertEqual(self.pools.qs_id, qs.id)
+        self.assertEqual(self.pools.status, "POTENTIAL")
+
 
 class ProgrammeTests(ProjectBase):
     def import_programme(self):

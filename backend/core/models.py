@@ -959,9 +959,11 @@ class Project(models.Model):
     belong to a project; MR/GRN and the HO chain stay site-wise."""
 
     class Status(models.TextChoices):
-        ACTIVE = "ACTIVE"
-        ON_HOLD = "ON_HOLD"
-        CLOSED = "CLOSED"
+        POTENTIAL = "POTENTIAL", "Potential"   # QS pre-award / tender stage
+        AWARDED = "AWARDED", "Awarded"
+        ACTIVE = "ACTIVE", "Active"
+        ON_HOLD = "ON_HOLD", "On hold"
+        CLOSED = "CLOSED", "Closed"
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="projects")
@@ -1006,6 +1008,9 @@ class Project(models.Model):
     pm = models.ForeignKey(  # Project PM — approval routing prefers this
         User, on_delete=models.PROTECT, null=True, blank=True,
         related_name="pm_projects")
+    qs = models.ForeignKey(  # assigned Quantity Surveyor — owns the financials
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="qs_projects")
     manpower_summary = models.TextField(blank=True)  # e.g. "1 SE, 2 masons…"
     # Planned manpower per month [{"month": "2026-05", "workers": 45}] —
     # the histogram sent to the client with the programme upon award

@@ -11,7 +11,11 @@ from .audit import audit
 from .models import ProgrammeActivity, Project, Site, User
 from .permissions import scoped_site_ids
 
-PROJECT_ADMIN_ROLES = ("ADMIN", "DIRECTOR", "PM", "QS")
+# Creating projects (incl. new tenders), the programme and activities is a
+# Director / Sr PM / Admin job. The QS does NOT create — the Director assigns
+# a QS, who then edits the project's financials & contract terms.
+PROJECT_CREATE_ROLES = ("ADMIN", "DIRECTOR", "PM")
+PROJECT_EDIT_ROLES = ("ADMIN", "DIRECTOR", "PM", "QS")
 
 # Contract terms + value are commercial data — shown only to those who may see
 # the contract value (HO roles incl. QS, and the assigned PM).
@@ -36,6 +40,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     site_code = serializers.CharField(source="site.code", read_only=True)
     pm_name = serializers.CharField(source="pm.full_name", read_only=True,
                                     default=None)
+    qs_name = serializers.CharField(source="qs.full_name", read_only=True,
+                                    default=None)
     activity_count = serializers.SerializerMethodField()
     overall_progress = serializers.SerializerMethodField()
     latest_manpower = serializers.SerializerMethodField()
@@ -44,6 +50,7 @@ class ProjectSerializer(serializers.ModelSerializer):
         model = Project
         fields = ["id", "site", "site_code", "code", "title", "scope",
                   "boq_ref", "contract_value", "loa_date", "pm", "pm_name",
+                  "qs", "qs_name",
                   "manpower_summary", "manpower_plan", "start_date",
                   "planned_completion", "actual_completion", "status",
                   "activity_count", "overall_progress", "latest_manpower",
@@ -103,6 +110,17 @@ class ActivitySerializer(serializers.ModelSerializer):
                   "progress"]
 
 
+@api_view(["GET"])
+def assignable_qs(request):
+    """Active Quantity Surveyors — for the project QS-assignment dropdown
+    (the Director assigns a QS to work on a project's financials/tender)."""
+    if request.user.role not in PROJECT_EDIT_ROLES:
+        return Response({"detail": "Not allowed."}, status=403)
+    people = User.objects.filter(role=User.Role.QS, is_active=True) \
+        .order_by("full_name").values("id", "full_name")
+    return Response(list(people))
+
+
 @api_view(["GET", "POST"])
 def site_projects(request, site_id):
     try:
@@ -114,7 +132,7 @@ def site_projects(request, site_id):
         return Response({"detail": "Not found."}, status=404)
 
     if request.method == "POST":
-        if request.user.role not in PROJECT_ADMIN_ROLES:
+        if request.user.role not in PROJECT_CREATE_ROLES:
             return Response({"detail": "Admin/Director/PM create projects."},
                             status=403)
         serializer = ProjectSerializer(data=request.data,
@@ -158,8 +176,8 @@ def project_detail(request, pk):
               detail={"code": code, "site": project.site.code})
         return Response(status=204)
     if request.method == "PATCH":
-        if request.user.role not in PROJECT_ADMIN_ROLES:
-            return Response({"detail": "Admin/Director/PM edit projects."},
+        if request.user.role not in PROJECT_EDIT_ROLES:
+            return Response({"detail": "Admin/Director/PM/QS edit projects."},
                             status=403)
         if "status" in request.data and \
                 request.data["status"] in Project.Status.values:
@@ -278,7 +296,7 @@ def project_programme(request, pk):
         return Response({"detail": "Not found."}, status=404)
 
     if request.method == "POST":
-        if request.user.role not in PROJECT_ADMIN_ROLES:
+        if request.user.role not in PROJECT_CREATE_ROLES:
             return Response({"detail": "Admin/Director/PM manage the "
                                        "programme."}, status=403)
         if request.data.get("paste"):
@@ -334,7 +352,7 @@ def activity_detail(request, pk):
             "project__site").get(pk=pk)
     except ProgrammeActivity.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
-    if request.user.role not in PROJECT_ADMIN_ROLES:
+    if request.user.role not in PROJECT_CREATE_ROLES:
         return Response({"detail": "Admin/Director/PM edit activities."},
                         status=403)
     if request.method == "DELETE":

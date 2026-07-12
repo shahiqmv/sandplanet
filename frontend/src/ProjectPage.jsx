@@ -152,6 +152,8 @@ manpower histogram, on the letterhead — send to the client"
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <tbody>
                 {[["Project PM", project.pm_name || "—"],
+                  ..."qs_name" in project
+                    ? [["Assigned QS", project.qs_name || "—"]] : [],
                   ["LOA date", project.loa_date || "—"],
                   ["Start date", project.start_date || "—"],
                   ["Planned finish", project.planned_completion || "—"],
@@ -358,7 +360,8 @@ function ManpowerPlanTab({ project, me, onSaved }) {
   );
 }
 
-const PROJECT_STATUSES = ["AWARDED", "ACTIVE", "ON_HOLD", "CLOSED"];
+const PROJECT_STATUSES = ["POTENTIAL", "AWARDED", "ACTIVE", "ON_HOLD",
+                          "CLOSED"];
 const CONTRACT_TYPES = [["", "—"], ["LUMP_SUM", "Lump sum"],
                         ["REMEASUREMENT", "Re-measurement"],
                         ["COST_PLUS", "Cost plus"]];
@@ -416,6 +419,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
     loa_date: project.loa_date || "",
     contract_value: project.contract_value ?? "",
     status: project.status || "ACTIVE",
+    qs: project.qs ?? "",
     contract_type: project.contract_type || "",
     payment_terms: project.payment_terms || "",
     advance_payment_pct: project.advance_payment_pct ?? "",
@@ -430,8 +434,13 @@ function EditProjectModal({ project, onClose, onSaved }) {
   });
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [qsList, setQsList] = useState([]);
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const num = (v) => (v === "" || v == null ? null : Number(v));
+
+  useEffect(() => {
+    api("/assignable/qs").then(setQsList).catch(() => setQsList([]));
+  }, []);
 
   async function save() {
     setError(null);
@@ -444,6 +453,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
         actual_completion: form.actual_completion || null,
         loa_date: form.loa_date || null,
         contract_value: num(form.contract_value), status: form.status,
+        qs: form.qs === "" ? null : Number(form.qs),
         contract_type: form.contract_type,
         payment_terms: form.payment_terms,
         advance_payment_pct: num(form.advance_payment_pct),
@@ -495,6 +505,13 @@ function EditProjectModal({ project, onClose, onSaved }) {
           <label style={full}>Title
             <input value={form.title} onChange={set("title")}
                    style={inputStyle} /></label>
+          <label style={full}>Assigned QS (owns the financials/tender)
+            <select value={form.qs} onChange={set("qs")} style={inputStyle}>
+              <option value="">— none —</option>
+              {qsList.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name}</option>
+              ))}
+            </select></label>
           <label style={field}>Start date
             <input type="date" value={form.start_date}
                    onChange={set("start_date")} style={inputStyle} /></label>

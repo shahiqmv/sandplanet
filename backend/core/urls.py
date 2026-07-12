@@ -120,6 +120,7 @@ urlpatterns = [
          name="dashboard-portfolio"),
     path("sites/<int:site_id>/projects", projects.site_projects,
          name="site-projects"),
+    path("assignable/qs", projects.assignable_qs, name="assignable-qs"),
     path("projects/<int:pk>", projects.project_detail, name="project-detail"),
     path("projects/<int:pk>/programme", projects.project_programme,
          name="project-programme"),
