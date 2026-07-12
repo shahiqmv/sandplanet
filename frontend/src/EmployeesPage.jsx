@@ -38,6 +38,7 @@ export default function EmployeesPage({ me, sites }) {
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null);   // employee being edited
+  const [batch, setBatch] = useState(false);       // batch-renew modal
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
@@ -94,6 +95,12 @@ export default function EmployeesPage({ me, sites }) {
             <span style={{ color: "#5a6b78" }}>
               {" "}— permanent workers expiring within {alerts.within_days} days
             </span>
+            {isHr && (
+              <button onClick={() => setBatch(true)}
+                      style={{ ...buttonStyle, padding: "3px 12px",
+                               fontSize: 12, marginLeft: 10 }}>
+                Renew as batch →</button>
+            )}
             <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap",
                           gap: 6 }}>
               {[...alerts.expired, ...alerts.expiring].map((r) => (
@@ -250,7 +257,154 @@ export default function EmployeesPage({ me, sites }) {
           onChanged={load}
           onSaved={() => { setEditing(null); load(); }} />
       )}
+
+      {batch && alerts && (
+        <BatchRenewModal
+          candidates={[...alerts.expired, ...alerts.expiring]}
+          onClose={() => setBatch(false)}
+          onDone={() => { setBatch(false); load(); }} />
+      )}
     </>
+  );
+}
+
+// Batch permit renewal: pick workers off the alert list, set months + fee
+// each, and raise ONE PYR (Permits & Fees, Head Office) to pay the total.
+// Expiries extend now; the PYR then runs the normal payment workflow.
+function BatchRenewModal({ candidates, onClose, onDone }) {
+  const [rows, setRows] = useState(candidates.map((c) => ({
+    id: c.id, emp_no: c.emp_no, full_name: c.full_name,
+    expiry: c.work_permit_expiry, permit_no: c.work_permit_no || "",
+    sel: true, months: "12", fee: "" })));
+  const [payee, setPayee] = useState("Immigration Maldives");
+  const [currency, setCurrency] = useState("MVR");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(null);
+
+  const setRow = (id, patch) => setRows((rs) =>
+    rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const chosen = rows.filter((r) => r.sel);
+  const total = chosen.reduce((a, r) => a + (parseFloat(r.fee) || 0), 0);
+
+  async function submit() {
+    setError(null);
+    if (!chosen.length) { setError("Select at least one worker."); return; }
+    if (chosen.some((r) => !(parseInt(r.months, 10) > 0))) {
+      setError("Every selected worker needs a renewal length."); return;
+    }
+    setBusy(true);
+    try {
+      const res = await api("/permits/batch-renew", { method: "POST", body: {
+        payee, currency,
+        lines: chosen.map((r) => ({ employee_id: r.id,
+          months: parseInt(r.months, 10), fee: parseFloat(r.fee) || 0,
+          permit_no: r.permit_no })),
+      } });
+      setDone(res);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)",
+                  display: "flex", alignItems: "center",
+                  justifyContent: "center", zIndex: 60, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ ...card, maxWidth: 720, width: "100%", maxHeight: "88vh",
+                    overflow: "auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
+            Batch work-permit renewal</h2>
+          <button onClick={onClose}
+                  style={{ ...ghostButton, marginLeft: "auto" }}>Close</button>
+        </div>
+
+        {done ? (
+          <div style={{ marginTop: 16 }}>
+            <p style={{ color: "#1a7f37", fontSize: 14 }}>
+              Renewed {done.count} permit(s). Raised <strong>{done.ref}</strong>
+              {" "}for {done.currency} {Number(done.amount).toLocaleString()} —
+              it now runs the normal payment approval workflow.
+            </p>
+            <button onClick={onDone} style={buttonStyle}>Done</button>
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0 10px" }}>
+              Each worker's expiry extends by the months set below now; one PYR
+              is raised for the total fee (Permits &amp; Fees, Head Office).
+            </p>
+            <table style={{ width: "100%", borderCollapse: "collapse",
+                            fontSize: 13 }}>
+              <thead><tr>
+                <th style={th} />
+                <th style={th}>Worker</th><th style={th}>Current expiry</th>
+                <th style={th}>Months</th><th style={th}>Fee</th>
+                <th style={th}>New permit no.</th>
+              </tr></thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} style={{ opacity: r.sel ? 1 : 0.5 }}>
+                    <td style={td}>
+                      <input type="checkbox" checked={r.sel}
+                             onChange={(e) => setRow(r.id,
+                               { sel: e.target.checked })} /></td>
+                    <td style={td}>{r.emp_no} {r.full_name}</td>
+                    <td style={td}>{r.expiry}</td>
+                    <td style={td}>
+                      <select value={r.months}
+                              onChange={(e) => setRow(r.id,
+                                { months: e.target.value })}
+                              style={{ ...inputStyle, width: 90 }}>
+                        {[3, 6, 12, 24].map((m) => (
+                          <option key={m} value={m}>{m}</option>
+                        ))}
+                      </select></td>
+                    <td style={td}>
+                      <input type="number" min="0" value={r.fee}
+                             placeholder="0"
+                             onChange={(e) => setRow(r.id,
+                               { fee: e.target.value })}
+                             style={{ ...inputStyle, width: 90 }} /></td>
+                    <td style={td}>
+                      <input value={r.permit_no} placeholder="(optional)"
+                             onChange={(e) => setRow(r.id,
+                               { permit_no: e.target.value })}
+                             style={{ ...inputStyle, width: 130 }} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{ display: "flex", gap: 10, marginTop: 14,
+                          flexWrap: "wrap", alignItems: "center" }}>
+              <label style={{ fontSize: 12.5 }}>Pay to{" "}
+                <input value={payee} onChange={(e) => setPayee(e.target.value)}
+                       style={{ ...inputStyle, width: 200 }} /></label>
+              <label style={{ fontSize: 12.5 }}>Currency{" "}
+                <select value={currency}
+                        onChange={(e) => setCurrency(e.target.value)}
+                        style={{ ...inputStyle, width: 80 }}>
+                  <option value="MVR">MVR</option>
+                  <option value="USD">USD</option>
+                </select></label>
+              <span style={{ marginLeft: "auto", fontWeight: 600,
+                             color: "var(--sp-navy)" }}>
+                {chosen.length} selected · total {currency}{" "}
+                {total.toLocaleString()}</span>
+            </div>
+            {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+            <div style={{ marginTop: 12 }}>
+              <button onClick={submit} disabled={busy || !chosen.length}
+                      style={buttonStyle}>
+                {busy ? "Raising PYR…" : "Renew + raise PYR"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

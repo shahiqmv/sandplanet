@@ -48,6 +48,8 @@ def create_payment_request(doc, data, user):
         return None, "That cost head is a Head Office pool, not a project head."
     # Salary advance/loan: a worker breakdown drives the amount and payee
     salary_lines = data.get("salary_lines") or []
+    # Work-permit renewal: a per-worker fee breakdown drives the amount
+    permit_lines = data.get("permit_lines") or []
     payee = (data.get("payee") or "").strip()
     purpose = (data.get("purpose") or "").strip()
     if salary_lines:
@@ -57,6 +59,13 @@ def create_payment_request(doc, data, user):
         amount = sum((ln["amount"] for ln in parsed), Decimal("0"))
         payee = payee or f"Salary advances — {doc.site.code}"
         purpose = purpose or "Staff salary advance / loan"
+    elif permit_lines:
+        parsed_permits, err = _parse_permit_lines(permit_lines)
+        if err:
+            return None, err
+        amount = sum((ln["fee"] for ln in parsed_permits), Decimal("0"))
+        payee = payee or "Work-permit renewals"
+        purpose = purpose or "Work-permit renewals"
     else:
         try:
             amount = Decimal(str(data.get("amount_requested") or 0))
@@ -71,6 +80,7 @@ def create_payment_request(doc, data, user):
     pr = PaymentRequest.objects.create(
         document=doc,
         payment_type="ADVANCE" if salary_lines
+        else "PERMIT_RENEWAL" if permit_lines
         else data.get("payment_type", "DIRECT"),
         cost_head=cost_head,
         payee=payee,
@@ -87,6 +97,8 @@ def create_payment_request(doc, data, user):
     )
     if salary_lines:
         _create_salary_advances(doc, parsed, data)
+    if permit_lines:
+        _create_permit_renewals(doc, parsed_permits, user)
     return pr, None
 
 
@@ -115,6 +127,45 @@ def _parse_salary_lines(raw):
     if not out:
         return None, "Add at least one worker."
     return out, None
+
+
+def _parse_permit_lines(raw):
+    """Validate permit-renewal lines: {employee_id, months, fee}."""
+    from .models import Employee
+
+    out = []
+    for ln in raw:
+        try:
+            emp = Employee.objects.get(pk=ln.get("employee_id"))
+        except Employee.DoesNotExist:
+            return None, "Unknown employee in a permit-renewal line."
+        try:
+            months = int(ln.get("months") or 0)
+        except (TypeError, ValueError):
+            return None, "Renewal months must be a whole number."
+        if months < 1:
+            return None, "Renewal months must be at least 1."
+        try:
+            fee = Decimal(str(ln.get("fee") or 0))
+        except (TypeError, ValueError):
+            return None, "A renewal fee is invalid."
+        if fee < 0:
+            return None, "Renewal fees cannot be negative."
+        out.append({"employee": emp, "months": months, "fee": fee,
+                    "permit_no": (ln.get("permit_no") or "").strip()})
+    if not out:
+        return None, "Select at least one worker to renew."
+    return out, None
+
+
+def _create_permit_renewals(doc, parsed, user):
+    """Extend each selected worker's permit and link the renewal to this PYR."""
+    from . import permits
+
+    for ln in parsed:
+        permits.renew(ln["employee"], ln["months"], ln["permit_no"],
+                      f"Batch renewal {doc.ref}", user, document=doc,
+                      fee=ln["fee"])
 
 
 def _create_salary_advances(doc, parsed, data):

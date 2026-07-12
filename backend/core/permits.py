@@ -40,9 +40,11 @@ def permit_status(emp, today=None):
     return "OK", days
 
 
-def renew(emp, months, permit_no, note, actor, today=None):
+def renew(emp, months, permit_no, note, actor, today=None, document=None,
+          fee=None):
     """Extend the permit expiry by `months`, from the current expiry (or today
-    if none/blank), record it, and audit. Returns the renewal row."""
+    if none/blank), record it, and audit. `document` links the PYR raised to
+    pay the fee (batch renewals). Returns the renewal row."""
     today = today or date.today()
     months = int(months)
     if months <= 0:
@@ -63,11 +65,12 @@ def renew(emp, months, permit_no, note, actor, today=None):
     row = WorkPermitRenewal.objects.create(
         employee=emp, months=months, previous_expiry=previous,
         new_expiry=new_expiry, permit_no=permit_no or "", note=note or "",
-        created_by=actor)
+        fee=fee, document=document, created_by=actor)
     audit("employee", emp.id, "PERMIT_RENEWED", actor=actor,
           detail={"emp_no": emp.emp_no, "months": months,
                   "previous_expiry": previous.isoformat() if previous else None,
-                  "new_expiry": new_expiry.isoformat()})
+                  "new_expiry": new_expiry.isoformat(),
+                  "pyr": document.ref if document else None})
     return row
 
 

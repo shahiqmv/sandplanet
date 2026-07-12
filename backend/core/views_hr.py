@@ -207,9 +207,11 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         rows = [{
             "months": r.months, "previous_expiry": r.previous_expiry,
             "new_expiry": r.new_expiry, "permit_no": r.permit_no,
-            "note": r.note, "by": r.created_by.full_name,
+            "note": r.note, "fee": r.fee, "by": r.created_by.full_name,
+            "pyr": r.document.ref if r.document_id else None,
             "at": r.created_at,
-        } for r in employee.permit_renewals.select_related("created_by")]
+        } for r in employee.permit_renewals.select_related(
+            "created_by", "document")]
         return Response(rows)
 
 
@@ -225,6 +227,62 @@ def permit_alerts(request):
         "expired": [r for r in rows if r["state"] == "EXPIRED"],
         "expiring": [r for r in rows if r["state"] == "EXPIRING"],
     })
+
+
+@api_view(["POST"])
+def permit_batch_renew(request):
+    """HR raises ONE PYR to renew several permits at once. Each selected
+    worker's permit is extended by its months and the PYR carries the total
+    renewal fee (Permits & Fees cost head) through the payment workflow, at
+    Head Office. Body: {lines:[{employee_id, months, fee, permit_no?}],
+    payee?, cost_head_id?, currency?, purpose?}."""
+    from .models import CostHead, Document, DocumentRevision
+    from .numbering import next_ref
+    from .payments import create_payment_request
+    if not _is_hr(request.user):
+        return Response({"detail": "HR/Admin only."}, status=403)
+    lines = request.data.get("lines") or []
+    if not lines:
+        return Response({"detail": "Select at least one worker to renew."},
+                        status=400)
+    site = Site.objects.filter(is_head_office=True).first()
+    if site is None:
+        return Response({"detail": "No Head Office site is configured."},
+                        status=400)
+    cost_head_id = request.data.get("cost_head_id")
+    if not cost_head_id:
+        ch = CostHead.objects.filter(name="Permits & Fees",
+                                     is_active=True).first()
+        cost_head_id = ch.id if ch else None
+    payee = request.data.get("payee") or "Work-permit renewals"
+    purpose = request.data.get("purpose") or "Work-permit renewals (batch)"
+    data = {
+        "permit_lines": lines, "cost_head_id": cost_head_id, "payee": payee,
+        "currency": request.data.get("currency", "MVR"), "purpose": purpose,
+        "payment_method": request.data.get("payment_method", "BANK"),
+        "has_supporting_doc": bool(request.data.get("has_supporting_doc")),
+        "no_doc_reason": request.data.get("no_doc_reason", ""),
+    }
+    with transaction.atomic():
+        ref = next_ref("PYR", site)
+        doc = Document.objects.create(
+            doc_type="PYR", ref=ref, site=site, doc_date=date.today(),
+            status="DRAFT", created_by=request.user)
+        rev = DocumentRevision.objects.create(
+            document=doc, rev_label="R0", created_by=request.user,
+            payload={"purpose": purpose, "payee": payee,
+                     "kind": "permit_renewal"})
+        doc.current_revision = rev
+        doc.save(update_fields=["current_revision"])
+        pr, err = create_payment_request(doc, data, request.user)
+        if err:
+            transaction.set_rollback(True)
+            return Response({"detail": err}, status=400)
+    audit("document", doc.id, "DOC_CREATED", actor=request.user,
+          to_state="DRAFT", detail={"ref": ref, "kind": "permit_renewal"})
+    return Response({"ref": doc.ref, "amount": str(pr.amount_requested),
+                     "currency": pr.currency, "count": len(lines)},
+                    status=201)
 
 
 # ===== Attendance =====

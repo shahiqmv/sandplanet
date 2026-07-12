@@ -112,3 +112,61 @@ class PermitApiTests(TestCase):
         r = self.client.post(f"/api/v1/employees/{e.id}/renew-permit",
                              {"months": 12}, format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class PermitBatchRenewTests(TestCase):
+    def setUp(self):
+        from datetime import date as _date
+
+        from .models import CostHead, Site
+        self.hr = make_user("hr", User.Role.HO_HR)
+        Site.objects.get_or_create(
+            code="MLE", defaults={"name": "Head Office", "is_head_office": True,
+                                  "status": Site.Status.ACTIVE,
+                                  "start_date": _date(2026, 1, 1)})
+        CostHead.objects.get_or_create(name="Permits & Fees")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_batch_renew_raises_pyr_and_extends_all(self):
+        from .models import Document, WorkPermitRenewal
+        e1 = emp("B1", work_permit_expiry=date(2026, 8, 1))
+        e2 = emp("B2", work_permit_expiry=date(2026, 8, 15))
+        r = self.client.post("/api/v1/permits/batch-renew", {
+            "payee": "Immigration Maldives",
+            "lines": [
+                {"employee_id": e1.id, "months": 12, "fee": 350},
+                {"employee_id": e2.id, "months": 6, "fee": 350},
+            ]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        from decimal import Decimal
+        self.assertEqual(r.data["count"], 2)
+        self.assertEqual(Decimal(r.data["amount"]), Decimal("700"))
+        e1.refresh_from_db()
+        e2.refresh_from_db()
+        self.assertEqual(e1.work_permit_expiry, date(2027, 8, 1))
+        self.assertEqual(e2.work_permit_expiry, date(2027, 2, 15))
+        doc = Document.objects.get(ref=r.data["ref"])
+        self.assertEqual(doc.doc_type, "PYR")
+        self.assertEqual(doc.status, "DRAFT")
+        self.assertEqual(doc.payment_request.payment_type, "PERMIT_RENEWAL")
+        self.assertEqual(doc.payment_request.amount_requested,
+                         __import__("decimal").Decimal("700.00"))
+        linked = WorkPermitRenewal.objects.filter(document=doc)
+        self.assertEqual(linked.count(), 2)
+        self.assertEqual(linked.get(employee=e1).fee,
+                         __import__("decimal").Decimal("350"))
+
+    def test_batch_renew_needs_lines(self):
+        r = self.client.post("/api/v1/permits/batch-renew", {"lines": []},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_batch_renew_hr_only(self):
+        se = make_user("se", User.Role.SITE_ENGINEER)
+        self.client.force_authenticate(se)
+        e = emp("X", work_permit_expiry=date(2026, 8, 1))
+        r = self.client.post("/api/v1/permits/batch-renew", {
+            "lines": [{"employee_id": e.id, "months": 12, "fee": 350}]},
+            format="json")
+        self.assertEqual(r.status_code, 403)

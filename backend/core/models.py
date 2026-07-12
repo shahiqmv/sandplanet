@@ -762,6 +762,13 @@ class WorkPermitRenewal(models.Model):
     new_expiry = models.DateField()
     permit_no = models.TextField(blank=True)   # new permit no, if it changed
     note = models.TextField(blank=True)        # e.g. the PYR ref that paid it
+    fee = models.DecimalField(max_digits=12, decimal_places=2, null=True,
+                              blank=True)       # renewal fee, for the PYR
+    # The PYR raised to pay this renewal's fee (batch renewals). Null for a
+    # plain single renewal with no payment attached.
+    document = models.ForeignKey(Document, on_delete=models.SET_NULL,
+                                 null=True, blank=True,
+                                 related_name="permit_renewals")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -1102,6 +1109,7 @@ class PaymentRequest(models.Model):
         ADVANCE = "ADVANCE", "Advance"
         REIMBURSEMENT = "REIMBURSEMENT", "Reimbursement"
         PETTY_CASH_REPLENISH = "PETTY_CASH_REPLENISH", "Petty cash replenishment"
+        PERMIT_RENEWAL = "PERMIT_RENEWAL", "Work-permit renewal"
 
     class Method(models.TextChoices):
         BANK = "BANK", "Bank transfer"
