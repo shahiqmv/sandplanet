@@ -29,6 +29,24 @@ class StockBase(ProcBase):
 
 
 class StockTests(StockBase):
+    def test_opening_stock_grn_without_manifest(self):
+        """Site team captures existing stock via a GRN with no LM/manifest."""
+        self.as_user(self.sa)
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id,   # no lm_ref
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        grn = r.data
+        self.client.patch(f"/api/v1/documents/{grn['ref']}", {"lines": [
+            {"item_id": self.cement.id, "qty_manifest": 0, "qty_received": 80},
+        ]}, format="json")
+        self.act(grn["ref"], "count")
+        self.as_user(self.pm)
+        self.act(grn["ref"], "verify")
+        moves = StockMovement.objects.filter(site=self.site, item=self.cement)
+        self.assertEqual(moves.count(), 1)
+        self.assertEqual(float(moves.first().qty), 80.0)
+
     def test_grn_verify_creates_receipts(self):
         self.grn_to_verified(cement_qty=140, rebar_qty=300)
         moves = StockMovement.objects.filter(site=self.site)

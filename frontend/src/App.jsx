@@ -337,7 +337,8 @@ export default function App() {
     try {
       const doc = await api("/documents", {
         method: "POST",
-        body: { doc_type: "GRN", site_id: openSite.id, lm_ref: lmRef },
+        body: { doc_type: "GRN", site_id: openSite.id,
+                ...(lmRef ? { lm_ref: lmRef } : {}) },
       });
       setDocView({ mode: "line-form", docType: "GRN", doc });
     } catch (e) {

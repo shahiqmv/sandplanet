@@ -257,9 +257,21 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
       <section style={{ ...card,
                         background: incomingLms.length ? "#fff8e6"
                                                        : "var(--paper)" }}>
-        <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
-          🚤 Incoming boats &amp; goods receiving
-        </h2>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                      flexWrap: "wrap" }}>
+          <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
+            🚤 Incoming boats &amp; goods receiving
+          </h2>
+          {canMr && (
+            <Btn onClick={() => onCreateGrn()}
+                 title="Enter stock already on site (no boat/manifest) — a GRN
+that adds your existing quantities to the system"
+                 style={{ marginLeft: "auto", padding: "4px 12px",
+                          fontSize: 13 }}>
+              + Opening stock (GRN)
+            </Btn>
+          )}
+        </div>
         {incomingLms.map((lm) => (
           <div key={lm.ref} style={{ display: "flex", gap: 12,
                                      alignItems: "center", padding: "4px 0",

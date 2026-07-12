@@ -181,30 +181,35 @@ def document_create(request):
     payload = request.data.get("payload") or {}
     lines_data = request.data.get("lines") or []
 
-    # GRN is raised FROM a manifest: prefill lines + link (spec §5.6)
+    # GRN is normally raised FROM a manifest: prefill lines + link (spec §5.6).
+    # Without a manifest it captures the site's existing / opening stock, keyed
+    # in by the site team (owner, temporary) — no LM link, lines added manually.
     lm = None
     if doc_type == "GRN":
         lm_ref = request.data.get("lm_ref") or payload.get("manifest_ref")
-        if not lm_ref:
-            return Response({"detail": "GRN requires lm_ref (the manifest)."},
-                            status=400)
-        try:
-            lm = Document.objects.get(ref=lm_ref, doc_type="LM", is_void=False)
-        except Document.DoesNotExist:
-            return Response({"detail": f"Unknown manifest '{lm_ref}'."}, status=400)
-        if lm.site_id != site.id:
-            return Response({"detail": "Manifest is for a different site."},
-                            status=400)
-        if not lines_data:
-            lines_data = grn_lines_from_lm(lm)
-        payload.setdefault("manifest_ref", lm.ref)
-        payload.setdefault("vessel", (lm.current_revision.payload or {}).get(
-            "vessel", ""))
-        payload.setdefault(
-            "mr_refs",
-            list(lm.links_from.filter(link_type="MR_LM")
-                 .values_list("to_document__ref", flat=True)),
-        )
+        if lm_ref:
+            try:
+                lm = Document.objects.get(ref=lm_ref, doc_type="LM",
+                                          is_void=False)
+            except Document.DoesNotExist:
+                return Response({"detail": f"Unknown manifest '{lm_ref}'."},
+                                status=400)
+            if lm.site_id != site.id:
+                return Response({"detail": "Manifest is for a different site."},
+                                status=400)
+            if not lines_data:
+                lines_data = grn_lines_from_lm(lm)
+            payload.setdefault("manifest_ref", lm.ref)
+            payload.setdefault("vessel",
+                               (lm.current_revision.payload or {}).get(
+                                   "vessel", ""))
+            payload.setdefault(
+                "mr_refs",
+                list(lm.links_from.filter(link_type="MR_LM")
+                     .values_list("to_document__ref", flat=True)),
+            )
+        else:
+            payload.setdefault("opening_stock", True)
 
     if doc_type == "MR":
         error = validate_mr_lines(lines_data)
