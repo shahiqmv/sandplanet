@@ -84,6 +84,25 @@ class UserSerializer(serializers.ModelSerializer):
         qs = user.site_allocations.filter(to_date__isnull=True).select_related("site")
         return AllocationSerializer(qs, many=True).data
 
+    def validate_username(self, value):
+        """Usernames are unique regardless of case, and stay reserved even
+        after an account is deactivated — so 'pubudu' and 'Pubudu' can't both
+        exist, and a name can't be reused by simply deactivating the old one."""
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Username is required.")
+        clash = User.objects.filter(username__iexact=value)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        existing = clash.first()
+        if existing:
+            state = "active" if existing.is_active else "deactivated"
+            raise serializers.ValidationError(
+                f"The username '{existing.username}' is already taken "
+                f"({state} account). Usernames must be unique regardless of "
+                "case — choose another, or reactivate/rename that account.")
+        return value
+
     def create(self, validated_data):
         from .invites import make_temp_password
 

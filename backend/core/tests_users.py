@@ -97,3 +97,25 @@ class UserInviteTests(TestCase):
         r = self.client.delete(f"/api/v1/users/{self.admin.id}")
         self.assertEqual(r.status_code, 400)
         self.assertTrue(User.objects.filter(pk=self.admin.id).exists())
+
+    def test_duplicate_username_blocked_case_insensitive(self):
+        make_user("pubudu", User.Role.SITE_ENGINEER)
+        r = self.client.post("/api/v1/users", {
+            "username": "Pubudu", "full_name": "Pubudu Two",
+            "role": "SITE_ENGINEER", "password": "chosen-pass-9"},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("username", r.data)
+        self.assertEqual(User.objects.filter(username__iexact="pubudu").count(),
+                         1)
+
+    def test_deactivated_username_stays_reserved(self):
+        u = make_user("pubudu", User.Role.SITE_ENGINEER)
+        u.is_active = False
+        u.save()
+        r = self.client.post("/api/v1/users", {
+            "username": "pubudu", "full_name": "New Pubudu",
+            "role": "SITE_ENGINEER", "password": "chosen-pass-9"},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("username", r.data)
