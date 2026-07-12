@@ -192,8 +192,8 @@ function num(v) {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function LineDocForm({ docType, site, sites, me, existing, onSaved,
-                              onCancel }) {
+export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
+                              onSaved, onCancel }) {
   const { items, reload: reloadItems } = useItems();
   const [payload, setPayload] = useState(existing?.payload ||
     (docType === "LM" ? { departure_point: "Male'" } : {}));
@@ -230,6 +230,22 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
     const mr = openMrs.find((m) => m.ref === first);
     if (mr) setSiteId(mr.site);
   }, [mrRefs, openMrs, isRefForm, siteId]);
+
+  // A GRN raised from a manifest prefills its lines from the LM. We defer
+  // creating the document until save, so fetch the prefill client-side here
+  // (the backend does the same when lm_ref is posted).
+  useEffect(() => {
+    if (docType !== "GRN" || existing || !grnLmRef) return;
+    api(`/lm/${grnLmRef}/grn-prefill`).then((data) => {
+      setPayload((p) => ({ ...p, ...(data.payload || {}) }));
+      setRows((data.lines || []).map((l) => ({
+        item_id: l.item_id, free_text: !l.item_id,
+        free_text_desc: l.free_text_desc, unit: l.unit,
+        qty_manifest: l.qty_manifest, qty_received: l.qty_received,
+        remarks: l.remarks,
+      })));
+    }).catch((e) => setError(e.message));
+  }, [docType, existing, grnLmRef]);
   const [rows, setRows] = useState(
     existing?.lines?.map((l) => ({
       item_id: l.item, free_text: l.is_free_text,
@@ -308,6 +324,12 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
   }
 
   async function save() {
+    // A new GRN is only worth creating once it has at least one line — this is
+    // what stops "click GRN → close" leaving empty drafts behind.
+    if (!existing && docType === "GRN" && linesForSave().length === 0) {
+      setError("Add at least one item before saving this GRN.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -332,6 +354,7 @@ export function LineDocForm({ docType, site, sites, me, existing, onSaved,
         if (mrRefs.trim()) body.mr_refs = mrRefs.split(",").map((s) => s.trim());
         if (prRefs.trim()) body.pr_refs = prRefs.split(",").map((s) => s.trim());
         if (poRefs.trim()) body.po_refs = poRefs.split(",").map((s) => s.trim());
+        if (docType === "GRN" && grnLmRef) body.lm_ref = grnLmRef;
         doc = await api("/documents", { method: "POST", body });
       }
       onSaved(doc);

@@ -332,18 +332,12 @@ export default function App() {
                  prefill: { previous_ir_ref: doc.ref, payload } });
   }
 
-  async function createGrn(lmRef) {
+  function createGrn(lmRef) {
+    // Open the GRN form without creating anything yet — the reference is only
+    // minted when the user saves, so abandoning the form leaves no empty draft.
     setError(null);
-    try {
-      const doc = await api("/documents", {
-        method: "POST",
-        body: { doc_type: "GRN", site_id: openSite.id,
-                ...(lmRef ? { lm_ref: lmRef } : {}) },
-      });
-      setDocView({ mode: "line-form", docType: "GRN", doc });
-    } catch (e) {
-      setError(e.message);
-    }
+    setDocView({ mode: "line-form", docType: "GRN", doc: null,
+                 grnLmRef: lmRef || null });
   }
 
   function bump() {
@@ -486,6 +480,7 @@ export default function App() {
           {docView?.mode === "line-form" && (
             <LineDocForm docType={docView.docType} site={openSite}
                          sites={sites} me={me} existing={docView.doc}
+                         grnLmRef={docView.grnLmRef}
                          onSaved={(doc) => { bump();
                            setDocView({ mode: "line-view", doc }); }}
                          onCancel={closeDoc} />
