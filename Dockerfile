@@ -27,6 +27,9 @@ COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ /app/backend/
+# Import templates (CSV masters for import_items / import_employees / etc.)
+# so `python manage.py import_items /app/import-templates/<file>` works.
+COPY import-templates/ /app/import-templates/
 # The built SPA lands at /app/frontend/dist so BASE_DIR.parent/frontend/dist
 # resolves (see settings.py TEMPLATES / STATICFILES_DIRS)
 COPY --from=frontend /build/dist /app/frontend/dist
