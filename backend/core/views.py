@@ -473,6 +473,22 @@ class IsPurchasingOrReadOnly(BasePermission):
         return request.user.role in ("HO_PURCHASING", "ADMIN")
 
 
+class CanEditCatalogItem(BasePermission):
+    """HO Purchasing/Admin manage the catalogue; site teams may CREATE a
+    missing item (flagged provisional) while receiving goods / adding tools."""
+    OWNER = ("HO_PURCHASING", "ADMIN")
+    CREATOR = OWNER + ("SITE_ADMIN", "SITE_ENGINEER", "PM")
+
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        if request.method == "POST":
+            return request.user.role in self.CREATOR
+        return request.user.role in self.OWNER   # PATCH: owners only
+
+
 class ItemCategoryViewSet(viewsets.ModelViewSet):
     """Controlled item categories, managed by HO Purchasing on their own
     page (owner, 2026-07-08)."""
@@ -495,7 +511,7 @@ class ItemCategoryViewSet(viewsets.ModelViewSet):
 
 class ItemViewSet(viewsets.ModelViewSet):
     serializer_class = ItemSerializer
-    permission_classes = [IsPurchasingOrReadOnly]
+    permission_classes = [CanEditCatalogItem]
     http_method_names = ["get", "post", "patch", "head", "options"]
 
     def get_queryset(self):
@@ -514,15 +530,30 @@ class ItemViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         from django.db import transaction
 
+        # A site team creating a missing item marks it provisional for HO review
+        provisional = self.request.user.role not in ("HO_PURCHASING", "ADMIN")
         with transaction.atomic():  # row-locked counter needs a transaction
-            item = serializer.save(code=next_item_code())
+            item = serializer.save(code=next_item_code(),
+                                   is_provisional=provisional)
         audit("item", item.id, "ITEM_CREATED", actor=self.request.user,
-              detail={"code": item.code})
+              detail={"code": item.code, "provisional": provisional})
 
     def perform_update(self, serializer):
         item = serializer.save()
         audit("item", item.id, "ITEM_UPDATED", actor=self.request.user,
               detail={"fields": sorted(self.request.data.keys())})
+
+    @action(detail=True, methods=["post"])
+    def approve(self, request, pk=None):
+        """HO Purchasing / Admin confirm a site-created provisional item."""
+        if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+            return Response({"detail": "HO Purchasing/Admin approve items."},
+                            status=403)
+        item = self.get_object()
+        item.is_provisional = False
+        item.save(update_fields=["is_provisional", "updated_at"])
+        audit("item", item.id, "ITEM_APPROVED", actor=request.user)
+        return Response(self.get_serializer(item).data)
 
     @action(detail=True, methods=["post"])
     def merge(self, request, pk=None):

@@ -45,6 +45,16 @@ export default function ItemsPage({ me }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function approve(item) {
+    setError(null);
+    try {
+      await api(`/items/${item.id}/approve`, { method: "POST" });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  const provisionalCount = items.filter((i) => i.is_provisional).length;
+
   async function uploadPhoto(item, file) {
     if (!file) return;
     setError(null);
@@ -96,6 +106,14 @@ export default function ItemsPage({ me }) {
         </div>
       )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {canEdit && provisionalCount > 0 && (
+        <p style={{ background: "#fdf6ef", border: "1px solid #f0c9a8",
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12.5,
+                    color: "#8a5a00", margin: "0 0 8px" }}>
+          {provisionalCount} site-added item(s) awaiting review — check the
+          spelling/category and click <strong>Approve</strong>.
+        </p>
+      )}
       {canEdit && (
         <p style={{ color: "#5a6b78", fontSize: 12, margin: "0 0 8px" }}>
           Mark ★ Major for key project materials — site staff can load these
@@ -128,7 +146,14 @@ export default function ItemsPage({ me }) {
               </td>
               <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)" }}>
                 {item.code}</td>
-              <td style={td}>{item.description}</td>
+              <td style={td}>{item.description}
+                {item.is_provisional && (
+                  <span style={{ marginLeft: 6, background: "#fdf1d6",
+                                 color: "#8a5a00", fontSize: 10.5,
+                                 padding: "1px 6px", borderRadius: 5 }}>
+                    provisional</span>
+                )}
+              </td>
               <td style={td}>{item.unit}</td>
               <td style={td}>{item.category}</td>
               <td style={td}>{item.brand}</td>
@@ -159,6 +184,12 @@ export default function ItemsPage({ me }) {
                                    fontSize: 12 }}>
                     {item.photo_url ? "Replace photo" : "Add photo"}
                   </button>
+                  {item.is_provisional && (
+                    <button onClick={() => approve(item)}
+                            style={{ ...ghostButton, padding: "2px 10px",
+                                     fontSize: 12, marginLeft: 6,
+                                     color: "#1a7f37" }}>Approve</button>
+                  )}
                   <button onClick={() => patch(item,
                                                { is_active: !item.is_active })}
                           style={{ ...ghostButton, padding: "2px 10px",

@@ -9,9 +9,10 @@ class ItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = Item
         fields = ["id", "code", "description", "unit", "category", "brand",
-                  "spec_ref", "notes", "is_active", "is_major", "photo",
-                  "photo_url", "merged_into"]
-        read_only_fields = ["code", "merged_into", "photo_url"]
+                  "spec_ref", "notes", "is_active", "is_major",
+                  "is_provisional", "photo", "photo_url", "merged_into"]
+        read_only_fields = ["code", "merged_into", "photo_url",
+                            "is_provisional"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
 
     def get_photo_url(self, obj):

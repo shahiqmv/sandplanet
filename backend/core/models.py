@@ -452,6 +452,9 @@ class Item(models.Model):
     is_active = models.BooleanField(default=True)
     is_major = models.BooleanField(  # a key project material (shows on DPR)
         default=False)
+    # Created by a site team when an item was missing from the catalogue —
+    # awaiting HO Purchasing review (owner, temporary access).
+    is_provisional = models.BooleanField(default=False)
     photo = models.FileField(upload_to="items/", null=True, blank=True)
     merged_into = models.ForeignKey(  # duplicate resolution
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="+"

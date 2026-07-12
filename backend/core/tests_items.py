@@ -29,6 +29,38 @@ class ItemFieldTests(TestCase):
         self.item.refresh_from_db()
         self.assertTrue(self.item.is_major)
 
+    def test_site_team_creates_provisional_item(self):
+        sa = make_user("sa9", User.Role.SITE_ADMIN)
+        self.client.force_authenticate(sa)
+        r = self.client.post("/api/v1/items",
+                             {"description": "New Chemical Anchor 12mm",
+                              "unit": "nos"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["is_provisional"])
+        self.assertTrue(r.data["code"].startswith("ITM-"))
+
+    def test_ho_created_item_is_not_provisional(self):
+        r = self.client.post("/api/v1/items",
+                             {"description": "Gate Valve 40mm", "unit": "nos"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertFalse(r.data["is_provisional"])
+
+    def test_site_team_cannot_edit_existing_item(self):
+        sa = make_user("sa8", User.Role.SITE_ADMIN)
+        self.client.force_authenticate(sa)
+        r = self.client.patch(f"/api/v1/items/{self.item.id}",
+                              {"description": "hacked"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_ho_approves_provisional_item(self):
+        prov = Item.objects.create(code="ITM-90099", description="Site Item",
+                                   unit="nos", is_provisional=True)
+        r = self.client.post(f"/api/v1/items/{prov.id}/approve")
+        self.assertEqual(r.status_code, 200, r.data)
+        prov.refresh_from_db()
+        self.assertFalse(prov.is_provisional)
+
     def test_upload_photo_returns_url(self):
         with override_settings(MEDIA_ROOT="test-media"):
             photo = SimpleUploadedFile("cement.png", PNG,

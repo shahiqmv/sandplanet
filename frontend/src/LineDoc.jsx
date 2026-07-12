@@ -117,7 +117,10 @@ function RefPicker({ label, refs, setRefs, options, hint }) {
 
 function ItemCell({ items, row, set, me, onItemCreated }) {
   const label = (it) => `${it.code} — ${it.description}`;
-  const canCreate = ["HO_PURCHASING", "ADMIN"].includes(me?.role);
+  // Site teams may add a missing item on the spot (flagged provisional for
+  // HO review); HO Purchasing/Admin add permanent catalogue items (owner).
+  const canCreate = ["HO_PURCHASING", "ADMIN", "SITE_ADMIN", "SITE_ENGINEER",
+                     "PM"].includes(me?.role);
   if (row.free_text) {
     return (
       <input value={row.free_text_desc || ""} placeholder="New item description"

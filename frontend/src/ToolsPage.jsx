@@ -50,6 +50,25 @@ export default function ToolsPage({ site, me, onClose }) {
     setDraft(EMPTY); setAdding(false);
   });
 
+  // Missing tool type? Site staff can add it to the catalog on the spot
+  // (created provisional for HO review), then pick it here.
+  const newToolType = () => run(async () => {
+    const name = window.prompt(
+      "New tool type name (e.g. Circular Saw 8 Inch):");
+    if (!name || !name.trim()) return;
+    const cats = catalog?.categories || ["Tools & Equipment"];
+    let category = cats[0];
+    if (cats.length > 1) {
+      category = window.prompt(`Which tool category? ${cats.join(" · ")}`,
+                               category);
+      if (category === null) return;
+    }
+    const item = await api("/items", { method: "POST",
+      body: { description: name.trim(), unit: "nos", category } });
+    setCatalog(await api("/tool-catalog"));
+    setDraft({ ...draft, item_id: String(item.id) });
+  });
+
   const changeState = (t, state, needNote) => run(async () => {
     const note = window.prompt(
       state === "FAULTY" ? "What's the fault? (required)"
@@ -110,16 +129,19 @@ export default function ToolsPage({ site, me, onClose }) {
                       padding: 12, margin: "10px 0", display: "flex", gap: 8,
                       flexWrap: "wrap", alignItems: "center" }}>
           {catalog && catalog.items.length === 0 ? (
-            <p style={{ fontSize: 13, color: "var(--muted)", margin: 0 }}>
-              No tool types in the catalog yet. Add them in the Item Register
-              under a category flagged as a tool, then they'll appear here.
-            </p>
+            <>
+              <p style={{ fontSize: 13, color: "var(--muted)", margin: 0,
+                          flex: "1 1 auto" }}>
+                No tool types in the catalog yet — add one:
+              </p>
+              <Btn onClick={newToolType}>+ New tool type</Btn>
+            </>
           ) : (
             <>
               <select value={draft.item_id}
                       onChange={(e) => setDraft({ ...draft,
                                                   item_id: e.target.value })}
-                      style={{ ...inputStyle, flex: "1 1 240px" }}>
+                      style={{ ...inputStyle, flex: "1 1 220px" }}>
                 <option value="">— choose tool —</option>
                 {(catalog?.categories || []).map((cat) => (
                   <optgroup key={cat} label={cat}>
@@ -129,6 +151,10 @@ export default function ToolsPage({ site, me, onClose }) {
                   </optgroup>
                 ))}
               </select>
+              <button onClick={newToolType} style={{ ...ghostButton,
+                        padding: "6px 10px", fontSize: 12 }}
+                      title="Add a tool type that isn't in the list">
+                + New type</button>
               <input placeholder="Serial no." value={draft.serial_no}
                      onChange={(e) => setDraft({ ...draft,
                                                  serial_no: e.target.value })}

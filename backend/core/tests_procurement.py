@@ -110,10 +110,18 @@ class ItemMasterTests(ProcBase):
         self.assertEqual(r.status_code, 201)
         self.assertTrue(r.data["code"].startswith("ITM-"))
 
-    def test_site_roles_cannot_edit_catalog(self):
+    def test_site_roles_create_provisional_but_cannot_edit(self):
+        # Site staff may add a MISSING item (flagged provisional for HO review)
         self.as_user(self.sa)
-        r = self.client.post("/api/v1/items", {"description": "x", "unit": "no"},
+        r = self.client.post("/api/v1/items",
+                             {"description": "Site Added Bolt M10", "unit": "no"},
                              format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["is_provisional"])
+        # but they cannot edit an existing catalogue item
+        existing = Item.objects.filter(is_provisional=False).first()
+        r = self.client.patch(f"/api/v1/items/{existing.id}",
+                              {"description": "hacked"}, format="json")
         self.assertEqual(r.status_code, 403)
 
     def test_search_and_merge(self):
