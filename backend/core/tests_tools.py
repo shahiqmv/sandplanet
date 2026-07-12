@@ -105,6 +105,23 @@ class ToolsApiTests(ToolsBase):
                             format="json")
         self.assertEqual(r.data["state"], "IN_USE")
 
+    def test_edit_can_retype_from_catalog(self):
+        """Renaming a unit = re-pointing it at another catalog tool type;
+        name + category follow, and the change stays inside the catalog."""
+        self.verified_grn([(self.drill, 1)])
+        saw = Item.objects.create(code="ITM-90007", description="Circular saw",
+                                  unit="nos", category="Tools & Equipment")
+        aid = ToolAsset.objects.filter(name="Battery drill").first().id
+        r = self.client.patch(f"/api/v1/tools/asset/{aid}",
+                             {"item_id": saw.id}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["name"], "Circular saw")
+        self.assertEqual(r.data["item_id"], saw.id)
+        # a non-tool item is rejected — names stay controlled
+        r = self.client.patch(f"/api/v1/tools/asset/{aid}",
+                             {"item_id": self.cement.id}, format="json")
+        self.assertEqual(r.status_code, 400)
+
     def test_register_lists_with_counts(self):
         self.verified_grn([(self.drill, 2)])
         r = self.client.get(f"/api/v1/tools/{self.site.id}")

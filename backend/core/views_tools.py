@@ -34,6 +34,7 @@ def _get_site(request, site_id):
 def _asset_info(t):
     return {
         "id": t.id, "name": t.name, "category": t.category,
+        "item_id": t.item_id,
         "serial_no": t.serial_no, "model": t.model, "brand": t.brand,
         "notes": t.notes, "state": t.state, "state_note": t.state_note,
         "source": t.source, "grn": t.document.ref if t.document_id else None,
@@ -120,6 +121,20 @@ def tool_detail(request, pk):
     if request.user.role not in MANAGE_ROLES:
         return Response({"detail": "Only site staff manage tools."}, status=403)
     changed = []
+    # Tool name/category are controlled: to rename a unit, re-point it at another
+    # catalog tool type (keeps the DPR summary from fragmenting on spellings).
+    if request.data.get("item_id") and str(request.data["item_id"]) != \
+            str(asset.item_id):
+        item = Item.objects.filter(pk=request.data["item_id"]).first()
+        if not item or not tools_svc.is_tool_item(item):
+            return Response(
+                {"detail": "Choose a tool from the catalog. Tool types are "
+                           "controlled — add a new one in the Item Register "
+                           "under a tool category first."}, status=400)
+        asset.item = item
+        asset.name = item.description.strip()
+        asset.category = item.category
+        changed += ["item", "name", "category"]
     for f in DETAIL_FIELDS:
         if f in request.data:
             setattr(asset, f, request.data[f] or "")

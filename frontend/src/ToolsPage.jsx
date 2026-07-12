@@ -50,23 +50,29 @@ export default function ToolsPage({ site, me, onClose }) {
     setDraft(EMPTY); setAdding(false);
   });
 
-  // Missing tool type? Site staff can add it to the catalog on the spot
-  // (created provisional for HO review), then pick it here.
-  const newToolType = () => run(async () => {
+  // Missing tool type? Site staff can add it to the catalog on the spot,
+  // then pick it. Returns the created item (or null if cancelled) so both the
+  // Add form and the Edit modal can reuse it.
+  async function createToolType() {
     const name = window.prompt(
       "New tool type name (e.g. Circular Saw 8 Inch):");
-    if (!name || !name.trim()) return;
+    if (!name || !name.trim()) return null;
     const cats = catalog?.categories || ["Tools & Equipment"];
     let category = cats[0];
     if (cats.length > 1) {
       category = window.prompt(`Which tool category? ${cats.join(" · ")}`,
                                category);
-      if (category === null) return;
+      if (category === null) return null;
     }
     const item = await api("/items", { method: "POST",
       body: { description: name.trim(), unit: "nos", category } });
     setCatalog(await api("/tool-catalog"));
-    setDraft({ ...draft, item_id: String(item.id) });
+    return item;
+  }
+
+  const newToolType = () => run(async () => {
+    const item = await createToolType();
+    if (item) setDraft((d) => ({ ...d, item_id: String(item.id) }));
   });
 
   const changeState = (t, state, needNote) => run(async () => {
@@ -224,24 +230,35 @@ export default function ToolsPage({ site, me, onClose }) {
       </table>
 
       {edit && (
-        <EditModal asset={edit} onClose={() => setEdit(null)}
+        <EditModal asset={edit} catalog={catalog} onNewType={createToolType}
+          onClose={() => setEdit(null)}
           onSaved={() => { setEdit(null); load(); }} onError={setError} />
       )}
     </section>
   );
 }
 
-function EditModal({ asset, onClose, onSaved, onError }) {
+function EditModal({ asset, catalog, onNewType, onClose, onSaved, onError }) {
   const [f, setF] = useState({ serial_no: asset.serial_no || "",
     model: asset.model || "", brand: asset.brand || "",
     notes: asset.notes || "" });
+  const [itemId, setItemId] = useState(String(asset.item_id || ""));
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setF((s) => ({ ...s, [k]: v }));
+
+  async function addType() {
+    onError(null);
+    try {
+      const item = await onNewType();
+      if (item) setItemId(String(item.id));
+    } catch (e) { onError(e.message); }
+  }
 
   async function save() {
     setBusy(true); onError(null);
     try {
-      await api(`/tools/asset/${asset.id}`, { method: "PATCH", body: f });
+      await api(`/tools/asset/${asset.id}`,
+                { method: "PATCH", body: { ...f, item_id: itemId } });
       onSaved();
     } catch (e) { onError(e.message); }
     finally { setBusy(false); }
@@ -269,9 +286,35 @@ function EditModal({ asset, onClose, onSaved, onError }) {
                   style={{ ...ghostButton, marginLeft: "auto" }}>Close</button>
         </div>
         <p style={{ fontSize: 12, color: "var(--muted)", margin: "2px 0 10px" }}>
-          {asset.category || "—"} · tool type is controlled from the catalog
+          Tool type comes from the catalog — pick a different one to rename this
+          unit (keeps every report consistent).
         </p>
         <div style={{ marginTop: 4 }}>
+          <label style={{ fontSize: 12.5, display: "block", marginBottom: 8 }}>
+            <span style={{ color: "#5a6b78" }}>Tool type</span>
+            <div style={{ display: "flex", gap: 6 }}>
+              <select value={itemId} onChange={(e) => setItemId(e.target.value)}
+                      style={{ ...inputStyle, flex: "1 1 auto" }}>
+                {!catalog?.items?.some((i) => String(i.id) === itemId) && (
+                  <option value={itemId}>{asset.name}</option>
+                )}
+                {(catalog?.categories || []).map((cat) => (
+                  <optgroup key={cat} label={cat}>
+                    {(catalog?.items || []).filter((i) => i.category === cat)
+                      .map((i) => (
+                        <option key={i.id} value={String(i.id)}>
+                          {i.description}</option>
+                      ))}
+                  </optgroup>
+                ))}
+              </select>
+              <button onClick={addType} type="button"
+                      style={{ ...ghostButton, padding: "6px 10px",
+                               fontSize: 12, whiteSpace: "nowrap" }}
+                      title="Add a tool type that isn't in the list">
+                + New type</button>
+            </div>
+          </label>
           <L label="Serial no." k="serial_no" />
           <L label="Model" k="model" />
           <L label="Brand" k="brand" />
