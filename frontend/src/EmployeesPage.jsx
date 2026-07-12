@@ -293,6 +293,8 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
     months: "12", fee: "" })));
   const [payee, setPayee] = useState("Immigration Maldives");
   const [currency, setCurrency] = useState("MVR");
+  const [filter, setFilter] = useState("");
+  const [bulk, setBulk] = useState({ months: "12", fee: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
@@ -301,6 +303,19 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
     rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const chosen = rows.filter((r) => r.sel);
   const total = chosen.reduce((a, r) => a + (parseFloat(r.fee) || 0), 0);
+
+  const q = filter.trim().toLowerCase();
+  const visible = q
+    ? rows.filter((r) => `${r.emp_no} ${r.full_name}`.toLowerCase().includes(q))
+    : rows;
+  const visIds = new Set(visible.map((r) => r.id));
+  const allVisSel = visible.length > 0 && visible.every((r) => r.sel);
+
+  const setAll = (sel) => setRows((rs) =>
+    rs.map((r) => (visIds.has(r.id) ? { ...r, sel } : r)));
+  const applyBulk = () => setRows((rs) => rs.map((r) =>
+    (r.sel ? { ...r, months: bulk.months,
+               fee: bulk.fee === "" ? r.fee : bulk.fee } : r)));
 
   async function submit() {
     setError(null);
@@ -320,14 +335,17 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
     finally { setBusy(false); }
   }
 
+  const stickyTh = { ...th, position: "sticky", top: 0, background: "#fff",
+                     zIndex: 1 };
+
   return (
     <div onClick={onClose}
          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)",
                   display: "flex", alignItems: "center",
-                  justifyContent: "center", zIndex: 60, padding: 20 }}>
+                  justifyContent: "center", zIndex: 60, padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()}
-           style={{ ...card, maxWidth: 720, width: "100%", maxHeight: "88vh",
-                    overflow: "auto" }}>
+           style={{ ...card, maxWidth: 980, width: "96vw", maxHeight: "92vh",
+                    display: "flex", flexDirection: "column" }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
           <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
             Batch work-permit renewal</h2>
@@ -347,75 +365,122 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
           </div>
         ) : (
           <>
-            <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0 10px" }}>
+            <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0 8px" }}>
               One PYR is raised for the total fee (Permits &amp; Fees, Head
               Office). Each expiry moves forward only when Finance pays it.
             </p>
-            <table style={{ width: "100%", borderCollapse: "collapse",
-                            fontSize: 13 }}>
-              <thead><tr>
-                <th style={th} />
-                <th style={th}>Worker</th><th style={th}>Current expiry</th>
-                <th style={th}>Months</th><th style={th}>Fee</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} style={{ opacity: r.sel ? 1 : 0.55 }}>
-                    <td style={td}>
-                      <input type="checkbox" checked={r.sel}
-                             onChange={(e) => setRow(r.id,
-                               { sel: e.target.checked })} /></td>
-                    <td style={td}>{r.emp_no} {r.full_name}
-                      {r.pending && (
-                        <span style={{ fontSize: 11, color: "#b35900",
-                                       marginLeft: 6 }}>· renewal pending</span>
-                      )}</td>
-                    <td style={{ ...td,
-                                 color: ["EXPIRED", "EXPIRING"].includes(r.state)
-                                   ? "#c0392b" : "inherit" }}>
-                      {r.expiry || "—"}</td>
-                    <td style={td}>
-                      <select value={r.months}
-                              onChange={(e) => setRow(r.id,
-                                { months: e.target.value })}
-                              style={{ ...inputStyle, width: 90 }}>
-                        {[3, 6, 12, 24].map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select></td>
-                    <td style={td}>
-                      <input type="number" min="0" value={r.fee}
-                             placeholder="0"
-                             onChange={(e) => setRow(r.id,
-                               { fee: e.target.value })}
-                             style={{ ...inputStyle, width: 90 }} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
 
-            <div style={{ display: "flex", gap: 10, marginTop: 14,
-                          flexWrap: "wrap", alignItems: "center" }}>
-              <label style={{ fontSize: 12.5 }}>Pay to{" "}
-                <input value={payee} onChange={(e) => setPayee(e.target.value)}
-                       style={{ ...inputStyle, width: 200 }} /></label>
-              <label style={{ fontSize: 12.5 }}>Currency{" "}
-                <select value={currency}
-                        onChange={(e) => setCurrency(e.target.value)}
-                        style={{ ...inputStyle, width: 80 }}>
-                  <option value="MVR">MVR</option>
-                  <option value="USD">USD</option>
-                </select></label>
-              <span style={{ marginLeft: "auto", fontWeight: 600,
-                             color: "var(--sp-navy)" }}>
-                {chosen.length} selected · total {currency}{" "}
-                {total.toLocaleString()}</span>
+            {/* toolbar: filter + select-all + bulk apply */}
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                          alignItems: "center", marginBottom: 8 }}>
+              <input placeholder="Filter by name / emp no." value={filter}
+                     onChange={(e) => setFilter(e.target.value)}
+                     style={{ ...inputStyle, width: 200 }} />
+              <button onClick={() => setAll(!allVisSel)} style={ghostButton}>
+                {allVisSel ? "Clear shown" : "Select shown"}</button>
+              <span style={{ width: 1, height: 20, background: "var(--sp-border)",
+                             margin: "0 2px" }} />
+              <span style={{ fontSize: 12.5, color: "#5a6b78" }}>
+                Set selected to</span>
+              <select value={bulk.months}
+                      onChange={(e) => setBulk({ ...bulk,
+                                                 months: e.target.value })}
+                      style={{ ...inputStyle, width: 80 }}>
+                {[3, 6, 12, 24].map((m) => (
+                  <option key={m} value={m}>{m}m</option>
+                ))}
+              </select>
+              <input type="number" min="0" placeholder="fee each"
+                     value={bulk.fee}
+                     onChange={(e) => setBulk({ ...bulk, fee: e.target.value })}
+                     style={{ ...inputStyle, width: 90 }} />
+              <button onClick={applyBulk} style={ghostButton}
+                      disabled={!chosen.length}>Apply to selected</button>
             </div>
-            {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-            <div style={{ marginTop: 12 }}>
-              <button onClick={submit} disabled={busy || !chosen.length}
-                      style={buttonStyle}>
-                {busy ? "Raising PYR…" : "Renew + raise PYR"}</button>
+
+            {/* scrollable worker list with a sticky header */}
+            <div style={{ flex: 1, overflow: "auto", border:
+                          "1px solid var(--sp-border)", borderRadius: 8 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse",
+                              fontSize: 13 }}>
+                <thead><tr>
+                  <th style={{ ...stickyTh, width: 32 }}>
+                    <input type="checkbox" checked={allVisSel}
+                           onChange={() => setAll(!allVisSel)} /></th>
+                  <th style={stickyTh}>Worker</th>
+                  <th style={stickyTh}>Current expiry</th>
+                  <th style={stickyTh}>Months</th><th style={stickyTh}>Fee</th>
+                </tr></thead>
+                <tbody>
+                  {visible.map((r) => (
+                    <tr key={r.id} style={{ opacity: r.sel ? 1 : 0.55 }}>
+                      <td style={td}>
+                        <input type="checkbox" checked={r.sel}
+                               onChange={(e) => setRow(r.id,
+                                 { sel: e.target.checked })} /></td>
+                      <td style={td}>{r.emp_no} {r.full_name}
+                        {r.pending && (
+                          <span style={{ fontSize: 11, color: "#b35900",
+                                     marginLeft: 6 }}>· renewal pending</span>
+                        )}</td>
+                      <td style={{ ...td, whiteSpace: "nowrap",
+                                   color: ["EXPIRED", "EXPIRING"].includes(r.state)
+                                     ? "#c0392b" : "inherit" }}>
+                        {r.expiry || "—"}</td>
+                      <td style={td}>
+                        <select value={r.months}
+                                onChange={(e) => setRow(r.id,
+                                  { months: e.target.value })}
+                                style={{ ...inputStyle, width: 80 }}>
+                          {[3, 6, 12, 24].map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select></td>
+                      <td style={td}>
+                        <input type="number" min="0" value={r.fee}
+                               placeholder="0"
+                               onChange={(e) => setRow(r.id,
+                                 { fee: e.target.value })}
+                               style={{ ...inputStyle, width: 90 }} /></td>
+                    </tr>
+                  ))}
+                  {visible.length === 0 && (
+                    <tr><td style={{ ...td, textAlign: "center",
+                                     color: "#5a6b78" }} colSpan={5}>
+                      No workers match "{filter}".</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            {/* fixed action bar */}
+            <div style={{ borderTop: "1px solid var(--sp-border)",
+                          paddingTop: 12, marginTop: 12 }}>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+                            alignItems: "center" }}>
+                <label style={{ fontSize: 12.5 }}>Pay to{" "}
+                  <input value={payee}
+                         onChange={(e) => setPayee(e.target.value)}
+                         style={{ ...inputStyle, width: 200 }} /></label>
+                <label style={{ fontSize: 12.5 }}>Currency{" "}
+                  <select value={currency}
+                          onChange={(e) => setCurrency(e.target.value)}
+                          style={{ ...inputStyle, width: 80 }}>
+                    <option value="MVR">MVR</option>
+                    <option value="USD">USD</option>
+                  </select></label>
+                <span style={{ marginLeft: "auto", fontWeight: 600,
+                               color: "var(--sp-navy)" }}>
+                  {chosen.length} selected · total {currency}{" "}
+                  {total.toLocaleString()}</span>
+              </div>
+              {error && <p style={{ color: "#c0392b", fontSize: 13,
+                                    margin: "8px 0 0" }}>{error}</p>}
+              <div style={{ marginTop: 12 }}>
+                <button onClick={submit} disabled={busy || !chosen.length}
+                        style={buttonStyle}>
+                  {busy ? "Raising PYR…" : "Renew + raise PYR"}</button>
+              </div>
             </div>
           </>
         )}
