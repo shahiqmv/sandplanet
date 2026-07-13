@@ -17,7 +17,7 @@ const ROLES = [
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];
 
-const EMPTY = { username: "", full_name: "", email: "", role: "",
+const EMPTY = { username: "", full_name: "", email: "", phone: "", role: "",
                 password: "" };
 
 export default function UsersPage({ me, sites }) {
@@ -146,6 +146,10 @@ export default function UsersPage({ me, sites }) {
         <input placeholder="Email (for login details)" type="email"
                value={draft.email}
                onChange={(e) => setDraft({ ...draft, email: e.target.value })}
+               style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
+        <input placeholder="Mobile (+960…) for SMS/WhatsApp alerts"
+               value={draft.phone}
+               onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
                style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
         <select value={draft.role}
                 onChange={(e) => setDraft({ ...draft, role: e.target.value })}

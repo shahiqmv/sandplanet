@@ -408,6 +408,8 @@ def _apply(request, doc, new_status, action, roles=None, pm_gate=False,
         _record(doc, action, request, comment=comment)
     audit("document", doc.id, f"DOC_{action}", actor=request.user,
           from_state=old, to_state=new_status, detail={"ref": doc.ref})
+    from .notify import notify_document
+    notify_document(doc, request.user)  # alert whoever it now blocks
     if pdf_milestone:
         generate_pdf(doc, doc.current_revision, pdf_milestone)
     return None

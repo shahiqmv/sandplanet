@@ -206,6 +206,8 @@ def _set_status(doc, new_status, action, user, comment=""):
     _record(doc, action, user, comment=comment)
     audit("document", doc.id, f"PYR_{action}", actor=user,
           from_state=old, to_state=new_status, detail={"ref": doc.ref})
+    from .notify import notify_document
+    notify_document(doc, user)  # alert whoever it now blocks
 
 
 def _is_pm_for(user, doc):

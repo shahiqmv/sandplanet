@@ -75,8 +75,9 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = [
-            "id", "username", "full_name", "email", "role", "is_active",
-            "last_login", "password", "allocations", "must_change_password",
+            "id", "username", "full_name", "email", "phone", "notify_external",
+            "role", "is_active", "last_login", "password", "allocations",
+            "must_change_password",
         ]
         read_only_fields = ["last_login", "is_active", "must_change_password"]
 

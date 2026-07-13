@@ -9,6 +9,7 @@ import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import ImportOrders, { IprView, ImportPaymentsDue } from "./ImportOrders.jsx";
+import NotificationBell from "./NotificationBell.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollRunPage from "./PayrollRunPage.jsx";
@@ -413,7 +414,14 @@ export default function App() {
           </nav>
         )}
         {me.authenticated && (
-          <span style={{ marginLeft: "auto", fontSize: 13 }}>
+          <NotificationBell onOpen={(ref, docType) => {
+            if (docType === "PV") { setDocView(null); setOpenSite(null);
+                                    setHoPage("vouchers"); }
+            else openDoc(ref);
+          }} />
+        )}
+        {me.authenticated && (
+          <span style={{ marginLeft: 16, fontSize: 13 }}>
             {me.full_name} · {me.role.replace(/_/g, " ")}
             <button onClick={logoutUser}
                     style={{ marginLeft: 14, background: "transparent",

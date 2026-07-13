@@ -2,10 +2,10 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import views, views_cost as cost, views_documents as docs, \
-    views_hr as hr, views_imports as imports_api, views_petty_cash as petty, \
-    views_projects as projects, views_payroll as payroll_api, \
-    views_quotes as quotes, views_stock as stock, views_tools as tools_api, \
-    views_vouchers as vouchers
+    views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
+    views_petty_cash as petty, views_projects as projects, \
+    views_payroll as payroll_api, views_quotes as quotes, \
+    views_stock as stock, views_tools as tools_api, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -27,6 +27,9 @@ urlpatterns = [
     path("auth/change-password", views.auth_change_password,
          name="auth-change-password"),
     path("auth/me", views.auth_me, name="auth-me"),
+    path("notifications", notify_api.notifications_list, name="notifications"),
+    path("notifications/read", notify_api.notifications_read,
+         name="notifications-read"),
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
     path("company/logo", views.company_logo, name="company-logo"),
     path("pms", views.pm_list, name="pm-list"),

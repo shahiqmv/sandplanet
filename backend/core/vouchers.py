@@ -120,6 +120,8 @@ def submit_voucher(pv, actor):
                             actor_role=actor.role)
     audit("document", pv.id, "PV_SUBMITTED", actor=actor,
           from_state="DRAFT", to_state="SUBMITTED", detail={"ref": pv.ref})
+    from .notify import notify_document
+    notify_document(pv, actor)  # a signatory must approve the voucher
     return None
 
 
@@ -157,6 +159,8 @@ def authorise_source(doc, actor):
                             comment="Authorised on voucher")
     audit("document", doc.id, "AUTHORISE", actor=actor,
           to_state="AUTHORISED", detail={"ref": doc.ref})
+    from .notify import notify_document
+    notify_document(doc, actor)  # an authorised PYR is Finance's to pay
 
 
 def _return_source(doc, actor, note):

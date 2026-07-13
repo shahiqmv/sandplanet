@@ -30,6 +30,10 @@ class User(AbstractUser):
     # Set when an admin issues a temporary password by invite email; the user
     # must choose their own password before using the app.
     must_change_password = models.BooleanField(default=False)
+    # Mobile (E.164, e.g. +9607xxxxxx) for SMS/WhatsApp approval alerts, and an
+    # opt-out if the in-app bell is enough for this user.
+    phone = models.CharField(max_length=20, blank=True)
+    notify_external = models.BooleanField(default=True)
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]
@@ -201,6 +205,30 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ["-at"]
+
+
+class Notification(models.Model):
+    """An alert that a user needs to approve or attend to something. Created on
+    the workflow transitions that block a specific person/role; surfaced in-app
+    (the bell) and, when the user has a phone + external delivery is
+    configured, pushed by SMS/WhatsApp."""
+
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE,
+                                  related_name="notifications")
+    title = models.CharField(max_length=140)
+    body = models.CharField(max_length=300, blank=True)
+    doc_ref = models.CharField(max_length=20, blank=True)
+    doc_type = models.CharField(max_length=3, blank=True)
+    # the document status this alert was raised for — dedupes re-fires
+    doc_status = models.CharField(max_length=30, blank=True)
+    category = models.CharField(max_length=20, default="approval")
+    read_at = models.DateTimeField(null=True, blank=True)
+    external_sent_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["recipient", "read_at"])]
 
 
 # ===== Documents (design §2, spec §4/§5/§7) =====
