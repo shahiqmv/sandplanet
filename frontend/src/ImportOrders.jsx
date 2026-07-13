@@ -321,7 +321,7 @@ function IprForm({ me, onSaved, onCancel }) {
   );
 }
 
-export function IprView({ me, refIpr, onClose }) {
+export function IprView({ me, refIpr, onClose, onOpenIrn }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
 
@@ -428,10 +428,21 @@ export function IprView({ me, refIpr, onClose }) {
         </table>
       </div>
 
+      {doc.landed && num(doc.landed.total_charges) > 0 && (
+        <p style={{ marginTop: 8, fontSize: 13 }}>
+          <strong style={{ color: "var(--sp-navy)" }}>Landed cost:</strong>{" "}
+          goods MVR {money(doc.landed.total_goods)} + charges{" "}
+          {money(doc.landed.total_charges)} ={" "}
+          <strong>MVR {money(doc.landed.total_landed)}</strong>
+          <span style={{ color: "#8a6d00" }}>
+            {" "}· {money(doc.landed.uplift_pct)}% uplift</span>
+        </p>
+      )}
+
       <MilestonePanel doc={doc} me={me} refIpr={refIpr} onChanged={load}
                       onError={setError} />
       <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
-                      onError={setError} />
+                      onError={setError} onOpenIrn={onOpenIrn} />
     </section>
   );
 }
@@ -443,11 +454,12 @@ const DOC_TYPES = [["BL_AWB", "Bill of Lading / AWB"],
   ["OTHER", "Other"]];
 const SHIP_STEPS = ["BOOKED", "SHIPPED", "IN_TRANSIT", "ARRIVED",
   "UNDER_CLEARING", "CLEARED"];
-const CHARGE_LABELS = [["customs_duty", "Customs duty"],
-  ["import_gst", "Import GST"], ["port_handling", "Port & handling"],
-  ["agent_charges", "Agent charges"], ["local_transport", "Local transport"]];
+const CHARGE_LABELS = [["freight", "Freight"], ["insurance", "Insurance"],
+  ["customs_duty", "Customs duty"], ["import_gst", "Import GST"],
+  ["port_handling", "Port & handling"], ["agent_charges", "Agent charges"],
+  ["local_transport", "Local transport"]];
 
-function ShipmentsPanel({ doc, refIpr, onChanged, onError }) {
+function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
@@ -477,7 +489,8 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError }) {
       )}
       {ships.map((s) => (
         <Shipment key={s.id} s={s} refIpr={refIpr} canManage={canManage}
-                  call={call} onChanged={onChanged} onError={onError} />
+                  call={call} onChanged={onChanged} onError={onError}
+                  onOpenIrn={onOpenIrn} />
       ))}
 
       {canManage && (adding ? (
@@ -520,12 +533,14 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError }) {
   );
 }
 
-function Shipment({ s, refIpr, canManage, call, onChanged, onError }) {
+function Shipment({ s, refIpr, canManage, call, onChanged, onError,
+                    onOpenIrn }) {
   const fileRef = useRef(null);
   const [docType, setDocType] = useState("BL_AWB");
   const [charges, setCharges] = useState(Object.fromEntries(
     CHARGE_LABELS.map(([k]) => [k, s[k] ?? ""])));
   const at = SHIP_STEPS.indexOf(s.status);
+  const arrived = at >= SHIP_STEPS.indexOf("ARRIVED");
 
   async function upload(file) {
     if (!file) return;
@@ -534,6 +549,14 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError }) {
     fd.append("file", file); fd.append("doc_type", docType);
     try { await apiUpload(`/ipr/${refIpr}/shipments/${s.id}/documents`, fd);
       onChanged(); } catch (e) { onError(e.message); }
+  }
+  async function receive() {
+    onError(null);
+    try {
+      const irn = await api(`/ipr/${refIpr}/shipments/${s.id}/receive`,
+                            { method: "POST", body: { location: "" } });
+      onOpenIrn?.(irn.ref);
+    } catch (e) { onError(e.message); }
   }
 
   return (
@@ -576,6 +599,13 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError }) {
           {s.shared_with_agent_at && (
             <span style={{ fontSize: 11.5, color: "#1a7f37" }}>
               ✓ shared with agent</span>
+          )}
+          {arrived && (
+            <button style={{ ...buttonStyle, padding: "2px 10px",
+                             fontSize: 12 }}
+                    onClick={receive}
+                    title="Count into the HO store (creates an IRN)">
+              📦 Receive at store</button>
           )}
         </div>
       )}
@@ -636,6 +666,187 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError }) {
         </div>
       )}
     </div>
+  );
+}
+
+export function IrnView({ me, refIrn, onClose }) {
+  const [doc, setDoc] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [error, setError] = useState(null);
+
+  function load() {
+    api(`/irn/${refIrn}`).then((d) => {
+      setDoc(d);
+      setRows(d.lines.map((l) => ({ id: l.id,
+        received_qty: l.received_qty ?? "", damaged_qty: l.damaged_qty ?? "",
+        condition_note: l.condition_note || "" })));
+    }).catch((e) => setError(e.message));
+  }
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [refIrn]);
+
+  const setRow = (i, patch) =>
+    setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  async function post() {
+    setError(null);
+    try {
+      await api(`/irn/${refIrn}/post`, { method: "POST", body: { rows } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  if (!doc) return <section style={card}>{error || "Loading…"}</section>;
+  const draft = doc.status === "DRAFT";
+
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "baseline" }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
+          {doc.ref} <StatusChip status={doc.status} /></h2>
+        <button onClick={onClose} style={ghostButton}>Close</button>
+      </div>
+      <p style={{ color: "#5a6b78", fontSize: 13, margin: "6px 0 0" }}>
+        Import Receipt · {doc.supplier} · order {doc.ipr_ref} · shipment{" "}
+        {doc.shipment_seq}</p>
+      {doc.landed && (
+        <p style={{ fontSize: 12.5, marginTop: 4 }}>
+          Landed MVR {money(doc.landed.total_landed)} ·{" "}
+          {money(doc.landed.uplift_pct)}% uplift over goods</p>
+      )}
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+
+      <SectionTitle>Count against the order</SectionTitle>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 13 }}>
+          <thead><tr>
+            <th style={th}>Item</th><th style={th}>Unit</th>
+            <th style={{ ...th, textAlign: "right" }}>Expected</th>
+            <th style={{ ...th, textAlign: "right" }}>Received</th>
+            <th style={{ ...th, textAlign: "right" }}>Damaged</th>
+            <th style={{ ...th, textAlign: "right" }}>Unit landed (MVR)</th>
+            <th style={th}>Condition</th>
+          </tr></thead>
+          <tbody>
+            {doc.lines.map((l, i) => {
+              const rec = num(rows[i]?.received_qty);
+              const short = rec !== num(l.expected_qty);
+              return (
+                <tr key={l.id}>
+                  <td style={td}>{l.description}</td>
+                  <td style={td}>{l.unit}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {money(l.expected_qty)}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {draft ? (
+                      <input type="number" value={rows[i]?.received_qty ?? ""}
+                        onChange={(e) => setRow(i,
+                          { received_qty: e.target.value })}
+                        style={{ ...inputStyle, width: 80, textAlign: "right",
+                          background: short ? "#fff8e6" : undefined }} />
+                    ) : money(l.received_qty)}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {draft ? (
+                      <input type="number" value={rows[i]?.damaged_qty ?? ""}
+                        onChange={(e) => setRow(i,
+                          { damaged_qty: e.target.value })}
+                        style={{ ...inputStyle, width: 70,
+                                 textAlign: "right" }} />
+                    ) : (l.damaged_qty ? money(l.damaged_qty) : "")}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {money(l.unit_landed_cost)}</td>
+                  <td style={td}>
+                    {draft ? (
+                      <input value={rows[i]?.condition_note ?? ""}
+                        onChange={(e) => setRow(i,
+                          { condition_note: e.target.value })}
+                        style={{ ...inputStyle, width: 140 }} />
+                    ) : l.condition_note}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {draft && doc.can_post && (
+        <div style={{ marginTop: 12 }}>
+          <button onClick={post} style={buttonStyle}>
+            Post receipt — create stock lots</button>
+          <p style={{ fontSize: 12, color: "#5a6b78", marginTop: 6 }}>
+            Creates valued lots in the HO store at unit landed cost. A shortage
+            or damage alerts the Director.</p>
+        </div>
+      )}
+      {doc.status === "RECEIVED" && (
+        <p style={{ fontSize: 12.5, color: "#1a7f37", marginTop: 10 }}>
+          ✓ Received — stock lots created in the HO store.</p>
+      )}
+    </section>
+  );
+}
+
+export function StoreLots({ onOpenIrn }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api("/store/lots").then(setData).catch((e) => setError(e.message));
+  }, []);
+  return (
+    <section style={card}>
+      <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+        🏬 HO Store — stock lots</h2>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      <p style={{ fontSize: 12.5, color: "#5a6b78" }}>
+        Imported stock at landed cost — reserved to a project or held as general
+        company stock. A company asset until it&apos;s issued to a site.</p>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead><tr>
+          <th style={th}>Item</th><th style={th}>Reserved for</th>
+          <th style={th}>Site</th>
+          <th style={{ ...th, textAlign: "right" }}>On hand</th>
+          <th style={{ ...th, textAlign: "right" }}>Unit landed</th>
+          <th style={{ ...th, textAlign: "right" }}>Value (MVR)</th>
+          <th style={th}>IRN</th><th style={th}>Received</th>
+        </tr></thead>
+        <tbody>
+          {(data?.lots || []).map((l) => (
+            <tr key={l.id}>
+              <td style={td}>{l.description}</td>
+              <td style={td}>{l.reserved_for === "General stock"
+                ? <span style={{ color: "#8a6d00" }}>General stock</span>
+                : l.reserved_for}</td>
+              <td style={td}>{l.site}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {money(l.qty_on_hand)} {l.unit}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {money(l.unit_landed_cost)}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {money(l.value_on_hand)}</td>
+              <td style={td}>
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              onOpenIrn?.(l.source_irn); }}
+                   style={{ color: "var(--sp-navy)" }}>{l.source_irn}</a></td>
+              <td style={td}>{l.received_date}</td>
+            </tr>
+          ))}
+          {data && data.lots.length === 0 && (
+            <tr><td colSpan={8} style={{ ...td, textAlign: "center",
+                                         color: "var(--muted)" }}>
+              No stock in the store yet.</td></tr>
+          )}
+        </tbody>
+        {data && data.lots.length > 0 && (
+          <tfoot><tr>
+            <td colSpan={5} style={{ ...td, textAlign: "right",
+                                     fontWeight: 700 }}>Total store value</td>
+            <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>
+              {money(data.total_value)}</td>
+            <td colSpan={2} style={td} />
+          </tr></tfoot>
+        )}
+      </table>
+    </section>
   );
 }
 

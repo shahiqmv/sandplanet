@@ -265,6 +265,7 @@ class Document(models.Model):
         PV = "PV"    # payment voucher — batch authorisation (M6d)
         PMR = "PMR"  # project material requisition — imports (§5.10, P1B)
         IPR = "IPR"  # international purchase requisition — the order (§5.10)
+        IRN = "IRN"  # import receipt note — count at the HO store (§5.10.8)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -367,6 +368,11 @@ class Document(models.Model):
             "SUBMITTED": {"APPROVED", "DRAFT", "CANCELLED"},
             "APPROVED": {"AUTHORISED", "DRAFT"},
             "AUTHORISED": {"CLOSED"},
+        },
+        # Import Receipt Note — count at the HO store, creates stock lots at
+        # landed cost (§5.10.8). Draft while counting; Received posts the lots.
+        "IRN": {
+            "DRAFT": {"RECEIVED", "CANCELLED"},
         },
     }
 
@@ -866,7 +872,12 @@ class ImportShipment(models.Model):
     status = models.CharField(max_length=14, choices=Status.choices,
                               default=Status.BOOKED)
     shared_with_agent_at = models.DateTimeField(null=True, blank=True)
-    # local clearing charges (MVR) — landed-cost inputs (§5.10.8)
+    # freight + insurance to Malé, then local clearing charges (all MVR) —
+    # the landed-cost inputs (§5.10.8/9)
+    freight = models.DecimalField(max_digits=14, decimal_places=2,
+                                  null=True, blank=True)
+    insurance = models.DecimalField(max_digits=14, decimal_places=2,
+                                    null=True, blank=True)
     customs_duty = models.DecimalField(max_digits=14, decimal_places=2,
                                        null=True, blank=True)
     import_gst = models.DecimalField(max_digits=14, decimal_places=2,
@@ -894,12 +905,14 @@ class ImportShipment(models.Model):
     class Meta:
         ordering = ["seq"]
 
+    CHARGE_FIELDS = ("freight", "insurance", "customs_duty", "import_gst",
+                     "port_handling", "agent_charges", "local_transport")
+
     @property
     def clearing_total(self):
         from decimal import Decimal
-        return sum((getattr(self, f) or Decimal("0")) for f in (
-            "customs_duty", "import_gst", "port_handling", "agent_charges",
-            "local_transport"))
+        return sum((getattr(self, f) or Decimal("0"))
+                   for f in self.CHARGE_FIELDS)
 
 
 def shipment_doc_path(instance, filename):
@@ -930,6 +943,78 @@ class ShipmentDocument(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                     blank=True, related_name="+")
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class ImportReceipt(models.Model):
+    """IRN header (§5.10.8) — one per IRN document. Counts a shipment against
+    its order at the HO store; posting creates stock lots at landed cost."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="import_receipt")
+    shipment = models.ForeignKey(ImportShipment, on_delete=models.PROTECT,
+                                 related_name="receipts")
+    location = models.CharField(max_length=60, blank=True)  # store location
+    notes = models.TextField(blank=True)
+
+    @property
+    def order(self):
+        return self.shipment.order
+
+
+class ImportReceiptLine(models.Model):
+    receipt = models.ForeignKey(ImportReceipt, on_delete=models.CASCADE,
+                                related_name="lines")
+    ipr_line = models.ForeignKey(ImportOrderLine, on_delete=models.PROTECT,
+                                 related_name="receipt_lines")
+    expected_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    received_qty = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    damaged_qty = models.DecimalField(max_digits=12, decimal_places=2,
+                                      null=True, blank=True)
+    condition_note = models.TextField(blank=True)
+
+    @property
+    def variance(self):
+        from decimal import Decimal
+        return (self.received_qty or Decimal("0")) - (self.expected_qty
+                                                      or Decimal("0"))
+
+
+class StockLot(models.Model):
+    """A valued lot of imported stock in the HO store (§6D.1). Created by an
+    IRN at unit landed cost; reserved to a project (from the IPR allocation) or
+    general company stock. Stock is a company asset, not project cost — it
+    becomes project cost only when issued to site and received (GRN, P1B-f)."""
+
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="stock_lots")
+    free_text_desc = models.TextField(blank=True)
+    unit = models.CharField(max_length=10, blank=True)
+    source_receipt = models.ForeignKey(ImportReceipt, on_delete=models.PROTECT,
+                                       related_name="lots")
+    source_ipr_line = models.ForeignKey(ImportOrderLine,
+                                        on_delete=models.PROTECT,
+                                        related_name="+")
+    # reserved to a project (committed exposure) or null = general stock
+    project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="stock_lots")
+    qty_received = models.DecimalField(max_digits=12, decimal_places=2)
+    qty_on_hand = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_landed_cost = models.DecimalField(max_digits=16, decimal_places=4)
+    location = models.CharField(max_length=60, blank=True)
+    received_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-received_date", "id"]
+
+    @property
+    def description(self):
+        return self.item.description if self.item_id else self.free_text_desc
+
+    @property
+    def value_on_hand(self):
+        return (self.qty_on_hand or 0) * (self.unit_landed_cost or 0)
 
 
 def quotation_path(instance, filename):

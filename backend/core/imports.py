@@ -298,8 +298,8 @@ def payments_due():
 # ---- Shipments + shipping documents (P1B-d) ------------------------------
 
 REQUIRED_FOR_CLEARING = ["BL_AWB", "PACKING_LIST", "COMMERCIAL_INVOICE"]
-CHARGE_FIELDS = ("customs_duty", "import_gst", "port_handling",
-                 "agent_charges", "local_transport")
+CHARGE_FIELDS = ("freight", "insurance", "customs_duty", "import_gst",
+                 "port_handling", "agent_charges", "local_transport")
 
 
 def fire_milestones(order, trigger, actor):
@@ -390,3 +390,149 @@ def share_with_agent(shipment, actor):
     shipment.save(update_fields=["shared_with_agent_at"])
     audit("document", shipment.order.document_id, "SHIPMENT_SHARED_AGENT",
           actor=actor, detail={"shipment": shipment.seq})
+
+
+# ---- Landed cost + IRN receipt + stock lots (P1B-e) ----------------------
+
+def landed_cost(order):
+    """Per-line landed cost for the order (§5.10.9): goods at the agreed rate
+    plus every shipment charge (freight/insurance/duty/GST/clearing…)
+    apportioned across the lines by goods value. Returns per-line unit landed
+    cost + order totals and the uplift over the order value."""
+    rate = order.exchange_rate
+    lines = list(order.lines.all())
+    goods = {ln.id: (ln.order_qty or ZERO) * (ln.unit_price or ZERO) * rate
+             for ln in lines}
+    total_goods = sum(goods.values(), ZERO)
+    total_charges = sum((s.clearing_total for s in order.shipments.all()),
+                        ZERO)
+    per_line = {}
+    for ln in lines:
+        g = goods[ln.id]
+        share = (total_charges * g / total_goods) if total_goods else ZERO
+        line_landed = g + share
+        unit = (line_landed / ln.order_qty) if ln.order_qty else ZERO
+        per_line[ln.id] = {
+            "goods": g.quantize(Decimal("0.01")),
+            "charge_share": share.quantize(Decimal("0.01")),
+            "line_landed": line_landed.quantize(Decimal("0.01")),
+            "unit_landed": unit.quantize(Decimal("0.0001")),
+        }
+    total_landed = (total_goods + total_charges)
+    uplift = ((total_charges / total_goods * 100) if total_goods else ZERO)
+    return {
+        "lines": per_line,
+        "total_goods": total_goods.quantize(Decimal("0.01")),
+        "total_charges": total_charges.quantize(Decimal("0.01")),
+        "total_landed": total_landed.quantize(Decimal("0.01")),
+        "uplift_pct": uplift.quantize(Decimal("0.01")),
+    }
+
+
+@transaction.atomic
+def create_receipt(shipment, data, actor):
+    """Open an IRN for a shipment — one receipt line per order line, expected
+    quantity prefilled from the order."""
+    from datetime import date
+    from .models import (Document, DocumentRevision, ImportReceipt,
+                         ImportReceiptLine)
+    order = shipment.order
+    doc = Document.objects.create(
+        doc_type="IRN", ref=next_ref("IRN", None), site=_ho_site(),
+        doc_date=data.get("doc_date") or date.today(), status="DRAFT",
+        created_by=actor)
+    DocumentRevision.objects.create(document=doc, rev_label="R0", payload={},
+                                    created_by=actor)
+    doc.current_revision = doc.revisions.first()
+    doc.save(update_fields=["current_revision"])
+    receipt = ImportReceipt.objects.create(
+        document=doc, shipment=shipment, location=data.get("location", ""),
+        notes=data.get("notes", ""))
+    for line in order.lines.all():
+        ImportReceiptLine.objects.create(
+            receipt=receipt, ipr_line=line, expected_qty=line.order_qty,
+            received_qty=line.order_qty)
+    audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
+          detail={"ref": doc.ref, "shipment": shipment.seq})
+    return doc
+
+
+def save_receipt_counts(receipt, rows, actor):
+    from .models import ImportReceiptLine
+    by_id = {r.get("id"): r for r in rows}
+    for line in receipt.lines.all():
+        r = by_id.get(line.id)
+        if r is None:
+            continue
+        line.received_qty = _dec(r.get("received_qty"))
+        line.damaged_qty = (_dec(r.get("damaged_qty"))
+                            if r.get("damaged_qty") not in (None, "") else None)
+        line.condition_note = r.get("condition_note", "")
+        line.save(update_fields=["received_qty", "damaged_qty",
+                                 "condition_note"])
+
+
+@transaction.atomic
+def post_receipt(irn_doc, actor):
+    """Post the IRN: create stock lots at unit landed cost, splitting each
+    line's received quantity across its IPR allocations (reserved projects +
+    general stock). A count discrepancy notifies the Director."""
+    from datetime import date
+    from .models import StockLot
+    receipt = irn_doc.import_receipt
+    order = receipt.order
+    lc = landed_cost(order)
+    discrepancy = False
+    for rline in receipt.lines.select_related("ipr_line").all():
+        received = rline.received_qty or ZERO
+        if rline.variance != ZERO or (rline.damaged_qty or ZERO) > ZERO:
+            discrepancy = True
+        if received <= ZERO:
+            continue
+        ipr_line = rline.ipr_line
+        unit = lc["lines"].get(ipr_line.id, {}).get("unit_landed", ZERO)
+        order_qty = ipr_line.order_qty or ZERO
+        allocs = list(ipr_line.allocations.all())
+        assigned = ZERO
+        for i, alloc in enumerate(allocs):
+            if i == len(allocs) - 1:
+                qty = received - assigned          # remainder to the last
+            else:
+                qty = (received * alloc.qty / order_qty).quantize(
+                    Decimal("0.01")) if order_qty else ZERO
+                assigned += qty
+            if qty <= ZERO:
+                continue
+            StockLot.objects.create(
+                item=ipr_line.item, free_text_desc=ipr_line.free_text_desc,
+                unit=ipr_line.unit, source_receipt=receipt,
+                source_ipr_line=ipr_line, project=alloc.project,
+                qty_received=qty, qty_on_hand=qty, unit_landed_cost=unit,
+                location=receipt.location, received_date=date.today())
+    irn_doc.status = "RECEIVED"
+    irn_doc.save(update_fields=["status", "updated_at"])
+    # the shipment is cleared/received once counted at the store
+    if receipt.shipment.status != "CLEARED":
+        receipt.shipment.status = "CLEARED"
+        receipt.shipment.save(update_fields=["status"])
+    audit("document", irn_doc.id, "IRN_POSTED", actor=actor,
+          to_state="RECEIVED", detail={"ref": irn_doc.ref})
+    if discrepancy:
+        from .models import User
+        from .notify import notify_user
+        for director in User.objects.filter(role="DIRECTOR", is_active=True):
+            notify_user(director,
+                        f"IRN {irn_doc.ref} received with a discrepancy",
+                        body=f"{order.document.ref} · {order.supplier.name}",
+                        doc=irn_doc, category="alert")
+
+
+def store_lots(project_id=None, in_stock_only=True):
+    from .models import StockLot
+    qs = StockLot.objects.select_related(
+        "item", "project__site", "source_receipt__document").all()
+    if in_stock_only:
+        qs = qs.filter(qty_on_hand__gt=0)
+    if project_id:
+        qs = qs.filter(project_id=project_id)
+    return qs

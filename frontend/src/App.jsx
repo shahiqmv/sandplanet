@@ -8,7 +8,8 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
-import ImportOrders, { IprView, ImportPaymentsDue } from "./ImportOrders.jsx";
+import ImportOrders, { IprView, IrnView, StoreLots, ImportPaymentsDue }
+  from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -57,6 +58,7 @@ const NAV_GROUPS = [
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN"]],
            ["imports", "International Orders", null],
+           ["store", "HO Store", null],
            ["suppliers", "Suppliers", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN"],
@@ -324,6 +326,10 @@ export default function App() {
         setDocView({ mode: "ipr-view", doc });
         return;
       }
+      if (doc.doc_type === "IRN") {
+        setDocView({ mode: "irn-view", doc });
+        return;
+      }
       const mode = doc.doc_type === "DPR" ? "dpr-view"
                  : ["IR", "MAR", "TWS"].includes(doc.doc_type) ? "qa-view"
                  : doc.doc_type === "PYR" ? "pyr-view"
@@ -517,7 +523,12 @@ export default function App() {
                                onClose={() => openDoc(docView.doc.ref)} />
           )}
           {docView?.mode === "ipr-view" && (
-            <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc} />
+            <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc}
+                     onOpenIrn={(ref) =>
+                       setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
+          {docView?.mode === "irn-view" && (
+            <IrnView me={me} refIrn={docView.doc.ref} onClose={closeDoc} />
           )}
           {docView?.mode === "qa-form" && (
             <QAForm docType={docView.docType} site={openSite} project={project}
@@ -739,6 +750,10 @@ export default function App() {
             hoPage === "import-payments" && (
             <ImportPaymentsDue onOpenIpr={(ref) =>
               setDocView({ mode: "ipr-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "store" && (
+            <StoreLots onOpenIrn={(ref) =>
+              setDocView({ mode: "irn-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />

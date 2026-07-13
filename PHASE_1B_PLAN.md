@@ -138,7 +138,18 @@ panel in the IPR view. Migration 0040. Original -d spec below:
   project's dashboard; customs duty, import GST, port & handling, agent
   charges recorded against the shipment (feed landed cost).
 
-### P1B-e — IRN + landed cost + stock lots (store core)
+### P1B-e — IRN + landed cost + stock lots (store core) — DONE 2026-07-13
+Shipped: landed cost = goods (at agreed rate) + every shipment charge
+(freight/insurance/duty/GST/port/agent/transport, freight+insurance added to
+the shipment) apportioned across lines by value; live total + uplift % on the
+IPR. IRN document (global `IRN-001`) opened against a shipment: count received
+vs order per line, shortage/excess + damage. Posting creates `StockLot`s valued
+at unit landed cost, splitting each line's received qty across its IPR
+allocations (reserved projects + general stock). A discrepancy notifies the
+Director. Stock lots are a company asset (HO store), not project cost — that
+comes at the site GRN in -f. UI: landed-cost line + "Receive at store" on the
+IPR, an IRN count/post view, and an "HO Store" page (valued lots, total value).
+Migration 0042. Reservation-override (§6D.2) deferred to -f. Original spec:
 - **Landed cost** (§5.10.9): `goods (at FX rate) + freight + insurance +
   duty + import GST + clearing + port & handling + local transport`;
   apportion shipment charges across lines by **value (default) / weight /

@@ -353,6 +353,61 @@ class ShipmentTests(IprBase):
         self.assertEqual(r.status_code, 404)   # site staff can't see IPRs
 
 
+class StoreReceiptTests(IprBase):
+    def _shipment(self, ref):
+        return self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                                format="json").data["shipments"][0]["id"]
+
+    def test_landed_cost_receipt_creates_valued_lots(self):
+        ref = self.create_and_authorise()   # 1000 USD @ 15 = 15000 goods
+        self.client.force_authenticate(self.ho)
+        sid = self._shipment(ref)
+        self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/charges",
+                         {"freight": "1000", "customs_duty": "500"},
+                         format="json")   # +1500 charges
+        d = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertEqual(float(d["landed"]["total_landed"]), 16500.0)
+        self.assertEqual(float(d["landed"]["uplift_pct"]), 10.0)
+
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {"location": "Bay 3"}, format="json").data
+        r = self.client.post(f"/api/v1/irn/{irn['ref']}/post", {},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        from .models import StockLot
+        lots = StockLot.objects.all()
+        self.assertEqual(lots.count(), 2)                 # project + general
+        proj = lots.get(project__isnull=False)
+        self.assertEqual(float(proj.qty_on_hand), 6.0)
+        self.assertEqual(float(proj.unit_landed_cost), 1650.0)  # 16500/10
+        gen = lots.get(project__isnull=True)
+        self.assertEqual(float(gen.qty_on_hand), 4.0)
+        # store view sums to the full landed value
+        sv = self.client.get("/api/v1/store/lots").data
+        self.assertEqual(float(sv["total_value"]), 16500.0)
+
+    def test_shortage_notifies_director_and_splits_pro_rata(self):
+        from .models import Notification, StockLot
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        sid = self._shipment(ref)
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {}, format="json").data
+        lid = irn["lines"][0]["id"]
+        r = self.client.post(f"/api/v1/irn/{irn['ref']}/post",
+                             {"rows": [{"id": lid, "received_qty": "8"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.director, doc_ref=irn["ref"]).exists())
+        # 8 split 6:4 → 4.8 to the project, 3.2 to general stock
+        self.assertEqual(float(StockLot.objects.get(
+            project__isnull=False).qty_on_hand), 4.8)
+        self.assertEqual(float(StockLot.objects.get(
+            project__isnull=True).qty_on_hand), 3.2)
+
+
 class SupplierCategoryTests(PmrBase):
     def test_category_filter_and_bank_visibility(self):
         Supplier.objects.create(name="Local Hardware",

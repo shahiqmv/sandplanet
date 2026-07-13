@@ -14,8 +14,9 @@ from rest_framework.response import Response
 
 from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
-                     ImportOrderLine, ImportPaymentMilestone, ImportShipment,
-                     Project, ShipmentDocument, Supplier)
+                     ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
+                     ImportReceiptLine, ImportShipment, Project,
+                     ShipmentDocument, StockLot, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN")
@@ -114,8 +115,9 @@ class ShipmentSerializer(serializers.ModelSerializer):
         fields = ["id", "seq", "mode", "forwarder", "forwarder_display",
                   "vessel_flight", "container_awb", "etd", "eta",
                   "tracking_ref", "carrier_link", "status", "status_display",
-                  "shared_with_agent_at", "customs_duty", "import_gst",
-                  "port_handling", "agent_charges", "local_transport",
+                  "shared_with_agent_at", "freight", "insurance",
+                  "customs_duty", "import_gst", "port_handling",
+                  "agent_charges", "local_transport",
                   "clearing_total", "documents", "missing_clearing",
                   "next_statuses", "notes"]
 
@@ -153,10 +155,61 @@ def _serialize(doc, request):
         order.milestones.all(), many=True,
         context={"order_total": total}).data
     data["shipments"] = ShipmentSerializer(
-        order.shipments.prefetch_related("documents").all(), many=True).data
+        order.shipments.prefetch_related("documents", "receipts").all(),
+        many=True).data
+    data["landed"] = ipr_svc.landed_cost(order)
+    data["receipts"] = [
+        {"ref": r.document.ref, "status": r.document.status,
+         "shipment_seq": r.shipment.seq}
+        for r in ImportReceipt.objects.filter(shipment__order=order)
+        .select_related("document", "shipment")]
     data["can_pay"] = request.user.role in PAY_ROLES
     data["can_manage"] = request.user.role in CREATE_ROLES
     return data
+
+
+class ReceiptLineSerializer(serializers.ModelSerializer):
+    description = serializers.CharField(source="ipr_line.description",
+                                        read_only=True)
+    unit = serializers.CharField(source="ipr_line.unit", read_only=True)
+
+    class Meta:
+        model = ImportReceiptLine
+        fields = ["id", "description", "unit", "expected_qty", "received_qty",
+                  "damaged_qty", "condition_note", "variance"]
+
+
+def _irn_payload(doc, request):
+    receipt = doc.import_receipt
+    order = receipt.order
+    lc = ipr_svc.landed_cost(order)
+    data = DocumentSerializer(doc, context={"request": request}).data
+    data["ipr_ref"] = order.document.ref
+    data["supplier"] = order.supplier.name
+    data["shipment_seq"] = receipt.shipment.seq
+    data["location"] = receipt.location
+    data["can_post"] = (request.user.role in CREATE_ROLES
+                        and doc.status == "DRAFT")
+    lines = []
+    for rl in receipt.lines.select_related("ipr_line").all():
+        row = ReceiptLineSerializer(rl).data
+        row["unit_landed_cost"] = lc["lines"].get(
+            rl.ipr_line_id, {}).get("unit_landed")
+        lines.append(row)
+    data["lines"] = lines
+    data["landed"] = lc
+    return data
+
+
+def _get_irn(request, ref):
+    try:
+        doc = Document.objects.select_related("current_revision").get(
+            ref=ref, doc_type="IRN")
+    except Document.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    if request.user.role not in VIEW_ROLES:
+        return None, Response({"detail": "Not found."}, status=404)
+    return doc, None
 
 
 def _get_shipment(doc, pk):
@@ -242,6 +295,84 @@ def ipr_shipment_document(request, ref, pk):
     ipr_svc.add_shipment_document(s, doc_type, upload, request.user,
                                   notes=request.data.get("notes", ""))
     return Response(_serialize(doc, request), status=201)
+
+
+@api_view(["POST"])
+def ipr_shipment_receive(request, ref, pk):
+    """Open an IRN to count this shipment into the HO store."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office receives shipments."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    irn = ipr_svc.create_receipt(s, request.data, request.user)
+    return Response(_irn_payload(irn, request), status=201)
+
+
+@api_view(["GET"])
+def irn_detail(request, ref):
+    doc, err = _get_irn(request, ref)
+    if err:
+        return err
+    return Response(_irn_payload(doc, request))
+
+
+@api_view(["POST"])
+def irn_save_counts(request, ref):
+    doc, err = _get_irn(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES or doc.status != "DRAFT":
+        return Response({"detail": "Only a draft IRN can be edited by HO."},
+                        status=403)
+    ipr_svc.save_receipt_counts(doc.import_receipt, request.data.get("rows")
+                                or [], request.user)
+    return Response(_irn_payload(doc, request))
+
+
+@api_view(["POST"])
+def irn_post(request, ref):
+    doc, err = _get_irn(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office posts the receipt."},
+                        status=403)
+    if doc.status != "DRAFT":
+        return Response({"detail": "This IRN is already posted."}, status=400)
+    if request.data.get("rows"):
+        ipr_svc.save_receipt_counts(doc.import_receipt, request.data["rows"],
+                                    request.user)
+    ipr_svc.post_receipt(doc, request.user)
+    doc.refresh_from_db()
+    return Response(_irn_payload(doc, request))
+
+
+@api_view(["GET"])
+def store_lots(request):
+    """The HO store: valued stock lots, reserved-to-project or general."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office store view."}, status=403)
+    rows = []
+    for lot in ipr_svc.store_lots(project_id=request.GET.get("project")):
+        rows.append({
+            "id": lot.id, "description": lot.description, "unit": lot.unit,
+            "qty_on_hand": lot.qty_on_hand,
+            "unit_landed_cost": lot.unit_landed_cost,
+            "value_on_hand": (lot.qty_on_hand * lot.unit_landed_cost)
+            .quantize(Decimal("0.01")),
+            "reserved_for": (lot.project.code if lot.project_id
+                             else "General stock"),
+            "site": lot.project.site.code if lot.project_id else "—",
+            "source_irn": lot.source_receipt.document.ref,
+            "location": lot.location, "received_date": lot.received_date,
+        })
+    total = sum((r["value_on_hand"] for r in rows), Decimal("0"))
+    return Response({"lots": rows, "total_value": total})
 
 
 @api_view(["POST"])
