@@ -5,17 +5,20 @@ Signatory/Finance only (site staff never see import prices, §6C.5). Submit /
 award / return / cancel reuse the generic document-action endpoint; authorise
 happens on a Payment Voucher.
 """
+from decimal import Decimal
+
 from rest_framework import serializers
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
-                     ImportOrderLine, Project, Supplier)
+                     ImportOrderLine, ImportPaymentMilestone, Project, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN")
 CREATE_ROLES = ("HO_PURCHASING", "ADMIN")
+PAY_ROLES = ("FINANCE", "ADMIN")
 
 
 class AllocationSerializer(serializers.ModelSerializer):
@@ -59,6 +62,23 @@ class OrderSerializer(serializers.ModelSerializer):
                   "loading_port", "discharge_port", "pi_ref", "notes", "lines"]
 
 
+class MilestoneSerializer(serializers.ModelSerializer):
+    due_amount = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ImportPaymentMilestone
+        fields = ["id", "seq", "label", "trigger", "percent", "fixed_amount",
+                  "due_date", "status", "due_amount", "tt_ref", "mvr_paid",
+                  "actual_rate", "paid_at"]
+
+    def get_due_amount(self, obj):
+        # order total is stashed on context to avoid a query per milestone
+        total = (self.context or {}).get("order_total")
+        if total is None:
+            total = ipr_svc.ipr_order_total(obj.order)
+        return obj.due_amount(total)
+
+
 def _get_ipr(request, ref):
     try:
         doc = Document.objects.select_related("current_revision").get(
@@ -72,13 +92,91 @@ def _get_ipr(request, ref):
 
 def _serialize(doc, request):
     order = doc.import_order
+    total = ipr_svc.ipr_order_total(order)
     data = DocumentSerializer(doc, context={"request": request}).data
     data["order"] = OrderSerializer(order).data
-    data["order_total"] = ipr_svc.ipr_order_total(order)
+    data["order_total"] = total
     data["mvr_total"] = ipr_svc.ipr_mvr_total(order)
     data["pmr_refs"] = list(
         ipr_svc.linked_pmrs(doc).values_list("ref", flat=True))
+    data["milestones"] = MilestoneSerializer(
+        order.milestones.all(), many=True,
+        context={"order_total": total}).data
+    data["can_pay"] = request.user.role in PAY_ROLES
+    data["can_manage"] = request.user.role in CREATE_ROLES
     return data
+
+
+def _get_milestone(doc, pk):
+    return doc.import_order.milestones.filter(pk=pk).first()
+
+
+@api_view(["POST"])
+def ipr_set_milestones(request, ref):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office sets the payment schedule."},
+                        status=403)
+    msg = ipr_svc.set_milestones(doc.import_order, request.data.get("rows") or [])
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_milestone_due(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office marks a milestone due."},
+                        status=403)
+    m = _get_milestone(doc, pk)
+    if not m:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.mark_milestone_due(m, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_milestone_pay(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in PAY_ROLES:
+        return Response({"detail": "Finance records import payments."},
+                        status=403)
+    m = _get_milestone(doc, pk)
+    if not m:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.pay_milestone(m, request.data.get("mvr_paid"),
+                                request.data.get("tt_ref", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["GET"])
+def ipr_payments_due(request):
+    if request.user.role not in PAY_ROLES:
+        return Response({"detail": "Finance view."}, status=403)
+    rows = []
+    for m in ipr_svc.payments_due():
+        total = ipr_svc.ipr_order_total(m.order)
+        rows.append({
+            "ipr_ref": m.order.document.ref, "milestone_id": m.id,
+            "label": m.label, "supplier": m.order.supplier.name,
+            "currency": m.order.order_currency,
+            "due_amount": m.due_amount(total),
+            "expected_mvr": (m.due_amount(total) * m.order.exchange_rate)
+            .quantize(Decimal("0.01")),
+            "due_date": m.due_date,
+        })
+    return Response(rows)
 
 
 @api_view(["GET", "POST"])

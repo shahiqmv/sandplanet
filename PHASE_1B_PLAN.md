@@ -93,7 +93,18 @@ links); refine if needed. NOTE original -b spec below:
   authorisation-date rate, pro-rata to reserved projects + the **General
   Stock** pool for the unreserved balance. Withdraw/return reverse as usual.
 
-### P1B-c — Part payments + multi-currency + FX
+### P1B-c — Part payments + multi-currency + FX — DONE 2026-07-13
+Shipped: `ImportPaymentMilestone` (per IPR: label, trigger, percent/fixed in
+order ccy, must sum to order total). HO sets the schedule + marks a milestone
+DUE (its trigger met); Finance sees it in "Import Payments" and records the
+actual MVR paid + TT ref. On payment: the committed-value share posts PAID to
+the projects/stock at the **agreed** rate (insulating projects from FX); the
+difference between actual MVR paid and that committed value posts to the
+**Foreign Exchange** pool (never a project). CostPosting gained ipr_milestone
+FK. API: /ipr/<ref>/milestones (set), .../<id>/due, .../<id>/pay,
+/ipr/payments-due. UI: payment-schedule panel in the IPR view + Finance→Import
+Payments queue. Migration 0039. NOTE: TT-advice file upload deferred to -d
+(shipping-doc attachments). Original -c spec below:
 - **Payment-milestone model** (new): per IPR, scheduled milestones (trigger
   + % or fixed amount), must sum to 100%. Triggers: PI attached / BL
   uploaded / arrival confirmed / date offset.

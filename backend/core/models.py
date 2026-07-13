@@ -742,6 +742,64 @@ class ImportAllocation(models.Model):
         return self.project_id is None
 
 
+class ImportPaymentMilestone(models.Model):
+    """A scheduled part-payment on an import order (§5.10.5). Milestones are
+    set in the order currency (a percent or a fixed amount) and must sum to the
+    order total. Purchasing marks one DUE when its trigger is met; Finance pays
+    it, recording the actual MVR paid and the TT reference. The committed-value
+    share posts PAID to the projects/stock; the difference between what was
+    actually paid and that committed value is realised FX (never a project)."""
+
+    class Trigger(models.TextChoices):
+        ADVANCE = "ADVANCE", "Advance / on order (PI)"
+        BL = "BL", "On shipping documents (B/L)"
+        ARRIVAL = "ARRIVAL", "On arrival"
+        DATE = "DATE", "By date"
+        BALANCE = "BALANCE", "Balance / other"
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        DUE = "DUE", "Due"
+        PAID = "PAID", "Paid"
+
+    order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
+                              related_name="milestones")
+    seq = models.IntegerField()
+    label = models.CharField(max_length=60)
+    trigger = models.CharField(max_length=8, choices=Trigger.choices,
+                               default=Trigger.BALANCE)
+    percent = models.DecimalField(max_digits=6, decimal_places=3, null=True,
+                                  blank=True)
+    fixed_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                       null=True, blank=True)  # order currency
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.PENDING)
+    # payment record (Finance)
+    tt_ref = models.CharField(max_length=60, blank=True)
+    mvr_paid = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                                   blank=True)
+    actual_rate = models.DecimalField(max_digits=12, decimal_places=4,
+                                      null=True, blank=True)
+    paid_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    paid_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["seq"]
+
+    def due_amount(self, order_total):
+        """This milestone's value in the order currency."""
+        from decimal import Decimal
+        if self.fixed_amount is not None:
+            return self.fixed_amount
+        if self.percent is not None:
+            return (order_total * self.percent / Decimal("100")).quantize(
+                Decimal("0.01"))
+        return Decimal("0")
+
+
 def quotation_path(instance, filename):
     return f"quotations/{instance.document.ref}/{instance.supplier_id}-{filename}"
 
@@ -1244,6 +1302,9 @@ class CostPosting(models.Model):
                                          blank=True, related_name="+")
     ipr_line = models.ForeignKey("ImportOrderLine", on_delete=models.PROTECT,
                                  null=True, blank=True, related_name="+")
+    ipr_milestone = models.ForeignKey("ImportPaymentMilestone",
+                                      on_delete=models.PROTECT, null=True,
+                                      blank=True, related_name="+")
     # sin_line FK added with its Phase 1B module
     is_stock_pool = models.BooleanField(default=False)  # HO pool posting
     staff_year = models.IntegerField(null=True, blank=True)

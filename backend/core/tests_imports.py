@@ -119,6 +119,22 @@ class IprBase(PmrBase):
         self.pmr.current_revision = rev
         self.pmr.save(update_fields=["current_revision"])
 
+    def create_and_authorise(self):
+        """Create the order, award it, and authorise it on a voucher."""
+        from .vouchers import approve_voucher, create_voucher, submit_voucher
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        pv, _ = create_voucher([ref], self.finance)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+        return ref
+
     def order_body(self, proj_qty=6, stock_qty=4):
         return {
             "supplier_id": self.supplier.id, "order_currency": "USD",
@@ -194,6 +210,72 @@ class IprFlowTests(IprBase):
         self.client.force_authenticate(self.sa)   # site admin
         r = self.client.get(f"/api/v1/ipr/{ref}")
         self.assertEqual(r.status_code, 404)       # invisible to site staff
+
+
+class MilestonePaymentTests(IprBase):
+    def test_schedule_pay_splits_and_posts_fx(self):
+        ref = self.create_and_authorise()   # order 1000 USD @ 15 = 15000 MVR
+        # 30% advance + 70% balance
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "percent": "30"},
+            {"label": "Balance", "trigger": "BALANCE", "percent": "70"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        advance = next(m for m in r.data["milestones"] if m["label"] == "Advance")
+        self.assertEqual(float(advance["due_amount"]), 300.0)   # 30% of 1000
+
+        # mark the advance due → Finance queue
+        self.client.post(
+            f"/api/v1/ipr/{ref}/milestones/{advance['id']}/due", {},
+            format="json")
+        self.client.force_authenticate(self.finance)
+        due = self.client.get("/api/v1/ipr/payments-due").data
+        self.assertEqual(len(due), 1)
+        self.assertEqual(float(due[0]["expected_mvr"]), 4500.0)  # 300*15
+
+        # pay it — actual rate 15.42 → MVR 4626 (committed value 4500, FX +126)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/milestones/{advance['id']}/pay",
+            {"mvr_paid": "4626", "tt_ref": "TT-88"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        paid = CostPosting.objects.filter(state="PAID", document__ref=ref)
+        # project leg 0.3*9000=2700, general-stock leg 0.3*6000=1800
+        proj = paid.filter(source="IPR", is_stock_pool=False)
+        self.assertEqual(float(sum(p.amount for p in proj)), 2700.0)
+        stock = paid.filter(source="IPR", is_stock_pool=True)
+        self.assertEqual(float(sum(p.amount for p in stock)), 1800.0)
+        # realised FX to the Foreign Exchange pool, never a project
+        fx = paid.get(source="FX")
+        self.assertEqual(float(fx.amount), 126.0)
+        self.assertTrue(fx.is_stock_pool)
+        self.assertEqual(fx.cost_head.name, "Foreign Exchange")
+        # total cash out reconciles to what Finance paid
+        self.assertEqual(float(sum(p.amount for p in paid)), 4626.0)
+
+    def test_schedule_must_sum_to_order_total(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "percent": "30"},
+            {"label": "Balance", "percent": "50"},   # only 80%
+        ]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sum to the order total", r.data["detail"])
+
+    def test_only_finance_pays(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Full", "percent": "100"}]}, format="json") \
+            .data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        # HO cannot pay
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/pay",
+                             {"mvr_paid": "15420"}, format="json")
+        self.assertEqual(r.status_code, 403)
 
 
 class SupplierCategoryTests(PmrBase):

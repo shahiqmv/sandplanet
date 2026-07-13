@@ -427,6 +427,219 @@ export function IprView({ me, refIpr, onClose }) {
           </tfoot>
         </table>
       </div>
+
+      <MilestonePanel doc={doc} me={me} refIpr={refIpr} onChanged={load}
+                      onError={setError} />
     </section>
+  );
+}
+
+export function ImportPaymentsDue({ onOpenIpr }) {
+  const [rows, setRows] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api("/ipr/payments-due").then(setRows).catch((e) => setError(e.message));
+  }, []);
+  return (
+    <section style={card}>
+      <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+        🌍 Import payments due</h2>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12,
+                      fontSize: 13 }}>
+        <thead><tr>
+          <th style={th}>Order</th><th style={th}>Supplier</th>
+          <th style={th}>Milestone</th>
+          <th style={{ ...th, textAlign: "right" }}>Amount</th>
+          <th style={{ ...th, textAlign: "right" }}>≈ MVR</th>
+          <th style={th}>Due</th>
+        </tr></thead>
+        <tbody>
+          {(rows || []).map((r) => (
+            <tr key={r.milestone_id}>
+              <td style={td}>
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              onOpenIpr(r.ipr_ref); }}
+                   style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                  {r.ipr_ref}</a>
+              </td>
+              <td style={td}>{r.supplier}</td>
+              <td style={td}>{r.label}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {r.currency} {money(r.due_amount)}</td>
+              <td style={{ ...td, textAlign: "right" }}>{money(r.expected_mvr)}</td>
+              <td style={td}>{r.due_date || "—"}</td>
+            </tr>
+          ))}
+          {rows && rows.length === 0 && (
+            <tr><td colSpan={6} style={{ ...td, textAlign: "center",
+                                         color: "var(--muted)" }}>
+              No import payments due. Purchasing marks a milestone due when its
+              trigger is met.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </section>
+  );
+}
+
+const TRIGGERS = [["ADVANCE", "Advance / on order"], ["BL", "On B/L"],
+                  ["ARRIVAL", "On arrival"], ["DATE", "By date"],
+                  ["BALANCE", "Balance / other"]];
+
+function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
+  const ms = doc.milestones || [];
+  const [editing, setEditing] = useState(false);
+  const [rows, setRows] = useState([{ label: "", trigger: "ADVANCE",
+    percent: "" }]);
+  const canManage = doc.can_manage;
+  const canPay = doc.can_pay;
+  const anyPaid = ms.some((m) => m.status === "PAID");
+
+  async function call(path, body) {
+    onError(null);
+    try {
+      await api(`/ipr/${refIpr}${path}`, { method: "POST", body });
+      setEditing(false);
+      onChanged();
+    } catch (e) { onError(e.message); }
+  }
+
+  const paidTotal = ms.filter((m) => m.status === "PAID")
+    .reduce((a, m) => a + num(m.mvr_paid), 0);
+
+  return (
+    <>
+      <SectionTitle>Payment schedule</SectionTitle>
+      {doc.status !== "AUTHORISED" && ms.length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          Set the part-payment milestones here; Finance pays each once the order
+          is authorised.</p>
+      )}
+
+      {ms.length > 0 && !editing && (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Milestone</th><th style={th}>Trigger</th>
+              <th style={{ ...th, textAlign: "right" }}>Amount</th>
+              <th style={th}>Status</th><th style={th}>TT / paid</th>
+              <th style={th} />
+            </tr></thead>
+            <tbody>
+              {ms.map((m) => (
+                <tr key={m.id}>
+                  <td style={td}>{m.label}</td>
+                  <td style={td}>{(TRIGGERS.find((t) => t[0] === m.trigger)
+                    || [, m.trigger])[1]}
+                    {m.percent ? ` · ${num(m.percent)}%` : ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {doc.order.order_currency} {money(m.due_amount)}</td>
+                  <td style={td}>
+                    {m.status === "PAID"
+                      ? <span style={{ color: "#1a7f37", fontWeight: 600 }}>
+                          Paid</span>
+                      : m.status === "DUE"
+                        ? <span style={{ color: "#b35900", fontWeight: 600 }}>
+                            Due</span>
+                        : <span style={{ color: "#8a97a1" }}>Pending</span>}
+                  </td>
+                  <td style={{ ...td, fontSize: 12 }}>
+                    {m.status === "PAID"
+                      ? `${m.tt_ref || "—"} · MVR ${money(m.mvr_paid)} @ ${
+                          num(m.actual_rate)}`
+                      : ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {canManage && m.status === "PENDING" && (
+                      <button style={{ ...ghostButton, padding: "2px 8px",
+                                       fontSize: 12 }}
+                              onClick={() => call(
+                                `/milestones/${m.id}/due`, {})}>
+                        Mark due</button>
+                    )}
+                    {canPay && m.status === "DUE" && (
+                      <button style={{ ...buttonStyle, padding: "2px 10px",
+                                       fontSize: 12 }}
+                              onClick={() => {
+                                const mvr = window.prompt(
+                                  `MVR actually paid for "${m.label}" `
+                                  + `(${doc.order.order_currency} ${money(
+                                      m.due_amount)}):`);
+                                if (!mvr) return;
+                                const tt = window.prompt("TT reference:") || "";
+                                call(`/milestones/${m.id}/pay`,
+                                     { mvr_paid: mvr, tt_ref: tt });
+                              }}>
+                        Record payment</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {paidTotal > 0 && (
+            <p style={{ fontSize: 12.5, color: "#1a7f37", marginTop: 6 }}>
+              Paid to date: MVR {money(paidTotal)}</p>
+          )}
+          {canManage && !anyPaid && (
+            <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12,
+                             marginTop: 6 }}
+                    onClick={() => { setRows(ms.map((m) => ({ label: m.label,
+                      trigger: m.trigger, percent: m.percent ? String(
+                        num(m.percent)) : "",
+                      fixed_amount: m.fixed_amount || "" }))); setEditing(true); }}>
+              Edit schedule</button>
+          )}
+        </div>
+      )}
+
+      {canManage && (ms.length === 0 || editing) && (
+        <div style={{ marginTop: 6 }}>
+          {rows.map((r, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+              <input placeholder="Milestone (e.g. Advance)" value={r.label}
+                style={{ ...inputStyle, flex: "1 1 auto" }}
+                onChange={(e) => setRows(rows.map((x, j) => j === i
+                  ? { ...x, label: e.target.value } : x))} />
+              <select value={r.trigger} style={{ ...inputStyle, width: 160 }}
+                onChange={(e) => setRows(rows.map((x, j) => j === i
+                  ? { ...x, trigger: e.target.value } : x))}>
+                {TRIGGERS.map((t) => (
+                  <option key={t[0]} value={t[0]}>{t[1]}</option>
+                ))}
+              </select>
+              <input type="number" placeholder="%" value={r.percent}
+                style={{ ...inputStyle, width: 80 }}
+                onChange={(e) => setRows(rows.map((x, j) => j === i
+                  ? { ...x, percent: e.target.value } : x))} />
+              {rows.length > 1 && (
+                <button style={{ ...ghostButton, color: "#c0392b",
+                                 padding: "2px 8px" }}
+                        onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                  ×</button>
+              )}
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
+                    onClick={() => setRows([...rows, { label: "",
+                      trigger: "BALANCE", percent: "" }])}>+ milestone</button>
+            <span style={{ fontSize: 12, color: rows.reduce(
+              (a, r) => a + num(r.percent), 0) === 100 ? "#1a7f37" : "#b35900" }}>
+              {rows.reduce((a, r) => a + num(r.percent), 0)}% of order
+            </span>
+            <button style={{ ...buttonStyle, padding: "4px 12px", fontSize: 13,
+                             marginLeft: "auto" }}
+                    onClick={() => call("/milestones", { rows })}>
+              Save schedule</button>
+            {editing && (
+              <button style={ghostButton}
+                      onClick={() => setEditing(false)}>Cancel</button>
+            )}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

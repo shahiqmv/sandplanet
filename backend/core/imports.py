@@ -163,28 +163,133 @@ def advance_linked_pmrs(ipr_doc, to_status, actor):
                   detail={"ref": pmr.ref, "ipr": ipr_doc.ref})
 
 
-def authorise_ipr(doc, actor):
-    """Commit the order when a signatory authorises it on a voucher (§6C.2).
-    Posts COMMITTED in MVR at the agreed rate: each project allocation to that
+def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
+    """Post `state` rows for a fraction (0..1) of the order at `rate` MVR, split
+    the same way the order is allocated: each project allocation to that
     project's site under the line's cost head; the general-stock balance to the
-    General Stock pool (never a project)."""
-    order = doc.import_order
-    rate = order.exchange_rate
+    General Stock pool (never a project). Shared by commitment and payment."""
     gs_head = costing.head("General Stock")
     ho = _ho_site()
     for line in order.lines.all():
         unit_mvr = (line.unit_price or ZERO) * rate
         for alloc in line.allocations.select_related("project__site"):
-            amount = (alloc.qty * unit_mvr).quantize(Decimal("0.01"))
+            amount = (alloc.qty * unit_mvr * fraction).quantize(Decimal("0.01"))
             if amount <= ZERO:
                 continue
             if alloc.project_id:
                 costing.post(site=alloc.project.site, cost_head=line.cost_head,
-                             state="COMMITTED", source="IPR", amount=amount,
+                             state=state, source="IPR", amount=amount,
                              currency="MVR", document=doc, ipr_line=line,
-                             actor=actor)
+                             ipr_milestone=milestone, actor=actor)
             else:
-                costing.post(site=ho, cost_head=gs_head, state="COMMITTED",
+                costing.post(site=ho, cost_head=gs_head, state=state,
                              source="IPR", amount=amount, currency="MVR",
                              document=doc, ipr_line=line, is_stock_pool=True,
-                             actor=actor)
+                             ipr_milestone=milestone, actor=actor)
+
+
+def authorise_ipr(doc, actor):
+    """Commit the order when a signatory authorises it on a voucher (§6C.2).
+    Posts COMMITTED in MVR at the agreed rate across the order's allocations."""
+    order = doc.import_order
+    _post_split(order, doc, "COMMITTED", Decimal("1"), order.exchange_rate,
+                actor)
+
+
+def set_milestones(order, rows):
+    """Replace the order's payment schedule. Each row: {label, trigger,
+    percent|fixed_amount, due_date}. The scheduled amounts must sum to the
+    order total (in the order currency)."""
+    from .models import ImportPaymentMilestone
+    if order.milestones.filter(status="PAID").exists():
+        return "Some milestones are already paid — the schedule is locked."
+    total = ipr_order_total(order)
+    scheduled = ZERO
+    cleaned = []
+    for i, r in enumerate(rows, 1):
+        label = (r.get("label") or "").strip()
+        if not label:
+            return f"Milestone {i}: give it a name."
+        pct = _dec(r.get("percent")) if r.get("percent") not in (None, "") \
+            else None
+        fixed = _dec(r.get("fixed_amount")) if r.get("fixed_amount") not in \
+            (None, "") else None
+        if pct is None and fixed is None:
+            return f"Milestone {i}: set a percent or a fixed amount."
+        amt = fixed if fixed is not None else (total * pct / Decimal("100"))
+        scheduled += amt
+        cleaned.append({"label": label,
+                        "trigger": r.get("trigger") or "BALANCE",
+                        "percent": pct, "fixed_amount": fixed,
+                        "due_date": r.get("due_date") or None})
+    if abs(scheduled.quantize(Decimal("0.01")) - total.quantize(
+            Decimal("0.01"))) > Decimal("0.01"):
+        return (f"The schedule ({scheduled.quantize(Decimal('0.01'))}) must "
+                f"sum to the order total ({total.quantize(Decimal('0.01'))} "
+                f"{order.order_currency}).")
+    order.milestones.exclude(status="PAID").delete()
+    for i, c in enumerate(cleaned, 1):
+        ImportPaymentMilestone.objects.create(order=order, seq=i, **c)
+    return None
+
+
+def mark_milestone_due(milestone, actor):
+    """Purchasing flags a milestone due (its trigger has been met) — it then
+    enters Finance's import-payments queue."""
+    if milestone.status != "PENDING":
+        return "Only a pending milestone can be marked due."
+    milestone.status = "DUE"
+    milestone.save(update_fields=["status"])
+    audit("document", milestone.order.document_id, "IPR_MILESTONE_DUE",
+          actor=actor, detail={"milestone": milestone.label})
+    return None
+
+
+def pay_milestone(milestone, mvr_paid, tt_ref, actor):
+    """Finance pays a due milestone. The committed-value share posts PAID to the
+    projects/stock at the agreed rate; the difference between the actual MVR
+    paid and that committed value is realised FX, posted to the Foreign Exchange
+    pool (never a project)."""
+    from django.utils import timezone
+    if milestone.status != "DUE":
+        return "Only a due milestone can be paid."
+    mvr_paid = _dec(mvr_paid)
+    if mvr_paid <= ZERO:
+        return "Enter the MVR amount actually paid."
+    order = milestone.order
+    doc = order.document
+    total = ipr_order_total(order)
+    due_ccy = milestone.due_amount(total)
+    if due_ccy <= ZERO:
+        return "This milestone has no amount."
+    fraction = due_ccy / total
+    committed_mvr = (due_ccy * order.exchange_rate).quantize(Decimal("0.01"))
+    with transaction.atomic():
+        _post_split(order, doc, "PAID", fraction, order.exchange_rate, actor,
+                    milestone=milestone)
+        fx_delta = (mvr_paid - committed_mvr).quantize(Decimal("0.01"))
+        if fx_delta != ZERO:
+            costing.post(site=_ho_site(), cost_head=costing.head(
+                "Foreign Exchange"), state="PAID", source="FX",
+                amount=fx_delta, currency="MVR", document=doc,
+                ipr_milestone=milestone, is_stock_pool=True, actor=actor)
+        milestone.status = "PAID"
+        milestone.tt_ref = tt_ref or ""
+        milestone.mvr_paid = mvr_paid
+        milestone.actual_rate = (mvr_paid / due_ccy).quantize(Decimal("0.0001"))
+        milestone.paid_by = actor
+        milestone.paid_at = timezone.now()
+        milestone.save(update_fields=["status", "tt_ref", "mvr_paid",
+                                      "actual_rate", "paid_by", "paid_at"])
+    audit("document", doc.id, "IPR_MILESTONE_PAID", actor=actor,
+          detail={"milestone": milestone.label, "mvr": str(mvr_paid),
+                  "tt_ref": tt_ref})
+    return None
+
+
+def payments_due():
+    """Due, unpaid milestones on authorised orders — Finance's payment queue."""
+    from .models import ImportPaymentMilestone
+    return ImportPaymentMilestone.objects.filter(
+        status="DUE", order__document__status="AUTHORISED").select_related(
+        "order__document", "order__supplier")

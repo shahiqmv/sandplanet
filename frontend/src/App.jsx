@@ -8,7 +8,7 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
-import ImportOrders, { IprView } from "./ImportOrders.jsx";
+import ImportOrders, { IprView, ImportPaymentsDue } from "./ImportOrders.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollRunPage from "./PayrollRunPage.jsx";
@@ -59,7 +59,8 @@ const NAV_GROUPS = [
     roles: ["FINANCE", "SIGNATORY", "ADMIN"],
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
-                                             "ADMIN"]]] },
+                                             "ADMIN"]],
+           ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
@@ -721,6 +722,11 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "imports" && (
             <ImportOrders me={me} onOpenIpr={(ref) =>
+              setDocView({ mode: "ipr-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho &&
+            hoPage === "import-payments" && (
+            <ImportPaymentsDue onOpenIpr={(ref) =>
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
