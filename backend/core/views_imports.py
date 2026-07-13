@@ -8,12 +8,14 @@ happens on a Payment Voucher.
 from decimal import Decimal
 
 from rest_framework import serializers
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
-                     ImportOrderLine, ImportPaymentMilestone, Project, Supplier)
+                     ImportOrderLine, ImportPaymentMilestone, ImportShipment,
+                     Project, ShipmentDocument, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN")
@@ -64,12 +66,16 @@ class OrderSerializer(serializers.ModelSerializer):
 
 class MilestoneSerializer(serializers.ModelSerializer):
     due_amount = serializers.SerializerMethodField()
+    tt_advice_url = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportPaymentMilestone
         fields = ["id", "seq", "label", "trigger", "percent", "fixed_amount",
                   "due_date", "status", "due_amount", "tt_ref", "mvr_paid",
-                  "actual_rate", "paid_at"]
+                  "actual_rate", "paid_at", "tt_advice_url"]
+
+    def get_tt_advice_url(self, obj):
+        return obj.tt_advice.url if obj.tt_advice else None
 
     def get_due_amount(self, obj):
         # order total is stashed on context to avoid a query per milestone
@@ -77,6 +83,50 @@ class MilestoneSerializer(serializers.ModelSerializer):
         if total is None:
             total = ipr_svc.ipr_order_total(obj.order)
         return obj.due_amount(total)
+
+
+class ShipmentDocumentSerializer(serializers.ModelSerializer):
+    doc_type_display = serializers.CharField(source="get_doc_type_display",
+                                             read_only=True)
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ShipmentDocument
+        fields = ["id", "doc_type", "doc_type_display", "file_url",
+                  "file_name", "notes", "uploaded_at"]
+
+    def get_file_url(self, obj):
+        return obj.file.url if obj.file else None
+
+
+class ShipmentSerializer(serializers.ModelSerializer):
+    forwarder_display = serializers.SerializerMethodField()
+    status_display = serializers.CharField(source="get_status_display",
+                                           read_only=True)
+    documents = ShipmentDocumentSerializer(many=True, read_only=True)
+    clearing_total = serializers.DecimalField(max_digits=16, decimal_places=2,
+                                              read_only=True)
+    missing_clearing = serializers.SerializerMethodField()
+    next_statuses = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ImportShipment
+        fields = ["id", "seq", "mode", "forwarder", "forwarder_display",
+                  "vessel_flight", "container_awb", "etd", "eta",
+                  "tracking_ref", "carrier_link", "status", "status_display",
+                  "shared_with_agent_at", "customs_duty", "import_gst",
+                  "port_handling", "agent_charges", "local_transport",
+                  "clearing_total", "documents", "missing_clearing",
+                  "next_statuses", "notes"]
+
+    def get_forwarder_display(self, obj):
+        return obj.forwarder.name if obj.forwarder_id else obj.forwarder_name
+
+    def get_missing_clearing(self, obj):
+        return ipr_svc.missing_clearing_docs(obj)
+
+    def get_next_statuses(self, obj):
+        return sorted(ImportShipment.NEXT.get(obj.status, set()))
 
 
 def _get_ipr(request, ref):
@@ -102,9 +152,116 @@ def _serialize(doc, request):
     data["milestones"] = MilestoneSerializer(
         order.milestones.all(), many=True,
         context={"order_total": total}).data
+    data["shipments"] = ShipmentSerializer(
+        order.shipments.prefetch_related("documents").all(), many=True).data
     data["can_pay"] = request.user.role in PAY_ROLES
     data["can_manage"] = request.user.role in CREATE_ROLES
     return data
+
+
+def _get_shipment(doc, pk):
+    return doc.import_order.shipments.filter(pk=pk).first()
+
+
+@api_view(["POST"])
+def ipr_shipment_create(request, ref):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office manages shipments."},
+                        status=403)
+    ipr_svc.create_shipment(doc.import_order, request.data, request.user)
+    return Response(_serialize(doc, request), status=201)
+
+
+@api_view(["POST"])
+def ipr_shipment_status(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office manages shipments."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.advance_shipment(s, request.data.get("status"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_shipment_charges(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES + ("FINANCE",):
+        return Response({"detail": "Head Office / Finance record charges."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    ipr_svc.set_clearing_charges(s, request.data, request.user)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_shipment_share(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office shares with the agent."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    ipr_svc.share_with_agent(s, request.user)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def ipr_shipment_document(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office uploads shipping documents."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    upload = request.FILES.get("file")
+    doc_type = request.data.get("doc_type")
+    if upload is None or not doc_type:
+        return Response({"detail": "A file and document type are required."},
+                        status=400)
+    ipr_svc.add_shipment_document(s, doc_type, upload, request.user,
+                                  notes=request.data.get("notes", ""))
+    return Response(_serialize(doc, request), status=201)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def ipr_milestone_tt_advice(request, ref, pk):
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in PAY_ROLES:
+        return Response({"detail": "Finance uploads the TT advice."},
+                        status=403)
+    m = _get_milestone(doc, pk)
+    if not m:
+        return Response({"detail": "Not found."}, status=404)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "A file is required."}, status=400)
+    m.tt_advice = upload
+    m.save(update_fields=["tt_advice"])
+    return Response(_serialize(doc, request))
 
 
 def _get_milestone(doc, pk):

@@ -278,6 +278,81 @@ class MilestonePaymentTests(IprBase):
         self.assertEqual(r.status_code, 403)
 
 
+class ShipmentTests(IprBase):
+    def _file(self, name="doc.pdf"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b"%PDF-1.4 test",
+                                  content_type="application/pdf")
+
+    def test_shipment_lifecycle_fires_milestones_and_gates_clearing(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        # 40% on B/L + 60% on arrival
+        self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "On BL", "trigger": "BL", "percent": "40"},
+            {"label": "On arrival", "trigger": "ARRIVAL", "percent": "60"},
+        ]}, format="json")
+
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                             {"mode": "SEA", "vessel_flight": "MV Test",
+                              "container_awb": "CONT-1"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ship = r.data["shipments"][0]
+        sid = ship["id"]
+
+        def milestone(label):
+            doc = self.client.get(f"/api/v1/ipr/{ref}").data
+            return next(m for m in doc["milestones"] if m["label"] == label)
+
+        # upload the B/L → BL milestone becomes due
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/documents",
+                             {"doc_type": "BL_AWB", "file": self._file()},
+                             format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(milestone("On BL")["status"], "DUE")
+        self.assertEqual(milestone("On arrival")["status"], "PENDING")
+
+        # ship → arrived fires the arrival milestone
+        self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/status",
+                         {"status": "SHIPPED"}, format="json")
+        self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/status",
+                         {"status": "ARRIVED"}, format="json")
+        self.assertEqual(milestone("On arrival")["status"], "DUE")
+
+        # can't go under clearing without packing list + commercial invoice
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/status",
+                             {"status": "UNDER_CLEARING"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("PACKING_LIST", r.data["detail"])
+        for t in ("PACKING_LIST", "COMMERCIAL_INVOICE"):
+            self.client.post(
+                f"/api/v1/ipr/{ref}/shipments/{sid}/documents",
+                {"doc_type": t, "file": self._file()}, format="multipart")
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/status",
+                             {"status": "UNDER_CLEARING"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["shipments"][0]["status"], "UNDER_CLEARING")
+
+    def test_clearing_charges_total(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        sid = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/charges",
+                             {"customs_duty": "1200", "import_gst": "800",
+                              "port_handling": "300", "agent_charges": "500",
+                              "local_transport": "200"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(float(r.data["shipments"][0]["clearing_total"]), 3000.0)
+
+    def test_only_ho_manages_shipments(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.sa)   # site admin
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                             format="json")
+        self.assertEqual(r.status_code, 404)   # site staff can't see IPRs
+
+
 class SupplierCategoryTests(PmrBase):
     def test_category_filter_and_bank_visibility(self):
         Supplier.objects.create(name="Local Hardware",

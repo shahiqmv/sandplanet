@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { api } from "./api.js";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { api, apiUpload } from "./api.js";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, SectionTitle,
          StatusChip, td, th } from "./ui.jsx";
 
@@ -430,7 +430,212 @@ export function IprView({ me, refIpr, onClose }) {
 
       <MilestonePanel doc={doc} me={me} refIpr={refIpr} onChanged={load}
                       onError={setError} />
+      <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
+                      onError={setError} />
     </section>
+  );
+}
+
+const DOC_TYPES = [["BL_AWB", "Bill of Lading / AWB"],
+  ["PACKING_LIST", "Packing list"], ["COMMERCIAL_INVOICE", "Commercial invoice"],
+  ["COO", "Certificate of origin"], ["INSURANCE", "Insurance"],
+  ["TEST_CERT", "Test certificate"], ["PI", "Proforma invoice"],
+  ["OTHER", "Other"]];
+const SHIP_STEPS = ["BOOKED", "SHIPPED", "IN_TRANSIT", "ARRIVED",
+  "UNDER_CLEARING", "CLEARED"];
+const CHARGE_LABELS = [["customs_duty", "Customs duty"],
+  ["import_gst", "Import GST"], ["port_handling", "Port & handling"],
+  ["agent_charges", "Agent charges"], ["local_transport", "Local transport"]];
+
+function ShipmentsPanel({ doc, refIpr, onChanged, onError }) {
+  const ships = doc.shipments || [];
+  const canManage = doc.can_manage;
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ mode: "SEA", forwarder_name: "",
+    vessel_flight: "", container_awb: "", etd: "", eta: "", tracking_ref: "" });
+
+  async function call(path, body) {
+    onError(null);
+    try { await api(`/ipr/${refIpr}${path}`, { method: "POST", body });
+      onChanged(); } catch (e) { onError(e.message); }
+  }
+  async function create() {
+    onError(null);
+    try { await api(`/ipr/${refIpr}/shipments`, { method: "POST", body: f });
+      setAdding(false);
+      setF({ mode: "SEA", forwarder_name: "", vessel_flight: "",
+        container_awb: "", etd: "", eta: "", tracking_ref: "" });
+      onChanged(); } catch (e) { onError(e.message); }
+  }
+
+  return (
+    <>
+      <SectionTitle>Shipments &amp; clearing</SectionTitle>
+      {ships.length === 0 && !adding && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          No shipments booked yet.</p>
+      )}
+      {ships.map((s) => (
+        <Shipment key={s.id} s={s} refIpr={refIpr} canManage={canManage}
+                  call={call} onChanged={onChanged} onError={onError} />
+      ))}
+
+      {canManage && (adding ? (
+        <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                      padding: 10, marginTop: 8 }}>
+          <div style={{ display: "grid",
+            gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+            <select value={f.mode} style={inputStyle}
+                    onChange={(e) => setF({ ...f, mode: e.target.value })}>
+              <option value="SEA">Sea</option><option value="AIR">Air</option>
+            </select>
+            <input placeholder="Forwarder" value={f.forwarder_name}
+              style={inputStyle}
+              onChange={(e) => setF({ ...f, forwarder_name: e.target.value })} />
+            <input placeholder="Vessel / flight" value={f.vessel_flight}
+              style={inputStyle}
+              onChange={(e) => setF({ ...f, vessel_flight: e.target.value })} />
+            <input placeholder="Container / AWB" value={f.container_awb}
+              style={inputStyle}
+              onChange={(e) => setF({ ...f, container_awb: e.target.value })} />
+            <label style={{ fontSize: 11, color: "#5a6b78" }}>ETD
+              <input type="date" value={f.etd} style={inputStyle}
+                onChange={(e) => setF({ ...f, etd: e.target.value })} /></label>
+            <label style={{ fontSize: 11, color: "#5a6b78" }}>ETA
+              <input type="date" value={f.eta} style={inputStyle}
+                onChange={(e) => setF({ ...f, eta: e.target.value })} /></label>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button style={{ ...buttonStyle, padding: "4px 12px" }}
+                    onClick={create}>Save shipment</button>
+            <button style={ghostButton}
+                    onClick={() => setAdding(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button style={{ ...ghostButton, padding: "4px 12px", marginTop: 8 }}
+                onClick={() => setAdding(true)}>+ Book shipment</button>
+      ))}
+    </>
+  );
+}
+
+function Shipment({ s, refIpr, canManage, call, onChanged, onError }) {
+  const fileRef = useRef(null);
+  const [docType, setDocType] = useState("BL_AWB");
+  const [charges, setCharges] = useState(Object.fromEntries(
+    CHARGE_LABELS.map(([k]) => [k, s[k] ?? ""])));
+  const at = SHIP_STEPS.indexOf(s.status);
+
+  async function upload(file) {
+    if (!file) return;
+    onError(null);
+    const fd = new FormData();
+    fd.append("file", file); fd.append("doc_type", docType);
+    try { await apiUpload(`/ipr/${refIpr}/shipments/${s.id}/documents`, fd);
+      onChanged(); } catch (e) { onError(e.message); }
+  }
+
+  return (
+    <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                  padding: 10, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+                    flexWrap: "wrap" }}>
+        <strong style={{ color: "var(--sp-navy)" }}>
+          Shipment {s.seq} · {s.mode}</strong>
+        <span style={{ fontSize: 12, color: "#5a6b78" }}>
+          {s.forwarder_display}{s.vessel_flight ? ` · ${s.vessel_flight}` : ""}
+          {s.container_awb ? ` · ${s.container_awb}` : ""}
+          {s.eta ? ` · ETA ${s.eta}` : ""}</span>
+      </div>
+      {/* status stepper */}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" }}>
+        {SHIP_STEPS.map((st, i) => (
+          <span key={st} style={{ fontSize: 11, padding: "2px 8px",
+            borderRadius: 12, background: i === at ? "var(--sp-navy)"
+              : i < at ? "#e6f0e8" : "#eef1f4",
+            color: i === at ? "#fff" : i < at ? "#1a7f37" : "#8a97a1",
+            fontWeight: i === at ? 700 : 500 }}>
+            {i < at ? "✓ " : ""}{st.replace(/_/g, " ")}</span>
+        ))}
+      </div>
+      {canManage && s.next_statuses.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+          {s.next_statuses.map((ns) => (
+            <button key={ns} style={{ ...ghostButton, padding: "2px 10px",
+                                      fontSize: 12 }}
+                    onClick={() => call(`/shipments/${s.id}/status`,
+                                        { status: ns })}>
+              → {ns.replace(/_/g, " ")}</button>
+          ))}
+          {!s.shared_with_agent_at && (
+            <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
+                    onClick={() => call(`/shipments/${s.id}/share`, {})}>
+              Share with clearing agent</button>
+          )}
+          {s.shared_with_agent_at && (
+            <span style={{ fontSize: 11.5, color: "#1a7f37" }}>
+              ✓ shared with agent</span>
+          )}
+        </div>
+      )}
+
+      {/* documents */}
+      <div style={{ fontSize: 12.5 }}>
+        {s.documents.map((d) => (
+          <span key={d.id} style={{ marginRight: 10 }}>
+            <a href={d.file_url} target="_blank" rel="noreferrer">
+              📎 {d.doc_type_display}</a></span>
+        ))}
+        {s.missing_clearing.length > 0 && (
+          <span style={{ color: "#b35900", marginLeft: 4 }}>
+            (for clearing, still need: {s.missing_clearing.map((m) =>
+              (DOC_TYPES.find((t) => t[0] === m) || [, m])[1]).join(", ")})</span>
+        )}
+      </div>
+      {canManage && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6,
+                      alignItems: "center" }}>
+          <select value={docType} style={{ ...inputStyle, width: 200 }}
+                  onChange={(e) => setDocType(e.target.value)}>
+            {DOC_TYPES.map((t) => (
+              <option key={t[0]} value={t[0]}>{t[1]}</option>
+            ))}
+          </select>
+          <input type="file" ref={fileRef} style={{ display: "none" }}
+                 onChange={(e) => upload(e.target.files[0])} />
+          <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
+                  onClick={() => fileRef.current?.click()}>Upload document</button>
+        </div>
+      )}
+
+      {/* clearing charges */}
+      {(canManage || s.clearing_total > 0) && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11.5, color: "#5a6b78", marginBottom: 3 }}>
+            Clearing charges (MVR) — feed the landed cost</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                        alignItems: "center" }}>
+            {CHARGE_LABELS.map(([k, label]) => (
+              <input key={k} type="number" placeholder={label}
+                value={charges[k]} disabled={!canManage}
+                style={{ ...inputStyle, width: 120 }}
+                onChange={(e) => setCharges({ ...charges, [k]: e.target.value })}
+                title={label} />
+            ))}
+            {canManage && (
+              <button style={{ ...ghostButton, padding: "3px 10px",
+                               fontSize: 12 }}
+                      onClick={() => call(`/shipments/${s.id}/charges`,
+                                          charges)}>Save charges</button>
+            )}
+            <span style={{ fontSize: 12.5, fontWeight: 600,
+                           color: "var(--sp-navy)" }}>
+              Total: MVR {money(s.clearing_total)}</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -504,6 +709,14 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
       onChanged();
     } catch (e) { onError(e.message); }
   }
+  async function uploadTt(mId, file) {
+    if (!file) return;
+    onError(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    try { await apiUpload(`/ipr/${refIpr}/milestones/${mId}/tt-advice`, fd);
+      onChanged(); } catch (e) { onError(e.message); }
+  }
 
   const paidTotal = ms.filter((m) => m.status === "PAID")
     .reduce((a, m) => a + num(m.mvr_paid), 0);
@@ -546,10 +759,21 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                         : <span style={{ color: "#8a97a1" }}>Pending</span>}
                   </td>
                   <td style={{ ...td, fontSize: 12 }}>
-                    {m.status === "PAID"
-                      ? `${m.tt_ref || "—"} · MVR ${money(m.mvr_paid)} @ ${
-                          num(m.actual_rate)}`
-                      : ""}</td>
+                    {m.status === "PAID" && (<>
+                      {m.tt_ref || "—"} · MVR {money(m.mvr_paid)} @{" "}
+                      {num(m.actual_rate)}
+                      {m.tt_advice_url && (
+                        <> · <a href={m.tt_advice_url} target="_blank"
+                               rel="noreferrer">📎 advice</a></>
+                      )}
+                      {canPay && !m.tt_advice_url && (
+                        <> · <label style={{ color: "var(--sp-navy)",
+                          cursor: "pointer" }}>attach advice
+                          <input type="file" style={{ display: "none" }}
+                            onChange={(e) => uploadTt(m.id, e.target.files[0])}
+                          /></label></>
+                      )}
+                    </>)}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {canManage && m.status === "PENDING" && (
                       <button style={{ ...ghostButton, padding: "2px 8px",

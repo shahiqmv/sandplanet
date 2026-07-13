@@ -293,3 +293,100 @@ def payments_due():
     return ImportPaymentMilestone.objects.filter(
         status="DUE", order__document__status="AUTHORISED").select_related(
         "order__document", "order__supplier")
+
+
+# ---- Shipments + shipping documents (P1B-d) ------------------------------
+
+REQUIRED_FOR_CLEARING = ["BL_AWB", "PACKING_LIST", "COMMERCIAL_INVOICE"]
+CHARGE_FIELDS = ("customs_duty", "import_gst", "port_handling",
+                 "agent_charges", "local_transport")
+
+
+def fire_milestones(order, trigger, actor):
+    """A shipping event met a trigger — move matching pending milestones to DUE
+    so they enter Finance's queue (§5.10.7)."""
+    fired = []
+    for m in order.milestones.filter(trigger=trigger, status="PENDING"):
+        m.status = "DUE"
+        m.save(update_fields=["status"])
+        fired.append(m)
+    if fired:
+        audit("document", order.document_id, "IPR_MILESTONES_FIRED",
+              actor=actor, detail={"trigger": trigger,
+                                   "milestones": [m.label for m in fired]})
+    return fired
+
+
+def create_shipment(order, data, actor):
+    from .models import ImportShipment, Supplier
+    seq = (order.shipments.count() or 0) + 1
+    forwarder = None
+    if data.get("forwarder_id"):
+        forwarder = Supplier.objects.filter(pk=data["forwarder_id"]).first()
+    return ImportShipment.objects.create(
+        order=order, seq=seq, mode=(data.get("mode") or "SEA"),
+        forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
+        vessel_flight=data.get("vessel_flight", ""),
+        container_awb=data.get("container_awb", ""),
+        etd=data.get("etd") or None, eta=data.get("eta") or None,
+        tracking_ref=data.get("tracking_ref", ""),
+        carrier_link=data.get("carrier_link", ""),
+        notes=data.get("notes", ""), created_by=actor)
+
+
+def missing_clearing_docs(shipment):
+    have = set(shipment.documents.values_list("doc_type", flat=True))
+    return [d for d in REQUIRED_FOR_CLEARING if d not in have]
+
+
+def advance_shipment(shipment, to_status, actor):
+    """Move a shipment forward. Arrival fires arrival-triggered milestones;
+    the move to Under Clearing needs the core documents (§5.10.7/8)."""
+    from .models import ImportShipment
+    if to_status not in ImportShipment.NEXT.get(shipment.status, set()):
+        return f"Cannot move from {shipment.status} to {to_status}."
+    if to_status == "UNDER_CLEARING":
+        missing = missing_clearing_docs(shipment)
+        if missing:
+            return ("Upload the clearing documents first — missing: "
+                    + ", ".join(missing))
+    old = shipment.status
+    shipment.status = to_status
+    shipment.save(update_fields=["status"])
+    audit("document", shipment.order.document_id, "SHIPMENT_STATUS",
+          actor=actor, from_state=old, to_state=to_status,
+          detail={"shipment": shipment.seq})
+    if to_status == "ARRIVED":
+        fire_milestones(shipment.order, "ARRIVAL", actor)
+    return None
+
+
+def set_clearing_charges(shipment, data, actor):
+    for f in CHARGE_FIELDS:
+        if f in data:
+            setattr(shipment, f, _dec(data.get(f)) if data.get(f) not in
+                    (None, "") else None)
+    shipment.save(update_fields=list(CHARGE_FIELDS))
+    audit("document", shipment.order.document_id, "SHIPMENT_CHARGES",
+          actor=actor, detail={"shipment": shipment.seq,
+                               "total": str(shipment.clearing_total)})
+
+
+def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
+    """Attach a typed shipping document. A B/L (or AWB) upload fires
+    BL-triggered payment milestones (§5.10.7)."""
+    from .models import ShipmentDocument
+    doc = ShipmentDocument.objects.create(
+        shipment=shipment, doc_type=doc_type, file=upload,
+        file_name=upload.name, notes=notes, uploaded_by=actor)
+    if doc_type == "BL_AWB":
+        fire_milestones(shipment.order, "BL", actor)
+    return doc
+
+
+def share_with_agent(shipment, actor):
+    from django.utils import timezone
+    shipment.shared_with_agent_at = timezone.now()
+    shipment.save(update_fields=["shared_with_agent_at"])
+    audit("document", shipment.order.document_id, "SHIPMENT_SHARED_AGENT",
+          actor=actor, detail={"shipment": shipment.seq})

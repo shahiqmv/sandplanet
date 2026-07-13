@@ -799,6 +799,110 @@ class ImportPaymentMilestone(models.Model):
                 Decimal("0.01"))
         return Decimal("0")
 
+    # payment proof (Finance uploads the TT advice, §5.10.5 / §5.10.7)
+    tt_advice = models.FileField(upload_to="import-docs/tt/", null=True,
+                                 blank=True)
+
+
+class ImportShipment(models.Model):
+    """A physical shipment moving an import order to Malé (§5.10.6). An order
+    may ship in several parts. Clearing charges recorded here feed the landed
+    cost (§5.10.9, apportioned in P1B-e)."""
+
+    class Mode(models.TextChoices):
+        SEA = "SEA", "Sea"
+        AIR = "AIR", "Air"
+
+    class Status(models.TextChoices):
+        BOOKED = "BOOKED", "Booked"
+        SHIPPED = "SHIPPED", "Shipped"
+        IN_TRANSIT = "IN_TRANSIT", "In transit"
+        ARRIVED = "ARRIVED", "Arrived Malé"
+        UNDER_CLEARING = "UNDER_CLEARING", "Under clearing"
+        CLEARED = "CLEARED", "Cleared"
+
+    order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
+                              related_name="shipments")
+    seq = models.IntegerField()
+    mode = models.CharField(max_length=3, choices=Mode.choices,
+                            default=Mode.SEA)
+    forwarder = models.ForeignKey(Supplier, on_delete=models.PROTECT,
+                                  null=True, blank=True, related_name="+")
+    forwarder_name = models.CharField(max_length=120, blank=True)
+    vessel_flight = models.CharField(max_length=80, blank=True)
+    container_awb = models.CharField(max_length=80, blank=True)
+    etd = models.DateField(null=True, blank=True)
+    eta = models.DateField(null=True, blank=True)
+    tracking_ref = models.CharField(max_length=80, blank=True)
+    carrier_link = models.CharField(max_length=300, blank=True)
+    status = models.CharField(max_length=14, choices=Status.choices,
+                              default=Status.BOOKED)
+    shared_with_agent_at = models.DateTimeField(null=True, blank=True)
+    # local clearing charges (MVR) — landed-cost inputs (§5.10.8)
+    customs_duty = models.DecimalField(max_digits=14, decimal_places=2,
+                                       null=True, blank=True)
+    import_gst = models.DecimalField(max_digits=14, decimal_places=2,
+                                     null=True, blank=True)
+    port_handling = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    agent_charges = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    local_transport = models.DecimalField(max_digits=14, decimal_places=2,
+                                          null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Transitions the UI offers; the service is the authority.
+    NEXT = {
+        "BOOKED": {"SHIPPED"},
+        "SHIPPED": {"IN_TRANSIT", "ARRIVED"},
+        "IN_TRANSIT": {"ARRIVED"},
+        "ARRIVED": {"UNDER_CLEARING"},
+        "UNDER_CLEARING": {"CLEARED"},
+    }
+
+    class Meta:
+        ordering = ["seq"]
+
+    @property
+    def clearing_total(self):
+        from decimal import Decimal
+        return sum((getattr(self, f) or Decimal("0")) for f in (
+            "customs_duty", "import_gst", "port_handling", "agent_charges",
+            "local_transport"))
+
+
+def shipment_doc_path(instance, filename):
+    return (f"import-docs/{instance.shipment.order.document.ref}/"
+            f"{instance.doc_type}-{filename}")
+
+
+class ShipmentDocument(models.Model):
+    """A typed shipping document on a shipment (§5.10.7). The completeness
+    checklist for clearing looks for the required types."""
+
+    class Type(models.TextChoices):
+        BL_AWB = "BL_AWB", "Bill of Lading / AWB"
+        PACKING_LIST = "PACKING_LIST", "Packing list"
+        COMMERCIAL_INVOICE = "COMMERCIAL_INVOICE", "Commercial invoice"
+        COO = "COO", "Certificate of origin"
+        INSURANCE = "INSURANCE", "Insurance"
+        TEST_CERT = "TEST_CERT", "Test certificate"
+        PI = "PI", "Proforma invoice"
+        OTHER = "OTHER", "Other"
+
+    shipment = models.ForeignKey(ImportShipment, on_delete=models.CASCADE,
+                                 related_name="documents")
+    doc_type = models.CharField(max_length=20, choices=Type.choices)
+    file = models.FileField(upload_to=shipment_doc_path)
+    file_name = models.CharField(max_length=200, blank=True)
+    notes = models.CharField(max_length=200, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
 
 def quotation_path(instance, filename):
     return f"quotations/{instance.document.ref}/{instance.supplier_id}-{filename}"

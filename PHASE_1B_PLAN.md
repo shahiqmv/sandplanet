@@ -115,7 +115,17 @@ Payments queue. Migration 0039. NOTE: TT-advice file upload deferred to -d
   posts to the **Foreign Exchange** pool (never a project). PAID posts here.
 - Unpaid milestones on a shipped order flagged prominently.
 
-### P1B-d — Shipment + documents + clearing
+### P1B-d — Shipment + documents + clearing — DONE 2026-07-13
+Shipped: `ImportShipment` (per IPR; mode, forwarder, vessel/flight, container/
+AWB, ETD/ETA, tracking, status Booked→Shipped→In transit→Arrived→Under
+clearing→Cleared, + clearing charges customs/GST/port/agent/transport feeding
+landed cost). `ShipmentDocument` typed uploads (BL/AWB, packing list, commercial
+invoice, COO, insurance, test cert, PI, other). Completeness checklist gates the
+move to Under Clearing (needs BL+packing+invoice). Uploading a B/L fires
+BL-trigger milestones DUE; reaching Arrived fires ARRIVAL-trigger milestones —
+both land in Finance's queue. Share-with-clearing-agent action (logged). TT-
+advice upload on a paid milestone (the -c deferral). UI: Shipments & clearing
+panel in the IPR view. Migration 0040. Original -d spec below:
 - **Shipment records** (§5.10.6): one or more per IPR — mode (Sea/Air),
   forwarder, vessel/flight, container/AWB, ETD/ETA, tracking ref + carrier
   link, status `Booked → Shipped → In Transit → Arrived → Cleared`.
