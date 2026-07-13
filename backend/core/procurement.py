@@ -341,19 +341,40 @@ def po_lm_prefill_lines(po):
     return rows
 
 
+def _ho_site():
+    from .vouchers import ho_site
+    return ho_site()
+
+
+def company_gst_rate():
+    """The company GST rate (%), default 8. Applied to a registered vendor's
+    awarded net at PR-matching time (owner 2026-07-13)."""
+    from .models import CompanyParameter
+    try:
+        v = CompanyParameter.objects.get(key="gst_rate").value
+        return Decimal(str(v))
+    except (CompanyParameter.DoesNotExist, Exception):
+        return Decimal("8")
+
+
 def sync_pr_vendor_rows(pr):
     """Vendor-summary rows derived from captured quotations (R2): one row
     per supplier, cash vs credit split by the quotation's payment terms.
     Totals count AWARDED lines only — what we actually intend to buy;
-    quotes with nothing awarded still appear (total 0) for the record."""
+    quotes with nothing awarded still appear (total 0) for the record.
+    GST is added per vendor (registered = quotation.gst_applicable) at the
+    company rate on the awarded net; amount_cash/amount_credit stay NET."""
     revision = pr.current_revision
     revision.lines.all().delete()
+    rate = company_gst_rate()
     line_no = 0
     for quotation in pr.quotations.select_related("supplier") \
             .prefetch_related("lines"):
         all_lines = list(quotation.lines.all())
         awarded = [line for line in all_lines if line.awarded]
-        total = sum((line.amount or 0) for line in awarded)
+        total = sum((line.amount or Decimal("0")) for line in awarded)
+        gst = ((total * rate / Decimal("100")).quantize(Decimal("0.01"))
+               if quotation.gst_applicable else Decimal("0"))
         is_credit = "credit" in (quotation.payment_terms or "").lower()
         line_no += 1
         DocumentLine.objects.create(
@@ -365,17 +386,28 @@ def sync_pr_vendor_rows(pr):
             purchase_type="CREDIT" if is_credit else "CASH",
             amount_cash=None if is_credit else total,
             amount_credit=total if is_credit else None,
+            gst_amount=gst,
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
         )
 
 
 # ===== PR signatory authorisation + cost postings (M6c) =====
 
-def pr_grand_total(pr):
+def pr_net_total(pr):
     total = Decimal("0")
     for ln in pr.current_revision.lines.all():
         total += (ln.amount_cash or 0) + (ln.amount_credit or 0)
     return total
+
+
+def pr_gst_total(pr):
+    return sum((ln.gst_amount or Decimal("0"))
+               for ln in pr.current_revision.lines.all())
+
+
+def pr_grand_total(pr):
+    """What is paid / authorised on the voucher — net + GST (gross)."""
+    return pr_net_total(pr) + pr_gst_total(pr)
 
 
 def authorise_pr(pr, actor):
@@ -396,22 +428,31 @@ def authorise_pr(pr, actor):
     from .models import CostHead, Payable
 
     materials = CostHead.objects.get(name="Materials")
+    gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
+    ho = _ho_site()
     for ln in pr.current_revision.lines.all():
-        amount = (ln.amount_cash or 0) + (ln.amount_credit or 0)
-        if amount <= 0:
+        net = (ln.amount_cash or 0) + (ln.amount_credit or 0)
+        gst = ln.gst_amount or 0
+        if net <= 0:
             continue
         head = ln.cost_head or materials
-        costing.post(site=pr.site, cost_head=head, state="COMMITTED",
-                     source="PR", amount=amount, document=pr,
-                     document_line=ln, actor=actor)
-        costing.post(site=pr.site, cost_head=head, state="INCURRED",
-                     source="PR", amount=amount, document=pr,
-                     document_line=ln, actor=actor)
+        # Net is the project cost; GST is recoverable input tax (not a project
+        # cost) — posted to the Input GST account at HO (owner 2026-07-13).
+        for state in ("COMMITTED", "INCURRED"):
+            costing.post(site=pr.site, cost_head=head, state=state,
+                         source="PR", amount=net, document=pr,
+                         document_line=ln, actor=actor)
+            if gst > 0 and gst_head is not None:
+                costing.post(site=ho, cost_head=gst_head, state=state,
+                             source="PR", amount=gst, document=pr,
+                             document_line=ln, is_stock_pool=True, actor=actor)
         if (ln.amount_credit or 0) > 0:
+            # We owe the vendor the gross (net + GST)
             Payable.objects.create(
                 document=pr, document_line=ln, site=pr.site,
                 vendor=ln.vendor or ln.free_text_desc,
-                terms=ln.payment_terms or "", amount=ln.amount_credit,
+                terms=ln.payment_terms or "",
+                amount=(ln.amount_credit or 0) + gst,
                 due_date=date.today() + timedelta(days=30))
     generate_pos_for_pr(pr, actor)
 
@@ -432,12 +473,18 @@ def post_pr_vendor_paid(pr, line, actor, ref):
     from . import costing
     from .models import CostHead, Payable
 
-    amount = (line.amount_cash or 0) + (line.amount_credit or 0)
-    if amount > 0:
+    net = (line.amount_cash or 0) + (line.amount_credit or 0)
+    gst = line.gst_amount or 0
+    if net > 0:
         materials = CostHead.objects.get(name="Materials")
         costing.post(site=pr.site, cost_head=line.cost_head or materials,
-                     state="PAID", source="PR", amount=amount, document=pr,
+                     state="PAID", source="PR", amount=net, document=pr,
                      document_line=line, actor=actor)
+        gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
+        if gst > 0 and gst_head is not None:
+            costing.post(site=_ho_site(), cost_head=gst_head, state="PAID",
+                         source="PR", amount=gst, document=pr,
+                         document_line=line, is_stock_pool=True, actor=actor)
     Payable.objects.filter(document=pr, document_line=line,
                            status="OUTSTANDING").update(
         status="SETTLED", settled_on=date.today(), settled_ref=ref)

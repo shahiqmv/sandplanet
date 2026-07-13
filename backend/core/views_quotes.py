@@ -84,8 +84,8 @@ class QuotationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Quotation
         fields = ["id", "supplier", "supplier_name", "quote_ref", "quote_date",
-                  "valid_until", "payment_terms", "notes", "file_url",
-                  "total", "lines"]
+                  "valid_until", "payment_terms", "gst_applicable", "notes",
+                  "file_url", "total", "lines"]
 
     def get_total(self, obj):
         return sum((line.amount or 0) for line in obj.lines.all())
@@ -179,6 +179,7 @@ def pr_quotations(request, ref):
         quote_date=request.data.get("quote_date") or None,
         valid_until=request.data.get("valid_until") or None,
         payment_terms=request.data.get("payment_terms", ""),
+        gst_applicable=bool(request.data.get("gst_applicable", True)),
         notes=request.data.get("notes", ""),
         created_by=request.user,
     )
@@ -214,6 +215,8 @@ def quotation_detail(request, pk):
             setattr(quotation, field, request.data[field] or None
                     if field.endswith("date") or field == "valid_until"
                     else request.data[field])
+    if "gst_applicable" in request.data:
+        quotation.gst_applicable = bool(request.data["gst_applicable"])
     quotation.save()
     if "lines" in request.data:
         _save_quote_lines(quotation, request.data["lines"])

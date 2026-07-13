@@ -166,6 +166,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
   const [newSupplier, setNewSupplier] = useState("");
   const [newRef, setNewRef] = useState("");
   const [newTerms, setNewTerms] = useState("Cash");
+  const [newGst, setNewGst] = useState(true);
   const [newFile, setNewFile] = useState(null);
   const [newLines, setNewLines] = useState([]);
   const [notice, setNotice] = useState(null);
@@ -189,7 +190,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
       const q = await api(`/pr/${doc.ref}/quotations`, {
         method: "POST",
         body: { supplier: +newSupplier, quote_ref: newRef,
-                payment_terms: newTerms,
+                payment_terms: newTerms, gst_applicable: newGst,
                 lines: newLines.filter((l) => l.supplier_desc) },
       });
       if (newFile) {
@@ -206,6 +207,7 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
       setNewSupplier("");
       setNewRef("");
       setNewTerms("Cash");
+      setNewGst(true);
       setNewFile(null);
       setNewLines([]);
       load();
@@ -228,6 +230,16 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  async function toggleGst(q) {
+    setError(null);
+    try {
+      await api(`/quotations/${q.id}`, { method: "PATCH",
+        body: { gst_applicable: !q.gst_applicable } });
+      load();
+      onChanged?.();
+    } catch (e) { setError(e.message); }
   }
 
   return (
@@ -268,8 +280,18 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                 {q.supplier_name}</strong>
               <span style={{ fontSize: 12, color: "#5a6b78" }}>
                 {q.quote_ref}{q.payment_terms && ` · ${q.payment_terms}`} ·
-                total MVR {Number(q.total).toLocaleString()}
+                net MVR {Number(q.total).toLocaleString()}
               </span>
+              <label style={{ fontSize: 12, display: "flex", gap: 4,
+                              alignItems: "center",
+                              color: q.gst_applicable ? "var(--sp-navy)"
+                                : "#8a97a1", cursor: canEdit ? "pointer"
+                                : "default" }}
+                     title="Vendor is GST-registered — adds GST at the company rate">
+                <input type="checkbox" checked={!!q.gst_applicable}
+                       disabled={!canEdit}
+                       onChange={() => toggleGst(q)} />
+                GST</label>
               {q.file_url && (
                 <a href={q.file_url} target="_blank" rel="noreferrer"
                    style={{ fontSize: 12 }}>quotation file</a>
@@ -352,6 +374,12 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
               <option>Cash</option>
               <option>Credit</option>
             </select>
+            <label style={{ fontSize: 13, display: "flex", gap: 4,
+                            alignItems: "center" }}
+                   title="Vendor is GST-registered — adds GST at the company rate">
+              <input type="checkbox" checked={newGst}
+                     onChange={(e) => setNewGst(e.target.checked)} />
+              GST-registered</label>
             <label style={{ fontSize: 13 }}>
               Quotation file (PDF):{" "}
               <input type="file" accept=".pdf,image/*"

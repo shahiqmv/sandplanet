@@ -1186,7 +1186,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
             const credit = doc.lines.reduce(
               (a, l) => a + num(l.amount_credit), 0);
             const untaxed = cash + credit;
-            const gst = untaxed * gstRate / 100;
+            // GST is now recorded per vendor (registered vs not) at matching;
+            // sum the stored per-line GST rather than a blanket rate.
+            const gst = doc.lines.reduce((a, l) => a + num(l.gst_amount), 0);
             const fmt = (v) => v.toLocaleString(undefined,
               { maximumFractionDigits: 2 });
             const right = { ...td, textAlign: "right", borderTop: "none" };
@@ -1203,7 +1205,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   <td style={{ ...right, fontWeight: 600 }}>{fmt(untaxed)}</td>
                 </tr>
                 <tr>
-                  <td colSpan={4} style={label}>GST ({gstRate}%)</td>
+                  <td colSpan={4} style={label}>GST (input tax)</td>
                   <td style={right} />
                   <td style={right} />
                   <td style={right}>{fmt(gst)}</td>

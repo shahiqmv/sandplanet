@@ -66,7 +66,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
     class Meta:
         model = DocumentLine
         fields = ["id", "line_no", "item", "item_code", "description",
-                  "free_text_desc", "is_free_text", "unit",
+                  "free_text_desc", "is_free_text", "unit", "gst_amount",
                   "item_photo_url", "item_is_major",
                   "qty_required", "qty_stock", "qty_to_order",
                   "qty_loaded", "qty_pending", "qty_manifest", "qty_received",

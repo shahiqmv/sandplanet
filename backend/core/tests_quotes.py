@@ -330,3 +330,43 @@ class ExtractionTests(QuoteBase):
         self.assertEqual(float(spray["amount"]), 8550.0)
         self.assertEqual(spray["unit"], "TIN")
         self.assertIn("5340", spray["remarks"])
+
+
+class GstTests(PoGenerationTests):
+    """GST on local purchases (owner 2026-07-13): per-vendor, gross payment,
+    net → project cost, GST → recoverable input-tax account."""
+
+    def test_gross_payment_net_cost_input_tax_and_payable(self):
+        from .costing import INPUT_GST_HEAD
+        from .models import CostHead, CostPosting, Payable
+        from .procurement import (pr_grand_total, pr_gst_total, pr_net_total)
+        mr, pr = self.full_award()          # both vendors GST-registered (8%)
+        prdoc = Document.objects.get(ref=pr["ref"])
+        self.assertEqual(float(pr_net_total(prdoc)), 27250.0)
+        self.assertEqual(float(pr_gst_total(prdoc)), 2180.0)     # 8% of 27250
+        self.assertEqual(float(pr_grand_total(prdoc)), 29430.0)  # gross
+
+        gst_head = CostHead.objects.get(name=INPUT_GST_HEAD)
+        mat = CostPosting.objects.filter(
+            document=prdoc, state="INCURRED").exclude(cost_head=gst_head)
+        self.assertEqual(float(sum(p.amount for p in mat)), 27250.0)  # net
+        gst = CostPosting.objects.filter(
+            document=prdoc, state="INCURRED", cost_head=gst_head)
+        self.assertEqual(float(sum(p.amount for p in gst)), 2180.0)
+        self.assertTrue(gst.first().is_stock_pool)   # not a project cost
+
+        # credit vendor's payable is the gross (net 9250 + GST 740)
+        pay = Payable.objects.get(document=prdoc)
+        self.assertEqual(float(pay.amount), 9990.0)
+
+    def test_gst_off_for_unregistered_vendor(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        q = self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC", "unit": "bag", "qty": 150, "rate": 120,
+             "mr_line": mr["lines"][0]["id"], "awarded": True}], terms="COD")
+        self.as_user(self.purchasing)
+        self.client.patch(f"/api/v1/quotations/{q['id']}",
+                          {"gst_applicable": False}, format="json")
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/sync-vendor-rows")
+        self.assertEqual(float(r.data["lines"][0]["gst_amount"]), 0.0)

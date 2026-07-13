@@ -544,8 +544,10 @@ function PayLinePr({ l, payKey, startPay, fields }) {
         <tbody>
           {(l.vendor_rows || []).map((row) => {
             const key = `pr:${l.ref}:${row.line_id}`;
-            const amt = Number(row.amount_cash || 0)
+            const net = Number(row.amount_cash || 0)
                       + Number(row.amount_credit || 0);
+            const gstv = Number(row.gst_amount || 0);
+            const gross = row.gross != null ? Number(row.gross) : net + gstv;
             return (
               <tr key={row.line_id}>
                 <td style={{ ...td, borderTop: "none" }}>
@@ -557,7 +559,11 @@ function PayLinePr({ l, payKey, startPay, fields }) {
                 </td>
                 <td style={{ ...td, borderTop: "none", textAlign: "right",
                              fontFamily: "var(--font-mono)" }}>
-                  MVR {money(amt)}</td>
+                  MVR {money(gross)}
+                  {gstv > 0 && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      net {money(net)} + GST {money(gstv)}</div>
+                  )}</td>
                 <td style={{ ...td, borderTop: "none" }}>
                   {row.paid ? (
                     <span style={{ color: "var(--green-fg)", fontSize: 13 }}>

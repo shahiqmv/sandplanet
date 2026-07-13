@@ -49,9 +49,11 @@ def _line_info(line):
                 continue
             # action_taken holds the slip/voucher ref once actually paid;
             # po_ref alone means ordered-not-yet-paid (credit vendors)
+            gst = ln.gst_amount or 0
             rows.append({"line_id": ln.id,
                          "vendor": ln.vendor or ln.free_text_desc,
                          "amount_cash": cash, "amount_credit": credit,
+                         "gst_amount": gst, "gross": cash + credit + gst,
                          "is_credit": credit > 0, "po_ref": ln.po_ref,
                          "payment_ref": ln.action_taken,
                          "paid": bool((ln.action_taken or "").strip())})

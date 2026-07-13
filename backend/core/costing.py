@@ -129,7 +129,9 @@ DEFAULT_HEADS = [
     "Materials", "Labour & Staff", "Subcontract", "Plant & Equipment",
     "Transport & Freight", "Site Overheads", "Permits & Fees", "Other",
 ]
-DEFAULT_POOLS = ["General Stock", "Foreign Exchange", "Stock Adjustment"]
+DEFAULT_POOLS = ["General Stock", "Foreign Exchange", "Stock Adjustment",
+                 "Input GST (recoverable)"]
+INPUT_GST_HEAD = "Input GST (recoverable)"
 
 
 def head(name):

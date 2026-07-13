@@ -570,6 +570,10 @@ class DocumentLine(models.Model):
                                       null=True, blank=True)  # PR vendor rows
     amount_credit = models.DecimalField(max_digits=14, decimal_places=2,
                                         null=True, blank=True)
+    # GST on a PR vendor row (recoverable input tax, owner 2026-07-13):
+    # amount_cash/amount_credit stay NET; this is the tax added for payment.
+    gst_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                     null=True, blank=True)
     vendor = models.TextField(blank=True)
     quotation_ref = models.TextField(blank=True)
     payment_terms = models.TextField(blank=True)
@@ -1098,6 +1102,9 @@ class Quotation(models.Model):
     quote_date = models.DateField(null=True, blank=True)
     valid_until = models.DateField(null=True, blank=True)
     payment_terms = models.TextField(blank=True)
+    # This supplier charges GST — off for unregistered vendors (owner
+    # 2026-07-13). Applied at the company rate on the awarded net.
+    gst_applicable = models.BooleanField(default=True)
     notes = models.TextField(blank=True)
     file = models.FileField(upload_to=quotation_path, null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
