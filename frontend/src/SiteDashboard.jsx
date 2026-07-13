@@ -18,6 +18,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const [pmrs, setPmrs] = useState([]);
   const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
+  const [grns, setGrns] = useState([]);
   const [pyrs, setPyrs] = useState([]);
   const [stock, setStock] = useState(null);
 
@@ -40,6 +41,8 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
     ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
+    api(`/documents/list?site=${site.id}&doc_type=GRN`).then(setGrns)
+      .catch(() => setGrns([]));
     api(`/stock/${site.id}`).then(setStock).catch(() => setStock(null));
   }, [site.id, projectParam]);
 
@@ -309,6 +312,55 @@ that adds your existing quantities to the system"
             manifest's lines pre-filled.
           </p>
         )}
+
+        {grns.length > 0 && (() => {
+          // Drafts first so a half-entered opening-stock GRN is easy to find
+          // and re-open (owner: teams close drafts and lose their place).
+          const sorted = [...grns].sort((a, b) =>
+            (a.status === "DRAFT" ? 0 : 1) - (b.status === "DRAFT" ? 0 : 1)
+            || b.ref.localeCompare(a.ref));
+          const drafts = grns.filter((g) => g.status === "DRAFT").length;
+          return (
+            <div style={{ marginTop: 14, borderTop: "1px solid var(--sp-border)",
+                          paddingTop: 10 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "var(--navy)",
+                            marginBottom: 6 }}>
+                Goods Received Notes
+                {drafts > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 500,
+                                 color: "#b35900" }}>
+                    · {drafts} draft{drafts > 1 ? "s" : ""} to finish</span>
+                )}
+              </div>
+              <table style={{ width: "100%", borderCollapse: "collapse",
+                              fontSize: 13 }}>
+                <tbody>
+                  {sorted.slice(0, 12).map((g) => (
+                    <tr key={g.ref} style={g.status === "DRAFT"
+                      ? { background: "#fff8e6" } : {}}>
+                      <td style={{ ...td, width: 130 }}>
+                        <a href="#" onClick={(e) => { e.preventDefault();
+                                                      onOpenDoc(g.ref); }}
+                           style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                          {g.ref}</a>
+                      </td>
+                      <td style={td}>{g.doc_date}</td>
+                      <td style={td}>
+                        {g.payload?.opening_stock ? "Opening stock"
+                         : g.payload?.manifest_ref || ""}</td>
+                      <td style={{ ...td, textAlign: "right" }}>
+                        {g.status === "DRAFT"
+                          ? <span style={{ color: "#b35900", fontWeight: 600 }}>
+                              Draft — continue →</span>
+                          : <StatusChip status={g.is_void ? "VOID" : g.status} />}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })()}
       </section>
 
       {(dash?.materials_in_transit_count > 0 ||
