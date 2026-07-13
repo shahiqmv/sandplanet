@@ -540,3 +540,105 @@ def store_lots(project_id=None, in_stock_only=True):
     if project_id:
         qs = qs.filter(project_id=project_id)
     return qs
+
+
+# ---- SIN — store issue to site (P1B-f) -----------------------------------
+
+def pick_lots_fifo(item, project, qty):
+    """Choose lots to satisfy `qty` of an item, FIFO within a reservation:
+    the project's reserved lots first (oldest first), then general stock.
+    Returns [(lot, take_qty)] or (None, error)."""
+    from .models import StockLot
+    need = _dec(qty)
+    if need <= ZERO:
+        return None, "Quantity must be greater than zero."
+    reserved = StockLot.objects.filter(item=item, project=project,
+                                       qty_on_hand__gt=0).order_by(
+        "received_date", "id") if project else StockLot.objects.none()
+    general = StockLot.objects.filter(item=item, project__isnull=True,
+                                      qty_on_hand__gt=0).order_by(
+        "received_date", "id")
+    picks, remaining = [], need
+    for lot in list(reserved) + list(general):
+        if remaining <= ZERO:
+            break
+        take = min(lot.qty_on_hand, remaining)
+        if take > ZERO:
+            picks.append((lot, take))
+            remaining -= take
+    if remaining > ZERO:
+        return None, f"Not enough stock — short {remaining} of {need}."
+    return picks, None
+
+
+@transaction.atomic
+def create_store_issue(to_site, to_project, rows, actor, notes=""):
+    """Open a SIN issuing chosen lots to a site. `rows` = [{lot_id, qty}].
+    Validates each quantity against the lot's on-hand balance."""
+    from datetime import date
+
+    from .models import (Document, DocumentRevision, StockLot, StoreIssue,
+                         StoreIssueLine)
+    cleaned = []
+    for r in rows or []:
+        lot = StockLot.objects.filter(pk=r.get("lot_id")).first()
+        if not lot:
+            return None, "One or more lots are unknown."
+        qty = _dec(r.get("qty"))
+        if qty <= ZERO:
+            return None, f"{lot.description}: quantity must be greater than zero."
+        if qty > lot.qty_on_hand:
+            return None, (f"{lot.description}: only {lot.qty_on_hand} on hand, "
+                          f"cannot issue {qty}.")
+        cleaned.append((lot, qty))
+    if not cleaned:
+        return None, "Add at least one lot to issue."
+    doc = Document.objects.create(
+        doc_type="SIN", ref=next_ref("SIN", None), site=_ho_site(),
+        doc_date=date.today(), status="DRAFT", created_by=actor)
+    DocumentRevision.objects.create(document=doc, rev_label="R0", payload={},
+                                    created_by=actor)
+    doc.current_revision = doc.revisions.first()
+    doc.save(update_fields=["current_revision"])
+    issue = StoreIssue.objects.create(document=doc, to_site=to_site,
+                                      to_project=to_project, notes=notes)
+    for lot, qty in cleaned:
+        StoreIssueLine.objects.create(issue=issue, lot=lot, qty=qty,
+                                      unit_landed_cost=lot.unit_landed_cost)
+    audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
+          detail={"ref": doc.ref, "to_site": to_site.code})
+    return doc, None
+
+
+@transaction.atomic
+def issue_store_issue(sin_doc, actor):
+    """Post the SIN: move each lot's issued quantity from on-hand to in-transit
+    (it has physically left the store; project cost lands at the site GRN)."""
+    from django.utils import timezone
+    issue = sin_doc.store_issue
+    for line in issue.lines.select_related("lot"):
+        lot = line.lot
+        if line.qty > lot.qty_on_hand:
+            return (f"{lot.description}: only {lot.qty_on_hand} on hand now — "
+                    "re-open the SIN.")
+        lot.qty_on_hand -= line.qty
+        lot.qty_in_transit = (lot.qty_in_transit or ZERO) + line.qty
+        lot.save(update_fields=["qty_on_hand", "qty_in_transit"])
+    issue.issued_by = actor
+    issue.issued_at = timezone.now()
+    issue.save(update_fields=["issued_by", "issued_at"])
+    sin_doc.status = "ISSUED"
+    sin_doc.save(update_fields=["status", "updated_at"])
+    audit("document", sin_doc.id, "SIN_ISSUED", actor=actor, to_state="ISSUED",
+          detail={"ref": sin_doc.ref})
+    return None
+
+
+def cancel_store_issue(sin_doc, actor):
+    if sin_doc.status != "DRAFT":
+        return "Only a draft SIN can be cancelled."
+    sin_doc.status = "CANCELLED"
+    sin_doc.save(update_fields=["status", "updated_at"])
+    audit("document", sin_doc.id, "SIN_CANCELLED", actor=actor,
+          to_state="CANCELLED", detail={"ref": sin_doc.ref})
+    return None

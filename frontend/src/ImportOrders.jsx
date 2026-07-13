@@ -833,66 +833,164 @@ export function IrnView({ me, refIrn, onClose }) {
   );
 }
 
-export function StoreLots({ onOpenIrn }) {
+export function StoreLots({ me, onOpenIrn }) {
   const [data, setData] = useState(null);
+  const [sins, setSins] = useState([]);
+  const [sites, setSites] = useState([]);
+  const [sel, setSel] = useState({});          // lot id -> qty to issue
+  const [destSite, setDestSite] = useState("");
   const [error, setError] = useState(null);
-  useEffect(() => {
+  const [busy, setBusy] = useState(false);
+  const canIssue = ["HO_PURCHASING", "ADMIN"].includes(me?.role);
+
+  const reload = () => {
     api("/store/lots").then(setData).catch((e) => setError(e.message));
-  }, []);
+    api("/store/issues").then(setSins).catch(() => {});
+    api("/sites").then(setSites).catch(() => {});
+  };
+  useEffect(reload, []);
+
+  const chosen = Object.entries(sel)
+    .filter(([, q]) => Number(q) > 0)
+    .map(([lot_id, qty]) => ({ lot_id: Number(lot_id), qty: Number(qty) }));
+
+  const issue = () => {
+    setError(null);
+    if (!destSite) { setError("Choose the destination site."); return; }
+    if (!chosen.length) { setError("Enter a quantity on the lots to issue."); return; }
+    setBusy(true);
+    api("/store/issues", { method: "POST",
+      body: { to_site_id: Number(destSite), rows: chosen } })
+      .then((sin) => api(`/sin/${sin.ref}/issue`, { method: "POST" }))
+      .then(() => { setSel({}); setDestSite(""); reload(); })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
+
   return (
-    <section style={card}>
-      <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-        🏬 HO Store — stock lots</h2>
-      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      <p style={{ fontSize: 12.5, color: "#5a6b78" }}>
-        Imported stock at landed cost — reserved to a project or held as general
-        company stock. A company asset until it&apos;s issued to a site.</p>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-        <thead><tr>
-          <th style={th}>Item</th><th style={th}>Reserved for</th>
-          <th style={th}>Site</th>
-          <th style={{ ...th, textAlign: "right" }}>On hand</th>
-          <th style={{ ...th, textAlign: "right" }}>Unit landed</th>
-          <th style={{ ...th, textAlign: "right" }}>Value (MVR)</th>
-          <th style={th}>IRN</th><th style={th}>Received</th>
-        </tr></thead>
-        <tbody>
-          {(data?.lots || []).map((l) => (
-            <tr key={l.id}>
-              <td style={td}>{l.description}</td>
-              <td style={td}>{l.reserved_for === "General stock"
-                ? <span style={{ color: "#8a6d00" }}>General stock</span>
-                : l.reserved_for}</td>
-              <td style={td}>{l.site}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {money(l.qty_on_hand)} {l.unit}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {money(l.unit_landed_cost)}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {money(l.value_on_hand)}</td>
-              <td style={td}>
-                <a href="#" onClick={(e) => { e.preventDefault();
-                                              onOpenIrn?.(l.source_irn); }}
-                   style={{ color: "var(--sp-navy)" }}>{l.source_irn}</a></td>
-              <td style={td}>{l.received_date}</td>
-            </tr>
-          ))}
-          {data && data.lots.length === 0 && (
-            <tr><td colSpan={8} style={{ ...td, textAlign: "center",
-                                         color: "var(--muted)" }}>
-              No stock in the store yet.</td></tr>
+    <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <section style={card}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12,
+                      flexWrap: "wrap" }}>
+          <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+            🏬 HO Store — stock lots</h2>
+          {canIssue && chosen.length > 0 && (
+            <span style={{ marginLeft: "auto", display: "flex", gap: 10,
+                           alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 13 }}>Issue {chosen.length} lot
+                {chosen.length === 1 ? "" : "s"} to</span>
+              <select value={destSite}
+                      onChange={(e) => setDestSite(e.target.value)}
+                      style={{ ...inputStyle, width: 200 }}>
+                <option value="">— site —</option>
+                {sites.filter((s) => !s.is_head_office).map((s) => (
+                  <option key={s.id} value={s.id}>{s.code} — {s.name}</option>
+                ))}
+              </select>
+              <Btn variant="primary" disabled={busy} onClick={issue}>
+                Issue to site</Btn>
+            </span>
           )}
-        </tbody>
-        {data && data.lots.length > 0 && (
-          <tfoot><tr>
-            <td colSpan={5} style={{ ...td, textAlign: "right",
-                                     fontWeight: 700 }}>Total store value</td>
-            <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>
-              {money(data.total_value)}</td>
-            <td colSpan={2} style={td} />
-          </tr></tfoot>
-        )}
-      </table>
+        </div>
+        {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+        <p style={{ fontSize: 12.5, color: "#5a6b78" }}>
+          Imported stock at landed cost — reserved to a project or held as
+          general company stock. A company asset until issued to a site
+          {canIssue && "; tick a quantity to issue it out (SIN)"}.</p>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 13 }}>
+          <thead><tr>
+            <th style={th}>Item</th><th style={th}>Reserved for</th>
+            <th style={th}>Site</th>
+            <th style={{ ...th, textAlign: "right" }}>On hand</th>
+            <th style={{ ...th, textAlign: "right" }}>In transit</th>
+            <th style={{ ...th, textAlign: "right" }}>Unit landed</th>
+            <th style={{ ...th, textAlign: "right" }}>Value (MVR)</th>
+            <th style={th}>IRN</th>
+            {canIssue && <th style={{ ...th, width: 100 }}>Issue qty</th>}
+          </tr></thead>
+          <tbody>
+            {(data?.lots || []).map((l) => (
+              <tr key={l.id}>
+                <td style={td}>{l.description}</td>
+                <td style={td}>{l.reserved_for === "General stock"
+                  ? <span style={{ color: "#8a6d00" }}>General stock</span>
+                  : l.reserved_for}</td>
+                <td style={td}>{l.site}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {money(l.qty_on_hand)} {l.unit}</td>
+                <td style={{ ...td, textAlign: "right",
+                             color: Number(l.qty_in_transit) > 0
+                               ? "#b35900" : "#8a97a1" }}>
+                  {Number(l.qty_in_transit) > 0
+                    ? money(l.qty_in_transit) : "—"}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {money(l.unit_landed_cost)}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {money(l.value_on_hand)}</td>
+                <td style={td}>
+                  <a href="#" onClick={(e) => { e.preventDefault();
+                                                onOpenIrn?.(l.source_irn); }}
+                     style={{ color: "var(--sp-navy)" }}>{l.source_irn}</a></td>
+                {canIssue && (
+                  <td style={td}>
+                    <input type="number" min="0" max={l.qty_on_hand}
+                           value={sel[l.id] || ""}
+                           disabled={Number(l.qty_on_hand) <= 0}
+                           onChange={(e) => setSel({ ...sel,
+                             [l.id]: e.target.value })}
+                           style={{ ...inputStyle, width: 80 }} />
+                  </td>
+                )}
+              </tr>
+            ))}
+            {data && data.lots.length === 0 && (
+              <tr><td colSpan={canIssue ? 9 : 8}
+                      style={{ ...td, textAlign: "center",
+                               color: "var(--muted)" }}>
+                No stock in the store yet.</td></tr>
+            )}
+          </tbody>
+          {data && data.lots.length > 0 && (
+            <tfoot><tr>
+              <td colSpan={6} style={{ ...td, textAlign: "right",
+                                       fontWeight: 700 }}>Total store value</td>
+              <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>
+                {money(data.total_value)}</td>
+              <td colSpan={canIssue ? 2 : 1} style={td} />
+            </tr></tfoot>
+          )}
+        </table>
+        </div>
+      </section>
+
+      {sins.length > 0 && (
+        <section style={card}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 15,
+                       color: "var(--sp-navy)" }}>Store issues (SIN)</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>SIN</th><th style={th}>To site</th>
+              <th style={th}>Lines</th><th style={th}>Date</th>
+              <th style={th}>Status</th>
+            </tr></thead>
+            <tbody>
+              {sins.map((s) => (
+                <tr key={s.ref}>
+                  <td style={td}>{s.ref}</td>
+                  <td style={td}>{s.to_site}
+                    {s.to_project ? ` · ${s.to_project}` : ""}</td>
+                  <td style={td}>{s.lines}</td>
+                  <td style={td}>{s.doc_date}</td>
+                  <td style={td}><StatusChip status={s.status} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
     </section>
   );
 }

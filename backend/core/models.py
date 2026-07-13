@@ -266,6 +266,7 @@ class Document(models.Model):
         PMR = "PMR"  # project material requisition — imports (§5.10, P1B)
         IPR = "IPR"  # international purchase requisition — the order (§5.10)
         IRN = "IRN"  # import receipt note — count at the HO store (§5.10.8)
+        SIN = "SIN"  # store issue note — issue stock to a site (§6D.3, P1B-f)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -377,6 +378,13 @@ class Document(models.Model):
         # landed cost (§5.10.8). Draft while counting; Received posts the lots.
         "IRN": {
             "DRAFT": {"RECEIVED", "CANCELLED"},
+        },
+        # Store Issue Note — issue store stock to a site (§6D.3, P1B-f). Draft
+        # while picking lots; Issued moves stock on-hand → in transit; Received
+        # when the site's GRN counts it in (posts INCURRED at landed cost).
+        "SIN": {
+            "DRAFT": {"ISSUED", "CANCELLED"},
+            "ISSUED": {"RECEIVED"},
         },
     }
 
@@ -1013,6 +1021,10 @@ class StockLot(models.Model):
                                 blank=True, related_name="stock_lots")
     qty_received = models.DecimalField(max_digits=12, decimal_places=2)
     qty_on_hand = models.DecimalField(max_digits=12, decimal_places=2)
+    # Issued to a site but not yet received there (§6D.3) — left the store,
+    # still a company asset until the site GRN turns it into project cost.
+    qty_in_transit = models.DecimalField(max_digits=12, decimal_places=2,
+                                         default=0)
     unit_landed_cost = models.DecimalField(max_digits=16, decimal_places=4)
     location = models.CharField(max_length=60, blank=True)
     received_date = models.DateField()
@@ -1028,6 +1040,44 @@ class StockLot(models.Model):
     @property
     def value_on_hand(self):
         return (self.qty_on_hand or 0) * (self.unit_landed_cost or 0)
+
+
+class StoreIssue(models.Model):
+    """SIN typed header (§6D.3) — one row per SIN document. Issues store stock
+    to a site (optionally reserved to a project); the value moves from the
+    store to *in transit to site*, becoming project cost only at the site
+    GRN (§5.10.11, INCURRED at landed cost)."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="store_issue")
+    to_site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                                related_name="store_issues")
+    to_project = models.ForeignKey("Project", on_delete=models.PROTECT,
+                                   null=True, blank=True,
+                                   related_name="store_issues")
+    notes = models.TextField(blank=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    issued_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"SIN {self.document.ref}"
+
+
+class StoreIssueLine(models.Model):
+    """One lot drawn on a SIN: the source lot, the quantity issued, and the
+    unit landed cost snapshot (the value that will INCURRED at the site GRN)."""
+
+    issue = models.ForeignKey(StoreIssue, on_delete=models.CASCADE,
+                              related_name="lines")
+    lot = models.ForeignKey(StockLot, on_delete=models.PROTECT,
+                            related_name="issue_lines")
+    qty = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_landed_cost = models.DecimalField(max_digits=16, decimal_places=4)
+
+    @property
+    def value(self):
+        return (self.qty or 0) * (self.unit_landed_cost or 0)
 
 
 def quotation_path(instance, filename):

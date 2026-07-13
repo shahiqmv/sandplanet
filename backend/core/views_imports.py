@@ -16,7 +16,7 @@ from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
                      ImportReceiptLine, ImportShipment, Project,
-                     ShipmentDocument, StockLot, Supplier)
+                     ShipmentDocument, Site, StockLot, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN")
@@ -391,17 +391,136 @@ def store_lots(request):
         rows.append({
             "id": lot.id, "description": lot.description, "unit": lot.unit,
             "qty_on_hand": lot.qty_on_hand,
+            "qty_in_transit": lot.qty_in_transit,
             "unit_landed_cost": lot.unit_landed_cost,
             "value_on_hand": (lot.qty_on_hand * lot.unit_landed_cost)
             .quantize(Decimal("0.01")),
             "reserved_for": (lot.project.code if lot.project_id
                              else "General stock"),
+            "project_id": lot.project_id,
             "site": lot.project.site.code if lot.project_id else "—",
             "source_irn": lot.source_receipt.document.ref,
             "location": lot.location, "received_date": lot.received_date,
         })
     total = sum((r["value_on_hand"] for r in rows), Decimal("0"))
     return Response({"lots": rows, "total_value": total})
+
+
+# ---- SIN — store issue to site (P1B-f) -----------------------------------
+
+def _sin_payload(doc, request):
+    issue = doc.store_issue
+    data = DocumentSerializer(doc, context={"request": request}).data
+    data["to_site"] = issue.to_site.code
+    data["to_project"] = issue.to_project.code if issue.to_project_id else None
+    data["notes"] = issue.notes
+    data["issued_by"] = issue.issued_by.full_name if issue.issued_by_id else None
+    data["can_issue"] = (request.user.role in CREATE_ROLES
+                         and doc.status == "DRAFT")
+    lines, total = [], Decimal("0")
+    for ln in issue.lines.select_related("lot__item").all():
+        val = (ln.qty * ln.unit_landed_cost).quantize(Decimal("0.01"))
+        total += val
+        lines.append({
+            "id": ln.id, "description": ln.lot.description,
+            "unit": ln.lot.unit, "qty": ln.qty,
+            "unit_landed_cost": ln.unit_landed_cost, "value": val,
+            "source_irn": ln.lot.source_receipt.document.ref,
+            "reserved_for": (ln.lot.project.code if ln.lot.project_id
+                             else "General stock")})
+    data["lines"] = lines
+    data["total_value"] = total
+    return data
+
+
+def _get_sin(request, ref):
+    try:
+        doc = Document.objects.select_related("current_revision").get(
+            ref=ref, doc_type="SIN")
+    except Document.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    if request.user.role not in VIEW_ROLES:
+        return None, Response({"detail": "Not found."}, status=404)
+    return doc, None
+
+
+@api_view(["GET", "POST"])
+def store_issues(request):
+    if request.method == "POST":
+        if request.user.role not in CREATE_ROLES:
+            return Response({"detail": "Head Office issues store stock."},
+                            status=403)
+        try:
+            to_site = Site.objects.get(pk=request.data.get("to_site_id"))
+        except Site.DoesNotExist:
+            return Response({"detail": "Choose the destination site."},
+                            status=400)
+        to_project = None
+        if request.data.get("to_project_id"):
+            to_project = Project.objects.filter(
+                pk=request.data["to_project_id"]).first()
+        doc, err = ipr_svc.create_store_issue(
+            to_site, to_project, request.data.get("rows") or [], request.user,
+            notes=request.data.get("notes", ""))
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(_sin_payload(doc, request), status=201)
+
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office store view."}, status=403)
+    qs = Document.objects.filter(doc_type="SIN").select_related(
+        "store_issue__to_site", "store_issue__to_project").order_by("-id")
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+    rows = [{
+        "ref": d.ref, "status": d.status, "doc_date": d.doc_date,
+        "to_site": d.store_issue.to_site.code,
+        "to_project": (d.store_issue.to_project.code
+                       if d.store_issue.to_project_id else None),
+        "lines": d.store_issue.lines.count(),
+    } for d in qs[:200]]
+    return Response(rows)
+
+
+@api_view(["GET"])
+def sin_detail(request, ref):
+    doc, err = _get_sin(request, ref)
+    if err:
+        return err
+    return Response(_sin_payload(doc, request))
+
+
+@api_view(["POST"])
+def sin_issue(request, ref):
+    doc, err = _get_sin(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office issues store stock."},
+                        status=403)
+    if doc.status != "DRAFT":
+        return Response({"detail": "Only a draft SIN can be issued."},
+                        status=400)
+    msg = ipr_svc.issue_store_issue(doc, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    doc.refresh_from_db()
+    return Response(_sin_payload(doc, request))
+
+
+@api_view(["POST"])
+def sin_cancel(request, ref):
+    doc, err = _get_sin(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office manages the store."},
+                        status=403)
+    msg = ipr_svc.cancel_store_issue(doc, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    doc.refresh_from_db()
+    return Response(_sin_payload(doc, request))
 
 
 @api_view(["POST"])

@@ -534,3 +534,79 @@ class ImportsCatalogTests(IprBase):
         t = self.client.get("/api/v1/imports/tracker").data
         self.assertIn(ref, [o["ref"] for o in t["orders"]])
         self.assertIn("awaiting_order", t)
+
+
+class StoreIssueTests(IprBase):
+    """SIN — issue landed stock from the HO store to a site (P1B-f1)."""
+
+    def _stock_lots(self):
+        """Authorise an order, ship, receive + post an IRN → HO stock lots."""
+        ref = self.create_and_authorise()
+        order = Document.objects.get(ref=ref).import_order
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                         format="json")
+        ship = order.shipments.first()
+        irn = self.client.post(
+            f"/api/v1/ipr/{ref}/shipments/{ship.id}/receive",
+            {"location": "HO"}, format="json").data
+        self.client.post(f"/api/v1/irn/{irn['ref']}/post", {}, format="json")
+        return order
+
+    def test_issue_moves_on_hand_to_in_transit(self):
+        from .models import StockLot
+        self._stock_lots()
+        general = StockLot.objects.get(project__isnull=True)  # 4 @ 1500
+        self.assertEqual(float(general.qty_on_hand), 4.0)
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/store/issues", {
+            "to_site_id": self.site.id, "to_project_id": self.project.id,
+            "rows": [{"lot_id": general.id, "qty": 2}]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.assertTrue(ref.startswith("SIN-"))
+        self.assertEqual(float(r.data["total_value"]), 3000.0)   # 2 @ 1500
+        # posting the SIN moves 2 from on-hand to in-transit
+        p = self.client.post(f"/api/v1/sin/{ref}/issue", {}, format="json")
+        self.assertEqual(p.status_code, 200, p.data)
+        self.assertEqual(p.data["status"], "ISSUED")
+        general.refresh_from_db()
+        self.assertEqual(float(general.qty_on_hand), 2.0)
+        self.assertEqual(float(general.qty_in_transit), 2.0)
+
+    def test_cannot_issue_more_than_on_hand(self):
+        from .models import StockLot
+        self._stock_lots()
+        general = StockLot.objects.get(project__isnull=True)
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/store/issues", {
+            "to_site_id": self.site.id,
+            "rows": [{"lot_id": general.id, "qty": 99}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("on hand", r.data["detail"])
+
+    def test_site_staff_cannot_issue_store(self):
+        from .models import StockLot
+        self._stock_lots()
+        general = StockLot.objects.get(project__isnull=True)
+        self.client.force_authenticate(self.sa)
+        r = self.client.post("/api/v1/store/issues", {
+            "to_site_id": self.site.id,
+            "rows": [{"lot_id": general.id, "qty": 1}]}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_fifo_picks_reserved_then_general(self):
+        from .imports import pick_lots_fifo
+        from .models import Item, StockLot
+        order = self._stock_lots()
+        line = order.lines.first()
+        item = line.item
+        if item is None:      # order line is free-text — attach a catalog item
+            item = Item.objects.create(description="Chilled-water pump",
+                                       unit="nos", code="ITM-T1")
+            StockLot.objects.filter(source_ipr_line=line).update(item=item)
+        picks, err = pick_lots_fifo(item, self.project, 8)  # 6 reserved + 2 gen
+        self.assertIsNone(err, err)
+        self.assertEqual(len(picks), 2)
+        self.assertEqual(picks[0][0].project_id, self.project.id)
+        self.assertIsNone(picks[1][0].project_id)

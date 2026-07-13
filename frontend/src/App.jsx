@@ -761,7 +761,7 @@ export default function App() {
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
-            <StoreLots onOpenIrn={(ref) =>
+            <StoreLots me={me} onOpenIrn={(ref) =>
               setDocView({ mode: "irn-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
