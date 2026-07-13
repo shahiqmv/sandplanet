@@ -47,7 +47,15 @@ def targets_for(doc):
     """(user, hint) pairs who must act on `doc` in its current state. Mirrors
     the per-role 'waiting on you' queue (approvals_pending)."""
     t, s = doc.doc_type, doc.status
-    if t in ("MR", "IR", "MAR", "PMR", "PYR") and s == "SUBMITTED":
+    if t in ("MR", "IR", "MAR", "PMR") and s == "SUBMITTED":
+        return [(u, "needs your approval") for u in _pm_for(doc)]
+    if t == "PYR" and s == "SUBMITTED":
+        # Site requests go to the PM; Head-Office (central) requests have no
+        # site PM and go straight to the Director (owner 2026-07-13).
+        pr = getattr(doc, "payment_request", None)
+        if pr and pr.origin != "SITE":
+            return [(u, "needs Director approval")
+                    for u in _role_users("DIRECTOR")]
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "PMR" and s == "PM_APPROVED":
         return [(u, "to review") for u in _role_users("HO_PURCHASING")]

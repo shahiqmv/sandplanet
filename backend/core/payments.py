@@ -15,9 +15,24 @@ from . import costing
 from .audit import audit
 from .models import Approval, CostHead, Document, PaymentRequest
 
-RAISER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"}
+SITE_RAISERS = {"SITE_ADMIN", "SITE_ENGINEER", "PM"}
+CENTRAL_RAISERS = {"HO_PURCHASING", "HO_HR", "DIRECTOR", "SIGNATORY", "QS"}
+FINANCE_RAISERS = {"FINANCE"}
+RAISER_ROLES = SITE_RAISERS | CENTRAL_RAISERS | FINANCE_RAISERS | {"ADMIN"}
+# Only Head-Office centres may raise a foreign-currency request; site teams
+# request in MVR only (owner 2026-07-13).
+USD_RAISERS = CENTRAL_RAISERS | FINANCE_RAISERS | {"ADMIN"}
 RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",
                   "MISSING_DOCUMENT", "DUPLICATE", "ON_HOLD", "OTHER"}
+
+
+def origin_for(role):
+    """The approval chain a raiser's role puts a PYR on."""
+    if role in FINANCE_RAISERS:
+        return "FINANCE"
+    if role in SITE_RAISERS:
+        return "SITE"
+    return "CENTRAL"      # HO Purchasing / HR / Director / Signatory / QS / Admin
 
 
 def _param(key, default):
@@ -77,6 +92,13 @@ def create_payment_request(doc, data, user):
         return None, "Payee is required."
     if not purpose:
         return None, "Purpose is required."
+    # Currency: MVR always allowed; USD only for Head-Office centres.
+    currency = (data.get("currency") or "MVR").upper()[:3]
+    if currency not in ("MVR", "USD"):
+        return None, "Currency must be MVR or USD."
+    if currency != "MVR" and user.role not in USD_RAISERS:
+        return None, "Site payment requests are in MVR only."
+    origin = origin_for(user.role)
     pr = PaymentRequest.objects.create(
         document=doc,
         payment_type="ADVANCE" if salary_lines
@@ -86,7 +108,8 @@ def create_payment_request(doc, data, user):
         payee=payee,
         payment_method=data.get("payment_method", "BANK"),
         payee_account=data.get("payee_account", ""),
-        currency=data.get("currency", "MVR"),
+        currency=currency,
+        origin=origin,
         amount_requested=amount,
         required_by=data.get("required_by") or None,
         purpose=purpose,
@@ -251,14 +274,31 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
+        if pr.origin == "FINANCE":
+            # Accounts-initiated (rent, salaries, utilities…): no Director step
+            # — cleared straight to a Payment Voucher for signatory approval.
+            _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
+                        "Accounts-initiated — authorised on a Payment Voucher")
         return None
 
     if action_name == "approve":
         if doc.status == "SUBMITTED":
-            if not _is_pm_for(user, doc):
-                return Response({"detail": "The site PM approves first."},
+            if pr.origin == "SITE":
+                if not _is_pm_for(user, doc):
+                    return Response({"detail": "The site PM approves first."},
+                                    status=403)
+                _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
+                return None
+            # CENTRAL (HO Purchasing / HR): the Director approves directly —
+            # there is no site PM in the chain.
+            if user.role not in ("DIRECTOR", "ADMIN"):
+                return Response({"detail": "Director approval required."},
                                 status=403)
-            _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
+            if doc.created_by_id == user.id and user.role != "ADMIN":
+                return Response({"detail": "You cannot approve your own "
+                                           "request."}, status=403)
+            _set_status(doc, "DIRECTOR_APPROVED", "DIRECTOR_APPROVE", user,
+                        comment)
             return None
         if doc.status == "PM_APPROVED":
             if user.role not in ("DIRECTOR", "ADMIN"):
@@ -293,14 +333,31 @@ def pyr_action(request, doc, action_name):
         if amount_paid != pr.amount_requested and not variance.strip():
             return Response({"detail": "A variance reason is required when "
                                        "the paid amount differs."}, status=400)
+        # A USD request posts to the (MVR) cost ledger converted at the rate
+        # applied when paying — entered, else the company MVR-per-USD rate.
+        if pr.currency == "USD":
+            from . import fx
+            try:
+                rate = Decimal(str(data.get("fx_rate") or fx.usd_rate()))
+            except (TypeError, ValueError):
+                return Response({"detail": "The MVR/USD rate is invalid."},
+                                status=400)
+            if rate <= 0:
+                return Response({"detail": "Enter the MVR/USD rate applied."},
+                                status=400)
+            pr.fx_rate = rate
+            ledger_amount = (amount_paid * rate).quantize(Decimal("0.01"))
+        else:
+            ledger_amount = amount_paid
         pr.amount_paid = amount_paid
         pr.paid_date = data.get("paid_date") or date.today()
         pr.payment_ref = data.get("payment_ref", "")
         pr.payment_method = data.get("payment_method", pr.payment_method)
         pr.variance_reason = variance
         pr.paid_by = user
-        pr.save(update_fields=["amount_paid", "paid_date", "payment_ref",
-                               "payment_method", "variance_reason", "paid_by"])
+        pr.save(update_fields=["amount_paid", "fx_rate", "paid_date",
+                               "payment_ref", "payment_method",
+                               "variance_reason", "paid_by"])
         # Finance attaches the transfer slip / cheque copy (owner request)
         slip = getattr(request, "FILES", {}).get("file")
         if slip is not None:
@@ -325,12 +382,12 @@ def pyr_action(request, doc, action_name):
             pass
         else:
             costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
-                         source="PYR", amount=amount_paid,
-                         currency=pr.currency, document=doc, actor=user,
+                         source="PYR", amount=ledger_amount,
+                         currency="MVR", document=doc, actor=user,
                          posted_on=pr.paid_date)
             costing.post(site=doc.site, cost_head=pr.cost_head,
-                         state="INCURRED", source="PYR", amount=amount_paid,
-                         currency=pr.currency, document=doc, actor=user,
+                         state="INCURRED", source="PYR", amount=ledger_amount,
+                         currency="MVR", document=doc, actor=user,
                          posted_on=pr.paid_date)
         # Work-permit renewals extend the expiries only now, on payment
         if pr.payment_type == "PERMIT_RENEWAL":

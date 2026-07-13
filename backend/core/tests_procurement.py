@@ -475,3 +475,52 @@ class HOEndpointTests(ProcBase):
         self.as_user(self.sa)
         r = self.client.get("/api/v1/dashboards/ho")
         self.assertEqual(r.status_code, 403)
+
+
+class LmEditTests(ProcBase):
+    """Purchasing corrects a Loading Manifest before a GRN is raised
+    (owner 2026-07-13)."""
+
+    def test_purchasing_edits_manifest_before_grn(self):
+        mr_ref = self.mr_to_sent()
+        lm = self.make_lm(mr_ref)
+        self.as_user(self.purchasing)
+        r = self.client.post(
+            f"/api/v1/documents/{lm['ref']}/edit-manifest", {
+                "lines": [
+                    {"item_id": self.cement.id, "qty_loaded": 120,
+                     "qty_pending": 30},
+                    {"item_id": self.rebar.id, "qty_loaded": 300,
+                     "qty_pending": 200},
+                ],
+                "payload": {"vessel": "MV Dhoni 8"},
+            }, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        line = next(l for l in r.data["lines"]
+                    if l["item_code"] == "ITM-90001")
+        self.assertEqual(float(line["qty_loaded"]), 120.0)
+        self.assertEqual(r.data["payload"]["vessel"], "MV Dhoni 8")
+
+    def test_site_role_cannot_edit_manifest(self):
+        mr_ref = self.mr_to_sent()
+        lm = self.make_lm(mr_ref)
+        self.as_user(self.sa)
+        r = self.client.post(
+            f"/api/v1/documents/{lm['ref']}/edit-manifest",
+            {"payload": {"vessel": "X"}}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_edit_blocked_after_grn_raised(self):
+        mr_ref = self.mr_to_sent()
+        lm = self.make_lm(mr_ref)
+        self.act(lm["ref"], "depart")
+        self.as_user(self.sa)
+        self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"],
+        }, format="json")
+        self.as_user(self.purchasing)
+        r = self.client.post(
+            f"/api/v1/documents/{lm['ref']}/edit-manifest",
+            {"payload": {"vessel": "Y"}}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("GRN", r.data["detail"])

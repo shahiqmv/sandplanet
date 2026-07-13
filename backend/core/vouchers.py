@@ -46,13 +46,22 @@ def _source_amount(doc):
     return Decimal("0")
 
 
+def source_currency(doc):
+    """The currency a requisition would be vouchered / paid in."""
+    if doc.doc_type == "PYR":
+        return doc.payment_request.currency
+    return "MVR"        # procurement (PR) settles in MVR
+
+
 def milestone_amount(m):
-    """A milestone's authorisation amount in MVR — its share at the agreed
-    order rate (the actual TT may differ; realised FX is settled on payment)."""
+    """A milestone's authorisation amount in the order currency — the actual TT
+    the signatory authorises (realised FX is settled on payment)."""
     from .imports import ipr_order_total
-    order = m.order
-    due_ccy = m.due_amount(ipr_order_total(order))
-    return (due_ccy * order.exchange_rate).quantize(Decimal("0.01"))
+    return m.due_amount(ipr_order_total(m.order))
+
+
+def milestone_currency(m):
+    return m.order.order_currency
 
 
 def _on_live_voucher():
@@ -61,7 +70,8 @@ def _on_live_voucher():
     withdrawn authorisation frees the source to be vouchered again — the
     source's own status is what gates re-eligibility."""
     return PaymentVoucherLine.objects.filter(
-        voucher__status__in=("DRAFT", "SUBMITTED")).values_list(
+        voucher__status__in=("DRAFT", "SUBMITTED"),
+        source_document__isnull=False).values_list(
         "source_document_id", flat=True)
 
 
@@ -129,6 +139,14 @@ def create_voucher(source_refs, actor, milestone_ids=None):
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"{m.order.document.ref} · {m.label} is already on a " \
                          "voucher."
+    # A voucher is single-currency (owner 2026-07-13): every chosen payment
+    # must share one currency (MVR or a foreign currency), never mixed.
+    currencies = ({source_currency(d) for d in sources}
+                  | {milestone_currency(m) for m in milestones})
+    if len(currencies) > 1:
+        return None, ("A voucher must be a single currency — "
+                      + " and ".join(sorted(currencies))
+                      + " payments cannot share one voucher.")
     with transaction.atomic():
         ref = next_ref("PV", None)
         pv = Document.objects.create(
@@ -140,10 +158,12 @@ def create_voucher(source_refs, actor, milestone_ids=None):
         pv.save(update_fields=["current_revision"])
         for doc in sources:
             PaymentVoucherLine.objects.create(
-                voucher=pv, source_document=doc, amount=_source_amount(doc))
+                voucher=pv, source_document=doc, amount=_source_amount(doc),
+                currency=source_currency(doc))
         for m in milestones:
             PaymentVoucherLine.objects.create(
-                voucher=pv, source_milestone=m, amount=milestone_amount(m))
+                voucher=pv, source_milestone=m, amount=milestone_amount(m),
+                currency=milestone_currency(m))
     audit("document", pv.id, "PV_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": ref,
                   "lines": len(sources) + len(milestones)})
@@ -184,9 +204,16 @@ def authorise_source(doc, actor):
         pr.authorised_by = actor
         pr.authorised_at = timezone.now()
         pr.save(update_fields=["authorised_by", "authorised_at"])
+        # The (MVR) ledger holds the commitment in MVR; a USD request is
+        # committed at the company rate (the actual rate lands on payment).
+        committed = pr.amount_requested
+        if pr.currency == "USD":
+            from . import fx
+            committed = (pr.amount_requested * fx.usd_rate()).quantize(
+                Decimal("0.01"))
         costing.post(site=doc.site, cost_head=pr.cost_head, state="COMMITTED",
-                     source="PYR", amount=pr.amount_requested,
-                     currency=pr.currency, document=doc, actor=actor)
+                     source="PYR", amount=committed,
+                     currency="MVR", document=doc, actor=actor)
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=doc, revision=doc.current_revision,

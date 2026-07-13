@@ -20,12 +20,29 @@ const nextMonth = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
-export default function PaymentRequestForm({ site, onSaved, onCancel }) {
+// Head-Office centres may raise in USD as well as MVR; site teams are MVR only.
+const USD_ROLES = ["HO_PURCHASING", "HO_HR", "FINANCE", "DIRECTOR",
+                   "SIGNATORY", "QS", "ADMIN"];
+
+export default function PaymentRequestForm({ site, sites, me, onSaved,
+                                            onCancel }) {
+  // Central raise (from a Head-Office area) passes `sites` to pick a filing
+  // site; a site raise passes a fixed `site`.
+  const central = !site && Array.isArray(sites);
+  const allowUSD = me ? USD_ROLES.includes(me.role) : false;
+  const [pickedSite, setPickedSite] = useState(() => {
+    if (site) return site;
+    const ho = (sites || []).find((s) => s.is_head_office);
+    return ho || (sites || [])[0] || null;
+  });
+  const activeSite = site || pickedSite;
+
   const [heads, setHeads] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [f, setF] = useState({
     payment_type: "DIRECT", cost_head_id: "", payee: "",
     payment_method: "BANK", payee_account: "", amount_requested: "",
+    currency: "MVR",
     required_by: "", purpose: "", is_urgent: false, urgent_reason: "",
     has_supporting_doc: true, no_doc_reason: "",
   });
@@ -42,8 +59,11 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
 
   useEffect(() => {
     api("/cost-heads").then(setHeads).catch(() => {});
-    api(`/employees?site=${site.id}`).then(setEmployees).catch(() => {});
-  }, [site.id]);
+    if (activeSite) {
+      api(`/employees?site=${activeSite.id}`).then(setEmployees)
+        .catch(() => {});
+    }
+  }, [activeSite?.id]);
 
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const setLine = (i, patch) => setSalaryLines((ls) =>
@@ -53,6 +73,7 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
     // Explicit validation with a clear message — a disabled button reads
     // as "broken" (owner: site admin "can't save")
     const missing = [];
+    if (!activeSite) missing.push("filing site / centre");
     if (!f.cost_head_id) missing.push("cost head");
     if (isSalary) {
       const clean = salaryLines.filter((l) => l.employee_id &&
@@ -72,10 +93,11 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
     setError(null);
     try {
       const body = {
-        doc_type: "PYR", site_id: site.id, payload: {},
+        doc_type: "PYR", site_id: activeSite.id, payload: {},
         cost_head_id: f.cost_head_id, payee: f.payee,
         payment_type: f.payment_type, payment_method: f.payment_method,
         payee_account: f.payee_account,
+        currency: allowUSD ? f.currency : "MVR",
         amount_requested: f.amount_requested,
         required_by: f.required_by || null, purpose: f.purpose,
         is_urgent: f.is_urgent, urgent_reason: f.urgent_reason,
@@ -111,17 +133,41 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
       <div style={{ display: "flex", justifyContent: "space-between",
                     alignItems: "baseline" }}>
         <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 17 }}>
-          New Payment Request — {site.code}
+          New Payment Request{activeSite ? ` — ${activeSite.code}` : ""}
         </h2>
         <button onClick={onCancel} style={ghostButton}>Cancel</button>
       </div>
       <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 4 }}>
-        For non-purchase spend — boat hire, subcontractors, rentals,
-        permits, staff transport. Material purchases go through an MR.
+        For non-purchase spend — rent, subcontractors, boat hire, permits,
+        utilities, staff transport. Material purchases go through an MR.
+        {central && " Head-Office requests skip the site PM."}
       </p>
 
       <div style={{ display: "grid", gap: 12, gridTemplateColumns: "1fr 1fr",
                     marginTop: 12 }}>
+        {central && (
+          <label style={{ fontSize: 13 }}>File under
+            <select value={pickedSite?.id || ""}
+                    onChange={(e) => setPickedSite((sites || []).find(
+                      (s) => String(s.id) === e.target.value) || null)}
+                    style={inputStyle}>
+              {(sites || []).map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.code} — {s.name}{s.is_head_office ? " (HO)" : ""}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {allowUSD && (
+          <label style={{ fontSize: 13 }}>Currency
+            <select value={f.currency}
+                    onChange={(e) => set("currency", e.target.value)}
+                    style={inputStyle}>
+              <option value="MVR">MVR</option>
+              <option value="USD">USD</option>
+            </select>
+          </label>
+        )}
         <label style={{ fontSize: 13 }}>Payment type
           <select value={f.payment_type}
                   onChange={(e) => set("payment_type", e.target.value)}
@@ -158,7 +204,8 @@ export default function PaymentRequestForm({ site, onSaved, onCancel }) {
         </label>
         )}
         {!isSalary && (
-        <label style={{ fontSize: 13 }}>Amount (MVR)
+        <label style={{ fontSize: 13 }}>
+          Amount ({allowUSD ? f.currency : "MVR"})
           <input type="number" min="0" value={f.amount_requested}
                  onChange={(e) => set("amount_requested", e.target.value)}
                  style={{ ...inputStyle, fontFamily: "var(--font-mono)" }} />

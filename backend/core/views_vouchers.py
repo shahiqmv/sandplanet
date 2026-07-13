@@ -16,8 +16,8 @@ def _line_info(line):
         order = m.order
         return {"line_id": line.id, "ref": order.document.ref,
                 "doc_type": "MILESTONE", "site_code": "HO",
-                "amount": line.amount, "status": line.status,
-                "query_note": line.query_note,
+                "amount": line.amount, "currency": line.currency,
+                "status": line.status, "query_note": line.query_note,
                 "source_status": m.status,
                 "payee": order.supplier.name, "cost_head": "Imports",
                 "purpose": m.label, "milestone_label": m.label,
@@ -27,6 +27,7 @@ def _line_info(line):
     src = line.source_document
     info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
             "site_code": src.site.code, "amount": line.amount,
+            "currency": line.currency,
             "status": line.status, "query_note": line.query_note,
             "source_status": src.status, "paid": False}
     if src.doc_type == "PYR" and hasattr(src, "payment_request"):
@@ -69,9 +70,11 @@ def _voucher_info(pv):
         "source_milestone__order__document",
         "source_milestone__order__supplier").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
+    currency = lines[0]["currency"] if lines else "MVR"
     return {
         "ref": pv.ref, "status": pv.status, "doc_date": pv.doc_date,
         "prepared_by": pv.created_by.full_name if pv.created_by else None,
+        "currency": currency,
         "total": sum(ln["amount"] for ln in lines),
         "paid_count": sum(1 for ln in approved if ln["paid"]),
         "approved_count": len(approved),
@@ -95,11 +98,12 @@ def awaiting_voucher(request):
     for doc in vouchers.awaiting_voucher():
         row = {"kind": "DOC", "ref": doc.ref, "doc_type": doc.doc_type,
                "site_code": doc.site.code, "doc_date": doc.doc_date,
-               "amount": vouchers._source_amount(doc)}
+               "amount": vouchers._source_amount(doc),
+               "currency": vouchers.source_currency(doc)}
         if doc.doc_type == "PYR" and hasattr(doc, "payment_request"):
             pr = doc.payment_request
             row.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
-                        "purpose": pr.purpose,
+                        "purpose": pr.purpose, "origin": pr.origin,
                         "has_supporting_doc": pr.has_supporting_doc})
         else:
             row.update({"payee": "(procurement)", "cost_head": "Materials"})
@@ -110,6 +114,7 @@ def awaiting_voucher(request):
             "ref": m.order.document.ref, "doc_type": "MILESTONE",
             "site_code": "HO", "doc_date": m.due_date,
             "amount": vouchers.milestone_amount(m),
+            "currency": vouchers.milestone_currency(m),
             "payee": m.order.supplier.name,
             "cost_head": f"Overseas TT · {m.label}",
             "purpose": m.label})
@@ -179,6 +184,7 @@ def _pv_pdf_context(pv):
     return {
         "doc": pv, "logo_src": logo_src(), "co": company_info(),
         "lines": rows, "total": _money(total), "settled": info["settled"],
+        "currency": info["currency"],
         "prepared_by": pv.created_by.full_name if pv.created_by else "",
         "submit_stamp": _stamp_for(approvals, "SUBMIT"),
         "approve_stamp": _stamp_for(approvals, "APPROVE"),
@@ -196,12 +202,24 @@ def finance_dashboard(request):
     from .models import Payable, PettyCashFloat
     from .petty_cash import cash_in_hand
 
+    from . import fx
+    from . import imports as ipr_svc
+    rate = fx.usd_rate()
+
+    def _mvr(amount, currency):
+        amount = Decimal(str(amount or 0))
+        return amount * rate if currency == "USD" else amount
+
     aw = vouchers.awaiting_voucher()
     aw_ms = list(vouchers.awaiting_milestones())
     aw_count = len(aw) + len(aw_ms)
-    aw_total = (sum((vouchers._source_amount(d) for d in aw), Decimal("0"))
-                + sum((vouchers.milestone_amount(m) for m in aw_ms),
-                      Decimal("0")))
+    # A mixed-currency KPI: show the MVR-equivalent of everything awaiting a
+    # voucher (USD converted at the company rate).
+    aw_total = (
+        sum((_mvr(vouchers._source_amount(d), vouchers.source_currency(d))
+             for d in aw), Decimal("0"))
+        + sum(((m.due_amount(ipr_svc.ipr_order_total(m.order))
+                * m.order.exchange_rate) for m in aw_ms), Decimal("0")))
     pvs = Document.objects.filter(doc_type="PV")
     to_pay = []          # approved vouchers still carrying unpaid lines
     for pv in pvs.filter(status="APPROVED"):
@@ -211,7 +229,8 @@ def finance_dashboard(request):
                            "paid": info["paid_count"],
                            "lines": info["approved_count"]})
     pyr_pay = Document.objects.filter(doc_type="PYR", status="AUTHORISED")
-    pyr_total = sum((d.payment_request.amount_requested for d in pyr_pay
+    pyr_total = sum((_mvr(d.payment_request.amount_requested,
+                          d.payment_request.currency) for d in pyr_pay
                      if hasattr(d, "payment_request")), Decimal("0"))
     payables = Payable.objects.filter(status="OUTSTANDING")
     pay_total = sum((p.amount for p in payables), Decimal("0"))

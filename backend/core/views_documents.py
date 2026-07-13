@@ -56,7 +56,10 @@ CREATE_ROLES = {  # spec §3 "can create"
     "LM": {"HO_PURCHASING"},
     "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
     "DMA": {"SITE_ENGINEER", "PM"},      # SE may prepare; PM issues (R5)
-    "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # payment request (M6)
+    # Payment request (M6): site teams + Head-Office centres (HO Purchasing,
+    # HR, Accounts/Finance) for non-purchase spend (owner 2026-07-13)
+    "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "HO_HR",
+            "FINANCE", "DIRECTOR", "SIGNATORY", "QS"},
     "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},  # import requirement (§5.10)
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
@@ -69,7 +72,15 @@ MIN_DPR_PHOTOS = 0  # owner (Phase C): no photo floor — attach any number
 
 
 def _serialize(doc, request):
-    return DocumentSerializer(doc, context={"request": request}).data
+    data = DocumentSerializer(doc, context={"request": request}).data
+    if doc.doc_type == "LM":
+        # Purchasing may correct a manifest until a GRN is raised against it
+        data["can_edit_manifest"] = (
+            request.user.role in ("HO_PURCHASING", "ADMIN")
+            and not doc.is_void
+            and doc.status not in ("RECEIVED", "RECEIVED_WITH_SHORTAGE")
+            and not doc.links_to.filter(link_type="LM_GRN").exists())
+    return data
 
 
 def _get_scoped_document(request, ref):
@@ -368,6 +379,48 @@ def document_revise(request, ref):
     return Response(_serialize(doc, request), status=201)
 
 
+@api_view(["POST"])
+def lm_edit(request, ref):
+    """Purchasing corrects a Loading Manifest (a data-entry fix) after it has
+    left Draft but before the site has raised a GRN against it — the manifest
+    still drives the GRN's prefilled counts, so the fix must land first
+    (owner 2026-07-13). Edits the current revision in place; a GRN closes it."""
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if doc.doc_type != "LM":
+        return Response({"detail": "This edit applies to Loading Manifests."},
+                        status=400)
+    if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+        return Response({"detail": "Head-Office Purchasing edits a manifest."},
+                        status=403)
+    if doc.is_void:
+        return Response({"detail": "Document is void."}, status=400)
+    if doc.status in ("RECEIVED", "RECEIVED_WITH_SHORTAGE"):
+        return Response({"detail": "The site has received this manifest — it "
+                                   "can no longer be edited."}, status=400)
+    if doc.links_to.filter(link_type="LM_GRN").exists():
+        return Response({"detail": "A GRN has already been raised against this "
+                                   "manifest — edit is closed. Ask the site to "
+                                   "correct it on the GRN."}, status=400)
+    revision = doc.current_revision
+    with transaction.atomic():
+        if isinstance(request.data.get("payload"), dict):
+            revision.payload = {**(revision.payload or {}),
+                                **request.data["payload"]}
+            revision.save(update_fields=["payload"])
+        if "lines" in request.data and doc.doc_type in LINE_TYPES:
+            revision.lines.all().delete()
+            save_lines(revision, request.data["lines"])
+        if request.data.get("doc_date"):
+            doc.doc_date = request.data["doc_date"]
+            doc.save(update_fields=["doc_date", "updated_at"])
+    audit("document", doc.id, "LM_EDITED", actor=request.user,
+          detail={"ref": doc.ref})
+    doc.refresh_from_db()
+    return Response(_serialize(doc, request))
+
+
 # ===== Workflow actions =====
 
 
@@ -513,8 +566,9 @@ def approvals_pending(request):
               "project_code": d.project.code if d.project else None,
               "doc_date": d.doc_date, "status": d.status,
               "hint": "PM approval"} for d in mine])
-        pyrs = [d for d in scoped(base.filter(doc_type="PYR",
-                                              status="SUBMITTED"))
+        pyrs = [d for d in scoped(base.filter(
+                    doc_type="PYR", status="SUBMITTED",
+                    payment_request__origin="SITE"))
                 .select_related("site")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To approve — submitted payment requests",
@@ -555,6 +609,12 @@ def approvals_pending(request):
         add("To approve — PM-approved payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
+        # Head-Office (central) requests skip the PM — the Director approves
+        # them straight from submitted (owner 2026-07-13)
+        add("To approve — Head-Office payment requests",
+            rows(base.filter(doc_type="PYR", status="SUBMITTED")
+                 .exclude(payment_request__origin="SITE"),
+                 "Director approval (no site PM in the chain)"))
         add("To size & release — reviewed import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
                  "Size the order (MOQ) and release to sourcing"))

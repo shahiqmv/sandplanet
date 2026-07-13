@@ -25,7 +25,7 @@
     <th style="width:4%">No.</th>
     <th>Requisition</th><th>Site</th><th>Payee</th>
     <th>Purpose</th><th>Cost Head</th>
-    <th class="num">Amount (MVR)</th><th>Payment Ref</th>
+    <th class="num">Amount ({{ currency }})</th><th>Payment Ref</th>
   </tr></thead>
   {% for l in lines %}
   <tr{% if l.queried %} class="queried"{% endif %}>
@@ -37,7 +37,7 @@
   </tr>
   {% endfor %}
   <tr>
-    <th colspan="6" class="num">Total Authorised (MVR)</th>
+    <th colspan="6" class="num">Total Authorised ({{ currency }})</th>
     <th class="num">{{ total }}</th><th></th>
   </tr>
 </table>

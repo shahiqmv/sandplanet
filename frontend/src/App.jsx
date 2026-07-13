@@ -721,12 +721,15 @@ export default function App() {
 
           {!docView && !openSite && me.is_ho && hoPage === "dashboard" && (
             <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
+                         onNewPayment={() => setDocView({
+                           mode: "central-pyr-form" })}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "finance-dash" && (
             <FinanceDashboard me={me}
-              onVouchers={() => setHoPage("vouchers")} />
+              onVouchers={() => setHoPage("vouchers")}
+              onNewPayment={() => setDocView({ mode: "central-pyr-form" })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
             <PaymentVouchersPage me={me} onOpenDoc={openDoc} />
@@ -794,7 +797,12 @@ export default function App() {
             <ManpowerPage site={openSite} onClose={closeDoc} />
           )}
           {docView?.mode === "pyr-form" && openSite && (
-            <PaymentRequestForm site={openSite}
+            <PaymentRequestForm site={openSite} me={me}
+              onSaved={(ref) => { bump(); openDoc(ref); }}
+              onCancel={closeDoc} />
+          )}
+          {docView?.mode === "central-pyr-form" && (
+            <PaymentRequestForm sites={sites} me={me}
               onSaved={(ref) => { bump(); openDoc(ref); }}
               onCancel={closeDoc} />
           )}

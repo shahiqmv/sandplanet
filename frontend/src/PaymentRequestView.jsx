@@ -140,14 +140,18 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
             ["Payee", pr.payee],
             ["Method", `${pr.payment_method}${pr.payee_account
               ? " · " + pr.payee_account : ""}`],
-            ["Amount requested", `MVR ${money(pr.amount_requested)}`],
+            ["Amount requested",
+             `${pr.currency || "MVR"} ${money(pr.amount_requested)}`],
             ["Required by", pr.required_by || "—"],
             ["Purpose", pr.purpose],
             ["Supporting doc", pr.has_supporting_doc
               ? `Yes (${evidence.length} attached)`
               : `No — ${pr.no_doc_reason || "(no reason)"}`],
             ...(pr.amount_paid != null
-              ? [["Amount paid", `MVR ${money(pr.amount_paid)}`],
+              ? [["Amount paid",
+                  `${pr.currency || "MVR"} ${money(pr.amount_paid)}`
+                  + (pr.fx_rate ? ` @ ${pr.fx_rate} = MVR `
+                     + money(pr.amount_paid * pr.fx_rate) : "")],
                  ["Payment ref", pr.payment_ref || "—"],
                  ...(pr.variance_reason
                    ? [["Variance", pr.variance_reason]] : [])] : []),
@@ -259,7 +263,8 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
         <div style={{ marginTop: 12, padding: 12, borderRadius: 8,
                       border: "1px solid var(--line)" }}>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <label style={{ fontSize: 13 }}>Amount paid (MVR)
+            <label style={{ fontSize: 13 }}>
+              Amount paid ({pr.currency || "MVR"})
               <input type="number" value={pay.amount_paid}
                      placeholder={pr.amount_requested}
                      onChange={(e) => setPay({ ...pay,

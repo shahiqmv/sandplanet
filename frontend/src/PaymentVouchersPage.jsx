@@ -13,6 +13,7 @@ import { Btn, RefStamp, StatusChip, card, ghostButton, inputStyle, td, th }
 
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
+const cur = (v, c) => `${c || "MVR"} ${money(v)}`;
 
 const mono = { fontFamily: "var(--font-mono)" };
 const TABS = [["all", "All"], ["DRAFT", "Draft"],
@@ -50,6 +51,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [payRef, setPayRef] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [payVariance, setPayVariance] = useState("");
+  const [payFx, setPayFx] = useState("");
   const [paySlip, setPaySlip] = useState(null);
 
   const reload = () => {
@@ -65,6 +67,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
 
   const pickedRows = awaiting.filter((d) => picked[awKey(d)]);
   const pickedTotal = pickedRows.reduce((s, d) => s + Number(d.amount || 0), 0);
+  const pickedCurrencies = [...new Set(pickedRows.map(
+    (d) => d.currency || "MVR"))];
+  const mixed = pickedCurrencies.length > 1;
   const shown = vouchers.filter((v) => tab === "all" || v.status === tab);
 
   const run = async (fn) => {
@@ -74,6 +79,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   };
 
   const createVoucher = () => run(async () => {
+    if (mixed) throw new Error("A voucher must be a single currency — "
+      + "deselect one currency.");
     const source_refs = pickedRows.filter((d) => d.kind !== "MILESTONE")
       .map((d) => d.ref);
     const milestone_ids = pickedRows.filter((d) => d.kind === "MILESTONE")
@@ -106,20 +113,23 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
 
   // ---- payment recording (reuses the per-document endpoints) ----------
   const startPay = (key, amount) => {
-    setPayKey(key); setPayRef(""); setPayVariance("");
+    setPayKey(key); setPayRef(""); setPayVariance(""); setPayFx("");
     setPayAmount(amount != null ? String(amount) : ""); setPaySlip(null);
   };
   const cancelPay = () => {
     setPayKey(null); setPayRef(""); setPayAmount(""); setPayVariance("");
-    setPaySlip(null);
+    setPayFx(""); setPaySlip(null);
   };
 
-  const payPyr = (ref, requested) => run(async () => {
+  const payPyr = (ref, requested, isUsd) => run(async () => {
     if (!payRef.trim()) throw new Error("A payment reference is required.");
+    if (isUsd && !(Number(payFx) > 0))
+      throw new Error("Enter the MVR/USD rate applied to this payment.");
     const fd = new FormData();
     fd.append("amount_paid", payAmount || requested);
     fd.append("payment_ref", payRef);
     fd.append("variance_reason", payVariance);
+    if (isUsd) fd.append("fx_rate", payFx);
     if (paySlip) fd.append("file", paySlip);
     await apiUpload(`/documents/${ref}/actions/pay`, fd);
     cancelPay(); reload();
@@ -145,6 +155,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                onChange={(e) => setPayAmount(e.target.value)}
                placeholder="Amount paid"
                style={{ ...inputStyle, width: 130 }} />
+      )}
+      {opts.usd && (
+        <input type="number" value={payFx}
+               onChange={(e) => setPayFx(e.target.value)}
+               placeholder="MVR/USD rate"
+               title="MVR per 1 USD applied to this payment"
+               style={{ ...inputStyle, width: 120 }} />
       )}
       <input value={payRef} onChange={(e) => setPayRef(e.target.value)}
              placeholder="Transfer / cheque ref"
@@ -199,11 +216,16 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             {pickedRows.length > 0 && (
               <span style={{ marginLeft: "auto", display: "flex", gap: 12,
                              alignItems: "center" }}>
-                <span style={{ fontSize: 13.5, color: "var(--navy)" }}>
+                <span style={{ fontSize: 13.5, color: mixed
+                  ? "var(--red-fg)" : "var(--navy)" }}>
                   {pickedRows.length} selected ·{" "}
-                  <strong style={mono}>MVR {money(pickedTotal)}</strong>
+                  {mixed
+                    ? <strong>mixed currency — pick one of {" "}
+                        {pickedCurrencies.join(" / ")}</strong>
+                    : <strong style={mono}>
+                        {cur(pickedTotal, pickedCurrencies[0])}</strong>}
                 </span>
-                <Btn variant="primary" disabled={busy}
+                <Btn variant="primary" disabled={busy || mixed}
                      onClick={createVoucher}>Create voucher</Btn>
               </span>
             )}
@@ -218,7 +240,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                   <th style={{ ...th, width: 34 }}></th>
                   <th style={th}>Ref</th><th style={th}>Site</th>
                   <th style={th}>Payee</th><th style={th}>Cost head</th>
-                  <th style={{ ...th, textAlign: "right" }}>Amount (MVR)</th>
+                  <th style={{ ...th, textAlign: "right" }}>Amount</th>
                 </tr></thead>
                 <tbody>
                   {awaiting.map((d) => {
@@ -249,7 +271,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                       <td style={td}>{d.payee}</td>
                       <td style={td}>{d.cost_head}</td>
                       <td style={{ ...td, textAlign: "right", ...mono }}>
-                        {money(d.amount)}</td>
+                        {cur(d.amount, d.currency)}</td>
                     </tr>
                   );
                   })}
@@ -315,7 +337,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                   <span style={{ marginLeft: "auto", fontSize: 17,
                                  fontWeight: 700, color: "var(--navy)",
                                  ...mono }}>
-                    MVR {money(pv.total)}</span>
+                    {cur(pv.total, pv.currency)}</span>
                 </div>
                 {/* meta strip */}
                 <div style={{ display: "flex", gap: 12, alignItems: "center",
@@ -342,7 +364,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                           <th style={th}>Ref</th><th style={th}>Site</th>
                           <th style={th}>Detail</th>
                           <th style={{ ...th, textAlign: "right" }}>
-                            Amount (MVR)</th>
+                            Amount ({pv.currency})</th>
                           <th style={th}></th>
                         </tr></thead>
                         <tbody>
@@ -430,8 +452,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                               <PayLinePyr l={l} payKey={payKey}
                                 startPay={startPay}
                                 form={payFormFields({ amount: true,
-                                  onSave: () => payPyr(l.ref,
-                                                       l.amount) })} />
+                                  usd: l.currency === "USD",
+                                  onSave: () => payPyr(l.ref, l.amount,
+                                    l.currency === "USD") })} />
                             )}
                             {l.doc_type === "PR" && (
                               <PayLinePr l={l} payKey={payKey}
@@ -492,7 +515,7 @@ function PayLinePyr({ l, payKey, startPay, form }) {
         <RefStamp small>{l.ref}</RefStamp>
         <span style={{ fontSize: 13.5 }}>{l.payee}</span>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 13.5,
-                       fontWeight: 600 }}>MVR {money(l.amount)}</span>
+                       fontWeight: 600 }}>{cur(l.amount, l.currency)}</span>
         {l.paid ? (
           <span style={{ color: "var(--green-fg)", fontSize: 13,
                          marginLeft: "auto" }}>

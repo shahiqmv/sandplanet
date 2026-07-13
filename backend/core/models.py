@@ -332,7 +332,11 @@ class Document(models.Model):
         # authorisation back to DRAFT (§7.5b). CANCELLED/REJECTED terminal.
         "PYR": {
             "DRAFT": {"SUBMITTED", "CANCELLED"},
-            "SUBMITTED": {"PM_APPROVED", "DRAFT", "REJECTED"},
+            # SUBMITTED→DIRECTOR_APPROVED is the central path (no site PM):
+            # HO Purchasing/HR Director-approve directly; a Finance-initiated
+            # PYR is cleared to voucher at this status without a Director step.
+            "SUBMITTED": {"PM_APPROVED", "DIRECTOR_APPROVED", "DRAFT",
+                          "REJECTED"},
             "PM_APPROVED": {"DIRECTOR_APPROVED", "DRAFT", "REJECTED"},
             "DIRECTOR_APPROVED": {"AUTHORISED", "DRAFT", "REJECTED"},
             "AUTHORISED": {"PAID", "DRAFT"},  # DRAFT = withdrawal (§7.5b)
@@ -1575,7 +1579,12 @@ class PaymentRequest(models.Model):
     payment_method = models.CharField(max_length=16, choices=Method.choices,
                                       default=Method.BANK)
     payee_account = models.TextField(blank=True)
-    currency = models.CharField(max_length=3, default="MVR")
+    currency = models.CharField(max_length=3, default="MVR")   # MVR or USD
+    # Who raised it drives the approval chain (§7.1 / owner 2026-07-13):
+    #   SITE    → PM → Director → voucher   (site teams, MVR only)
+    #   CENTRAL → Director → voucher        (HO Purchasing / HR, MVR or USD)
+    #   FINANCE → voucher only              (Accounts-initiated rent/salary etc.)
+    origin = models.CharField(max_length=8, default="SITE")
     amount_requested = models.DecimalField(max_digits=14, decimal_places=2)
     required_by = models.DateField(null=True, blank=True)
     purpose = models.TextField()
@@ -1602,9 +1611,13 @@ class PaymentRequest(models.Model):
                                      blank=True, related_name="+")
     withdrawn_at = models.DateTimeField(null=True, blank=True)
     withdrawn_reason = models.TextField(blank=True)
-    # Finance execution
+    # Finance execution. amount_paid is in `currency`; for a USD request
+    # fx_rate is the MVR-per-USD rate applied when paying, so the cost ledger
+    # (MVR) receives amount_paid * fx_rate (owner 2026-07-13).
     amount_paid = models.DecimalField(max_digits=14, decimal_places=2,
                                       null=True, blank=True)
+    fx_rate = models.DecimalField(max_digits=12, decimal_places=4, null=True,
+                                  blank=True)
     paid_date = models.DateField(null=True, blank=True)
     payment_ref = models.TextField(blank=True)
     variance_reason = models.TextField(blank=True)
@@ -1669,6 +1682,10 @@ class PaymentVoucherLine(models.Model):
     source_milestone = models.ForeignKey(
         "ImportPaymentMilestone", on_delete=models.PROTECT, null=True,
         blank=True, related_name="voucher_lines")
+    # A voucher is single-currency (owner 2026-07-13): every line on it shares
+    # this currency — MVR for PR, the request currency for a PYR, the order
+    # currency for an overseas TT.
+    currency = models.CharField(max_length=3, default="MVR")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.INCLUDED)

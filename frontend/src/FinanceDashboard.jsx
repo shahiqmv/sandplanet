@@ -24,7 +24,7 @@ function Tile({ label, value, sub, tone, onClick }) {
   );
 }
 
-export default function FinanceDashboard({ me, onVouchers }) {
+export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
 
@@ -40,8 +40,22 @@ export default function FinanceDashboard({ me, onVouchers }) {
 
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 18 }}>
-        Finance — money in motion</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12,
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 18 }}>
+          Finance — money in motion</h2>
+        {onNewPayment && (
+          <button onClick={onNewPayment}
+                  style={{ marginLeft: "auto", background: "var(--navy)",
+                           color: "#fff", border: "none", borderRadius: 8,
+                           padding: "8px 14px", fontSize: 13, fontWeight: 600,
+                           cursor: "pointer" }}>
+            ＋ Raise a payment (MVR / USD)</button>
+        )}
+      </div>
+      <p style={{ margin: "-6px 0 0", fontSize: 12.5, color: "var(--muted)" }}>
+        Accounts-initiated payments (rent, salaries, utilities) go straight to
+        a Payment Voucher for the signatory — no Director step.</p>
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
         <Tile label="Awaiting a voucher"

@@ -744,7 +744,38 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [gstRate, setGstRate] = useState(8);
   const [quoteFiles, setQuoteFiles] = useState({});
   const [preview, setPreview] = useState(null);   // item photo lightbox
+  const [editLm, setEditLm] = useState(null);      // manifest fix (LM)
   const lineFileRefs = useRef({});                // per-line hidden inputs
+
+  function startEditLm() {
+    setError(null);
+    setEditLm({
+      vessel: (doc.payload || {}).vessel || "",
+      lines: (doc.lines || []).map((l) => ({
+        item_id: l.item || null,
+        free_text_desc: l.free_text_desc || "",
+        unit: l.unit || "",
+        desc: l.item_code ? `${l.item_code} — ${l.description}`
+          : (l.description || l.free_text_desc),
+        qty_loaded: l.qty_loaded ?? "", qty_pending: l.qty_pending ?? "" })),
+    });
+  }
+  async function saveManifest() {
+    setError(null);
+    try {
+      const fresh = await api(`/documents/${doc.ref}/edit-manifest`, {
+        method: "POST",
+        body: {
+          payload: { vessel: editLm.vessel },
+          lines: editLm.lines.map((l) => ({
+            item_id: l.item_id, free_text_desc: l.free_text_desc,
+            unit: l.unit, qty_loaded: l.qty_loaded,
+            qty_pending: l.qty_pending })),
+        },
+      });
+      setDoc(fresh); setEditLm(null); onChanged?.();
+    } catch (e) { setError(e.message); }
+  }
 
   async function uploadLinePhoto(line, file) {
     if (!file) return;
@@ -842,6 +873,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                     flexWrap: "wrap" }}>
         {canEdit && <button onClick={() => onEdit(doc)} style={buttonStyle}>
           Continue editing</button>}
+        {doc.can_edit_manifest && !editLm && (
+          <button onClick={startEditLm} style={ghostButton}
+                  title="Fix a data-entry mistake before the site raises a GRN">
+            ✏️ Fix manifest</button>
+        )}
         {canAmend && <button onClick={amend} style={buttonStyle}>
           Amend (new revision)</button>}
         {actions.map(([action, label, , , prompt]) => (
@@ -896,6 +932,63 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
               ))}
           </tbody>
         </table>
+      )}
+
+      {editLm && (
+        <div style={{ margin: "12px 0", padding: 12, borderRadius: 8,
+                      border: "1px solid var(--sp-navy)",
+                      background: "var(--sp-tint, #f5f8fb)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10,
+                        flexWrap: "wrap", marginBottom: 8 }}>
+            <strong style={{ color: "var(--sp-navy)", fontSize: 14 }}>
+              Fix manifest — correct the loaded / pending quantities</strong>
+            <label style={{ fontSize: 12.5, marginLeft: "auto" }}>Vessel{" "}
+              <input value={editLm.vessel}
+                     onChange={(e) => setEditLm({ ...editLm,
+                       vessel: e.target.value })}
+                     style={{ ...inputStyle, width: 180, display: "inline" }} />
+            </label>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Item</th>
+              <th style={{ ...th, width: 120 }}>Loaded</th>
+              <th style={{ ...th, width: 120 }}>Pending</th>
+            </tr></thead>
+            <tbody>
+              {editLm.lines.map((l, i) => (
+                <tr key={i}>
+                  <td style={td}>{l.desc}</td>
+                  <td style={td}>
+                    <input type="number" min="0" value={l.qty_loaded}
+                           onChange={(e) => setEditLm({ ...editLm,
+                             lines: editLm.lines.map((x, j) => j === i
+                               ? { ...x, qty_loaded: e.target.value } : x) })}
+                           style={{ ...inputStyle, width: 100 }} />
+                  </td>
+                  <td style={td}>
+                    <input type="number" min="0" value={l.qty_pending}
+                           onChange={(e) => setEditLm({ ...editLm,
+                             lines: editLm.lines.map((x, j) => j === i
+                               ? { ...x, qty_pending: e.target.value } : x) })}
+                           style={{ ...inputStyle, width: 100 }} />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+            <button onClick={saveManifest} style={buttonStyle}>
+              Save correction</button>
+            <button onClick={() => setEditLm(null)} style={ghostButton}>
+              Cancel</button>
+            <span style={{ fontSize: 12, color: "var(--faint)",
+                           alignSelf: "center" }}>
+              Only possible until the site raises a GRN against this manifest.
+            </span>
+          </div>
+        </div>
       )}
 
       <SectionTitle>{isPR ? "Vendors" : "Items"}</SectionTitle>

@@ -249,7 +249,10 @@ class MilestonePaymentTests(IprBase):
         pv, err = create_voucher([], self.finance,
                                  milestone_ids=[advance["id"]])
         self.assertIsNone(err, err)
-        self.assertEqual(float(pv.voucher_lines.get().amount), 4500.0)
+        # the voucher authorises the TT in the order currency (USD 300)
+        line = pv.voucher_lines.get()
+        self.assertEqual(float(line.amount), 300.0)
+        self.assertEqual(line.currency, "USD")
         submit_voucher(pv, self.finance)
         approve_voucher(pv, self.signatory)
 
@@ -277,6 +280,24 @@ class MilestonePaymentTests(IprBase):
         self.assertEqual(fx.cost_head.name, "Foreign Exchange")
         # total cash out reconciles to what Finance paid
         self.assertEqual(float(sum(p.amount for p in paid)), 4626.0)
+
+    def test_milestone_voucher_does_not_hide_other_awaiting(self):
+        """Regression: a milestone voucher line has a null source_document —
+        it must not poison awaiting_voucher()'s exclude() (which wiped every
+        PR/PYR on SQLite when None leaked into the id list)."""
+        from .vouchers import (_on_live_voucher, awaiting_voucher,
+                               create_voucher)
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Full", "trigger": "ADVANCE", "percent": "100"}]},
+            format="json").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        pv, err = create_voucher([], self.finance, milestone_ids=[m["id"]])
+        self.assertIsNone(err, err)
+        self.assertNotIn(None, list(_on_live_voucher()))
+        self.assertIsInstance(awaiting_voucher(), list)
 
     def test_schedule_must_sum_to_order_total(self):
         ref = self.create_and_authorise()

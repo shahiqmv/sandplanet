@@ -4,7 +4,8 @@ import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
 
-export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
+export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
+                                      refresh }) {
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("MR");
   const [rows, setRows] = useState([]);
@@ -72,6 +73,10 @@ export default function HODashboard({ me, onOpenDoc, onNew, refresh }) {
                 <button onClick={() => onNew("LM")} style={ghostButton}>
                   + New LM</button>
               </>
+            )}
+            {onNewPayment && (
+              <button onClick={onNewPayment} style={ghostButton}>
+                + Payment request</button>
             )}
           </span>
         </div>

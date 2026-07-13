@@ -223,3 +223,70 @@ class PyrSupportingDocTests(PyrBase):
                              no_doc_reason="").data["ref"]
         r = self.act(ref, "submit", self.sa)
         self.assertEqual(r.status_code, 400)
+
+
+class CentralPaymentTests(PyrBase):
+    """Head-Office (central) payment requests + two-currency mode
+    (owner 2026-07-13)."""
+
+    def setUp(self):
+        super().setUp()
+        self.ho = make_user("hop", User.Role.HO_PURCHASING)
+
+    def raise_by(self, user, **extra):
+        self.client.force_authenticate(user)
+        body = {"doc_type": "PYR", "site_id": self.site.id, "payload": {},
+                "cost_head_id": self.head.id, "payee": "Landlord Ltd",
+                "payment_type": "DIRECT", "payment_method": "BANK",
+                "amount_requested": 1000, "purpose": "Office rent",
+                "has_supporting_doc": True}
+        body.update(extra)
+        return self.client.post("/api/v1/documents", body, format="json")
+
+    def test_site_cannot_request_usd(self):
+        r = self.raise_pyr(amount=1000, currency="USD")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("MVR only", r.data["detail"])
+
+    def test_central_skips_pm_director_approves(self):
+        ref = self.raise_by(self.ho).data["ref"]
+        self.assertEqual(self.act(ref, "submit", self.ho).status_code, 200)
+        # PM cannot approve a central request — the Director approves directly
+        self.assertEqual(self.act(ref, "approve", self.pm).status_code, 403)
+        r = self.act(ref, "approve", self.director)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
+
+    def test_finance_initiated_clears_to_voucher_on_submit(self):
+        ref = self.raise_by(self.finance, currency="USD").data["ref"]
+        r = self.act(ref, "submit", self.finance)
+        self.assertEqual(r.status_code, 200, r.data)
+        # Accounts-initiated: no Director step — straight to the voucher queue
+        self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
+
+    def test_usd_pay_posts_mvr_at_rate(self):
+        ref = self.raise_by(self.finance, currency="USD",
+                            amount_requested=100).data["ref"]
+        self.act(ref, "submit", self.finance)          # → DIRECTOR_APPROVED
+        self.assertEqual(self.authorise(ref).status_code, 200)
+        r = self.act(ref, "pay", self.finance, amount_paid=100,
+                     fx_rate="15", payment_ref="TT-USD-1")
+        self.assertEqual(r.status_code, 200, r.data)
+        paid = CostPosting.objects.get(document__ref=ref, state="PAID")
+        self.assertEqual(float(paid.amount), 1500.0)   # 100 USD * 15
+        self.assertEqual(paid.currency, "MVR")
+
+    def test_voucher_rejects_mixed_currency(self):
+        # a site MVR request, Director-approved
+        mvr = self.raise_pyr(amount=1000).data["ref"]
+        self.act(mvr, "submit", self.sa)
+        self.act(mvr, "approve", self.pm)
+        self.act(mvr, "approve", self.director)
+        # an Accounts USD request, cleared to voucher
+        usd = self.raise_by(self.finance, currency="USD").data["ref"]
+        self.act(usd, "submit", self.finance)
+        self.client.force_authenticate(self.finance)
+        r = self.client.post("/api/v1/payment-vouchers",
+                             {"source_refs": [mvr, usd]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("single currency", r.data["detail"])

@@ -132,6 +132,7 @@ class DocumentSerializer(serializers.ModelSerializer):
             "cost_head_id": pr.cost_head_id, "payee": pr.payee,
             "payment_method": pr.payment_method,
             "payee_account": pr.payee_account, "currency": pr.currency,
+            "origin": pr.origin, "fx_rate": pr.fx_rate,
             "amount_requested": pr.amount_requested,
             "required_by": pr.required_by, "purpose": pr.purpose,
             "is_urgent": pr.is_urgent, "urgent_reason": pr.urgent_reason,
