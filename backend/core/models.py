@@ -793,8 +793,9 @@ class ImportPaymentMilestone(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
-        DUE = "DUE", "Due"
-        PAID = "PAID", "Paid"
+        DUE = "DUE", "Due"                    # trigger met — needs a voucher
+        AUTHORISED = "AUTHORISED", "Authorised"  # signatory-approved on a PV
+        PAID = "PAID", "Paid"                 # TT executed by Finance
 
     order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
                               related_name="milestones")
@@ -807,8 +808,12 @@ class ImportPaymentMilestone(models.Model):
     fixed_amount = models.DecimalField(max_digits=14, decimal_places=2,
                                        null=True, blank=True)  # order currency
     due_date = models.DateField(null=True, blank=True)
-    status = models.CharField(max_length=8, choices=Status.choices,
+    status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.PENDING)
+    # the Payment Voucher a signatory approved to authorise this TT — every
+    # overseas payment carries its voucher reference for book-keeping (§6C.2)
+    voucher = models.ForeignKey("Document", on_delete=models.PROTECT,
+                                null=True, blank=True, related_name="+")
     # payment record (Finance)
     tt_ref = models.CharField(max_length=60, blank=True)
     mvr_paid = models.DecimalField(max_digits=14, decimal_places=2, null=True,
@@ -1657,8 +1662,13 @@ class PaymentVoucherLine(models.Model):
     voucher = models.ForeignKey(Document, on_delete=models.CASCADE,
                                 related_name="voucher_lines")  # the PV
     source_document = models.ForeignKey(
-        Document, on_delete=models.PROTECT,
-        related_name="voucher_lines_as_source")  # the PR / PYR
+        Document, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="voucher_lines_as_source")  # the PR / PYR / IPR
+    # an overseas TT (import milestone) batched for signatory authorisation —
+    # exactly one of source_document / source_milestone is set per line
+    source_milestone = models.ForeignKey(
+        "ImportPaymentMilestone", on_delete=models.PROTECT, null=True,
+        blank=True, related_name="voucher_lines")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.INCLUDED)
@@ -1668,7 +1678,9 @@ class PaymentVoucherLine(models.Model):
     class Meta:
         constraints = [
             models.UniqueConstraint(fields=["voucher", "source_document"],
-                                    name="uniq_voucher_source")
+                                    name="uniq_voucher_source"),
+            models.UniqueConstraint(fields=["voucher", "source_milestone"],
+                                    name="uniq_voucher_milestone"),
         ]
 
 

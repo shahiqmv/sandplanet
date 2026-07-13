@@ -860,6 +860,10 @@ export function ImportPaymentsDue({ onOpenIpr }) {
     <section style={card}>
       <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
         🌍 Import payments due</h2>
+      <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "4px 0 0" }}>
+        Every overseas TT is authorised on a Payment Voucher first. Batch a
+        due one on the <strong>Payment Vouchers</strong> page; once a signatory
+        approves it, record the TT against its milestone.</p>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12,
                       fontSize: 13 }}>
@@ -868,7 +872,7 @@ export function ImportPaymentsDue({ onOpenIpr }) {
           <th style={th}>Milestone</th>
           <th style={{ ...th, textAlign: "right" }}>Amount</th>
           <th style={{ ...th, textAlign: "right" }}>≈ MVR</th>
-          <th style={th}>Due</th>
+          <th style={th}>Due</th><th style={th}>Stage</th>
         </tr></thead>
         <tbody>
           {(rows || []).map((r) => (
@@ -885,10 +889,17 @@ export function ImportPaymentsDue({ onOpenIpr }) {
                 {r.currency} {money(r.due_amount)}</td>
               <td style={{ ...td, textAlign: "right" }}>{money(r.expected_mvr)}</td>
               <td style={td}>{r.due_date || "—"}</td>
+              <td style={td}>
+                {r.stage === "READY"
+                  ? <span style={{ color: "#1d6fb8", fontWeight: 600 }}>
+                      Authorised · {r.voucher_ref} → record TT</span>
+                  : <span style={{ color: "#b35900", fontWeight: 600 }}>
+                      Awaiting voucher</span>}
+              </td>
             </tr>
           ))}
           {rows && rows.length === 0 && (
-            <tr><td colSpan={6} style={{ ...td, textAlign: "center",
+            <tr><td colSpan={7} style={{ ...td, textAlign: "center",
                                          color: "var(--muted)" }}>
               No import payments due. Purchasing marks a milestone due when its
               trigger is met.</td></tr>
@@ -964,10 +975,14 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                     {m.status === "PAID"
                       ? <span style={{ color: "#1a7f37", fontWeight: 600 }}>
                           Paid</span>
-                      : m.status === "DUE"
-                        ? <span style={{ color: "#b35900", fontWeight: 600 }}>
-                            Due</span>
-                        : <span style={{ color: "#8a97a1" }}>Pending</span>}
+                      : m.status === "AUTHORISED"
+                        ? <span style={{ color: "#1d6fb8", fontWeight: 600 }}>
+                            Authorised{m.voucher_ref
+                              ? ` · ${m.voucher_ref}` : ""}</span>
+                        : m.status === "DUE"
+                          ? <span style={{ color: "#b35900", fontWeight: 600 }}>
+                              Due · needs voucher</span>
+                          : <span style={{ color: "#8a97a1" }}>Pending</span>}
                   </td>
                   <td style={{ ...td, fontSize: 12 }}>
                     {m.status === "PAID" && (<>
@@ -994,19 +1009,24 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                         Mark due</button>
                     )}
                     {canPay && m.status === "DUE" && (
+                      <span style={{ fontSize: 11.5, color: "#b35900" }}>
+                        Batch on a Payment Voucher to authorise</span>
+                    )}
+                    {canPay && m.status === "AUTHORISED" && (
                       <button style={{ ...buttonStyle, padding: "2px 10px",
                                        fontSize: 12 }}
                               onClick={() => {
                                 const mvr = window.prompt(
                                   `MVR actually paid for "${m.label}" `
                                   + `(${doc.order.order_currency} ${money(
-                                      m.due_amount)}):`);
+                                      m.due_amount)}, authorised on `
+                                  + `${m.voucher_ref || "voucher"}):`);
                                 if (!mvr) return;
                                 const tt = window.prompt("TT reference:") || "";
                                 call(`/milestones/${m.id}/pay`,
                                      { mvr_paid: mvr, tt_ref: tt });
                               }}>
-                        Record payment</button>
+                        Record TT payment</button>
                     )}
                   </td>
                 </tr>

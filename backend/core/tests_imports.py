@@ -225,7 +225,7 @@ class MilestonePaymentTests(IprBase):
         advance = next(m for m in r.data["milestones"] if m["label"] == "Advance")
         self.assertEqual(float(advance["due_amount"]), 300.0)   # 30% of 1000
 
-        # mark the advance due → Finance queue
+        # mark the advance due → Finance queue (awaiting a voucher)
         self.client.post(
             f"/api/v1/ipr/{ref}/milestones/{advance['id']}/due", {},
             format="json")
@@ -233,6 +233,29 @@ class MilestonePaymentTests(IprBase):
         due = self.client.get("/api/v1/ipr/payments-due").data
         self.assertEqual(len(due), 1)
         self.assertEqual(float(due[0]["expected_mvr"]), 4500.0)  # 300*15
+        self.assertEqual(due[0]["stage"], "AWAITING_VOUCHER")
+
+        # a due (un-vouchered) TT cannot be paid yet
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/milestones/{advance['id']}/pay",
+            {"mvr_paid": "4626", "tt_ref": "TT-88"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("authorised on a Payment Voucher", r.data["detail"])
+
+        # Finance batches the TT onto a voucher; a signatory approves it
+        from .vouchers import (approve_voucher, create_voucher,
+                               submit_voucher)
+        pv, err = create_voucher([], self.finance,
+                                 milestone_ids=[advance["id"]])
+        self.assertIsNone(err, err)
+        self.assertEqual(float(pv.voucher_lines.get().amount), 4500.0)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+
+        # the milestone now carries its authorising voucher and is ready to pay
+        due = self.client.get("/api/v1/ipr/payments-due").data
+        self.assertEqual(due[0]["stage"], "READY")
+        self.assertEqual(due[0]["voucher_ref"], pv.ref)
 
         # pay it — actual rate 15.42 → MVR 4626 (committed value 4500, FX +126)
         r = self.client.post(

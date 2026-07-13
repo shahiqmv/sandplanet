@@ -68,12 +68,14 @@ class OrderSerializer(serializers.ModelSerializer):
 class MilestoneSerializer(serializers.ModelSerializer):
     due_amount = serializers.SerializerMethodField()
     tt_advice_url = serializers.SerializerMethodField()
+    voucher_ref = serializers.CharField(source="voucher.ref", read_only=True,
+                                        default=None)
 
     class Meta:
         model = ImportPaymentMilestone
         fields = ["id", "seq", "label", "trigger", "percent", "fixed_amount",
                   "due_date", "status", "due_amount", "tt_ref", "mvr_paid",
-                  "actual_rate", "paid_at", "tt_advice_url"]
+                  "actual_rate", "paid_at", "tt_advice_url", "voucher_ref"]
 
     def get_tt_advice_url(self, obj):
         return obj.tt_advice.url if obj.tt_advice else None
@@ -462,7 +464,10 @@ def ipr_payments_due(request):
             "due_amount": m.due_amount(total),
             "expected_mvr": (m.due_amount(total) * m.order.exchange_rate)
             .quantize(Decimal("0.01")),
-            "due_date": m.due_date,
+            "due_date": m.due_date, "status": m.status,
+            "stage": ("READY" if m.status == "AUTHORISED"
+                      else "AWAITING_VOUCHER"),
+            "voucher_ref": m.voucher.ref if m.voucher_id else None,
         })
     return Response(rows)
 

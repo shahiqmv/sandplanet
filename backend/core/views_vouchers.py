@@ -11,6 +11,19 @@ from .models import Document
 
 
 def _line_info(line):
+    if line.source_milestone_id:
+        m = line.source_milestone
+        order = m.order
+        return {"line_id": line.id, "ref": order.document.ref,
+                "doc_type": "MILESTONE", "site_code": "HO",
+                "amount": line.amount, "status": line.status,
+                "query_note": line.query_note,
+                "source_status": m.status,
+                "payee": order.supplier.name, "cost_head": "Imports",
+                "purpose": m.label, "milestone_label": m.label,
+                "payment_ref": m.tt_ref, "mvr_paid": m.mvr_paid,
+                # the TT itself is executed on the Import Payments page
+                "paid": m.status == "PAID"}
     src = line.source_document
     info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
             "site_code": src.site.code, "amount": line.amount,
@@ -52,7 +65,9 @@ def _line_info(line):
 
 def _voucher_info(pv):
     lines = [_line_info(ln) for ln in pv.voucher_lines.select_related(
-        "source_document__site").order_by("id")]
+        "source_document__site",
+        "source_milestone__order__document",
+        "source_milestone__order__supplier").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     return {
         "ref": pv.ref, "status": pv.status, "doc_date": pv.doc_date,
@@ -72,12 +87,13 @@ def _voucher_info(pv):
 
 @api_view(["GET"])
 def awaiting_voucher(request):
-    """Director-approved PR/PYR awaiting authorisation on a voucher."""
+    """Director-approved PR/PYR/IPR and due overseas TT milestones awaiting
+    authorisation on a voucher."""
     if request.user.role not in ("FINANCE", "ADMIN"):
         return Response({"detail": "Finance builds vouchers."}, status=403)
     out = []
     for doc in vouchers.awaiting_voucher():
-        row = {"ref": doc.ref, "doc_type": doc.doc_type,
+        row = {"kind": "DOC", "ref": doc.ref, "doc_type": doc.doc_type,
                "site_code": doc.site.code, "doc_date": doc.doc_date,
                "amount": vouchers._source_amount(doc)}
         if doc.doc_type == "PYR" and hasattr(doc, "payment_request"):
@@ -85,9 +101,21 @@ def awaiting_voucher(request):
             row.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
                         "purpose": pr.purpose,
                         "has_supporting_doc": pr.has_supporting_doc})
+        elif doc.doc_type == "IPR":
+            row.update({"payee": doc.import_order.supplier.name,
+                        "cost_head": "Overseas order"})
         else:
             row.update({"payee": "(procurement)", "cost_head": "Materials"})
         out.append(row)
+    for m in vouchers.awaiting_milestones():
+        out.append({
+            "kind": "MILESTONE", "milestone_id": m.id,
+            "ref": m.order.document.ref, "doc_type": "MILESTONE",
+            "site_code": "HO", "doc_date": m.due_date,
+            "amount": vouchers.milestone_amount(m),
+            "payee": m.order.supplier.name,
+            "cost_head": f"Overseas TT · {m.label}",
+            "purpose": m.label})
     return Response(out)
 
 
@@ -98,7 +126,8 @@ def payment_vouchers(request):
             return Response({"detail": "Finance builds vouchers."},
                             status=403)
         pv, err = vouchers.create_voucher(
-            request.data.get("source_refs") or [], request.user)
+            request.data.get("source_refs") or [], request.user,
+            milestone_ids=request.data.get("milestone_ids") or [])
         if err:
             return Response({"detail": err}, status=400)
         return Response(_voucher_info(pv), status=201)
@@ -129,6 +158,8 @@ def _pay_str(li):
         refs = [r["payment_ref"] for r in li.get("vendor_rows", [])
                 if r.get("paid") and r.get("payment_ref")]
         return ", ".join(refs)
+    if li["doc_type"] == "MILESTONE":
+        return li.get("payment_ref") or ("paid" if li["paid"] else "")
     return ""
 
 
@@ -169,7 +200,11 @@ def finance_dashboard(request):
     from .petty_cash import cash_in_hand
 
     aw = vouchers.awaiting_voucher()
-    aw_total = sum((vouchers._source_amount(d) for d in aw), Decimal("0"))
+    aw_ms = list(vouchers.awaiting_milestones())
+    aw_count = len(aw) + len(aw_ms)
+    aw_total = (sum((vouchers._source_amount(d) for d in aw), Decimal("0"))
+                + sum((vouchers.milestone_amount(m) for m in aw_ms),
+                      Decimal("0")))
     pvs = Document.objects.filter(doc_type="PV")
     to_pay = []          # approved vouchers still carrying unpaid lines
     for pv in pvs.filter(status="APPROVED"):
@@ -193,7 +228,7 @@ def finance_dashboard(request):
                        "below_trigger": cih <= trigger,
                        "custodian": fl.custodian.full_name})
     return Response({
-        "awaiting_voucher": {"count": len(aw), "total": aw_total},
+        "awaiting_voucher": {"count": aw_count, "total": aw_total},
         "vouchers": {"draft": pvs.filter(status="DRAFT").count(),
                      "submitted": pvs.filter(status="SUBMITTED").count(),
                      "to_pay": to_pay},

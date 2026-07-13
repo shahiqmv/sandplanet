@@ -246,13 +246,15 @@ def mark_milestone_due(milestone, actor):
 
 
 def pay_milestone(milestone, mvr_paid, tt_ref, actor):
-    """Finance pays a due milestone. The committed-value share posts PAID to the
-    projects/stock at the agreed rate; the difference between the actual MVR
-    paid and that committed value is realised FX, posted to the Foreign Exchange
-    pool (never a project)."""
+    """Finance executes the TT for a voucher-authorised milestone. The
+    committed-value share posts PAID to the projects/stock at the agreed rate;
+    the difference between the actual MVR paid and that committed value is
+    realised FX, posted to the Foreign Exchange pool (never a project). The
+    milestone already carries the authorising voucher reference (§6C.2)."""
     from django.utils import timezone
-    if milestone.status != "DUE":
-        return "Only a due milestone can be paid."
+    if milestone.status != "AUTHORISED":
+        return ("This payment must be authorised on a Payment Voucher before "
+                "the TT can be recorded.")
     mvr_paid = _dec(mvr_paid)
     if mvr_paid <= ZERO:
         return "Enter the MVR amount actually paid."
@@ -288,11 +290,13 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
 
 
 def payments_due():
-    """Due, unpaid milestones on authorised orders — Finance's payment queue."""
+    """Overseas TT milestones in Finance's queue: DUE ones (awaiting voucher
+    authorisation) and AUTHORISED ones (voucher-approved, ready for the TT)."""
     from .models import ImportPaymentMilestone
     return ImportPaymentMilestone.objects.filter(
-        status="DUE", order__document__status="AUTHORISED").select_related(
-        "order__document", "order__supplier")
+        status__in=("DUE", "AUTHORISED"),
+        order__document__status="AUTHORISED").select_related(
+        "order__document", "order__supplier", "voucher")
 
 
 # ---- Shipments + shipping documents (P1B-d) ------------------------------

@@ -21,9 +21,15 @@ const TABS = [["all", "All"], ["DRAFT", "Draft"],
 // A voucher line's human description varies by source document type
 function lineDetail(l) {
   if (l.doc_type === "IPR") return "Overseas order — paid on Import Payments";
+  if (l.doc_type === "MILESTONE")
+    return `Overseas TT · ${l.milestone_label || l.purpose || ""} `
+      + "— paid on Import Payments";
   if (l.doc_type === "PR") return "Procurement — pay each vendor";
   return [l.payee, l.purpose].filter(Boolean).join(" · ");
 }
+
+// A stable pick key for an awaiting row (docs by ref, milestones by id)
+const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}` : d.ref;
 
 export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
@@ -57,10 +63,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   };
   useEffect(reload, []);
 
-  const pickedRefs = Object.keys(picked).filter((r) => picked[r]);
-  const pickedTotal = awaiting
-    .filter((d) => picked[d.ref])
-    .reduce((s, d) => s + Number(d.amount || 0), 0);
+  const pickedRows = awaiting.filter((d) => picked[awKey(d)]);
+  const pickedTotal = pickedRows.reduce((s, d) => s + Number(d.amount || 0), 0);
   const shown = vouchers.filter((v) => tab === "all" || v.status === tab);
 
   const run = async (fn) => {
@@ -70,8 +74,12 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   };
 
   const createVoucher = () => run(async () => {
+    const source_refs = pickedRows.filter((d) => d.kind !== "MILESTONE")
+      .map((d) => d.ref);
+    const milestone_ids = pickedRows.filter((d) => d.kind === "MILESTONE")
+      .map((d) => d.milestone_id);
     await api("/payment-vouchers",
-              { method: "POST", body: { source_refs: pickedRefs } });
+              { method: "POST", body: { source_refs, milestone_ids } });
     setPicked({}); reload();
   });
 
@@ -188,11 +196,11 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
               {awaiting.length} requisition{awaiting.length === 1 ? "" : "s"}
             </span>
-            {pickedRefs.length > 0 && (
+            {pickedRows.length > 0 && (
               <span style={{ marginLeft: "auto", display: "flex", gap: 12,
                              alignItems: "center" }}>
                 <span style={{ fontSize: 13.5, color: "var(--navy)" }}>
-                  {pickedRefs.length} selected ·{" "}
+                  {pickedRows.length} selected ·{" "}
                   <strong style={mono}>MVR {money(pickedTotal)}</strong>
                 </span>
                 <Btn variant="primary" disabled={busy}
@@ -213,19 +221,29 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                   <th style={{ ...th, textAlign: "right" }}>Amount (MVR)</th>
                 </tr></thead>
                 <tbody>
-                  {awaiting.map((d) => (
-                    <tr key={d.ref} style={{ background: picked[d.ref]
+                  {awaiting.map((d) => {
+                    const key = awKey(d);
+                    const isMs = d.kind === "MILESTONE";
+                    return (
+                    <tr key={key} style={{ background: picked[key]
                       ? "var(--sky-soft)" : "transparent" }}>
                       <td style={{ ...td, textAlign: "center" }}>
-                        <input type="checkbox" checked={!!picked[d.ref]}
+                        <input type="checkbox" checked={!!picked[key]}
                                onChange={(e) => setPicked(
-                                 { ...picked, [d.ref]: e.target.checked })} />
+                                 { ...picked, [key]: e.target.checked })} />
                       </td>
                       <td style={td}>
                         <a href="#" onClick={(e) => { e.preventDefault();
                                                       onOpenDoc(d.ref); }}
                            style={{ textDecoration: "none" }}>
                           <RefStamp small>{d.ref}</RefStamp></a>
+                        {isMs && (
+                          <span style={{ marginLeft: 6, fontSize: 11,
+                            fontWeight: 600, color: "#8a6d00",
+                            background: "var(--amber-bg, #fff4e0)",
+                            padding: "1px 6px", borderRadius: 10 }}>
+                            overseas TT</span>
+                        )}
                       </td>
                       <td style={td}>{d.site_code}</td>
                       <td style={td}>{d.payee}</td>
@@ -233,7 +251,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                       <td style={{ ...td, textAlign: "right", ...mono }}>
                         {money(d.amount)}</td>
                     </tr>
-                  ))}
+                  );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -268,7 +287,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             const canApprove = isSignatory && pv.status === "SUBMITTED";
             const canPay = isFinance && pv.status === "APPROVED";
             const payable = pv.lines.filter((l) => l.status === "APPROVED"
-              && l.doc_type !== "IPR");
+              && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE");
             return (
               <div key={pv.ref} style={{ border: "1px solid var(--line)",
                 borderRadius: 10, overflow: "hidden",
@@ -345,7 +364,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                                   <RefStamp small>{l.ref}</RefStamp></a>
                               </td>
                               <td style={td}>{l.site_code}</td>
-                              <td style={{ ...td, color: l.doc_type === "IPR"
+                              <td style={{ ...td, color: (l.doc_type === "IPR"
+                                || l.doc_type === "MILESTONE")
                                 ? "#8a6d00" : "inherit" }}>{lineDetail(l)}</td>
                               <td style={{ ...td, textAlign: "right", ...mono }}>
                                 {money(l.amount)}</td>
@@ -424,13 +444,14 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                         ))}
                       </div>
                     )}
-                    {canPay && pv.lines.some((l) => l.doc_type === "IPR"
+                    {canPay && pv.lines.some((l) => (l.doc_type === "IPR"
+                      || l.doc_type === "MILESTONE")
                       && l.status === "APPROVED") && (
                       <p style={{ marginTop: 10, fontSize: 12.5,
                                   color: "#8a6d00" }}>
-                        Overseas orders on this voucher are paid on the{" "}
-                        <strong>Import Payments</strong> page against their
-                        milestones, not here.</p>
+                        Overseas orders and TTs authorised on this voucher are
+                        executed on the <strong>Import Payments</strong> page
+                        against their milestones, not here.</p>
                     )}
 
                     {pv.approvals?.length > 0 && (
