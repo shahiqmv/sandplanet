@@ -8,6 +8,7 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
+import ImportOrders, { IprView } from "./ImportOrders.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollRunPage from "./PayrollRunPage.jsx";
@@ -52,6 +53,7 @@ const NAV_GROUPS = [
            ["items", "Items", null],
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN"]],
+           ["imports", "International Orders", null],
            ["suppliers", "Suppliers", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN"],
@@ -314,6 +316,10 @@ export default function App() {
     setError(null);
     try {
       const doc = await api(`/documents/${ref}`);
+      if (doc.doc_type === "IPR") {
+        setDocView({ mode: "ipr-view", doc });
+        return;
+      }
       const mode = doc.doc_type === "DPR" ? "dpr-view"
                  : ["IR", "MAR", "TWS"].includes(doc.doc_type) ? "qa-view"
                  : doc.doc_type === "PYR" ? "pyr-view"
@@ -497,6 +503,9 @@ export default function App() {
           {docView?.mode === "pr-match" && (
             <MatchingWorkspace doc={docView.doc} me={me} onChanged={bump}
                                onClose={() => openDoc(docView.doc.ref)} />
+          )}
+          {docView?.mode === "ipr-view" && (
+            <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc} />
           )}
           {docView?.mode === "qa-form" && (
             <QAForm docType={docView.docType} site={openSite} project={project}
@@ -709,6 +718,10 @@ export default function App() {
             ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
             hoPage === "item-categories" && (
             <ItemCategoriesPage me={me} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "imports" && (
+            <ImportOrders me={me} onOpenIpr={(ref) =>
+              setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />

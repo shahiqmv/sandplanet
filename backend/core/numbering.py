@@ -4,7 +4,7 @@ from .models import DocCounter
 
 # Global numbering, no site code (§4.1, R2). PV = Payment Voucher (M6d),
 # an HO instrument batching requisitions from many sites.
-GLOBAL_TYPES = {"PR", "LM", "PO", "PV"}
+GLOBAL_TYPES = {"PR", "LM", "PO", "PV", "IPR"}  # IPR global per §5.10 / D5
 
 
 def next_ref(doc_type, site):

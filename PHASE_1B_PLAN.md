@@ -66,7 +66,19 @@ sizing / surplus-to-general-stock (that lands on the IPR in P1B-b).
   IPR lifecycle progresses in later slices).
 - Ledger: none yet (PMR is demand, not cost).
 
-### P1B-b — IPR + ordering + commitment
+### P1B-b — IPR + ordering + commitment — DONE 2026-07-13
+Shipped: IPR document (global `IPR-001`), `ImportOrder`/`ImportOrderLine`/
+`ImportAllocation` models; build the order from sized-and-released PMRs (demand
+links `PMR_IPR`, PMR→SOURCING on draft, PMR→ORDERED on award); per-line
+allocations split the qty between reserving projects and general stock. Workflow
+Draft→Submitted→Approved (Director award)→Authorised (signatory, on a Payment
+Voucher — PV extended to accept IPR sources). **COMMITTED posts at authorisation
+in MVR at the agreed rate**, each project allocation to that project's site under
+the line cost head, the general-stock balance to the General Stock pool. UI:
+"International Orders" page (register + order form with supplier/currency/rate/
+allocations + PMR demand picker) + IPR view. Migration 0038. Tests in
+tests_imports.py. Full per-line demand-qty mapping is coarse (document-level PMR
+links); refine if needed. NOTE original -b spec below:
 - **IPR document** (§5.10.4): new type, global numbering `IPR-018`. Header
   (INTERNATIONAL supplier, currency + exchange-rate basis, incoterm, ports,
   PI ref + attachment, quotations). Lines (order qty, unit price in order

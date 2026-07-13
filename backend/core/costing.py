@@ -44,7 +44,7 @@ def can_authorise(user, amount):
 
 def post(*, site, cost_head, state, source, amount, posted_on=None,
          document=None, document_line=None, petty_cash_entry=None,
-         is_stock_pool=False, staff_year=None, staff_month=None,
+         ipr_line=None, is_stock_pool=False, staff_year=None, staff_month=None,
          work_package="", reversal_of=None, actor=None, currency="MVR"):
     """Append one cost posting. The single low-level writer — callers are
     the typed trigger functions below, never views directly."""
@@ -53,7 +53,7 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
         amount=Decimal(str(amount)), currency=currency,
         posted_on=posted_on or date.today(),
         document=document, document_line=document_line,
-        petty_cash_entry=petty_cash_entry,
+        petty_cash_entry=petty_cash_entry, ipr_line=ipr_line,
         is_stock_pool=is_stock_pool, staff_year=staff_year,
         staff_month=staff_month, work_package=work_package,
         reversal_of=reversal_of, created_by=actor,
@@ -101,6 +101,7 @@ def reverse_document(document, actor=None, states=None):
             state=original.state, source=original.source,
             amount=-original.amount, currency=original.currency,
             document=document, document_line=original.document_line,
+            ipr_line=original.ipr_line,
             is_stock_pool=original.is_stock_pool,
             staff_year=original.staff_year, staff_month=original.staff_month,
             work_package=original.work_package,

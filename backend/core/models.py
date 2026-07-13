@@ -236,6 +236,7 @@ class Document(models.Model):
         PYR = "PYR"  # payment request (§5.9, M6)
         PV = "PV"    # payment voucher — batch authorisation (M6d)
         PMR = "PMR"  # project material requisition — imports (§5.10, P1B)
+        IPR = "IPR"  # international purchase requisition — the order (§5.10)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -328,6 +329,16 @@ class Document(models.Model):
             "SOURCING": {"ORDERED"},
             "ORDERED": {"RECEIVED"},
             "RECEIVED": {"CLOSED"},
+        },
+        # International Purchase Requisition — the overseas order (§5.10.4).
+        # HO raises it, the Director awards (APPROVED), a signatory authorises
+        # it on a Payment Voucher (AUTHORISED = commitment, §6C.2 / D1). The
+        # shipment→clearance→receipt lifecycle lands in later slices (-d/-e).
+        "IPR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"APPROVED", "DRAFT", "CANCELLED"},
+            "APPROVED": {"AUTHORISED", "DRAFT"},
+            "AUTHORISED": {"CLOSED"},
         },
     }
 
@@ -552,7 +563,8 @@ class DocumentLine(models.Model):
 class DocumentLink(models.Model):
     LINK_TYPES = [("MR_PR", "MR→PR"), ("MR_LM", "MR→LM"), ("PR_LM", "PR→LM"),
                   ("LM_GRN", "LM→GRN"), ("IR_NCR", "IR→NCR"),
-                  ("PR_PO", "PR→PO"), ("PO_LM", "PO→LM")]
+                  ("PR_PO", "PR→PO"), ("PO_LM", "PO→LM"),
+                  ("PMR_IPR", "PMR→IPR")]
 
     from_document = models.ForeignKey(
         Document, on_delete=models.PROTECT, related_name="links_from"
@@ -658,6 +670,76 @@ class Supplier(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class ImportOrder(models.Model):
+    """IPR typed header (§5.10.4) — one row per IPR document. The order is
+    placed in the supplier's currency; a manually agreed exchange rate (D4)
+    converts it to MVR when the commitment posts at authorisation."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="import_order")
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT,
+                                 related_name="import_orders")
+    order_currency = models.CharField(max_length=3, default="USD")
+    # order currency → MVR (the "agreed exchange-rate basis"); manual per D4
+    exchange_rate = models.DecimalField(max_digits=12, decimal_places=4)
+    incoterm = models.CharField(max_length=12, blank=True)
+    loading_port = models.CharField(max_length=60, blank=True)
+    discharge_port = models.CharField(max_length=60, blank=True)
+    pi_ref = models.CharField(max_length=40, blank=True)  # proforma invoice
+    notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"IPR {self.document.ref}"
+
+
+class ImportOrderLine(models.Model):
+    """A line on the order: an item, the ordered quantity and unit price (in
+    the order currency), and a cost head. Its allocations split the ordered
+    quantity between reserving projects and general company stock (§5.10.4)."""
+
+    order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
+                              related_name="lines")
+    line_no = models.IntegerField()
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    free_text_desc = models.TextField(blank=True)
+    unit = models.CharField(max_length=10, blank=True)
+    spec = models.TextField(blank=True)
+    order_qty = models.DecimalField(max_digits=12, decimal_places=2)
+    unit_price = models.DecimalField(max_digits=14, decimal_places=4)  # order ccy
+    cost_head = models.ForeignKey("CostHead", on_delete=models.PROTECT,
+                                  related_name="+")
+    remarks = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["line_no"]
+
+    @property
+    def description(self):
+        return self.item.description if self.item else self.free_text_desc
+
+    @property
+    def line_value(self):  # in order currency
+        return (self.order_qty or 0) * (self.unit_price or 0)
+
+
+class ImportAllocation(models.Model):
+    """How one order line's quantity is shared. A project allocation reserves
+    stock to that project (commitment lands on the project's site); a null
+    project is the general-stock balance (commitment to the General Stock
+    pool). Per line, the allocations must sum to the ordered quantity."""
+
+    line = models.ForeignKey(ImportOrderLine, on_delete=models.CASCADE,
+                             related_name="allocations")
+    project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="import_allocations")
+    qty = models.DecimalField(max_digits=12, decimal_places=2)
+
+    @property
+    def is_general_stock(self):
+        return self.project_id is None
 
 
 def quotation_path(instance, filename):
@@ -1160,7 +1242,9 @@ class CostPosting(models.Model):
     petty_cash_entry = models.ForeignKey("PettyCashEntry",
                                          on_delete=models.PROTECT, null=True,
                                          blank=True, related_name="+")
-    # ipr_line / sin_line FKs added with their Phase 1B modules
+    ipr_line = models.ForeignKey("ImportOrderLine", on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="+")
+    # sin_line FK added with its Phase 1B module
     is_stock_pool = models.BooleanField(default=False)  # HO pool posting
     staff_year = models.IntegerField(null=True, blank=True)
     staff_month = models.IntegerField(null=True, blank=True)

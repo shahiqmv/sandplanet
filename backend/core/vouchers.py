@@ -18,7 +18,8 @@ from .models import (Approval, Document, DocumentRevision, PaymentVoucherLine,
 from .numbering import next_ref
 
 # What is ready to go on a voucher, per source type
-AWAITING_STATUS = {"PR": "APPROVED", "PYR": "DIRECTOR_APPROVED"}
+AWAITING_STATUS = {"PR": "APPROVED", "PYR": "DIRECTOR_APPROVED",
+                   "IPR": "APPROVED"}
 
 
 def ho_site():
@@ -40,6 +41,9 @@ def _source_amount(doc):
     if doc.doc_type == "PR":
         from .procurement import pr_grand_total
         return pr_grand_total(doc)
+    if doc.doc_type == "IPR":
+        from .imports import ipr_mvr_total
+        return ipr_mvr_total(doc.import_order)
     return Decimal("0")
 
 
@@ -62,6 +66,9 @@ def awaiting_voucher():
             .select_related("site"):
         out.append(doc)
     for doc in docs.filter(doc_type="PYR", status="DIRECTOR_APPROVED") \
+            .select_related("site"):
+        out.append(doc)
+    for doc in docs.filter(doc_type="IPR", status="APPROVED") \
             .select_related("site"):
         out.append(doc)
     return out
@@ -136,6 +143,12 @@ def authorise_source(doc, actor):
         costing.post(site=doc.site, cost_head=pr.cost_head, state="COMMITTED",
                      source="PYR", amount=pr.amount_requested,
                      currency=pr.currency, document=doc, actor=actor)
+        doc.status = "AUTHORISED"
+        doc.save(update_fields=["status", "updated_at"])
+    elif doc.doc_type == "IPR":
+        from .imports import authorise_ipr
+
+        authorise_ipr(doc, actor)  # COMMITTED split projects + General Stock
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=doc, revision=doc.current_revision,

@@ -6,7 +6,8 @@ from datetime import date
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import (Document, Project, SitePmHistory, Site, Supplier, User)
+from .models import (CostHead, CostPosting, Document, DocumentRevision,
+                     Project, SitePmHistory, Site, Supplier, User)
 from .tests import make_user
 
 
@@ -94,6 +95,105 @@ class PmrWorkflowTests(PmrBase):
         r = self.client.post(f"/api/v1/documents/{ref}/actions/return",
                              {"comment": "spec unclear"}, format="json")
         self.assertEqual(r.data["status"], "DRAFT")
+
+
+class IprBase(PmrBase):
+    def setUp(self):
+        super().setUp()
+        self.finance = make_user("fin", User.Role.FINANCE)
+        self.signatory = make_user("sig", User.Role.SIGNATORY)
+        self.supplier = Supplier.objects.create(
+            name="Guangzhou Pumps Co", category="INTERNATIONAL",
+            country="China", default_currency="USD")
+        self.head = CostHead.objects.get_or_create(
+            name="Materials", defaults={"sort_order": 1})[0]
+        CostHead.objects.get_or_create(
+            name="General Stock", defaults={"is_pool": True})
+        # a sized-and-released PMR ready to be ordered
+        self.pmr = Document.objects.create(
+            doc_type="PMR", ref="PMR-SJR-050", site=self.site,
+            project=self.project, doc_date=date.today(),
+            status="SIZED_RELEASED", created_by=self.pm)
+        rev = DocumentRevision.objects.create(document=self.pmr, rev_label="R0",
+                                              payload={}, created_by=self.pm)
+        self.pmr.current_revision = rev
+        self.pmr.save(update_fields=["current_revision"])
+
+    def order_body(self, proj_qty=6, stock_qty=4):
+        return {
+            "supplier_id": self.supplier.id, "order_currency": "USD",
+            "exchange_rate": "15", "incoterm": "FOB",
+            "pmr_refs": [self.pmr.ref],
+            "lines": [{
+                "free_text_desc": "Chilled-water pump", "unit": "nos",
+                "order_qty": proj_qty + stock_qty, "unit_price": "100",
+                "cost_head_id": self.head.id,
+                "allocations": [
+                    {"project_id": self.project.id, "qty": proj_qty},
+                    {"project_id": None, "qty": stock_qty},
+                ],
+            }],
+        }
+
+
+class IprFlowTests(IprBase):
+    def test_create_award_authorise_commits_split(self):
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/ipr", self.order_body(), format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.assertTrue(ref.startswith("IPR-"))          # global numbering
+        self.assertEqual(r.data["mvr_total"], 15000)     # 1000 USD * 15
+        # creating the order moved the PMR into sourcing
+        self.pmr.refresh_from_db()
+        self.assertEqual(self.pmr.status, "SOURCING")
+
+        # HO submits, Director awards → PMR advances to ORDERED
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "APPROVED")
+        self.pmr.refresh_from_db()
+        self.assertEqual(self.pmr.status, "ORDERED")
+        # nothing committed yet — award is not the commitment point
+        self.assertFalse(CostPosting.objects.filter(source="IPR").exists())
+
+        # Finance vouchers it, signatory approves → COMMITTED split posts
+        from .vouchers import approve_voucher, create_voucher, submit_voucher
+        pv, err = create_voucher([ref], self.finance)
+        self.assertIsNone(err, err)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+
+        doc = Document.objects.get(ref=ref)
+        self.assertEqual(doc.status, "AUTHORISED")
+        posts = CostPosting.objects.filter(source="IPR", state="COMMITTED")
+        # project leg: 6 * 100 * 15 = 9000 to the project's site
+        proj_leg = posts.get(is_stock_pool=False)
+        self.assertEqual(proj_leg.site_id, self.site.id)
+        self.assertEqual(float(proj_leg.amount), 9000.0)
+        # general-stock leg: 4 * 100 * 15 = 6000 to the pool, not a project
+        pool_leg = posts.get(is_stock_pool=True)
+        self.assertEqual(float(pool_leg.amount), 6000.0)
+        self.assertEqual(float(sum(p.amount for p in posts)), 15000.0)
+
+    def test_allocations_must_sum_to_order_qty(self):
+        self.client.force_authenticate(self.ho)
+        body = self.order_body(proj_qty=6, stock_qty=1)  # sums to 7, qty 10
+        body["lines"][0]["order_qty"] = 10
+        r = self.client.post("/api/v1/ipr", body, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sum to the order", r.data["detail"])
+
+    def test_site_staff_cannot_view_import_prices(self):
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.force_authenticate(self.sa)   # site admin
+        r = self.client.get(f"/api/v1/ipr/{ref}")
+        self.assertEqual(r.status_code, 404)       # invisible to site staff
 
 
 class SupplierCategoryTests(PmrBase):

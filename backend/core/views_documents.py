@@ -686,9 +686,10 @@ def _do_submit(request, doc, comment):
     roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"},
              "IR": {"SITE_ENGINEER", "PM"},
              "MAR": {"SITE_ENGINEER", "PM"},
-             "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"}}.get(doc.doc_type)
+             "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
+             "IPR": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR."},
+        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/IPR."},
                         status=400)
     if doc.doc_type == "PR" and doc.quotations.exists():
         # Coverage tally (R2): every MR line quoted AND awarded, or an
@@ -725,7 +726,16 @@ def _do_approve(request, doc, comment):
         if err is None:
             on_pr_approved(doc, request.user)
         return err
-    return Response({"detail": "Approve applies to MR/PR/IR/MAR."}, status=400)
+    if doc.doc_type == "IPR":  # Director awards the order; commitment is next
+        # (a signatory authorises it on a Payment Voucher, §6C.2 / D1)
+        err = _apply(request, doc, "APPROVED", "APPROVE",
+                     roles={"DIRECTOR"}, comment=comment)
+        if err is None:
+            from .imports import advance_linked_pmrs
+            advance_linked_pmrs(doc, "ORDERED", request.user)
+        return err
+    return Response({"detail": "Approve applies to MR/PR/IR/MAR/IPR."},
+                    status=400)
 
 
 def _do_authorise(request, doc, comment):
@@ -778,7 +788,12 @@ def _do_return(request, doc, comment):
             "APPROVED" else {"DIRECTOR"}
         return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
-    return Response({"detail": "Return applies to MR/PR/IR/MAR."}, status=400)
+    if doc.doc_type == "IPR":
+        # Director returns a submitted order for rework (no commitment yet)
+        return _apply(request, doc, "DRAFT", "RETURN",
+                      roles={"DIRECTOR", "HO_PURCHASING"}, comment=comment)
+    return Response({"detail": "Return applies to MR/PR/IR/MAR/IPR."},
+                    status=400)
 
 
 def _set_workflow_payload(revision, key, data):
@@ -978,14 +993,18 @@ def _do_size_release(request, doc, comment):
 
 
 def _do_cancel(request, doc, comment):
-    """PMR/PR/PYR cancellation from an early state (a requirement no longer
-    needed). PMR: the raising team or the project PM cancels before ordering."""
-    if doc.doc_type != "PMR":
-        return Response({"detail": "cancel applies to PMR here."}, status=400)
+    """Cancellation from an early state (no longer needed). PMR: the raising
+    team / project PM before ordering. IPR: HO Purchasing before authorisation."""
     if not comment.strip():
         return Response({"detail": "A reason is required to cancel."}, status=400)
-    return _apply(request, doc, "CANCELLED", "CANCEL",
-                  roles={"SITE_ENGINEER", "SITE_ADMIN", "PM"}, comment=comment)
+    if doc.doc_type == "PMR":
+        return _apply(request, doc, "CANCELLED", "CANCEL",
+                      roles={"SITE_ENGINEER", "SITE_ADMIN", "PM"},
+                      comment=comment)
+    if doc.doc_type == "IPR":
+        return _apply(request, doc, "CANCELLED", "CANCEL",
+                      roles={"HO_PURCHASING"}, comment=comment)
+    return Response({"detail": "cancel applies to PMR/IPR here."}, status=400)
 
 
 def _do_void(request, doc, comment):
