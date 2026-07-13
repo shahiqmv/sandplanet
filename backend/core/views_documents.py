@@ -47,8 +47,10 @@ CREATE_ROLES = {  # spec §3 "can create"
     "TWS": {"SITE_ENGINEER", "PM"},
     "IR": {"SITE_ENGINEER", "PM"},       # SE submits with QA/QC
     "MAR": {"SITE_ENGINEER", "PM"},      # SE submits with QS
-    "MR": {"SITE_ADMIN", "PM"},          # Site Admin owns the MR sequence
-    "GRN": {"SITE_ADMIN", "PM"},
+    # Site Engineer has full site-task parity with Site Admin (owner,
+    # 2026-07-13): both raise MRs, receive goods, etc.
+    "MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
+    "GRN": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
     "PR": {"HO_PURCHASING"},             # Head Office documents
     "LM": {"HO_PURCHASING"},
     "PO": {"HO_PURCHASING"},             # normally auto-generated (R2)
@@ -683,7 +685,8 @@ def _post_dpr_consumption(doc, actor):
 
 
 def _do_submit(request, doc, comment):
-    roles = {"MR": {"SITE_ADMIN", "PM"}, "PR": {"HO_PURCHASING"},
+    roles = {"MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
+             "PR": {"HO_PURCHASING"},
              "IR": {"SITE_ENGINEER", "PM"},
              "MAR": {"SITE_ENGINEER", "PM"},
              "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
@@ -886,8 +889,8 @@ def _do_send(request, doc, comment):
     if doc.doc_type != "MR":
         return Response({"detail": "Send applies to MR."}, status=400)
     return _apply(request, doc, "SENT_TO_HO", "SEND",
-                  roles={"SITE_ADMIN", "PM"}, lock_revision=True,
-                  pdf_milestone="sent", comment=comment)
+                  roles={"SITE_ADMIN", "SITE_ENGINEER", "PM"},
+                  lock_revision=True, pdf_milestone="sent", comment=comment)
 
 
 def _do_depart(request, doc, comment):
@@ -907,7 +910,7 @@ def _do_count(request, doc, comment):
     if doc.doc_type != "GRN":
         return Response({"detail": "Count applies to GRN."}, status=400)
     return _apply(request, doc, "COUNTED", "COUNT",
-                  roles={"SITE_ADMIN"}, comment=comment)
+                  roles={"SITE_ADMIN", "SITE_ENGINEER"}, comment=comment)
 
 
 def _do_verify(request, doc, comment):
@@ -960,7 +963,7 @@ def _do_close(request, doc, comment):
             "closed_date": date.today().isoformat(),
         })
         return None
-    roles = {"MR": {"SITE_ADMIN", "PM", "HO_PURCHASING"},
+    roles = {"MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING"},
              "PR": {"HO_PURCHASING"}, "PO": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
         return Response({"detail": "Close applies to MR/PR/PO/IR."}, status=400)

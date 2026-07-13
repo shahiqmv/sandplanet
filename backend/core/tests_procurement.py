@@ -139,6 +139,25 @@ class ItemMasterTests(ProcBase):
 
 
 class MRFlowTests(ProcBase):
+    def test_site_engineer_has_site_admin_parity(self):
+        """Site Engineer can raise + send an MR and confirm a GRN count —
+        full site-task parity with Site Admin (owner, 2026-07-13)."""
+        self.as_user(self.se)      # SITE_ENGINEER
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "payload": {"stock_attested": True},
+            "lines": [{"item_id": self.cement.id, "qty_required": 10,
+                       "qty_stock": 0, "qty_to_order": 10}],
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        # submit (engineer) → PM approves → engineer sends to HO
+        self.assertEqual(self.act(ref, "submit").data["status"], "SUBMITTED")
+        self.as_user(self.pm)
+        self.act(ref, "approve")
+        self.as_user(self.se)
+        self.assertEqual(self.act(ref, "send").data["status"], "SENT_TO_HO")
+
     def test_urgent_line_requires_reason(self):
         self.as_user(self.sa)
         r = self.client.post("/api/v1/documents", {

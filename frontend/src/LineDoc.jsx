@@ -38,12 +38,15 @@ const HEADER_FIELDS = {
 // Which actions the UI offers; the server is the authority.
 const ACTIONS = {
   MR: [
-    ["submit", "Submit", ["DRAFT"], ["SITE_ADMIN", "PM", "ADMIN"]],
+    // Site Engineer has full site-task parity with Site Admin (owner)
+    ["submit", "Submit", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "PM",
+                                     "ADMIN"]],
     ["approve", "Approve (PM)", ["SUBMITTED"], ["PM", "ADMIN"]],
     ["return", "Return with comment", ["SUBMITTED"], ["PM", "ADMIN"], "comment"],
-    ["send", "Send to HO", ["PM_APPROVED"], ["SITE_ADMIN", "PM", "ADMIN"]],
+    ["send", "Send to HO", ["PM_APPROVED"], ["SITE_ADMIN", "SITE_ENGINEER",
+                                             "PM", "ADMIN"]],
     ["close", "Close", ["PARTIALLY_LOADED", "LOADED"],
-     ["SITE_ADMIN", "PM", "HO_PURCHASING", "ADMIN"]],
+     ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "ADMIN"]],
   ],
   PR: [
     ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
@@ -66,7 +69,8 @@ const ACTIONS = {
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   GRN: [
-    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "ADMIN"]],
+    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER",
+                                           "ADMIN"]],
     ["verify", "Verify (SE/PM)", ["COUNTED"], ["SITE_ENGINEER", "PM", "ADMIN"]],
   ],
   PMR: [
@@ -794,7 +798,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const canEdit = doc.status === "DRAFT" && !doc.is_void;
   const canAmend = doc.doc_type === "MR" && !doc.is_void &&
     !["DRAFT", "SUBMITTED", "PM_APPROVED", "CLOSED"].includes(doc.status) &&
-    ["SITE_ADMIN", "PM", "ADMIN"].includes(me.role);
+    ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role);
 
   const isPR = doc.doc_type === "PR";
   const p = doc.payload || {};

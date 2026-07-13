@@ -4,7 +4,7 @@ import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
-const CAN_CREATE_MR = ["SITE_ADMIN", "PM", "ADMIN"];
+const CAN_CREATE_MR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
 
 export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onNewQa, onAttendance, onDma,
@@ -142,7 +142,8 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
             <button onClick={onNewPyr} style={buttonStyle}>+ Payment</button>
           )}
-          {["SITE_ADMIN", "PM", "FINANCE", "ADMIN"].includes(me.role) && (
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "ADMIN"]
+            .includes(me.role) && (
             <button onClick={onPettyCash} style={buttonStyle}>💰 Petty Cash</button>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (

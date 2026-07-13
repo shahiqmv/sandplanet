@@ -3,7 +3,8 @@ import { api } from "./api.js";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const ROLES = [
-  ["SITE_ENGINEER", "Site Engineer — prepares DPR/TWS, submits IR & MAR"],
+  ["SITE_ENGINEER", "Site Engineer — full site tasks: DPR/TWS, IR & MAR, "
+   + "MR, GRN, attendance, petty cash"],
   ["SITE_ADMIN", "Site Admin / Storekeeper — DPR, MR, GRN, attendance, petty cash"],
   ["PM", "Project Manager — approves site documents, OT, month sign-off"],
   ["HO_PURCHASING", "HO Purchasing — PR, LM, PO, item & supplier masters"],
