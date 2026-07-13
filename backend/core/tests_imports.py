@@ -120,8 +120,9 @@ class IprBase(PmrBase):
         self.pmr.save(update_fields=["current_revision"])
 
     def create_and_authorise(self):
-        """Create the order, award it, and authorise it on a voucher."""
-        from .vouchers import approve_voucher, create_voucher, submit_voucher
+        """Create the order, award it (Director), and authorise it directly
+        (Signatory) — no voucher: placing the order is a commitment, not a
+        payment."""
         self.client.force_authenticate(self.ho)
         ref = self.client.post("/api/v1/ipr", self.order_body(),
                                format="json").data["ref"]
@@ -130,9 +131,9 @@ class IprBase(PmrBase):
         self.client.force_authenticate(self.director)
         self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
                          format="json")
-        pv, _ = create_voucher([ref], self.finance)
-        submit_voucher(pv, self.finance)
-        approve_voucher(pv, self.signatory)
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
         return ref
 
     def order_body(self, proj_qty=6, stock_qty=4):
@@ -176,12 +177,12 @@ class IprFlowTests(IprBase):
         # nothing committed yet — award is not the commitment point
         self.assertFalse(CostPosting.objects.filter(source="IPR").exists())
 
-        # Finance vouchers it, signatory approves → COMMITTED split posts
-        from .vouchers import approve_voucher, create_voucher, submit_voucher
-        pv, err = create_voucher([ref], self.finance)
-        self.assertIsNone(err, err)
-        submit_voucher(pv, self.finance)
-        approve_voucher(pv, self.signatory)
+        # a signatory authorises the order directly (no voucher — placing the
+        # order is a commitment, not a payment) → COMMITTED split posts
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
 
         doc = Document.objects.get(ref=ref)
         self.assertEqual(doc.status, "AUTHORISED")

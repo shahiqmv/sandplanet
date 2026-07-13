@@ -59,9 +59,13 @@ def targets_for(doc):
         return [(u, "to verify") for u in _pm_for(doc)]
     if t in ("PR", "IPR") and s == "SUBMITTED":
         return [(u, "to award") for u in _role_users("DIRECTOR")]
-    if t in ("PR", "IPR") and s == "APPROVED":
+    if t == "PR" and s == "APPROVED":
         return [(u, "awaiting a payment voucher")
                 for u in _role_users("FINANCE")]
+    if t == "IPR" and s == "APPROVED":
+        # placing the order is the commitment, not a payment — a signatory
+        # authorises the order directly (no voucher)
+        return [(u, "to authorise") for u in _role_users("SIGNATORY")]
     if t == "PYR" and s == "PM_APPROVED":
         return [(u, "needs Director approval") for u in _role_users("DIRECTOR")]
     if t == "PYR" and s == "DIRECTOR_APPROVED":

@@ -101,9 +101,6 @@ def awaiting_voucher(request):
             row.update({"payee": pr.payee, "cost_head": pr.cost_head.name,
                         "purpose": pr.purpose,
                         "has_supporting_doc": pr.has_supporting_doc})
-        elif doc.doc_type == "IPR":
-            row.update({"payee": doc.import_order.supplier.name,
-                        "cost_head": "Overseas order"})
         else:
             row.update({"payee": "(procurement)", "cost_head": "Materials"})
         out.append(row)

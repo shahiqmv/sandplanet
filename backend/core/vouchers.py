@@ -17,9 +17,11 @@ from .models import (Approval, Document, DocumentRevision,
                      ImportPaymentMilestone, PaymentVoucherLine, Site)
 from .numbering import next_ref
 
-# What is ready to go on a voucher, per source type
-AWAITING_STATUS = {"PR": "APPROVED", "PYR": "DIRECTOR_APPROVED",
-                   "IPR": "APPROVED"}
+# What is ready to go on a voucher, per source type. Vouchers are strictly
+# payment instruments: a PR/PYR to be paid, or an overseas TT milestone.
+# An import order (IPR) never goes on a voucher — placing it is a commitment,
+# not a payment; a signatory authorises the order directly (§6C.2).
+AWAITING_STATUS = {"PR": "APPROVED", "PYR": "DIRECTOR_APPROVED"}
 
 
 def ho_site():
@@ -41,9 +43,6 @@ def _source_amount(doc):
     if doc.doc_type == "PR":
         from .procurement import pr_grand_total
         return pr_grand_total(doc)
-    if doc.doc_type == "IPR":
-        from .imports import ipr_mvr_total
-        return ipr_mvr_total(doc.import_order)
     return Decimal("0")
 
 
@@ -67,7 +66,7 @@ def _on_live_voucher():
 
 
 def awaiting_voucher():
-    """Director-approved PR / PYR / IPR not already on a live voucher."""
+    """Director-approved PR / PYR not already on a live voucher."""
     docs = Document.objects.filter(is_void=False).exclude(
         id__in=_on_live_voucher())
     out = []
@@ -75,9 +74,6 @@ def awaiting_voucher():
             .select_related("site"):
         out.append(doc)
     for doc in docs.filter(doc_type="PYR", status="DIRECTOR_APPROVED") \
-            .select_related("site"):
-        out.append(doc)
-    for doc in docs.filter(doc_type="IPR", status="APPROVED") \
             .select_related("site"):
         out.append(doc)
     return out
@@ -114,8 +110,8 @@ def create_voucher(source_refs, actor, milestone_ids=None):
     for doc in sources:
         want = AWAITING_STATUS.get(doc.doc_type)
         if want is None or doc.status != want:
-            return None, (f"{doc.ref} is not a Director-approved PR/PYR/IPR "
-                          "awaiting authorisation.")
+            return None, (f"{doc.ref} is not a Director-approved PR/PYR "
+                          "awaiting payment.")
         if PaymentVoucherLine.objects.filter(
                 source_document=doc,
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
@@ -191,12 +187,6 @@ def authorise_source(doc, actor):
         costing.post(site=doc.site, cost_head=pr.cost_head, state="COMMITTED",
                      source="PYR", amount=pr.amount_requested,
                      currency=pr.currency, document=doc, actor=actor)
-        doc.status = "AUTHORISED"
-        doc.save(update_fields=["status", "updated_at"])
-    elif doc.doc_type == "IPR":
-        from .imports import authorise_ipr
-
-        authorise_ipr(doc, actor)  # COMMITTED split projects + General Stock
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=doc, revision=doc.current_revision,

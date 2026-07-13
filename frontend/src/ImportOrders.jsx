@@ -14,6 +14,8 @@ const money = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2
 const ACTIONS = [
   ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
   ["approve", "Award (Director)", ["SUBMITTED"], ["DIRECTOR", "ADMIN"]],
+  ["authorise", "Authorise order (Signatory)", ["APPROVED"],
+   ["SIGNATORY", "ADMIN"]],
   ["return", "Return with comment", ["SUBMITTED", "APPROVED"],
    ["DIRECTOR", "HO_PURCHASING", "ADMIN"], "comment"],
   ["cancel", "Cancel", ["DRAFT", "SUBMITTED"], ["HO_PURCHASING", "ADMIN"],
@@ -377,8 +379,9 @@ export function IprView({ me, refIpr, onClose, onOpenIrn }) {
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {doc.status === "APPROVED" && (
         <p style={{ fontSize: 12.5, color: "#1a7f37" }}>
-          Awarded — awaiting a Payment Voucher; the commitment posts when a
-          signatory authorises it.</p>
+          Awarded — awaiting a signatory to authorise the order. The MVR
+          commitment posts on authorisation; each overseas TT is vouchered
+          later when it is paid.</p>
       )}
 
       <SectionTitle>Order lines</SectionTitle>

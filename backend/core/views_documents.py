@@ -566,6 +566,11 @@ def approvals_pending(request):
               "status": pv.status,
               "hint": "Approve the batch or query lines"}
              for pv in base.filter(doc_type="PV", status="SUBMITTED")[:50]])
+        # …and authorises Director-approved import orders (the commitment;
+        # placing the order is not a payment, so it carries no voucher)
+        add("To authorise — approved import orders (IPR)",
+            rows(base.filter(doc_type="IPR", status="APPROVED"),
+                 "Authorise the order — posts the MVR commitment"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To action — MRs sent to Head Office",
             rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
@@ -733,7 +738,7 @@ def _do_approve(request, doc, comment):
             on_pr_approved(doc, request.user)
         return err
     if doc.doc_type == "IPR":  # Director awards the order; commitment is next
-        # (a signatory authorises it on a Payment Voucher, §6C.2 / D1)
+        # (a signatory authorises the order directly, §6C.2)
         err = _apply(request, doc, "APPROVED", "APPROVE",
                      roles={"DIRECTOR"}, comment=comment)
         if err is None:
@@ -745,8 +750,23 @@ def _do_approve(request, doc, comment):
 
 
 def _do_authorise(request, doc, comment):
-    """Retired at M6d — a PR is authorised on a Payment Voucher (a
-    signatory approves a batch, not each PR individually)."""
+    """A signatory authorises a Director-approved import order — this is the
+    commitment point (posts COMMITTED at the agreed rate). No Payment Voucher
+    is raised here: vouchers are strictly for payments, and placing the order
+    is not a payment. Each overseas TT is vouchered later when it is paid.
+
+    (For PR/PYR the equivalent authorisation is done on a Payment Voucher — a
+    signatory approves a batch, not each requisition individually, M6d.)"""
+    if doc.doc_type == "IPR":
+        if doc.status != "APPROVED":
+            return Response({"detail": "Only a Director-approved order can be "
+                                       "authorised."}, status=400)
+        err = _apply(request, doc, "AUTHORISED", "AUTHORISE",
+                     roles={"SIGNATORY"}, comment=comment)
+        if err is None:
+            from .imports import authorise_ipr
+            authorise_ipr(doc, request.user)
+        return err
     return Response({"detail": "PRs are authorised on a Payment Voucher "
                                "(Finance builds it, a signatory approves "
                                "it)."}, status=400)
