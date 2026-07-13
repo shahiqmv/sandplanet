@@ -1,6 +1,7 @@
 from datetime import date, timedelta
 
 from django.db import transaction
+from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -1113,6 +1114,57 @@ def documents_list(request):
         DocumentSerializer(qs[:200], many=True,
                            context={"request": request}).data
     )
+
+
+@api_view(["GET"])
+def mr_export(request, ref):
+    """Export an MR's line items to Excel so Purchasing can source them
+    (owner, 2026-07-13). Any role that can see the MR may export it."""
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if doc.doc_type != "MR":
+        return Response({"detail": "Export applies to MR."}, status=400)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    rev = doc.current_revision
+    payload = rev.payload or {}
+    wb = Workbook()
+    ws = wb.active
+    ws.title = doc.ref[:31]
+    bold = Font(bold=True)
+    ws.append([f"Material Requisition {doc.ref}"])
+    ws["A1"].font = Font(bold=True, size=14)
+    ws.append(["Site", doc.site.name, "", "Status",
+               doc.status.replace("_", " ").title()])
+    ws.append(["Trades / section", payload.get("trades_covered", ""), "",
+               "Required by", payload.get("required_by", "")])
+    ws.append(["Planned loading", payload.get("planned_loading", "")])
+    ws.append([])
+    headers = ["#", "Item Code", "Description", "Unit", "Required", "In Stock",
+               "To Order", "Priority", "Urgent reason", "Remarks"]
+    ws.append(headers)
+    for cell in ws[ws.max_row]:
+        cell.font = bold
+    for i, ln in enumerate(rev.lines.select_related("item").all(), 1):
+        ws.append([
+            i, ln.item.code if ln.item_id else "",
+            ln.description, ln.unit,
+            float(ln.qty_required or 0), float(ln.qty_stock or 0),
+            float(ln.qty_to_order or 0), ln.priority or "",
+            ln.urgent_reason or "", ln.remarks or "",
+        ])
+    widths = [4, 12, 40, 8, 10, 10, 10, 10, 24, 30]
+    for col, w in enumerate(widths, 1):
+        ws.column_dimensions[ws.cell(row=1, column=col)
+                             .column_letter].width = w
+    response = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument"
+                     ".spreadsheetml.sheet")
+    response["Content-Disposition"] = f'attachment; filename="{doc.ref}.xlsx"'
+    wb.save(response)
+    return response
 
 
 @api_view(["GET"])

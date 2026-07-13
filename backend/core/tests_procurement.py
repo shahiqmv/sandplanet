@@ -158,6 +158,16 @@ class MRFlowTests(ProcBase):
         self.as_user(self.se)
         self.assertEqual(self.act(ref, "send").data["status"], "SENT_TO_HO")
 
+    def test_mr_exports_to_excel(self):
+        """Purchasing can download an MR's items as an Excel sheet."""
+        mr = self.make_mr()
+        self.as_user(self.purchasing)
+        r = self.client.get(f"/api/v1/mr/{mr['ref']}/export.xlsx")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("spreadsheetml", r["Content-Type"])
+        self.assertIn(f'{mr["ref"]}.xlsx', r["Content-Disposition"])
+        self.assertTrue(len(r.content) > 0)
+
     def test_urgent_line_requires_reason(self):
         self.as_user(self.sa)
         r = self.client.post("/api/v1/documents", {

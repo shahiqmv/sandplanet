@@ -522,6 +522,13 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         </div>
       )}
 
+      {docType === "LM" && !existing && (
+        <p style={{ fontSize: 12, color: "#5a6b78", margin: "6px 0 0" }}>
+          References are optional — for a <strong>direct dispatch</strong> pick
+          the site, leave MR/PR/PO blank, and add the items below.
+        </p>
+      )}
+
       {docType === "PR" && !existing ? (
         <p style={{ background: "#e8f0f7", borderRadius: 8, padding: "10px 14px",
                     fontSize: 13, color: "var(--sp-navy)", marginTop: 16 }}>
@@ -853,6 +860,14 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
             {label}
           </button>
         ))}
+        {doc.doc_type === "MR" && (
+          <a href={`/api/v1/mr/${doc.ref}/export.xlsx`}
+             style={{ ...ghostButton, textDecoration: "none",
+                      display: "inline-block" }}
+             title="Download the item list as an Excel sheet">
+            ⬇ Excel
+          </a>
+        )}
         {pdfs.map((f) => (
           <a key={f.id} href={f.url} target="_blank" rel="noreferrer"
              style={{ ...ghostButton, textDecoration: "none",
