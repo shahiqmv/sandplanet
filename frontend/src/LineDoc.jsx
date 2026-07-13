@@ -246,7 +246,9 @@ const LINE_DEFAULTS = {
   PR: {},
   LM: {},
   GRN: {},
-  PMR: { free_text: true },
+  // PMR loads items from the catalog to keep descriptions consistent; the
+  // per-row "New item" checkbox is the escape hatch (owner 2026-07-13).
+  PMR: {},
 };
 
 function num(v) {

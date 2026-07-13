@@ -104,6 +104,8 @@ function IprForm({ me, onSaved, onCancel }) {
     api("/ipr/context").then(setCtx).catch((e) => setError(e.message));
   }, []);
 
+  const items = ctx?.items || [];
+  const itemLabel = (it) => it ? `${it.code} — ${it.description}` : "";
   const setH = (k, v) => setHdr((s) => ({ ...s, [k]: v }));
   const setLine = (i, patch) =>
     setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
@@ -234,6 +236,9 @@ function IprForm({ me, onSaved, onCancel }) {
       )}
 
       <SectionTitle>Order lines</SectionTitle>
+      <datalist id="ipr-items">
+        {items.map((it) => <option key={it.id} value={itemLabel(it)} />)}
+      </datalist>
       {lines.map((l, i) => {
         const lineVal = num(l.order_qty) * num(l.unit_price);
         const allocSum = l.allocations.reduce((a, x) => a + num(x.qty), 0);
@@ -244,10 +249,21 @@ function IprForm({ me, onSaved, onCancel }) {
             <div style={{ display: "grid",
               gridTemplateColumns: "2fr 0.7fr 1fr 1fr 1.4fr 30px", gap: 6,
               alignItems: "center" }}>
-              <input placeholder="Description" value={l.free_text_desc}
-                     onChange={(e) => setLine(i, { free_text_desc: e.target.value })}
+              <input list="ipr-items" placeholder="Search catalog / describe"
+                     value={l._itemText ?? (l.item_id
+                       ? itemLabel(items.find((it) => it.id === l.item_id))
+                       : l.free_text_desc)}
+                     onChange={(e) => {
+                       const v = e.target.value;
+                       const m = items.find((it) => itemLabel(it) === v);
+                       if (m) setLine(i, { item_id: m.id, _itemText: v,
+                         unit: m.unit, free_text_desc: "" });
+                       else setLine(i, { item_id: null, _itemText: v,
+                         free_text_desc: v });
+                     }}
                      style={inputStyle} />
               <input placeholder="Unit" value={l.unit}
+                     disabled={!!l.item_id}
                      onChange={(e) => setLine(i, { unit: e.target.value })}
                      style={inputStyle} />
               <input type="number" placeholder="Order qty" value={l.order_qty}
@@ -339,6 +355,14 @@ export function IprView({ me, refIpr, onClose, onOpenIrn }) {
       load();
     } catch (e) { setError(e.message); }
   }
+  async function uploadPi(file) {
+    if (!file) return;
+    setError(null);
+    const fd = new FormData();
+    fd.append("file", file);
+    try { await apiUpload(`/ipr/${refIpr}/proforma`, fd); load(); }
+    catch (e) { setError(e.message); }
+  }
 
   if (!doc) return <section style={card}>{error || "Loading…"}</section>;
   const o = doc.order;
@@ -363,6 +387,26 @@ export function IprView({ me, refIpr, onClose, onOpenIrn }) {
         <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 0" }}>
           Fulfils: {doc.pmr_refs.join(" · ")}</p>
       )}
+
+      {/* Supplier proforma invoice — HO uploads; approvers view it */}
+      <div style={{ marginTop: 8, display: "flex", alignItems: "center",
+                    gap: 10, flexWrap: "wrap", fontSize: 13 }}>
+        <strong style={{ color: "var(--sp-navy)" }}>Proforma invoice:</strong>
+        {o.proforma_invoice_url ? (
+          <a href={o.proforma_invoice_url} target="_blank" rel="noreferrer">
+            📎 View{o.pi_ref ? ` (${o.pi_ref})` : ""}</a>
+        ) : (
+          <span style={{ color: "#8a97a1" }}>not uploaded yet</span>
+        )}
+        {doc.can_manage && (
+          <label style={{ color: "var(--sp-navy)", cursor: "pointer",
+                          fontSize: 12.5 }}>
+            {o.proforma_invoice_url ? "Replace" : "Upload PI"}
+            <input type="file" style={{ display: "none" }}
+                   onChange={(e) => uploadPi(e.target.files[0])} />
+          </label>
+        )}
+      </div>
 
       <div style={{ display: "flex", gap: 10, margin: "14px 0",
                     flexWrap: "wrap" }}>
@@ -849,6 +893,110 @@ export function StoreLots({ onOpenIrn }) {
           </tr></tfoot>
         )}
       </table>
+    </section>
+  );
+}
+
+const SHIP_TONE = { BOOKED: "#8a97a1", SHIPPED: "#1d6fb8",
+  IN_TRANSIT: "#1d6fb8", ARRIVED: "#b35900", UNDER_CLEARING: "#b35900",
+  CLEARED: "#1a7f37" };
+
+export function ImportTracker({ onOpenIpr }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(null);
+  useEffect(() => {
+    api("/imports/tracker").then(setData).catch((e) => setError(e.message));
+  }, []);
+  return (
+    <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      <div>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 18 }}>
+          🌍 Import tracker</h2>
+        <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "4px 0 0" }}>
+          Every overseas order and where it stands — demand (PMR) → order (IPR)
+          → shipment → receipt (IRN) → payments.</p>
+      </div>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+
+      {data?.awaiting_order?.length > 0 && (
+        <section style={card}>
+          <h3 style={{ margin: "0 0 8px", fontSize: 14, color: "#b35900" }}>
+            Awaiting an order — sized & released demand ({data.awaiting_order
+              .length})</h3>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {data.awaiting_order.map((p) => (
+              <span key={p.ref} style={{ fontSize: 12.5, padding: "3px 10px",
+                border: "1px solid var(--sp-border)", borderRadius: 20 }}>
+                {p.ref}{p.project ? ` · ${p.project}` : ""} · {p.status}</span>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section style={card}>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Order</th><th style={th}>Supplier</th>
+              <th style={th}>Stage</th>
+              <th style={{ ...th, textAlign: "right" }}>Value</th>
+              <th style={th}>Shipments</th><th style={th}>Payments</th>
+              <th style={th}>Receipt</th>
+            </tr></thead>
+            <tbody>
+              {(data?.orders || []).map((o) => (
+                <tr key={o.ref}>
+                  <td style={td}>
+                    <a href="#" onClick={(e) => { e.preventDefault();
+                                                  onOpenIpr(o.ref); }}
+                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                      {o.ref}</a>
+                    {o.pmrs.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#8a97a1" }}>
+                        ← {o.pmrs.join(", ")}</div>
+                    )}
+                  </td>
+                  <td style={td}>{o.supplier}</td>
+                  <td style={td}><StatusChip status={o.status} /></td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {o.currency} {money(o.order_total)}</td>
+                  <td style={td}>
+                    {o.shipments.length === 0
+                      ? <span style={{ color: "#8a97a1" }}>—</span>
+                      : o.shipments.map((s) => (
+                        <div key={s.seq} style={{ fontSize: 12 }}>
+                          #{s.seq}{" "}
+                          <span style={{ color: SHIP_TONE[s.status] || "inherit",
+                            fontWeight: 600 }}>{s.status_display}</span>
+                          {s.eta ? ` · ETA ${s.eta}` : ""}</div>
+                      ))}
+                  </td>
+                  <td style={td}>
+                    {o.milestones_total === 0
+                      ? <span style={{ color: "#8a97a1" }}>no schedule</span>
+                      : <span style={{ fontWeight: 600, color:
+                          o.milestones_paid === o.milestones_total
+                            ? "#1a7f37" : "#b35900" }}>
+                          {o.milestones_paid}/{o.milestones_total} paid</span>}
+                  </td>
+                  <td style={td}>
+                    {o.receipts.length === 0
+                      ? <span style={{ color: "#8a97a1" }}>—</span>
+                      : o.receipts.map((r) => (
+                        <div key={r.ref} style={{ fontSize: 12 }}>
+                          {r.ref} · {r.status}</div>))}
+                  </td>
+                </tr>
+              ))}
+              {data && data.orders.length === 0 && (
+                <tr><td colSpan={7} style={{ ...td, textAlign: "center",
+                  color: "var(--muted)" }}>No overseas orders yet.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </section>
   );
 }

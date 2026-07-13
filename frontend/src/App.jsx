@@ -8,8 +8,8 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
-import ImportOrders, { IprView, IrnView, StoreLots, ImportPaymentsDue }
-  from "./ImportOrders.jsx";
+import ImportOrders, { IprView, IrnView, StoreLots, ImportPaymentsDue,
+  ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -58,6 +58,7 @@ const NAV_GROUPS = [
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN"]],
            ["imports", "International Orders", null],
+           ["import-tracker", "Import Tracker", null],
            ["store", "HO Store", null],
            ["suppliers", "Suppliers", null]] },
   { key: "finance", label: "Finance",
@@ -747,6 +748,11 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "imports" && (
             <ImportOrders me={me} onOpenIpr={(ref) =>
+              setDocView({ mode: "ipr-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho &&
+            hoPage === "import-tracker" && (
+            <ImportTracker onOpenIpr={(ref) =>
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho &&

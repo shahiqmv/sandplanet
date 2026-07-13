@@ -56,13 +56,18 @@ class OrderSerializer(serializers.ModelSerializer):
                                           read_only=True)
     supplier_country = serializers.CharField(source="supplier.country",
                                              read_only=True)
+    proforma_invoice_url = serializers.SerializerMethodField()
     lines = OrderLineSerializer(many=True, read_only=True)
 
     class Meta:
         model = ImportOrder
         fields = ["supplier", "supplier_name", "supplier_country",
                   "order_currency", "exchange_rate", "incoterm",
-                  "loading_port", "discharge_port", "pi_ref", "notes", "lines"]
+                  "loading_port", "discharge_port", "pi_ref",
+                  "proforma_invoice_url", "notes", "lines"]
+
+    def get_proforma_invoice_url(self, obj):
+        return obj.proforma_invoice.url if obj.proforma_invoice else None
 
 
 class MilestoneSerializer(serializers.ModelSerializer):
@@ -216,6 +221,28 @@ def _get_irn(request, ref):
 
 def _get_shipment(doc, pk):
     return doc.import_order.shipments.filter(pk=pk).first()
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def ipr_proforma_upload(request, ref):
+    """HO uploads the supplier's proforma invoice so the Director / Signatory
+    can view it before authorising the order (owner 2026-07-13)."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office uploads the proforma invoice."},
+                        status=403)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "A file is required."}, status=400)
+    order = doc.import_order
+    order.proforma_invoice = upload
+    if request.data.get("pi_ref"):
+        order.pi_ref = request.data["pi_ref"]
+    order.save(update_fields=["proforma_invoice", "pi_ref"])
+    return Response(_serialize(doc, request))
 
 
 @api_view(["POST"])
@@ -472,6 +499,47 @@ def ipr_payments_due(request):
     return Response(rows)
 
 
+@api_view(["GET"])
+def imports_tracker(request):
+    """One row per overseas order with its live stage across the pipeline
+    (PMR demand → order → shipments → receipt → payments), plus sized-and-
+    released PMRs still awaiting an order (owner 2026-07-13)."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    orders = []
+    for d in Document.objects.filter(doc_type="IPR").select_related(
+            "import_order__supplier", "created_by").order_by("-id")[:200]:
+        o = d.import_order
+        ships = list(o.shipments.all())
+        milestones = list(o.milestones.all())
+        receipts = ImportReceipt.objects.filter(
+            shipment__order=o).select_related("document")
+        orders.append({
+            "ref": d.ref, "status": d.status, "supplier": o.supplier.name,
+            "currency": o.order_currency,
+            "order_total": ipr_svc.ipr_order_total(o),
+            "pmrs": list(ipr_svc.linked_pmrs(d).values_list("ref", flat=True)),
+            "shipments": [{"seq": s.seq, "status": s.status,
+                           "status_display": s.get_status_display(),
+                           "eta": s.eta} for s in ships],
+            "milestones_paid": sum(1 for m in milestones
+                                   if m.status == "PAID"),
+            "milestones_total": len(milestones),
+            "receipts": [{"ref": r.document.ref, "status": r.document.status}
+                         for r in receipts],
+            "created_by": d.created_by.full_name if d.created_by else None,
+            "doc_date": d.doc_date,
+        })
+    awaiting_order = [
+        {"ref": p.ref, "status": p.status,
+         "project": p.project.code if p.project else None,
+         "site": p.site.code, "doc_date": p.doc_date}
+        for p in Document.objects.filter(
+            doc_type="PMR", status__in=("SIZED_RELEASED", "SOURCING"),
+            is_void=False).select_related("project", "site").order_by("-id")]
+    return Response({"orders": orders, "awaiting_order": awaiting_order})
+
+
 @api_view(["GET", "POST"])
 def ipr_list_create(request):
     if request.method == "POST":
@@ -523,6 +591,11 @@ def ipr_context(request):
     heads = [{"id": h.id, "name": h.name}
              for h in CostHead.objects.filter(is_active=True, is_pool=False)
              .order_by("sort_order", "name")]
+    from .models import Item
+    items = [{"id": it.id, "code": it.code, "description": it.description,
+              "unit": it.unit}
+             for it in Item.objects.filter(is_active=True, merged_into__isnull=True)
+             .order_by("code")]
     projects = [{"id": p.id, "code": p.code, "title": p.title,
                  "site_code": p.site.code}
                 for p in Project.objects.filter(
@@ -543,4 +616,4 @@ def ipr_context(request):
                       for ln in rev.lines.all()] if rev else [],
         })
     return Response({"suppliers": suppliers, "cost_heads": heads,
-                     "projects": projects, "pmrs": pmrs})
+                     "items": items, "projects": projects, "pmrs": pmrs})

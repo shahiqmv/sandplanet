@@ -471,3 +471,66 @@ class SupplierCategoryTests(PmrBase):
         self.client.force_authenticate(self.sa)
         r = self.client.get("/api/v1/suppliers?category=INTERNATIONAL")
         self.assertNotIn("bank_details", r.data[0])
+
+
+class ImportsCatalogTests(IprBase):
+    """Catalog-driven IPR lines, proforma-invoice upload, import tracker
+    (owner 2026-07-13)."""
+
+    def _item(self):
+        self.client.force_authenticate(self.ho)
+        return self.client.post("/api/v1/items", {
+            "description": "Chilled-water pump", "unit": "nos",
+            "category": "MEP"}, format="json").data
+
+    def test_context_includes_catalog_items(self):
+        self._item()
+        self.client.force_authenticate(self.ho)
+        ctx = self.client.get("/api/v1/ipr/context").data
+        self.assertIn("items", ctx)
+        self.assertTrue(any(i["description"] == "Chilled-water pump"
+                            for i in ctx["items"]))
+
+    def test_ipr_line_from_catalog_item_without_pmr(self):
+        it = self._item()
+        body = self.order_body()
+        body["pmr_refs"] = []
+        body["lines"][0] = {
+            "item_id": it["id"], "unit": "nos", "order_qty": 5,
+            "unit_price": "100", "cost_head_id": self.head.id,
+            "allocations": [{"project_id": None, "qty": 5}]}
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/ipr", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["order"]["lines"][0]["item"], it["id"])
+
+    def test_proforma_upload_and_view_by_signatory(self):
+        import tempfile
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from django.test import override_settings
+        ref = self.create_and_authorise()
+        with override_settings(MEDIA_ROOT=tempfile.mkdtemp()):
+            self.client.force_authenticate(self.ho)
+            pdf = SimpleUploadedFile("pi.pdf", b"%PDF-1.4 test",
+                                     content_type="application/pdf")
+            r = self.client.post(f"/api/v1/ipr/{ref}/proforma", {"file": pdf},
+                                 format="multipart")
+            self.assertEqual(r.status_code, 200, r.data)
+            self.assertTrue(r.data["order"]["proforma_invoice_url"])
+            self.client.force_authenticate(self.signatory)
+            d = self.client.get(f"/api/v1/ipr/{ref}").data
+            self.assertTrue(d["order"]["proforma_invoice_url"])
+        # site staff cannot upload (order is HO-only)
+        self.client.force_authenticate(self.sa)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/proforma",
+            {"file": SimpleUploadedFile("x.pdf", b"x")}, format="multipart")
+        self.assertIn(r.status_code, (403, 404))
+
+    def test_tracker_lists_orders_and_awaiting(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        t = self.client.get("/api/v1/imports/tracker").data
+        self.assertIn(ref, [o["ref"] for o in t["orders"]])
+        self.assertIn("awaiting_order", t)

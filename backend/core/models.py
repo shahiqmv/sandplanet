@@ -725,7 +725,11 @@ class ImportOrder(models.Model):
     incoterm = models.CharField(max_length=12, blank=True)
     loading_port = models.CharField(max_length=60, blank=True)
     discharge_port = models.CharField(max_length=60, blank=True)
-    pi_ref = models.CharField(max_length=40, blank=True)  # proforma invoice
+    pi_ref = models.CharField(max_length=40, blank=True)  # proforma invoice no.
+    # The supplier's proforma invoice file, uploaded by HO for the Director /
+    # Signatory to view before authorising the order (owner 2026-07-13).
+    proforma_invoice = models.FileField(upload_to="import-docs/pi/", null=True,
+                                        blank=True)
     notes = models.TextField(blank=True)
 
     def __str__(self):
