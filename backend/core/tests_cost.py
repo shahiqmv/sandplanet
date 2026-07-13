@@ -45,6 +45,19 @@ class CostViewTests(TestCase):
         self.assertEqual(r.data["committed"], Decimal("20000.00"))  # 200k / 10
         self.assertEqual(r.data["incurred"], Decimal("15000.00"))
 
+    def test_signatory_sees_portfolio_and_cost(self):
+        """The signatory authorises payment vouchers, so gets the project
+        portfolio + cost dashboards (owner, 2026-07-13)."""
+        sig = make_user("sig1", User.Role.SIGNATORY)
+        self.client.force_authenticate(sig)
+        self.assertEqual(
+            self.client.get("/api/v1/dashboards/portfolio").status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/v1/cost/portfolio").status_code, 200)
+        self.assertEqual(
+            self.client.get(f"/api/v1/cost/site/{self.site.id}").status_code,
+            200)
+
     def test_qs_can_set_rate_and_see_cost(self):
         qs = make_user("qs1", User.Role.QS)
         self.client.force_authenticate(qs)

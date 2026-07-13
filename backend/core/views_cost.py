@@ -14,8 +14,10 @@ from .costing import DEFAULT_HEADS
 from .models import CompanyParameter, CostPosting, Project, Site
 
 # QS is the project-financial role and sees all project costing (in USD).
-COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "HO_HR", "QS")
-SENIOR_COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "QS")
+# The Signatory authorises payment vouchers, so sees portfolio + project cost
+# for context (owner, 2026-07-13).
+COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "HO_HR", "QS", "SIGNATORY")
+SENIOR_COST_ROLES = ("ADMIN", "DIRECTOR", "FINANCE", "QS", "SIGNATORY")
 STATES = ("COMMITTED", "INCURRED", "PAID")
 
 

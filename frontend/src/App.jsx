@@ -43,8 +43,10 @@ const NAV_GROUPS = [
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
   { key: "approvals", label: "My Tasks", roles: [...APPROVERS, "QS"],
     subs: [["approvals", "My Tasks", APPROVERS],
-           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS"]],
-           ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS"]]] },
+           ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS",
+                                       "SIGNATORY"]],
+           ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS",
+                                     "SIGNATORY"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
@@ -457,12 +459,13 @@ export default function App() {
                            onOpen={openApprovalItem} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "FINANCE", "ADMIN", "QS"].includes(me.role) &&
+            ["DIRECTOR", "FINANCE", "ADMIN", "QS", "SIGNATORY"]
+              .includes(me.role) &&
             hoPage === "cost" && (
             <CostControlPage onOpenDoc={openDoc} me={me} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "ADMIN", "QS"].includes(me.role) &&
+            ["DIRECTOR", "ADMIN", "QS", "SIGNATORY"].includes(me.role) &&
             hoPage === "portfolio" && (
             <PortfolioPage refresh={refresh}
                            onOpenProject={(id) => setDocView({
