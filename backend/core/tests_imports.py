@@ -582,6 +582,32 @@ class EditDraftIprTests(IprBase):
         self.assertIn(r.status_code, (403, 404))
 
 
+class ProvisionalBlockTests(IprBase):
+    """A provisional (site-added, unreviewed) catalogue item cannot be ordered
+    until HO approves it (owner 2026-07-14)."""
+
+    def test_ipr_submit_blocked_until_item_approved(self):
+        from .models import Item
+        prov = Item.objects.create(code="ITM-P9", description="Site Pump",
+                                   unit="nos", is_provisional=True)
+        body = self.order_body()
+        body["lines"][0] = {"item_id": prov.id, "unit": "nos", "order_qty": 5,
+                            "unit_price": "100", "cost_head_id": self.head.id,
+                            "allocations": [{"project_id": None, "qty": 5}]}
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", body, format="json").data["ref"]
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Site Pump", r.data["provisional_items"])
+        # HO approves the item, then the order submits fine
+        self.client.post(f"/api/v1/items/{prov.id}/approve")
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+
+
 class QsOverseasAuthTests(IprBase):
     """QS shares the Director's overseas-procurement authority: size-release
     PMRs and award/return IPRs (owner 2026-07-14)."""

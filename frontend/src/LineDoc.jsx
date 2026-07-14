@@ -182,13 +182,7 @@ function ItemCell({ items, row, set, me, onItemCreated }) {
   // HO review); HO Purchasing/Admin add permanent catalogue items (owner).
   const canCreate = ["HO_PURCHASING", "ADMIN", "SITE_ADMIN", "SITE_ENGINEER",
                      "PM"].includes(me?.role);
-  if (row.free_text) {
-    return (
-      <input value={row.free_text_desc || ""} placeholder="New item description"
-             onChange={(e) => set({ free_text_desc: e.target.value })}
-             style={{ ...inputStyle, background: "#fff8e6" }} />
-    );
-  }
+  const siteRole = ["SITE_ADMIN", "SITE_ENGINEER", "PM"].includes(me?.role);
   const selected = items.find((it) => it.id === row.item_id);
   const text = row._itemText ?? (selected ? label(selected) : "");
   // Purchasing/Admin typed something with no catalog match → offer to
@@ -230,12 +224,22 @@ function ItemCell({ items, row, set, me, onItemCreated }) {
         {items.map((it) => <option key={it.id} value={label(it)} />)}
       </datalist>
       {typedNoMatch && (
-        <button type="button" onClick={createFromText}
-                style={{ ...ghostButton, padding: "2px 8px", fontSize: 11.5,
-                         marginTop: 3, color: "var(--sp-navy)" }}>
-          + Add "{text.trim().slice(0, 24)}
-          {text.trim().length > 24 ? "…" : ""}" to catalog
-        </button>
+        <div>
+          <button type="button" onClick={createFromText}
+                  style={{ ...ghostButton, padding: "2px 8px", fontSize: 11.5,
+                           marginTop: 3, color: "var(--sp-navy)" }}>
+            + Add "{text.trim().slice(0, 24)}
+            {text.trim().length > 24 ? "…" : ""}" to catalog
+          </button>
+          {siteRole && (
+            <div style={{ fontSize: 10.5, color: "#8a5a00", marginTop: 2 }}>
+              new items go to HO for approval before ordering</div>
+          )}
+        </div>
+      )}
+      {!row.item_id && text.trim() && !typedNoMatch && (
+        <div style={{ fontSize: 10.5, color: "#c0392b", marginTop: 2 }}>
+          pick a catalogue item{canCreate ? " or add it to the catalog" : ""}</div>
       )}
     </>
   );
@@ -246,8 +250,9 @@ const LINE_DEFAULTS = {
   PR: {},
   LM: {},
   GRN: {},
-  // PMR loads items from the catalog to keep descriptions consistent; the
-  // per-row "New item" checkbox is the escape hatch (owner 2026-07-13).
+  // MR/PMR lines must be catalogue items (owner 2026-07-14) — a missing item
+  // is created via "+ Add to catalog" (provisional for site staff, pending
+  // HO approval), never raw free text.
   PMR: {},
 };
 
@@ -306,7 +311,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
     api(`/lm/${grnLmRef}/grn-prefill`).then((data) => {
       setPayload((p) => ({ ...p, ...(data.payload || {}) }));
       setRows((data.lines || []).map((l) => ({
-        item_id: l.item_id, free_text: !l.item_id,
+        item_id: l.item_id,
+        _itemText: l.item_id ? undefined : (l.free_text_desc || ""),
         free_text_desc: l.free_text_desc, unit: l.unit,
         qty_manifest: l.qty_manifest, qty_received: l.qty_received,
         fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
@@ -316,7 +322,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   }, [docType, existing, grnLmRef]);
   const [rows, setRows] = useState(
     existing?.lines?.map((l) => ({
-      item_id: l.item, free_text: l.is_free_text,
+      item_id: l.item,
+      _itemText: l.item ? undefined : (l.free_text_desc || l.description || ""),
       free_text_desc: l.free_text_desc, unit: l.unit,
       qty_required: l.qty_required, qty_stock: l.qty_stock,
       qty_to_order: l.qty_to_order, qty_loaded: l.qty_loaded,
@@ -343,7 +350,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       const data = await api(`/po/${first}/lm-prefill`);
       setSiteId(data.site_id);
       setRows(data.lines.map((l) => ({
-        item_id: l.item_id, free_text: !l.item_id,
+        item_id: l.item_id,
+        _itemText: l.item_id ? undefined : (l.free_text_desc || ""),
         free_text_desc: l.free_text_desc, unit: l.unit,
         qty_loaded: l.qty_loaded, qty_pending: l.qty_pending,
         remarks: l.remarks,
@@ -361,7 +369,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       const data = await api(`/mr/${first}/lm-prefill`);
       setSiteId(data.site_id);  // destination = the MR's site
       setRows(data.lines.map((l) => ({
-        item_id: l.item_id, free_text: !l.item_id,
+        item_id: l.item_id,
+        _itemText: l.item_id ? undefined : (l.free_text_desc || ""),
         free_text_desc: l.free_text_desc, unit: l.unit,
         qty_loaded: l.qty_loaded, qty_pending: l.qty_pending,
         remarks: l.remarks,
@@ -375,12 +384,11 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   function linesForSave() {
     return rows
       .filter((r) => r.item_id || (r.free_text_desc || "").trim() ||
-                     (r.vendor || "").trim())
+                     (r._itemText || "").trim() || (r.vendor || "").trim())
       .map((r) => ({
-        item_id: r.free_text ? null : r.item_id,
-        free_text_desc: r.free_text ? r.free_text_desc
-                        : (r.item_id ? "" : (r.free_text_desc ||
-                                             r.vendor || "")),
+        item_id: r.item_id || null,
+        free_text_desc: r.item_id ? ""
+                        : (r.free_text_desc || r._itemText || r.vendor || ""),
         unit: r.unit, qty_required: r.qty_required, qty_stock: r.qty_stock,
         qty_to_order: r.qty_to_order, qty_loaded: r.qty_loaded,
         qty_pending: r.qty_pending, qty_manifest: r.qty_manifest,
@@ -403,6 +411,18 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
     if (!existing && docType === "PMR" && !projectId) {
       setError("Choose the project this import request is for.");
       return;
+    }
+    // Every material line must be a catalogue item — no raw free text (owner
+    // 2026-07-14). Missing items are created (provisional) via "+ Add to
+    // catalog" on the line.
+    if (["MR", "PMR"].includes(docType)) {
+      const orphan = linesForSave().find((l) => !l.item_id);
+      if (orphan) {
+        setError(`"${orphan.free_text_desc || "A line"}" isn't a catalogue `
+          + "item. Pick it from the list, or use “+ Add to catalog” "
+          + "to add it first.");
+        return;
+      }
     }
     setBusy(true);
     setError(null);
@@ -560,7 +580,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
               ) : (
                 <>
                   <th style={{ ...th, minWidth: 220 }}>Item</th>
-                  <th style={th}>New?</th><th style={th}>Unit</th>
+                  <th style={th}>Unit</th>
                   {docType === "MR" && (<>
                     <th style={th}>Required</th><th style={th}>Stock</th>
                     <th style={th}>To Order</th><th style={th}>Priority</th>
@@ -610,13 +630,6 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                       <ItemCell items={items} row={row} me={me}
                                 onItemCreated={reloadItems}
                                 set={(patch) => setRow(i, patch)} />
-                    </td>
-                    <td style={{ padding: 3, textAlign: "center" }}>
-                      <input type="checkbox" checked={!!row.free_text}
-                             title="New item — not in catalog"
-                             onChange={(e) =>
-                               setRow(i, { free_text: e.target.checked,
-                                           item_id: null, _itemText: "" })} />
                     </td>
                     <td style={{ padding: 3 }}>
                       <input value={row.unit || ""} disabled={!!row.item_id}

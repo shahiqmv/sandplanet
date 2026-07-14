@@ -47,16 +47,24 @@ class ItemFieldTests(TestCase):
         self.assertEqual(self.item.brand, "Lafarge")
         self.assertEqual(self.item.spec_ref, "ASTM C150")
 
-    def test_site_team_adds_item_directly(self):
-        # Approval gate is off for now — site-created items are not provisional
+    def test_site_added_item_is_provisional(self):
+        # Approval gate ON (owner 2026-07-14): a site-created item is
+        # provisional until HO reviews the spelling/category and approves.
         sa = make_user("sa9", User.Role.SITE_ADMIN)
         self.client.force_authenticate(sa)
         r = self.client.post("/api/v1/items",
                              {"description": "New Chemical Anchor 12mm",
                               "unit": "nos"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertFalse(r.data["is_provisional"])
+        self.assertTrue(r.data["is_provisional"])
         self.assertTrue(r.data["code"].startswith("ITM-"))
+
+    def test_ho_added_item_is_permanent(self):
+        r = self.client.post("/api/v1/items",   # setUp authenticates HO
+                             {"description": "HO Anchor 10mm", "unit": "nos"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertFalse(r.data["is_provisional"])
 
     def test_site_team_cannot_edit_existing_item(self):
         sa = make_user("sa8", User.Role.SITE_ADMIN)

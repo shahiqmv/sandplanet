@@ -790,6 +790,27 @@ def _post_dpr_consumption(doc, actor):
                       reason=f"Consumed — DPR {doc.ref}")
 
 
+def _provisional_items(doc):
+    """Descriptions of still-provisional catalogue items on an order — site
+    additions HO hasn't reviewed yet. Nothing may be ordered until HO approves
+    the spelling/category (owner 2026-07-14)."""
+    def scan(lines):
+        return [ln.item.description for ln in lines
+                if getattr(ln, "item", None) and ln.item.is_provisional
+                and getattr(ln, "fulfil_source", "") != "STORE"]
+    if doc.doc_type == "IPR":
+        return scan(doc.import_order.lines.select_related("item").all())
+    if doc.doc_type == "PR":
+        out = []
+        for link in doc.links_from.filter(link_type="MR_PR") \
+                .select_related("to_document__current_revision"):
+            rev = link.to_document.current_revision
+            if rev:
+                out += scan(rev.lines.select_related("item").all())
+        return out
+    return []
+
+
 def _do_submit(request, doc, comment):
     roles = {"MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
              "PR": {"HO_PURCHASING"},
@@ -819,6 +840,14 @@ def _do_submit(request, doc, comment):
                                        "uncovered MR lines."}, status=400)
         # Vendor summary always reflects the quotes at submit time
         sync_pr_vendor_rows(doc)
+    if doc.doc_type in ("PR", "IPR"):
+        pending = sorted(set(_provisional_items(doc)))
+        if pending:
+            return Response({
+                "detail": "These items are pending catalogue approval — HO "
+                          "Purchasing must approve them (Items page) before "
+                          "ordering: " + ", ".join(pending[:20]),
+                "provisional_items": pending}, status=400)
     return _apply(request, doc, "SUBMITTED", "SUBMIT", roles=roles,
                   comment=comment)
 

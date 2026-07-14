@@ -532,13 +532,15 @@ class ItemViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         from django.db import transaction
 
-        # Provisional/approval gate is OFF for now (owner) — site-created items
-        # are added directly. Flip is_provisional back on here to re-enable:
-        #   provisional = self.request.user.role not in ("HO_PURCHASING","ADMIN")
+        # Provisional/approval gate (owner 2026-07-14): items created by site
+        # staff are provisional until HO Purchasing/Admin review the spelling &
+        # category and approve them. HO/Admin create permanent items directly.
+        provisional = self.request.user.role not in ("HO_PURCHASING", "ADMIN")
         with transaction.atomic():  # row-locked counter needs a transaction
-            item = serializer.save(code=next_item_code())
+            item = serializer.save(code=next_item_code(),
+                                   is_provisional=provisional)
         audit("item", item.id, "ITEM_CREATED", actor=self.request.user,
-              detail={"code": item.code})
+              detail={"code": item.code, "provisional": provisional})
 
     def perform_update(self, serializer):
         item = serializer.save()
