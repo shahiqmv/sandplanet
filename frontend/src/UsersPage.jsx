@@ -26,6 +26,8 @@ export default function UsersPage({ me, sites }) {
   const [draftSite, setDraftSite] = useState("");
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [cfg, setCfg] = useState(null);          // SMS/WhatsApp delivery config
+  const [testPhone, setTestPhone] = useState("");
 
   const projectSites = sites.filter((s) => !s.is_head_office);
 
@@ -33,6 +35,24 @@ export default function UsersPage({ me, sites }) {
     api("/users").then(setUsers).catch((e) => setError(e.message));
   }
   useEffect(load, []);
+  useEffect(() => { api("/notify/config").then(setCfg).catch(() => {}); }, []);
+
+  async function saveUserField(user, patch) {
+    setError(null);
+    try {
+      await api(`/users/${user.id}`, { method: "PATCH", body: patch });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  async function sendTest() {
+    setError(null); setNotice(null);
+    try {
+      const r = await api("/notify/test", { method: "POST",
+        body: { phone: testPhone } });
+      setNotice(r.detail);
+    } catch (e) { setError(e.message); }
+  }
 
   async function add() {
     setError(null);
@@ -190,10 +210,38 @@ export default function UsersPage({ me, sites }) {
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
+      <div style={{ display: "flex", gap: 10, alignItems: "center",
+                    flexWrap: "wrap", padding: "10px 12px", borderRadius: 8,
+                    background: "var(--sp-tint, #f5f8fb)", margin: "6px 0 12px" }}>
+        <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
+          📱 SMS / WhatsApp alerts</strong>
+        {cfg && (cfg.configured ? (
+          <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
+            ✓ configured — {cfg.channel} via {cfg.sender}</span>
+        ) : (
+          <span style={{ fontSize: 12.5, color: "#8a5a00" }}>
+            not configured — set TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN /
+            TWILIO_FROM in the server .env, then redeploy</span>
+        ))}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6,
+                       alignItems: "center" }}>
+          <input placeholder="Test to +960…" value={testPhone}
+                 onChange={(e) => setTestPhone(e.target.value)}
+                 style={{ ...inputStyle, width: 150, padding: "4px 8px" }} />
+          <button onClick={sendTest} disabled={!cfg?.configured}
+                  style={{ ...ghostButton, padding: "4px 12px", fontSize: 12.5 }}>
+            Send test</button>
+        </span>
+        <span style={{ fontSize: 11.5, color: "var(--muted)", flexBasis: "100%" }}>
+          A user with a mobile number and <em>SMS</em> ticked below gets an
+          alert whenever a document is waiting on them.</span>
+      </div>
+
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead><tr>
           <th style={th}>Username</th><th style={th}>Name</th>
-          <th style={th}>Role</th><th style={th}>Sites</th>
+          <th style={th}>Role</th><th style={th}>Mobile · SMS</th>
+          <th style={th}>Sites</th>
           <th style={th}>Allocate</th><th style={th}>PM of…</th>
           <th style={th} />
         </tr></thead>
@@ -204,6 +252,24 @@ export default function UsersPage({ me, sites }) {
                            color: "var(--sp-navy)" }}>{user.username}</td>
               <td style={td}>{user.full_name}</td>
               <td style={td}>{user.role.replace(/_/g, " ")}</td>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>
+                <input key={`ph-${user.id}-${user.phone || ""}`}
+                       defaultValue={user.phone || ""} placeholder="+960…"
+                       onBlur={(e) => {
+                         const v = e.target.value.trim();
+                         if (v !== (user.phone || "")) {
+                           saveUserField(user, { phone: v });
+                         }
+                       }}
+                       style={{ ...inputStyle, width: 110, padding: "3px 6px" }} />
+                <label style={{ fontSize: 11, marginLeft: 6,
+                                color: user.notify_external ? "var(--sp-navy)"
+                                  : "#8a97a1" }}>
+                  <input type="checkbox" checked={!!user.notify_external}
+                         onChange={(e) => saveUserField(user,
+                           { notify_external: e.target.checked })} /> SMS
+                </label>
+              </td>
               <td style={td}>
                 {user.allocations.map((a) => a.site_code).join(", ") || "—"}
               </td>
