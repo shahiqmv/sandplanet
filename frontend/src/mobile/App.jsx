@@ -1,8 +1,14 @@
 // Planet Mobile — app shell: auth gate, role-based tabs, detail navigation,
 // action stamp + toast, install/notify prompts, offline awareness.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { api, getToken, setToken } from "./api.js";
-import { disablePush, enablePush, pushPermission, pushSupported } from "./push.js";
+import {
+  disablePush,
+  enablePush,
+  isSubscribed,
+  pushPermission,
+  pushSupported,
+} from "./push.js";
 import {
   ActionedList,
   Alerts,
@@ -311,37 +317,65 @@ function SignIn({ onSignedIn }) {
 }
 
 // ---- Enable-notifications prompt (dismissible) --------------------------
-function NotifyPrompt() {
-  const [state, setState] = useState("idle"); // idle|busy|hidden
-  const dismissed = useRef(
-    localStorage.getItem("planet.mobile.notify.dismissed") === "1"
-  );
+const NOTIFY_ENABLED = "planet.mobile.notify.enabled";
+const NOTIFY_DISMISSED = "planet.mobile.notify.dismissed";
 
-  if (
-    dismissed.current ||
-    state === "hidden" ||
-    !pushSupported() ||
-    pushPermission() !== "default"
-  ) {
-    return null;
-  }
-  if (isIos() && !isStandalone()) {
-    // iOS only allows push for installed PWAs — don't nag inside Safari.
-    return null;
-  }
+function NotifyPrompt() {
+  // Start hidden; only reveal after confirming this device is NOT already
+  // subscribed. Basing visibility on an existing push subscription (not the
+  // flaky Notification.permission read) stops the prompt re-appearing forever
+  // once notifications are on.
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      if (
+        !pushSupported() ||
+        localStorage.getItem(NOTIFY_ENABLED) === "1" ||
+        localStorage.getItem(NOTIFY_DISMISSED) === "1" ||
+        pushPermission() === "denied" ||
+        (isIos() && !isStandalone()) // iOS push only works installed
+      ) {
+        return;
+      }
+      if (await isSubscribed()) {
+        localStorage.setItem(NOTIFY_ENABLED, "1"); // already on — never nag
+        return;
+      }
+      if (alive) setShow(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!show) return null;
 
   async function enable() {
-    setState("busy");
-    const { ok, reason } = await enablePush();
-    if (ok) setState("hidden");
-    else if (reason === "server-off" || reason === "unsupported")
-      setState("hidden");
-    else setState("idle");
+    setBusy(true);
+    try {
+      const { ok, reason } = await enablePush();
+      if (ok) {
+        localStorage.setItem(NOTIFY_ENABLED, "1");
+        setShow(false);
+      } else if (reason === "denied") {
+        // Blocked at OS level — the browser won't prompt again, so stop asking.
+        localStorage.setItem(NOTIFY_DISMISSED, "1");
+        setShow(false);
+      } else if (reason === "server-off" || reason === "unsupported") {
+        setShow(false);
+      } else {
+        setBusy(false); // "default" (dismissed dialog) / offline — allow retry
+      }
+    } catch {
+      setBusy(false);
+    }
   }
   function dismiss() {
-    localStorage.setItem("planet.mobile.notify.dismissed", "1");
-    dismissed.current = true;
-    setState("hidden");
+    localStorage.setItem(NOTIFY_DISMISSED, "1");
+    setShow(false);
   }
 
   return (
@@ -349,11 +383,11 @@ function NotifyPrompt() {
       <h4>Turn on notifications</h4>
       <p>Get a push when something needs you, or a document you raised moves.</p>
       <div className="row">
-        <button className="btn secondary" onClick={dismiss} disabled={state === "busy"}>
+        <button className="btn secondary" onClick={dismiss} disabled={busy}>
           Not now
         </button>
-        <button className="btn" onClick={enable} disabled={state === "busy"}>
-          {state === "busy" ? "Enabling…" : "Enable"}
+        <button className="btn" onClick={enable} disabled={busy}>
+          {busy ? "Enabling…" : "Enable"}
         </button>
       </div>
     </div>

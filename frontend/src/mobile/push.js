@@ -28,6 +28,19 @@ async function readyRegistration() {
   return navigator.serviceWorker.ready;
 }
 
+// True if this device already has a live push subscription — the reliable
+// "notifications are on" signal (Notification.permission reads unreliably in
+// installed PWAs). Never throws.
+export async function isSubscribed() {
+  try {
+    const reg = await readyRegistration();
+    if (!reg) return false;
+    return !!(await reg.pushManager.getSubscription());
+  } catch {
+    return false;
+  }
+}
+
 // Ask permission, subscribe with the server's VAPID key, register with backend.
 // Returns { ok, reason }.
 export async function enablePush() {
@@ -36,7 +49,7 @@ export async function enablePush() {
   if (!enabled || !public_key) return { ok: false, reason: "server-off" };
 
   const perm = await Notification.requestPermission();
-  if (perm !== "granted") return { ok: false, reason: "denied" };
+  if (perm !== "granted") return { ok: false, reason: perm }; // "denied" | "default"
 
   const reg = await readyRegistration();
   if (!reg) return { ok: false, reason: "no-sw" };
