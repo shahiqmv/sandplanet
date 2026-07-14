@@ -13,7 +13,10 @@ export default function ItemsPage({ me }) {
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState(null);   // photo lightbox url
+  const [importResult, setImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
   const fileRefs = useRef({});                     // per-item hidden inputs
+  const importRef = useRef();
 
   const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role);
 
@@ -54,6 +57,25 @@ export default function ItemsPage({ me }) {
   }
 
   const provisionalCount = items.filter((i) => i.is_provisional).length;
+
+  async function importExcel(file) {
+    if (!file) return;
+    setError(null);
+    setImportResult(null);
+    setImporting(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await apiUpload("/items/import", fd);
+      setImportResult(res);
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setImporting(false);
+      if (importRef.current) importRef.current.value = "";
+    }
+  }
 
   async function uploadPhoto(item, file) {
     if (!file) return;
@@ -103,6 +125,52 @@ export default function ItemsPage({ me }) {
                  style={{ ...inputStyle, width: 110 }} />
           <button onClick={add} disabled={!draft.description || !draft.unit}
                   style={buttonStyle}>Add item</button>
+        </div>
+      )}
+
+      {canEdit && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center",
+                      flexWrap: "wrap", padding: "10px 12px",
+                      background: "var(--sp-tint, #f5f8fb)", borderRadius: 8,
+                      marginBottom: 10 }}>
+          <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
+            Bulk add from Excel</strong>
+          <a href="/api/v1/items/import-template"
+             style={{ ...ghostButton, textDecoration: "none",
+                      padding: "4px 12px", fontSize: 12.5 }}>
+            ⬇ Download template</a>
+          <input type="file" accept=".xlsx" ref={importRef}
+                 style={{ display: "none" }}
+                 onChange={(e) => importExcel(e.target.files[0])} />
+          <button onClick={() => importRef.current?.click()} disabled={importing}
+                  style={{ ...buttonStyle, padding: "4px 14px", fontSize: 12.5 }}>
+            {importing ? "Importing…" : "⬆ Upload filled sheet"}</button>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            Fill the template and upload — codes are assigned automatically;
+            existing descriptions are skipped.</span>
+        </div>
+      )}
+      {importResult && (
+        <div style={{ background: "#eef7f0", border: "1px solid #bfe0c8",
+                      borderRadius: 8, padding: "8px 12px", fontSize: 13,
+                      marginBottom: 10 }}>
+          <strong style={{ color: "#1a7f37" }}>
+            Imported {importResult.created} item(s)</strong>
+          {importResult.skipped > 0 && ` · ${importResult.skipped} skipped `
+            + "(blank / duplicate / no unit)"}
+          {importResult.errors?.length > 0 && (
+            <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: "#8a5a00" }}>
+              {importResult.errors.slice(0, 12).map((er, i) => (
+                <li key={i}>Row {er.row}: {er.message}</li>
+              ))}
+              {importResult.errors.length > 12 && (
+                <li>…and {importResult.errors.length - 12} more</li>
+              )}
+            </ul>
+          )}
+          <button onClick={() => setImportResult(null)}
+                  style={{ ...ghostButton, padding: "2px 10px", fontSize: 12,
+                           marginTop: 6 }}>Dismiss</button>
         </div>
       )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}

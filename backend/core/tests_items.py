@@ -132,3 +132,71 @@ class MrLinePhotoTests(TestCase):
         self.assertEqual(r.status_code, 201, r.data)
         fresh = self.client.get(f"/api/v1/documents/{mr.data['ref']}")
         self.assertIsNotNone(fresh.data["lines"][0]["item_photo_url"])
+
+
+class ItemBulkImportTests(TestCase):
+    """Excel template + bulk import from the Items page (owner 2026-07-14)."""
+
+    def setUp(self):
+        from .models import ItemCategory
+        self.purchasing = make_user("hopb", User.Role.HO_PURCHASING)
+        ItemCategory.objects.get_or_create(name="Civil")
+        self.client = APIClient()
+        self.client.force_authenticate(self.purchasing)
+
+    def _xlsx(self, rows, header=None):
+        import io
+
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Items"
+        ws.append(header or ["Description", "Unit", "Category", "Brand",
+                             "Spec Ref", "Key material (yes/no)"])
+        for r in rows:
+            ws.append(r)
+        buf = io.BytesIO()
+        wb.save(buf)
+        buf.seek(0)
+        return SimpleUploadedFile(
+            "items.xlsx", buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet")
+
+    def test_template_downloads(self):
+        r = self.client.get("/api/v1/items/import-template")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("spreadsheetml", r["Content-Type"])
+
+    def test_import_creates_items_and_skips_dupes(self):
+        Item.objects.create(code="ITM-90001", description="Existing bar",
+                            unit="kg")
+        f = self._xlsx([
+            ["Rebar 12mm", "kg", "Civil", "Steelco", "B500", "yes"],
+            ["PVC pipe 63mm", "m", "", "", "", ""],
+            ["Existing bar", "kg", "", "", "", ""],        # duplicate → skip
+            ["No unit item", "", "", "", "", ""],          # no unit → error
+            ["Bad cat", "nos", "Nonsense", "", "", ""],    # unknown category
+        ])
+        r = self.client.post("/api/v1/items/import", {"file": f},
+                             format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["created"], 3)   # rebar, pvc, bad-cat(no cat)
+        self.assertTrue(r.data["skipped"] >= 1)  # duplicate + no-unit
+        rebar = Item.objects.get(description="Rebar 12mm")
+        self.assertEqual(rebar.category, "Civil")
+        self.assertTrue(rebar.is_major)
+        self.assertEqual(Item.objects.get(description="Bad cat").category, "")
+
+    def test_import_requires_description_column(self):
+        f = self._xlsx([["kg"]], header=["Unit"])
+        r = self.client.post("/api/v1/items/import", {"file": f},
+                             format="multipart")
+        self.assertEqual(r.status_code, 400)
+
+    def test_site_staff_cannot_bulk_import(self):
+        self.client.force_authenticate(make_user("sa7", User.Role.SITE_ADMIN))
+        f = self._xlsx([["X", "kg", "", "", "", ""]])
+        r = self.client.post("/api/v1/items/import", {"file": f},
+                             format="multipart")
+        self.assertEqual(r.status_code, 403)

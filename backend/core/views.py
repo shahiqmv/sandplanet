@@ -460,6 +460,8 @@ def parameter_detail(request, key):
 from rest_framework.permissions import BasePermission  # noqa: E402
 
 from .models import Item  # noqa: E402
+from rest_framework.parsers import FormParser, MultiPartParser  # noqa: E402
+
 from .procurement import next_item_code  # noqa: E402
 from .serializers_documents import ItemSerializer  # noqa: E402
 
@@ -542,6 +544,105 @@ class ItemViewSet(viewsets.ModelViewSet):
         item = serializer.save()
         audit("item", item.id, "ITEM_UPDATED", actor=self.request.user,
               detail={"fields": sorted(self.request.data.keys())})
+
+    @action(detail=False, methods=["get"], url_path="import-template")
+    def import_template(self, request):
+        """A ready-to-fill Excel template for the bulk item import (owner
+        2026-07-14)."""
+        import io
+
+        from django.http import HttpResponse
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+
+        from .models import ItemCategory
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Items"
+        headers = ["Description", "Unit", "Category", "Brand", "Spec Ref",
+                   "Key material (yes/no)"]
+        ws.append(headers)
+        widths = [42, 10, 20, 18, 18, 20]
+        for i, w in enumerate(widths, 1):
+            ws.cell(row=1, column=i).font = Font(bold=True)
+            ws.column_dimensions[chr(64 + i)].width = w
+        ws.freeze_panes = "A2"
+
+        info = wb.create_sheet("Instructions")
+        cats = ", ".join(ItemCategory.objects.filter(is_active=True)
+                         .order_by("name").values_list("name", flat=True))
+        for line in [
+            "Fill the 'Items' sheet — one row per catalogue item.",
+            "",
+            "Description  — required (item name / spec).",
+            "Unit         — required (bag, kg, nos, m, m2, m3, ltr, roll…).",
+            "Category     — optional; must match an existing Item Category.",
+            "Brand        — optional.",
+            "Spec Ref     — optional.",
+            "Key material — 'yes' to flag it as a DPR key material.",
+            "",
+            f"Item Categories: {cats or '(none defined yet)'}",
+            "",
+            "Codes (ITM-…) are assigned automatically. A row whose description "
+            "already exists is skipped, so re-uploading a file is safe.",
+        ]:
+            info.append([line])
+        info.column_dimensions["A"].width = 95
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        resp = HttpResponse(
+            buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet")
+        resp["Content-Disposition"] = \
+            'attachment; filename="item-import-template.xlsx"'
+        return resp
+
+    @action(detail=False, methods=["post"], url_path="import",
+            parser_classes=[MultiPartParser, FormParser])
+    def bulk_import(self, request):
+        """Create catalogue items from a filled Excel sheet (owner
+        2026-07-14). HO Purchasing / Admin only."""
+        if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+            return Response({"detail": "Head Office manages the catalogue."},
+                            status=403)
+        upload = request.FILES.get("file")
+        if upload is None:
+            return Response({"detail": "Attach the filled Excel (.xlsx) file."},
+                            status=400)
+        from openpyxl import load_workbook
+
+        from .item_import import import_item_rows, normalise_header
+        try:
+            wb = load_workbook(upload, read_only=True, data_only=True)
+        except Exception:
+            return Response({"detail": "Could not read the file — save it as "
+                                       ".xlsx and try again."}, status=400)
+        ws = wb["Items"] if "Items" in wb.sheetnames else wb.active
+        it = ws.iter_rows(values_only=True)
+        header = next(it, None)
+        if header is None:
+            return Response({"detail": "The sheet is empty."}, status=400)
+        keys = [normalise_header(h) for h in header]
+        if "description" not in keys:
+            return Response({"detail": "The sheet needs a 'Description' "
+                                       "column (use the template)."},
+                            status=400)
+        rows = []
+        for raw in it:
+            if not any(str(v).strip() for v in raw if v is not None):
+                continue                       # blank row
+            rows.append({k: v for k, v in zip(keys, raw) if k})
+        if not rows:
+            return Response({"detail": "No item rows found below the header."},
+                            status=400)
+        result = import_item_rows(rows)
+        audit("item", 0, "ITEMS_BULK_IMPORTED", actor=request.user,
+              detail={"created": result["created"],
+                      "skipped": result["skipped"]})
+        return Response(result)
 
     @action(detail=True, methods=["post"])
     def approve(self, request, pk=None):
