@@ -242,6 +242,19 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function removeQuotation(q) {
+    if (!window.confirm(
+      `Remove ${q.supplier_name} from this PR? Their quotation and any `
+      + "matched lines will be deleted and the vendor summary rebuilt.")) return;
+    setError(null);
+    try {
+      await api(`/quotations/${q.id}`, { method: "DELETE" });
+      setEditing((s) => { const n = { ...s }; delete n[q.id]; return n; });
+      load();
+      onChanged?.();
+    } catch (e) { setError(e.message); }
+  }
+
   return (
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between",
@@ -302,6 +315,14 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
                         style={{ ...ghostButton, marginLeft: "auto",
                                  padding: "3px 12px", fontSize: 12 }}>
                   Edit / match lines
+                </button>
+              )}
+              {canEdit && !isEditing && (
+                <button onClick={() => removeQuotation(q)}
+                        title="Remove this supplier from the PR"
+                        style={{ ...ghostButton, padding: "3px 12px",
+                                 fontSize: 12, color: "#c0392b" }}>
+                  Remove supplier
                 </button>
               )}
               {isEditing && (

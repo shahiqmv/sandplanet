@@ -29,6 +29,24 @@ class ItemFieldTests(TestCase):
         self.item.refresh_from_db()
         self.assertTrue(self.item.is_major)
 
+    def test_purchasing_edits_item_details(self):
+        """Purchasing corrects site-entered mistakes (owner 2026-07-14)."""
+        from .models import ItemCategory
+
+        ItemCategory.objects.get_or_create(name="Structural",
+                                           defaults={"is_active": True})
+        r = self.client.patch(f"/api/v1/items/{self.item.id}", {
+            "description": "Cement OPC 50kg bag", "unit": "bags",
+            "category": "Structural", "brand": "Lafarge",
+            "spec_ref": "ASTM C150"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.item.refresh_from_db()
+        self.assertEqual(self.item.description, "Cement OPC 50kg bag")
+        self.assertEqual(self.item.unit, "bags")
+        self.assertEqual(self.item.category, "Structural")
+        self.assertEqual(self.item.brand, "Lafarge")
+        self.assertEqual(self.item.spec_ref, "ASTM C150")
+
     def test_site_team_adds_item_directly(self):
         # Approval gate is off for now — site-created items are not provisional
         sa = make_user("sa9", User.Role.SITE_ADMIN)

@@ -13,6 +13,8 @@ export default function ItemsPage({ me }) {
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState(null);   // photo lightbox url
+  const [editId, setEditId] = useState(null);      // item being edited inline
+  const [editDraft, setEditDraft] = useState({});
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
   const fileRefs = useRef({});                     // per-item hidden inputs
@@ -44,6 +46,23 @@ export default function ItemsPage({ me }) {
     setError(null);
     try {
       await api(`/items/${item.id}`, { method: "PATCH", body });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  function startEdit(item) {
+    setError(null);
+    setEditId(item.id);
+    setEditDraft({ description: item.description, unit: item.unit,
+                   category: item.category || "", brand: item.brand || "",
+                   spec_ref: item.spec_ref || "" });
+  }
+
+  async function saveEdit(item) {
+    setError(null);
+    try {
+      await api(`/items/${item.id}`, { method: "PATCH", body: editDraft });
+      setEditId(null);
       load();
     } catch (e) { setError(e.message); }
   }
@@ -213,18 +232,67 @@ export default function ItemsPage({ me }) {
                 )}
               </td>
               <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)" }}>
-                {item.code}</td>
-              <td style={td}>{item.description}
-                {item.is_provisional && (
-                  <span style={{ marginLeft: 6, background: "#fdf1d6",
-                                 color: "#8a5a00", fontSize: 10.5,
-                                 padding: "1px 6px", borderRadius: 5 }}>
-                    provisional</span>
-                )}
-              </td>
-              <td style={td}>{item.unit}</td>
-              <td style={td}>{item.category}</td>
-              <td style={td}>{item.brand}</td>
+                {canEdit && editId !== item.id ? (
+                  <button onClick={() => startEdit(item)} title="Edit details"
+                          style={{ background: "none", border: "none", padding: 0,
+                                   font: "inherit", color: "var(--sp-navy)",
+                                   fontWeight: 600, cursor: "pointer",
+                                   textDecoration: "underline" }}>
+                    {item.code}</button>
+                ) : item.code}</td>
+              {editId === item.id ? (
+                <>
+                  <td style={td}>
+                    <input value={editDraft.description}
+                           onChange={(e) => setEditDraft({ ...editDraft,
+                                             description: e.target.value })}
+                           style={{ ...inputStyle, width: "100%", minWidth: 200 }} />
+                    <input placeholder="Spec ref (optional)"
+                           value={editDraft.spec_ref}
+                           onChange={(e) => setEditDraft({ ...editDraft,
+                                             spec_ref: e.target.value })}
+                           style={{ ...inputStyle, width: "100%", minWidth: 200,
+                                    marginTop: 4, fontSize: 12 }} />
+                  </td>
+                  <td style={td}>
+                    <input value={editDraft.unit}
+                           onChange={(e) => setEditDraft({ ...editDraft,
+                                             unit: e.target.value })}
+                           style={{ ...inputStyle, width: 70 }} />
+                  </td>
+                  <td style={td}>
+                    <select value={editDraft.category}
+                            onChange={(e) => setEditDraft({ ...editDraft,
+                                              category: e.target.value })}
+                            style={{ ...inputStyle, width: 130 }}>
+                      <option value="">—</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td style={td}>
+                    <input value={editDraft.brand}
+                           onChange={(e) => setEditDraft({ ...editDraft,
+                                             brand: e.target.value })}
+                           style={{ ...inputStyle, width: 100 }} />
+                  </td>
+                </>
+              ) : (
+                <>
+                  <td style={td}>{item.description}
+                    {item.is_provisional && (
+                      <span style={{ marginLeft: 6, background: "#fdf1d6",
+                                     color: "#8a5a00", fontSize: 10.5,
+                                     padding: "1px 6px", borderRadius: 5 }}>
+                        provisional</span>
+                    )}
+                  </td>
+                  <td style={td}>{item.unit}</td>
+                  <td style={td}>{item.category}</td>
+                  <td style={td}>{item.brand}</td>
+                </>
+              )}
               <td style={{ ...td, textAlign: "center" }}>
                 {canEdit ? (
                   <button title={item.is_major ? "Major material"
@@ -240,16 +308,30 @@ export default function ItemsPage({ me }) {
                   </button>
                 ) : (item.is_major ? "★" : "")}
               </td>
-              {canEdit && (
+              {canEdit && editId === item.id && (
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  <button onClick={() => saveEdit(item)}
+                          disabled={!editDraft.description || !editDraft.unit}
+                          style={{ ...buttonStyle, padding: "2px 12px",
+                                   fontSize: 12 }}>Save</button>
+                  <button onClick={() => setEditId(null)}
+                          style={{ ...ghostButton, padding: "2px 10px",
+                                   fontSize: 12, marginLeft: 6 }}>Cancel</button>
+                </td>
+              )}
+              {canEdit && editId !== item.id && (
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
                   <input type="file" accept="image/*"
                          ref={(el) => (fileRefs.current[item.id] = el)}
                          style={{ display: "none" }}
                          onChange={(e) => uploadPhoto(item,
                                                       e.target.files[0])} />
+                  <button onClick={() => startEdit(item)}
+                          style={{ ...ghostButton, padding: "2px 10px",
+                                   fontSize: 12 }}>Edit</button>
                   <button onClick={() => fileRefs.current[item.id]?.click()}
                           style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12 }}>
+                                   fontSize: 12, marginLeft: 6 }}>
                     {item.photo_url ? "Replace photo" : "Add photo"}
                   </button>
                   {item.is_provisional && (

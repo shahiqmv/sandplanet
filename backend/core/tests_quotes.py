@@ -112,6 +112,41 @@ class CoverageTests(QuoteBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "SUBMITTED")
 
+    def test_remove_mistaken_supplier(self):
+        """A supplier added by mistake can be removed so it stops showing as a
+        zero-line vendor in the PR summary (owner 2026-07-14)."""
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC 50kg", "unit": "bag", "qty": 150,
+             "rate": 120, "mr_line": mr["lines"][0]["id"], "awarded": True},
+        ])
+        # a second supplier added in error, with no lines
+        oops = self.add_quote(pr["ref"], self.steel, [])
+        self.as_user(self.purchasing)
+        self.client.post(f"/api/v1/pr/{pr['ref']}/sync-vendor-rows")
+        vendors = {row["vendor"] for row in
+                   self.client.get(f"/api/v1/documents/{pr['ref']}").data["lines"]}
+        self.assertIn("Maldives Steel Traders", vendors)   # zero-line row shows
+
+        r = self.client.delete(f"/api/v1/quotations/{oops['id']}")
+        self.assertEqual(r.status_code, 204)
+        # quotation gone and the vendor summary rebuilt without it
+        quotes = self.client.get(f"/api/v1/pr/{pr['ref']}/quotations").data
+        self.assertEqual([q["supplier_name"] for q in quotes],
+                         ["Male' Hardware Pvt Ltd"])
+        vendors = {row["vendor"] for row in
+                   self.client.get(f"/api/v1/documents/{pr['ref']}").data["lines"]}
+        self.assertNotIn("Maldives Steel Traders", vendors)
+
+    def test_site_role_cannot_remove_supplier(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        q = self.add_quote(pr["ref"], self.hw, [])
+        self.as_user(self.sa)
+        r = self.client.delete(f"/api/v1/quotations/{q['id']}")
+        self.assertEqual(r.status_code, 403)
+
     def test_matched_but_unawarded_blocks_submit(self):
         mr = self.sent_mr()
         pr = self.draft_pr(mr)
