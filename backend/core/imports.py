@@ -642,3 +642,89 @@ def cancel_store_issue(sin_doc, actor):
     audit("document", sin_doc.id, "SIN_CANCELLED", actor=actor,
           to_state="CANCELLED", detail={"ref": sin_doc.ref})
     return None
+
+
+@transaction.atomic
+def receive_store_issue(sin_doc, actor):
+    """The site receives a store issue — the import cost event (§5.10.11):
+    post INCURRED at landed cost to the destination project and clear the
+    in-transit balance on each lot. Store-issued goods carry no PR/PYR; this
+    receipt is where they become project cost."""
+    from . import costing
+    from .models import CostHead
+    if sin_doc.status != "ISSUED":
+        return "Only an issued SIN can be received."
+    issue = sin_doc.store_issue
+    materials = CostHead.objects.get(name="Materials")
+    for line in issue.lines.select_related("lot"):
+        lot = line.lot
+        lot.qty_in_transit = max(ZERO, (lot.qty_in_transit or ZERO) - line.qty)
+        lot.save(update_fields=["qty_in_transit"])
+        amount = (line.qty * line.unit_landed_cost).quantize(Decimal("0.01"))
+        if amount > ZERO:
+            costing.post(site=issue.to_site, cost_head=materials,
+                         state="INCURRED", source="STORE_ISSUE", amount=amount,
+                         document=sin_doc, actor=actor)
+    sin_doc.status = "RECEIVED"
+    sin_doc.save(update_fields=["status", "updated_at"])
+    audit("document", sin_doc.id, "SIN_RECEIVED", actor=actor,
+          to_state="RECEIVED", detail={"ref": sin_doc.ref})
+    return None
+
+
+# ---- MR fulfilment from store (P1B-f2) -----------------------------------
+
+def mr_store_availability(mr):
+    """Per MR line, how much of the item is on hand in the HO store —
+    reserved to the MR's project first, then general stock (owner 2026-07-13)."""
+    from .models import StockLot
+    rev = mr.current_revision
+    project = mr.project
+    out = {}
+    for ln in rev.lines.all():
+        if not ln.item_id:
+            out[ln.id] = ZERO
+            continue
+        qs = StockLot.objects.filter(item_id=ln.item_id, qty_on_hand__gt=0)
+        avail = ZERO
+        for lot in qs:
+            if lot.project_id in ((project.id if project else None), None):
+                avail += lot.qty_on_hand
+        out[ln.id] = avail
+    return out
+
+
+@transaction.atomic
+def fulfil_mr_from_store(mr, line_ids, actor):
+    """Issue a SIN drawing the chosen MR lines' order quantities from store
+    stock (FIFO), mark those lines store-fulfilled, and link SIN↔MR."""
+    from .models import DocumentLink
+    wanted = set(line_ids or [])
+    lines = [ln for ln in mr.current_revision.lines.all()
+             if ln.id in wanted and ln.item_id]
+    if not lines:
+        return None, "Select at least one catalog-item line to fulfil from store."
+    rows, picked = [], []
+    for ln in lines:
+        qty = ln.qty_to_order or ZERO
+        if qty <= ZERO:
+            continue
+        picks, err = pick_lots_fifo(ln.item, mr.project, qty)
+        if err:
+            return None, f"{ln.item.description}: {err}"
+        for lot, take in picks:
+            rows.append({"lot_id": lot.id, "qty": take})
+        picked.append(ln)
+    if not rows:
+        return None, "Nothing to issue — the selected lines have no order qty."
+    doc, err = create_store_issue(mr.site, mr.project, rows, actor,
+                                  notes=f"Store issue for {mr.ref}")
+    if err:
+        return None, err
+    issue_store_issue(doc, actor)
+    for ln in picked:
+        ln.fulfil_source = "STORE"
+        ln.save(update_fields=["fulfil_source"])
+    DocumentLink.objects.get_or_create(from_document=doc, to_document=mr,
+                                       link_type="MR_SIN")
+    return doc, None

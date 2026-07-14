@@ -610,3 +610,91 @@ class StoreIssueTests(IprBase):
         self.assertEqual(len(picks), 2)
         self.assertEqual(picks[0][0].project_id, self.project.id)
         self.assertIsNone(picks[1][0].project_id)
+
+
+class MrFromStoreTests(IprBase):
+    """MR fulfilled from the HO store via a SIN; INCURRED at the site on
+    receipt at landed cost (P1B-f2, owner 2026-07-13)."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import Item
+        self.item = Item.objects.create(code="ITM-P1", unit="nos",
+                                        description="Chilled-water pump")
+
+    def _stock(self):
+        body = self.order_body()
+        body["lines"][0]["free_text_desc"] = ""
+        body["lines"][0]["item_id"] = self.item.id
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", body, format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        order = Document.objects.get(ref=ref).import_order
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                         format="json")
+        ship = order.shipments.first()
+        irn = self.client.post(
+            f"/api/v1/ipr/{ref}/shipments/{ship.id}/receive",
+            {"location": "HO"}, format="json").data
+        self.client.post(f"/api/v1/irn/{irn['ref']}/post", {}, format="json")
+
+    def _mr(self, qty_to_order=3):
+        self.client.force_authenticate(self.sa)
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "lines": [{"item_id": self.item.id, "qty_required": qty_to_order,
+                       "qty_stock": 0, "qty_to_order": qty_to_order}],
+        }, format="json").data
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.sa)
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/send", {},
+                         format="json")
+        return self.client.get(f"/api/v1/documents/{mr['ref']}").data
+
+    def test_store_availability_reports_general_stock(self):
+        self._stock()
+        mr = self._mr()
+        line_id = mr["lines"][0]["id"]
+        self.client.force_authenticate(self.ho)
+        r = self.client.get(f"/api/v1/mr/{mr['ref']}/store-availability")
+        self.assertEqual(r.status_code, 200, r.data)
+        # site MR (no project) → only general stock (4 units) is available
+        self.assertEqual(float(r.data["availability"][str(line_id)]), 4.0)
+
+    def test_fulfil_from_store_then_receive_posts_incurred(self):
+        from .models import CostPosting, StockLot
+        self._stock()
+        mr = self._mr(qty_to_order=3)
+        line_id = mr["lines"][0]["id"]
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/mr/{mr['ref']}/store-fulfil",
+                             {"line_ids": [line_id]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        sin_ref = r.data["ref"]
+        self.assertEqual(r.data["status"], "ISSUED")
+        general = StockLot.objects.get(item=self.item, project__isnull=True)
+        self.assertEqual(float(general.qty_on_hand), 1.0)      # 4 - 3
+        self.assertEqual(float(general.qty_in_transit), 3.0)
+        # site receives → INCURRED at landed cost (3 @ 1500 = 4500)
+        self.client.force_authenticate(self.sa)
+        p = self.client.post(f"/api/v1/sin/{sin_ref}/receive", {},
+                             format="json")
+        self.assertEqual(p.status_code, 200, p.data)
+        self.assertEqual(p.data["status"], "RECEIVED")
+        general.refresh_from_db()
+        self.assertEqual(float(general.qty_in_transit), 0.0)
+        inc = CostPosting.objects.filter(site=self.site, state="INCURRED",
+                                         source="STORE_ISSUE")
+        self.assertEqual(float(sum(x.amount for x in inc)), 4500.0)

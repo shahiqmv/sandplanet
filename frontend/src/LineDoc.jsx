@@ -747,7 +747,35 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [quoteFiles, setQuoteFiles] = useState({});
   const [preview, setPreview] = useState(null);   // item photo lightbox
   const [editLm, setEditLm] = useState(null);      // manifest fix (LM)
+  const [storeAvail, setStoreAvail] = useState(null);   // MR-from-store (HO)
+  const [storeSel, setStoreSel] = useState({});
   const lineFileRefs = useRef({});                // per-line hidden inputs
+
+  const canFulfilStore = doc.doc_type === "MR" &&
+    ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
+    !["DRAFT", "SUBMITTED", "PM_APPROVED", "CLOSED"].includes(doc.status);
+
+  useEffect(() => {
+    if (canFulfilStore) {
+      api(`/mr/${doc.ref}/store-availability`)
+        .then((d) => setStoreAvail(d.availability || {})).catch(() => {});
+    }
+  }, [doc.ref, canFulfilStore]);
+
+  async function fulfilFromStore() {
+    setError(null);
+    const line_ids = Object.keys(storeSel).filter((k) => storeSel[k])
+      .map(Number);
+    if (!line_ids.length) { setError("Tick the lines to fulfil from store."); return; }
+    try {
+      const sin = await api(`/mr/${doc.ref}/store-fulfil`,
+        { method: "POST", body: { line_ids } });
+      setStoreSel({});
+      window.alert(`Store issue ${sin.ref} created and issued to ${sin.to_site}.`);
+      setDoc(await api(`/documents/${doc.ref}`));
+      onChanged?.();
+    } catch (e) { setError(e.message); }
+  }
 
   function startEditLm() {
     setError(null);
@@ -990,6 +1018,47 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
               Only possible until the site raises a GRN against this manifest.
             </span>
           </div>
+        </div>
+      )}
+
+      {canFulfilStore && storeAvail &&
+        doc.lines.some((l) => Number(storeAvail[l.id]) > 0) && (
+        <div style={{ margin: "12px 0", padding: 12, borderRadius: 8,
+                      border: "1px solid #b35900",
+                      background: "var(--sp-tint, #f5f8fb)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10,
+                        flexWrap: "wrap", marginBottom: 8 }}>
+            <strong style={{ color: "#b35900", fontSize: 14 }}>
+              Available in HO store — fulfil from stock instead of buying</strong>
+            <button onClick={fulfilFromStore}
+                    style={{ ...buttonStyle, marginLeft: "auto",
+                             padding: "4px 12px", fontSize: 13 }}>
+              Fulfil selected from store</button>
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <tbody>
+              {doc.lines.filter((l) => Number(storeAvail[l.id]) > 0).map((l) => (
+                <tr key={l.id}>
+                  <td style={{ ...td, width: 34 }}>
+                    <input type="checkbox" checked={!!storeSel[l.id]}
+                           onChange={(e) => setStoreSel({ ...storeSel,
+                             [l.id]: e.target.checked })} />
+                  </td>
+                  <td style={td}>{l.description || l.free_text_desc}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    need {num(l.qty_to_order)} · {" "}
+                    <strong style={{ color: "#1a7f37" }}>
+                      {num(storeAvail[l.id])} in store</strong></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {doc.lines.some((l) => l.fulfil_source === "STORE") && (
+            <p style={{ fontSize: 12, color: "#1a7f37", margin: "6px 0 0" }}>
+              ✓ Some lines are already being fulfilled from store (SIN issued).
+            </p>
+          )}
         </div>
       )}
 

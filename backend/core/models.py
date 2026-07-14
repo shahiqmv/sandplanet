@@ -583,6 +583,9 @@ class DocumentLine(models.Model):
         "CostHead", on_delete=models.PROTECT, null=True, blank=True,
         related_name="+")
     purchase_type = models.CharField(max_length=6, blank=True)  # CASH|CREDIT
+    # How an MR line is fulfilled (P1B-f): blank = local purchase (PR);
+    # "STORE" = issued from HO store stock via a SIN (owner 2026-07-13).
+    fulfil_source = models.CharField(max_length=8, blank=True)
     rate = models.DecimalField(max_digits=14, decimal_places=2,  # PO lines (R2)
                                null=True, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2,

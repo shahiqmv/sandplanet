@@ -73,7 +73,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "priority", "urgent_reason", "rate", "amount",
                   "amount_cash", "amount_credit", "vendor", "quotation_ref",
                   "payment_terms", "action_taken", "po_ref", "is_changed",
-                  "spec", "mar_ref", "remarks"]
+                  "fulfil_source", "spec", "mar_ref", "remarks"]
 
     def get_is_free_text(self, obj):
         return obj.item_id is None  # flagged "new item — not in catalog"

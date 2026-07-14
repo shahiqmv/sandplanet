@@ -974,7 +974,7 @@ export function StoreLots({ me, onOpenIrn }) {
             <thead><tr>
               <th style={th}>SIN</th><th style={th}>To site</th>
               <th style={th}>Lines</th><th style={th}>Date</th>
-              <th style={th}>Status</th>
+              <th style={th}>Status</th><th style={th} />
             </tr></thead>
             <tbody>
               {sins.map((s) => (
@@ -985,10 +985,27 @@ export function StoreLots({ me, onOpenIrn }) {
                   <td style={td}>{s.lines}</td>
                   <td style={td}>{s.doc_date}</td>
                   <td style={td}><StatusChip status={s.status} /></td>
+                  <td style={td}>
+                    {s.status === "ISSUED" && (
+                      <button style={{ ...ghostButton, padding: "2px 10px",
+                                       fontSize: 12 }} disabled={busy}
+                              onClick={() => {
+                                setBusy(true);
+                                api(`/sin/${s.ref}/receive`, { method: "POST" })
+                                  .then(() => reload())
+                                  .catch((e) => setError(e.message))
+                                  .finally(() => setBusy(false));
+                              }}>
+                        Mark received at site</button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
+            Receiving a store issue posts the material to the site project at
+            landed cost.</p>
         </section>
       )}
     </section>

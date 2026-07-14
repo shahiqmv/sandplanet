@@ -523,6 +523,63 @@ def sin_cancel(request, ref):
     return Response(_sin_payload(doc, request))
 
 
+SIN_RECEIVE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "HO_PURCHASING", "ADMIN")
+
+
+@api_view(["POST"])
+def sin_receive(request, ref):
+    """The destination site receives the store issue → INCURRED at landed
+    cost (P1B-f2)."""
+    try:
+        doc = Document.objects.get(ref=ref, doc_type="SIN")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in SIN_RECEIVE_ROLES:
+        return Response({"detail": "The receiving site confirms a store "
+                                   "issue."}, status=403)
+    msg = ipr_svc.receive_store_issue(doc, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    doc.refresh_from_db()
+    return Response(_sin_payload(doc, request))
+
+
+def _get_mr(request, ref):
+    try:
+        doc = Document.objects.select_related("current_revision", "site",
+                                              "project").get(
+            ref=ref, doc_type="MR")
+    except Document.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    return doc, None
+
+
+@api_view(["GET"])
+def mr_store_availability(request, ref):
+    doc, err = _get_mr(request, ref)
+    if err:
+        return err
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    avail = ipr_svc.mr_store_availability(doc)
+    return Response({"availability": {str(k): v for k, v in avail.items()}})
+
+
+@api_view(["POST"])
+def mr_store_fulfil(request, ref):
+    doc, err = _get_mr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office fulfils from the store."},
+                        status=403)
+    sin, msg = ipr_svc.fulfil_mr_from_store(
+        doc, request.data.get("line_ids") or [], request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_sin_payload(sin, request), status=201)
+
+
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 def ipr_milestone_tt_advice(request, ref, pk):
