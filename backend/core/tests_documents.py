@@ -308,6 +308,29 @@ class DprScopedReportTests(DocBase):
         combo = _dpr_context(doc, rev, {"project": "VILLAS", "trade": "MEP"})
         self.assertEqual(self._nrows(combo), 1)
 
+    def test_project_manpower_comes_from_the_dma(self):
+        from .models import Document, ManpowerCategory
+        from .pdf import _dpr_context
+        ManpowerCategory.objects.create(name="Mason", grp="LABOUR",
+                                        list_type="DPR", sort_order=1)
+        ref = self._dpr()
+        # the day's DMA allocates crew to two projects
+        self.client.post("/api/v1/documents", {
+            "doc_type": "DMA", "site_id": self.site.id,
+            "doc_date": date.today().isoformat(),
+            "payload": {"tasks": [
+                {"task": "Cabling", "project": "VILLAS", "category": "Mason",
+                 "workers": "6"},
+                {"task": "Pump base", "project": "POOL", "category": "Mason",
+                 "workers": "4"}]}}, format="json")
+        rev = Document.objects.get(ref=ref).current_revision
+        doc = rev.document
+        villas = _dpr_context(doc, rev, {"project": "VILLAS"})
+        self.assertTrue(villas["manpower_from_dma"])
+        self.assertEqual(villas["manpower_total"], 6)   # VILLAS crew only
+        # full report keeps the DPR's own (site-wide) manpower, not the DMA
+        self.assertFalse(_dpr_context(doc, rev)["manpower_from_dma"])
+
     def test_scoped_report_filters_materials_and_machinery(self):
         from .models import Document
         from .pdf import _dpr_context

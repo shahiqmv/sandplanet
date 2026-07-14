@@ -92,6 +92,35 @@ def _dpr_context(document, revision, filters=None):
         if count <= 0:
             continue  # only the categories actually on site today (owner)
         (staff if cat.grp == "STAFF" else labour).append((cat.name, count))
+    # For a project report, manpower comes from that day's DMA allocation to
+    # the project (tasks tagged project + category + workers), not the site-wide
+    # DPR count (owner phase 2b). Falls back to an empty section if no DMA.
+    manpower_from_dma = False
+    if fp:
+        from .models import Document
+        dma = Document.objects.filter(
+            doc_type="DMA", site=site, doc_date=document.doc_date,
+            is_void=False).select_related("current_revision").first()
+        cat_by_name = {c.name: c for c in categories.values()}
+        agg = {}
+        if dma and dma.current_revision:
+            for t in (dma.current_revision.payload or {}).get("tasks", []):
+                if (t.get("project") or "").strip() != fp:
+                    continue
+                name = (t.get("category") or "").strip() or "Unassigned"
+                try:
+                    agg[name] = agg.get(name, 0) + int(t.get("workers") or 0)
+                except (TypeError, ValueError):
+                    pass
+        staff, labour, total = [], [], 0
+        for name, w in agg.items():
+            if w <= 0:
+                continue
+            total += w
+            cat = cat_by_name.get(name)
+            grp = cat.grp if cat else "LABOUR"
+            (staff if grp == "STAFF" else labour).append((name, w))
+        manpower_from_dma = True
     # Staff | Trades/Labour side by side, as on the owner's printed form
     depth = max(len(staff), len(labour), 1)
     staff += [("", "")] * (depth - len(staff))
@@ -188,6 +217,7 @@ def _dpr_context(document, revision, filters=None):
         "show_group_headers": show_group_headers,
         "manpower_pairs": manpower_pairs,
         "manpower_total": total,
+        "manpower_from_dma": manpower_from_dma,
         "machinery_rows": machinery_rows,
         "material_rows": material_rows,
         "photos": photos,

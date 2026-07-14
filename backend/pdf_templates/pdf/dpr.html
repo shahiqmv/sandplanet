@@ -19,7 +19,7 @@
 {# form-version info stays off the print (owner, 2026-07-08) #}
 {% include "pdf/_letterhead.html" with title=scope_title|default:"DAILY PROGRESS REPORT" %}
 {% if scoped %}
-<p class="note" style="margin:0 0 6px">Filtered extract of DPR {{ doc.ref }} — <strong>{{ scope_label }}</strong>{% if scope_pm %} · In-charge: {{ scope_pm }}{% endif %}. Manpower, materials and progress photos are recorded site-wide in the full DPR.</p>
+<p class="note" style="margin:0 0 6px">Filtered extract of DPR {{ doc.ref }} — <strong>{{ scope_label }}</strong>{% if scope_pm %} · In-charge: {{ scope_pm }}{% endif %}.{% if not scope_project %} Trade extract — manpower, materials and photos are recorded site-wide in the full DPR.{% endif %}</p>
 {% endif %}
 
 <table>
@@ -73,8 +73,8 @@
   {% endfor %}
 </table>
 
-{% if not scoped %}
-<h2>2.&nbsp; MANPOWER</h2>
+{% if not scoped or scope_project %}
+<h2>2.&nbsp; MANPOWER{% if manpower_from_dma %} — ALLOCATED TO {{ scope_label }}{% endif %}</h2>
 <table>
   <thead><tr><th colspan="2" style="width:50%">Staff</th>
              <th colspan="2">Trades / Labour</th></tr></thead>
@@ -82,10 +82,11 @@
   <tr><td>{{ row.0 }}</td><td class="ctr" style="width:10%">{{ row.1 }}</td>
       <td>{{ row.2 }}</td><td class="ctr" style="width:10%">{{ row.3 }}</td></tr>
   {% endfor %}
-  <tr><td colspan="3" class="lbl" style="text-align:right">TOTAL MANPOWER AT SITE</td>
+  <tr><td colspan="3" class="lbl" style="text-align:right">TOTAL MANPOWER{% if manpower_from_dma %} ON THIS PROJECT{% else %} AT SITE{% endif %}</td>
       <td class="lbl ctr">{{ manpower_total }}</td></tr>
 </table>
-{% endif %}{# manpower: full report only (project split arrives in phase 2b) #}
+{% if manpower_from_dma %}<p class="note">From the day's manpower allocation (DMA) for this project.{% if manpower_total == 0 %} No crew allocated to this project in the DMA today.{% endif %}</p>{% endif %}
+{% endif %}{# manpower: full report, or project-scoped (from the DMA) #}
 
 {% if not scoped or scope_project %}
 <h2>3.&nbsp; MACHINERY &amp; EQUIPMENT IN USE</h2>
