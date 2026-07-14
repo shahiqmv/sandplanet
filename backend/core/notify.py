@@ -82,23 +82,73 @@ def _body(doc):
     return " · ".join(parts)
 
 
+def originator_events(doc):
+    """(user, message) milestone notifications for the people who RAISED the
+    documents involved — the 'track what you raised' feed (R6 §6.2). Approvals,
+    returns/rejections (always), client decisions, payment completed, manifest
+    departed, and goods received."""
+    from .procurement import linked_docs
+    t, s = doc.doc_type, doc.status
+    out = []
+
+    def creator(d):
+        return d.created_by if d and getattr(d, "created_by_id", None) else None
+
+    if t == "LM" and s == "DEPARTED":
+        for mr in linked_docs(doc, "MR_LM", "from"):
+            u = creator(mr)
+            if u:
+                out.append((u, f"{mr.ref}: loaded & departed on {doc.ref}."))
+    elif t == "GRN" and s == "COMPLETE":
+        for lm in linked_docs(doc, "LM_GRN", "from"):
+            for mr in linked_docs(lm, "MR_LM", "from"):
+                u = creator(mr)
+                if u:
+                    out.append((u, f"{mr.ref}: goods received on site "
+                                f"({doc.ref})."))
+    elif t == "PYR" and s == "PAID":
+        u = creator(doc)
+        if u:
+            out.append((u, f"{doc.ref}: payment completed."))
+
+    # The action that just happened, told to the document's own originator.
+    last = doc.approvals.select_related("actor").order_by("-acted_at").first()
+    u = creator(doc)
+    if u and last and last.actor_id != u.id:
+        who = last.actor.full_name if last.actor_id else (last.actor_role or "")
+        if last.action in ("APPROVE", "AUTHORISE"):
+            verb = "authorised" if last.action == "AUTHORISE" else "approved"
+            out.append((u, f"{doc.ref} {verb} by {who}."))
+        elif last.action in ("RETURN", "REJECT"):
+            out.append((u, f"{doc.ref} returned — "
+                        f"{last.comment or 'see the document'}."))
+        elif last.action == "RESULT_RECORDED":
+            out.append((u, f"{doc.ref}: client decision — {s.title()}."
+                        + (f" {last.comment}" if last.comment else "")))
+    return out
+
+
 def notify_document(doc, actor=None):
-    """Create + dispatch notifications for whoever the document now blocks.
-    Never raises — a notification failure must not roll back the transition."""
+    """Create + dispatch notifications for whoever the document now blocks, and
+    the milestone updates for whoever raised the documents involved. Never
+    raises — a notification failure must not roll back the transition."""
+    def emit(user, title):
+        if actor and user.id == actor.id:
+            return
+        if Notification.objects.filter(
+                recipient=user, doc_ref=doc.ref, doc_status=doc.status,
+                title=title, read_at__isnull=True).exists():
+            return
+        n = Notification.objects.create(
+            recipient=user, title=title, body=_body(doc), doc_ref=doc.ref,
+            doc_type=doc.doc_type, doc_status=doc.status)
+        _push(n, user)
+
     try:
         for user, hint in targets_for(doc):
-            if actor and user.id == actor.id:
-                continue
-            if Notification.objects.filter(
-                    recipient=user, doc_ref=doc.ref, doc_status=doc.status,
-                    read_at__isnull=True).exists():
-                continue
-            n = Notification.objects.create(
-                recipient=user,
-                title=f"{doc.doc_type} {doc.ref} {hint}",
-                body=_body(doc), doc_ref=doc.ref, doc_type=doc.doc_type,
-                doc_status=doc.status)
-            _push(n, user)
+            emit(user, f"{doc.doc_type} {doc.ref} {hint}")
+        for user, message in originator_events(doc):
+            emit(user, message)
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_document failed for %s", getattr(doc, "ref", "?"))
 

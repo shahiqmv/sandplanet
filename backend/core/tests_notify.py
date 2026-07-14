@@ -45,3 +45,27 @@ class NotificationTests(ProcBase):
         self.act(pr["ref"], "submit")
         self.assertTrue(Notification.objects.filter(
             recipient=self.director, doc_ref=pr["ref"]).exists())
+
+
+class OriginatorNotifyTests(ProcBase):
+    """Milestone notifications to the person who raised the document (R6 §6.2)."""
+
+    def test_originator_notified_on_approval(self):
+        mr = self.make_mr()                 # raised by sa
+        self.act(mr["ref"], "submit")
+        self.as_user(self.pm)
+        self.act(mr["ref"], "approve")
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.sa, doc_ref=mr["ref"],
+            title__icontains="approved").exists())
+
+    def test_originator_notified_on_return_with_reason(self):
+        mr = self.make_mr()
+        self.act(mr["ref"], "submit")
+        self.as_user(self.pm)
+        self.act(mr["ref"], "return", {"comment": "spec unclear"})
+        n = Notification.objects.filter(
+            recipient=self.sa, doc_ref=mr["ref"],
+            title__icontains="returned").first()
+        self.assertIsNotNone(n)
+        self.assertIn("spec unclear", n.title)
