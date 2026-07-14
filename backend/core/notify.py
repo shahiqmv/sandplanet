@@ -93,11 +93,12 @@ def notify_document(doc, actor=None):
                     recipient=user, doc_ref=doc.ref, doc_status=doc.status,
                     read_at__isnull=True).exists():
                 continue
-            Notification.objects.create(
+            n = Notification.objects.create(
                 recipient=user,
                 title=f"{doc.doc_type} {doc.ref} {hint}",
                 body=_body(doc), doc_ref=doc.ref, doc_type=doc.doc_type,
                 doc_status=doc.status)
+            _push(n, user)
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_document failed for %s", getattr(doc, "ref", "?"))
 
@@ -105,11 +106,22 @@ def notify_document(doc, actor=None):
 def notify_user(user, title, body="", doc=None, category="alert"):
     """Ad-hoc notification (e.g. an import payment falling due)."""
     try:
-        return Notification.objects.create(
+        n = Notification.objects.create(
             recipient=user, title=title, body=body, category=category,
             doc_ref=getattr(doc, "ref", "") or "",
             doc_type=getattr(doc, "doc_type", "") or "",
             doc_status=getattr(doc, "status", "") or "")
+        _push(n, user)
+        return n
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_user failed")
         return None
+
+
+def _push(notification, user):
+    """Best-effort Web Push on top of the in-app record (never raises)."""
+    try:
+        from .push import dispatch_push
+        dispatch_push(notification, user)
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("push dispatch failed")

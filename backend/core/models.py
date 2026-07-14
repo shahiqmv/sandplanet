@@ -533,6 +533,20 @@ class MobileDevice(models.Model):
                 timezone.now() - timedelta(days=self.IDLE_DAYS))
 
 
+class PushSubscription(models.Model):
+    """A Web Push (VAPID) endpoint for a user's browser/PWA. One per browser;
+    purged on a 404/410 from the push service (R6 mobile, owner 2026-07-14)."""
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name="push_subs")
+    endpoint = models.TextField(unique=True)
+    p256dh = models.CharField(max_length=200)
+    auth = models.CharField(max_length=100)
+    label = models.CharField(max_length=120, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_success = models.DateTimeField(null=True, blank=True)
+
+
 # ===== Item master (spec §5.0) & procurement chain (§5.5–§5.8, §6) =====
 
 

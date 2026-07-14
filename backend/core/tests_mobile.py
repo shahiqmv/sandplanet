@@ -150,3 +150,63 @@ class MobileOriginatorTests(ProcBase):
             self.m.post("/api/mobile/v1/alerts/read", {},
                         format="json").status_code, 200)
         self.assertEqual(self.m.get("/api/mobile/v1/alerts").data["unread"], 0)
+
+
+class MobilePushTests(MobileAuthTests):
+    """Web-push subscription lifecycle + gated delivery (R6 slice 4a)."""
+
+    def _auth(self):
+        c = APIClient()
+        tok = c.post("/api/mobile/v1/auth/login",
+                     {"username": "pm_m", "password": "verify-123"},
+                     format="json").data["token"]
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+        return c
+
+    def test_vapid_key_disabled_without_env(self):
+        c = self._auth()
+        r = c.get("/api/mobile/v1/push/vapid-key")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data["enabled"])          # no VAPID_* configured
+
+    def test_subscribe_and_unsubscribe(self):
+        from .models import PushSubscription
+        c = self._auth()
+        body = {"endpoint": "https://push.example/abc",
+                "keys": {"p256dh": "k1", "auth": "k2"}}
+        self.assertEqual(
+            c.post("/api/mobile/v1/push/subscribe", body,
+                   format="json").status_code, 201)
+        self.assertTrue(PushSubscription.objects.filter(
+            endpoint=body["endpoint"], user=self.user).exists())
+        # re-subscribing the same endpoint updates, not duplicates
+        c.post("/api/mobile/v1/push/subscribe", body, format="json")
+        self.assertEqual(PushSubscription.objects.filter(
+            endpoint=body["endpoint"]).count(), 1)
+        c.post("/api/mobile/v1/push/unsubscribe",
+               {"endpoint": body["endpoint"]}, format="json")
+        self.assertFalse(PushSubscription.objects.filter(
+            endpoint=body["endpoint"]).exists())
+
+    def test_notification_dispatches_push_when_configured(self):
+        from unittest import mock
+
+        from .models import Notification, PushSubscription
+        from .notify import notify_user
+        PushSubscription.objects.create(
+            user=self.user, endpoint="https://push.example/x",
+            p256dh="k1", auth="k2")
+        with mock.patch("core.push.send_push", return_value=True) as snd:
+            n = notify_user(self.user, "Hi", "there")
+        self.assertIsInstance(n, Notification)
+        snd.assert_called_once()
+
+    def test_notification_is_noop_when_push_unconfigured(self):
+        # no VAPID env → send_push returns None, no error, alert still written
+        from .models import Notification, PushSubscription
+        from .notify import notify_user
+        PushSubscription.objects.create(
+            user=self.user, endpoint="https://push.example/y",
+            p256dh="k1", auth="k2")
+        n = notify_user(self.user, "Hi", "there")
+        self.assertTrue(Notification.objects.filter(pk=n.pk).exists())

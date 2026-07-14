@@ -16,4 +16,7 @@ urlpatterns = [
     path("requests/<str:ref>/timeline", m.m_timeline, name="m-timeline"),
     path("alerts", m.m_alerts, name="m-alerts"),
     path("alerts/read", m.m_alerts_read, name="m-alerts-read"),
+    path("push/vapid-key", m.m_vapid_key, name="m-vapid-key"),
+    path("push/subscribe", m.m_push_subscribe, name="m-push-subscribe"),
+    path("push/unsubscribe", m.m_push_unsubscribe, name="m-push-unsubscribe"),
 ]

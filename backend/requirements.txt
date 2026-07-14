@@ -9,3 +9,4 @@ weasyprint>=62  # Windows needs the GTK3 runtime installed: DECISIONS.md D4
 Pillow>=10.0
 pdfplumber>=0.11
 openpyxl>=3.1
+pywebpush>=2.0            # Web Push (VAPID) for the mobile companion (R6)
