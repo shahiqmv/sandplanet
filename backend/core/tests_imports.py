@@ -500,6 +500,23 @@ class SupplierCategoryTests(PmrBase):
         r = self.client.get("/api/v1/suppliers?category=INTERNATIONAL")
         self.assertNotIn("bank_details", r.data[0])
 
+    def test_reclassify_local_supplier_to_international(self):
+        """A supplier created Local can be switched to International so it
+        appears when raising an import order (owner 2026-07-14)."""
+        s = Supplier.objects.create(name="Male' Trading",
+                                    category=Supplier.Category.LOCAL)
+        self.client.force_authenticate(self.ho)
+        ctx = self.client.get("/api/v1/ipr/context").data
+        self.assertNotIn("Male' Trading",
+                         [x["name"] for x in ctx["suppliers"]])
+        r = self.client.patch(f"/api/v1/suppliers/{s.id}",
+                              {"category": "INTERNATIONAL", "country": "China",
+                               "default_currency": "USD"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        ctx = self.client.get("/api/v1/ipr/context").data
+        row = next(x for x in ctx["suppliers"] if x["name"] == "Male' Trading")
+        self.assertEqual(row["default_currency"], "USD")
+
 
 class ImportsCatalogTests(IprBase):
     """Catalog-driven IPR lines, proforma-invoice upload, import tracker
