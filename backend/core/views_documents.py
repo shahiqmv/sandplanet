@@ -1209,6 +1209,7 @@ def document_attachments(request, ref):
         file=upload, file_name=upload.name,
         content_type=upload.content_type or "",
         size_bytes=upload.size, caption=request.data.get("caption", ""),
+        project_code=(request.data.get("project") or "").strip(),
         uploaded_by=request.user,
     )
     return Response(AttachmentSerializer(attachment,

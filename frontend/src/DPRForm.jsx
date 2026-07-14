@@ -9,9 +9,10 @@ const WEATHER = ["Sunny", "Cloudy", "Rainy"];
 const emptyWork = { project: "", activity_id: "", activity: "", trade: "",
                     location: "", progress_today: "", progress_todate: "",
                     remarks: "" };
-const emptyMachine = { item: "", nos: "", remarks: "" };
+const emptyMachine = { item: "", nos: "", remarks: "", project: "" };
 const emptyMaterial = {
   material: "", unit: "", opening: "", received: "", consumed: "", remarks: "",
+  project: "",
 };
 
 function RowTable({ headers, rows, setRows, empty, render }) {
@@ -110,6 +111,21 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   const [file, setFile] = useState(null);
 
   const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
+  const [photoProject, setPhotoProject] = useState("");
+
+  // Project tag (owner phase 2): lets the client report filter materials,
+  // machinery and photos to one project. Blank = general / whole site.
+  const projectCell = (value, onChange) => (
+    <td style={{ padding: 3 }}>
+      <select value={value || ""} onChange={(e) => onChange(e.target.value)}
+              style={{ ...inputStyle, width: 120 }}>
+        <option value="">— general —</option>
+        {activeProjects.map((pr) => (
+          <option key={pr.code} value={pr.code}>{pr.code}</option>
+        ))}
+      </select>
+    </td>
+  );
 
   useEffect(() => {
     api("/manpower-categories").then((all) =>
@@ -265,6 +281,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
     fd.append("file", file);
     fd.append("kind", "PHOTO");
     fd.append("caption", caption);
+    fd.append("project", photoProject);
     try {
       await apiUpload(`/documents/${doc.ref}/attachments`, fd);
       const fresh = await api(`/documents/${doc.ref}`);
@@ -552,11 +569,12 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         )}
       </div>
       <RowTable
-        headers={["Item", "Nos", "Remarks (working/idle/breakdown)"]}
+        headers={["Item", "Project", "Nos", "Remarks (working/idle/breakdown)"]}
         rows={machinery} setRows={setMachinery} empty={emptyMachine}
         render={(row, set) => (
           <>
             {cell(row.item, (v) => set({ item: v }))}
+            {projectCell(row.project, (v) => set({ project: v }))}
             {cell(row.nos, (v) => set({ nos: v }), 70)}
             {cell(row.remarks, (v) => set({ remarks: v }), 180)}
           </>
@@ -576,8 +594,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         )}
       </div>
       <RowTable
-        headers={["Material", "Unit", "Opening", "Received", "Consumed",
-                  "Balance", "Remarks"]}
+        headers={["Material", "Project", "Unit", "Opening", "Received",
+                  "Consumed", "Balance", "Remarks"]}
         rows={materials} setRows={setMaterials} empty={emptyMaterial}
         render={(row, set) => {
           const bal = (parseFloat(row.opening) || 0)
@@ -587,6 +605,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
           return (
           <>
             {cell(row.material, (v) => set({ material: v }))}
+            {projectCell(row.project, (v) => set({ project: v }))}
             {cell(row.unit, (v) => set({ unit: v }), 60)}
             {cell(row.opening, (v) => set({ opening: v }), 70, "number")}
             {cell(row.received, (v) => set({ received: v }), 70, "number")}
@@ -645,7 +664,16 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                    onChange={(e) => setFile(e.target.files[0])} />
             <input placeholder="Caption (location / activity)" value={caption}
                    onChange={(e) => setCaption(e.target.value)}
-                   style={{ ...inputStyle, width: 260 }} />
+                   style={{ ...inputStyle, width: 220 }} />
+            <select value={photoProject}
+                    onChange={(e) => setPhotoProject(e.target.value)}
+                    title="Tag this photo to a project for the client report"
+                    style={{ ...inputStyle, width: 130 }}>
+              <option value="">— general —</option>
+              {activeProjects.map((pr) => (
+                <option key={pr.code} value={pr.code}>{pr.code}</option>
+              ))}
+            </select>
             <button type="button" onClick={uploadPhoto}
                     disabled={!file || !caption} style={buttonStyle}>
               Upload
@@ -659,6 +687,10 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                               border: "1px solid var(--sp-border)" }} />
                 <figcaption style={{ fontSize: 11, color: "#5a6b78" }}>
                   {ph.caption || "(no caption)"}
+                  {ph.project_code && (
+                    <span style={{ color: "var(--sp-navy)" }}>
+                      {" · "}{ph.project_code}</span>
+                  )}
                 </figcaption>
               </figure>
             ))}

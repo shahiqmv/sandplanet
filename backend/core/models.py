@@ -501,6 +501,8 @@ class Attachment(models.Model):
     content_type = models.TextField(blank=True)
     size_bytes = models.BigIntegerField(default=0)
     caption = models.TextField(blank=True)  # DPR photo captions
+    project_code = models.CharField(  # tags a DPR photo to a project for the
+        max_length=20, blank=True)    # scoped client report (owner 2026-07-14)
     uploaded_by = models.ForeignKey(
         User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )

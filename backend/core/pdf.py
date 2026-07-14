@@ -138,16 +138,24 @@ def _dpr_context(document, revision, filters=None):
     # No blank filler rows — the report shows only the day's actual work
     # (owner: fixed-grid padding looked empty for a digital report).
 
-    machinery_keys = ("item", "nos", "remarks")
+    # Materials/machinery/photos are tagged by project (phase 2) — filter them
+    # to the project when the report is project-scoped. They are not trade-
+    # tagged, so a trade-only report shows the work narrative + site context.
+    def keep(row):
+        return not fp or (row.get("project") or "").strip() == fp
+    machinery_keys = ("item", "nos", "remarks", "project")
     machinery_rows = [norm(r, machinery_keys)
-                      for r in payload.get("machinery", [])]
+                      for r in payload.get("machinery", []) if keep(r)]
     material_keys = ("material", "unit", "opening", "received", "consumed",
-                     "balance", "remarks")
+                     "balance", "remarks", "project")
     material_rows = [norm(r, material_keys)
-                     for r in payload.get("materials", [])]
+                     for r in payload.get("materials", []) if keep(r)]
 
     photos = []
-    for p in document.attachments.filter(kind="PHOTO").order_by("id"):
+    photo_qs = document.attachments.filter(kind="PHOTO").order_by("id")
+    if fp:
+        photo_qs = photo_qs.filter(project_code=fp)
+    for p in photo_qs:
         try:
             src = f"file:///{p.file.path}"  # filesystem storage
         except NotImplementedError:
@@ -172,6 +180,7 @@ def _dpr_context(document, revision, filters=None):
         "payload": payload,
         "form_subline": f"Form No: FRM-PRJ-01  |  Rev: {revision.rev_label}",
         "scoped": scoped,
+        "scope_project": bool(fp),
         "scope_title": scope_title,
         "scope_label": " · ".join(scope_bits),
         "scope_pm": scope_pm,

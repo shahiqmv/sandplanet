@@ -85,7 +85,9 @@
   <tr><td colspan="3" class="lbl" style="text-align:right">TOTAL MANPOWER AT SITE</td>
       <td class="lbl ctr">{{ manpower_total }}</td></tr>
 </table>
+{% endif %}{# manpower: full report only (project split arrives in phase 2b) #}
 
+{% if not scoped or scope_project %}
 <h2>3.&nbsp; MACHINERY &amp; EQUIPMENT IN USE</h2>
 <table>
   <thead><tr><th>Item</th><th style="width:10%">Nos</th>
@@ -113,7 +115,7 @@
   {% endfor %}
 </table>
 <p class="note">Balance auto-calculates: Opening + Received − Consumed. Report only key / bulk materials daily; full stock lives in the site stock book.</p>
-{% endif %}{# not scoped #}
+{% endif %}{# machinery + materials: full report or project-scoped #}
 
 <h2>5.&nbsp; MATTERS AFFECTING PROGRESS (delays, shortages, weather impact)</h2>
 <div class="box">{{ payload.matters_affecting|default:""|linebreaksbr }}</div>
@@ -129,7 +131,7 @@
       <td>{% if payload.safety.incident %}{{ payload.safety.details }}{% endif %}</td></tr>
 </table>
 
-{% if not scoped %}<p class="note">Progress photos with captions follow on the Progress Photos sheet.</p>{% endif %}
+{% if not scoped or scope_project %}<p class="note">Progress photos with captions follow on the Progress Photos sheet.</p>{% endif %}
 
 <table class="sig">
   <tr><td class="t">PREPARED BY (SITE ENGINEER / ADMIN)</td>
@@ -148,7 +150,7 @@
   </tr>
 </table>
 
-{% if photos and not scoped %}
+{% if photos and not scoped or photos and scope_project %}
 <div class="pagebreak"></div>
 {% with photos_sub=doc.ref|add:" / "|add:photo_date %}
 {% include "pdf/_letterhead.html" with title="DAILY PROGRESS PHOTOS" subline=photos_sub %}

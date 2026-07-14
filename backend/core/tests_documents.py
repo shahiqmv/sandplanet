@@ -278,6 +278,11 @@ class DprScopedReportTests(DocBase):
              "progress_today": "5", "progress_todate": "30"},
             {"project": "POOL", "trade": "MEP", "activity": "Pump wiring",
              "progress_today": "8", "progress_todate": "20"},
+        ], "materials": [
+            {"material": "Cable", "project": "VILLAS", "consumed": "5"},
+            {"material": "Cement", "project": "POOL", "consumed": "2"},
+        ], "machinery": [
+            {"item": "Excavator", "project": "POOL", "nos": "1"},
         ]}
         r = self.create_dpr(payload=payload)
         self.assertEqual(r.status_code, 201, r.data)
@@ -302,6 +307,22 @@ class DprScopedReportTests(DocBase):
         self.assertEqual(villas["scope_pm"], self.pm.full_name)
         combo = _dpr_context(doc, rev, {"project": "VILLAS", "trade": "MEP"})
         self.assertEqual(self._nrows(combo), 1)
+
+    def test_scoped_report_filters_materials_and_machinery(self):
+        from .models import Document
+        from .pdf import _dpr_context
+        rev = Document.objects.get(ref=self._dpr()).current_revision
+        doc = rev.document
+        full = _dpr_context(doc, rev)
+        self.assertEqual(len(full["material_rows"]), 2)
+        self.assertEqual(len(full["machinery_rows"]), 1)
+        villas = _dpr_context(doc, rev, {"project": "VILLAS"})
+        self.assertEqual(len(villas["material_rows"]), 1)   # Cable only
+        self.assertEqual(len(villas["machinery_rows"]), 0)  # excavator is POOL
+        self.assertTrue(villas["scope_project"])
+        # trade-only report: materials/machinery aren't trade-tagged → hidden
+        mep = _dpr_context(doc, rev, {"trade": "MEP"})
+        self.assertFalse(mep["scope_project"])
 
     @override_settings(MEDIA_ROOT="test-media")
     def test_report_pdf_endpoint_renders(self):

@@ -37,7 +37,7 @@ class AttachmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attachment
         fields = ["id", "kind", "file_name", "content_type", "size_bytes",
-                  "caption", "url", "created_at"]
+                  "caption", "project_code", "url", "created_at"]
 
     def get_url(self, obj):
         request = self.context.get("request")
