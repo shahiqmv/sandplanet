@@ -25,6 +25,7 @@ import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
+import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
@@ -57,6 +58,7 @@ const NAV_GROUPS = [
            ["items", "Items", null],
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN"]],
+           ["pmr-register", "Import Requests", null],
            ["imports", "International Orders", null],
            ["import-tracker", "Import Tracker", null],
            ["store", "HO Store", null],
@@ -724,6 +726,7 @@ export default function App() {
             <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
                          onNewPayment={() => setDocView({
                            mode: "central-pyr-form" })}
+                         onPmrRegister={() => setHoPage("pmr-register")}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
           )}
@@ -745,6 +748,10 @@ export default function App() {
             ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
             hoPage === "item-categories" && (
             <ItemCategoriesPage me={me} />
+          )}
+          {!docView && !openSite && me.is_ho &&
+            hoPage === "pmr-register" && (
+            <PmrRegister onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "imports" && (
             <ImportOrders me={me} onOpenIpr={(ref) =>

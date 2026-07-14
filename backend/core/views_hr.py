@@ -622,9 +622,18 @@ def timesheet_lock(request, site_id, year, month):
 
 @api_view(["POST"])
 def timesheet_reopen(request, site_id, year, month):
-    """HR reopen with reason — audited (spec §6A.3)."""
-    if not _is_hr(request.user):
-        return Response({"detail": "HO HR/Payroll reopens months."}, status=403)
+    """Reopen a locked month with a reason — audited (spec §6A.3). Whoever may
+    lock may unlock: the site PM (accidental locks) as well as HO HR / Admin
+    (owner 2026-07-14)."""
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    pm = site.current_pm()
+    if not (request.user.role in ("ADMIN", "HO_HR") or
+            (request.user.role == "PM" and pm and pm.id == request.user.id)):
+        return Response({"detail": "The site PM or HR reopens a month."},
+                        status=403)
     reason = (request.data.get("reason") or "").strip()
     if not reason:
         return Response({"detail": "A reason is required."}, status=400)

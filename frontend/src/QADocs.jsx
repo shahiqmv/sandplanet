@@ -97,6 +97,22 @@ function Field({ def, value, onChange }) {
   );
 }
 
+// Local YYYY-MM-DD (avoids the UTC shift toISOString would cause east of GMT).
+function localISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-`
+    + `${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// TWS is next-working-day's schedule. The "day" rolls over at 3am, so a
+// schedule keyed in just after midnight is for the coming day, not the day
+// after (owner 2026-07-14).
+function twsDefaultDate() {
+  const base = new Date();
+  if (base.getHours() < 3) base.setDate(base.getDate() - 1);
+  base.setDate(base.getDate() + 1);
+  return localISO(base);
+}
+
 export function QAForm({ docType, site, project, projects = [], existing,
                          prefill, onSaved, onCancel }) {
   // TWS is SITE-WIDE (R8): planned rows are tagged per project; IR/MAR
@@ -106,8 +122,7 @@ export function QAForm({ docType, site, project, projects = [], existing,
                                          prefill?.payload || {});
   const [docDate, setDocDate] = useState(
     existing?.doc_date ||
-    (docType === "TWS"
-      ? new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+    (docType === "TWS" ? twsDefaultDate()
       : new Date().toISOString().slice(0, 10))
   );
   const [activities, setActivities] = useState(payload.activities?.length
@@ -185,7 +200,10 @@ export function QAForm({ docType, site, project, projects = [], existing,
                     gap: 12, marginTop: 16 }}>
         <label style={{ fontSize: 13 }}>
           {docType === "TWS" ? "Schedule for (date)" : "Date"}
-          <input type="date" value={docDate} disabled={!!existing}
+          {/* TWS date stays editable on a draft so a late-night entry can be
+              corrected to the right day (owner 2026-07-14) */}
+          <input type="date" value={docDate}
+                 disabled={!!existing && docType !== "TWS"}
                  onChange={(e) => setDocDate(e.target.value)}
                  style={inputStyle} />
         </label>

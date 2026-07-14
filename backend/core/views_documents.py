@@ -308,15 +308,16 @@ def document_detail(request, ref):
                 return Response({"detail": error}, status=400)
         save_lines(revision, request.data["lines"],
                    previous_revision=_previous_revision(doc))
-    if "doc_date" in request.data and doc.doc_type == "DPR":
+    if "doc_date" in request.data and doc.doc_type in ("DPR", "TWS", "DMA"):
+        # one per site per day — re-dating a draft must not collide
         clash = Document.objects.filter(
-            doc_type="DPR", site=doc.site, doc_date=request.data["doc_date"],
-            is_void=False,
+            doc_type=doc.doc_type, site=doc.site,
+            doc_date=request.data["doc_date"], is_void=False,
         ).exclude(pk=doc.pk).first()
         if clash:
             return Response(
-                {"detail": f"{clash.ref} already exists for that date."}, status=400
-            )
+                {"detail": f"{clash.ref} already exists for that date."},
+                status=400)
         doc.doc_date = request.data["doc_date"]
         doc.save(update_fields=["doc_date"])
     elif "doc_date" in request.data:
@@ -641,6 +642,10 @@ def approvals_pending(request):
         add("To review — PM-approved import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="PM_APPROVED")),
                  "Review the requirement before the Director sizes it"))
+        add("To order — sized & released import requests (PMR)",
+            rows(base.filter(doc_type="PMR",
+                             status__in=("SIZED_RELEASED", "SOURCING")),
+                 "Raise the overseas order (IPR) for this requirement"))
     if user.role in ("FINANCE", "HO_PURCHASING", "ADMIN"):
         add("Payments pending — authorised PRs",
             rows(scoped(base.filter(doc_type="PR",
@@ -1516,6 +1521,7 @@ def dashboard_ho(request):
     if not request.user.is_ho:
         return Response({"detail": "HO roles only."}, status=403)
     base = Document.objects.filter(is_void=False)
+    pmr = base.filter(doc_type="PMR")
     return Response({
         "mrs_awaiting_action": base.filter(doc_type="MR",
                                            status="SENT_TO_HO").count(),
@@ -1527,6 +1533,11 @@ def dashboard_ho(request):
         "pending_items_open": PendingItem.objects.filter(status="PENDING").count(),
         "grn_shortages": base.filter(doc_type="GRN",
                                      status="SHORTAGE_REPORTED").count(),
+        # Import requests (PMR) in flight (owner 2026-07-14)
+        "pmrs_to_review": pmr.filter(status="PM_APPROVED").count(),
+        "pmrs_to_size": pmr.filter(status="HO_REVIEWED").count(),
+        "pmrs_pending_order": pmr.filter(
+            status__in=["SIZED_RELEASED", "SOURCING"]).count(),
     })
 
 

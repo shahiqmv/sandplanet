@@ -62,6 +62,7 @@ urlpatterns = [
     path("ipr/context", imports_api.ipr_context, name="ipr-context"),
     path("imports/tracker", imports_api.imports_tracker,
          name="imports-tracker"),
+    path("pmr/register", imports_api.pmr_register, name="pmr-register"),
     path("ipr/<str:ref>/proforma", imports_api.ipr_proforma_upload,
          name="ipr-proforma"),
     path("ipr/payments-due", imports_api.ipr_payments_due,

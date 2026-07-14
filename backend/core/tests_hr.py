@@ -205,6 +205,22 @@ class OtAndLockTests(HrBase):
         r = self.save_attendance(day, ot=1)
         self.assertEqual(r.status_code, 200)
 
+    def test_site_pm_can_reopen_own_month(self):
+        """A site PM may unlock a month it locked by mistake (owner
+        2026-07-14)."""
+        day = working_day(self.site)
+        self.save_attendance(day)
+        self.as_user(self.pm)
+        self.client.post(f"/api/v1/timesheets/{self.site.id}/"
+                         f"{day.year}/{day.month}/lock")
+        r = self.client.post(f"/api/v1/timesheets/{self.site.id}/"
+                             f"{day.year}/{day.month}/reopen",
+                             {"reason": "locked by mistake"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "OPEN")
+        # edits work again
+        self.assertEqual(self.save_attendance(day, ot=1).status_code, 200)
+
     def test_lock_is_pm_gated(self):
         day = working_day(self.site)
         self.as_user(self.sa)  # a site admin cannot sign off the month

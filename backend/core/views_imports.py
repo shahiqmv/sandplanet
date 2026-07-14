@@ -675,6 +675,66 @@ def ipr_payments_due(request):
     return Response(rows)
 
 
+PMR_REGISTER_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",
+                      "QS", "ADMIN")
+# Ordered PMR pipeline for age/next-step display
+PMR_STAGE_ORDER = ["DRAFT", "SUBMITTED", "PM_APPROVED", "HO_REVIEWED",
+                   "SIZED_RELEASED", "SOURCING", "ORDERED", "RECEIVED",
+                   "CLOSED"]
+PMR_NEXT_ACTION = {
+    "SUBMITTED": "Site PM to approve",
+    "PM_APPROVED": "HO Purchasing to review",
+    "HO_REVIEWED": "Director to size & release",
+    "SIZED_RELEASED": "HO Purchasing to raise the overseas order",
+    "SOURCING": "HO Purchasing — order in progress",
+    "ORDERED": "On an overseas order — in the import pipeline",
+    "RECEIVED": "Received at store",
+}
+
+
+@api_view(["GET"])
+def pmr_register(request):
+    """Register of Project Material Requisitions for HO / Purchasing / Director
+    to track — especially those sized-and-released but not yet ordered
+    (owner 2026-07-14). ?filter=pending_order | open | <status>."""
+    if request.user.role not in PMR_REGISTER_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    from datetime import date
+
+    qs = Document.objects.filter(doc_type="PMR", is_void=False).select_related(
+        "project", "site", "current_revision").order_by("-id")
+    flt = request.GET.get("filter")
+    if flt == "pending_order":
+        qs = qs.filter(status__in=("SIZED_RELEASED", "SOURCING"))
+    elif flt == "open":
+        qs = qs.exclude(status__in=("CLOSED", "CANCELLED", "REJECTED"))
+    elif flt:
+        qs = qs.filter(status=flt)
+    today = date.today()
+    rows = []
+    for d in qs[:300]:
+        rev = d.current_revision
+        payload = (rev.payload or {}) if rev else {}
+        lines = list(rev.lines.all()) if rev else []
+        ipr = d.links_to.filter(link_type="PMR_IPR").select_related(
+            "from_document").first()
+        rows.append({
+            "ref": d.ref, "status": d.status,
+            "project": d.project.code if d.project_id else None,
+            "site": d.site.code, "discipline": payload.get("discipline", ""),
+            "justification": payload.get("justification", ""),
+            "lines_count": len(lines),
+            "items": [{"description": ln.description, "qty": ln.qty_required,
+                       "unit": ln.unit, "spec": ln.spec} for ln in lines[:8]],
+            "doc_date": d.doc_date,
+            "days_open": (today - d.doc_date).days if d.doc_date else None,
+            "pending_order": d.status in ("SIZED_RELEASED", "SOURCING"),
+            "next_action": PMR_NEXT_ACTION.get(d.status, ""),
+            "ipr_ref": ipr.from_document.ref if ipr else None,
+        })
+    return Response(rows)
+
+
 @api_view(["GET"])
 def imports_tracker(request):
     """One row per overseas order with its live stage across the pipeline

@@ -70,6 +70,34 @@ class PmrWorkflowTests(PmrBase):
         self.assertEqual((doc.current_revision.payload or {})
                          .get("sizing", {}).get("note"), "Order 10 (MOQ)")
 
+    def test_pmr_register_and_dashboard_flag_pending_order(self):
+        """A sized-and-released PMR shows as pending-order in the register and
+        the HO dashboard (owner 2026-07-14)."""
+        pmr = self.create_pmr()
+        ref = pmr["ref"]
+
+        def act(user, action, **body):
+            self.client.force_authenticate(user)
+            return self.client.post(
+                f"/api/v1/documents/{ref}/actions/{action}", body,
+                format="json")
+        act(self.sa, "submit")
+        act(self.pm, "approve")
+        act(self.ho, "ho-review")
+        act(self.director, "size-release", comment="Order 10")
+
+        self.client.force_authenticate(self.ho)
+        reg = self.client.get("/api/v1/pmr/register?filter=pending_order").data
+        row = next(r for r in reg if r["ref"] == ref)
+        self.assertTrue(row["pending_order"])
+        self.assertIn("order", row["next_action"].lower())
+        dash = self.client.get("/api/v1/dashboards/ho").data
+        self.assertEqual(dash["pmrs_pending_order"], 1)
+        # site staff cannot see the register
+        self.client.force_authenticate(self.sa)
+        self.assertEqual(
+            self.client.get("/api/v1/pmr/register").status_code, 403)
+
     def test_wrong_role_cannot_advance(self):
         pmr = self.create_pmr()
         ref = pmr["ref"]

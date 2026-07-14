@@ -61,6 +61,9 @@ def targets_for(doc):
         return [(u, "to review") for u in _role_users("HO_PURCHASING")]
     if t == "PMR" and s == "HO_REVIEWED":
         return [(u, "to size & release") for u in _role_users("DIRECTOR")]
+    if t == "PMR" and s == "SIZED_RELEASED":
+        # sized & released — Purchasing must now place the overseas order
+        return [(u, "to order") for u in _role_users("HO_PURCHASING")]
     if t == "DPR" and s == "ISSUED":
         return [(u, "to verify") for u in _pm_for(doc)]
     if t == "GRN" and s == "COUNTED":

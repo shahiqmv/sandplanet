@@ -83,6 +83,23 @@ export default function AttendancePage({ site, me, onClose }) {
     }
   }
 
+  async function unlockMonth() {
+    const [y, m] = day.split("-");
+    const reason = window.prompt("Reopen this month for edits — reason "
+      + "(e.g. locked by mistake):");
+    if (reason === null) return;
+    if (!reason.trim()) { setError("A reason is required to reopen."); return; }
+    setError(null);
+    try {
+      await api(`/timesheets/${site.id}/${+y}/${+m}/reopen`,
+        { method: "POST", body: { reason: reason.trim() } });
+      setNotice("Month reopened — you can edit attendance again.");
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   const restDay = grid?.is_rest_day;
   const remarkOptions = restDay ? REST_REMARKS : NORMAL_REMARKS;
 
@@ -108,7 +125,8 @@ export default function AttendancePage({ site, me, onClose }) {
     return (
       <section style={card}>
         {header}
-        <Register site={site} />
+        <Register site={site} canEnter={canEnter}
+          onOpenDay={(dateStr) => { setDay(dateStr); setMode("day"); }} />
       </section>
     );
   }
@@ -134,11 +152,19 @@ export default function AttendancePage({ site, me, onClose }) {
         </p>
       )}
       {grid?.locked && (
-        <p style={{ background: "#fdeceb", borderRadius: 8,
-                    padding: "8px 12px", fontSize: 13 }}>
-          🔒 This month is signed off and locked. Corrections require an
-          HO HR reopen.
-        </p>
+        <div style={{ background: "#fdeceb", borderRadius: 8,
+                      padding: "8px 12px", fontSize: 13, display: "flex",
+                      alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+          <span>🔒 This month is signed off and locked.
+            {isPm ? " Reopen it if it was locked by mistake." : " Ask the "
+              + "site PM or HR to reopen it for corrections."}</span>
+          {isPm && (
+            <button onClick={unlockMonth}
+                    style={{ ...ghostButton, marginLeft: "auto",
+                             color: "#b35900" }}>
+              🔓 Unlock month</button>
+          )}
+        </div>
       )}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
@@ -232,12 +258,21 @@ const CODE_STYLE = {
   S: { bg: "#fff5e6", c: "#b35900" }, "½": { bg: "#f0f0f0", c: "#5a6b78" },
 };
 
-function Register({ site }) {
+function Register({ site, canEnter, onOpenDay }) {
   const nowD = new Date();
   const [year, setYear] = useState(nowD.getFullYear());
   const [month, setMonth] = useState(nowD.getMonth() + 1);
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+
+  const isPastMonth = year < nowD.getFullYear() ||
+    (year === nowD.getFullYear() && month < nowD.getMonth() + 1);
+  const isCurrentMonth = year === nowD.getFullYear() &&
+    month === nowD.getMonth() + 1;
+  const dayOpen = (dn) => canEnter && onOpenDay &&
+    (isPastMonth || (isCurrentMonth && dn <= (data?.today || 0)));
+  const dateStr = (dn) => `${year}-${String(month).padStart(2, "0")}-`
+    + `${String(dn).padStart(2, "0")}`;
 
   useEffect(() => {
     setError(null);
@@ -271,6 +306,11 @@ function Register({ site }) {
         </span>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {canEnter && onOpenDay && !data?.locked && (
+        <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 0" }}>
+          Tip: click any day column below to open that day and enter or fix
+          attendance (past days included).</p>
+      )}
 
       {data && (
         <div style={{ overflowX: "auto", marginTop: 10 }}>
@@ -278,13 +318,21 @@ function Register({ site }) {
             <thead><tr>
               <th style={{ ...th, position: "sticky", left: 0,
                            background: "#fff" }}>Employee</th>
-              {data.days.map((d) => (
-                <th key={d.day} style={{ ...dcell, fontWeight: 600,
+              {data.days.map((d) => {
+                const open = dayOpen(d.day);
+                return (
+                <th key={d.day}
+                    onClick={open ? () => onOpenDay(dateStr(d.day)) : undefined}
+                    style={{ ...dcell, fontWeight: 600,
                       background: d.rest ? "#eef4fb"
                         : d.day === data.today ? "#fff8e6" : "#f6f8fa",
-                      color: "#3a4750" }}
-                    title={d.dow}>{d.day}</th>
-              ))}
+                      color: open ? "var(--sp-navy)" : "#3a4750",
+                      cursor: open ? "pointer" : "default",
+                      textDecoration: open ? "underline" : "none" }}
+                    title={open ? `${d.dow} — click to enter attendance`
+                      : d.dow}>{d.day}</th>
+                );
+              })}
               <th style={{ ...th, textAlign: "right" }}>Pr</th>
               <th style={{ ...th, textAlign: "right" }}>Fr</th>
               <th style={{ ...th, textAlign: "right" }}>OT</th>

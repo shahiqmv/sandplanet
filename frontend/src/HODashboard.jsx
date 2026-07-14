@@ -5,7 +5,7 @@ import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
 
 export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
-                                      refresh }) {
+                                      onPmrRegister, refresh }) {
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("MR");
   const [rows, setRows] = useState([]);
@@ -52,6 +52,17 @@ export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
               tone={stats?.grn_shortages ? "alert" : "ok"}
               context={stats?.grn_shortages
                 ? "chase vendors within 24h" : "none open"} />
+        <div onClick={stats?.pmrs_pending_order && onPmrRegister
+               ? onPmrRegister : undefined}
+             style={{ cursor: stats?.pmrs_pending_order && onPmrRegister
+               ? "pointer" : "default" }}>
+          <Stat label="Import requests to order"
+                value={stats?.pmrs_pending_order ?? "–"}
+                tone={stats?.pmrs_pending_order ? "alert" : "ok"}
+                context={stats?.pmrs_pending_order
+                  ? "sized & released — raise the overseas order"
+                  : "none waiting"} />
+        </div>
       </section>
 
       <Eyebrow>Registers</Eyebrow>
