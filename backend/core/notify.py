@@ -1,27 +1,13 @@
 """Approval / attention notifications.
 
 When a document transitions into a state that blocks a specific person or role,
-we create a Notification for each target (surfaced by the in-app bell) and — if
-that user has a phone and external delivery is configured — push it by
-SMS/WhatsApp. Creating a notification must never break the transition that
-triggered it, so everything here is wrapped defensively.
-
-External delivery mirrors the email pattern: it is a no-op until the provider
-env vars are set, so nothing is sent in dev or before Twilio is configured.
-Configure in the environment (.env):
-    NOTIFY_PROVIDER=twilio
-    TWILIO_ACCOUNT_SID=AC...
-    TWILIO_AUTH_TOKEN=...
-    TWILIO_FROM=+9607...            (or a WhatsApp sender)
-    TWILIO_CHANNEL=sms             (or "whatsapp")
+we create a Notification for each target, surfaced by the in-app bell (and,
+once Planet Mobile ships, delivered by web push). Creating a notification must
+never break the transition that triggered it, so everything here is wrapped
+defensively. (The SMS/WhatsApp delivery track was dropped — superseded by the
+mobile companion, owner 2026-07-14.)
 """
 import logging
-import os
-import urllib.parse
-import urllib.request
-from base64 import b64encode
-
-from django.utils import timezone
 
 from .models import Notification, User
 
@@ -107,12 +93,11 @@ def notify_document(doc, actor=None):
                     recipient=user, doc_ref=doc.ref, doc_status=doc.status,
                     read_at__isnull=True).exists():
                 continue
-            n = Notification.objects.create(
+            Notification.objects.create(
                 recipient=user,
                 title=f"{doc.doc_type} {doc.ref} {hint}",
                 body=_body(doc), doc_ref=doc.ref, doc_type=doc.doc_type,
                 doc_status=doc.status)
-            _dispatch_external(n, user)
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_document failed for %s", getattr(doc, "ref", "?"))
 
@@ -120,59 +105,11 @@ def notify_document(doc, actor=None):
 def notify_user(user, title, body="", doc=None, category="alert"):
     """Ad-hoc notification (e.g. an import payment falling due)."""
     try:
-        n = Notification.objects.create(
+        return Notification.objects.create(
             recipient=user, title=title, body=body, category=category,
             doc_ref=getattr(doc, "ref", "") or "",
             doc_type=getattr(doc, "doc_type", "") or "",
             doc_status=getattr(doc, "status", "") or "")
-        _dispatch_external(n, user)
-        return n
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_user failed")
         return None
-
-
-# ---- External delivery (SMS / WhatsApp via Twilio) -----------------------
-
-def _twilio_config():
-    sid = os.environ.get("TWILIO_ACCOUNT_SID")
-    token = os.environ.get("TWILIO_AUTH_TOKEN")
-    sender = os.environ.get("TWILIO_FROM")
-    if not (sid and token and sender):
-        return None
-    channel = (os.environ.get("TWILIO_CHANNEL") or "sms").lower()
-    return {"sid": sid, "token": token, "from": sender, "channel": channel}
-
-
-def _dispatch_external(notification, user):
-    """Send the notification by SMS/WhatsApp if the user opted in, has a phone,
-    and a provider is configured. No-op otherwise."""
-    if not user.notify_external or not user.phone:
-        return
-    cfg = _twilio_config()
-    if not cfg:
-        return
-    try:
-        _twilio_send(cfg, user.phone,
-                     f"{notification.title}\n{notification.body}".strip())
-        notification.external_sent_at = timezone.now()
-        notification.save(update_fields=["external_sent_at"])
-    except Exception:                       # pragma: no cover - network
-        log.exception("SMS/WhatsApp send failed for %s", user.username)
-
-
-def _twilio_send(cfg, to_phone, message):
-    prefix = "whatsapp:" if cfg["channel"] == "whatsapp" else ""
-    data = urllib.parse.urlencode({
-        "From": f"{prefix}{cfg['from']}",
-        "To": f"{prefix}{to_phone}",
-        "Body": message,
-    }).encode()
-    url = (f"https://api.twilio.com/2010-04-01/Accounts/{cfg['sid']}"
-           f"/Messages.json")
-    auth = b64encode(f"{cfg['sid']}:{cfg['token']}".encode()).decode()
-    req = urllib.request.Request(url, data=data, method="POST")
-    req.add_header("Authorization", f"Basic {auth}")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=8) as resp:  # noqa: S310
-        return resp.status

@@ -122,61 +122,6 @@ def auth_change_password(request):
     return Response({"detail": "Password updated."})
 
 
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
-def auth_notification_settings(request):
-    """Self-service: a signed-in user sets their own mobile + SMS/WhatsApp
-    opt-in for approval alerts (owner 2026-07-14)."""
-    user = request.user
-    if "phone" in request.data:
-        user.phone = (request.data.get("phone") or "").strip()[:20]
-    if "notify_external" in request.data:
-        user.notify_external = bool(request.data.get("notify_external"))
-    user.save(update_fields=["phone", "notify_external"])
-    return Response({"phone": user.phone,
-                     "notify_external": user.notify_external})
-
-
-@api_view(["GET"])
-@permission_classes([IsAdmin])
-def notify_config(request):
-    """Whether external SMS/WhatsApp delivery is configured (env vars set)."""
-    from .notify import _twilio_config
-
-    cfg = _twilio_config()
-    return Response({"configured": bool(cfg),
-                     "channel": cfg["channel"] if cfg else None,
-                     "sender": cfg["from"] if cfg else None})
-
-
-@api_view(["POST"])
-@permission_classes([IsAdmin])
-def notify_test(request):
-    """Send a one-off test message so the owner can confirm Twilio is wired up
-    without waiting for a real approval to fire."""
-    from .notify import _twilio_config, _twilio_send
-
-    cfg = _twilio_config()
-    if not cfg:
-        return Response({"detail": "SMS/WhatsApp isn't configured yet — set "
-                         "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM "
-                         "in the server environment (.env), then redeploy."},
-                        status=400)
-    to = (request.data.get("phone") or request.user.phone or "").strip()
-    if not to:
-        return Response({"detail": "Enter a mobile number to send the test to."},
-                        status=400)
-    try:
-        _twilio_send(cfg, to, "Sand Planet: test alert. If you got this, "
-                     "SMS/WhatsApp notifications are working.")
-    except Exception as exc:                       # pragma: no cover - network
-        return Response({"detail": f"Send failed — {exc}"}, status=502)
-    audit("user", request.user.id, "NOTIFY_TEST_SENT", actor=request.user,
-          detail={"to": to, "channel": cfg["channel"]})
-    return Response({"detail": f"Test message sent to {to} "
-                     f"via {cfg['channel']}."})
-
-
 # ===== Sites =====
 
 
