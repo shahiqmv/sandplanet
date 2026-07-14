@@ -309,6 +309,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         item_id: l.item_id, free_text: !l.item_id,
         free_text_desc: l.free_text_desc, unit: l.unit,
         qty_manifest: l.qty_manifest, qty_received: l.qty_received,
+        fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
         remarks: l.remarks,
       })));
     }).catch((e) => setError(e.message));
@@ -324,6 +325,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       urgent_reason: l.urgent_reason, vendor: l.vendor,
       quotation_ref: l.quotation_ref, payment_terms: l.payment_terms,
       amount_cash: l.amount_cash, amount_credit: l.amount_credit,
+      fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
       remarks: l.remarks,
     })) || [{ ...LINE_DEFAULTS[docType] }]
   );
@@ -386,6 +388,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         urgent_reason: r.urgent_reason, vendor: r.vendor,
         quotation_ref: r.quotation_ref, payment_terms: r.payment_terms,
         amount_cash: r.amount_cash, amount_credit: r.amount_credit,
+        fulfil_source: r.fulfil_source, store_issue_line: r.store_issue_line,
         remarks: r.remarks,
       }));
   }
@@ -785,10 +788,22 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         item_id: l.item || null,
         free_text_desc: l.free_text_desc || "",
         unit: l.unit || "",
+        fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
         desc: l.item_code ? `${l.item_code} — ${l.description}`
           : (l.description || l.free_text_desc),
         qty_loaded: l.qty_loaded ?? "", qty_pending: l.qty_pending ?? "" })),
     });
+  }
+  async function loadStore() {
+    setError(null);
+    try {
+      const fresh = await api(`/documents/${doc.ref}/load-store`,
+        { method: "POST" });
+      setDoc(fresh);
+      window.alert(`Loaded ${fresh.loaded_store_lines ?? 0} store item line(s) `
+        + "onto the manifest. The site receives them on the GRN.");
+      onChanged?.();
+    } catch (e) { setError(e.message); }
   }
   async function saveManifest() {
     setError(null);
@@ -800,7 +815,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           lines: editLm.lines.map((l) => ({
             item_id: l.item_id, free_text_desc: l.free_text_desc,
             unit: l.unit, qty_loaded: l.qty_loaded,
-            qty_pending: l.qty_pending })),
+            qty_pending: l.qty_pending,
+            fulfil_source: l.fulfil_source,
+            store_issue_line: l.store_issue_line })),
         },
       });
       setDoc(fresh); setEditLm(null); onChanged?.();
@@ -907,6 +924,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           <button onClick={startEditLm} style={ghostButton}
                   title="Fix a data-entry mistake before the site raises a GRN">
             ✏️ Fix manifest</button>
+        )}
+        {doc.can_edit_manifest && doc.loadable_store_count > 0 && (
+          <button onClick={loadStore} style={buttonStyle}
+                  title="Add the site's issued store items to this manifest">
+            🏬 Load {doc.loadable_store_count} store item(s)</button>
         )}
         {canAmend && <button onClick={amend} style={buttonStyle}>
           Amend (new revision)</button>}
@@ -1181,6 +1203,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                         {line.is_free_text && (
                           <span style={{ color: "#b35900", fontSize: 11,
                                          fontWeight: 700 }}> NEW ITEM</span>
+                        )}
+                        {line.fulfil_source === "STORE" && (
+                          <span title="Issued from HO store (SIN)"
+                                style={{ marginLeft: 6, fontSize: 10.5,
+                                  fontWeight: 700, color: "#8a6d00",
+                                  background: "#fff4e0", padding: "1px 6px",
+                                  borderRadius: 10 }}>FROM STORE</span>
                         )}
                         {line.is_changed && (
                           <span style={{ color: "#b35900", fontSize: 11,

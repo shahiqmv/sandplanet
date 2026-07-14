@@ -141,6 +141,8 @@ urlpatterns = [
          name="document-attachments"),
     path("documents/<str:ref>/edit-manifest", docs.lm_edit,
          name="lm-edit"),
+    path("documents/<str:ref>/load-store", docs.lm_load_store,
+         name="lm-load-store"),
     path("documents/<str:ref>/revisions", docs.document_revise,
          name="document-revise"),
     path("registers/dpr-tws", docs.register_dpr_tws, name="register-dpr-tws"),

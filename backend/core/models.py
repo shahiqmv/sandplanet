@@ -586,6 +586,12 @@ class DocumentLine(models.Model):
     # How an MR line is fulfilled (P1B-f): blank = local purchase (PR);
     # "STORE" = issued from HO store stock via a SIN (owner 2026-07-13).
     fulfil_source = models.CharField(max_length=8, blank=True)
+    # An LM/GRN line that carries a store-issued item points back to its SIN
+    # line, so the site GRN can receive it and post INCURRED at landed cost in
+    # the same combined receipt (owner 2026-07-14, P1B-f3).
+    store_issue_line = models.ForeignKey("StoreIssueLine",
+                                         on_delete=models.PROTECT, null=True,
+                                         blank=True, related_name="+")
     rate = models.DecimalField(max_digits=14, decimal_places=2,  # PO lines (R2)
                                null=True, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2,
@@ -1081,6 +1087,10 @@ class StoreIssueLine(models.Model):
                             related_name="issue_lines")
     qty = models.DecimalField(max_digits=12, decimal_places=2)
     unit_landed_cost = models.DecimalField(max_digits=16, decimal_places=4)
+    # How much has been received at site (via a GRN or a direct SIN receipt) —
+    # the single guard against posting the cost twice (P1B-f3).
+    received_qty = models.DecimalField(max_digits=12, decimal_places=2,
+                                       default=0)
 
     @property
     def value(self):

@@ -81,6 +81,8 @@ def save_lines(revision, lines_data, previous_revision=None):
             is_changed=is_changed,
             spec=data.get("spec") or "",
             mar_ref=data.get("mar_ref") or "",
+            fulfil_source=data.get("fulfil_source") or "",
+            store_issue_line_id=data.get("store_issue_line") or None,
             remarks=data.get("remarks") or "",
         ))
     return created
@@ -199,8 +201,10 @@ def on_grn_verified(grn, actor):
     received quantities — tool-category items become individual assets on the
     site Tools & Equipment register; everything else adds to site stock."""
     from . import stock, tools  # local import to avoid a cycle at module load
+    from .imports import receive_store_issue_line
 
-    lines = list(grn.current_revision.lines.all())
+    lines = list(grn.current_revision.lines.select_related(
+        "item", "store_issue_line").all())
     shortage = any(
         (line.qty_received or 0) < (line.qty_manifest or 0) for line in lines
     )
@@ -209,7 +213,13 @@ def on_grn_verified(grn, actor):
                    actor, "LM_RECEIVED")
 
     for line in lines:
-        if not (line.item_id and (line.qty_received or 0) > 0):
+        qty = line.qty_received or 0
+        # A store-issued line becomes project cost here — INCURRED at landed
+        # cost, and its SIN advances to Received (P1B-f3).
+        if line.store_issue_line_id and qty > 0:
+            receive_store_issue_line(line.store_issue_line, qty, grn.site, grn,
+                                     actor)
+        if not (line.item_id and qty > 0):
             continue
         if tools.is_tool_item(line.item):
             tools.create_from_grn(grn, line, line.qty_received, actor)
@@ -230,6 +240,10 @@ def grn_lines_from_lm(lm):
             "unit": line.unit,
             "qty_manifest": float(line.qty_loaded) if line.qty_loaded else 0,
             "qty_received": None,
+            # carry a store-issued line through so the GRN can receive it and
+            # post its landed cost (P1B-f3)
+            "fulfil_source": line.fulfil_source or "",
+            "store_issue_line": line.store_issue_line_id,
             "remarks": "",
         })
     return rows

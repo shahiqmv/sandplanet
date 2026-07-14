@@ -726,3 +726,64 @@ class MrFromStoreTests(IprBase):
         inc = CostPosting.objects.filter(site=self.site, state="INCURRED",
                                          source="STORE_ISSUE")
         self.assertEqual(float(sum(x.amount for x in inc)), 4500.0)
+
+
+class StoreOnManifestTests(MrFromStoreTests):
+    """Store items ride the LM and are received on ONE combined GRN, posting
+    INCURRED at landed cost (owner 2026-07-14, P1B-f3)."""
+
+    def test_store_line_on_lm_incurred_at_grn_no_double_count(self):
+        from .models import CostPosting, StockLot, StoreIssueLine, User as U
+        from .tests import make_user
+        se = make_user("se_store", U.Role.SITE_ENGINEER, site=self.site)
+        self._stock()
+        mr = self._mr(qty_to_order=3)
+        line_id = mr["lines"][0]["id"]
+        self.client.force_authenticate(self.ho)
+        sin = self.client.post(f"/api/v1/mr/{mr['ref']}/store-fulfil",
+                               {"line_ids": [line_id]}, format="json").data
+        lm = self.client.post("/api/v1/documents", {
+            "doc_type": "LM", "site_id": self.site.id,
+            "mr_refs": [mr["ref"]], "lines": []}, format="json").data
+        loaded = self.client.post(f"/api/v1/documents/{lm['ref']}/load-store",
+                                  {}, format="json")
+        self.assertEqual(loaded.status_code, 200, loaded.data)
+        self.assertEqual(loaded.data["loaded_store_lines"], 1)
+        self.client.post(f"/api/v1/documents/{lm['ref']}/actions/depart", {},
+                         format="json")
+
+        self.client.force_authenticate(self.sa)
+        grn = self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id,
+            "lm_ref": lm["ref"]}, format="json").data
+        gline = grn["lines"][0]
+        self.assertEqual(gline["fulfil_source"], "STORE")
+        # count received in full — echo the store link, as the UI does
+        self.client.patch(f"/api/v1/documents/{grn['ref']}", {"lines": [{
+            "item_id": self.item.id, "qty_manifest": gline["qty_manifest"],
+            "qty_received": 3, "fulfil_source": "STORE",
+            "store_issue_line": gline["store_issue_line"]}]}, format="json")
+        self.client.post(f"/api/v1/documents/{grn['ref']}/actions/count", {},
+                         format="json")
+        self.client.force_authenticate(se)
+        v = self.client.post(f"/api/v1/documents/{grn['ref']}/actions/verify",
+                             {}, format="json")
+        self.assertEqual(v.data["status"], "COMPLETE", v.data)
+
+        inc = CostPosting.objects.filter(site=self.site, state="INCURRED",
+                                         source="STORE_ISSUE")
+        self.assertEqual(float(sum(x.amount for x in inc)), 4500.0)   # 3 @ 1500
+        general = StockLot.objects.get(item=self.item, project__isnull=True)
+        self.assertEqual(float(general.qty_in_transit), 0.0)
+        self.assertEqual(Document.objects.get(ref=sin["ref"]).status,
+                         "RECEIVED")
+        self.assertEqual(float(StoreIssueLine.objects.get(
+            issue__document__ref=sin["ref"]).received_qty), 3.0)
+
+        # a direct SIN receipt afterwards must not double-post
+        self.client.force_authenticate(self.sa)
+        self.client.post(f"/api/v1/sin/{sin['ref']}/receive", {},
+                         format="json")
+        again = CostPosting.objects.filter(site=self.site, state="INCURRED",
+                                           source="STORE_ISSUE")
+        self.assertEqual(float(sum(x.amount for x in again)), 4500.0)

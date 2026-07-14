@@ -280,6 +280,9 @@ def pr_coverage_data(pr):
     rows = []
     for mr in mr_docs:
         for line in mr.current_revision.lines.select_related("item"):
+            # store-fulfilled lines are covered by a SIN, not a quote (P1B-f3)
+            if line.fulfil_source == "STORE":
+                continue
             quote_lines = matches.get(line.id, [])
             rows.append({
                 "mr_ref": mr.ref,

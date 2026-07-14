@@ -75,11 +75,18 @@ def _serialize(doc, request):
     data = DocumentSerializer(doc, context={"request": request}).data
     if doc.doc_type == "LM":
         # Purchasing may correct a manifest until a GRN is raised against it
-        data["can_edit_manifest"] = (
+        editable = (
             request.user.role in ("HO_PURCHASING", "ADMIN")
             and not doc.is_void
             and doc.status not in ("RECEIVED", "RECEIVED_WITH_SHORTAGE")
             and not doc.links_to.filter(link_type="LM_GRN").exists())
+        data["can_edit_manifest"] = editable
+        # How many issued store lines could still be loaded onto this manifest
+        if editable:
+            from .imports import loadable_store_lines
+            data["loadable_store_count"] = len(loadable_store_lines(doc))
+        else:
+            data["loadable_store_count"] = 0
     return data
 
 
@@ -420,6 +427,32 @@ def lm_edit(request, ref):
           detail={"ref": doc.ref})
     doc.refresh_from_db()
     return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def lm_load_store(request, ref):
+    """Load the site's issued store items (SINs) onto this Loading Manifest so
+    they travel with the purchased goods and are received on one GRN
+    (owner 2026-07-14, P1B-f3)."""
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if doc.doc_type != "LM":
+        return Response({"detail": "This applies to Loading Manifests."},
+                        status=400)
+    if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+        return Response({"detail": "Head-Office Purchasing loads the "
+                                   "manifest."}, status=403)
+    if doc.is_void or doc.status in ("RECEIVED", "RECEIVED_WITH_SHORTAGE") \
+            or doc.links_to.filter(link_type="LM_GRN").exists():
+        return Response({"detail": "This manifest can no longer be edited."},
+                        status=400)
+    from .imports import load_store_issues_onto_lm
+    n = load_store_issues_onto_lm(doc, request.user)
+    doc.refresh_from_db()
+    data = _serialize(doc, request)
+    data["loaded_store_lines"] = n
+    return Response(data)
 
 
 # ===== Workflow actions =====

@@ -644,32 +644,96 @@ def cancel_store_issue(sin_doc, actor):
     return None
 
 
-@transaction.atomic
-def receive_store_issue(sin_doc, actor):
-    """The site receives a store issue — the import cost event (§5.10.11):
-    post INCURRED at landed cost to the destination project and clear the
-    in-transit balance on each lot. Store-issued goods carry no PR/PYR; this
-    receipt is where they become project cost."""
+def receive_store_issue_line(sil, qty, to_site, document, actor):
+    """Receive `qty` of a store-issued line at site — the import cost event
+    (§5.10.11): post INCURRED at landed cost, clear the lot's in-transit
+    balance, and advance the SIN once all its lines are received. Idempotent
+    via received_qty, so a GRN receipt and a direct SIN receipt never
+    double-post (P1B-f3). Returns the amount posted."""
     from . import costing
     from .models import CostHead
+    remaining = (sil.qty or ZERO) - (sil.received_qty or ZERO)
+    take = min(_dec(qty), remaining) if remaining > ZERO else ZERO
+    if take <= ZERO:
+        return ZERO
+    lot = sil.lot
+    lot.qty_in_transit = max(ZERO, (lot.qty_in_transit or ZERO) - take)
+    lot.save(update_fields=["qty_in_transit"])
+    sil.received_qty = (sil.received_qty or ZERO) + take
+    sil.save(update_fields=["received_qty"])
+    amount = (take * sil.unit_landed_cost).quantize(Decimal("0.01"))
+    if amount > ZERO:
+        costing.post(site=to_site, cost_head=CostHead.objects.get(
+            name="Materials"), state="INCURRED", source="STORE_ISSUE",
+            amount=amount, document=document, actor=actor)
+    sin = sil.issue
+    if all((ln.received_qty or ZERO) >= (ln.qty or ZERO)
+           for ln in sin.lines.all()):
+        doc = sin.document
+        if doc.status == "ISSUED":
+            doc.status = "RECEIVED"
+            doc.save(update_fields=["status", "updated_at"])
+            audit("document", doc.id, "SIN_RECEIVED", actor=actor,
+                  to_state="RECEIVED", detail={"ref": doc.ref,
+                                               "via": document.ref})
+    return amount
+
+
+@transaction.atomic
+def receive_store_issue(sin_doc, actor):
+    """Direct receipt of a whole SIN (for store issues not carried on an LM) —
+    receives every remaining line. Store issues loaded onto a Loading Manifest
+    are received on the site GRN instead (P1B-f3)."""
     if sin_doc.status != "ISSUED":
         return "Only an issued SIN can be received."
-    issue = sin_doc.store_issue
-    materials = CostHead.objects.get(name="Materials")
-    for line in issue.lines.select_related("lot"):
-        lot = line.lot
-        lot.qty_in_transit = max(ZERO, (lot.qty_in_transit or ZERO) - line.qty)
-        lot.save(update_fields=["qty_in_transit"])
-        amount = (line.qty * line.unit_landed_cost).quantize(Decimal("0.01"))
-        if amount > ZERO:
-            costing.post(site=issue.to_site, cost_head=materials,
-                         state="INCURRED", source="STORE_ISSUE", amount=amount,
-                         document=sin_doc, actor=actor)
-    sin_doc.status = "RECEIVED"
-    sin_doc.save(update_fields=["status", "updated_at"])
-    audit("document", sin_doc.id, "SIN_RECEIVED", actor=actor,
-          to_state="RECEIVED", detail={"ref": sin_doc.ref})
+    for line in sin_doc.store_issue.lines.select_related("lot"):
+        remaining = (line.qty or ZERO) - (line.received_qty or ZERO)
+        if remaining > ZERO:
+            receive_store_issue_line(line, remaining, sin_doc.store_issue.to_site,
+                                     sin_doc, actor)
     return None
+
+
+def loadable_store_lines(lm):
+    """Issued SIN lines bound for the LM's site, not yet loaded onto a live LM
+    nor received — available to load onto this manifest (P1B-f3)."""
+    from django.db.models import F
+
+    from .models import DocumentLine, StoreIssueLine
+    on_lm = set(DocumentLine.objects.filter(
+        store_issue_line__isnull=False, revision__document__doc_type="LM",
+        revision__document__is_void=False).values_list(
+        "store_issue_line_id", flat=True))
+    qs = StoreIssueLine.objects.filter(
+        issue__document__doc_type="SIN", issue__document__status="ISSUED",
+        issue__to_site=lm.site).select_related(
+        "lot__item", "issue__document").exclude(
+        id__in=on_lm).filter(received_qty__lt=F("qty"))
+    return list(qs)
+
+
+@transaction.atomic
+def load_store_issues_onto_lm(lm, actor):
+    """Append every loadable store-issued line for the LM's site to the
+    manifest as store lines (P1B-f3)."""
+    from django.db.models import Max
+
+    from .models import DocumentLine
+    lines = loadable_store_lines(lm)
+    if not lines:
+        return 0
+    rev = lm.current_revision
+    start = rev.lines.aggregate(m=Max("line_no"))["m"] or 0
+    for i, sil in enumerate(lines, 1):
+        remaining = (sil.qty or ZERO) - (sil.received_qty or ZERO)
+        DocumentLine.objects.create(
+            revision=rev, line_no=start + i, item=sil.lot.item,
+            free_text_desc=sil.lot.free_text_desc, unit=sil.lot.unit,
+            qty_loaded=remaining, qty_pending=ZERO,
+            fulfil_source="STORE", store_issue_line=sil)
+    audit("document", lm.id, "LM_STORE_LOADED", actor=actor,
+          detail={"ref": lm.ref, "lines": len(lines)})
+    return len(lines)
 
 
 # ---- MR fulfilment from store (P1B-f2) -----------------------------------
