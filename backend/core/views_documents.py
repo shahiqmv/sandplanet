@@ -835,10 +835,11 @@ def _do_approve(request, doc, comment):
         if err is None:
             on_pr_approved(doc, request.user)
         return err
-    if doc.doc_type == "IPR":  # Director awards the order; commitment is next
-        # (a signatory authorises the order directly, §6C.2)
+    if doc.doc_type == "IPR":  # Director/QS awards the order; commitment is next
+        # (a signatory authorises the order directly, §6C.2). QS has the same
+        # overseas-procurement authority as the Director (owner 2026-07-14).
         err = _apply(request, doc, "APPROVED", "APPROVE",
-                     roles={"DIRECTOR"}, comment=comment)
+                     roles={"DIRECTOR", "QS"}, comment=comment)
         if err is None:
             from .imports import advance_linked_pmrs
             advance_linked_pmrs(doc, "ORDERED", request.user)
@@ -901,8 +902,8 @@ def _do_return(request, doc, comment):
         # HO staff at PM-Approved, Director at HO-Reviewed/Sized.
         roles = {"SUBMITTED": {"PM"},
                  "PM_APPROVED": {"HO_PURCHASING"},
-                 "HO_REVIEWED": {"DIRECTOR"},
-                 "SIZED_RELEASED": {"DIRECTOR"}}.get(doc.status, set())
+                 "HO_REVIEWED": {"DIRECTOR", "QS"},
+                 "SIZED_RELEASED": {"DIRECTOR", "QS"}}.get(doc.status, set())
         return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
     if doc.doc_type == "PR":
@@ -913,9 +914,9 @@ def _do_return(request, doc, comment):
         return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
     if doc.doc_type == "IPR":
-        # Director returns a submitted order for rework (no commitment yet)
+        # Director/QS returns a submitted order for rework (no commitment yet)
         return _apply(request, doc, "DRAFT", "RETURN",
-                      roles={"DIRECTOR", "HO_PURCHASING"}, comment=comment)
+                      roles={"DIRECTOR", "QS", "HO_PURCHASING"}, comment=comment)
     return Response({"detail": "Return applies to MR/PR/IR/MAR/IPR."},
                     status=400)
 
@@ -1107,7 +1108,7 @@ def _do_size_release(request, doc, comment):
     if doc.doc_type != "PMR":
         return Response({"detail": "size-release applies to PMR."}, status=400)
     err = _apply(request, doc, "SIZED_RELEASED", "SIZE_RELEASE",
-                 roles={"DIRECTOR"}, comment=comment)
+                 roles={"DIRECTOR", "QS"}, comment=comment)
     if err is None and comment.strip():
         _set_workflow_payload(doc.current_revision, "sizing", {
             "note": comment, "by": request.user.full_name,

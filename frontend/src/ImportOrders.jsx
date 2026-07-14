@@ -13,11 +13,12 @@ const money = (v) => num(v).toLocaleString(undefined, { maximumFractionDigits: 2
 // IPR workflow buttons (server is the authority)
 const ACTIONS = [
   ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
-  ["approve", "Award (Director)", ["SUBMITTED"], ["DIRECTOR", "ADMIN"]],
+  ["approve", "Award (Director/QS)", ["SUBMITTED"], ["DIRECTOR", "QS",
+                                                     "ADMIN"]],
   ["authorise", "Authorise order (Signatory)", ["APPROVED"],
    ["SIGNATORY", "ADMIN"]],
   ["return", "Return with comment", ["SUBMITTED", "APPROVED"],
-   ["DIRECTOR", "HO_PURCHASING", "ADMIN"], "comment"],
+   ["DIRECTOR", "QS", "HO_PURCHASING", "ADMIN"], "comment"],
   ["cancel", "Cancel", ["DRAFT", "SUBMITTED"], ["HO_PURCHASING", "ADMIN"],
    "comment"],
 ];

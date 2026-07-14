@@ -518,6 +518,63 @@ class SupplierCategoryTests(PmrBase):
         self.assertEqual(row["default_currency"], "USD")
 
 
+class QsOverseasAuthTests(IprBase):
+    """QS shares the Director's overseas-procurement authority: size-release
+    PMRs and award/return IPRs (owner 2026-07-14)."""
+
+    def setUp(self):
+        super().setUp()
+        self.qs = make_user("qs", User.Role.QS)
+
+    def _pmr_to_ho_reviewed(self):
+        pmr = self.create_pmr()
+        ref = pmr["ref"]
+
+        def act(user, action):
+            self.client.force_authenticate(user)
+            return self.client.post(
+                f"/api/v1/documents/{ref}/actions/{action}", {}, format="json")
+        act(self.sa, "submit")
+        act(self.pm, "approve")
+        act(self.ho, "ho-review")
+        return ref
+
+    def test_qs_can_size_release_pmr(self):
+        ref = self._pmr_to_ho_reviewed()
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/size-release",
+                             {"comment": "Order 10 (MOQ)"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SIZED_RELEASED")
+
+    def test_qs_can_award_and_view_ipr(self):
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        # QS can list and open overseas orders…
+        self.client.force_authenticate(self.qs)
+        self.assertEqual(self.client.get("/api/v1/ipr").status_code, 200)
+        # …and award (approve) one, exactly like the Director
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "APPROVED")
+
+    def test_site_role_still_cannot_award_ipr(self):
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.sa)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertIn(r.status_code, (403, 404))   # denied (can't see/award)
+        self.assertEqual(Document.objects.get(ref=ref).status, "SUBMITTED")
+
+
 class OpeningStockTests(PmrBase):
     """Seed the HO store with opening / manual stock without an import
     (owner 2026-07-14)."""

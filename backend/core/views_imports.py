@@ -19,7 +19,8 @@ from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ShipmentDocument, Site, StockLot, Supplier)
 from .serializers_documents import DocumentSerializer
 
-VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN")
+VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN",
+              "QS")  # QS shares the Director's overseas-procurement authority
 CREATE_ROLES = ("HO_PURCHASING", "ADMIN")
 PAY_ROLES = ("FINANCE", "ADMIN")
 
