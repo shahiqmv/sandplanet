@@ -509,6 +509,30 @@ class Attachment(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
 
+class MobileDevice(models.Model):
+    """A signed-in mobile (PWA) device holding a long-lived, sliding-expiry
+    token so approvers stay logged in ~30 days and can be revoked per device
+    from the desktop admin (owner 2026-07-14, R6 mobile companion)."""
+
+    IDLE_DAYS = 30
+
+    user = models.ForeignKey(User, on_delete=models.CASCADE,
+                             related_name="mobile_devices")
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    label = models.CharField(max_length=120, blank=True)   # user-agent hint
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now_add=True)
+    revoked = models.BooleanField(default=False)
+
+    @property
+    def is_active(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        return (not self.revoked and self.last_seen >=
+                timezone.now() - timedelta(days=self.IDLE_DAYS))
+
+
 # ===== Item master (spec §5.0) & procurement chain (§5.5–§5.8, §6) =====
 
 
