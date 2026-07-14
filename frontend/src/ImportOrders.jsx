@@ -91,13 +91,29 @@ function newLine() {
            allocations: [{ project_id: "", qty: "" }] };
 }
 
-function IprForm({ me, onSaved, onCancel }) {
+export function IprForm({ me, existing, onSaved, onCancel }) {
+  const o = existing?.order;
   const [ctx, setCtx] = useState(null);
-  const [hdr, setHdr] = useState({ supplier_id: "", order_currency: "USD",
+  const [hdr, setHdr] = useState(o ? {
+    supplier_id: String(o.supplier || ""), order_currency: o.order_currency,
+    exchange_rate: String(o.exchange_rate ?? ""), incoterm: o.incoterm || "",
+    loading_port: o.loading_port || "", discharge_port: o.discharge_port || "",
+    pi_ref: o.pi_ref || "", notes: o.notes || "",
+  } : { supplier_id: "", order_currency: "USD",
     exchange_rate: "", incoterm: "", loading_port: "", discharge_port: "",
     pi_ref: "", notes: "" });
-  const [pmrRefs, setPmrRefs] = useState([]);
-  const [lines, setLines] = useState([newLine()]);
+  const [pmrRefs, setPmrRefs] = useState(existing?.pmr_refs || []);
+  const [lines, setLines] = useState(o ? o.lines.map((l) => ({
+    ...newLine(), item_id: l.item || null,
+    free_text_desc: l.item ? "" : l.description, unit: l.unit || "",
+    spec: l.spec || "", order_qty: String(l.order_qty ?? ""),
+    unit_price: String(l.unit_price ?? ""),
+    cost_head_id: String(l.cost_head || ""), remarks: l.remarks || "",
+    allocations: l.allocations?.length
+      ? l.allocations.map((a) => ({ project_id: String(a.project || ""),
+                                    qty: String(a.qty ?? "") }))
+      : [{ project_id: "", qty: "" }],
+  })) : [newLine()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -147,6 +163,23 @@ function IprForm({ me, onSaved, onCancel }) {
     lines.reduce((a, l) => a + num(l.order_qty) * num(l.unit_price), 0), [lines]);
   const mvrTotal = orderTotal * num(hdr.exchange_rate);
 
+  // Promote a free-text "new item" line to a real catalog item, so it becomes
+  // a proper inventory item and can be amended in the Item Master (owner req).
+  async function addToCatalog(i) {
+    const l = lines[i];
+    const desc = (l._itemText ?? l.free_text_desc ?? "").trim();
+    if (!desc) return setError("Type the item description first.");
+    if (!l.unit) return setError("Enter the unit before adding to the catalog.");
+    setError(null);
+    try {
+      const item = await api("/items", { method: "POST",
+        body: { description: desc, unit: l.unit } });
+      setCtx((c) => ({ ...c, items: [...(c?.items || []), item] }));
+      setLine(i, { item_id: item.id, free_text_desc: "", unit: item.unit,
+        _itemText: `${item.code} — ${item.description}` });
+    } catch (e) { setError(e.message); }
+  }
+
   async function save() {
     setBusy(true); setError(null);
     try {
@@ -159,7 +192,9 @@ function IprForm({ me, onSaved, onCancel }) {
           allocations: l.allocations.map((a) => ({
             project_id: a.project_id || null, qty: a.qty })),
         })) };
-      const doc = await api("/ipr", { method: "POST", body });
+      const doc = existing
+        ? await api(`/ipr/${existing.ref}`, { method: "PATCH", body })
+        : await api("/ipr", { method: "POST", body });
       onSaved(doc.ref);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -172,7 +207,8 @@ function IprForm({ me, onSaved, onCancel }) {
   return (
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between" }}>
-        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>New International Order</h2>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
+          {existing ? `Edit order ${existing.ref}` : "New International Order"}</h2>
         <button onClick={onCancel} style={ghostButton}>Close</button>
       </div>
 
@@ -215,8 +251,8 @@ function IprForm({ me, onSaved, onCancel }) {
         </label>
       </div>
 
-      <SectionTitle>Demand — PMRs this order fulfils</SectionTitle>
-      {ctx.pmrs.length === 0 ? (
+      {!existing && <SectionTitle>Demand — PMRs this order fulfils</SectionTitle>}
+      {existing ? null : ctx.pmrs.length === 0 ? (
         <p style={{ fontSize: 13, color: "var(--muted)" }}>
           No sized-and-released import requests waiting to be ordered.</p>
       ) : (
@@ -285,6 +321,20 @@ function IprForm({ me, onSaved, onCancel }) {
                                padding: "2px 8px" }}>×</button>
             </div>
             <div style={{ marginTop: 6, paddingLeft: 8 }}>
+              {!l.item_id && (
+                <div style={{ marginBottom: 6 }}>
+                  <button onClick={() => addToCatalog(i)}
+                          title="Create a catalogue item from this description so
+                                 it becomes a proper inventory item"
+                          style={{ ...ghostButton, padding: "2px 10px",
+                                   fontSize: 12, color: "#b35900" }}>
+                    ＋ Add “{(l._itemText ?? l.free_text_desc ?? "").slice(0, 28)
+                      || "new item"}” to catalog</button>
+                  <span style={{ fontSize: 11, color: "#8a97a1",
+                                 marginLeft: 8 }}>
+                    new item — not yet in the catalogue</span>
+                </div>
+              )}
               <div style={{ fontSize: 11.5, color: "#5a6b78", marginBottom: 4 }}>
                 Allocate {money(l.order_qty)} {l.unit} · line value{" "}
                 {money(lineVal)} {hdr.order_currency}
@@ -333,14 +383,14 @@ function IprForm({ me, onSaved, onCancel }) {
       </p>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       <button onClick={save} disabled={busy} style={{ ...buttonStyle, marginTop: 8 }}>
-        {busy ? "Saving…" : "Save draft order"}</button>
+        {busy ? "Saving…" : existing ? "Save changes" : "Save draft order"}</button>
       {/* projById kept for future per-allocation labels */}
       <span style={{ display: "none" }}>{Object.keys(projById).length}</span>
     </section>
   );
 }
 
-export function IprView({ me, refIpr, onClose, onOpenIrn }) {
+export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
 
@@ -376,7 +426,13 @@ export function IprView({ me, refIpr, onClose, onOpenIrn }) {
                     alignItems: "baseline" }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
           {doc.ref} <StatusChip status={doc.status} /></h2>
-        <button onClick={onClose} style={ghostButton}>Close</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          {doc.status === "DRAFT" && doc.can_manage && onEdit && (
+            <button onClick={() => onEdit(doc)} style={buttonStyle}>
+              ✏️ Edit order</button>
+          )}
+          <button onClick={onClose} style={ghostButton}>Close</button>
+        </div>
       </div>
       <p style={{ color: "#5a6b78", fontSize: 13, margin: "6px 0 0" }}>
         {o.supplier_name}{o.supplier_country ? ` · ${o.supplier_country}` : ""}

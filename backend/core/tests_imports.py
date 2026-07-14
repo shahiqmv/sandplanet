@@ -518,6 +518,70 @@ class SupplierCategoryTests(PmrBase):
         self.assertEqual(row["default_currency"], "USD")
 
 
+class EditDraftIprTests(IprBase):
+    """A draft overseas order can be edited before submit, and free-text 'new
+    item' lines promoted to catalog items (owner 2026-07-14)."""
+
+    def _draft(self):
+        self.client.force_authenticate(self.ho)
+        return self.client.post("/api/v1/ipr", self.order_body(),
+                                format="json").data["ref"]
+
+    def test_edit_draft_line_description_and_rate(self):
+        ref = self._draft()
+        body = {"supplier_id": self.supplier.id, "order_currency": "USD",
+                "exchange_rate": "16", "incoterm": "CIF",
+                "lines": [{"free_text_desc": "Chilled-water pump (corrected)",
+                           "unit": "nos", "order_qty": 10, "unit_price": "120",
+                           "cost_head_id": self.head.id,
+                           "allocations": [{"project_id": None, "qty": 10}]}]}
+        r = self.client.patch(f"/api/v1/ipr/{ref}", body, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(float(r.data["order"]["exchange_rate"]), 16.0)
+        line = r.data["order"]["lines"][0]
+        self.assertEqual(line["description"], "Chilled-water pump (corrected)")
+        self.assertIsNone(line["item"])
+        self.assertEqual(float(line["order_qty"]), 10.0)
+
+    def test_promote_free_text_line_to_catalog_item(self):
+        from .models import Item
+        ref = self._draft()
+        self.client.force_authenticate(self.ho)
+        item = self.client.post("/api/v1/items",
+                                {"description": "Chilled-water pump 50 m3/h",
+                                 "unit": "nos"}, format="json").data
+        self.assertTrue(item["code"].startswith("ITM-"))   # now in the catalog
+        body = {"supplier_id": self.supplier.id, "order_currency": "USD",
+                "exchange_rate": "15",
+                "lines": [{"item_id": item["id"], "order_qty": 10,
+                           "unit_price": "100", "cost_head_id": self.head.id,
+                           "allocations": [{"project_id": None, "qty": 10}]}]}
+        r = self.client.patch(f"/api/v1/ipr/{ref}", body, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["order"]["lines"][0]["item"], item["id"])
+        self.assertTrue(Item.objects.filter(pk=item["id"]).exists())
+
+    def test_cannot_edit_after_submit(self):
+        ref = self._draft()
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        r = self.client.patch(f"/api/v1/ipr/{ref}",
+                              {"supplier_id": self.supplier.id,
+                               "exchange_rate": "16",
+                               "lines": self.order_body()["lines"]},
+                              format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_site_role_cannot_edit(self):
+        ref = self._draft()
+        self.client.force_authenticate(self.sa)
+        r = self.client.patch(f"/api/v1/ipr/{ref}",
+                              {"exchange_rate": "16",
+                               "lines": self.order_body()["lines"]},
+                              format="json")
+        self.assertIn(r.status_code, (403, 404))
+
+
 class QsOverseasAuthTests(IprBase):
     """QS shares the Director's overseas-procurement authority: size-release
     PMRs and award/return IPRs (owner 2026-07-14)."""

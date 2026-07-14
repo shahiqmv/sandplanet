@@ -121,6 +121,39 @@ def create_ipr(data, actor):
     return doc, None
 
 
+@transaction.atomic
+def update_ipr(doc, data, actor):
+    """Edit a DRAFT overseas order in place — header + lines (owner 2026-07-14).
+    Only a draft can be edited; nothing is committed yet, so replacing the lines
+    is safe. PMR demand links are left as they are."""
+    if doc.status != "DRAFT":
+        return None, "Only a draft order can be edited."
+    order = doc.import_order
+    if data.get("supplier_id"):
+        supplier = Supplier.objects.filter(pk=data["supplier_id"]).first()
+        if not supplier:
+            return None, "Choose the overseas supplier."
+        order.supplier = supplier
+    rate = _dec(data.get("exchange_rate"))
+    if rate <= ZERO:
+        return None, "Enter the agreed exchange rate (order currency → MVR)."
+    lines_data = data.get("lines") or []
+    err = _validate_lines(lines_data)
+    if err:
+        return None, err
+    order.order_currency = (data.get("order_currency")
+                            or order.order_currency)[:3].upper()
+    order.exchange_rate = rate
+    for f in ("incoterm", "loading_port", "discharge_port", "pi_ref", "notes"):
+        if f in data:
+            setattr(order, f, data.get(f) or "")
+    order.save()
+    _save_lines(order, lines_data)
+    audit("document", doc.id, "IPR_EDITED", actor=actor,
+          detail={"ref": doc.ref, "lines": len(lines_data)})
+    return doc, None
+
+
 def _save_lines(order, lines_data):
     order.lines.all().delete()
     from .models import CostHead

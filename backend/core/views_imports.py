@@ -819,11 +819,18 @@ def ipr_list_create(request):
     return Response(rows)
 
 
-@api_view(["GET"])
+@api_view(["GET", "PATCH"])
 def ipr_detail(request, ref):
     doc, err = _get_ipr(request, ref)
     if err:
         return err
+    if request.method == "PATCH":
+        if request.user.role not in CREATE_ROLES:
+            return Response({"detail": "Head Office edits draft orders."},
+                            status=403)
+        doc, msg = ipr_svc.update_ipr(doc, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
     return Response(_serialize(doc, request))
 
 

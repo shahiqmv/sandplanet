@@ -8,8 +8,8 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
-import ImportOrders, { IprView, IrnView, StoreLots, ImportPaymentsDue,
-  ImportTracker } from "./ImportOrders.jsx";
+import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
+  ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -534,7 +534,17 @@ export default function App() {
           {docView?.mode === "ipr-view" && (
             <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc}
                      onOpenIrn={(ref) =>
-                       setDocView({ mode: "irn-view", doc: { ref } })} />
+                       setDocView({ mode: "irn-view", doc: { ref } })}
+                     onEdit={(doc) =>
+                       setDocView({ mode: "ipr-edit", doc })} />
+          )}
+          {docView?.mode === "ipr-edit" && (
+            <IprForm me={me} existing={docView.doc}
+                     onSaved={(ref) =>
+                       setDocView({ mode: "ipr-view", doc: { ref } })}
+                     onCancel={() =>
+                       setDocView({ mode: "ipr-view",
+                                    doc: { ref: docView.doc.ref } })} />
           )}
           {docView?.mode === "irn-view" && (
             <IrnView me={me} refIrn={docView.doc.ref} onClose={closeDoc} />
