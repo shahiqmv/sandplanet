@@ -112,3 +112,41 @@ class MobileQueueTests(ProcBase):
                     format="json")
         done = self.m.get("/api/mobile/v1/actioned").data["items"]
         self.assertIn(mr["ref"], [i["ref"] for i in done])
+
+
+class MobileOriginatorTests(ProcBase):
+    """My Requests, tracking timeline, alerts feed (R6 slice 3)."""
+
+    def setUp(self):
+        super().setUp()
+        self.sa.set_password("verify-123")
+        self.sa.save()
+        self.m = APIClient()
+        tok = self.m.post("/api/mobile/v1/auth/login",
+                          {"username": self.sa.username,
+                           "password": "verify-123"}, format="json").data["token"]
+        self.m.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+
+    def test_requests_lists_my_mr_with_timeline(self):
+        mr = self.make_mr()                 # raised by sa
+        self.act(mr["ref"], "submit")
+        self.as_user(self.pm)
+        self.act(mr["ref"], "approve")
+        reqs = self.m.get("/api/mobile/v1/requests").data["items"]
+        self.assertIn(mr["ref"], [r["ref"] for r in reqs])
+        tl = self.m.get(
+            f"/api/mobile/v1/requests/{mr['ref']}/timeline").data
+        self.assertEqual(tl["steps"][0]["label"], "Raised")
+        self.assertGreaterEqual(len(tl["steps"]), 2)   # raised + approvals
+
+    def test_alerts_feed_and_mark_read(self):
+        from .models import Notification
+        Notification.objects.create(recipient=self.sa, title="MR-X approved",
+                                    body="", doc_ref="MR-X", doc_type="MR")
+        a = self.m.get("/api/mobile/v1/alerts").data
+        self.assertEqual(a["unread"], 1)
+        self.assertEqual(len(a["items"]), 1)
+        self.assertEqual(
+            self.m.post("/api/mobile/v1/alerts/read", {},
+                        format="json").status_code, 200)
+        self.assertEqual(self.m.get("/api/mobile/v1/alerts").data["unread"], 0)

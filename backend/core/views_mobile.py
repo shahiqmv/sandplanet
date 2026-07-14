@@ -244,3 +244,126 @@ def m_approve(request, ref):
 @permission_classes([IsAuthenticated])
 def m_return(request, ref):
     return _act(request, ref, "return")
+
+
+# ---- Originator: my requests / timeline / alerts ------------------------
+
+TRACKABLE = ("MR", "IR", "MAR", "PMR", "PR", "PYR")
+
+# A live status is a "current" step; these read as finished/terminal.
+_TERMINAL = {"CLOSED", "COMPLETE", "PAID", "RECEIVED", "REJECTED", "CANCELLED",
+             "PAID_PO_ISSUED", "VERIFIED", "ACKNOWLEDGED"}
+
+
+def _request_line(doc):
+    bits = [doc.site.code] if doc.site_id else []
+    if doc.project_id:
+        bits.append(doc.project.code)
+    bits.append(doc.status.replace("_", " ").title())
+    return " · ".join(bits)
+
+
+@api_view(["GET"])
+@authentication_classes(MOBILE_AUTH)
+@permission_classes([IsAuthenticated])
+def m_requests(request):
+    """Documents this user raised, newest activity first, with an unread-change
+    dot when an alert about them is still unread."""
+    from .models import Document, Notification
+    docs = Document.objects.filter(
+        created_by=request.user, is_void=False, doc_type__in=TRACKABLE) \
+        .select_related("site", "project").order_by("-updated_at")[:60]
+    unread_refs = set(Notification.objects.filter(
+        recipient=request.user, read_at__isnull=True)
+        .values_list("doc_ref", flat=True))
+    items = [{
+        "ref": d.ref, "doc_type": d.doc_type,
+        "site_code": d.site.code if d.site_id else "—",
+        "status": d.status, "status_label": d.status.replace("_", " ").title(),
+        "line": _request_line(d), "updated_at": d.updated_at,
+        "unread": d.ref in unread_refs,
+    } for d in docs]
+    return Response({"items": items})
+
+
+def _timeline(doc):
+    """A tracking stepper derived from the document's own status audit plus its
+    linked downstream documents — no new chain model (R6 §5.5)."""
+    steps = [{"label": "Raised", "ref": doc.ref,
+              "when": doc.created_at.date().isoformat(), "state": "done"}]
+    for a in doc.approvals.select_related("actor").order_by("acted_at"):
+        steps.append({
+            "label": (a.result or a.action or "").replace("_", " ").title(),
+            "ref": a.actor.full_name if a.actor_id else (a.actor_role or ""),
+            "when": a.acted_at.date().isoformat(), "state": "done"})
+
+    def add_linked(d, hop=0):
+        seen = set()
+        links = (list(d.links_from.select_related("to_document")) +
+                 list(d.links_to.select_related("from_document")))
+        for lk in links:
+            other = (lk.to_document if lk.from_document_id == d.id
+                     else lk.from_document)
+            if (not other or other.id == doc.id or other.id in seen
+                    or other.doc_type in ("PO",)):
+                continue
+            seen.add(other.id)
+            steps.append({
+                "label": f"{other.doc_type} · "
+                         f"{other.status.replace('_', ' ').title()}",
+                "ref": other.ref,
+                "when": other.doc_date.isoformat() if other.doc_date else "",
+                "state": "done" if other.status in _TERMINAL else "current"})
+            if hop < 1 and other.doc_type in ("MR", "PR", "LM"):
+                add_linked(other, hop + 1)   # e.g. MR→LM→GRN
+
+    add_linked(doc)
+    return steps
+
+
+@api_view(["GET"])
+@authentication_classes(MOBILE_AUTH)
+@permission_classes([IsAuthenticated])
+def m_timeline(request, ref):
+    from .models import Document
+    try:
+        doc = Document.objects.select_related("site", "project").get(ref=ref)
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    sids = scoped_site_ids(request.user)
+    if (doc.created_by_id != request.user.id and sids is not None
+            and doc.site_id not in sids):
+        return Response({"detail": "Not found."}, status=404)
+    return Response({"ref": doc.ref, "doc_type": doc.doc_type,
+                     "title_line": _request_line(doc),
+                     "status": doc.status, "steps": _timeline(doc)})
+
+
+@api_view(["GET"])
+@authentication_classes(MOBILE_AUTH)
+@permission_classes([IsAuthenticated])
+def m_alerts(request):
+    """The originator alerts feed — the existing Notification records."""
+    from .models import Notification
+    from .views_notify import NotificationSerializer
+    qs = Notification.objects.filter(recipient=request.user)[:40]
+    unread = Notification.objects.filter(
+        recipient=request.user, read_at__isnull=True).count()
+    return Response({"unread": unread,
+                     "items": NotificationSerializer(qs, many=True).data})
+
+
+@api_view(["POST"])
+@authentication_classes(MOBILE_AUTH)
+@permission_classes([IsAuthenticated])
+def m_alerts_read(request):
+    from django.utils import timezone
+
+    from .models import Notification
+    qs = Notification.objects.filter(recipient=request.user,
+                                     read_at__isnull=True)
+    ids = request.data.get("ids")
+    if ids:
+        qs = qs.filter(id__in=ids)
+    qs.update(read_at=timezone.now())
+    return Response({"ok": True})

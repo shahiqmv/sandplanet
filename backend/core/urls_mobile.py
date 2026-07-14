@@ -12,4 +12,8 @@ urlpatterns = [
     path("documents/<str:ref>", m.m_document, name="m-document"),
     path("documents/<str:ref>/approve", m.m_approve, name="m-approve"),
     path("documents/<str:ref>/return", m.m_return, name="m-return"),
+    path("requests", m.m_requests, name="m-requests"),
+    path("requests/<str:ref>/timeline", m.m_timeline, name="m-timeline"),
+    path("alerts", m.m_alerts, name="m-alerts"),
+    path("alerts/read", m.m_alerts_read, name="m-alerts-read"),
 ]
