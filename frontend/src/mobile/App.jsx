@@ -10,7 +10,6 @@ import {
   pushSupported,
 } from "./push.js";
 import {
-  ActionedList,
   Alerts,
   DocumentDetail,
   MyRequests,
@@ -101,7 +100,6 @@ export default function App() {
     const t = [];
     if (APPROVER_ROLES.has(user.role)) {
       t.push({ key: "pending", label: "Pending" });
-      t.push({ key: "actioned", label: "Actioned" });
     }
     t.push({ key: "requests", label: "Requests" });
     t.push({ key: "alerts", label: "Alerts" });
@@ -232,9 +230,6 @@ export default function App() {
               onOpen={setDetail}
               onCount={(n) => setCounts((c) => ({ ...c, pending: n }))}
             />
-          )}
-          {tab === "actioned" && (
-            <ActionedList key={`actioned-${refreshKey}`} onOpen={setDetail} />
           )}
           {tab === "requests" && (
             <MyRequests key={`requests-${refreshKey}`} onOpen={setDetail} />
