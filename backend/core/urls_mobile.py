@@ -7,4 +7,9 @@ urlpatterns = [
     path("auth/login", m.m_login, name="m-login"),
     path("auth/logout", m.m_logout, name="m-logout"),
     path("me", m.m_me, name="m-me"),
+    path("queue", m.m_queue, name="m-queue"),
+    path("actioned", m.m_actioned, name="m-actioned"),
+    path("documents/<str:ref>", m.m_document, name="m-document"),
+    path("documents/<str:ref>/approve", m.m_approve, name="m-approve"),
+    path("documents/<str:ref>/return", m.m_return, name="m-return"),
 ]

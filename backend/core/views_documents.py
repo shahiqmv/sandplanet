@@ -567,11 +567,10 @@ def _do_issue(request, doc, comment):
                     status=400)
 
 
-@api_view(["GET"])
-def approvals_pending(request):
-    """The per-role 'waiting on you' queue (owner, 2026-07-08): each
-    approver's landing page lists exactly the documents blocked on them."""
-    user = request.user
+def pending_groups(user):
+    """The per-role 'waiting on you' queue (owner, 2026-07-08): each approver's
+    landing page lists exactly the documents blocked on them. Plain helper so
+    both the desktop endpoint and the mobile queue can reuse it."""
     site_ids = scoped_site_ids(user)
     groups = []
 
@@ -701,6 +700,12 @@ def approvals_pending(request):
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
                  "Execute payment and record the reference"))
+    return groups
+
+
+@api_view(["GET"])
+def approvals_pending(request):
+    groups = pending_groups(request.user)
     return Response({"groups": groups,
                      "total": sum(len(g["items"]) for g in groups)})
 

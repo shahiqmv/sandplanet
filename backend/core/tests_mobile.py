@@ -5,7 +5,7 @@ from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from .models import MobileDevice, User
+from .models import Document, MobileDevice, User
 from .tests import make_user
 
 
@@ -59,3 +59,56 @@ class MobileAuthTests(TestCase):
                       (200, 403))  # session endpoint ignores the bearer token
         self.assertFalse(self.client.get("/api/v1/auth/me")
                          .data.get("authenticated", False))
+
+
+from .tests_procurement import ProcBase  # noqa: E402
+
+
+class MobileQueueTests(ProcBase):
+    """Approver queue + approve/return over the mobile API (R6 slice 2)."""
+
+    def setUp(self):
+        super().setUp()
+        self.pm.set_password("verify-123")
+        self.pm.save()
+        self.m = APIClient()
+        tok = self.m.post("/api/mobile/v1/auth/login",
+                          {"username": self.pm.username,
+                           "password": "verify-123"}, format="json").data["token"]
+        self.m.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+
+    def test_pm_sees_and_approves_mr_then_409(self):
+        mr = self.make_mr()
+        self.act(mr["ref"], "submit")               # sa submits → waits on PM
+        q = self.m.get("/api/mobile/v1/queue")
+        self.assertEqual(q.status_code, 200)
+        self.assertIn(mr["ref"], [i["ref"] for i in q.data["items"]])
+        r = self.m.post(f"/api/mobile/v1/documents/{mr['ref']}/approve", {},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=mr["ref"]).status,
+                         "PM_APPROVED")
+        # second tap (or the other approver) → 409 already actioned
+        r2 = self.m.post(f"/api/mobile/v1/documents/{mr['ref']}/approve", {},
+                         format="json")
+        self.assertEqual(r2.status_code, 409)
+
+    def test_return_requires_reason(self):
+        mr = self.make_mr()
+        self.act(mr["ref"], "submit")
+        self.assertEqual(self.m.post(
+            f"/api/mobile/v1/documents/{mr['ref']}/return", {},
+            format="json").status_code, 400)
+        r = self.m.post(f"/api/mobile/v1/documents/{mr['ref']}/return",
+                        {"comment": "Quantities don't match the GRN"},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=mr["ref"]).status, "DRAFT")
+
+    def test_actioned_lists_the_approval(self):
+        mr = self.make_mr()
+        self.act(mr["ref"], "submit")
+        self.m.post(f"/api/mobile/v1/documents/{mr['ref']}/approve", {},
+                    format="json")
+        done = self.m.get("/api/mobile/v1/actioned").data["items"]
+        self.assertIn(mr["ref"], [i["ref"] for i in done])
