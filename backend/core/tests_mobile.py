@@ -210,3 +210,37 @@ class MobilePushTests(MobileAuthTests):
             p256dh="k1", auth="k2")
         n = notify_user(self.user, "Hi", "there")
         self.assertTrue(Notification.objects.filter(pk=n.pk).exists())
+
+
+class MobilePwaShellTests(TestCase):
+    """The PWA shell resources served under /m/ (manifest, service worker,
+    deep-link shell). Guarded on frontend/dist/m.html existing — skip cleanly
+    when the frontend hasn't been built (e.g. CI before the build step)."""
+
+    def setUp(self):
+        from django.conf import settings
+        self.built = (settings.BASE_DIR.parent / "frontend" / "dist"
+                      / "m.html").exists()
+
+    def test_manifest_is_served(self):
+        r = self.client.get("/m/manifest.webmanifest")
+        if not self.built:
+            return
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/manifest+json")
+        self.assertEqual(r.json()["scope"], "/m/")
+
+    def test_service_worker_scope_header(self):
+        r = self.client.get("/m/sw.js")
+        if not self.built:
+            return
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("javascript", r["Content-Type"])
+        self.assertEqual(r["Service-Worker-Allowed"], "/m/")
+
+    def test_deep_link_path_renders_the_shell(self):
+        r = self.client.get("/m/track/MR-SJR-001")
+        if not self.built:
+            return
+        self.assertEqual(r.status_code, 200)
+        self.assertIn(b"<div id=\"root\">", r.content)
