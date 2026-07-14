@@ -1084,6 +1084,21 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         </div>
       )}
 
+      {/* Why no store panel? Tell HO the store is empty for these items so the
+          absence of the amber box above is never a mystery. */}
+      {canFulfilStore && storeAvail &&
+        !doc.lines.some((l) => Number(storeAvail[l.id]) > 0) &&
+        !doc.lines.some((l) => l.fulfil_source === "STORE") && (
+        <p style={{ margin: "12px 0", padding: "8px 12px", borderRadius: 8,
+                    fontSize: 12.5, color: "#5a6b78",
+                    background: "var(--sp-tint, #f5f8fb)",
+                    border: "1px solid var(--sp-border)" }}>
+          No HO-store stock matches these items, so there is nothing to fulfil
+          from store — purchase them via a PR. (Store stock lands via an import
+          receipt or an opening-stock entry on the HO Store page.)
+        </p>
+      )}
+
       <SectionTitle>{isPR ? "Vendors" : "Items"}</SectionTitle>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>

@@ -833,22 +833,61 @@ export function IrnView({ me, refIrn, onClose }) {
   );
 }
 
+const EMPTY_OS = { item_id: "", qty: "", unit_cost: "", project_id: "",
+                   location: "" };
+
 export function StoreLots({ me, onOpenIrn }) {
   const [data, setData] = useState(null);
   const [sins, setSins] = useState([]);
   const [sites, setSites] = useState([]);
+  const [items, setItems] = useState([]);
+  const [projects, setProjects] = useState([]);
   const [sel, setSel] = useState({});          // lot id -> qty to issue
   const [destSite, setDestSite] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [osOpen, setOsOpen] = useState(false);        // opening-stock panel
+  const [osLines, setOsLines] = useState([{ ...EMPTY_OS }]);
+  const [osNote, setOsNote] = useState("");
+  const [osMsg, setOsMsg] = useState(null);
   const canIssue = ["HO_PURCHASING", "ADMIN"].includes(me?.role);
 
   const reload = () => {
     api("/store/lots").then(setData).catch((e) => setError(e.message));
     api("/store/issues").then(setSins).catch(() => {});
     api("/sites").then(setSites).catch(() => {});
+    if (["HO_PURCHASING", "ADMIN"].includes(me?.role)) {
+      api("/items").then(setItems).catch(() => {});
+      api("/ipr/context").then((c) => setProjects(c.projects || []))
+        .catch(() => {});
+    }
   };
   useEffect(reload, []);
+
+  const setOsLine = (i, patch) =>
+    setOsLines(osLines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+
+  const osValid = osLines.some((l) => l.item_id && Number(l.qty) > 0);
+
+  const saveOpening = () => {
+    setError(null); setOsMsg(null);
+    const lines = osLines
+      .filter((l) => l.item_id && Number(l.qty) > 0)
+      .map((l) => ({ item_id: Number(l.item_id), qty: Number(l.qty),
+                     unit_cost: Number(l.unit_cost) || 0,
+                     project_id: l.project_id ? Number(l.project_id) : null,
+                     location: l.location }));
+    setBusy(true);
+    api("/store/opening-stock", { method: "POST",
+      body: { lines, note: osNote } })
+      .then((r) => {
+        setOsMsg(`✓ ${r.lots} lot(s) added — value MVR ${money(r.total_value)}.`);
+        setOsLines([{ ...EMPTY_OS }]); setOsNote(""); setOsOpen(false);
+        reload();
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setBusy(false));
+  };
 
   const chosen = Object.entries(sel)
     .filter(([, q]) => Number(q) > 0)
@@ -874,6 +913,12 @@ export function StoreLots({ me, onOpenIrn }) {
                       flexWrap: "wrap" }}>
           <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
             🏬 HO Store — stock lots</h2>
+          {canIssue && chosen.length === 0 && (
+            <button onClick={() => { setOsOpen(!osOpen); setOsMsg(null); }}
+                    style={{ ...ghostButton, padding: "3px 12px",
+                             fontSize: 12.5 }}>
+              {osOpen ? "Cancel" : "➕ Receive opening stock"}</button>
+          )}
           {canIssue && chosen.length > 0 && (
             <span style={{ marginLeft: "auto", display: "flex", gap: 10,
                            alignItems: "center", flexWrap: "wrap" }}>
@@ -897,6 +942,106 @@ export function StoreLots({ me, onOpenIrn }) {
           Imported stock at landed cost — reserved to a project or held as
           general company stock. A company asset until issued to a site
           {canIssue && "; tick a quantity to issue it out (SIN)"}.</p>
+        {osMsg && (
+          <p style={{ color: "#1a7f37", fontSize: 13 }}>{osMsg}</p>
+        )}
+
+        {osOpen && (
+          <div style={{ border: "1px dashed var(--sp-border)", borderRadius: 8,
+                        padding: 14, marginBottom: 12 }}>
+            <strong style={{ color: "var(--sp-navy)", fontSize: 14 }}>
+              Receive opening / manual stock</strong>
+            <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 10px" }}>
+              Record stock already sitting in the HO store at its unit cost.
+              Creates a valued lot per line — a company asset until issued to a
+              site (no purchase or import needed).</p>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse",
+                              fontSize: 13 }}>
+                <thead><tr>
+                  <th style={th}>Item</th>
+                  <th style={{ ...th, textAlign: "right" }}>Qty</th>
+                  <th style={{ ...th, textAlign: "right" }}>Unit cost (MVR)</th>
+                  <th style={th}>Reserve to project</th>
+                  <th style={th}>Location</th><th />
+                </tr></thead>
+                <tbody>
+                  {osLines.map((l, i) => (
+                    <tr key={i}>
+                      <td style={{ padding: 3, minWidth: 220 }}>
+                        <select value={l.item_id}
+                                onChange={(e) => setOsLine(i,
+                                  { item_id: e.target.value })}
+                                style={{ ...inputStyle, width: "100%" }}>
+                          <option value="">Select item…</option>
+                          {items.map((it) => (
+                            <option key={it.id} value={it.id}>
+                              {it.code} · {it.description}</option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: 3 }}>
+                        <input type="number" min="0" value={l.qty}
+                               onChange={(e) => setOsLine(i,
+                                 { qty: e.target.value })}
+                               style={{ ...inputStyle, width: 80,
+                                        textAlign: "right" }} />
+                      </td>
+                      <td style={{ padding: 3 }}>
+                        <input type="number" min="0" value={l.unit_cost}
+                               onChange={(e) => setOsLine(i,
+                                 { unit_cost: e.target.value })}
+                               style={{ ...inputStyle, width: 100,
+                                        textAlign: "right" }} />
+                      </td>
+                      <td style={{ padding: 3 }}>
+                        <select value={l.project_id}
+                                onChange={(e) => setOsLine(i,
+                                  { project_id: e.target.value })}
+                                style={{ ...inputStyle, width: 190 }}>
+                          <option value="">General stock</option>
+                          {projects.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.code} — {p.site_code || p.site?.code || ""}
+                            </option>
+                          ))}
+                        </select>
+                      </td>
+                      <td style={{ padding: 3 }}>
+                        <input value={l.location}
+                               onChange={(e) => setOsLine(i,
+                                 { location: e.target.value })}
+                               placeholder="Rack / bin"
+                               style={{ ...inputStyle, width: 120 }} />
+                      </td>
+                      <td style={{ width: 30 }}>
+                        {osLines.length > 1 && (
+                          <button onClick={() => setOsLines(
+                                    osLines.filter((_, j) => j !== i))}
+                                  style={{ ...ghostButton, padding: "2px 8px",
+                                           color: "#c0392b" }}>×</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button onClick={() => setOsLines([...osLines, { ...EMPTY_OS }])}
+                    style={{ ...ghostButton, padding: "4px 12px",
+                             marginTop: 6 }}>+ Add line</button>
+            <div style={{ display: "flex", gap: 10, marginTop: 10,
+                          alignItems: "center", flexWrap: "wrap" }}>
+              <input value={osNote}
+                     onChange={(e) => setOsNote(e.target.value)}
+                     placeholder="Note / reference (optional)"
+                     style={{ ...inputStyle, width: 260 }} />
+              <Btn variant="primary" disabled={!osValid || busy}
+                   onClick={saveOpening}>
+                {busy ? "Saving…" : "Receive into store"}</Btn>
+            </div>
+          </div>
+        )}
         <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
                         fontSize: 13 }}>
@@ -907,7 +1052,7 @@ export function StoreLots({ me, onOpenIrn }) {
             <th style={{ ...th, textAlign: "right" }}>In transit</th>
             <th style={{ ...th, textAlign: "right" }}>Unit landed</th>
             <th style={{ ...th, textAlign: "right" }}>Value (MVR)</th>
-            <th style={th}>IRN</th>
+            <th style={th}>Source</th>
             {canIssue && <th style={{ ...th, width: 100 }}>Issue qty</th>}
           </tr></thead>
           <tbody>
@@ -930,9 +1075,13 @@ export function StoreLots({ me, onOpenIrn }) {
                 <td style={{ ...td, textAlign: "right" }}>
                   {money(l.value_on_hand)}</td>
                 <td style={td}>
-                  <a href="#" onClick={(e) => { e.preventDefault();
-                                                onOpenIrn?.(l.source_irn); }}
-                     style={{ color: "var(--sp-navy)" }}>{l.source_irn}</a></td>
+                  {String(l.source_irn || "").startsWith("IRN") ? (
+                    <a href="#" onClick={(e) => { e.preventDefault();
+                                                  onOpenIrn?.(l.source_irn); }}
+                       style={{ color: "var(--sp-navy)" }}>{l.source_irn}</a>
+                  ) : (
+                    <span style={{ color: "#8a97a1" }}>{l.source_irn}</span>
+                  )}</td>
                 {canIssue && (
                   <td style={td}>
                     <input type="number" min="0" max={l.qty_on_hand}

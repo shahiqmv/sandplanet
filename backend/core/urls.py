@@ -89,6 +89,8 @@ urlpatterns = [
     path("ipr/<str:ref>/shipments/<int:pk>/receive",
          imports_api.ipr_shipment_receive, name="ipr-shipment-receive"),
     path("store/lots", imports_api.store_lots, name="store-lots"),
+    path("store/opening-stock", imports_api.store_opening_stock,
+         name="store-opening-stock"),
     path("store/issues", imports_api.store_issues, name="store-issues"),
     path("sin/<str:ref>", imports_api.sin_detail, name="sin-detail"),
     path("sin/<str:ref>/issue", imports_api.sin_issue, name="sin-issue"),

@@ -542,6 +542,54 @@ def store_lots(project_id=None, in_stock_only=True):
     return qs
 
 
+@transaction.atomic
+def receive_opening_stock(lines, actor, received_date=None):
+    """Seed the HO store with existing / opening stock — one valued StockLot
+    per line at its stated unit cost, with no import origin. It is a company
+    asset from day one and becomes project cost only when later issued to a
+    site and received there (owner 2026-07-14)."""
+    from datetime import date
+
+    from .models import Item, Project, StockLot
+    rows = []
+    for i, ln in enumerate(lines or [], 1):
+        if not ln.get("item_id"):
+            return None, f"Line {i}: choose a catalog item."
+        qty = _dec(ln.get("qty"))
+        if qty <= ZERO:
+            return None, f"Line {i}: quantity must be greater than zero."
+        cost = _dec(ln.get("unit_cost"))
+        if cost < ZERO:
+            return None, f"Line {i}: unit cost cannot be negative."
+        try:
+            item = Item.objects.get(pk=ln["item_id"])
+        except Item.DoesNotExist:
+            return None, f"Line {i}: item not found."
+        project = None
+        if ln.get("project_id"):
+            try:
+                project = Project.objects.get(pk=ln["project_id"])
+            except Project.DoesNotExist:
+                return None, f"Line {i}: project not found."
+        note = (ln.get("note") or "").strip()
+        rows.append((item, qty, cost, project, ln.get("location") or "", note))
+    if not rows:
+        return None, "Add at least one stock line."
+    rdate = received_date or date.today()
+    created = []
+    for item, qty, cost, project, location, note in rows:
+        origin = "Opening stock" + (f" · {note}" if note else "")
+        created.append(StockLot.objects.create(
+            item=item, unit=item.unit, project=project,
+            qty_received=qty, qty_on_hand=qty, unit_landed_cost=cost,
+            location=location, received_date=rdate, origin_note=origin[:120]))
+    total = sum((lot.qty_on_hand * lot.unit_landed_cost for lot in created),
+                ZERO)
+    audit("stock_lot", created[0].id, "OPENING_STOCK_RECEIVED", actor=actor,
+          detail={"lots": len(created), "value": str(total)})
+    return {"lots": len(created), "total_value": total}, None
+
+
 # ---- SIN — store issue to site (P1B-f) -----------------------------------
 
 def pick_lots_fifo(item, project, qty):

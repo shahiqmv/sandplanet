@@ -399,11 +399,26 @@ def store_lots(request):
                              else "General stock"),
             "project_id": lot.project_id,
             "site": lot.project.site.code if lot.project_id else "—",
-            "source_irn": lot.source_receipt.document.ref,
+            "source_irn": lot.source_ref,
             "location": lot.location, "received_date": lot.received_date,
         })
     total = sum((r["value_on_hand"] for r in rows), Decimal("0"))
     return Response({"lots": rows, "total_value": total})
+
+
+@api_view(["POST"])
+def store_opening_stock(request):
+    """Seed the HO store with existing / opening stock (owner 2026-07-14) — one
+    valued lot per line, no import needed. Purchasing/Admin only."""
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office receives store stock."},
+                        status=403)
+    result, msg = ipr_svc.receive_opening_stock(
+        request.data.get("lines") or [], request.user,
+        received_date=request.data.get("received_date") or None)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(result, status=201)
 
 
 # ---- SIN — store issue to site (P1B-f) -----------------------------------
@@ -425,7 +440,7 @@ def _sin_payload(doc, request):
             "id": ln.id, "description": ln.lot.description,
             "unit": ln.lot.unit, "qty": ln.qty,
             "unit_landed_cost": ln.unit_landed_cost, "value": val,
-            "source_irn": ln.lot.source_receipt.document.ref,
+            "source_irn": ln.lot.source_ref,
             "reserved_for": (ln.lot.project.code if ln.lot.project_id
                              else "General stock")})
     data["lines"] = lines

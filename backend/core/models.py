@@ -1024,11 +1024,15 @@ class StockLot(models.Model):
                              blank=True, related_name="stock_lots")
     free_text_desc = models.TextField(blank=True)
     unit = models.CharField(max_length=10, blank=True)
+    # Import-received lots carry their source; opening/manual stock has none.
     source_receipt = models.ForeignKey(ImportReceipt, on_delete=models.PROTECT,
-                                       related_name="lots")
+                                        null=True, blank=True,
+                                        related_name="lots")
     source_ipr_line = models.ForeignKey(ImportOrderLine,
-                                        on_delete=models.PROTECT,
-                                        related_name="+")
+                                        on_delete=models.PROTECT, null=True,
+                                        blank=True, related_name="+")
+    # provenance for non-import lots, e.g. "Opening stock" + a note/ref
+    origin_note = models.CharField(max_length=120, blank=True)
     # reserved to a project (committed exposure) or null = general stock
     project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
                                 blank=True, related_name="stock_lots")
@@ -1049,6 +1053,13 @@ class StockLot(models.Model):
     @property
     def description(self):
         return self.item.description if self.item_id else self.free_text_desc
+
+    @property
+    def source_ref(self):
+        """The IRN that brought it in, or a label for opening/manual stock."""
+        if self.source_receipt_id:
+            return self.source_receipt.document.ref
+        return self.origin_note or "Opening stock"
 
     @property
     def value_on_hand(self):

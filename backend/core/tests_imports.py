@@ -518,6 +518,84 @@ class SupplierCategoryTests(PmrBase):
         self.assertEqual(row["default_currency"], "USD")
 
 
+class OpeningStockTests(PmrBase):
+    """Seed the HO store with opening / manual stock without an import
+    (owner 2026-07-14)."""
+
+    def test_receive_opening_stock_into_ho_store(self):
+        from .models import Item, StockLot
+        item = Item.objects.create(code="ITM-70001", description="Cement",
+                                   unit="bag")
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/store/opening-stock", {
+            "lines": [{"item_id": item.id, "qty": 40, "unit_cost": 150,
+                       "location": "Rack A"}],
+            "note": "Year-end count"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["lots"], 1)
+        self.assertEqual(float(r.data["total_value"]), 6000.0)   # 40 × 150
+        lot = StockLot.objects.get(item=item)
+        self.assertIsNone(lot.source_receipt_id)
+        self.assertEqual(float(lot.qty_on_hand), 40.0)
+        self.assertEqual(float(lot.unit_landed_cost), 150.0)
+        self.assertIn("Opening stock", lot.origin_note)
+        # surfaces in the HO store list with a friendly source label
+        row = next(x for x in self.client.get("/api/v1/store/lots").data["lots"]
+                   if x["id"] == lot.id)
+        self.assertIn("Opening stock", row["source_irn"])
+
+    def test_opening_stock_can_fulfil_a_later_mr(self):
+        from .models import Item
+        item = Item.objects.create(code="ITM-70003", description="Rebar",
+                                   unit="kg")
+        self.client.force_authenticate(self.ho)
+        self.client.post("/api/v1/store/opening-stock", {
+            "lines": [{"item_id": item.id, "qty": 100, "unit_cost": 20}]},
+            format="json")
+        # a site MR for the same item, sent to HO
+        self.client.force_authenticate(self.sa)
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "lines": [{"item_id": item.id, "qty_required": 30, "qty_stock": 0,
+                       "qty_to_order": 30}]}, format="json").data
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.sa)
+        self.client.post(f"/api/v1/documents/{mr['ref']}/actions/send", {},
+                         format="json")
+        # HO sees the opening stock as available to fulfil from store
+        self.client.force_authenticate(self.ho)
+        avail = self.client.get(
+            f"/api/v1/mr/{mr['ref']}/store-availability").data["availability"]
+        self.assertEqual(float(list(avail.values())[0]), 100.0)
+
+    def test_site_role_cannot_receive_opening_stock(self):
+        from .models import Item
+        item = Item.objects.create(code="ITM-70002", description="Sand",
+                                   unit="bag")
+        self.client.force_authenticate(self.sa)
+        r = self.client.post("/api/v1/store/opening-stock", {
+            "lines": [{"item_id": item.id, "qty": 5, "unit_cost": 10}]},
+            format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_validation_rejects_bad_lines(self):
+        from .models import Item
+        item = Item.objects.create(code="ITM-70004", description="Ply",
+                                   unit="sheet")
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/store/opening-stock", {
+            "lines": [{"item_id": item.id, "qty": 0, "unit_cost": 10}]},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/v1/store/opening-stock",
+                             {"lines": []}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+
 class ImportsCatalogTests(IprBase):
     """Catalog-driven IPR lines, proforma-invoice upload, import tracker
     (owner 2026-07-13)."""
