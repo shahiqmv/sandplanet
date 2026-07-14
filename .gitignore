@@ -20,3 +20,12 @@ Thumbs.db
 staticfiles/
 media/
 backend/test-media/
+
+# User-guide demo instance (throwaway) + capture artifacts
+backend/db.demo.sqlite3
+backend/media-demo/
+guide/node_modules/
+guide/screenshots/
+guide/_preview/
+guide/_server.log
+deploy.log
