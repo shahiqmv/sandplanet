@@ -15,7 +15,12 @@ const emptyMaterial = {
   project: "",
 };
 
-function RowTable({ headers, rows, setRows, empty, render }) {
+function RowTable({ headers, rows, setRows, empty, render, focus }) {
+  // "Focus" (owner phase 3): when a project is focused, only its rows show and
+  // new rows default to it — a multi-project DPR fills one project at a time.
+  const shown = focus
+    ? rows.map((r, i) => [r, i]).filter(([r]) => (r.project || "") === focus)
+    : rows.map((r, i) => [r, i]);
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -31,7 +36,7 @@ function RowTable({ headers, rows, setRows, empty, render }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
+          {shown.map(([row, i]) => (
             <tr key={i}>
               {render(row, (patch) =>
                 setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)))
@@ -49,7 +54,9 @@ function RowTable({ headers, rows, setRows, empty, render }) {
           ))}
         </tbody>
       </table>
-      <button type="button" onClick={() => setRows([...rows, { ...empty }])}
+      <button type="button"
+              onClick={() => setRows([...rows,
+                { ...empty, ...(focus ? { project: focus } : {}) }])}
               style={{ ...ghostButton, padding: "4px 12px", marginTop: 6 }}>
         + Add row
       </button>
@@ -112,6 +119,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
 
   const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
   const [photoProject, setPhotoProject] = useState("");
+  const [focus, setFocus] = useState("");   // project focus for entry (phase 3)
 
   // Project tag (owner phase 2): lets the client report filter materials,
   // machinery and photos to one project. Blank = general / whole site.
@@ -336,6 +344,31 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         <button onClick={onCancel} style={ghostButton}>Close</button>
       </div>
 
+      {activeProjects.length > 1 && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center",
+                      flexWrap: "wrap", margin: "12px 0 0", padding: "8px 12px",
+                      borderRadius: 8, background: "var(--sp-tint, #f5f8fb)" }}>
+          <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
+            🎯 Focus</strong>
+          <select value={focus}
+                  onChange={(e) => { setFocus(e.target.value);
+                                     setPhotoProject(e.target.value); }}
+                  style={{ ...inputStyle, width: 240 }}>
+            <option value="">All projects</option>
+            {activeProjects.map((pr) => (
+              <option key={pr.code} value={pr.code}>
+                {pr.code} — {pr.title}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {focus
+              ? "Showing this project's rows only — new work / materials / "
+                + "machinery rows and photos default to it."
+              : "Fill one project at a time to keep a busy DPR manageable."}
+          </span>
+        </div>
+      )}
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12,
                     marginTop: 16 }}>
         <label style={{ fontSize: 13 }}>Date
@@ -402,7 +435,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         {activeProjects.length > 0 &&
           " — tag each row with its project and programme activity"}
       </SectionTitle>
-      <RowTable
+      <RowTable focus={focus}
         headers={["Project", "Activity / Milestone", "Trade",
                   "Location/Area/Villa", "Today %", "To-date %", "Remarks"]}
         rows={workDone} setRows={setWorkDone} empty={emptyWork}
@@ -568,7 +601,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                            ? "#1a7f37" : "#b35900" }}>{toolsNotice}</span>
         )}
       </div>
-      <RowTable
+      <RowTable focus={focus}
         headers={["Item", "Project", "Nos", "Remarks (working/idle/breakdown)"]}
         rows={machinery} setRows={setMachinery} empty={emptyMachine}
         render={(row, set) => (
@@ -593,7 +626,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
                            ? "#1a7f37" : "#b35900" }}>{matNotice}</span>
         )}
       </div>
-      <RowTable
+      <RowTable focus={focus}
         headers={["Material", "Project", "Unit", "Opening", "Received",
                   "Consumed", "Balance", "Remarks"]}
         rows={materials} setRows={setMaterials} empty={emptyMaterial}
