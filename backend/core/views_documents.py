@@ -1604,6 +1604,39 @@ def dashboard_ho(request):
     })
 
 
+@api_view(["GET"])
+def dpr_report_pdf(request, ref):
+    """On-demand DPR PDF, optionally scoped to one project and/or trade so a
+    client can get a filtered slice off the single site DPR (owner 2026-07-14).
+    ?project=<code>&trade=<name>; no params = the full report."""
+    from django.conf import settings
+    from django.template.loader import render_to_string
+
+    from .pdf import _dpr_context
+
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "DPR":
+        return err or Response({"detail": "Not a DPR."}, status=400)
+    rev = doc.current_revision
+    if not rev:
+        return Response({"detail": "Nothing to render yet."}, status=400)
+    filters = {"project": request.GET.get("project", ""),
+               "trade": request.GET.get("trade", "")}
+    html = render_to_string("pdf/dpr.html", _dpr_context(doc, rev, filters))
+    try:
+        from weasyprint import HTML
+
+        pdf = HTML(string=html,
+                   base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:                       # pragma: no cover - engine missing
+        return Response({"detail": "PDF engine unavailable."}, status=503)
+    scope = "-".join(p for p in (filters["project"], filters["trade"]) if p)
+    name = (f"{doc.ref}-{scope}" if scope else doc.ref).replace(" ", "_")
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{name}.pdf"'
+    return resp
+
+
 # ===== Prefill conveniences (design §3) =====
 
 

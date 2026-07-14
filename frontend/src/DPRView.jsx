@@ -3,6 +3,14 @@ import { api } from "./api.js";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, td, th }
   from "./ui.jsx";
 
+const rptLink = { display: "block", padding: "4px 6px", fontSize: 12.5,
+                  color: "var(--sp-navy)", textDecoration: "none",
+                  borderRadius: 4 };
+const rptHd = { fontSize: 10.5, textTransform: "uppercase", letterSpacing: .4,
+                color: "#8a97a1", margin: "8px 0 2px", fontWeight: 700 };
+const miniSel = { fontSize: 12, padding: "2px 4px", borderRadius: 4,
+                  border: "1px solid var(--sp-border)", maxWidth: 90 };
+
 export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }) {
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
@@ -38,6 +46,19 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
 
   const photos = (doc.attachments || []).filter((a) => a.kind === "PHOTO");
   const pdfs = (doc.attachments || []).filter((a) => a.kind === "GENERATED_PDF");
+
+  // Client reports: one site DPR, filtered on the fly by project / trade.
+  const uniq = (key) => [...new Set((p.work_done || [])
+    .map((r) => (r[key] || "").trim()).filter(Boolean))].sort();
+  const dprProjects = uniq("project");
+  const dprTrades = uniq("trade");
+  const [combo, setCombo] = useState({ project: "", trade: "" });
+  const reportUrl = (params) => {
+    const qs = new URLSearchParams(
+      Object.fromEntries(Object.entries(params).filter(([, v]) => v))).toString();
+    return `/api/v1/dpr/${doc.ref}/report.pdf${qs ? `?${qs}` : ""}`;
+  };
+  const canReport = doc.status !== "DRAFT" && (p.work_done || []).length > 0;
   const canVerify = doc.status === "ISSUED" &&
     (me.role === "PM" || me.role === "ADMIN") && !doc.is_void;
   const canEdit = doc.status === "DRAFT" && !doc.is_void;
@@ -81,6 +102,56 @@ export default function DPRView({ doc: initial, me, onClose, onChanged, onEdit }
             PDF — {f.file_name}
           </a>
         ))}
+        {canReport && (
+          <details style={{ position: "relative" }}>
+            <summary style={{ ...ghostButton, cursor: "pointer",
+                              listStyle: "none", display: "inline-block" }}>
+              ⬇ Client report ▾</summary>
+            <div style={{ position: "absolute", zIndex: 20, marginTop: 4,
+                          background: "#fff", border: "1px solid var(--sp-border)",
+                          borderRadius: 8, padding: 10, minWidth: 240,
+                          boxShadow: "0 6px 18px rgba(0,0,0,.14)" }}>
+              <a href={reportUrl({})} target="_blank" rel="noreferrer"
+                 style={rptLink}>Full DPR (all projects)</a>
+              {dprProjects.length > 0 && <div style={rptHd}>By project</div>}
+              {dprProjects.map((pr) => (
+                <a key={pr} href={reportUrl({ project: pr })} target="_blank"
+                   rel="noreferrer" style={rptLink}>{pr}</a>
+              ))}
+              {dprTrades.length > 0 && <div style={rptHd}>By trade</div>}
+              {dprTrades.map((t) => (
+                <a key={t} href={reportUrl({ trade: t })} target="_blank"
+                   rel="noreferrer" style={rptLink}>{t}</a>
+              ))}
+              {dprProjects.length > 0 && dprTrades.length > 0 && (
+                <>
+                  <div style={rptHd}>Project + trade</div>
+                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                    <select value={combo.project} style={miniSel}
+                            onChange={(e) => setCombo({ ...combo,
+                              project: e.target.value })}>
+                      <option value="">Project…</option>
+                      {dprProjects.map((pr) => <option key={pr}>{pr}</option>)}
+                    </select>
+                    <select value={combo.trade} style={miniSel}
+                            onChange={(e) => setCombo({ ...combo,
+                              trade: e.target.value })}>
+                      <option value="">Trade…</option>
+                      {dprTrades.map((t) => <option key={t}>{t}</option>)}
+                    </select>
+                    <a href={reportUrl(combo)} target="_blank" rel="noreferrer"
+                       style={{ ...ghostButton, padding: "2px 8px",
+                                fontSize: 12,
+                                pointerEvents: combo.project || combo.trade
+                                  ? "auto" : "none",
+                                opacity: combo.project || combo.trade ? 1 : .5 }}>
+                      Open</a>
+                  </div>
+                </>
+              )}
+            </div>
+          </details>
+        )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

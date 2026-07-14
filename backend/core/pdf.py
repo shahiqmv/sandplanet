@@ -68,9 +68,17 @@ def _pad(rows, minimum, keys):
     return rows + [{k: "" for k in keys} for _ in range(minimum - len(rows))]
 
 
-def _dpr_context(document, revision):
+def _dpr_context(document, revision, filters=None):
     site = document.site
     payload = revision.payload or {}
+    # A scoped report (owner 2026-07-14): filter WORK DONE to one project
+    # and/or trade so a client can get e.g. an MEP-only or per-project DPR off
+    # the single site DPR. Site-wide sections (manpower/materials/photos) are
+    # hidden in scoped mode until they carry project/trade tags (phase 2).
+    filters = filters or {}
+    fp = (filters.get("project") or "").strip()
+    ft = (filters.get("trade") or "").strip()
+    scoped = bool(fp or ft)
     categories = {
         c.id: c
         for c in ManpowerCategory.objects.filter(list_type="DPR")
@@ -97,6 +105,10 @@ def _dpr_context(document, revision):
                  "progress_todate", "remarks", "project")
     work_rows = []
     for row in payload.get("work_done", []):
+        if fp and (row.get("project") or "").strip() != fp:
+            continue
+        if ft and (row.get("trade") or "").strip().lower() != ft.lower():
+            continue
         r = norm(row, work_keys)
         if not r["progress_todate"]:
             r["progress_todate"] = row.get("progress_pct", "")
@@ -142,6 +154,16 @@ def _dpr_context(document, revision):
             src = p.file.url  # S3/Spaces: (presigned) URL, fetched by the engine
         photos.append({"src": src, "caption": p.caption})
     approvals = list(document.approvals.select_related("actor").all())
+    scope_bits, scope_pm = [], ""
+    if fp:
+        scope_bits.append(titles.get(fp, fp))
+        proj = site.projects.filter(code=fp).select_related("pm").first()
+        if proj and proj.pm_id:
+            scope_pm = proj.pm.full_name
+    if ft:
+        scope_bits.append(ft)
+    scope_title = (" · ".join(scope_bits) + " — DAILY PROGRESS REPORT").upper() \
+        if scoped else "DAILY PROGRESS REPORT"
     return {
         "doc": document,
         "logo_src": logo_src(),
@@ -149,6 +171,10 @@ def _dpr_context(document, revision):
         "site": site,
         "payload": payload,
         "form_subline": f"Form No: FRM-PRJ-01  |  Rev: {revision.rev_label}",
+        "scoped": scoped,
+        "scope_title": scope_title,
+        "scope_label": " · ".join(scope_bits),
+        "scope_pm": scope_pm,
         "work_groups": work_groups,
         "show_group_headers": show_group_headers,
         "manpower_pairs": manpower_pairs,

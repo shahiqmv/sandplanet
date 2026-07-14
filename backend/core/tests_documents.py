@@ -261,3 +261,55 @@ class RegisterTests(DocBase):
         self.client.post(f"/api/v1/documents/{ref}/actions/issue")
         r = self.client.get(f"/api/v1/dashboards/site/{self.site.id}")
         self.assertEqual(r.data["unverified_dprs"], 1)
+
+
+class DprScopedReportTests(DocBase):
+    """One site DPR → filtered client reports by project / trade
+    (owner 2026-07-14)."""
+
+    def _dpr(self):
+        from .models import Project
+        Project.objects.create(site=self.site, code="VILLAS",
+                               title="Overwater Villas", pm=self.pm)
+        payload = {"weather_am": "Sunny", "manpower": {}, "work_done": [
+            {"project": "VILLAS", "trade": "MEP", "activity": "Cable pull",
+             "progress_today": "10", "progress_todate": "40"},
+            {"project": "VILLAS", "trade": "Civil", "activity": "Blockwork",
+             "progress_today": "5", "progress_todate": "30"},
+            {"project": "POOL", "trade": "MEP", "activity": "Pump wiring",
+             "progress_today": "8", "progress_todate": "20"},
+        ]}
+        r = self.create_dpr(payload=payload)
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data["ref"]
+
+    def _nrows(self, ctx):
+        return sum(len(g["rows"]) for g in ctx["work_groups"])
+
+    def test_context_filters_by_project_and_trade(self):
+        from .models import Document
+        from .pdf import _dpr_context
+        rev = Document.objects.get(ref=self._dpr()).current_revision
+        doc = rev.document
+        self.assertEqual(self._nrows(_dpr_context(doc, rev)), 3)
+        self.assertFalse(_dpr_context(doc, rev)["scoped"])
+        mep = _dpr_context(doc, rev, {"trade": "MEP"})
+        self.assertEqual(self._nrows(mep), 2)
+        self.assertTrue(mep["scoped"])
+        villas = _dpr_context(doc, rev, {"project": "VILLAS"})
+        self.assertEqual(self._nrows(villas), 2)
+        self.assertIn("Overwater Villas", villas["scope_label"])
+        self.assertEqual(villas["scope_pm"], self.pm.full_name)
+        combo = _dpr_context(doc, rev, {"project": "VILLAS", "trade": "MEP"})
+        self.assertEqual(self._nrows(combo), 1)
+
+    @override_settings(MEDIA_ROOT="test-media")
+    def test_report_pdf_endpoint_renders(self):
+        try:
+            import weasyprint  # noqa: F401
+        except Exception:
+            self.skipTest("WeasyPrint unavailable")
+        ref = self._dpr()
+        r = self.client.get(f"/api/v1/dpr/{ref}/report.pdf?trade=MEP")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")

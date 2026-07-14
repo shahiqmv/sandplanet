@@ -17,7 +17,10 @@
 {% if doc.is_void %}<div class="void">VOID</div>{% endif %}
 {% include "pdf/_footer.html" with footer_doc="DPR" %}
 {# form-version info stays off the print (owner, 2026-07-08) #}
-{% include "pdf/_letterhead.html" with title="DAILY PROGRESS REPORT" %}
+{% include "pdf/_letterhead.html" with title=scope_title|default:"DAILY PROGRESS REPORT" %}
+{% if scoped %}
+<p class="note" style="margin:0 0 6px">Filtered extract of DPR {{ doc.ref }} — <strong>{{ scope_label }}</strong>{% if scope_pm %} · In-charge: {{ scope_pm }}{% endif %}. Manpower, materials and progress photos are recorded site-wide in the full DPR.</p>
+{% endif %}
 
 <table>
   <tr><td class="lbl" style="width:19%">DPR No.</td><td style="width:31%">{{ doc.ref }}</td>
@@ -70,6 +73,7 @@
   {% endfor %}
 </table>
 
+{% if not scoped %}
 <h2>2.&nbsp; MANPOWER</h2>
 <table>
   <thead><tr><th colspan="2" style="width:50%">Staff</th>
@@ -109,6 +113,7 @@
   {% endfor %}
 </table>
 <p class="note">Balance auto-calculates: Opening + Received − Consumed. Report only key / bulk materials daily; full stock lives in the site stock book.</p>
+{% endif %}{# not scoped #}
 
 <h2>5.&nbsp; MATTERS AFFECTING PROGRESS (delays, shortages, weather impact)</h2>
 <div class="box">{{ payload.matters_affecting|default:""|linebreaksbr }}</div>
@@ -124,7 +129,7 @@
       <td>{% if payload.safety.incident %}{{ payload.safety.details }}{% endif %}</td></tr>
 </table>
 
-<p class="note">Progress photos with captions follow on the Progress Photos sheet.</p>
+{% if not scoped %}<p class="note">Progress photos with captions follow on the Progress Photos sheet.</p>{% endif %}
 
 <table class="sig">
   <tr><td class="t">PREPARED BY (SITE ENGINEER / ADMIN)</td>
@@ -143,7 +148,7 @@
   </tr>
 </table>
 
-{% if photos %}
+{% if photos and not scoped %}
 <div class="pagebreak"></div>
 {% with photos_sub=doc.ref|add:" / "|add:photo_date %}
 {% include "pdf/_letterhead.html" with title="DAILY PROGRESS PHOTOS" subline=photos_sub %}
