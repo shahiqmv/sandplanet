@@ -106,7 +106,7 @@ function localISO(d) {
 // TWS is next-working-day's schedule. The "day" rolls over at 3am, so a
 // schedule keyed in just after midnight is for the coming day, not the day
 // after (owner 2026-07-14).
-function twsDefaultDate() {
+export function twsDefaultDate() {
   const base = new Date();
   if (base.getHours() < 3) base.setDate(base.getDate() - 1);
   base.setDate(base.getDate() + 1);

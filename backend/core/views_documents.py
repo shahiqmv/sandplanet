@@ -1505,6 +1505,17 @@ def dashboard_site(request, site_id):
     dma_today = Document.objects.filter(
         doc_type="DMA", site=site, doc_date=today, is_void=False
     ).first()
+    # TWS is "tomorrow's schedule" — keyed by the day it is FOR (its doc_date).
+    # Return a small window by date so the dashboard can ask "is the NEXT
+    # schedule day done?" (matching the 3am-aware create default) rather than
+    # mistaking today's schedule for tomorrow's (owner 2026-07-14).
+    tws_by_date = {
+        t.doc_date.isoformat(): {"ref": t.ref, "status": t.status}
+        for t in Document.objects.filter(
+            doc_type="TWS", site=site, is_void=False,
+            doc_date__gte=today - timedelta(days=1),
+            doc_date__lte=today + timedelta(days=2))
+    }
     # Materials snapshot: what is on the water (departed manifests) and
     # what HO still owes the site (open pending items) — headline, not
     # the full detail (owner, 2026-07-08)
@@ -1569,6 +1580,7 @@ def dashboard_site(request, site_id):
         if dpr_today else None,
         "dma_today": {"ref": dma_today.ref, "status": dma_today.status}
         if dma_today else None,
+        "tws_by_date": tws_by_date,
         "unverified_dprs": unverified,
         "open_drafts": drafts,
         "incoming_lms": incoming_lms,

@@ -313,3 +313,30 @@ class DprScopedReportTests(DocBase):
         r = self.client.get(f"/api/v1/dpr/{ref}/report.pdf?trade=MEP")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
+
+
+class DashboardTwsTests(DocBase):
+    """The dashboard's 'Tomorrow Work Schedule' state keys off the TWS dated
+    for the day it covers, so today's schedule is not mistaken for tomorrow's
+    (owner 2026-07-14)."""
+
+    def _tws(self, d):
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "TWS", "site_id": self.site.id, "doc_date": d.isoformat(),
+            "payload": {"activities": []}}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def test_tws_by_date_separates_today_and_tomorrow(self):
+        today = date.today()
+        tomorrow = today + timedelta(days=1)
+        self._tws(today)                       # today's schedule (from yesterday)
+        byd = self.client.get(
+            f"/api/v1/dashboards/site/{self.site.id}").data["tws_by_date"]
+        self.assertIn(today.isoformat(), byd)
+        self.assertNotIn(tomorrow.isoformat(), byd)   # tomorrow not done yet
+        self._tws(tomorrow)                     # now prepare tomorrow's
+        byd = self.client.get(
+            f"/api/v1/dashboards/site/{self.site.id}").data["tws_by_date"]
+        self.assertIn(tomorrow.isoformat(), byd)
+        self.assertEqual(byd[tomorrow.isoformat()]["status"], "DRAFT")

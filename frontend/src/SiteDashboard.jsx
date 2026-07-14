@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import { twsDefaultDate } from "./QADocs.jsx";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
@@ -53,11 +54,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const gaps = register?.rows.filter((r) => r.gap).length || 0;
   // Today's obligations come first (design brief: dashboard order is
   // priority order) — DPR + TWS as stamp tiles
-  const todayRow = register?.rows.find((r) => r.due_today) ||
-    register?.rows[register.rows.length - 1];
   const dprIssued = dash?.dpr_today &&
     ["ISSUED", "VERIFIED"].includes(dash.dpr_today.status);
-  const twsRef = todayRow?.tws_ref;
+  // "Tomorrow's schedule" is a TWS dated for the NEXT working day — the same
+  // date "Prepare TWS" defaults to — not today's TWS (owner 2026-07-14).
+  const tws = dash?.tws_by_date?.[twsDefaultDate()];
+  const twsRef = tws?.ref;
 
   return (
     <>
