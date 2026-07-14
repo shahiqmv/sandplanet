@@ -1584,6 +1584,11 @@ def mr_lm_prefill(request, ref):
         return err or Response({"detail": "Not an MR."}, status=400)
     rows = []
     for line in doc.current_revision.lines.select_related("item"):
+        # Store-fulfilled lines ride the manifest via "Load store items" (they
+        # carry their SIN link); pulling them in here as purchase lines would
+        # double them up on the LM (owner 2026-07-14).
+        if line.fulfil_source == "STORE":
+            continue
         rows.append({
             "item_id": line.item_id,
             "free_text_desc": line.free_text_desc,

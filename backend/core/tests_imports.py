@@ -827,6 +827,19 @@ class StoreOnManifestTests(MrFromStoreTests):
     """Store items ride the LM and are received on ONE combined GRN, posting
     INCURRED at landed cost (owner 2026-07-14, P1B-f3)."""
 
+    def test_lm_prefill_excludes_store_fulfilled_lines(self):
+        """The MR→LM prefill must skip store-fulfilled lines — they load via
+        "Load store items", so prefilling them too would double the line
+        (owner 2026-07-14)."""
+        self._stock()
+        mr = self._mr(qty_to_order=3)
+        line_id = mr["lines"][0]["id"]
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/mr/{mr['ref']}/store-fulfil",
+                         {"line_ids": [line_id]}, format="json")
+        pre = self.client.get(f"/api/v1/mr/{mr['ref']}/lm-prefill").data
+        self.assertEqual(pre["lines"], [])   # store line is not a purchase line
+
     def test_store_line_on_lm_incurred_at_grn_no_double_count(self):
         from .models import CostPosting, StockLot, StoreIssueLine, User as U
         from .tests import make_user
