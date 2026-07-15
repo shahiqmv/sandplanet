@@ -33,20 +33,30 @@ def _require_editor(request):
 class BoqItemSerializer(serializers.ModelSerializer):
     amount = serializers.DecimalField(max_digits=18, decimal_places=2,
                                       read_only=True)
+    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                             read_only=True)
+    amount_install = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                              read_only=True)
+    rate_total = serializers.DecimalField(max_digits=16, decimal_places=2,
+                                          read_only=True)
 
     class Meta:
         model = BoqItem
         fields = ["id", "sort_order", "section", "item_code", "description",
-                  "unit", "qty", "rate", "is_heading", "amount"]
+                  "unit", "qty", "rate_supply", "rate_install", "rate_total",
+                  "is_heading", "amount", "amount_supply", "amount_install"]
 
 
 def _boq_payload(project):
     boq = getattr(project, "boq", None)
     if boq is None:
         return {"exists": False, "currency": "USD", "is_locked": False,
-                "total": 0, "items": []}
+                "split_rates": False, "total": 0, "total_supply": 0,
+                "total_install": 0, "items": []}
     return {"exists": True, "currency": boq.currency,
-            "is_locked": boq.is_locked, "total": boq.total,
+            "is_locked": boq.is_locked, "split_rates": boq.split_rates,
+            "total": boq.total, "total_supply": boq.total_supply,
+            "total_install": boq.total_install,
             "items": BoqItemSerializer(boq.items.all(), many=True).data}
 
 
@@ -143,14 +153,19 @@ def boq_template(request, pid):
     wb = Workbook()
     ws = wb.active
     ws.title = "BOQ"
-    headers = ["Section", "Code", "Description", "Unit", "Qty", "Rate"]
+    # Supply (Material) + Install (Labour) columns; leave Install blank for a
+    # combined-rate contract.
+    headers = ["Section", "Code", "Description", "Unit", "Qty",
+               "Material", "Labour"]
     ws.append(headers)
-    for i, w in enumerate([22, 10, 46, 8, 12, 12], start=1):
+    for i, w in enumerate([22, 10, 46, 8, 12, 12, 12], start=1):
         ws.cell(row=1, column=i).font = Font(bold=True)
         ws.column_dimensions[chr(64 + i)].width = w
-    ws.append(["Bill 1 — Substructure", "", "", "", "", ""])
-    ws.append(["", "1.1", "Excavate for foundations", "m3", "120", "8.50"])
-    ws.append(["", "1.2", "Mass concrete blinding", "m3", "35", "95.00"])
+    ws.append(["Bill 1 — Substructure", "", "", "", "", "", ""])
+    ws.append(["", "1.1", "Excavate for foundations", "m3", "120", "5.00",
+               "3.50"])
+    ws.append(["", "1.2", "Mass concrete blinding", "m3", "35", "80.00",
+               "15.00"])
     ws.freeze_panes = "A2"
     resp = HttpResponse(content_type="application/vnd.openxmlformats-"
                         "officedocument.spreadsheetml.sheet")

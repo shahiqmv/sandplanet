@@ -23,28 +23,43 @@ class BoqTests(TestCase):
     def _url(self, tail=""):
         return f"/api/v1/projects/{self.project.id}/boq{tail}"
 
+    # A supply (material) + install (labour) split BOQ.
     ROWS = [
         {"section": "Bill 1 — Substructure", "description":
          "Bill 1 — Substructure", "is_heading": True},
         {"section": "Bill 1 — Substructure", "item_code": "1.1",
          "description": "Excavate for foundations", "unit": "m3",
-         "qty": "120", "rate": "8.50"},
+         "qty": "120", "rate_supply": "5.00", "rate_install": "3.50"},
         {"section": "Bill 1 — Substructure", "item_code": "1.2",
          "description": "Mass concrete blinding", "unit": "m3",
-         "qty": "35", "rate": "95.00"},
+         "qty": "35", "rate_supply": "80.00", "rate_install": "15.00"},
     ]
 
-    def test_qs_saves_boq_and_total_excludes_headings(self):
+    def test_qs_saves_split_boq_totals(self):
         self.client.force_authenticate(self.qs)
         r = self.client.post(self._url("/items"), {"rows": self.ROWS},
                              format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertTrue(r.data["exists"])
+        self.assertTrue(r.data["split_rates"])
         self.assertEqual(len(r.data["items"]), 3)
-        # 120*8.50 + 35*95.00 = 1020 + 3325 = 4345; heading contributes 0
+        # supply: 120*5 + 35*80 = 600 + 2800 = 3400
+        # labour: 120*3.5 + 35*15 = 420 + 525 = 945 ; total 4345
+        self.assertEqual(float(r.data["total_supply"]), 3400.0)
+        self.assertEqual(float(r.data["total_install"]), 945.0)
         self.assertEqual(float(r.data["total"]), 4345.0)
         heading = next(i for i in r.data["items"] if i["is_heading"])
         self.assertEqual(float(heading["amount"]), 0.0)
+
+    def test_combined_rate_boq_is_not_split(self):
+        self.client.force_authenticate(self.qs)
+        rows = [{"item_code": "1.1", "description": "Blockwork", "unit": "m2",
+                 "qty": "50", "rate_combined": "20.00"}]
+        r = self.client.post(self._url("/items"), {"rows": rows},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(r.data["split_rates"])
+        self.assertEqual(float(r.data["total"]), 1000.0)
 
     def test_save_replaces_previous_lines(self):
         self.client.force_authenticate(self.qs)

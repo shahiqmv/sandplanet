@@ -1614,11 +1614,15 @@ class ProgrammeActivity(models.Model):
 class Boq(models.Model):
     """A project's Bill of Quantities — the priced contract schedule the QS
     progresses interim claims against. One per project; locked once claiming
-    starts so the contract baseline can't shift under a live claim."""
+    starts so the contract baseline can't shift under a live claim.
+
+    `split_rates` records whether the client wants supply (material) and
+    installation (labour) priced separately, or as one combined rate."""
 
     project = models.OneToOneField(Project, on_delete=models.CASCADE,
                                    related_name="boq")
     currency = models.CharField(max_length=3, default="USD")  # contracts are USD
+    split_rates = models.BooleanField(default=False)  # material + labour columns
     is_locked = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
@@ -1630,33 +1634,64 @@ class Boq(models.Model):
         from decimal import Decimal
         return sum((i.amount for i in self.items.all()), Decimal("0"))
 
+    @property
+    def total_supply(self):
+        from decimal import Decimal
+        return sum((i.amount_supply for i in self.items.all()), Decimal("0"))
+
+    @property
+    def total_install(self):
+        from decimal import Decimal
+        return sum((i.amount_install for i in self.items.all()), Decimal("0"))
+
 
 class BoqItem(models.Model):
-    """One BOQ line. A priced item carries qty × rate; a heading/preamble row
-    (is_heading) is a section title or note with no money. `section` groups
-    items under a trade for subtotals and the claim layout."""
+    """One BOQ line. A priced item carries qty × rate; the rate splits into a
+    supply (material) leg and an installation (labour) leg — a combined-rate
+    contract simply leaves the labour leg empty and puts the whole rate on
+    supply. A heading/preamble row (is_heading) is a section title or note with
+    no money. `section` groups items under a bill/trade for subtotals."""
 
     boq = models.ForeignKey(Boq, on_delete=models.CASCADE, related_name="items")
     sort_order = models.IntegerField(default=0)
-    section = models.CharField(max_length=120, blank=True)  # trade / bill
+    section = models.CharField(max_length=120, blank=True)  # bill / trade
     item_code = models.CharField(max_length=30, blank=True)  # e.g. A.1.2
     description = models.TextField(blank=True)
     unit = models.CharField(max_length=20, blank=True)
     qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
                               blank=True)
-    rate = models.DecimalField(max_digits=14, decimal_places=2, null=True,
-                               blank=True)
+    rate_supply = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)   # material
+    rate_install = models.DecimalField(max_digits=14, decimal_places=2,
+                                       null=True, blank=True)  # labour
     is_heading = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "id"]
 
     @property
-    def amount(self):
+    def rate_total(self):
+        from decimal import Decimal
+        return (self.rate_supply or Decimal("0")) + (self.rate_install
+                                                     or Decimal("0"))
+
+    def _amount(self, rate):
         from decimal import Decimal
         if self.is_heading:
             return Decimal("0")
-        return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
+        return (self.qty or Decimal("0")) * (rate or Decimal("0"))
+
+    @property
+    def amount_supply(self):
+        return self._amount(self.rate_supply)
+
+    @property
+    def amount_install(self):
+        return self._amount(self.rate_install)
+
+    @property
+    def amount(self):
+        return self._amount(self.rate_total)
 
 
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
