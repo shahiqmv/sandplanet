@@ -567,8 +567,24 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ mode: "SEA", forwarder_name: "",
-    vessel_flight: "", container_awb: "", etd: "", eta: "", tracking_ref: "" });
+  const blankF = { mode: "SEA", forwarder_name: "", vessel_flight: "",
+    container_awb: "", etd: "", eta: "", tracking_ref: "" };
+  const [f, setF] = useState(blankF);
+  const [split, setSplit] = useState(false);
+  const [alloc, setAlloc] = useState([]);
+
+  const orderLines = (doc.order && doc.order.lines) || [];
+  const shippable = orderLines.filter((l) => num(l.remaining_qty) > 0);
+  const fullyShipped = orderLines.length > 0 && shippable.length === 0;
+
+  function startAdd() {
+    setAlloc(shippable.map((l) => ({ ipr_line_id: l.id,
+      qty: String(num(l.remaining_qty)), desc: l.description,
+      unit: l.unit, max: num(l.remaining_qty) })));
+    setSplit(false);
+    setF(blankF);
+    setAdding(true);
+  }
 
   async function call(path, body) {
     onError(null);
@@ -577,10 +593,16 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
   }
   async function create() {
     onError(null);
-    try { await api(`/ipr/${refIpr}/shipments`, { method: "POST", body: f });
-      setAdding(false);
-      setF({ mode: "SEA", forwarder_name: "", vessel_flight: "",
-        container_awb: "", etd: "", eta: "", tracking_ref: "" });
+    const body = { ...f };
+    if (split) {
+      body.lines = alloc.filter((a) => num(a.qty) > 0)
+        .map((a) => ({ ipr_line_id: a.ipr_line_id, qty: a.qty }));
+      if (body.lines.length === 0) {
+        onError("Add at least one item quantity to this shipment."); return;
+      }
+    }
+    try { await api(`/ipr/${refIpr}/shipments`, { method: "POST", body });
+      setAdding(false); setSplit(false); setF(blankF);
       onChanged(); } catch (e) { onError(e.message); }
   }
 
@@ -622,6 +644,33 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
               <input type="date" value={f.eta} style={inputStyle}
                 onChange={(e) => setF({ ...f, eta: e.target.value })} /></label>
           </div>
+          {shippable.length > 0 && (
+            <div style={{ marginTop: 8, borderTop: "1px solid var(--sp-border)",
+                          paddingTop: 8 }}>
+              <label style={{ fontSize: 12, display: "flex", gap: 6,
+                              alignItems: "center", cursor: "pointer" }}>
+                <input type="checkbox" checked={split}
+                  onChange={(e) => setSplit(e.target.checked)} />
+                Split — ship only some items (default: the whole remaining order)
+              </label>
+              {split && (
+                <div style={{ marginTop: 6 }}>
+                  {alloc.map((a, i) => (
+                    <div key={a.ipr_line_id} style={{ display: "flex", gap: 8,
+                      alignItems: "center", marginBottom: 4, fontSize: 12.5 }}>
+                      <span style={{ flex: "1 1 auto" }}>{a.desc}</span>
+                      <input type="number" value={a.qty} min="0" max={a.max}
+                        style={{ ...inputStyle, width: 80 }}
+                        onChange={(e) => setAlloc(alloc.map((x, j) => j === i
+                          ? { ...x, qty: e.target.value } : x))} />
+                      <span style={{ color: "#8a97a1", width: 96 }}>
+                        / {a.max} {a.unit} left</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             <button style={{ ...buttonStyle, padding: "4px 12px" }}
                     onClick={create}>Save shipment</button>
@@ -630,8 +679,12 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
           </div>
         </div>
       ) : (
-        <button style={{ ...ghostButton, padding: "4px 12px", marginTop: 8 }}
-                onClick={() => setAdding(true)}>+ Book shipment</button>
+        <button style={{ ...ghostButton, padding: "4px 12px", marginTop: 8,
+                         opacity: fullyShipped ? 0.5 : 1 }}
+                disabled={fullyShipped}
+                title={fullyShipped ? "The whole order is already on shipments"
+                  : ""}
+                onClick={startAdd}>+ Book shipment</button>
       ))}
     </>
   );
@@ -675,6 +728,13 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
           {s.container_awb ? ` · ${s.container_awb}` : ""}
           {s.eta ? ` · ETA ${s.eta}` : ""}</span>
       </div>
+      {s.lines && s.lines.length > 0 && (
+        <div style={{ fontSize: 12, color: "#5a6b78", marginTop: 3 }}>
+          <strong style={{ color: "#41505c" }}>Contents:</strong>{" "}
+          {s.lines.map((l) => `${num(l.qty)}${l.unit ? " " + l.unit : ""} `
+            + `${l.description}`).join(" · ")}
+        </div>
+      )}
       {/* status stepper */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" }}>
         {SHIP_STEPS.map((st, i) => (
