@@ -223,7 +223,7 @@ export default function App() {
           {!online && (
             <div className="stale-bar">You're offline — showing last update.</div>
           )}
-          <NotifyPrompt />
+          <NotifyPrompt onToast={showToast} />
           {tab === "pending" && (
             <PendingInbox
               key={`pending-${refreshKey}`}
@@ -315,11 +315,12 @@ function SignIn({ onSignedIn }) {
 const NOTIFY_ENABLED = "planet.mobile.notify.enabled";
 const NOTIFY_DISMISSED = "planet.mobile.notify.dismissed";
 
-function NotifyPrompt() {
-  // Start hidden; only reveal after confirming this device is NOT already
-  // subscribed. Basing visibility on an existing push subscription (not the
-  // flaky Notification.permission read) stops the prompt re-appearing forever
-  // once notifications are on.
+function NotifyPrompt({ onToast }) {
+  // Start hidden; only reveal after confirming (a) the server actually has web
+  // push configured, and (b) this device is NOT already subscribed. Gating on
+  // the server's vapid-key means we never nag when push isn't set up, and
+  // basing "already on" on a real subscription (not the flaky
+  // Notification.permission read) stops it re-appearing once enabled.
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -339,6 +340,9 @@ function NotifyPrompt() {
         localStorage.setItem(NOTIFY_ENABLED, "1"); // already on — never nag
         return;
       }
+      // Don't prompt at all unless the server can actually deliver push.
+      const vk = await api.vapidKey().catch(() => ({ enabled: false }));
+      if (!vk || !vk.enabled) return;
       if (alive) setShow(true);
     })();
     return () => {
@@ -348,6 +352,8 @@ function NotifyPrompt() {
 
   if (!show) return null;
 
+  // Any outcome except a transient one stops the auto-prompt for good, so the
+  // card never nags on every launch.
   async function enable() {
     setBusy(true);
     try {
@@ -355,14 +361,22 @@ function NotifyPrompt() {
       if (ok) {
         localStorage.setItem(NOTIFY_ENABLED, "1");
         setShow(false);
-      } else if (reason === "denied") {
-        // Blocked at OS level — the browser won't prompt again, so stop asking.
+        onToast && onToast({ msg: "Notifications on.", tone: "ok" });
+      } else if (reason === "default") {
+        // They dismissed the OS dialog without choosing — let them retry.
+        setBusy(false);
+      } else {
+        // denied / server-off / unsupported — won't succeed by re-asking.
         localStorage.setItem(NOTIFY_DISMISSED, "1");
         setShow(false);
-      } else if (reason === "server-off" || reason === "unsupported") {
-        setShow(false);
-      } else {
-        setBusy(false); // "default" (dismissed dialog) / offline — allow retry
+        onToast &&
+          onToast({
+            msg:
+              reason === "denied"
+                ? "Blocked — turn on notifications for Planet in your phone settings."
+                : "Notifications aren't available on this device yet.",
+            tone: "alert",
+          });
       }
     } catch {
       setBusy(false);
