@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import BoqPanel from "./BoqPanel.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
@@ -14,7 +15,7 @@ const TABS = [
   ["programme", "Programme", true],
   ["manpower", "Manpower plan", true],
   ["documents", "Documents", true],
-  ["bom", "BOM · Phase B", false],
+  ["commercial", "Commercial", true],  // QS: BOQ (claims follow)
   ["budget", "Budget · later", false],
   ["tender", "Tender · later", false],
 ];
@@ -104,7 +105,8 @@ manpower histogram, on the letterhead — send to the client"
         </div>
         <div style={{ display: "flex", gap: 6, marginTop: 14,
                       flexWrap: "wrap" }}>
-          {TABS.map(([key, label, enabled]) => (
+          {TABS.filter(([key]) => key !== "commercial" || canEdit)
+            .map(([key, label, enabled]) => (
             <button key={key} disabled={!enabled}
                     onClick={() => enabled && setTab(key)}
                     title={enabled ? "" : "Reserved — coming in a later phase"}
@@ -194,6 +196,10 @@ manpower histogram, on the letterhead — send to the client"
 
       {tab === "manpower" && (
         <ManpowerPlanTab project={project} me={me} onSaved={load} />
+      )}
+
+      {tab === "commercial" && (
+        <BoqPanel projectId={projectId} project={project} me={me} />
       )}
 
       {tab === "documents" && (
