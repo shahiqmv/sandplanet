@@ -207,6 +207,32 @@ def scope_pr_to_mr_lines(pr, mr_docs, line_ids):
     return None
 
 
+def release_pr_lines(pr, line_ids, actor):
+    """Return MR lines from an in-progress PR to the open pool, so a purchaser
+    who can't source them on this PR can raise another PR for them (owner
+    2026-07-15). Only before the PR is committed; awarded lines stay put (they
+    are being ordered). `line_ids` empty = release everything not yet awarded.
+    Returns (released_count, error)."""
+    from .models import DocumentLine, QuotationLine
+    if pr.status not in ("DRAFT", "SUBMITTED"):
+        return 0, "You can only change a PR's items before it is approved."
+    qs = DocumentLine.objects.filter(ordered_pr=pr)
+    if line_ids:
+        qs = qs.filter(id__in=line_ids)
+    awarded = set(QuotationLine.objects.filter(
+        quotation__document=pr, awarded=True, mr_line__isnull=False)
+        .values_list("mr_line_id", flat=True))
+    ids = [ln.id for ln in qs if ln.id not in awarded]
+    if ids:
+        DocumentLine.objects.filter(id__in=ids).update(ordered_pr=None)
+        # drop any (non-awarded) quote matches pointing at the released lines
+        QuotationLine.objects.filter(
+            quotation__document=pr, mr_line_id__in=ids).update(mr_line=None)
+    audit("document", pr.id, "PR_LINES_RELEASED", actor=actor,
+          detail={"ref": pr.ref, "count": len(ids)})
+    return len(ids), None
+
+
 def on_pr_approved(pr, actor):
     """Issuing a PR against an MR marks the MR PR-raised (spec §4.3). When the
     PR only covered some of a long MR, the MR goes to Partially Ordered and

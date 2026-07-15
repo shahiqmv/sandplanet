@@ -161,6 +161,8 @@ urlpatterns = [
     path("po/<str:ref>/lm-prefill", docs.po_lm_prefill, name="po-lm-prefill"),
     path("pr/<str:ref>/quotations", quotes.pr_quotations, name="pr-quotations"),
     path("pr/<str:ref>/coverage", quotes.pr_coverage, name="pr-coverage"),
+    path("pr/<str:ref>/release-lines", quotes.pr_release_lines,
+         name="pr-release-lines"),
     path("pr/<str:ref>/sync-vendor-rows", quotes.pr_sync_vendor_rows,
          name="pr-sync-vendor-rows"),
     path("pr/<str:ref>/vendor-payment", quotes.pr_vendor_payment,

@@ -607,3 +607,36 @@ class PartialPRTests(ProcBase):
         descs = {row["description"] for row in cov.data["rows"]}
         self.assertIn(self.cement.description, descs)
         self.assertNotIn(self.rebar.description, descs)
+
+    def test_release_reopens_items_for_a_new_pr(self):
+        # A PR that took the whole MR can hand items back so a new PR can take
+        # them (the mid-matching escape hatch, owner 2026-07-15).
+        mr_ref = self.mr_to_sent()
+        pr = self.make_pr(mr_ref)                 # whole MR (no line_ids)
+        # while it is on the whole MR, the MR is not offered elsewhere
+        self.assertNotIn(mr_ref, self._for_pr())
+        lines = self._lines(mr_ref)
+        rebar_line = lines[self.rebar.id]["id"]
+        # release just the rebar back to the MR
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/release-lines",
+                             {"line_ids": [rebar_line]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["released"], 1)
+        lines = self._lines(mr_ref)
+        self.assertIsNone(lines[self.rebar.id]["ordered_pr_ref"])   # reopened
+        self.assertEqual(lines[self.cement.id]["ordered_pr_ref"], pr["ref"])
+        # MR now shows for a fresh PR again
+        self.assertIn(mr_ref, self._for_pr())
+
+    def test_release_blocked_after_approval(self):
+        mr_ref = self.mr_to_sent()
+        pr = self.make_pr(mr_ref)
+        self._approve(pr["ref"])
+        lines = self._lines(mr_ref)
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/release-lines",
+                             {"line_ids": [lines[self.rebar.id]["id"]]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("approved", r.data["detail"].lower())

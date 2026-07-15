@@ -107,6 +107,63 @@ function CoverageBanner({ coverage }) {
   );
 }
 
+// The items this PR is carrying, with a way to take the ones you can't source
+// off the PR — they reopen on the MR for a later PR (owner 2026-07-15).
+function ScopePanel({ rows, busy, onRelease }) {
+  const droppable = rows.filter((r) => !r.awarded);
+  return (
+    <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                  padding: "10px 14px", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+                    flexWrap: "wrap", marginBottom: 6 }}>
+        <strong style={{ color: "var(--sp-navy)", fontSize: 13 }}>
+          Items on this PR ({rows.length})</strong>
+        {droppable.length > 0 && (
+          <button disabled={busy}
+                  onClick={() => onRelease(droppable.map((r) => r.mr_line_id),
+                    `all ${droppable.length} item(s) you haven't awarded`)}
+                  style={{ ...ghostButton, marginLeft: "auto",
+                           padding: "3px 12px", fontSize: 12,
+                           color: "#8a5a00" }}>
+            Take un-ordered items off this PR ({droppable.length})
+          </button>
+        )}
+      </div>
+      <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 8px" }}>
+        Can't source an item on this PR? Remove it — it reopens on the MR so you
+        can raise another PR for it. Awarded items stay.
+      </p>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+                      fontSize: 12 }}>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.mr_line_id}
+                style={{ borderTop: "1px solid var(--sp-border)" }}>
+              <td style={{ padding: "4px 6px" }}>{r.description}</td>
+              <td style={{ padding: "4px 6px", color: "#5a6b78" }}>
+                {r.mr_ref}</td>
+              <td style={{ padding: "4px 6px" }}>
+                {r.awarded ? <span style={{ color: "#1a7f37" }}>awarded</span>
+                  : r.covered ? "quoted" : <span style={{ color: "#8a5a00" }}>
+                      not quoted</span>}</td>
+              <td style={{ padding: "4px 6px", textAlign: "right" }}>
+                {!r.awarded && (
+                  <button disabled={busy}
+                          onClick={() => onRelease([r.mr_line_id],
+                            r.description)}
+                          style={{ ...ghostButton, padding: "2px 8px",
+                                   fontSize: 12, color: "#c0392b" }}>
+                    remove</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function useQuoteData(docRef) {
   const [quotations, setQuotations] = useState([]);
   const [coverage, setCoverage] = useState(null);
@@ -255,6 +312,19 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function releaseLines(ids, label) {
+    if (!window.confirm(
+      `Take ${label} off ${doc.ref}? They'll reopen on the MR so you can `
+      + "raise another PR for them.")) return;
+    setError(null); setBusy(true);
+    try {
+      await api(`/pr/${doc.ref}/release-lines`, { method: "POST",
+                                                  body: { line_ids: ids } });
+      load();
+      onChanged?.();
+    } catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+
   return (
     <section style={card}>
       <div style={{ display: "flex", justifyContent: "space-between",
@@ -273,6 +343,9 @@ export function MatchingWorkspace({ doc, me, onClose, onChanged }) {
       </p>
 
       <CoverageBanner coverage={coverage} />
+      {canEdit && mrOptions.length > 0 && (
+        <ScopePanel rows={mrOptions} busy={busy} onRelease={releaseLines} />
+      )}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

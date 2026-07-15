@@ -424,6 +424,31 @@ def pr_coverage(request, ref):
 
 
 @api_view(["POST"])
+def pr_release_lines(request, ref):
+    """Take MR items off this PR (before approval) so they reopen on the MR for
+    a later PR — the escape hatch when a purchaser can't source everything on
+    one PR (owner 2026-07-15). `line_ids` empty = every not-yet-awarded item."""
+    pr, err = _get_pr(request, ref)
+    if err:
+        return err
+    if request.user.role not in ("HO_PURCHASING", "ADMIN"):
+        return Response({"detail": "Only Purchasing changes a PR's items."},
+                        status=403)
+    from .procurement import release_pr_lines, sync_pr_vendor_rows
+    n, msg = release_pr_lines(pr, request.data.get("line_ids") or [],
+                              request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    sync_pr_vendor_rows(pr)
+    rows = pr_coverage_data(pr)
+    return Response({"released": n, "pr": pr.ref, "rows": rows,
+                     "uncovered": [r["description"] for r in rows
+                                   if not r["covered"]],
+                     "unawarded": [r["description"] for r in rows
+                                   if r["covered"] and not r["awarded"]]})
+
+
+@api_view(["POST"])
 def pr_sync_vendor_rows(request, ref):
     """Rebuild the PR vendor-summary rows from captured quotations, so the
     Director approves totals backed by item-level detail (R2)."""
