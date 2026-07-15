@@ -1,7 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_cost as cost, views_documents as docs, \
+from . import views, views_commercial as commercial, views_cost as cost, \
+    views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
@@ -188,6 +189,14 @@ urlpatterns = [
          name="programme-pdf"),
     path("programme-activities/<int:pk>", projects.activity_detail,
          name="activity-detail"),
+    # Project commercial (QS) — BOQ
+    path("projects/<int:pid>/boq", commercial.boq_detail, name="boq-detail"),
+    path("projects/<int:pid>/boq/items", commercial.boq_save, name="boq-save"),
+    path("projects/<int:pid>/boq/lock", commercial.boq_lock, name="boq-lock"),
+    path("projects/<int:pid>/boq/import", commercial.boq_import,
+         name="boq-import"),
+    path("projects/<int:pid>/boq/template", commercial.boq_template,
+         name="boq-template"),
     path("sites/<int:site_id>/manpower", hr.site_manpower,
          name="site-manpower"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),

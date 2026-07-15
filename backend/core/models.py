@@ -1611,6 +1611,54 @@ class ProgrammeActivity(models.Model):
         verbose_name_plural = "programme activities"
 
 
+class Boq(models.Model):
+    """A project's Bill of Quantities — the priced contract schedule the QS
+    progresses interim claims against. One per project; locked once claiming
+    starts so the contract baseline can't shift under a live claim."""
+
+    project = models.OneToOneField(Project, on_delete=models.CASCADE,
+                                   related_name="boq")
+    currency = models.CharField(max_length=3, default="USD")  # contracts are USD
+    is_locked = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def total(self):
+        from decimal import Decimal
+        return sum((i.amount for i in self.items.all()), Decimal("0"))
+
+
+class BoqItem(models.Model):
+    """One BOQ line. A priced item carries qty × rate; a heading/preamble row
+    (is_heading) is a section title or note with no money. `section` groups
+    items under a trade for subtotals and the claim layout."""
+
+    boq = models.ForeignKey(Boq, on_delete=models.CASCADE, related_name="items")
+    sort_order = models.IntegerField(default=0)
+    section = models.CharField(max_length=120, blank=True)  # trade / bill
+    item_code = models.CharField(max_length=30, blank=True)  # e.g. A.1.2
+    description = models.TextField(blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
+                              blank=True)
+    rate = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                               blank=True)
+    is_heading = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    @property
+    def amount(self):
+        from decimal import Decimal
+        if self.is_heading:
+            return Decimal("0")
+        return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
+
+
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
 
 
