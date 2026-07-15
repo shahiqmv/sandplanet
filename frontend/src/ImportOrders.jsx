@@ -1390,7 +1390,7 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
   const ms = doc.milestones || [];
   const [editing, setEditing] = useState(false);
   const [rows, setRows] = useState([{ label: "", trigger: "ADVANCE",
-    percent: "" }]);
+    basis: "pct", value: "" }]);
   const canManage = doc.can_manage;
   const canPay = doc.can_pay;
   const anyPaid = ms.some((m) => m.status === "PAID");
@@ -1414,6 +1414,14 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
 
   const paidTotal = ms.filter((m) => m.status === "PAID")
     .reduce((a, m) => a + num(m.mvr_paid), 0);
+
+  // Schedule balance while editing: each row is a % of the order value or a
+  // fixed amount in the order currency; the sum must equal the order total.
+  const orderTotal = num(doc.order_total);
+  const ccy = (doc.order && doc.order.order_currency) || doc.currency || "";
+  const scheduled = rows.reduce((a, r) => a + (r.basis === "fixed"
+    ? num(r.value) : (num(r.value) / 100) * orderTotal), 0);
+  const balanced = Math.abs(scheduled - orderTotal) < 0.01;
 
   return (
     <>
@@ -1440,7 +1448,8 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                   <td style={td}>{m.label}</td>
                   <td style={td}>{(TRIGGERS.find((t) => t[0] === m.trigger)
                     || [, m.trigger])[1]}
-                    {m.percent ? ` · ${num(m.percent)}%` : ""}</td>
+                    {m.percent ? ` · ${num(m.percent)}%`
+                      : (m.fixed_amount != null ? " · fixed" : "")}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {doc.order.order_currency} {money(m.due_amount)}</td>
                   <td style={td}>
@@ -1513,9 +1522,11 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
             <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12,
                              marginTop: 6 }}
                     onClick={() => { setRows(ms.map((m) => ({ label: m.label,
-                      trigger: m.trigger, percent: m.percent ? String(
-                        num(m.percent)) : "",
-                      fixed_amount: m.fixed_amount || "" }))); setEditing(true); }}>
+                      trigger: m.trigger,
+                      basis: m.fixed_amount != null ? "fixed" : "pct",
+                      value: m.fixed_amount != null ? String(num(m.fixed_amount))
+                        : (m.percent ? String(num(m.percent)) : "") })));
+                      setEditing(true); }}>
               Edit schedule</button>
           )}
         </div>
@@ -1536,10 +1547,18 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                   <option key={t[0]} value={t[0]}>{t[1]}</option>
                 ))}
               </select>
-              <input type="number" placeholder="%" value={r.percent}
-                style={{ ...inputStyle, width: 80 }}
+              <select value={r.basis} style={{ ...inputStyle, width: 96 }}
                 onChange={(e) => setRows(rows.map((x, j) => j === i
-                  ? { ...x, percent: e.target.value } : x))} />
+                  ? { ...x, basis: e.target.value } : x))}>
+                <option value="pct">% of order</option>
+                <option value="fixed">Fixed {ccy}</option>
+              </select>
+              <input type="number"
+                placeholder={r.basis === "fixed" ? (ccy || "amount") : "%"}
+                value={r.value}
+                style={{ ...inputStyle, width: 90 }}
+                onChange={(e) => setRows(rows.map((x, j) => j === i
+                  ? { ...x, value: e.target.value } : x))} />
               {rows.length > 1 && (
                 <button style={{ ...ghostButton, color: "#c0392b",
                                  padding: "2px 8px" }}
@@ -1551,14 +1570,20 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
                     onClick={() => setRows([...rows, { label: "",
-                      trigger: "BALANCE", percent: "" }])}>+ milestone</button>
-            <span style={{ fontSize: 12, color: rows.reduce(
-              (a, r) => a + num(r.percent), 0) === 100 ? "#1a7f37" : "#b35900" }}>
-              {rows.reduce((a, r) => a + num(r.percent), 0)}% of order
+                      trigger: "BALANCE", basis: "pct", value: "" }])}>
+              + milestone</button>
+            <span style={{ fontSize: 12, fontWeight: 600,
+              color: balanced ? "#1a7f37" : "#b35900" }}>
+              {ccy} {money(scheduled)} / {money(orderTotal)}
+              {balanced ? " ✓" : " — must equal the order total"}
             </span>
             <button style={{ ...buttonStyle, padding: "4px 12px", fontSize: 13,
-                             marginLeft: "auto" }}
-                    onClick={() => call("/milestones", { rows })}>
+                             marginLeft: "auto", opacity: balanced ? 1 : 0.5 }}
+                    disabled={!balanced}
+                    onClick={() => call("/milestones", { rows: rows.map((r) => ({
+                      label: r.label, trigger: r.trigger,
+                      percent: r.basis === "pct" ? r.value : "",
+                      fixed_amount: r.basis === "fixed" ? r.value : "" })) })}>
               Save schedule</button>
             {editing && (
               <button style={ghostButton}

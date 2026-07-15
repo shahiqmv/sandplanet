@@ -337,6 +337,30 @@ class MilestonePaymentTests(IprBase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("sum to the order total", r.data["detail"])
 
+    def test_mixed_fixed_and_percent_schedule(self):
+        """A milestone can be a fixed amount in the order currency, mixed with
+        percentage milestones, as long as the schedule sums to the order
+        total (10 × $100 = $1000)."""
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "fixed_amount": "250"},
+            {"label": "Balance", "trigger": "BALANCE", "percent": "75"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        amounts = sorted(float(m["due_amount"]) for m in r.data["milestones"])
+        self.assertEqual(amounts, [250.0, 750.0])
+
+    def test_fixed_schedule_must_still_balance(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "fixed_amount": "250"},
+            {"label": "Balance", "fixed_amount": "600"},   # 850 ≠ 1000
+        ]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("sum to the order total", r.data["detail"])
+
     def test_only_finance_pays(self):
         ref = self.create_and_authorise()
         self.client.force_authenticate(self.ho)
