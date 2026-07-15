@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
+import VariationsPanel from "./VariationsPanel.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
 
@@ -199,7 +200,10 @@ manpower histogram, on the letterhead — send to the client"
       )}
 
       {tab === "commercial" && (
-        <BoqPanel projectId={projectId} project={project} me={me} />
+        <>
+          <BoqPanel projectId={projectId} project={project} me={me} />
+          <VariationsPanel projectId={projectId} me={me} />
+        </>
       )}
 
       {tab === "documents" && (

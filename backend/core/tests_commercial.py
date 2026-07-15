@@ -96,3 +96,71 @@ class BoqTests(TestCase):
         self.assertFalse(r.data["exists"])
         self.assertEqual(r.data["items"], [])
         self.assertFalse(Boq.objects.filter(project=self.project).exists())
+
+
+class VariationTests(TestCase):
+    def setUp(self):
+        self.site = Site.objects.create(
+            code="VKR", name="Vakkaru", status=Site.Status.ACTIVE,
+            start_date=date.today() - timedelta(days=90))
+        self.project = Project.objects.create(
+            site=self.site, code="POOLS17", title="17 Swimming Pools",
+            contract_value="500000")
+        self.qs = make_user("qs1", User.Role.QS)
+        self.se = make_user("se1", User.Role.SITE_ENGINEER, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+
+    def _create(self, kind="ADDITION"):
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/variations/create",
+            {"title": "Extra pool coping", "kind": kind, "rows": [
+                {"item_code": "V1", "description": "Coping stone", "unit": "m",
+                 "qty": "40", "rate_supply": "25", "rate_install": "10"}]},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data["variations"][-1]
+
+    def test_addition_adjusts_revised_only_when_approved(self):
+        v = self._create("ADDITION")
+        self.assertEqual(v["ref"], "VO-01")
+        self.assertEqual(float(v["gross"]), 1400.0)   # 40 * (25+10)
+        self.assertEqual(float(v["signed_total"]), 1400.0)
+        vid = v["id"]
+        # submitted → shows as a pending provision, revised unchanged
+        r = self.client.post(f"/api/v1/variations/{vid}/status",
+                             {"status": "SUBMITTED"}, format="json")
+        c = r.data["contract"]
+        self.assertEqual(float(c["revised"]), 500000.0)
+        self.assertEqual(float(c["pending_net"]), 1400.0)
+        self.assertEqual(float(c["forecast"]), 501400.0)
+        # approved → folds into the revised contract sum
+        r = self.client.post(f"/api/v1/variations/{vid}/status",
+                             {"status": "APPROVED"}, format="json")
+        c = r.data["contract"]
+        self.assertEqual(float(c["revised"]), 501400.0)
+        self.assertEqual(float(c["pending_net"]), 0.0)
+
+    def test_omission_subtracts(self):
+        v = self._create("OMISSION")
+        self.assertEqual(float(v["signed_total"]), -1400.0)
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "APPROVED"}, format="json")
+        self.assertEqual(float(r.data["contract"]["revised"]), 498600.0)
+
+    def test_approved_variation_is_locked_for_edit(self):
+        v = self._create()
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "APPROVED"}, format="json")
+        r = self.client.post(f"/api/v1/variations/{v['id']}/items",
+                             {"rows": []}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_site_staff_cannot_see_variations(self):
+        self.client.force_authenticate(self.se)
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/variations")
+        self.assertEqual(r.status_code, 403)

@@ -6,6 +6,8 @@ the client. Slice 1 is the BOQ itself.
 """
 from decimal import Decimal, InvalidOperation
 
+from django.db.models import Max
+
 from .audit import audit
 
 ZERO = Decimal("0")
@@ -108,3 +110,115 @@ def set_boq_lock(project, locked, actor):
     audit("project", project.id,
           "BOQ_LOCKED" if locked else "BOQ_UNLOCKED", actor=actor)
     return boq, None
+
+
+# ---- Variations (VOs) ----------------------------------------------------
+
+def _variation_items(variation, rows):
+    from .models import VariationItem
+    out = []
+    for i, r in enumerate(rows):
+        desc = str(r.get("description") or "").strip()
+        section = str(r.get("section") or "").strip()
+        code = str(r.get("item_code") or "").strip()
+        unit = str(r.get("unit") or "").strip()
+        if not (desc or section or code):
+            continue
+        qty = _dec(r.get("qty"))
+        supply = _dec(r.get("rate_supply"))
+        install = _dec(r.get("rate_install"))
+        if supply is None and install is None:
+            supply = _dec(r.get("rate_combined"))
+        has_rate = supply is not None or install is not None
+        is_heading = bool(r.get("is_heading")) or (
+            qty is None and not has_rate and not unit)
+        out.append(VariationItem(
+            variation=variation, sort_order=i, section=section, item_code=code,
+            description=desc, unit=unit, qty=qty, rate_supply=supply,
+            rate_install=install, is_heading=is_heading))
+    return out
+
+
+def create_variation(project, data, actor):
+    from .models import Variation
+    seq = (project.variations.aggregate(m=Max("seq"))["m"] or 0) + 1
+    v = Variation.objects.create(
+        project=project, seq=seq, ref=(data.get("ref") or f"VO-{seq:02d}"),
+        title=data.get("title") or "",
+        kind=data.get("kind") or "ADDITION",
+        ref_date=data.get("ref_date") or None, created_by=actor)
+    if data.get("rows"):
+        set_variation_items(v, data["rows"], actor)
+    audit("project", project.id, "VARIATION_CREATED", actor=actor,
+          detail={"ref": v.ref})
+    return v, None
+
+
+def set_variation_items(variation, rows, actor):
+    from .models import VariationItem
+    if variation.status not in ("DRAFT",):
+        return None, "Only a draft variation can be edited."
+    items = _variation_items(variation, rows)
+    variation.items.all().delete()
+    VariationItem.objects.bulk_create(items)
+    audit("project", variation.project_id, "VARIATION_SAVED", actor=actor,
+          detail={"ref": variation.ref, "gross": str(variation.gross)})
+    return variation, None
+
+
+def set_variation_meta(variation, data, actor):
+    """Edit a draft variation's header (title/kind/ref/date)."""
+    if variation.status != "DRAFT":
+        return None, "Only a draft variation can be edited."
+    for f in ("ref", "title", "kind"):
+        if f in data:
+            setattr(variation, f, data.get(f) or getattr(variation, f))
+    if "ref_date" in data:
+        variation.ref_date = data.get("ref_date") or None
+    variation.save(update_fields=["ref", "title", "kind", "ref_date"])
+    return variation, None
+
+
+VARIATION_FLOW = {
+    "DRAFT": {"SUBMITTED"},
+    "SUBMITTED": {"APPROVED", "REJECTED", "DRAFT"},
+    "APPROVED": set(),          # locked once approved (feeds claims)
+    "REJECTED": {"DRAFT"},
+}
+
+
+def set_variation_status(variation, to_status, actor):
+    from .models import Variation
+    allowed = VARIATION_FLOW.get(variation.status, set())
+    if to_status not in allowed:
+        return None, f"Cannot move a {variation.status} variation to {to_status}."
+    if to_status == "SUBMITTED" and not variation.items.exists():
+        return None, "Add at least one variation item before submitting."
+    variation.status = to_status
+    variation.save(update_fields=["status"])
+    audit("project", variation.project_id, f"VARIATION_{to_status}",
+          actor=actor, detail={"ref": variation.ref})
+    return variation, None
+
+
+def contract_summary(project):
+    """The IPA contract block: original sum + approved VOs = revised sum;
+    submitted-not-approved VOs are provisions in the forecast (IPA §C–E)."""
+    from decimal import Decimal
+    original = Decimal(str(project.contract_value or 0))
+    approved = project.variations.filter(status="APPROVED")
+    submitted = project.variations.filter(status="SUBMITTED")
+
+    def signed(qs):
+        return sum((v.signed_total for v in qs), Decimal("0"))
+
+    approved_net = signed(approved)
+    pending_net = signed(submitted)
+    revised = original + approved_net
+    return {
+        "original": original,
+        "approved_net": approved_net,
+        "revised": revised,
+        "pending_net": pending_net,
+        "forecast": revised + pending_net,
+    }

@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import commercial
-from .models import BoqItem, Project
+from .models import BoqItem, Project, Variation, VariationItem
 from .views_projects import PROJECT_EDIT_ROLES, _can_view_value
 
 
@@ -172,3 +172,137 @@ def boq_template(request, pid):
     resp["Content-Disposition"] = 'attachment; filename="boq-template.xlsx"'
     wb.save(resp)
     return resp
+
+
+# ---- Variations (VOs) ---------------------------------------------------
+
+class VariationItemSerializer(serializers.ModelSerializer):
+    amount = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                      read_only=True)
+    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                             read_only=True)
+    amount_install = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                              read_only=True)
+    rate_total = serializers.DecimalField(max_digits=16, decimal_places=2,
+                                          read_only=True)
+
+    class Meta:
+        model = VariationItem
+        fields = ["id", "sort_order", "section", "item_code", "description",
+                  "unit", "qty", "rate_supply", "rate_install", "rate_total",
+                  "is_heading", "amount", "amount_supply", "amount_install"]
+
+
+class VariationSerializer(serializers.ModelSerializer):
+    gross = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                     read_only=True)
+    signed_total = serializers.DecimalField(max_digits=18, decimal_places=2,
+                                            read_only=True)
+    items = VariationItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = Variation
+        fields = ["id", "seq", "ref", "title", "kind", "status", "ref_date",
+                  "gross", "signed_total", "items"]
+
+
+def _variations_payload(project):
+    vs = project.variations.prefetch_related("items").all()
+    return {
+        "currency": (getattr(project, "boq", None).currency
+                     if getattr(project, "boq", None) else "USD"),
+        "contract": {k: v for k, v in commercial.contract_summary(
+            project).items()},
+        "variations": VariationSerializer(vs, many=True).data,
+    }
+
+
+def _get_variation(request, pk):
+    try:
+        v = Variation.objects.select_related("project__site").get(pk=pk)
+    except Variation.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    if not _can_view_value(request.user, v.project):
+        return None, Response({"detail": "Not permitted."}, status=403)
+    return v, None
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def variation_list(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    return Response(_variations_payload(p))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_create(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    commercial.create_variation(p, request.data, request.user)
+    return Response(_variations_payload(p), status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_items(request, pk):
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_variation_items(v, request.data.get("rows") or [],
+                                            request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_variations_payload(v.project))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_meta(request, pk):
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_variation_meta(v, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_variations_payload(v.project))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def variation_status(request, pk):
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_variation_status(
+        v, request.data.get("status"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_variations_payload(v.project))
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def variation_delete(request, pk):
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    if v.status != "DRAFT":
+        return Response({"detail": "Only a draft variation can be deleted."},
+                        status=400)
+    project = v.project
+    v.delete()
+    return Response(_variations_payload(project))

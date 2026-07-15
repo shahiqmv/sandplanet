@@ -1699,6 +1699,98 @@ class BoqItem(models.Model):
         return self._amount(self.rate_total)
 
 
+class Variation(models.Model):
+    """A variation order (VO) on a project's contract — an addition or omission
+    the QS raises, sends for client approval, and (once approved) claims like
+    BOQ items. Approved VOs adjust the contract sum; submitted-not-approved
+    ones read as provisions pending approval in the forecast (IPA §D/E)."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted to client"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    class Kind(models.TextChoices):
+        ADDITION = "ADDITION", "Addition"
+        OMISSION = "OMISSION", "Omission"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="variations")
+    seq = models.IntegerField()
+    ref = models.CharField(max_length=20)          # e.g. VO-01
+    title = models.TextField(blank=True)
+    kind = models.CharField(max_length=8, choices=Kind.choices,
+                            default=Kind.ADDITION)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    ref_date = models.DateField(null=True, blank=True)   # client instruction
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["seq"]
+
+    @property
+    def gross(self):
+        from decimal import Decimal
+        return sum((i.amount for i in self.items.all()), Decimal("0"))
+
+    @property
+    def signed_total(self):
+        """Net effect on the contract sum: additions add, omissions subtract."""
+        return -self.gross if self.kind == self.Kind.OMISSION else self.gross
+
+
+class VariationItem(models.Model):
+    """A priced line on a variation — same shape as a BOQ line (supply +
+    installation, or a combined rate; headings carry no money)."""
+
+    variation = models.ForeignKey(Variation, on_delete=models.CASCADE,
+                                  related_name="items")
+    sort_order = models.IntegerField(default=0)
+    section = models.CharField(max_length=120, blank=True)
+    item_code = models.CharField(max_length=30, blank=True)
+    description = models.TextField(blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
+                              blank=True)
+    rate_supply = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)
+    rate_install = models.DecimalField(max_digits=14, decimal_places=2,
+                                       null=True, blank=True)
+    is_heading = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    @property
+    def rate_total(self):
+        from decimal import Decimal
+        return (self.rate_supply or Decimal("0")) + (self.rate_install
+                                                     or Decimal("0"))
+
+    def _amount(self, rate):
+        from decimal import Decimal
+        if self.is_heading:
+            return Decimal("0")
+        return (self.qty or Decimal("0")) * (rate or Decimal("0"))
+
+    @property
+    def amount_supply(self):
+        return self._amount(self.rate_supply)
+
+    @property
+    def amount_install(self):
+        return self._amount(self.rate_install)
+
+    @property
+    def amount(self):
+        return self._amount(self.rate_total)
+
+
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
 
 
