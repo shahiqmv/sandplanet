@@ -187,6 +187,28 @@ class PrAuthorisationTests(PrCostingBase):
                          Decimal("7000"))
         self.assertEqual(Payable.objects.get(document=pr).status, "SETTLED")
 
+    def test_credit_terms_editable_until_authorisation(self):
+        from datetime import date, timedelta
+        pr = self.make_pr()            # Director-approved, no payable yet
+        credit_line = next(ln for ln in pr.current_revision.lines.all()
+                           if (ln.amount_credit or 0) > 0)
+        self.client.force_authenticate(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr.ref}/credit-terms",
+                             {"rows": [{"line_id": credit_line.id,
+                                        "credit_days": 45}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        credit_line.refresh_from_db()
+        self.assertEqual(credit_line.credit_days, 45)
+        self.authorise(pr.ref)         # payable due now follows the 45 days
+        p = Payable.objects.get(document=pr)
+        self.assertEqual(p.due_date, date.today() + timedelta(days=45))
+        # once the payable exists the terms are locked
+        self.client.force_authenticate(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr.ref}/credit-terms",
+                             {"rows": [{"line_id": credit_line.id,
+                                        "credit_days": 10}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+
     def test_payable_due_date_follows_credit_days(self):
         from datetime import date, timedelta
         pr = self.make_pr()

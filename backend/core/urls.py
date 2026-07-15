@@ -165,6 +165,8 @@ urlpatterns = [
          name="pr-sync-vendor-rows"),
     path("pr/<str:ref>/vendor-payment", quotes.pr_vendor_payment,
          name="pr-vendor-payment"),
+    path("pr/<str:ref>/credit-terms", quotes.pr_credit_terms,
+         name="pr-credit-terms"),
     path("quotations/<int:pk>", quotes.quotation_detail, name="quotation-detail"),
     path("quotations/<int:pk>/file", quotes.quotation_file,
          name="quotation-file"),

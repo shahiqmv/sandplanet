@@ -367,6 +367,40 @@ def pr_vendor_payment(request, ref):
     return Response(data)
 
 
+@api_view(["POST"])
+def pr_credit_terms(request, ref):
+    """Update the credit period (days) / terms on a PR's vendor lines while the
+    PO/payable isn't created yet — Purchasing/Finance can correct terms right up
+    to authorisation (owner 2026-07-15). Once payables exist the terms are
+    locked on the payable."""
+    pr, err = _get_pr(request, ref)
+    if err:
+        return err
+    if request.user.role not in ("HO_PURCHASING", "FINANCE", "ADMIN"):
+        return Response({"detail": "Purchasing or Finance updates credit "
+                         "terms."}, status=403)
+    if pr.payables.exists():
+        return Response({"detail": "The PO/payable is already created — the "
+                         "credit terms are locked on the payable."}, status=400)
+    rows = request.data.get("rows") or []
+    lines = {ln.id: ln for ln in pr.current_revision.lines.all()}
+    changed = 0
+    for r in rows:
+        ln = lines.get(r.get("line_id"))
+        if not ln:
+            continue
+        cd = r.get("credit_days")
+        ln.credit_days = int(cd) if str(cd or "").strip().isdigit() else None
+        if "payment_terms" in r:
+            ln.payment_terms = r.get("payment_terms") or ""
+        ln.save(update_fields=["credit_days", "payment_terms"])
+        changed += 1
+    audit("document", pr.id, "PR_CREDIT_TERMS", actor=request.user,
+          detail={"ref": pr.ref, "lines": changed})
+    from .serializers_documents import DocumentSerializer
+    return Response(DocumentSerializer(pr, context={"request": request}).data)
+
+
 @api_view(["GET"])
 def pr_coverage(request, ref):
     pr, err = _get_pr(request, ref)

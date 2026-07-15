@@ -762,6 +762,63 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   );
 }
 
+// Adjust the credit period (days) on a Director-approved PR's credit vendor
+// lines, before the PO/payable is generated (owner 2026-07-15). The days drive
+// the payable's due date at authorisation.
+function CreditTermsEditor({ doc, onSaved, onError }) {
+  const creditLines = doc.lines.filter((l) => Number(l.amount_credit) > 0);
+  const [days, setDays] = useState(Object.fromEntries(
+    creditLines.map((l) => [l.id, l.credit_days ?? ""])));
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true); onError && onError(null);
+    try {
+      const rows = creditLines.map((l) => ({ line_id: l.id,
+        credit_days: days[l.id] }));
+      const data = await api(`/pr/${doc.ref}/credit-terms`,
+        { method: "POST", body: { rows } });
+      onSaved(data); setOpen(false);
+    } catch (e) { onError && onError(e.message); }
+    setBusy(false);
+  }
+
+  if (!open) {
+    return (
+      <p style={{ margin: "4px 0 12px", fontSize: 12.5, color: "#5a6b78" }}>
+        Credit terms can still be adjusted before the PO is generated.{" "}
+        <button style={{ ...ghostButton, padding: "2px 10px" }}
+                onClick={() => setOpen(true)}>✎ Update credit terms</button>
+      </p>
+    );
+  }
+  return (
+    <div style={{ margin: "4px 0 12px", padding: 10, borderRadius: 8,
+      border: "1px solid var(--sp-border)",
+      background: "var(--sp-tint, #f5f8fb)" }}>
+      <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
+        Credit terms (days)</strong>
+      {creditLines.map((l) => (
+        <div key={l.id} style={{ display: "flex", gap: 8, alignItems: "center",
+          marginTop: 6, fontSize: 12.5 }}>
+          <span style={{ flex: 1 }}>{l.vendor || l.free_text_desc}</span>
+          <input type="number" min="0" value={days[l.id] ?? ""}
+            style={{ ...inputStyle, width: 80 }}
+            onChange={(e) => setDays({ ...days, [l.id]: e.target.value })} />
+          <span style={{ color: "#8a97a1" }}>days</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button style={{ ...buttonStyle, padding: "4px 12px" }} disabled={busy}
+                onClick={save}>{busy ? "Saving…" : "Save terms"}</button>
+        <button style={ghostButton} onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+
 export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                               onOpenMatch, onOpenDoc }) {
   const [doc, setDoc] = useState(initial);
@@ -1120,6 +1177,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       )}
 
       <SectionTitle>{isPR ? "Vendors" : "Items"}</SectionTitle>
+      {isPR && doc.status === "APPROVED"
+        && ["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role)
+        && doc.lines.some((l) => Number(l.amount_credit) > 0) && (
+        <CreditTermsEditor doc={doc} onSaved={setDoc} onError={setError} />
+      )}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
