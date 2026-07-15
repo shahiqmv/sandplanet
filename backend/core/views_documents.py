@@ -651,6 +651,12 @@ def pending_groups(user):
         add("To size & release — reviewed import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
                  "Size the order (MOQ) and release to sourcing"))
+    if user.role in ("DIRECTOR", "QS", "ADMIN"):
+        # QS shares the Director's overseas-procurement authority (owner
+        # 2026-07-12): both award a submitted import order. IPRs are global.
+        add("To award — submitted import orders (IPR)",
+            rows(base.filter(doc_type="IPR", status="SUBMITTED"),
+                 "Award the overseas order (Director / QS)"))
     if user.role in ("SIGNATORY", "ADMIN"):
         # Signatory approves whole Payment Vouchers (M6d), not each doc
         add("To approve — payment vouchers",

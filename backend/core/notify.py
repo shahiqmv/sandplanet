@@ -54,8 +54,11 @@ def targets_for(doc):
         return [(u, "to verify") for u in _pm_for(doc)]
     if t == "GRN" and s == "COUNTED":
         return [(u, "to verify") for u in _pm_for(doc)]
-    if t in ("PR", "IPR") and s == "SUBMITTED":
+    if t == "PR" and s == "SUBMITTED":
         return [(u, "to award") for u in _role_users("DIRECTOR")]
+    if t == "IPR" and s == "SUBMITTED":
+        # QS shares the Director's overseas-procurement authority — both award
+        return [(u, "to award") for u in _role_users("DIRECTOR", "QS")]
     if t == "PR" and s == "APPROVED":
         return [(u, "awaiting a payment voucher")
                 for u in _role_users("FINANCE")]

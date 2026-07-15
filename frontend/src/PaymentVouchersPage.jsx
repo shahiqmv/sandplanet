@@ -71,6 +71,11 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const pickedCurrencies = [...new Set(pickedRows.map(
     (d) => d.currency || "MVR"))];
   const mixed = pickedCurrencies.length > 1;
+  // Requisitions (PR/PYR/overseas-TT) flow here automatically once approved;
+  // credit payables are shown in their own section so Finance can choose which
+  // invoice to pay rather than seeing them all queued as pending (owner 07-15).
+  const reqAwaiting = awaiting.filter((d) => d.kind !== "PAYABLE");
+  const payables = awaiting.filter((d) => d.kind === "PAYABLE");
   const shown = vouchers.filter((v) => tab === "all" || v.status === tab);
 
   const run = async (fn) => {
@@ -196,6 +201,76 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const heading = { margin: 0, color: "var(--navy)", fontSize: 16,
                     fontWeight: 700 };
 
+  // Selected-summary + Create button, shared by both picker sections so a
+  // voucher can be raised from the requisition list or the payables list.
+  const pickedBar = pickedRows.length > 0 && (
+    <span style={{ marginLeft: "auto", display: "flex", gap: 12,
+                   alignItems: "center" }}>
+      <span style={{ fontSize: 13.5, color: mixed
+        ? "var(--red-fg)" : "var(--navy)" }}>
+        {pickedRows.length} selected ·{" "}
+        {mixed
+          ? <strong>mixed currency — pick one of {" "}
+              {pickedCurrencies.join(" / ")}</strong>
+          : <strong style={mono}>
+              {cur(pickedTotal, pickedCurrencies[0])}</strong>}
+      </span>
+      <Btn variant="primary" disabled={busy || mixed}
+           onClick={createVoucher}>Create voucher</Btn>
+    </span>
+  );
+
+  const pickerRow = (d) => {
+    const key = awKey(d);
+    const isMs = d.kind === "MILESTONE";
+    return (
+      <tr key={key} style={{ background: picked[key]
+        ? "var(--sky-soft)" : "transparent" }}>
+        <td style={{ ...td, textAlign: "center" }}>
+          <input type="checkbox" checked={!!picked[key]}
+                 onChange={(e) => setPicked(
+                   { ...picked, [key]: e.target.checked })} />
+        </td>
+        <td style={td}>
+          <a href="#" onClick={(e) => { e.preventDefault();
+                                        onOpenDoc(d.ref); }}
+             style={{ textDecoration: "none" }}>
+            <RefStamp small>{d.ref}</RefStamp></a>
+          {isMs && (
+            <span style={{ marginLeft: 6, fontSize: 11,
+              fontWeight: 600, color: "#8a6d00",
+              background: "var(--amber-bg, #fff4e0)",
+              padding: "1px 6px", borderRadius: 10 }}>
+              overseas TT</span>
+          )}
+          {d.kind === "PAYABLE" && (
+            <span style={{ marginLeft: 6, fontSize: 11,
+              fontWeight: 600,
+              color: d.overdue ? "#b0402f" : "#5a6b78",
+              background: d.overdue ? "#f6e7e3" : "#eef3f7",
+              padding: "1px 6px", borderRadius: 10 }}>
+              credit payable{d.overdue ? " · overdue"
+                : d.due_date ? ` · due ${d.due_date}` : ""}</span>
+          )}
+        </td>
+        <td style={td}>{d.site_code}</td>
+        <td style={td}>{d.payee}</td>
+        <td style={td}>{d.cost_head}</td>
+        <td style={{ ...td, textAlign: "right", ...mono }}>
+          {cur(d.amount, d.currency)}</td>
+      </tr>
+    );
+  };
+
+  const pickerHead = (
+    <thead><tr>
+      <th style={{ ...th, width: 34 }}></th>
+      <th style={th}>Ref</th><th style={th}>Site</th>
+      <th style={th}>Payee</th><th style={th}>Cost head</th>
+      <th style={{ ...th, textAlign: "right" }}>Amount</th>
+    </tr></thead>
+  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
@@ -223,83 +298,47 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                         flexWrap: "wrap", marginBottom: 4 }}>
             <h3 style={heading}>Awaiting a voucher</h3>
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              {awaiting.length} requisition{awaiting.length === 1 ? "" : "s"}
+              {reqAwaiting.length} requisition
+              {reqAwaiting.length === 1 ? "" : "s"}
             </span>
-            {pickedRows.length > 0 && (
-              <span style={{ marginLeft: "auto", display: "flex", gap: 12,
-                             alignItems: "center" }}>
-                <span style={{ fontSize: 13.5, color: mixed
-                  ? "var(--red-fg)" : "var(--navy)" }}>
-                  {pickedRows.length} selected ·{" "}
-                  {mixed
-                    ? <strong>mixed currency — pick one of {" "}
-                        {pickedCurrencies.join(" / ")}</strong>
-                    : <strong style={mono}>
-                        {cur(pickedTotal, pickedCurrencies[0])}</strong>}
-                </span>
-                <Btn variant="primary" disabled={busy || mixed}
-                     onClick={createVoucher}>Create voucher</Btn>
-              </span>
-            )}
+            {pickedBar}
           </div>
-          {awaiting.length === 0 ? (
+          {reqAwaiting.length === 0 ? (
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
               Nothing awaiting a voucher right now.</p>
           ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead><tr>
-                  <th style={{ ...th, width: 34 }}></th>
-                  <th style={th}>Ref</th><th style={th}>Site</th>
-                  <th style={th}>Payee</th><th style={th}>Cost head</th>
-                  <th style={{ ...th, textAlign: "right" }}>Amount</th>
-                </tr></thead>
-                <tbody>
-                  {awaiting.map((d) => {
-                    const key = awKey(d);
-                    const isMs = d.kind === "MILESTONE";
-                    return (
-                    <tr key={key} style={{ background: picked[key]
-                      ? "var(--sky-soft)" : "transparent" }}>
-                      <td style={{ ...td, textAlign: "center" }}>
-                        <input type="checkbox" checked={!!picked[key]}
-                               onChange={(e) => setPicked(
-                                 { ...picked, [key]: e.target.checked })} />
-                      </td>
-                      <td style={td}>
-                        <a href="#" onClick={(e) => { e.preventDefault();
-                                                      onOpenDoc(d.ref); }}
-                           style={{ textDecoration: "none" }}>
-                          <RefStamp small>{d.ref}</RefStamp></a>
-                        {isMs && (
-                          <span style={{ marginLeft: 6, fontSize: 11,
-                            fontWeight: 600, color: "#8a6d00",
-                            background: "var(--amber-bg, #fff4e0)",
-                            padding: "1px 6px", borderRadius: 10 }}>
-                            overseas TT</span>
-                        )}
-                        {d.kind === "PAYABLE" && (
-                          <span style={{ marginLeft: 6, fontSize: 11,
-                            fontWeight: 600,
-                            color: d.overdue ? "#b0402f" : "#5a6b78",
-                            background: d.overdue ? "#f6e7e3" : "#eef3f7",
-                            padding: "1px 6px", borderRadius: 10 }}>
-                            credit payable{d.overdue ? " · overdue"
-                              : d.due_date ? ` · due ${d.due_date}` : ""}</span>
-                        )}
-                      </td>
-                      <td style={td}>{d.site_code}</td>
-                      <td style={td}>{d.payee}</td>
-                      <td style={td}>{d.cost_head}</td>
-                      <td style={{ ...td, textAlign: "right", ...mono }}>
-                        {cur(d.amount, d.currency)}</td>
-                    </tr>
-                  );
-                  })}
-                </tbody>
+                {pickerHead}
+                <tbody>{reqAwaiting.map(pickerRow)}</tbody>
               </table>
             </div>
           )}
+        </section>
+      )}
+
+      {/* Finance: credit payables — pick which invoice(s) to pay now */}
+      {isFinance && payables.length > 0 && (
+        <section style={{ ...card, margin: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12,
+                        flexWrap: "wrap", marginBottom: 4 }}>
+            <h3 style={heading}>Outstanding payables</h3>
+            <span style={{ fontSize: 13, color: "var(--muted)" }}>
+              {payables.length} invoice{payables.length === 1 ? "" : "s"} on
+              credit
+            </span>
+            {pickedBar}
+          </div>
+          <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 8px" }}>
+            These aren't queued for payment. Tick the invoice(s) you want to
+            settle — when due, or early — and raise a voucher for just those.
+          </p>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              {pickerHead}
+              <tbody>{payables.map(pickerRow)}</tbody>
+            </table>
+          </div>
         </section>
       )}
 

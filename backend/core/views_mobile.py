@@ -77,6 +77,7 @@ APPROVABLE = {
     ("MR", "SUBMITTED"), ("IR", "SUBMITTED"), ("MAR", "SUBMITTED"),
     ("PR", "SUBMITTED"), ("PYR", "SUBMITTED"), ("PYR", "PM_APPROVED"),
     ("PV", "SUBMITTED"),
+    ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
 }
 
 
@@ -95,6 +96,9 @@ def _card_amount(ref, doc_type):
         return float(sum(
             (ln.amount or 0) for ln in
             PaymentVoucherLine.objects.filter(voucher=d)))
+    if doc_type == "IPR" and hasattr(d, "import_order"):
+        from .imports import ipr_order_total
+        return float(ipr_order_total(d.import_order))
     return None
 
 
