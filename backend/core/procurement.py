@@ -151,10 +151,71 @@ def set_status(doc, new_status, actor, event):
           to_state=new_status, detail={"ref": doc.ref})
 
 
+def orderable_mr_lines(mr):
+    """Current-revision MR lines that go through the local-purchase (PR) route
+    and still need ordering — i.e. not store-issued and with something to
+    order. These are the lines a PR can take."""
+    rev = mr.current_revision
+    if rev is None:
+        return []
+    return [ln for ln in rev.lines.all()
+            if ln.fulfil_source != "STORE"
+            and (ln.qty_to_order is None or ln.qty_to_order > 0)]
+
+
+def active_pr_claimed_line_ids():
+    """MR-line ids already taken by a live PR (not void/cancelled/rejected)."""
+    from .models import DocumentLine
+    return set(
+        DocumentLine.objects.filter(
+            ordered_pr__isnull=False, ordered_pr__is_void=False)
+        .exclude(ordered_pr__status__in=["CANCELLED", "REJECTED"])
+        .values_list("id", flat=True))
+
+
+def remaining_mr_lines(mr, claimed=None):
+    """Orderable MR lines not yet taken by a live PR."""
+    if claimed is None:
+        claimed = active_pr_claimed_line_ids()
+    return [ln for ln in orderable_mr_lines(mr) if ln.id not in claimed]
+
+
+def scope_pr_to_mr_lines(pr, mr_docs, line_ids):
+    """Take the chosen MR lines for this PR. `line_ids` empty/None means the
+    whole MR (every orderable line). Returns an error string on conflict."""
+    from .models import DocumentLine
+    claimed = active_pr_claimed_line_ids()
+    orderable = {}
+    for mr in mr_docs:
+        for ln in orderable_mr_lines(mr):
+            orderable[ln.id] = ln
+    if line_ids:
+        targets = []
+        for lid in line_ids:
+            ln = orderable.get(lid)
+            if ln is None:
+                return (f"Item {lid} isn't an orderable line on the selected "
+                        f"MR(s).")
+            if ln.id in claimed:
+                return f"“{ln.description}” is already on another PR."
+            targets.append(ln)
+    else:
+        targets = [ln for ln in orderable.values() if ln.id not in claimed]
+    for ln in targets:
+        ln.ordered_pr = pr
+    DocumentLine.objects.bulk_update(targets, ["ordered_pr"])
+    return None
+
+
 def on_pr_approved(pr, actor):
-    """Spec §4.3: issuing a PR against an MR sets the MR to PR Raised."""
+    """Issuing a PR against an MR marks the MR PR-raised (spec §4.3). When the
+    PR only covered some of a long MR, the MR goes to Partially Ordered and
+    stays open for further PRs (owner 2026-07-15)."""
+    claimed = active_pr_claimed_line_ids()
     for mr in linked_docs(pr, "MR_PR", "from"):  # link rows: PR → MR
-        set_status(mr, "PR_RAISED", actor, "MR_PR_RAISED")
+        target = "PR_RAISED" if not remaining_mr_lines(mr, claimed) \
+            else "PARTIALLY_ORDERED"
+        set_status(mr, target, actor, "MR_PR_RAISED")
 
 
 def on_lm_departed(lm, actor):
@@ -168,7 +229,7 @@ def on_lm_departed(lm, actor):
     pr_by_any = prs[0] if prs else None
 
     for mr in linked_docs(lm, "MR_LM", "from"):  # link rows: LM → MR
-        if mr.status in ("SENT_TO_HO", "PR_RAISED"):
+        if mr.status in ("SENT_TO_HO", "PR_RAISED", "PARTIALLY_ORDERED"):
             set_status(mr, "LOADING_PLANNED", actor, "MR_LOADING_PLANNED")
         set_status(mr, "PARTIALLY_LOADED" if has_pending else "LOADED",
                    actor, "MR_LOADING_UPDATED")

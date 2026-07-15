@@ -524,3 +524,86 @@ class LmEditTests(ProcBase):
             {"payload": {"vessel": "Y"}}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("GRN", r.data["detail"])
+
+
+class PartialPRTests(ProcBase):
+    """Owner 2026-07-15: a PR can cover only some of a long MR's items, and
+    the rest stay open for a later PR (partial fulfilment)."""
+
+    def _lines(self, mr_ref):
+        self.as_user(self.purchasing)
+        r = self.client.get(f"/api/v1/documents/{mr_ref}")
+        return {ln["item"]: ln for ln in r.data["lines"]}
+
+    def _for_pr(self):
+        self.as_user(self.purchasing)
+        r = self.client.get("/api/v1/documents/list?doc_type=MR&for_pr=1")
+        return {d["ref"] for d in r.data}
+
+    def _pr(self, mr_ref, line_ids, vendor="Vendor A", amount=5000):
+        self.as_user(self.purchasing)
+        return self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr_ref],
+            "mr_line_ids": line_ids,
+            "lines": [{"free_text_desc": vendor, "vendor": vendor,
+                       "amount_cash": amount}]}, format="json")
+
+    def _approve(self, pr_ref):
+        self.act(pr_ref, "submit")
+        self.as_user(self.director)
+        self.act(pr_ref, "approve")
+        self.as_user(self.purchasing)
+
+    def test_partial_pr_keeps_mr_open_for_more(self):
+        mr_ref = self.mr_to_sent()
+        lines = self._lines(mr_ref)
+        r = self._pr(mr_ref, [lines[self.cement.id]["id"]])
+        self.assertEqual(r.status_code, 201, r.data)
+        pr_ref = r.data["ref"]
+        # cement taken by this PR; rebar still open
+        lines = self._lines(mr_ref)
+        self.assertEqual(lines[self.cement.id]["ordered_pr_ref"], pr_ref)
+        self.assertIsNone(lines[self.rebar.id]["ordered_pr_ref"])
+        # MR still offered for another PR
+        self.assertIn(mr_ref, self._for_pr())
+        # approving a partial PR leaves the MR partially ordered, still open
+        self._approve(pr_ref)
+        self.assertEqual(Document.objects.get(ref=mr_ref).status,
+                         "PARTIALLY_ORDERED")
+        self.assertIn(mr_ref, self._for_pr())
+
+    def test_second_pr_covers_the_rest_and_closes_mr(self):
+        mr_ref = self.mr_to_sent()
+        lines = self._lines(mr_ref)
+        self._approve(self._pr(mr_ref, [lines[self.cement.id]["id"]]).data["ref"])
+        r2 = self._pr(mr_ref, [lines[self.rebar.id]["id"]], vendor="Vendor B")
+        self.assertEqual(r2.status_code, 201, r2.data)
+        self._approve(r2.data["ref"])
+        self.assertEqual(Document.objects.get(ref=mr_ref).status, "PR_RAISED")
+        self.assertNotIn(mr_ref, self._for_pr())
+
+    def test_cannot_take_a_line_already_on_another_pr(self):
+        mr_ref = self.mr_to_sent()
+        lines = self._lines(mr_ref)
+        cement_line = lines[self.cement.id]["id"]
+        self._pr(mr_ref, [cement_line])
+        r = self._pr(mr_ref, [cement_line], vendor="Vendor B")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already", r.data["detail"].lower())
+
+    def test_whole_mr_pr_still_marks_pr_raised(self):
+        # no mr_line_ids = whole MR (backward compatible)
+        mr_ref = self.mr_to_sent()
+        pr = self.make_pr(mr_ref)
+        self._approve(pr["ref"])
+        self.assertEqual(Document.objects.get(ref=mr_ref).status, "PR_RAISED")
+        self.assertNotIn(mr_ref, self._for_pr())
+
+    def test_coverage_is_scoped_to_the_prs_lines(self):
+        mr_ref = self.mr_to_sent()
+        lines = self._lines(mr_ref)
+        pr_ref = self._pr(mr_ref, [lines[self.cement.id]["id"]]).data["ref"]
+        cov = self.client.get(f"/api/v1/pr/{pr_ref}/coverage")
+        descs = {row["description"] for row in cov.data["rows"]}
+        self.assertIn(self.cement.description, descs)
+        self.assertNotIn(self.rebar.description, descs)

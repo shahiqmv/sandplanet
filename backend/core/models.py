@@ -295,7 +295,11 @@ class Document(models.Model):
             "DRAFT": {"SUBMITTED"},
             "SUBMITTED": {"PM_APPROVED", "DRAFT"},  # DRAFT = returned
             "PM_APPROVED": {"SENT_TO_HO"},
-            "SENT_TO_HO": {"PR_RAISED", "LOADING_PLANNED"},
+            # PARTIALLY_ORDERED: a PR covered some items, the rest still need
+            # one — the MR stays open for further PRs (owner 2026-07-15).
+            "SENT_TO_HO": {"PR_RAISED", "PARTIALLY_ORDERED", "LOADING_PLANNED"},
+            "PARTIALLY_ORDERED": {"PARTIALLY_ORDERED", "PR_RAISED",
+                                  "LOADING_PLANNED"},
             "PR_RAISED": {"LOADING_PLANNED"},
             "LOADING_PLANNED": {"PARTIALLY_LOADED", "LOADED"},
             "PARTIALLY_LOADED": {"PARTIALLY_LOADED", "LOADED", "CLOSED"},
@@ -629,6 +633,14 @@ class DocumentLine(models.Model):
     # How an MR line is fulfilled (P1B-f): blank = local purchase (PR);
     # "STORE" = issued from HO store stock via a SIN (owner 2026-07-13).
     fulfil_source = models.CharField(max_length=8, blank=True)
+    # The PR that has taken this MR line for ordering (owner 2026-07-15): a
+    # PR can cover only some of a long MR's items, so each ordered line points
+    # to its PR and the rest stay requisitionable for a later PR. Null = still
+    # open. Only set on MR lines. A line counts as taken only while its PR is
+    # live (not void / cancelled / rejected).
+    ordered_pr = models.ForeignKey(
+        "Document", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="ordered_mr_lines")
     # An LM/GRN line that carries a store-issued item points back to its SIN
     # line, so the site GRN can receive it and post INCURRED at landed cost in
     # the same combined receipt (owner 2026-07-14, P1B-f3).

@@ -275,6 +275,10 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   const [poRefs, setPoRefs] = useState("");
   const [openMrs, setOpenMrs] = useState([]);
   const [related, setRelated] = useState({ prs: [], pos: [] });
+  // Partial PR (owner 2026-07-15): the orderable lines of the picked MR(s) and
+  // which of them this PR will take. Anything left unticked stays on the MR.
+  const [mrLines, setMrLines] = useState([]);
+  const [pickLine, setPickLine] = useState({});   // line id -> bool
 
   const isRefForm = (docType === "PR" || docType === "LM") && !existing;
 
@@ -286,6 +290,30 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
     const filter = docType === "PR" ? "for_pr=1" : "open=1";
     api(`/documents/list?doc_type=MR&${filter}${params}`).then(setOpenMrs);
   }, [isRefForm, siteId, docType]);
+
+  // Load the orderable lines of the MR(s) picked for a new PR, and default to
+  // taking every still-open line (owner 2026-07-15).
+  useEffect(() => {
+    if (docType !== "PR" || existing) return;
+    const refs = mrRefs.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!refs.length) { setMrLines([]); setPickLine({}); return; }
+    Promise.all(refs.map((r) => api(`/documents/${r}`).catch(() => null)))
+      .then((docs) => {
+        const out = [];
+        const pick = {};
+        docs.filter(Boolean).forEach((d) => {
+          (d.lines || []).forEach((l) => {
+            const orderable = l.fulfil_source !== "STORE"
+              && (l.qty_to_order == null || Number(l.qty_to_order) > 0);
+            if (!orderable) return;
+            out.push({ ...l, mr_ref: d.ref });
+            if (!l.ordered_pr_ref) pick[l.id] = true;   // open → default taken
+          });
+        });
+        setMrLines(out);
+        setPickLine(pick);
+      });
+  }, [docType, existing, mrRefs]);
 
   useEffect(() => {
     if (docType !== "LM" || existing) return;
@@ -448,6 +476,16 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           lines: linesForSave(),
         };
         if (mrRefs.trim()) body.mr_refs = mrRefs.split(",").map((s) => s.trim());
+        if (docType === "PR") {
+          const picked = mrLines.filter((l) => pickLine[l.id]).map((l) => l.id);
+          if (mrLines.length && !picked.length) {
+            setError("Tick at least one item for this PR (or leave the rest "
+              + "for a later one).");
+            setBusy(false);
+            return;
+          }
+          body.mr_line_ids = picked;
+        }
         if (prRefs.trim()) body.pr_refs = prRefs.split(",").map((s) => s.trim());
         if (poRefs.trim()) body.po_refs = poRefs.split(",").map((s) => s.trim());
         if (docType === "GRN" && grnLmRef) body.lm_ref = grnLmRef;
@@ -557,12 +595,59 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       )}
 
       {docType === "PR" && !existing ? (
-        <p style={{ background: "#e8f0f7", borderRadius: 8, padding: "10px 14px",
-                    fontSize: 13, color: "var(--sp-navy)", marginTop: 16 }}>
-          Save the draft first — then capture each supplier's quotation and
-          match it to the MR lines on the next screen. The vendor summary
-          builds itself from the quotes.
-        </p>
+        <>
+          {mrLines.length > 0 && (
+            <>
+              <SectionTitle>Items to order on this PR</SectionTitle>
+              <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 8px" }}>
+                Tick the items this PR covers. Anything you leave unticked stays
+                on the MR — you can raise another PR for it later.
+              </p>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead><tr>
+                    <th style={{ ...th, width: 34 }}></th>
+                    <th style={th}>Item</th><th style={th}>Unit</th>
+                    <th style={{ ...th, textAlign: "right" }}>To order</th>
+                    <th style={th}>MR</th>
+                  </tr></thead>
+                  <tbody>
+                    {mrLines.map((l) => {
+                      const taken = !!l.ordered_pr_ref;
+                      return (
+                        <tr key={l.id} style={{ opacity: taken ? 0.5 : 1 }}>
+                          <td style={{ ...td, textAlign: "center" }}>
+                            <input type="checkbox" disabled={taken}
+                              checked={!!pickLine[l.id]}
+                              onChange={(e) => setPickLine({ ...pickLine,
+                                [l.id]: e.target.checked })} />
+                          </td>
+                          <td style={td}>{l.description}</td>
+                          <td style={td}>{l.unit}</td>
+                          <td style={{ ...td, textAlign: "right" }}>
+                            {l.qty_to_order ?? "—"}</td>
+                          <td style={td}>{l.mr_ref}
+                            {taken && (
+                              <span style={{ marginLeft: 6, fontSize: 11,
+                                color: "#8a6d00" }}>on {l.ordered_pr_ref}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+          <p style={{ background: "#e8f0f7", borderRadius: 8,
+                      padding: "10px 14px", fontSize: 13,
+                      color: "var(--sp-navy)", marginTop: 16 }}>
+            Save the draft — then capture each supplier's quotation and match it
+            to these items on the next screen. The vendor summary builds itself
+            from the quotes.
+          </p>
+        </>
       ) : (
       <>
       <SectionTitle>

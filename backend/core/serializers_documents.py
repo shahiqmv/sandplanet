@@ -62,6 +62,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
     item_photo_url = serializers.SerializerMethodField()
     item_is_major = serializers.BooleanField(source="item.is_major",
                                              read_only=True, default=False)
+    ordered_pr_ref = serializers.SerializerMethodField()
 
     class Meta:
         model = DocumentLine
@@ -75,10 +76,19 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "payment_terms", "credit_days", "action_taken", "po_ref",
                   "is_changed",
                   "fulfil_source", "store_issue_line", "spec", "mar_ref",
-                  "remarks"]
+                  "remarks", "ordered_pr_ref"]
 
     def get_is_free_text(self, obj):
         return obj.item_id is None  # flagged "new item — not in catalog"
+
+    def get_ordered_pr_ref(self, obj):
+        # For an MR line: the live PR that has already taken it (so the PR
+        # picker can grey out items on another PR). Null if open (owner
+        # 2026-07-15).
+        pr = obj.ordered_pr
+        if pr and not pr.is_void and pr.status not in ("CANCELLED", "REJECTED"):
+            return pr.ref
+        return None
 
     def get_item_photo_url(self, obj):
         # A photo attached to THIS line (free-text items) wins; otherwise the

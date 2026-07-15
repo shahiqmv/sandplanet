@@ -272,6 +272,15 @@ def document_create(request):
             save_lines(revision, lines_data)
         for mr in mr_docs:
             link_documents(doc, mr, "MR_PR" if doc_type == "PR" else "MR_LM")
+        if doc_type == "PR" and mr_docs:
+            # Take just the chosen MR items for this PR; empty list = whole MR.
+            # The rest stay open for a later PR (owner 2026-07-15).
+            from .procurement import scope_pr_to_mr_lines
+            scope_err = scope_pr_to_mr_lines(
+                doc, mr_docs, request.data.get("mr_line_ids") or [])
+            if scope_err:
+                transaction.set_rollback(True)
+                return Response({"detail": scope_err}, status=400)
         for pr in pr_docs:
             link_documents(doc, pr, "PR_LM")
         for po in po_docs:
@@ -1259,19 +1268,20 @@ def documents_list(request):
         if statuses:
             qs = qs.filter(status__in=statuses, is_void=False)
     if request.GET.get("for_pr"):
-        # MRs ready to raise a PR against: reached HO (SENT_TO_HO) and NOT
-        # already covered by an active PR — a draft PR links MR_PR the
-        # moment it is saved, so an MR with an ongoing PR drops out here.
-        from .models import DocumentLink
+        # MRs ready to raise a PR against: reached HO and still have at least
+        # one orderable item not yet taken by a live PR. A PR can cover only
+        # part of a long MR, so an MR stays offered (as Partially Ordered)
+        # until every item has a PR (owner 2026-07-15).
+        from .procurement import remaining_mr_lines, active_pr_claimed_line_ids
 
-        covered = DocumentLink.objects.filter(
-            link_type="MR_PR", from_document__doc_type="PR",
-            from_document__is_void=False,
-        ).exclude(
-            from_document__status__in=["CANCELLED", "REJECTED"]
-        ).values_list("to_document_id", flat=True)
-        qs = qs.filter(doc_type="MR", status="SENT_TO_HO",
-                       is_void=False).exclude(id__in=covered)
+        claimed = active_pr_claimed_line_ids()
+        candidates = qs.filter(
+            doc_type="MR", is_void=False,
+            status__in=["SENT_TO_HO", "PARTIALLY_ORDERED"]
+        ).select_related("current_revision")
+        open_ids = [mr.id for mr in candidates
+                    if remaining_mr_lines(mr, claimed)]
+        qs = qs.filter(id__in=open_ids)
     return Response(
         DocumentSerializer(qs[:200], many=True,
                            context={"request": request}).data
