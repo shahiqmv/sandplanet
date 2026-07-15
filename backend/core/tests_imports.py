@@ -327,6 +327,25 @@ class MilestonePaymentTests(IprBase):
         self.assertNotIn(None, list(_on_live_voucher()))
         self.assertIsInstance(awaiting_voucher(), list)
 
+    def test_mobile_pv_detail_renders_milestone_line(self):
+        """Regression: opening a PV that batches an overseas-TT milestone on
+        Planet Mobile must not 500 (was reading a non-existent .stage attr)."""
+        from .views_mobile import _document_payload
+        from .vouchers import create_voucher
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "percent": "100"}]}, format="json") \
+            .data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        pv, err = create_voucher([], self.finance, milestone_ids=[m["id"]])
+        self.assertIsNone(err, err)
+        payload = _document_payload(pv, None)      # must not raise
+        self.assertEqual(payload["doc_type"], "PV")
+        self.assertEqual(len(payload["lines"]), 1)
+        self.assertIn("Advance", payload["lines"][0]["ref"])
+
     def test_schedule_must_sum_to_order_total(self):
         ref = self.create_and_authorise()
         self.client.force_authenticate(self.ho)

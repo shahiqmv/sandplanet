@@ -148,17 +148,31 @@ def m_actioned(request):
     return Response({"items": items[:80]})
 
 
+def _pv_line_ref(ln):
+    """Label for a voucher line: the source document's ref, or — for an
+    overseas TT — the import order + milestone name."""
+    if ln.source_document_id:
+        return ln.source_document.ref
+    m = ln.source_milestone
+    if not m:
+        return "—"
+    try:
+        return f"{m.order.document.ref} · {m.label}"
+    except Exception:               # pragma: no cover - defensive
+        return m.label or "—"
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
     from .serializers_documents import DocumentSerializer
     if doc.doc_type == "PV":
-        lines = [{"ref": ln.source_document.ref if ln.source_document_id
-                  else (ln.source_milestone.stage if ln.source_milestone_id
-                        else "—"),
+        qs = (PaymentVoucherLine.objects.filter(voucher=doc)
+              .select_related("source_document",
+                              "source_milestone__order__document"))
+        lines = [{"ref": _pv_line_ref(ln),
                   "amount": float(ln.amount or 0), "currency": ln.currency}
-                 for ln in PaymentVoucherLine.objects.filter(voucher=doc)
-                 .select_related("source_document")]
+                 for ln in qs]
         return {"ref": doc.ref, "doc_type": "PV", "status": doc.status,
                 "doc_date": doc.doc_date,
                 "amount": float(sum(x["amount"] for x in lines)),
