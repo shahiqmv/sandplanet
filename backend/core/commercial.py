@@ -222,3 +222,250 @@ def contract_summary(project):
         "pending_net": pending_net,
         "forecast": revised + pending_net,
     }
+
+
+# ---- Progress claims (interim payment applications / IPCs) ---------------
+
+def create_claim(project, data, actor):
+    """Open a new interim claim. Locks the BOQ (the contract baseline is now
+    frozen), snapshots the money terms, and pre-populates one line per priced
+    BOQ item and approved-variation item — each seeded from the previous
+    claim's cumulative valuation so the QS only bumps the figures that moved."""
+    from .models import ProgressClaim, ProgressClaimItem
+    boq = getattr(project, "boq", None)
+    if boq is None or not boq.items.exists():
+        return None, "Add a BOQ before raising a claim."
+    if not boq.is_locked:
+        boq.is_locked = True
+        boq.save(update_fields=["is_locked"])
+
+    seq = (project.claims.aggregate(m=Max("seq"))["m"] or 0) + 1
+    previous = project.claims.order_by("-seq").first()
+    gst = _dec(project.output_gst_pct)
+    default_basis = ("MEASURED" if project.contract_type == "REMEASUREMENT"
+                     else "PERCENT")
+    claim = ProgressClaim.objects.create(
+        project=project, seq=seq, ref=(data.get("ref") or f"IPA-{seq:02d}"),
+        claim_type=data.get("claim_type") or "INTERIM",
+        basis=data.get("basis") or default_basis,
+        work_done_upto=data.get("work_done_upto") or None, previous=previous,
+        advance_pct=_dec(project.advance_payment_pct) or ZERO,
+        recovery_pct=_dec(project.advance_payment_pct) or ZERO,
+        retention_pct=_dec(project.retention_pct) or ZERO,
+        gst_pct=gst if gst is not None else Decimal("8"),
+        material_on_site=(previous.material_on_site if previous else ZERO),
+        material_off_site=(previous.material_off_site if previous else ZERO),
+        retention_released=(previous.retention_released if previous else ZERO),
+        created_by=actor)
+
+    prev_map = {}
+    if previous:
+        for pci in previous.items.all():
+            prev_map[(pci.source, pci.boq_item_id,
+                      pci.variation_item_id)] = pci
+    new_items = []
+    for it in boq.items.all():
+        if it.is_heading:
+            continue
+        pci = prev_map.get(("BOQ", it.id, None))
+        new_items.append(ProgressClaimItem(
+            claim=claim, source="BOQ", boq_item=it,
+            cumulative_pct=(pci.cumulative_pct if pci else None),
+            cumulative_qty=(pci.cumulative_qty if pci else None)))
+    for v in project.variations.filter(
+            status="APPROVED").prefetch_related("items"):
+        for it in v.items.all():
+            if it.is_heading:
+                continue
+            pci = prev_map.get(("VO", None, it.id))
+            new_items.append(ProgressClaimItem(
+                claim=claim, source="VO", variation_item=it,
+                cumulative_pct=(pci.cumulative_pct if pci else None),
+                cumulative_qty=(pci.cumulative_qty if pci else None)))
+    ProgressClaimItem.objects.bulk_create(new_items)
+    audit("project", project.id, "CLAIM_CREATED", actor=actor,
+          detail={"ref": claim.ref, "lines": len(new_items)})
+    return claim, None
+
+
+def set_claim_items(claim, rows, actor):
+    """Update the cumulative %-complete / measured qty on a draft claim's
+    lines. Rows are [{id, cumulative_pct?, cumulative_qty?}]."""
+    from .models import ProgressClaimItem
+    if claim.status != "DRAFT":
+        return None, "Only a draft claim can be valued."
+    by_id = {ci.id: ci for ci in claim.items.all()}
+    changed = []
+    for r in rows:
+        ci = by_id.get(r.get("id"))
+        if ci is None:
+            continue
+        if "cumulative_pct" in r:
+            ci.cumulative_pct = _dec(r.get("cumulative_pct"))
+        if "cumulative_qty" in r:
+            ci.cumulative_qty = _dec(r.get("cumulative_qty"))
+        changed.append(ci)
+    if changed:
+        ProgressClaimItem.objects.bulk_update(
+            changed, ["cumulative_pct", "cumulative_qty"])
+    audit("project", claim.project_id, "CLAIM_VALUED", actor=actor,
+          detail={"ref": claim.ref, "lines": len(changed)})
+    return claim, None
+
+
+def set_claim_meta(claim, data, actor):
+    """Edit a draft claim's header — type, basis, date, and the cumulative
+    material-on/off-site and retention-release figures the QS enters direct."""
+    if claim.status != "DRAFT":
+        return None, "Only a draft claim can be edited."
+    for f in ("ref", "claim_type", "basis", "note"):
+        if f in data:
+            setattr(claim, f, data.get(f) or getattr(claim, f))
+    if "work_done_upto" in data:
+        claim.work_done_upto = data.get("work_done_upto") or None
+    for f in ("material_on_site", "material_off_site", "retention_released"):
+        if f in data:
+            setattr(claim, f, _dec(data.get(f)) or ZERO)
+    claim.save()
+    return claim, None
+
+
+CLAIM_FLOW = {
+    "DRAFT": {"SUBMITTED"},
+    "SUBMITTED": {"CERTIFIED", "REJECTED", "DRAFT"},
+    "CERTIFIED": {"PAID"},
+    "PAID": set(),
+    "REJECTED": {"DRAFT"},
+}
+
+
+def set_claim_status(claim, to_status, actor):
+    from django.utils import timezone
+    allowed = CLAIM_FLOW.get(claim.status, set())
+    if to_status not in allowed:
+        return None, f"Cannot move a {claim.status} claim to {to_status}."
+    if to_status == "SUBMITTED" and not claim.items.exists():
+        return None, "Value at least one line before submitting the claim."
+    claim.status = to_status
+    fields = ["status"]
+    if to_status == "CERTIFIED":
+        claim.certified_by = actor
+        claim.certified_at = timezone.now()
+        fields += ["certified_by", "certified_at"]
+    claim.save(update_fields=fields)
+    audit("project", claim.project_id, f"CLAIM_{to_status}", actor=actor,
+          detail={"ref": claim.ref})
+    return claim, None
+
+
+def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
+    """Cumulative value of a line: qty×rate for re-measurement, else a % of the
+    (signed) contract amount for lump-sum."""
+    if basis == "MEASURED":
+        return (cum_qty or ZERO) * (rate or ZERO) * sign
+    return (cum_pct or ZERO) / Decimal("100") * contract_amount
+
+
+def _claim_net(claim):
+    """Net cumulative certified (waterfall line N) — used as the 'previously
+    certified' figure of the following claim."""
+    if claim is None:
+        return ZERO
+    return claim_valuation(claim)["waterfall"]["net_cumulative"]
+
+
+def claim_valuation(claim):
+    """The full IPA waterfall for one claim: per-line previous/current/
+    cumulative values, per-section summary, and the header money cascade
+    (gross K → advance recovery L → retention M → net N → less previous P →
+    net due Q → output GST R → total). Mirrors the owner's Soneva IPA."""
+    from collections import OrderedDict
+    project = claim.project
+    original = Decimal(str(project.contract_value or 0))
+    revised = contract_summary(project)["revised"]
+    basis = claim.basis
+
+    prev = claim.previous
+    prev_map = {}
+    if prev:
+        for pci in prev.items.all():
+            prev_map[(pci.source, pci.boq_item_id,
+                      pci.variation_item_id)] = pci
+
+    k1 = k4 = ZERO
+    lines = []
+    for ci in claim.items.select_related(
+            "boq_item", "variation_item", "variation_item__variation"):
+        line = ci.line
+        if line is None:
+            continue
+        is_vo = ci.source == "VO"
+        omission = is_vo and line.variation.kind == "OMISSION"
+        sign = Decimal("-1") if omission else Decimal("1")
+        rate = line.rate_total
+        contract_amt = (line.amount or ZERO) * sign
+        cum_val = _cum_value(basis, ci.cumulative_pct, ci.cumulative_qty,
+                             contract_amt, rate, sign)
+        pci = prev_map.get((ci.source, ci.boq_item_id, ci.variation_item_id))
+        prev_val = (_cum_value(basis, pci.cumulative_pct, pci.cumulative_qty,
+                               contract_amt, rate, sign) if pci else ZERO)
+        cur_val = cum_val - prev_val
+        if is_vo:
+            k4 += cum_val
+        else:
+            k1 += cum_val
+        lines.append({
+            "id": ci.id, "source": ci.source, "section": line.section,
+            "item_code": line.item_code, "description": line.description,
+            "unit": line.unit, "contract_qty": line.qty, "rate": rate,
+            "contract_amount": contract_amt,
+            "cumulative_pct": ci.cumulative_pct,
+            "cumulative_qty": ci.cumulative_qty,
+            "previous_value": prev_val, "current_value": cur_val,
+            "cumulative_value": cum_val,
+        })
+
+    k2 = Decimal(str(claim.material_on_site or 0))     # material on site
+    k3 = Decimal(str(claim.material_off_site or 0))    # material off site
+    k_gross = k1 + k2 + k3 + k4                        # K gross cumulative
+
+    advance_total = claim.advance_pct / Decimal("100") * original   # L1
+    advance_recovered = min(
+        claim.recovery_pct / Decimal("100") * k_gross, advance_total)  # L2
+    retention_held = (claim.retention_pct / Decimal("100")
+                      * (k1 + k2 + k4))                 # M1 (not on off-site)
+    retention_released = Decimal(str(claim.retention_released or 0))  # M2
+    net_retention = retention_released - retention_held              # M
+    net_cumulative = k_gross - advance_recovered + net_retention     # N
+    previously = _claim_net(prev)                                    # P
+    net_due = net_cumulative - previously                           # Q
+    gst = claim.gst_pct / Decimal("100") * net_due                  # R
+    total = net_due + gst
+
+    secs = OrderedDict()
+    for ln in lines:
+        s = ln["section"] or "—"
+        d = secs.setdefault(s, {"section": s, "previous": ZERO,
+                                "current": ZERO, "cumulative": ZERO})
+        d["previous"] += ln["previous_value"]
+        d["current"] += ln["current_value"]
+        d["cumulative"] += ln["cumulative_value"]
+
+    return {
+        "lines": lines,
+        "section_summary": list(secs.values()),
+        "waterfall": {
+            "original": original, "revised": revised,
+            "k1_work_done": k1, "k2_material_on_site": k2,
+            "k3_material_off_site": k3, "k4_variations": k4,
+            "k_gross": k_gross,
+            "advance_total": advance_total,
+            "advance_recovered": advance_recovered,
+            "retention_held": retention_held,
+            "retention_released": retention_released,
+            "net_retention": net_retention,
+            "net_cumulative": net_cumulative,
+            "previously_certified": previously,
+            "net_due": net_due, "gst": gst, "total": total,
+        },
+    }

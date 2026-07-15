@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import VariationsPanel from "./VariationsPanel.jsx";
+import ClaimsPanel from "./ClaimsPanel.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
 
@@ -203,6 +204,7 @@ manpower histogram, on the letterhead — send to the client"
         <>
           <BoqPanel projectId={projectId} project={project} me={me} />
           <VariationsPanel projectId={projectId} me={me} />
+          <ClaimsPanel projectId={projectId} me={me} />
         </>
       )}
 

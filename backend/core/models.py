@@ -1547,6 +1547,10 @@ class Project(models.Model):
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                         null=True, blank=True)
     retention_release_terms = models.TextField(blank=True)
+    # Output GST charged on interim claims (Maldives GST, statutory 8%). Held
+    # per project so a zero-rated/exempt contract can override it.
+    output_gst_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                         null=True, blank=True)
     # time & penalties
     defects_liability_months = models.PositiveIntegerField(null=True,
                                                            blank=True)
@@ -1789,6 +1793,115 @@ class VariationItem(models.Model):
     @property
     def amount(self):
         return self._amount(self.rate_total)
+
+
+class ProgressClaim(models.Model):
+    """An interim payment application (IPA / IPC) — the QS values work done to
+    date against the BOQ + approved variations, applies the contract's advance
+    recovery and retention, and claims the balance from the client. Claims
+    chain by seq: each carries the cumulative valuation forward, and the amount
+    "now due" is this claim's net cumulative less the previous claim's.
+
+    The money terms (advance %, recovery %, retention %, GST %) are snapshotted
+    at creation so a signed claim's arithmetic never shifts if the project
+    terms are later edited."""
+
+    class Type(models.TextChoices):
+        ADVANCE = "ADVANCE", "Advance payment"
+        INTERIM = "INTERIM", "Interim"
+        RELEASE = "RELEASE", "Retention release"
+        FINAL = "FINAL", "Final account"
+
+    class Basis(models.TextChoices):
+        PERCENT = "PERCENT", "% complete"       # lump-sum valuation
+        MEASURED = "MEASURED", "Measured qty"    # re-measurement valuation
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        SUBMITTED = "SUBMITTED", "Submitted"
+        CERTIFIED = "CERTIFIED", "Certified"
+        PAID = "PAID", "Paid"
+        REJECTED = "REJECTED", "Rejected"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="claims")
+    seq = models.IntegerField()
+    ref = models.CharField(max_length=20)          # e.g. IPA-01
+    claim_type = models.CharField(max_length=8, choices=Type.choices,
+                                  default=Type.INTERIM)
+    basis = models.CharField(max_length=8, choices=Basis.choices,
+                             default=Basis.PERCENT)
+    work_done_upto = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    previous = models.ForeignKey("self", on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    # Money terms snapshotted from the project at creation.
+    advance_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                      default=0)   # advance as % of contract
+    recovery_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                       default=0)  # recovered per work done
+    retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
+                                        default=0)
+    gst_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # Cumulative header figures the QS enters directly (IPA K2/K3, M2).
+    material_on_site = models.DecimalField(max_digits=16, decimal_places=2,
+                                           default=0)  # K2
+    material_off_site = models.DecimalField(max_digits=16, decimal_places=2,
+                                            default=0)  # K3
+    retention_released = models.DecimalField(max_digits=16, decimal_places=2,
+                                             default=0)  # M2 (cumulative)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    certified_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    certified_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["seq"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "seq"],
+                                    name="uniq_claim_seq_per_project")
+        ]
+
+    def __str__(self):
+        return f"{self.project.code}/{self.ref}"
+
+
+class ProgressClaimItem(models.Model):
+    """One valued line within a claim — a cumulative %-complete (lump sum) or a
+    cumulative measured quantity (re-measurement) against a BOQ item or an
+    approved variation item. The contract price is read live from the linked
+    item (both are locked once claiming starts). 'Current' value is derived by
+    the service as this cumulative less the previous claim's."""
+
+    class Source(models.TextChoices):
+        BOQ = "BOQ", "BOQ"
+        VO = "VO", "Variation"
+
+    claim = models.ForeignKey(ProgressClaim, on_delete=models.CASCADE,
+                              related_name="items")
+    source = models.CharField(max_length=3, choices=Source.choices)
+    boq_item = models.ForeignKey(BoqItem, on_delete=models.CASCADE, null=True,
+                                 blank=True, related_name="+")
+    variation_item = models.ForeignKey(VariationItem, on_delete=models.CASCADE,
+                                       null=True, blank=True, related_name="+")
+    cumulative_pct = models.DecimalField(max_digits=6, decimal_places=2,
+                                         null=True, blank=True)   # 0..100
+    cumulative_qty = models.DecimalField(max_digits=14, decimal_places=3,
+                                         null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def line(self):
+        """The underlying priced item (BOQ or variation)."""
+        return self.boq_item if self.source == self.Source.BOQ \
+            else self.variation_item
 
 
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====

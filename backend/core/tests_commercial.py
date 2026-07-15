@@ -164,3 +164,160 @@ class VariationTests(TestCase):
         self.client.force_authenticate(self.se)
         r = self.client.get(f"/api/v1/projects/{self.project.id}/variations")
         self.assertEqual(r.status_code, 403)
+
+
+class ProgressClaimTests(TestCase):
+    """The interim claim (IPA) waterfall: BOQ + approved VOs valued to date,
+    advance recovery, retention, previous-claim chaining and output GST."""
+
+    def setUp(self):
+        self.site = Site.objects.create(
+            code="VKR", name="Vakkaru", status=Site.Status.ACTIVE,
+            start_date=date.today() - timedelta(days=90))
+        # small numbers so the 40% advance actually bites the recovery cap
+        self.project = Project.objects.create(
+            site=self.site, code="POOLS17", title="17 Swimming Pools",
+            contract_value="3000", contract_type="LUMP_SUM",
+            advance_payment_pct="40", retention_pct="10", output_gst_pct="8")
+        self.qs = make_user("qs1", User.Role.QS)
+        self.se = make_user("se1", User.Role.SITE_ENGINEER, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        # BOQ: A = 100 × 10 = 1000, B = 100 × 20 = 2000  (total 3000)
+        self.client.post(
+            f"/api/v1/projects/{self.project.id}/boq/items",
+            {"rows": [
+                {"item_code": "A", "description": "Item A", "unit": "no",
+                 "qty": "100", "rate_combined": "10"},
+                {"item_code": "B", "description": "Item B", "unit": "no",
+                 "qty": "100", "rate_combined": "20"}]},
+            format="json")
+
+    def _create(self, data=None):
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/claims/create",
+            data or {}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data["claims"][-1]
+
+    def _detail(self, cid):
+        return self.client.get(f"/api/v1/claims/{cid}").data
+
+    def _value_pct(self, cid, mapping):
+        d = self._detail(cid)
+        rows = [{"id": ln["id"], "cumulative_pct": mapping[ln["item_code"]]}
+                for ln in d["lines"] if ln["item_code"] in mapping]
+        return self.client.post(f"/api/v1/claims/{cid}/items",
+                                {"rows": rows}, format="json").data
+
+    def test_create_locks_boq_and_seeds_lines(self):
+        c = self._create()
+        self.assertEqual(c["ref"], "IPA-01")
+        self.assertEqual(c["basis"], "PERCENT")     # lump-sum default
+        # snapshotted terms
+        self.assertEqual(float(c["advance_pct"]), 40.0)
+        self.assertEqual(float(c["retention_pct"]), 10.0)
+        self.assertEqual(float(c["gst_pct"]), 8.0)
+        # BOQ is now locked (baseline frozen)
+        boq = self.client.get(
+            f"/api/v1/projects/{self.project.id}/boq").data
+        self.assertTrue(boq["is_locked"])
+        # one claim line per priced item
+        self.assertEqual(len(self._detail(c["id"])["lines"]), 2)
+
+    def test_first_claim_waterfall(self):
+        c = self._create()
+        # A at 50% → 500, B at 25% → 500  (K1 = 1000)
+        r = self._value_pct(c["id"], {"A": "50", "B": "25"})
+        w = r["waterfall"]
+        self.assertEqual(float(w["k1_work_done"]), 1000.0)
+        self.assertEqual(float(w["k_gross"]), 1000.0)
+        # advance recovery: 40% of 1000 = 400 (cap 1200, not hit)
+        self.assertEqual(float(w["advance_recovered"]), 400.0)
+        # retention 10% of 1000 = 100 held
+        self.assertEqual(float(w["retention_held"]), 100.0)
+        # N = 1000 − 400 − 100 = 500 ; nothing previous → Q = 500
+        self.assertEqual(float(w["net_cumulative"]), 500.0)
+        self.assertEqual(float(w["previously_certified"]), 0.0)
+        self.assertEqual(float(w["net_due"]), 500.0)
+        # GST 8% of 500 = 40 ; total 540
+        self.assertEqual(float(w["gst"]), 40.0)
+        self.assertEqual(float(w["total"]), 540.0)
+
+    def test_second_claim_chains_off_the_first(self):
+        c1 = self._create()
+        self._value_pct(c1["id"], {"A": "50", "B": "25"})
+        # a second claim carries the cumulative % forward from the first
+        c2 = self._create()
+        seeded = {ln["item_code"]: ln["cumulative_pct"]
+                  for ln in self._detail(c2["id"])["lines"]}
+        self.assertEqual(float(seeded["A"]), 50.0)
+        self.assertEqual(float(seeded["B"]), 25.0)
+        # bump to A 100% (1000), B 50% (1000) + 200 material on site
+        self.client.post(f"/api/v1/claims/{c2['id']}/meta",
+                         {"material_on_site": "200"}, format="json")
+        r = self._value_pct(c2["id"], {"A": "100", "B": "50"})
+        w = r["waterfall"]
+        self.assertEqual(float(w["k1_work_done"]), 2000.0)
+        self.assertEqual(float(w["k2_material_on_site"]), 200.0)
+        self.assertEqual(float(w["k_gross"]), 2200.0)
+        self.assertEqual(float(w["advance_recovered"]), 880.0)   # 40% of 2200
+        self.assertEqual(float(w["retention_held"]), 220.0)      # 10% of 2200
+        self.assertEqual(float(w["net_cumulative"]), 1100.0)
+        self.assertEqual(float(w["previously_certified"]), 500.0)  # claim 1 N
+        self.assertEqual(float(w["net_due"]), 600.0)             # 1100 − 500
+        self.assertEqual(float(w["gst"]), 48.0)
+        self.assertEqual(float(w["total"]), 648.0)
+
+    def test_approved_variation_is_claimable(self):
+        # add + approve a VO, then a claim should include its line
+        v = self.client.post(
+            f"/api/v1/projects/{self.project.id}/variations/create",
+            {"title": "Extra", "kind": "ADDITION", "rows": [
+                {"item_code": "V1", "description": "Extra work", "unit": "no",
+                 "qty": "10", "rate_combined": "50"}]}, format="json").data
+        vid = v["variations"][-1]["id"]
+        self.client.post(f"/api/v1/variations/{vid}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        self.client.post(f"/api/v1/variations/{vid}/status",
+                         {"status": "APPROVED"}, format="json")
+        c = self._create()
+        lines = self._detail(c["id"])["lines"]
+        vo = next(ln for ln in lines if ln["source"] == "VO")
+        self.assertEqual(vo["item_code"], "V1")
+        r = self._value_pct(c["id"], {"V1": "100"})
+        self.assertEqual(float(r["waterfall"]["k4_variations"]), 500.0)
+
+    def test_measured_basis_uses_quantity(self):
+        self.project.contract_type = "REMEASUREMENT"
+        self.project.save(update_fields=["contract_type"])
+        c = self._create()
+        self.assertEqual(c["basis"], "MEASURED")
+        d = self._detail(c["id"])
+        rows = [{"id": ln["id"], "cumulative_qty": "60"}
+                for ln in d["lines"] if ln["item_code"] == "A"]
+        r = self.client.post(f"/api/v1/claims/{c['id']}/items",
+                             {"rows": rows}, format="json").data
+        # 60 × rate 10 = 600
+        self.assertEqual(float(r["waterfall"]["k1_work_done"]), 600.0)
+
+    def test_draft_only_editing_and_status_flow(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})
+        cid = c["id"]
+        self.client.post(f"/api/v1/claims/{cid}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        # can no longer value a submitted claim
+        blocked = self.client.post(f"/api/v1/claims/{cid}/items",
+                                   {"rows": []}, format="json")
+        self.assertEqual(blocked.status_code, 400)
+        r = self.client.post(f"/api/v1/claims/{cid}/status",
+                             {"status": "CERTIFIED"}, format="json")
+        self.assertEqual(r.data["claim"]["status"], "CERTIFIED")
+        self.assertIsNotNone(r.data["claim"]["certified_at"])
+
+    def test_site_staff_cannot_see_claims(self):
+        self._create()
+        self.client.force_authenticate(self.se)
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/claims")
+        self.assertEqual(r.status_code, 403)

@@ -9,7 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import commercial
-from .models import BoqItem, Project, Variation, VariationItem
+from .models import (BoqItem, ProgressClaim, Project, Variation,
+                     VariationItem)
 from .views_projects import PROJECT_EDIT_ROLES, _can_view_value
 
 
@@ -306,3 +307,154 @@ def variation_delete(request, pk):
     project = v.project
     v.delete()
     return Response(_variations_payload(project))
+
+
+# ---- Progress claims (interim payment applications) ---------------------
+
+def _claim_meta(claim):
+    return {
+        "id": claim.id, "seq": claim.seq, "ref": claim.ref,
+        "claim_type": claim.claim_type, "basis": claim.basis,
+        "status": claim.status, "work_done_upto": claim.work_done_upto,
+        "advance_pct": claim.advance_pct, "recovery_pct": claim.recovery_pct,
+        "retention_pct": claim.retention_pct, "gst_pct": claim.gst_pct,
+        "material_on_site": claim.material_on_site,
+        "material_off_site": claim.material_off_site,
+        "retention_released": claim.retention_released,
+        "note": claim.note,
+        "previous_ref": claim.previous.ref if claim.previous_id else None,
+        "certified_at": claim.certified_at,
+    }
+
+
+def _claims_payload(project):
+    """The claims register: each claim's header plus its net-due / total from
+    the waterfall, and the contract summary strip."""
+    claims = list(project.claims.all())
+    rows = []
+    for c in claims:
+        w = commercial.claim_valuation(c)["waterfall"]
+        rows.append({**_claim_meta(c),
+                     "k_gross": w["k_gross"], "net_due": w["net_due"],
+                     "gst": w["gst"], "total": w["total"]})
+    return {
+        "currency": (getattr(project, "boq", None).currency
+                     if getattr(project, "boq", None) else "USD"),
+        "contract": {k: v for k, v in commercial.contract_summary(
+            project).items()},
+        "can_raise": bool(getattr(project, "boq", None)
+                          and project.boq.items.exists()),
+        "claims": rows,
+    }
+
+
+def _claim_detail(claim):
+    val = commercial.claim_valuation(claim)
+    return {"claim": _claim_meta(claim), **val}
+
+
+def _get_claim(request, pk):
+    try:
+        c = ProgressClaim.objects.select_related(
+            "project__site", "previous").get(pk=pk)
+    except ProgressClaim.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    if not _can_view_value(request.user, c.project):
+        return None, Response({"detail": "Not permitted."}, status=403)
+    return c, None
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def claim_list(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    return Response(_claims_payload(p))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def claim_create(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.create_claim(p, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claims_payload(p), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def claim_detail(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    return Response(_claim_detail(c))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def claim_items(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_claim_items(c, request.data.get("rows") or [],
+                                        request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claim_detail(c))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def claim_meta(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_claim_meta(c, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claim_detail(c))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def claim_status(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_claim_status(c, request.data.get("status"),
+                                         request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claim_detail(c))
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def claim_delete(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    if c.status != "DRAFT":
+        return Response({"detail": "Only a draft claim can be deleted."},
+                        status=400)
+    # Only the newest claim can be removed — earlier ones anchor the chain.
+    if c.project.claims.filter(seq__gt=c.seq).exists():
+        return Response({"detail": "Delete the later claim(s) first."},
+                        status=400)
+    project = c.project
+    c.delete()
+    return Response(_claims_payload(project))
