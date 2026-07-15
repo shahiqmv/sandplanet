@@ -29,8 +29,8 @@ class SupplierSerializer(serializers.ModelSerializer):
     class Meta:
         model = Supplier
         fields = ["id", "name", "category", "country", "default_currency",
-                  "default_incoterm", "contact_person", "phone", "email",
-                  "address", "bank_details", "notes", "is_active"]
+                  "default_incoterm", "credit_days", "contact_person", "phone",
+                  "email", "address", "bank_details", "notes", "is_active"]
 
     def to_representation(self, obj):
         data = super().to_representation(obj)

@@ -77,6 +77,9 @@ def save_lines(revision, lines_data, previous_revision=None):
             vendor=data.get("vendor") or "",
             quotation_ref=data.get("quotation_ref") or "",
             payment_terms=data.get("payment_terms") or "",
+            credit_days=(int(data["credit_days"])
+                         if str(data.get("credit_days") or "").strip().isdigit()
+                         else None),
             action_taken=data.get("action_taken") or "",
             is_changed=is_changed,
             spec=data.get("spec") or "",
@@ -461,13 +464,16 @@ def authorise_pr(pr, actor):
                              source="PR", amount=gst, document=pr,
                              document_line=ln, is_stock_pool=True, actor=actor)
         if (ln.amount_credit or 0) > 0:
-            # We owe the vendor the gross (net + GST)
+            # We owe the vendor the gross (net + GST). Due date follows the
+            # line's agreed credit period (days); 30 is only a fallback.
+            days = ln.credit_days if ln.credit_days is not None else 30
             Payable.objects.create(
                 document=pr, document_line=ln, site=pr.site,
                 vendor=ln.vendor or ln.free_text_desc,
-                terms=ln.payment_terms or "",
+                terms=ln.payment_terms or (f"{days} days" if ln.credit_days
+                                           is not None else ""),
                 amount=(ln.amount_credit or 0) + gst,
-                due_date=date.today() + timedelta(days=30))
+                due_date=date.today() + timedelta(days=days))
     generate_pos_for_pr(pr, actor)
 
 

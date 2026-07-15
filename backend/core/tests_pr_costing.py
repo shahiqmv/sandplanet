@@ -186,3 +186,15 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(costing.document_net(pr, state="PAID"),
                          Decimal("7000"))
         self.assertEqual(Payable.objects.get(document=pr).status, "SETTLED")
+
+    def test_payable_due_date_follows_credit_days(self):
+        from datetime import date, timedelta
+        pr = self.make_pr()
+        credit_line = next(ln for ln in pr.current_revision.lines.all()
+                           if (ln.amount_credit or 0) > 0)
+        credit_line.credit_days = 60          # supplier gives 60-day terms
+        credit_line.save(update_fields=["credit_days"])
+        self.authorise(pr.ref)
+        p = Payable.objects.get(document=pr)
+        self.assertEqual(p.due_date, date.today() + timedelta(days=60))
+        self.assertIn("60", p.terms)

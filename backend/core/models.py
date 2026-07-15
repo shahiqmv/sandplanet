@@ -616,7 +616,10 @@ class DocumentLine(models.Model):
                                      null=True, blank=True)
     vendor = models.TextField(blank=True)
     quotation_ref = models.TextField(blank=True)
-    payment_terms = models.TextField(blank=True)
+    payment_terms = models.TextField(blank=True)  # descriptive note
+    # Credit period in days for a credit vendor — drives the payable due date at
+    # authorisation. Prefilled from the supplier default, overridable per PR.
+    credit_days = models.PositiveIntegerField(null=True, blank=True)
     action_taken = models.TextField(blank=True)  # payment slip / voucher no.
     po_ref = models.TextField(blank=True)  # auto-filled at PO generation (R3)
     cost_head = models.ForeignKey(  # PR vendor lines carry a cost head (§6C.1)
@@ -753,6 +756,8 @@ class Supplier(models.Model):
     country = models.CharField(max_length=60, blank=True)
     default_currency = models.CharField(max_length=3, blank=True)   # e.g. USD
     default_incoterm = models.CharField(max_length=12, blank=True)  # e.g. FOB
+    credit_days = models.PositiveIntegerField(null=True, blank=True)  # default
+    #  credit period; prefills a PR vendor line, drives the payable due date
     contact_person = models.TextField(blank=True)
     phone = models.TextField(blank=True)
     email = models.TextField(blank=True)
