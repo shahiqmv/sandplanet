@@ -989,6 +989,25 @@ class ImportShipment(models.Model):
                    for f in self.CHARGE_FIELDS)
 
 
+class ImportShipmentLine(models.Model):
+    """Which order-line quantities travel on this shipment (§5.10.6). An order
+    may ship in parts; each part draws a quantity from a line's still-to-ship
+    balance. When a shipment has no lines (legacy / whole-order shipments) it is
+    treated as carrying the full order."""
+
+    shipment = models.ForeignKey(ImportShipment, on_delete=models.CASCADE,
+                                 related_name="lines")
+    ipr_line = models.ForeignKey(ImportOrderLine, on_delete=models.PROTECT,
+                                 related_name="shipment_lines")
+    qty = models.DecimalField(max_digits=12, decimal_places=2)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["shipment", "ipr_line"],
+                                    name="uniq_shipment_line"),
+        ]
+
+
 def shipment_doc_path(instance, filename):
     return (f"import-docs/{instance.shipment.order.document.ref}/"
             f"{instance.doc_type}-{filename}")

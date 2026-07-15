@@ -354,13 +354,59 @@ def fire_milestones(order, trigger, actor):
     return fired
 
 
+def line_shipped(ipr_line):
+    """Quantity of this order line already allocated to shipments."""
+    from django.db.models import Sum
+    from .models import ImportShipmentLine
+    return (ImportShipmentLine.objects.filter(ipr_line=ipr_line)
+            .aggregate(s=Sum("qty"))["s"] or ZERO)
+
+
+def line_remaining(ipr_line):
+    """Quantity of this order line still to be put on a shipment."""
+    return (ipr_line.order_qty or ZERO) - line_shipped(ipr_line)
+
+
+@transaction.atomic
 def create_shipment(order, data, actor):
-    from .models import ImportShipment, Supplier
+    """Book a shipment. `data['lines']` optionally allocates order-line
+    quantities to this shipment ([{ipr_line_id, qty}]); each quantity must be
+    within that line's still-to-ship balance. With no allocation given, the
+    shipment carries the whole remaining order (single-shipment / 'ship the
+    rest' default)."""
+    from .models import ImportShipment, ImportShipmentLine, Supplier
     seq = (order.shipments.count() or 0) + 1
     forwarder = None
     if data.get("forwarder_id"):
         forwarder = Supplier.objects.filter(pk=data["forwarder_id"]).first()
-    return ImportShipment.objects.create(
+
+    # Resolve the allocation (explicit rows, else the whole remaining order).
+    order_lines = {ln.id: ln for ln in order.lines.all()}
+    rows = data.get("lines")
+    alloc = []                                   # [(ipr_line, qty)]
+    if rows:
+        for r in rows:
+            ln = order_lines.get(r.get("ipr_line_id"))
+            qty = _dec(r.get("qty"))
+            if ln is None or qty <= ZERO:
+                continue
+            remaining = line_remaining(ln)
+            if qty > remaining:
+                return None, (f"{ln.description or ('line ' + str(ln.line_no))}"
+                              f": only {remaining} left to ship "
+                              f"(you entered {qty}).")
+            alloc.append((ln, qty))
+        if not alloc:
+            return None, "Add at least one item quantity to this shipment."
+    else:
+        for ln in order.lines.all():
+            remaining = line_remaining(ln)
+            if remaining > ZERO:
+                alloc.append((ln, remaining))
+        if not alloc:
+            return None, "The whole order is already on shipments."
+
+    shipment = ImportShipment.objects.create(
         order=order, seq=seq, mode=(data.get("mode") or "SEA"),
         forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
         vessel_flight=data.get("vessel_flight", ""),
@@ -369,6 +415,10 @@ def create_shipment(order, data, actor):
         tracking_ref=data.get("tracking_ref", ""),
         carrier_link=data.get("carrier_link", ""),
         notes=data.get("notes", ""), created_by=actor)
+    for ln, qty in alloc:
+        ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
+                                          qty=qty)
+    return shipment, None
 
 
 def missing_clearing_docs(shipment):
@@ -485,10 +535,19 @@ def create_receipt(shipment, data, actor):
     receipt = ImportReceipt.objects.create(
         document=doc, shipment=shipment, location=data.get("location", ""),
         notes=data.get("notes", ""))
-    for line in order.lines.all():
-        ImportReceiptLine.objects.create(
-            receipt=receipt, ipr_line=line, expected_qty=line.order_qty,
-            received_qty=line.order_qty)
+    # Seed one receipt line per item ON THIS SHIPMENT; legacy/whole-order
+    # shipments (no allocation) fall back to the full order.
+    alloc = list(shipment.lines.select_related("ipr_line").all())
+    if alloc:
+        for sl in alloc:
+            ImportReceiptLine.objects.create(
+                receipt=receipt, ipr_line=sl.ipr_line, expected_qty=sl.qty,
+                received_qty=sl.qty)
+    else:
+        for line in order.lines.all():
+            ImportReceiptLine.objects.create(
+                receipt=receipt, ipr_line=line, expected_qty=line.order_qty,
+                received_qty=line.order_qty)
     audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": doc.ref, "shipment": shipment.seq})
     return doc

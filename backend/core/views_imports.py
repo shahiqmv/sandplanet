@@ -15,8 +15,8 @@ from rest_framework.response import Response
 from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
-                     ImportReceiptLine, ImportShipment, Project,
-                     ShipmentDocument, Site, StockLot, Supplier)
+                     ImportReceiptLine, ImportShipment, ImportShipmentLine,
+                     Project, ShipmentDocument, Site, StockLot, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN",
@@ -44,12 +44,21 @@ class OrderLineSerializer(serializers.ModelSerializer):
     line_value = serializers.DecimalField(max_digits=18, decimal_places=2,
                                           read_only=True)
     allocations = AllocationSerializer(many=True, read_only=True)
+    shipped_qty = serializers.SerializerMethodField()
+    remaining_qty = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportOrderLine
         fields = ["id", "line_no", "item", "description", "unit", "spec",
                   "order_qty", "unit_price", "cost_head", "cost_head_name",
-                  "line_value", "remarks", "allocations"]
+                  "line_value", "remarks", "allocations",
+                  "shipped_qty", "remaining_qty"]
+
+    def get_shipped_qty(self, obj):
+        return ipr_svc.line_shipped(obj)
+
+    def get_remaining_qty(self, obj):
+        return ipr_svc.line_remaining(obj)
 
 
 class OrderSerializer(serializers.ModelSerializer):
@@ -108,11 +117,24 @@ class ShipmentDocumentSerializer(serializers.ModelSerializer):
         return obj.file.url if obj.file else None
 
 
+class ShipmentLineSerializer(serializers.ModelSerializer):
+    description = serializers.CharField(source="ipr_line.description",
+                                        read_only=True)
+    unit = serializers.CharField(source="ipr_line.unit", read_only=True)
+    line_no = serializers.IntegerField(source="ipr_line.line_no",
+                                       read_only=True)
+
+    class Meta:
+        model = ImportShipmentLine
+        fields = ["id", "ipr_line", "line_no", "description", "unit", "qty"]
+
+
 class ShipmentSerializer(serializers.ModelSerializer):
     forwarder_display = serializers.SerializerMethodField()
     status_display = serializers.CharField(source="get_status_display",
                                            read_only=True)
     documents = ShipmentDocumentSerializer(many=True, read_only=True)
+    lines = ShipmentLineSerializer(many=True, read_only=True)
     clearing_total = serializers.DecimalField(max_digits=16, decimal_places=2,
                                               read_only=True)
     missing_clearing = serializers.SerializerMethodField()
@@ -126,7 +148,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
                   "shared_with_agent_at", "freight", "insurance",
                   "customs_duty", "import_gst", "port_handling",
                   "agent_charges", "local_transport",
-                  "clearing_total", "documents", "missing_clearing",
+                  "clearing_total", "documents", "lines", "missing_clearing",
                   "next_statuses", "notes"]
 
     def get_forwarder_display(self, obj):
@@ -254,7 +276,10 @@ def ipr_shipment_create(request, ref):
     if request.user.role not in CREATE_ROLES:
         return Response({"detail": "Head Office manages shipments."},
                         status=403)
-    ipr_svc.create_shipment(doc.import_order, request.data, request.user)
+    _, msg = ipr_svc.create_shipment(doc.import_order, request.data,
+                                     request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
     return Response(_serialize(doc, request), status=201)
 
 

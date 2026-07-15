@@ -430,6 +430,50 @@ class ShipmentTests(IprBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["shipments"][0]["status"], "UNDER_CLEARING")
 
+    def test_split_shipment_allocation_receipt_and_limit(self):
+        """A 10-unit order ships in two parts. Each shipment draws from the
+        line's remaining balance; over-allocation is refused; the IRN for a
+        part seeds only that part's quantity; and once fully shipped a further
+        whole-order shipment has nothing left."""
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        lid = self.client.get(f"/api/v1/ipr/{ref}").data[
+            "order"]["lines"][0]["id"]
+
+        # ship 4 of 10
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+            {"mode": "SEA", "lines": [{"ipr_line_id": lid, "qty": "4"}]},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        line = self.client.get(f"/api/v1/ipr/{ref}").data["order"]["lines"][0]
+        self.assertEqual(float(line["shipped_qty"]), 4.0)
+        self.assertEqual(float(line["remaining_qty"]), 6.0)
+
+        # over-allocation refused (only 6 left)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+            {"mode": "SEA", "lines": [{"ipr_line_id": lid, "qty": "7"}]},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("left to ship", r.data["detail"])
+
+        # the IRN for shipment 1 expects only its 4 units
+        sid = self.client.get(f"/api/v1/ipr/{ref}").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {}, format="json").data
+        self.assertEqual(len(irn["lines"]), 1)
+        self.assertEqual(float(irn["lines"][0]["expected_qty"]), 4.0)
+
+        # ship the remaining 6; then no whole-order shipment is possible
+        self.client.post(f"/api/v1/ipr/{ref}/shipments",
+            {"mode": "SEA", "lines": [{"ipr_line_id": lid, "qty": "6"}]},
+            format="json")
+        self.assertEqual(float(self.client.get(f"/api/v1/ipr/{ref}").data[
+            "order"]["lines"][0]["remaining_qty"]), 0.0)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already on shipments", r.data["detail"])
+
     def test_clearing_charges_total(self):
         ref = self.create_and_authorise()
         self.client.force_authenticate(self.ho)
