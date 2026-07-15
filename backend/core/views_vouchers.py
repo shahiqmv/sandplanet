@@ -24,6 +24,19 @@ def _line_info(line):
                 "payment_ref": m.tt_ref, "mvr_paid": m.mvr_paid,
                 # the TT itself is executed on the Import Payments page
                 "paid": m.status == "PAID"}
+    if line.source_payable_id:
+        p = line.source_payable
+        return {"line_id": line.id, "ref": p.document.ref,
+                "doc_type": "PAYABLE",
+                "site_code": p.site.code if p.site_id else "HO",
+                "amount": line.amount, "currency": line.currency,
+                "status": line.status, "query_note": line.query_note,
+                "source_status": p.status, "payable_id": p.id,
+                "payee": p.vendor, "cost_head": "Materials",
+                "purpose": f"Credit payable · terms {p.terms or '—'} · due "
+                           f"{p.due_date or '—'}",
+                "payment_ref": p.settled_ref,
+                "paid": p.status == "SETTLED"}
     src = line.source_document
     info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
             "site_code": src.site.code, "amount": line.amount,
@@ -70,7 +83,8 @@ def _voucher_info(pv):
     lines = [_line_info(ln) for ln in pv.voucher_lines.select_related(
         "source_document__site",
         "source_milestone__order__document",
-        "source_milestone__order__supplier").order_by("id")]
+        "source_milestone__order__supplier",
+        "source_payable__document", "source_payable__site").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     currency = lines[0]["currency"] if lines else "MVR"
     return {
@@ -120,6 +134,17 @@ def awaiting_voucher(request):
             "payee": m.order.supplier.name,
             "cost_head": f"Overseas TT · {m.label}",
             "purpose": m.label})
+    today = date.today()
+    for p in vouchers.awaiting_payables():
+        out.append({
+            "kind": "PAYABLE", "payable_id": p.id,
+            "ref": p.document.ref, "doc_type": "PAYABLE",
+            "site_code": p.site.code if p.site_id else "HO",
+            "doc_date": p.due_date, "due_date": p.due_date,
+            "overdue": bool(p.due_date and p.due_date < today),
+            "amount": p.amount, "currency": "MVR",
+            "payee": p.vendor, "cost_head": "Credit payable",
+            "purpose": f"Terms {p.terms or '—'}"})
     return Response(out)
 
 
@@ -131,7 +156,8 @@ def payment_vouchers(request):
                             status=403)
         pv, err = vouchers.create_voucher(
             request.data.get("source_refs") or [], request.user,
-            milestone_ids=request.data.get("milestone_ids") or [])
+            milestone_ids=request.data.get("milestone_ids") or [],
+            payable_ids=request.data.get("payable_ids") or [])
         if err:
             return Response({"detail": err}, status=400)
         return Response(_voucher_info(pv), status=201)
@@ -310,6 +336,21 @@ def payment_voucher_action(request, ref, action):
         pv.status = "CANCELLED"
         pv.save(update_fields=["status", "updated_at"])
         err = None
+    elif action == "settle-payable":
+        if user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance settles payments."},
+                            status=403)
+        if pv.status != "APPROVED":
+            return Response({"detail": "The voucher must be signatory-approved "
+                             "before payables are paid."}, status=400)
+        line = pv.voucher_lines.filter(
+            source_payable_id=request.data.get("payable_id"),
+            status="APPROVED").select_related("source_payable").first()
+        if not line:
+            return Response({"detail": "That payable is not an approved line "
+                             "on this voucher."}, status=400)
+        err = vouchers.settle_payable(line.source_payable, user,
+                                      request.data.get("payment_ref") or "")
     else:
         return Response({"detail": f"Unknown action '{action}'."}, status=400)
     if err:

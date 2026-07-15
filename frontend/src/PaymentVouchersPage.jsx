@@ -30,7 +30,8 @@ function lineDetail(l) {
 }
 
 // A stable pick key for an awaiting row (docs by ref, milestones by id)
-const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}` : d.ref;
+const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
+  : d.kind === "PAYABLE" ? `P:${d.payable_id}` : d.ref;
 
 export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
@@ -81,12 +82,15 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const createVoucher = () => run(async () => {
     if (mixed) throw new Error("A voucher must be a single currency — "
       + "deselect one currency.");
-    const source_refs = pickedRows.filter((d) => d.kind !== "MILESTONE")
-      .map((d) => d.ref);
+    const source_refs = pickedRows.filter(
+      (d) => d.kind !== "MILESTONE" && d.kind !== "PAYABLE").map((d) => d.ref);
     const milestone_ids = pickedRows.filter((d) => d.kind === "MILESTONE")
       .map((d) => d.milestone_id);
+    const payable_ids = pickedRows.filter((d) => d.kind === "PAYABLE")
+      .map((d) => d.payable_id);
     await api("/payment-vouchers",
-              { method: "POST", body: { source_refs, milestone_ids } });
+              { method: "POST", body: { source_refs, milestone_ids,
+                                        payable_ids } });
     setPicked({}); reload();
   });
 
@@ -142,6 +146,14 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
     fd.append("payment_ref", payRef);
     if (paySlip) fd.append("file", paySlip);
     await apiUpload(`/pr/${prRef}/vendor-payment`, fd);
+    cancelPay(); reload();
+  });
+
+  const settlePayable = (pvRef, payableId) => run(async () => {
+    if (!payRef.trim()) throw new Error("A payment reference is required.");
+    await api(`/payment-vouchers/${pvRef}/actions/settle-payable`,
+              { method: "POST", body: { payable_id: payableId,
+                                        payment_ref: payRef } });
     cancelPay(); reload();
   });
 
@@ -265,6 +277,15 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                             background: "var(--amber-bg, #fff4e0)",
                             padding: "1px 6px", borderRadius: 10 }}>
                             overseas TT</span>
+                        )}
+                        {d.kind === "PAYABLE" && (
+                          <span style={{ marginLeft: 6, fontSize: 11,
+                            fontWeight: 600,
+                            color: d.overdue ? "#b0402f" : "#5a6b78",
+                            background: d.overdue ? "#f6e7e3" : "#eef3f7",
+                            padding: "1px 6px", borderRadius: 10 }}>
+                            credit payable{d.overdue ? " · overdue"
+                              : d.due_date ? ` · due ${d.due_date}` : ""}</span>
                         )}
                       </td>
                       <td style={td}>{d.site_code}</td>
@@ -462,6 +483,30 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                                 fields={(row) => payFormFields({
                                   onSave: () => payVendor(l.ref,
                                                           row.line_id) })} />
+                            )}
+                            {l.doc_type === "PAYABLE" && (
+                              <div>
+                                <div style={{ display: "flex", gap: 10,
+                                  alignItems: "baseline", flexWrap: "wrap" }}>
+                                  <strong>{l.payee}</strong>
+                                  <span style={{ fontSize: 12.5,
+                                    color: "var(--muted)" }}>{l.purpose}</span>
+                                  <span style={{ marginLeft: "auto",
+                                    fontFamily: "var(--mono, monospace)" }}>
+                                    MVR {money(l.amount)}</span>
+                                </div>
+                                {payKey === `pay:${l.payable_id}`
+                                  ? payFormFields({ onSave: () =>
+                                      settlePayable(pv.ref, l.payable_id) })
+                                  : (
+                                    <div style={{ marginTop: 6 }}>
+                                      <Btn variant="primary"
+                                        onClick={() => startPay(
+                                          `pay:${l.payable_id}`)}>
+                                        Record payment</Btn>
+                                    </div>
+                                  )}
+                              </div>
                             )}
                           </div>
                         ))}

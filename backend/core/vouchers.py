@@ -14,7 +14,7 @@ from django.utils import timezone
 from . import costing
 from .audit import audit
 from .models import (Approval, Document, DocumentRevision,
-                     ImportPaymentMilestone, PaymentVoucherLine, Site)
+                     ImportPaymentMilestone, Payable, PaymentVoucherLine, Site)
 from .numbering import next_ref
 
 # What is ready to go on a voucher, per source type. Vouchers are strictly
@@ -64,6 +64,43 @@ def milestone_currency(m):
     return m.order.order_currency
 
 
+def payable_amount(p):
+    return p.amount
+
+
+def payable_currency(p):
+    return "MVR"        # credit payables settle in MVR
+
+
+def _on_live_payable():
+    """Payables sitting on a voucher still being processed (DRAFT/SUBMITTED)."""
+    return PaymentVoucherLine.objects.filter(
+        voucher__status__in=("DRAFT", "SUBMITTED"),
+        source_payable__isnull=False).values_list(
+        "source_payable_id", flat=True)
+
+
+def awaiting_payables():
+    """Outstanding credit payables that can be pulled onto a voucher — any of
+    them (due or early, an owner may pay ahead if a vendor withdraws credit)."""
+    return Payable.objects.filter(status="OUTSTANDING").exclude(
+        id__in=_on_live_payable()).select_related(
+        "document", "site").order_by("due_date", "id")
+
+
+def settle_payable(payable, actor, ref):
+    """Finance pays a voucher-approved credit payable: posts the PAID leg for
+    the PR vendor line and marks the payable SETTLED (owner 2026-07-15)."""
+    if payable.status != "OUTSTANDING":
+        return "This payable is already settled or cancelled."
+    from .procurement import post_pr_vendor_paid
+    post_pr_vendor_paid(payable.document, payable.document_line, actor,
+                        ref or "")
+    audit("document", payable.document_id, "PAYABLE_SETTLED", actor=actor,
+          detail={"vendor": payable.vendor, "ref": ref})
+    return None
+
+
 def _on_live_voucher():
     """Source docs sitting on a voucher that is still being processed
     (DRAFT or SUBMITTED). Approved/cancelled vouchers are historical, and a
@@ -106,12 +143,13 @@ def awaiting_milestones():
         "order__document", "order__supplier")
 
 
-def create_voucher(source_refs, actor, milestone_ids=None):
-    """Finance creates a draft voucher from chosen requisitions and/or overseas
-    TT milestones."""
+def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None):
+    """Finance creates a draft voucher from chosen requisitions, overseas TT
+    milestones and/or credit-vendor payables."""
     source_refs = list(source_refs or [])
     milestone_ids = [int(m) for m in (milestone_ids or [])]
-    if not source_refs and not milestone_ids:
+    payable_ids = [int(p) for p in (payable_ids or [])]
+    if not source_refs and not milestone_ids and not payable_ids:
         return None, "Select at least one payment to voucher."
     sources = list(Document.objects.filter(ref__in=source_refs,
                                            is_void=False))
@@ -139,10 +177,22 @@ def create_voucher(source_refs, actor, milestone_ids=None):
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"{m.order.document.ref} · {m.label} is already on a " \
                          "voucher."
+    payables = list(Payable.objects.filter(id__in=payable_ids)
+                    .select_related("document"))
+    if len(payables) != len(set(payable_ids)):
+        return None, "One or more payables are unknown."
+    for p in payables:
+        if p.status != "OUTSTANDING":
+            return None, f"The payable to {p.vendor} is no longer outstanding."
+        if PaymentVoucherLine.objects.filter(
+                source_payable=p,
+                voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+            return None, f"The payable to {p.vendor} is already on a voucher."
     # A voucher is single-currency (owner 2026-07-13): every chosen payment
     # must share one currency (MVR or a foreign currency), never mixed.
     currencies = ({source_currency(d) for d in sources}
-                  | {milestone_currency(m) for m in milestones})
+                  | {milestone_currency(m) for m in milestones}
+                  | {payable_currency(p) for p in payables})
     if len(currencies) > 1:
         return None, ("A voucher must be a single currency — "
                       + " and ".join(sorted(currencies))
@@ -164,9 +214,13 @@ def create_voucher(source_refs, actor, milestone_ids=None):
             PaymentVoucherLine.objects.create(
                 voucher=pv, source_milestone=m, amount=milestone_amount(m),
                 currency=milestone_currency(m))
+        for p in payables:
+            PaymentVoucherLine.objects.create(
+                voucher=pv, source_payable=p, amount=payable_amount(p),
+                currency=payable_currency(p))
     audit("document", pv.id, "PV_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": ref,
-                  "lines": len(sources) + len(milestones)})
+                  "lines": len(sources) + len(milestones) + len(payables)})
     return pv, None
 
 
@@ -283,8 +337,11 @@ def approve_voucher(pv, actor, queried_ids=None, note=""):
                 line.save(update_fields=["status"])
                 if line.source_milestone_id:
                     authorise_milestone(line.source_milestone, pv, actor)
-                else:
+                elif line.source_document_id:
                     authorise_source(line.source_document, actor)
+                # A payable line: the commitment was already authorised at PR
+                # time, so approval simply green-lights the payment — Finance
+                # settles it (posts PAID + marks the payable SETTLED).
         pv.status = "APPROVED"
         pv.save(update_fields=["status", "updated_at"])
         Approval.objects.create(document=pv, revision=pv.current_revision,

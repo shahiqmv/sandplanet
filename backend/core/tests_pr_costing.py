@@ -187,6 +187,33 @@ class PrAuthorisationTests(PrCostingBase):
                          Decimal("7000"))
         self.assertEqual(Payable.objects.get(document=pr).status, "SETTLED")
 
+    def test_credit_payable_paid_via_new_voucher(self):
+        """A credit payable can be pulled onto a fresh voucher; signatory
+        approves, Finance settles → PAID posted + payable SETTLED."""
+        pr = self.make_pr()
+        self.authorise(pr.ref)         # creates the OUTSTANDING payable (7000)
+        payable = Payable.objects.get(document=pr)
+        self.assertEqual(payable.status, "OUTSTANDING")
+        self.client.force_authenticate(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"payable_ids": [payable.id]}, format="json")
+        self.assertEqual(pv.status_code, 201, pv.data)
+        pref = pv.data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/submit",
+                         {}, format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/approve",
+                         {}, format="json")
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pref}/actions/settle-payable",
+            {"payable_id": payable.id, "payment_ref": "TT-77"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        payable.refresh_from_db()
+        self.assertEqual(payable.status, "SETTLED")
+        self.assertEqual(costing.document_net(pr, state="PAID"),
+                         Decimal("7000"))
+
     def test_credit_terms_editable_until_authorisation(self):
         from datetime import date, timedelta
         pr = self.make_pr()            # Director-approved, no payable yet

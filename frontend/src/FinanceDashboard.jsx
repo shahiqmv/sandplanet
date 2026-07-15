@@ -76,8 +76,14 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
               sub={`MVR ${money(d.pyr_to_pay.total)}`} />
         <Tile label="Outstanding payables"
               value={d.payables.count}
-              sub={`MVR ${money(d.payables.total)} on credit terms`} />
+              sub={`MVR ${money(d.payables.total)} on credit terms`}
+              onClick={onVouchers} />
       </div>
+      {d.payables.count > 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
+          Credit payables appear in the voucher builder — raise a Payment
+          Voucher for them when due, or early if a vendor withdraws credit.</p>
+      )}
 
       {d.vouchers.to_pay.length > 0 && (
         <div style={card}>

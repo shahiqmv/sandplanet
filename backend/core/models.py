@@ -1914,6 +1914,12 @@ class PaymentVoucherLine(models.Model):
     source_milestone = models.ForeignKey(
         "ImportPaymentMilestone", on_delete=models.PROTECT, null=True,
         blank=True, related_name="voucher_lines")
+    # A credit-vendor payable pulled onto a voucher to be paid (when due, or
+    # early if a vendor withdraws credit) — owner 2026-07-15. Exactly one of
+    # source_document / source_milestone / source_payable is set per line.
+    source_payable = models.ForeignKey(
+        "Payable", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="voucher_lines")
     # A voucher is single-currency (owner 2026-07-13): every line on it shares
     # this currency — MVR for PR, the request currency for a PYR, the order
     # currency for an overseas TT.
@@ -1930,6 +1936,8 @@ class PaymentVoucherLine(models.Model):
                                     name="uniq_voucher_source"),
             models.UniqueConstraint(fields=["voucher", "source_milestone"],
                                     name="uniq_voucher_milestone"),
+            models.UniqueConstraint(fields=["voucher", "source_payable"],
+                                    name="uniq_voucher_payable"),
         ]
 
 
