@@ -13,7 +13,8 @@ const CATEGORIES = [
 const CAT_LABEL = Object.fromEntries(CATEGORIES);
 
 const EMPTY = { name: "", category: "LOCAL", contact_person: "", phone: "",
-                email: "", country: "", default_currency: "", address: "" };
+                email: "", country: "", default_currency: "", credit_days: "",
+                address: "" };
 
 export default function SuppliersPage({ me }) {
   const [suppliers, setSuppliers] = useState([]);
@@ -98,6 +99,12 @@ export default function SuppliersPage({ me }) {
                      style={{ ...inputStyle, width: 120 }} maxLength={3} />
             </>
           )}
+          <input type="number" min="0" placeholder="Credit days"
+                 title="Default credit period in days — prefills a PR vendor line"
+                 value={draft.credit_days ?? ""}
+                 onChange={(e) => setDraft({ ...draft,
+                                             credit_days: e.target.value })}
+                 style={{ ...inputStyle, width: 110 }} />
           <input placeholder="Address (shown on POs)"
                  value={draft.address}
                  onChange={(e) => setDraft({ ...draft,

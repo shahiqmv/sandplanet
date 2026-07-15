@@ -331,6 +331,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       qty_received: l.qty_received, priority: l.priority || "NORMAL",
       urgent_reason: l.urgent_reason, vendor: l.vendor,
       quotation_ref: l.quotation_ref, payment_terms: l.payment_terms,
+      credit_days: l.credit_days,
       amount_cash: l.amount_cash, amount_credit: l.amount_credit,
       fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
       remarks: l.remarks,
@@ -395,6 +396,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         qty_received: r.qty_received, priority: r.priority,
         urgent_reason: r.urgent_reason, vendor: r.vendor,
         quotation_ref: r.quotation_ref, payment_terms: r.payment_terms,
+        credit_days: r.credit_days,
         amount_cash: r.amount_cash, amount_credit: r.amount_credit,
         fulfil_source: r.fulfil_source, store_issue_line: r.store_issue_line,
         remarks: r.remarks,
@@ -573,7 +575,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
               {docType === "PR" ? (
                 <>
                   <th style={th}>Vendor</th><th style={th}>Quotation Ref</th>
-                  <th style={th}>Payment Terms</th>
+                  <th style={th}>Terms · Credit days</th>
                   <th style={th}>Amount Cash (MVR)</th>
                   <th style={th}>Amount Credit (MVR)</th>
                 </>
@@ -612,9 +614,14 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                     <td style={{ padding: 3 }}><input value={row.quotation_ref || ""}
                       onChange={(e) => setRow(i, { quotation_ref: e.target.value })}
                       style={{ ...inputStyle, width: 110 }} /></td>
-                    <td style={{ padding: 3 }}><input value={row.payment_terms || ""}
-                      onChange={(e) => setRow(i, { payment_terms: e.target.value })}
-                      style={{ ...inputStyle, width: 130 }} /></td>
+                    <td style={{ padding: 3, whiteSpace: "nowrap" }}>
+                      <input value={row.payment_terms || ""} placeholder="terms"
+                        onChange={(e) => setRow(i, { payment_terms: e.target.value })}
+                        style={{ ...inputStyle, width: 88 }} />
+                      <input type="number" min="0" value={row.credit_days ?? ""}
+                        placeholder="days" title="Credit period in days — sets the payable's due date at authorisation"
+                        onChange={(e) => setRow(i, { credit_days: e.target.value })}
+                        style={{ ...inputStyle, width: 50, marginLeft: 4 }} /></td>
                     <td style={{ padding: 3 }}><input type="number"
                       value={row.amount_cash ?? ""}
                       onChange={(e) => setRow(i, { amount_cash: e.target.value })}
@@ -1167,7 +1174,10 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                       </>
                     )}
                   </td>
-                  <td style={td}>{line.payment_terms}</td>
+                  <td style={td}>{line.payment_terms}
+                    {line.credit_days != null
+                      ? `${line.payment_terms ? " · " : ""}${line.credit_days}d`
+                      : ""}</td>
                   <td style={td}>
                     {/* PO for a credit vendor (from authorisation) and the
                         transfer slip once Finance records payment on the
