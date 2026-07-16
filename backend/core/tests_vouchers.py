@@ -254,7 +254,7 @@ class VoucherVoidTests(VoucherBase):
         self.voucher_action(pv, "approve", self.signatory)
         return a, pv
 
-    def test_void_reverses_commitment_and_returns_source(self):
+    def test_finance_requests_then_signatory_authorises_the_void(self):
         from django.db.models import Sum
         a, pv = self._approved_voucher(3000)
         pyr = Document.objects.get(ref=a)
@@ -263,9 +263,19 @@ class VoucherVoidTests(VoucherBase):
             document=pyr, state="COMMITTED",
             reversal_of__isnull=True).aggregate(s=Sum("amount"))["s"]
         self.assertEqual(committed, Decimal("3000"))
-        # void
-        r = self.voucher_action(pv, "void", self.signatory,
+        # a signatory can't void until Finance has requested it
+        self.assertEqual(
+            self.voucher_action(pv, "void", self.signatory).status_code, 400)
+        # Finance raises the request (reason required)
+        self.assertEqual(
+            self.voucher_action(pv, "request-void", self.finance).status_code,
+            400)
+        r = self.voucher_action(pv, "request-void", self.finance,
                                 reason="wrong batch")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["void_requested"])
+        # signatory authorises the reversal
+        r = self.voucher_action(pv, "void", self.signatory)
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "VOID")
         # PYR returned to its pre-voucher state; commitment nets to zero
@@ -280,13 +290,28 @@ class VoucherVoidTests(VoucherBase):
                     self.client.get("/api/v1/finance/awaiting-voucher").data]
         self.assertIn(a, awaiting)
 
-    def test_authorised_voucher_needs_a_signatory_to_void(self):
+    def test_authorised_void_needs_finance_request_and_a_signatory(self):
         a, pv = self._approved_voucher(1000)
-        # Finance can't void an AUTHORISED voucher — signatory authorisation
+        # Finance can't void an AUTHORISED voucher outright — only request it
         self.assertEqual(
             self.voucher_action(pv, "void", self.finance,
                                 reason="x").status_code, 403)
-        # reason required
+        # a signatory can't request the void; that's Finance's step
+        self.assertEqual(
+            self.voucher_action(pv, "request-void", self.signatory,
+                                reason="x").status_code, 403)
+        # signatory can't authorise before a request exists
+        self.assertEqual(
+            self.voucher_action(pv, "void", self.signatory).status_code, 400)
+
+    def test_signatory_can_decline_a_void_request(self):
+        a, pv = self._approved_voucher(1000)
+        self.voucher_action(pv, "request-void", self.finance, reason="oops")
+        r = self.voucher_action(pv, "decline-void", self.signatory)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(r.data["void_requested"])
+        self.assertEqual(r.data["status"], "APPROVED")
+        # and with the request gone, a bare void is blocked again
         self.assertEqual(
             self.voucher_action(pv, "void", self.signatory).status_code, 400)
 
@@ -315,6 +340,7 @@ class VoucherVoidTests(VoucherBase):
         costing.post(site=self.site, cost_head=self.head, state="PAID",
                      source="PYR", amount=Decimal("1000"), document=pyr,
                      actor=self.finance)
-        r = self.voucher_action(pv, "void", self.signatory, reason="too late")
+        self.voucher_action(pv, "request-void", self.finance, reason="too late")
+        r = self.voucher_action(pv, "void", self.signatory)
         self.assertEqual(r.status_code, 400)
         self.assertIn("payment", r.data["detail"].lower())

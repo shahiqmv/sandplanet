@@ -122,6 +122,28 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
     if (reason && reason.trim()) voucherAction(pv.ref, "void", { reason });
   };
 
+  // An authorised (approved) voucher takes two hands: Finance requests the
+  // void with a reason, a signatory then authorises (or declines) it.
+  const requestVoid = (pv) => {
+    const reason = window.prompt(
+      `Request to void ${pv.ref}? A signatory must authorise the reversal. `
+      + "Reason:");
+    if (reason && reason.trim())
+      voucherAction(pv.ref, "request-void", { reason });
+  };
+
+  const authoriseVoid = (pv) => {
+    if (window.confirm(
+      `Authorise the void of ${pv.ref}? This reverses its commitments and `
+      + "returns the requisitions to be re-vouchered."))
+      voucherAction(pv.ref, "void", {});
+  };
+
+  const declineVoid = (pv) => {
+    if (window.confirm(`Decline the void request on ${pv.ref}?`))
+      voucherAction(pv.ref, "decline-void", {});
+  };
+
   const openVoucher = (ref) => {
     setOpen(open === ref ? null : ref);
     setQueries({}); setNote(""); setError(null); cancelPay();
@@ -375,13 +397,16 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             const canSubmit = isFinance && pv.status === "DRAFT";
             const canApprove = isSignatory && pv.status === "SUBMITTED";
             const canPay = isFinance && pv.status === "APPROVED";
-            // Void: an authorised voucher needs a signatory (reverses its
-            // commitments); a submitted-but-unauthorised one Finance can void
-            // with a reason (owner 2026-07-16).
-            const canVoid = !pv.is_void && !(pv.paid_count > 0)
-              && (pv.status === "APPROVED" ? isSignatory
-                : pv.status === "SUBMITTED" ? (isFinance || isSignatory)
-                : false);
+            // Void (owner 2026-07-16). A submitted-but-unauthorised voucher
+            // Finance voids directly with a reason. An authorised one is a
+            // two-step: Finance requests the void, a signatory authorises it.
+            const notPaid = !pv.is_void && !(pv.paid_count > 0);
+            const canVoid = notPaid && pv.status === "SUBMITTED"
+              && (isFinance || isSignatory);
+            const canRequestVoid = notPaid && pv.status === "APPROVED"
+              && isFinance && !pv.void_requested;
+            const canAuthoriseVoid = notPaid && pv.status === "APPROVED"
+              && isSignatory && pv.void_requested;
             const payable = pv.lines.filter((l) => l.status === "APPROVED"
               && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE");
             return (
@@ -512,17 +537,50 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                       </div>
                     )}
 
-                    {canVoid && pv.status !== "DRAFT" && (
+                    {canVoid && (
                       <div style={{ marginTop: 12 }}>
                         <button disabled={busy} onClick={() => voidVoucher(pv)}
                           style={{ ...ghostButton, color: "#c0392b",
                                    borderColor: "#e3b7b0" }}>
                           Void voucher</button>
-                        {pv.status === "APPROVED" && (
-                          <span style={{ fontSize: 12, color: "var(--muted)",
-                                         marginLeft: 10 }}>
-                            reverses commitments; blocked once any line is paid
-                          </span>
+                      </div>
+                    )}
+                    {canRequestVoid && (
+                      <div style={{ marginTop: 12 }}>
+                        <button disabled={busy}
+                          onClick={() => requestVoid(pv)}
+                          style={{ ...ghostButton, color: "#c0392b",
+                                   borderColor: "#e3b7b0" }}>
+                          Request void</button>
+                        <span style={{ fontSize: 12, color: "var(--muted)",
+                                       marginLeft: 10 }}>
+                          a signatory must authorise; blocked once any line is
+                          paid
+                        </span>
+                      </div>
+                    )}
+                    {pv.void_requested && (
+                      <div style={{ marginTop: 12, padding: "10px 12px",
+                                    background: "#fdf3e7", borderRadius: 8,
+                                    border: "1px solid #f0d9b5" }}>
+                        <p style={{ margin: 0, fontSize: 13, color: "#8a5a00" }}>
+                          Void requested{pv.void_requested_by
+                            ? ` by ${pv.void_requested_by}` : ""}
+                          {pv.void_reason ? ` — ${pv.void_reason}` : ""}
+                        </p>
+                        {canAuthoriseVoid && (
+                          <div style={{ display: "flex", gap: 10,
+                                        marginTop: 10 }}>
+                            <button disabled={busy}
+                              onClick={() => authoriseVoid(pv)}
+                              style={{ ...ghostButton, color: "#c0392b",
+                                       borderColor: "#e3b7b0" }}>
+                              Authorise void</button>
+                            <button disabled={busy}
+                              onClick={() => declineVoid(pv)}
+                              style={ghostButton}>
+                              Decline</button>
+                          </div>
                         )}
                       </div>
                     )}

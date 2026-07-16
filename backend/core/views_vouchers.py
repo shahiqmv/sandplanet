@@ -91,6 +91,9 @@ def _voucher_info(pv):
     return {
         "ref": pv.ref, "status": "VOID" if pv.is_void else pv.status,
         "is_void": pv.is_void, "void_reason": pv.void_reason,
+        "void_requested": bool(pv.void_requested_by_id) and not pv.is_void,
+        "void_requested_by": (pv.void_requested_by.full_name
+                              if pv.void_requested_by_id else None),
         "doc_date": pv.doc_date,
         "prepared_by": pv.created_by.full_name if pv.created_by else None,
         "currency": currency,
@@ -354,19 +357,57 @@ def payment_voucher_action(request, ref, action):
                              "on this voucher."}, status=400)
         err = vouchers.settle_payable(line.source_payable, user,
                                       request.data.get("payment_ref") or "")
+    elif action == "request-void":
+        # Reversing an AUTHORISED voucher is a two-handed move: Finance raises
+        # the request (with a reason), a signatory then authorises it
+        # (owner 2026-07-16). A draft/submitted voucher is voided directly.
+        if user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance requests a void."}, status=403)
+        if pv.status != "APPROVED":
+            return Response({"detail": "Only an authorised voucher needs a void "
+                             "request — a draft/submitted one is voided "
+                             "directly."}, status=400)
+        reason = (request.data.get("reason") or "").strip()
+        if not reason:
+            return Response({"detail": "A reason for the void is required."},
+                            status=400)
+        pv.void_requested_by = user
+        pv.void_reason = reason
+        pv.save(update_fields=["void_requested_by", "void_reason",
+                               "updated_at"])
+        from . import notify
+        notify.notify_void_request(pv, user)
+        err = None
+    elif action == "decline-void":
+        if user.role not in ("SIGNATORY", "ADMIN"):
+            return Response({"detail": "Only a signatory can decline a void "
+                             "request."}, status=403)
+        if not pv.void_requested_by_id:
+            return Response({"detail": "There is no void request to decline."},
+                            status=400)
+        pv.void_requested_by = None
+        pv.void_reason = ""
+        pv.save(update_fields=["void_requested_by", "void_reason",
+                               "updated_at"])
+        err = None
     elif action == "void":
-        # An AUTHORISED (approved) voucher can only be reversed with signatory
-        # authorisation; a not-yet-authorised one (draft/submitted) can be
-        # voided by Finance with an explanation (owner 2026-07-16).
+        # An AUTHORISED (approved) voucher can only be reversed by a signatory,
+        # and only once Finance has requested it. A not-yet-authorised one
+        # (draft/submitted) is voided by Finance directly with an explanation.
         if pv.status == "APPROVED":
             if user.role not in ("SIGNATORY", "ADMIN"):
                 return Response({"detail": "An authorised voucher can only be "
                                  "voided by a signatory."}, status=403)
-        elif user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
-            return Response({"detail": "Only Finance or a signatory can void a "
-                             "voucher."}, status=403)
-        err = vouchers.void_voucher(pv, user,
-                                    request.data.get("reason") or "")
+            if not pv.void_requested_by_id and user.role != "ADMIN":
+                return Response({"detail": "Finance must request the void "
+                                 "before it can be authorised."}, status=400)
+            reason = pv.void_reason or request.data.get("reason") or ""
+        else:
+            if user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+                return Response({"detail": "Only Finance or a signatory can "
+                                 "void a voucher."}, status=403)
+            reason = request.data.get("reason") or ""
+        err = vouchers.void_voucher(pv, user, reason)
     else:
         return Response({"detail": f"Unknown action '{action}'."}, status=400)
     if err:

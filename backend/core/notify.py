@@ -156,6 +156,17 @@ def notify_document(doc, actor=None):
         log.exception("notify_document failed for %s", getattr(doc, "ref", "?"))
 
 
+def notify_void_request(pv, actor=None):
+    """Tell the signatories that Finance has asked to void an authorised
+    voucher, so they can authorise (or decline) the reversal."""
+    for user in _role_users("SIGNATORY"):
+        if actor and user.id == actor.id:
+            continue
+        notify_user(
+            user, f"PV {pv.ref} — void requested",
+            body=pv.void_reason or "", doc=pv, category="approval")
+
+
 def notify_user(user, title, body="", doc=None, category="alert"):
     """Ad-hoc notification (e.g. an import payment falling due)."""
     try:

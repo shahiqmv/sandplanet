@@ -414,6 +414,12 @@ class Document(models.Model):
         User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
     )
     voided_at = models.DateTimeField(null=True, blank=True)
+    # Reversing an AUTHORISED payment voucher takes two hands: Finance raises
+    # the void request (this is set), a signatory then authorises it (owner
+    # 2026-07-16). Null = no pending request.
+    void_requested_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True, related_name="+"
+    )
     created_by = models.ForeignKey(
         User, on_delete=models.PROTECT, related_name="documents_created"
     )
