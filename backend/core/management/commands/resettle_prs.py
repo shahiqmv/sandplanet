@@ -32,6 +32,22 @@ class Command(BaseCommand):
             if pr.status != before:
                 healed += 1
                 self.stdout.write(f"  [ok] {pr.ref}: {before} -> {pr.status}")
+                continue
+            # still stuck — show which vendor rows are blocking it
+            blockers = []
+            for ln in pr.current_revision.lines.all():
+                net = (ln.amount_cash or 0) + (ln.amount_credit or 0)
+                acted = (ln.action_taken or "").strip() or (ln.po_ref or "").strip()
+                if net > 0 and not acted:
+                    kind = "credit(no PO)" if (ln.amount_credit or 0) > 0 \
+                        else "cash(no payment)"
+                    blockers.append(
+                        f"{ln.vendor or ln.free_text_desc or '?'} "
+                        f"[{kind}, net {net}]")
+            if blockers:
+                self.stdout.write(
+                    f"  [.. ] {pr.ref} ({pr.status}) blocked by: "
+                    + "; ".join(blockers))
 
         self.stdout.write(self.style.SUCCESS(
             f"Reviewed {prs.count()} PR(s); advanced {healed}."))
