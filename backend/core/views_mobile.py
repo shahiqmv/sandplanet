@@ -78,6 +78,7 @@ APPROVABLE = {
     ("PR", "SUBMITTED"), ("PYR", "SUBMITTED"), ("PYR", "PM_APPROVED"),
     ("PV", "SUBMITTED"),
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
+    ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
 }
 
 
@@ -235,6 +236,13 @@ def _act(request, ref, kind):
         from .payments import pyr_action
         result = pyr_action(request, doc, "approve" if kind == "approve"
                             else "return")
+        if isinstance(result, Response) and result.status_code >= 400:
+            return result
+    elif doc.doc_type == "IPR" and doc.status == "APPROVED":
+        # signatory authorises the overseas order — commits it and raises the PO
+        from .views_documents import _do_authorise, _do_return
+        result = (_do_return if kind == "return" else _do_authorise)(
+            request, doc, comment)
         if isinstance(result, Response) and result.status_code >= 400:
             return result
     else:

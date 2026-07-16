@@ -770,6 +770,48 @@ class QsOverseasAuthTests(IprBase):
         self.assertEqual(Document.objects.get(ref=ref).status, "SUBMITTED")
 
 
+class MobileIprAuthoriseTests(IprBase):
+    """The signatory authorises a Director-awarded overseas order from the
+    mobile app, raising its PO (owner 2026-07-16)."""
+
+    def setUp(self):
+        super().setUp()
+        self.signatory.set_password("verify-123")
+        self.signatory.save()
+        self.m = APIClient()
+        tok = self.m.post("/api/mobile/v1/auth/login",
+                          {"username": self.signatory.username,
+                           "password": "verify-123"}, format="json").data["token"]
+        self.m.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+
+    def _awarded_order(self):
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        return ref
+
+    def test_signatory_sees_and_authorises_awarded_ipr_on_mobile(self):
+        ref = self._awarded_order()
+        self.assertEqual(Document.objects.get(ref=ref).status, "APPROVED")
+        # the awarded order reaches the signatory's mobile queue…
+        q = self.m.get("/api/mobile/v1/queue")
+        self.assertEqual(q.status_code, 200)
+        self.assertIn(ref, [i["ref"] for i in q.data["items"]])
+        # …and authorising it commits the order and raises the PO
+        r = self.m.post(f"/api/mobile/v1/documents/{ref}/approve", {},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
+        self.assertTrue(Document.objects.filter(
+            doc_type="PO", links_to__from_document__ref=ref,
+            links_to__link_type="IPR_PO").exists())
+
+
 class OpeningStockTests(PmrBase):
     """Seed the HO store with opening / manual stock without an import
     (owner 2026-07-14)."""
