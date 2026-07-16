@@ -424,6 +424,42 @@ class ChainTests(ProcBase):
         self.assertNotIn("Credit Vendor",
                          [v["vendor"] for v in info["lines"][0]["vendor_rows"]])
 
+    def test_zero_value_losing_bid_does_not_strand_the_pr(self):
+        """A captured quotation with nothing awarded lands as a zero-value
+        vendor row. It has nothing to pay or order, so it must not hold the PR
+        at PAYMENT_PROCESSING forever once the real cash vendor is paid
+        (owner 2026-07-16)."""
+        mr_ref = self.mr_to_sent()
+        self.as_user(self.purchasing)
+        pr = self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr_ref],
+            "lines": [
+                {"free_text_desc": "Winning Vendor", "vendor": "Winning Vendor",
+                 "amount_cash": 5000},
+                {"free_text_desc": "Losing Bid", "vendor": "Losing Bid",
+                 "amount_cash": 0},
+            ]}, format="json").data
+        self.act(pr["ref"], "submit")
+        self.as_user(self.director)
+        self.act(pr["ref"], "approve")
+        self.as_user(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [pr["ref"]]},
+                              format="json").data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
+                         format="json")
+        self.as_user(self.signatory)
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+                         format="json")
+        # pay the one real cash vendor — the zero-value row must not block close
+        win = next(ln["id"] for ln in pr["lines"]
+                   if ln["vendor"] == "Winning Vendor")
+        self.as_user(self.finance)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/vendor-payment",
+                             {"line_id": win, "payment_ref": "TRF-9"})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
+
     def test_lm_departure_creates_pending_and_updates_mr(self):
         mr_ref = self.mr_to_sent()
         lm = self.make_lm(mr_ref)

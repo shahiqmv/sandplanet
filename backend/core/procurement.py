@@ -436,15 +436,25 @@ def generate_pos_for_pr(pr, actor):
 def advance_pr_settlement(pr, actor):
     """PR status follows the vendor rows: a row is settled by a payment
     slip (cash) or a generated PO (credit). All settled -> PAID_PO_ISSUED;
-    some -> PAYMENT_PROCESSING (R3 addendum)."""
+    some -> PAYMENT_PROCESSING (R3 addendum).
+
+    A zero-value row (a captured quotation with nothing awarded — a losing
+    bid) has nothing to pay or order, so it counts as already settled; it must
+    not hold the PR open forever (owner 2026-07-16)."""
     lines = list(pr.current_revision.lines.all())
     if not lines:
         return
-    settled = [ln for ln in lines
-               if ln.action_taken.strip() or ln.po_ref.strip()]
+
+    def _net(ln):
+        return (ln.amount_cash or 0) + (ln.amount_credit or 0)
+
+    def _acted(ln):
+        return bool(ln.action_taken.strip() or ln.po_ref.strip())
+
+    settled = [ln for ln in lines if _acted(ln) or _net(ln) <= 0]
     if len(settled) == len(lines):
         set_status(pr, "PAID_PO_ISSUED", actor, "PR_SETTLED")
-    elif settled:
+    elif any(_acted(ln) for ln in lines):
         set_status(pr, "PAYMENT_PROCESSING", actor, "PR_PARTIALLY_SETTLED")
 
 
