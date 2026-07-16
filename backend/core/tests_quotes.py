@@ -112,6 +112,52 @@ class CoverageTests(QuoteBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "SUBMITTED")
 
+    def test_legacy_unscoped_pr_shows_only_its_quoted_items(self):
+        # A pre-feature PR whose MR lines were never scoped to it (the one-time
+        # backfill handed them to an older PR sharing the MR). Coverage must
+        # anchor to what THIS PR quoted, not the whole MR — else the un-quoted
+        # rest wrongly blocks its submit and can't be removed (owner 2026-07-16).
+        from .models import Document, DocumentLine
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        cement_line = mr["lines"][0]["id"]
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "OPC cement", "unit": "bag", "qty": 150,
+             "rate": 120, "mr_line": cement_line, "awarded": True}])
+        # wipe this PR's scope, as the backfill would if another PR grabbed the
+        # MR's lines first
+        prdoc = Document.objects.get(ref=pr["ref"])
+        DocumentLine.objects.filter(ordered_pr=prdoc).update(ordered_pr=None)
+        r = self.client.get(f"/api/v1/pr/{pr['ref']}/coverage")
+        descs = {row["description"] for row in r.data["rows"]}
+        self.assertEqual(descs, {"Cement OPC 50kg bag"})   # not the whole MR
+        self.assertEqual(r.data["uncovered"], [])          # rebar isn't on it
+        # so it submits clean, no override needed
+        r = self.act(pr["ref"], "submit")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+
+    def test_release_removes_a_matched_unscoped_line(self):
+        from .models import Document, DocumentLine
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        cement_line, rebar_line = mr["lines"][0]["id"], mr["lines"][1]["id"]
+        self.add_quote(pr["ref"], self.hw, [
+            {"supplier_desc": "cement", "unit": "bag", "qty": 150, "rate": 120,
+             "mr_line": cement_line, "awarded": True},
+            {"supplier_desc": "rebar", "unit": "kg", "qty": 500, "rate": 9,
+             "mr_line": rebar_line, "awarded": False}])
+        prdoc = Document.objects.get(ref=pr["ref"])
+        DocumentLine.objects.filter(ordered_pr=prdoc).update(ordered_pr=None)
+        # remove the un-awarded (matched but unscoped) rebar line
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/release-lines",
+                             {"line_ids": [rebar_line]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["released"], 1)
+        r = self.client.get(f"/api/v1/pr/{pr['ref']}/coverage")
+        self.assertEqual({row["description"] for row in r.data["rows"]},
+                         {"Cement OPC 50kg bag"})
+
     def test_remove_mistaken_supplier(self):
         """A supplier added by mistake can be removed so it stops showing as a
         zero-line vendor in the PR summary (owner 2026-07-14)."""

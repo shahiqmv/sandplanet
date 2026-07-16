@@ -277,18 +277,19 @@ def pr_coverage_data(pr):
         quotation__document=pr, mr_line__isnull=False
     ).select_related("quotation__supplier"):
         matches.setdefault(ql.mr_line_id, []).append(ql)
-    # Only the MR items this PR took (owner 2026-07-15). Legacy PRs raised
-    # before per-line scoping took nothing explicitly — fall back to the whole
-    # MR so their coverage still shows.
-    scoped_ids = set(DocumentLine.objects.filter(ordered_pr=pr)
-                     .values_list("id", flat=True))
+    # The MR items this PR is responsible for = scoped + quotation-matched
+    # (owner 2026-07-15). Only a truly untouched PR (nothing scoped, nothing
+    # matched) falls back to the whole MR — so a legacy PR that quoted part of
+    # a shared MR shows just its own items, not the entire bill.
+    from .procurement import pr_scope_line_ids
+    show_ids = pr_scope_line_ids(pr)
     rows = []
     for mr in mr_docs:
         for line in mr.current_revision.lines.select_related("item"):
             # store-fulfilled lines are covered by a SIN, not a quote (P1B-f3)
             if line.fulfil_source == "STORE":
                 continue
-            if scoped_ids and line.id not in scoped_ids:
+            if show_ids and line.id not in show_ids:
                 continue
             quote_lines = matches.get(line.id, [])
             rows.append({

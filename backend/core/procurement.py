@@ -207,6 +207,22 @@ def scope_pr_to_mr_lines(pr, mr_docs, line_ids):
     return None
 
 
+def pr_scope_line_ids(pr):
+    """The MR-line ids a PR is responsible for: the lines explicitly scoped to
+    it (ordered_pr), PLUS any it has quotation-matched. An empty set means the
+    PR hasn't been scoped and hasn't matched anything — callers then fall back
+    to the whole linked MR. This keeps a legacy PR (scoped to nothing by the
+    one-time backfill because an older PR on the same MR grabbed the lines
+    first) anchored to what it actually quoted, not the entire MR."""
+    from .models import DocumentLine, QuotationLine
+    scoped = set(DocumentLine.objects.filter(ordered_pr=pr)
+                 .values_list("id", flat=True))
+    matched = set(QuotationLine.objects.filter(
+        quotation__document=pr, mr_line__isnull=False)
+        .values_list("mr_line_id", flat=True))
+    return scoped | matched
+
+
 def release_pr_lines(pr, line_ids, actor):
     """Return MR lines from an in-progress PR to the open pool, so a purchaser
     who can't source them on this PR can raise another PR for them (owner
@@ -216,16 +232,18 @@ def release_pr_lines(pr, line_ids, actor):
     from .models import DocumentLine, QuotationLine
     if pr.status not in ("DRAFT", "SUBMITTED"):
         return 0, "You can only change a PR's items before it is approved."
-    qs = DocumentLine.objects.filter(ordered_pr=pr)
+    # Operate on the PR's whole item set (scoped + quotation-matched), so a
+    # matched-but-unscoped line can still be removed.
+    scope = pr_scope_line_ids(pr)
     if line_ids:
-        qs = qs.filter(id__in=line_ids)
+        scope &= set(line_ids)
     awarded = set(QuotationLine.objects.filter(
         quotation__document=pr, awarded=True, mr_line__isnull=False)
         .values_list("mr_line_id", flat=True))
-    ids = [ln.id for ln in qs if ln.id not in awarded]
+    ids = [lid for lid in scope if lid not in awarded]
     if ids:
+        # clear any scope claim, and drop the non-awarded quote matches
         DocumentLine.objects.filter(id__in=ids).update(ordered_pr=None)
-        # drop any (non-awarded) quote matches pointing at the released lines
         QuotationLine.objects.filter(
             quotation__document=pr, mr_line_id__in=ids).update(mr_line=None)
     audit("document", pr.id, "PR_LINES_RELEASED", actor=actor,
