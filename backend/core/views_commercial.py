@@ -324,6 +324,7 @@ def _claim_meta(claim):
         "note": claim.note,
         "previous_ref": claim.previous.ref if claim.previous_id else None,
         "certified_at": claim.certified_at,
+        "invoice_no": claim.invoice_no,
     }
 
 
@@ -503,3 +504,48 @@ def receipt_delete(request, pk):
     project = r.project
     commercial.delete_client_receipt(r, request.user)
     return Response(_claims_payload(project))
+
+
+# ---- Claim / invoice PDFs (P5) ------------------------------------------
+
+def _render_pdf(template, context, filename):
+    from django.conf import settings
+    from django.http import HttpResponse
+    from django.template.loader import render_to_string
+    html = render_to_string(template, context)
+    try:
+        from weasyprint import HTML
+        pdf = HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{filename}.pdf"'
+    return resp
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def claim_ipa_pdf(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if c.status == "DRAFT":
+        return Response({"detail": "Submit the claim before printing the "
+                                   "application."}, status=400)
+    return _render_pdf("pdf/claim_ipa.html",
+                       commercial.claim_pdf_context(c),
+                       f"{c.project.code}-{c.ref}-IPA")
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def claim_invoice_pdf(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if c.status not in ("CERTIFIED", "PAID"):
+        return Response({"detail": "A tax invoice can be issued once the "
+                                   "claim is certified."}, status=400)
+    return _render_pdf("pdf/tax_invoice.html",
+                       commercial.invoice_pdf_context(c),
+                       f"{c.invoice_no or c.ref}")

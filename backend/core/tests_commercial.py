@@ -399,3 +399,33 @@ class ProgressClaimTests(TestCase):
             f"/api/v1/projects/{self.project.id}/receipts",
             {"amount": "100", "received_on": "2026-07-16"}, format="json")
         self.assertEqual(r.status_code, 403)
+
+    # ---- P5: IPA + tax-invoice PDFs ---------------------------------------
+
+    def test_certifying_assigns_invoice_no_and_pdfs_render(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})
+        self._certify(c["id"])
+        payload = self.client.get(
+            f"/api/v1/projects/{self.project.id}/claims").data
+        cl = next(x for x in payload["claims"] if x["id"] == c["id"])
+        self.assertTrue(cl["invoice_no"].startswith("INV-"))
+        for tail in ("ipa", "invoice"):
+            r = self.client.get(f"/api/v1/claims/{c['id']}/{tail}.pdf")
+            self.assertEqual(r.status_code, 200, getattr(r, "data", tail))
+            self.assertEqual(r["Content-Type"], "application/pdf")
+
+    def test_invoice_pdf_blocked_before_certification(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})   # DRAFT
+        r = self.client.get(f"/api/v1/claims/{c['id']}/invoice.pdf")
+        self.assertEqual(r.status_code, 400)
+
+    def test_amount_in_words(self):
+        from decimal import Decimal
+        from core.commercial import amount_in_words
+        self.assertEqual(amount_in_words(Decimal("540.00")),
+                         "US Dollars Five hundred forty and 00/100 only")
+        self.assertEqual(
+            amount_in_words(Decimal("1234.56")),
+            "US Dollars One thousand two hundred thirty-four and 56/100 only")

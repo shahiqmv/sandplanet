@@ -1869,6 +1869,9 @@ class ProgressClaim(models.Model):
     certified_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                      blank=True, related_name="+")
     certified_at = models.DateTimeField(null=True, blank=True)
+    # Sequential tax-invoice number, assigned once the claim is certified (the
+    # point a formal GST invoice can be raised for the client). P5.
+    invoice_no = models.CharField(max_length=20, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

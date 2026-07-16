@@ -1,0 +1,64 @@
+<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+<style>
+  .biller { width: 100%; margin: 5mm 0 6mm; }
+  .biller td { border: none; vertical-align: top; padding: 0 6px 0 0;
+               font-size: 9pt; }
+  .biller .lbl2 { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
+                  letter-spacing: .04em; margin-top: 2mm; }
+  .biller .nm { font-weight: 700; font-size: 10.5pt; }
+  .tot td { border: none; padding: 3px 8px; font-size: 10pt; }
+  .tot .grand td { font-weight: 800; border-top: 1.2px solid #16527E;
+                   font-size: 12pt; color: #16527E; padding-top: 5px; }
+  .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="TAX INVOICE" %}
+{% include "pdf/_letterhead.html" with title="TAX INVOICE" subline=subline %}
+
+<table class="biller"><tr>
+  <td style="width: 55%">
+    <div class="lbl2" style="margin-top:0">Bill to</div>
+    <div class="nm">{{ employer.name }}</div>
+    {% if employer.address %}<div>{{ employer.address }}</div>{% endif %}
+    {% if employer.contact %}<div>Attn: {{ employer.contact }}{% if employer.designation %}, {{ employer.designation }}{% endif %}</div>{% endif %}
+  </td>
+  <td>
+    <div class="lbl2" style="margin-top:0">Invoice No</div>
+    <div class="nm">{{ claim.invoice_no|default:"—" }}</div>
+    <div class="lbl2">Date</div>
+    <div>{% if claim.certified_at %}{{ claim.certified_at|date:"d M Y" }}{% else %}—{% endif %}</div>
+    <div class="lbl2">Project</div><div>{{ project.title }}</div>
+    {% if co.tin %}<div class="lbl2">Our TIN</div><div>{{ co.tin }}</div>{% endif %}
+  </td>
+</tr></table>
+
+<table>
+  <thead><tr>
+    <th style="text-align:left">Description</th>
+    <th class="num" style="width:34mm">Amount ({{ currency }})</th>
+  </tr></thead>
+  <tbody>
+    <tr>
+      <td>{{ type_label }} payment application {{ claim.ref }} — value of work
+        certified to date{% if claim.work_done_upto %} ({{ claim.work_done_upto|date:"d M Y" }}){% endif %},
+        net of advance recovery and retention.</td>
+      <td class="num">{{ net_due|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<table class="tot" style="width: 82mm; margin-left: auto; margin-top: 4mm">
+  <tr><td>Net amount</td>
+      <td class="num">{{ currency }} {{ net_due|floatformat:2 }}</td></tr>
+  <tr><td>Output GST @ {{ gst_pct|floatformat:2 }}%</td>
+      <td class="num">{{ currency }} {{ gst|floatformat:2 }}</td></tr>
+  <tr class="grand"><td>Total due</td>
+      <td class="num">{{ currency }} {{ total|floatformat:2 }}</td></tr>
+</table>
+<div class="words">{{ amount_words }}</div>
+</body>
+</html>

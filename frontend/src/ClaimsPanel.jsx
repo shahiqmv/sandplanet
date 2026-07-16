@@ -484,6 +484,23 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
         </div>
       </div>
 
+      {/* Documents (P5) */}
+      {c.status !== "DRAFT" && (
+        <div style={{ display: "flex", gap: 14, marginTop: 12,
+                      flexWrap: "wrap", alignItems: "center" }}>
+          <a href={`/api/v1/claims/${claimId}/ipa.pdf`} target="_blank"
+             rel="noreferrer" style={{ fontSize: 13, color: "var(--navy)",
+                                       fontWeight: 600 }}>
+            ⬇ Payment application (IPA)</a>
+          {["CERTIFIED", "PAID"].includes(c.status) && (
+            <a href={`/api/v1/claims/${claimId}/invoice.pdf`} target="_blank"
+               rel="noreferrer" style={{ fontSize: 13, color: "var(--navy)",
+                                         fontWeight: 600 }}>
+              ⬇ Tax invoice{c.invoice_no ? ` · ${c.invoice_no}` : ""}</a>
+          )}
+        </div>
+      )}
+
       {/* Workflow */}
       {canEdit && (
         <div style={{ display: "flex", gap: 8, marginTop: 12,

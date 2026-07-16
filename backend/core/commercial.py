@@ -352,6 +352,9 @@ def set_claim_status(claim, to_status, actor):
         claim.certified_by = actor
         claim.certified_at = timezone.now()
         fields += ["certified_by", "certified_at"]
+        if not claim.invoice_no:
+            claim.invoice_no = _next_invoice_no()
+            fields.append("invoice_no")
     claim.save(update_fields=fields)
     audit("project", claim.project_id, f"CLAIM_{to_status}", actor=actor,
           detail={"ref": claim.ref})
@@ -546,4 +549,103 @@ def project_revenue_summary(project):
         "pct_complete": (revenue / revised * Decimal("100")
                          if revised else ZERO),
         "claims_certified": len(certified),
+    }
+
+
+# ---- Claim / invoice PDFs (P5) -------------------------------------------
+
+def _next_invoice_no():
+    from .models import ProgressClaim
+    n = ProgressClaim.objects.exclude(invoice_no="").count() + 1
+    return f"INV-{n:04d}"
+
+
+_ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight",
+         "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen",
+         "sixteen", "seventeen", "eighteen", "nineteen"]
+_TENS = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy",
+         "eighty", "ninety"]
+
+
+def _under_1000(n):
+    if n < 20:
+        return _ONES[n]
+    if n < 100:
+        return (_TENS[n // 10] + ("-" + _ONES[n % 10] if n % 10 else "")).strip()
+    return (_ONES[n // 100] + " hundred"
+            + (" " + _under_1000(n % 100) if n % 100 else "")).strip()
+
+
+def amount_in_words(amount, currency="USD"):
+    """A money amount as words for the invoice/IPA (e.g. 'US Dollars One
+    Thousand Five Hundred and 40/100 only')."""
+    amount = Decimal(str(amount or 0))
+    whole = int(amount)
+    cents = int((amount - whole) * 100)
+    groups = [("", 0), (" thousand", 1), (" million", 2), (" billion", 3)]
+    parts, rest = [], whole
+    chunks = []
+    while rest > 0:
+        chunks.append(rest % 1000)
+        rest //= 1000
+    if not chunks:
+        chunks = [0]
+    for i in range(len(chunks) - 1, -1, -1):
+        if chunks[i]:
+            parts.append(_under_1000(chunks[i]) + groups[i][0])
+    words = " ".join(parts).strip() or "zero"
+    words = words[:1].upper() + words[1:]
+    name = "US Dollars" if currency == "USD" else currency
+    return f"{name} {words} and {cents:02d}/100 only"
+
+
+def _employer(project):
+    """The client (Employer) block for a project's IPA / invoice — held on the
+    site (the resort relationship)."""
+    s = project.site
+    return {
+        "name": s.client_name or s.name,
+        "address": s.client_address, "contact": s.client_contact,
+        "designation": s.client_designation,
+        "phone": s.client_phone, "email": s.client_email,
+    }
+
+
+def claim_pdf_context(claim):
+    """Context for the interim payment application / certificate PDF."""
+    from .pdf import company_info, logo_src
+    project = claim.project
+    val = claim_valuation(claim)
+    w = val["waterfall"]
+    boq = getattr(project, "boq", None)
+    ccy = boq.currency if boq else "USD"
+    return {
+        "logo_src": logo_src(), "co": company_info(),
+        "claim": claim, "project": project,
+        "employer": _employer(project), "currency": ccy,
+        "waterfall": w, "approved_vos": w["revised"] - w["original"],
+        "lines": val["lines"], "sections": val["section_summary"],
+        "amount_words": amount_in_words(w["total"], ccy),
+        "type_label": dict(
+            claim.Type.choices).get(claim.claim_type, claim.claim_type),
+        "subline": f"Application {claim.ref}  ·  {project.code}",
+    }
+
+
+def invoice_pdf_context(claim):
+    """Context for the client tax invoice PDF (the GST bill for this claim)."""
+    from .pdf import company_info, logo_src
+    project = claim.project
+    w = claim_valuation(claim)["waterfall"]
+    boq = getattr(project, "boq", None)
+    ccy = boq.currency if boq else "USD"
+    return {
+        "logo_src": logo_src(), "co": company_info(),
+        "claim": claim, "project": project,
+        "employer": _employer(project), "currency": ccy,
+        "type_label": dict(
+            claim.Type.choices).get(claim.claim_type, claim.claim_type),
+        "net_due": w["net_due"], "gst": w["gst"], "gst_pct": claim.gst_pct,
+        "total": w["total"], "amount_words": amount_in_words(w["total"], ccy),
+        "subline": f"Invoice {claim.invoice_no or '—'}",
     }

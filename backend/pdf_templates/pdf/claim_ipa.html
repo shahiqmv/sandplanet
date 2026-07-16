@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+<style>
+  .wf td { font-size: 9pt; }
+  .wf .amt { text-align: right; font-family: 'Courier New', monospace;
+             width: 38mm; }
+  .wf .sub td { background: #EAF1F6; font-weight: 700; }
+  .wf .grand td { background: #BFD3E3; font-weight: 800; font-size: 10pt;
+                  color: #10344F; }
+  .neg { color: #b0402f; }
+  .words { margin-top: 3mm; font-style: italic; font-size: 9pt;
+           color: #10344F; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="IPA" %}
+{% include "pdf/_letterhead.html" with title="INTERIM PAYMENT APPLICATION" subline=subline %}
+
+<table class="kv">
+  <tr><td class="k">Employer</td><td>{{ employer.name }}</td>
+      <td class="k">Application No</td><td>{{ claim.ref }} · {{ type_label }}</td></tr>
+  <tr><td class="k">Contractor</td><td>{{ co.legal_name }}</td>
+      <td class="k">Work done up to</td>
+      <td>{% if claim.work_done_upto %}{{ claim.work_done_upto|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+  <tr><td class="k">Project</td><td>{{ project.title }}</td>
+      <td class="k">Basis</td>
+      <td>{% if claim.basis == "MEASURED" %}Re-measurement{% else %}% complete{% endif %}</td></tr>
+</table>
+
+<h2>Contract sum ({{ currency }})</h2>
+<table class="wf">
+  <tr><td>C — Original contract sum</td>
+      <td class="amt">{{ waterfall.original|floatformat:2 }}</td></tr>
+  <tr><td>D — Approved variations</td>
+      <td class="amt">{{ approved_vos|floatformat:2 }}</td></tr>
+  <tr class="sub"><td>Revised contract sum</td>
+      <td class="amt">{{ waterfall.revised|floatformat:2 }}</td></tr>
+</table>
+
+<h2>Valuation of work done ({{ currency }})</h2>
+<table class="wf">
+  <tr><td>K1 — Value of work done (BOQ)</td>
+      <td class="amt">{{ waterfall.k1_work_done|floatformat:2 }}</td></tr>
+  <tr><td>K2 — Materials on site</td>
+      <td class="amt">{{ waterfall.k2_material_on_site|floatformat:2 }}</td></tr>
+  <tr><td>K3 — Materials off site</td>
+      <td class="amt">{{ waterfall.k3_material_off_site|floatformat:2 }}</td></tr>
+  <tr><td>K4 — Variations</td>
+      <td class="amt">{{ waterfall.k4_variations|floatformat:2 }}</td></tr>
+  <tr class="sub"><td>K — Gross value certified</td>
+      <td class="amt">{{ waterfall.k_gross|floatformat:2 }}</td></tr>
+  <tr><td>Less recovery of advance</td>
+      <td class="amt neg">({{ waterfall.advance_recovered|floatformat:2 }})</td></tr>
+  <tr><td>Less retention</td>
+      <td class="amt neg">({{ waterfall.retention_held|floatformat:2 }})</td></tr>
+  {% if waterfall.retention_released %}
+  <tr><td>Add retention released</td>
+      <td class="amt">{{ waterfall.retention_released|floatformat:2 }}</td></tr>
+  {% endif %}
+  <tr class="sub"><td>N — Net value certified to date</td>
+      <td class="amt">{{ waterfall.net_cumulative|floatformat:2 }}</td></tr>
+  <tr><td>Less previously certified</td>
+      <td class="amt neg">({{ waterfall.previously_certified|floatformat:2 }})</td></tr>
+  <tr class="sub"><td>Q — Net amount due this application</td>
+      <td class="amt">{{ waterfall.net_due|floatformat:2 }}</td></tr>
+  <tr><td>Output GST @ {{ claim.gst_pct|floatformat:2 }}%</td>
+      <td class="amt">{{ waterfall.gst|floatformat:2 }}</td></tr>
+  <tr class="grand"><td>Total due (incl. GST)</td>
+      <td class="amt">{{ currency }} {{ waterfall.total|floatformat:2 }}</td></tr>
+</table>
+<div class="words">{{ amount_words }}</div>
+
+{% if sections %}
+<h2>Summary by bill</h2>
+<table>
+  <thead><tr>
+    <th style="text-align:left">Bill / section</th>
+    <th class="num">This application</th><th class="num">Cumulative</th>
+  </tr></thead>
+  <tbody>
+    {% for s in sections %}
+    <tr><td>{{ s.section }}</td>
+        <td class="num">{{ s.current|floatformat:2 }}</td>
+        <td class="num">{{ s.cumulative|floatformat:2 }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<table class="sig">
+  <tr><td class="t">Prepared — Quantity Surveyor</td>
+      <td class="t">Certified — Employer / Consultant</td></tr>
+  <tr><td></td><td></td></tr>
+</table>
+</body>
+</html>
