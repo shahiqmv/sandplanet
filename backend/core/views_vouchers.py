@@ -54,20 +54,20 @@ def _line_info(line):
                      "payment_ref": pr.payment_ref,
                      "paid": src.status == "PAID"})
     if src.doc_type == "PR":
+        # Only CASH vendors are paid on the voucher; credit vendors are
+        # committed as payables and settled via the payables flow, so they are
+        # not shown here as payments (owner 2026-07-16).
         rows = []
         for ln in src.current_revision.lines.all():
             cash = ln.amount_cash or 0
-            credit = ln.amount_credit or 0
-            if cash <= 0 and credit <= 0:
+            if cash <= 0:
                 continue
-            # action_taken holds the slip/voucher ref once actually paid;
-            # po_ref alone means ordered-not-yet-paid (credit vendors)
             gst = ln.gst_amount or 0
             rows.append({"line_id": ln.id,
                          "vendor": ln.vendor or ln.free_text_desc,
-                         "amount_cash": cash, "amount_credit": credit,
-                         "gst_amount": gst, "gross": cash + credit + gst,
-                         "is_credit": credit > 0, "po_ref": ln.po_ref,
+                         "amount_cash": cash, "amount_credit": 0,
+                         "gst_amount": gst, "gross": cash + gst,
+                         "is_credit": False, "po_ref": ln.po_ref,
                          "payment_ref": ln.action_taken,
                          "paid": bool((ln.action_taken or "").strip())})
         info.update({
@@ -75,7 +75,8 @@ def _line_info(line):
                      or "(procurement)",
             "cost_head": "Materials", "purpose": "Procurement",
             "vendor_rows": rows,
-            "paid": bool(rows) and all(r["paid"] for r in rows)})
+            # an all-credit PR has no cash rows — nothing to pay here
+            "paid": all(r["paid"] for r in rows)})
     return info
 
 

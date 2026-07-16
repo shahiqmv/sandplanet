@@ -41,8 +41,9 @@ def _source_amount(doc):
     if doc.doc_type == "PYR":
         return doc.payment_request.amount_requested
     if doc.doc_type == "PR":
-        from .procurement import pr_grand_total
-        return pr_grand_total(doc)
+        # Only the cash portion is paid on the voucher; credit is a payable.
+        from .procurement import pr_cash_total
+        return pr_cash_total(doc)
     return Decimal("0")
 
 

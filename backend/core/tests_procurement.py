@@ -378,6 +378,46 @@ class ChainTests(ProcBase):
         refs = {ln["vendor"]: ln["action_taken"] for ln in r.data["lines"]}
         self.assertEqual(refs, {"Vendor A": "TRF-1", "Vendor B": "VCH-9"})
 
+    def test_voucher_carries_only_the_cash_portion_of_a_pr(self):
+        # Credit vendors are committed as payables, not paid on the voucher
+        # (owner 2026-07-16).
+        from .models import Payable
+        mr_ref = self.mr_to_sent()
+        self.as_user(self.purchasing)
+        pr = self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr_ref],
+            "lines": [
+                {"free_text_desc": "Cash Vendor", "vendor": "Cash Vendor",
+                 "amount_cash": 5000},
+                {"free_text_desc": "Credit Vendor", "vendor": "Credit Vendor",
+                 "amount_credit": 7000, "payment_terms": "30 days credit"},
+            ]}, format="json").data
+        self.act(pr["ref"], "submit")
+        self.as_user(self.director)
+        self.act(pr["ref"], "approve")
+        self.as_user(self.finance)
+        r = self.client.post("/api/v1/payment-vouchers",
+                             {"source_refs": [pr["ref"]]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        pv = r.data["ref"]
+        # voucher total = cash portion only, and only the cash vendor shows
+        self.assertEqual(float(r.data["total"]), 5000.0)
+        rows = r.data["lines"][0]["vendor_rows"]
+        self.assertEqual([v["vendor"] for v in rows], ["Cash Vendor"])
+        # approving commits the PR → the credit vendor is now a payable
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
+                         format="json")
+        self.as_user(self.signatory)
+        self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
+                         format="json")
+        self.assertTrue(Payable.objects.filter(
+            document__ref=pr["ref"], vendor="Credit Vendor",
+            status="OUTSTANDING").exists())
+        # still no credit vendor on the voucher's payment list
+        self.as_user(self.finance)
+        info = self.client.get(f"/api/v1/payment-vouchers/{pv}").data
+        self.assertNotIn("Credit Vendor",
+                         [v["vendor"] for v in info["lines"][0]["vendor_rows"]])
 
     def test_lm_departure_creates_pending_and_updates_mr(self):
         mr_ref = self.mr_to_sent()

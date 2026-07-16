@@ -528,8 +528,19 @@ def pr_gst_total(pr):
 
 
 def pr_grand_total(pr):
-    """What is paid / authorised on the voucher — net + GST (gross)."""
+    """The whole committed value of a PR — net + GST (gross), cash and credit."""
     return pr_net_total(pr) + pr_gst_total(pr)
+
+
+def pr_cash_total(pr):
+    """The CASH portion of a PR (gross) — what is actually paid on a payment
+    voucher. Credit lines are committed as payables and settled separately, so
+    they never appear on the voucher (owner 2026-07-16)."""
+    total = Decimal("0")
+    for ln in pr.current_revision.lines.all():
+        if (ln.amount_cash or 0) > 0:
+            total += (ln.amount_cash or 0) + (ln.gst_amount or 0)
+    return total
 
 
 def authorise_pr(pr, actor):
