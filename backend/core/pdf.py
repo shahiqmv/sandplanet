@@ -59,6 +59,17 @@ def company_info():
         "email": _param("company_email", ""),
         "website": _param("company_website", "www.sandplanet.mv"),
         "tagline": _param("company_tagline", ""),
+        # Bank / remittance details (owner 2026-07-16): shown on invoices so
+        # the client knows where to pay. All edited on the Company page.
+        "bank": {
+            "name": _param("company_bank_name", ""),
+            "account_name": _param("company_bank_account_name", ""),
+            "account_no": _param("company_bank_account_no", ""),
+            "currency": _param("company_bank_currency", ""),
+            "swift": _param("company_bank_swift", ""),
+            "iban": _param("company_bank_iban", ""),
+            "branch": _param("company_bank_branch", ""),
+        },
     }
 
 

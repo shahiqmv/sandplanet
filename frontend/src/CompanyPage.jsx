@@ -6,7 +6,7 @@ import { buttonStyle, card, inputStyle } from "./ui.jsx";
 // registration no and address managed in one place — every PDF letterhead
 // and footer pulls from here.
 
-const FIELDS = [
+const IDENTITY = [
   ["company_legal_name", "Legal name", "Sand Planet Pvt Ltd"],
   ["company_reg_no", "Company registration no", "e.g. C-0123/2015"],
   ["company_tin", "TIN (tax identification no)", ""],
@@ -16,6 +16,18 @@ const FIELDS = [
   ["company_website", "Website", "www.sandplanet.mv"],
   ["company_tagline", "Tagline (external documents)", ""],
 ];
+// Bank / remittance details — printed on client invoices so they know
+// where to pay (owner 2026-07-16).
+const BANK = [
+  ["company_bank_name", "Bank name", "e.g. Bank of Maldives"],
+  ["company_bank_branch", "Branch", ""],
+  ["company_bank_account_name", "Account name", ""],
+  ["company_bank_account_no", "Account number", ""],
+  ["company_bank_currency", "Account currency", "USD"],
+  ["company_bank_swift", "SWIFT / BIC", ""],
+  ["company_bank_iban", "IBAN (if any)", ""],
+];
+const FIELDS = [...IDENTITY, ...BANK];
 
 export default function CompanyPage() {
   const [values, setValues] = useState({});
@@ -86,7 +98,23 @@ export default function CompanyPage() {
         </label>
       </div>
 
-      {FIELDS.map(([key, label, placeholder]) => (
+      {IDENTITY.map(([key, label, placeholder]) => (
+        <label key={key}
+               style={{ display: "block", fontSize: 13, marginBottom: 10 }}>
+          {label}
+          <input value={values[key] || ""} placeholder={placeholder}
+                 onChange={(e) => setValues({ ...values,
+                                              [key]: e.target.value })}
+                 style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
+        </label>
+      ))}
+
+      <h3 style={{ color: "var(--sp-navy)", fontSize: 14,
+                   margin: "16px 0 2px" }}>Bank account</h3>
+      <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 10px" }}>
+        Shown as the remittance details on client tax invoices.
+      </p>
+      {BANK.map(([key, label, placeholder]) => (
         <label key={key}
                style={{ display: "block", fontSize: 13, marginBottom: 10 }}>
           {label}

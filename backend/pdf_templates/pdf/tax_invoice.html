@@ -13,11 +13,23 @@
   .tot .grand td { font-weight: 800; border-top: 1.2px solid #16527E;
                    font-size: 12pt; color: #16527E; padding-top: 5px; }
   .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
+  .frm { font-size: 8.5pt; color: #33424e; line-height: 1.45; margin: 1mm 0 5mm; }
+  .frm .fn { font-weight: 700; color: #10344F; font-size: 9.5pt; }
+  .bankbox { width: 100%; border: 0.6px solid #A9B6C0; margin-top: 8mm;
+             border-collapse: collapse; }
+  .bankbox .bh { background: #EAF1F6; font-weight: 700; color: #10344F;
+                 padding: 3px 8px; font-size: 8.5pt; }
+  .bankbox td { padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
 </style>
 </head>
 <body>
 {% include "pdf/_footer.html" with footer_doc="TAX INVOICE" %}
 {% include "pdf/_letterhead.html" with title="TAX INVOICE" subline=subline %}
+
+<div class="frm">
+  <span class="fn">{{ co.legal_name }}</span>{% if co.reg_no %} &nbsp;·&nbsp; Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} &nbsp;·&nbsp; TIN {{ co.tin }}{% endif %}
+  {% if co.address %}<br>{{ co.address }}{% endif %}{% if co.phone %} &nbsp;·&nbsp; {{ co.phone }}{% endif %}{% if co.email %} &nbsp;·&nbsp; {{ co.email }}{% endif %}
+</div>
 
 <table class="biller"><tr>
   <td style="width: 55%">
@@ -32,7 +44,6 @@
     <div class="lbl2">Date</div>
     <div>{% if claim.certified_at %}{{ claim.certified_at|date:"d M Y" }}{% else %}—{% endif %}</div>
     <div class="lbl2">Project</div><div>{{ project.title }}</div>
-    {% if co.tin %}<div class="lbl2">Our TIN</div><div>{{ co.tin }}</div>{% endif %}
   </td>
 </tr></table>
 
@@ -60,5 +71,23 @@
       <td class="num">{{ currency }} {{ total|floatformat:2 }}</td></tr>
 </table>
 <div class="words">{{ amount_words }}</div>
+
+{% if co.bank.name or co.bank.account_no %}
+<table class="bankbox">
+  <tr><td class="bh" colspan="2">Payment details — please remit to</td></tr>
+  <tr>
+    <td style="width:50%">
+      {% if co.bank.name %}<strong>Bank:</strong> {{ co.bank.name }}{% if co.bank.branch %}, {{ co.bank.branch }}{% endif %}<br>{% endif %}
+      {% if co.bank.account_name %}<strong>Account name:</strong> {{ co.bank.account_name }}<br>{% endif %}
+      {% if co.bank.account_no %}<strong>Account no:</strong> {{ co.bank.account_no }}{% if co.bank.currency %} ({{ co.bank.currency }}){% endif %}{% endif %}
+    </td>
+    <td>
+      {% if co.bank.swift %}<strong>SWIFT / BIC:</strong> {{ co.bank.swift }}<br>{% endif %}
+      {% if co.bank.iban %}<strong>IBAN:</strong> {{ co.bank.iban }}<br>{% endif %}
+      {% if co.tin %}<strong>TIN:</strong> {{ co.tin }}{% endif %}
+    </td>
+  </tr>
+</table>
+{% endif %}
 </body>
 </html>
