@@ -263,6 +263,11 @@ class MRFlowTests(ProcBase):
             "/api/v1/documents/list?doc_type=MR").data
         self.assertNotIn(mr["ref"], [r["ref"] for r in reg])
         self.assertNotIn(mr["ref"], [d["ref"] for d in lst])
+        # but oversight roles (Director) still see the site's draft
+        self.as_user(self.director)
+        seen = self.client.get(
+            f"/api/v1/documents/list?doc_type=MR&site={self.site.id}").data
+        self.assertIn(mr["ref"], [d["ref"] for d in seen])
         # advance it to HO
         self.as_user(self.sa)
         self.act(mr["ref"], "submit")

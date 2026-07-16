@@ -1248,14 +1248,15 @@ OPEN_STATUSES = {
     "LM": ["DRAFT", "LOADING", "DEPARTED"],
 }
 
-# An MR is the site's own document until it is sent to Head Office; HO staff
-# (Purchasing etc.) shouldn't see a site's DRAFT/PM-review stages (owner
-# 2026-07-16).
+# An MR is the site's own document until it is sent to Head Office; Purchasing
+# shouldn't see a site's DRAFT/PM-review stages (owner 2026-07-16). The site
+# team and oversight roles (Director/Finance/Admin) still see the full
+# lifecycle, including on the site dashboard.
 PRE_HO_MR_STATES = ("DRAFT", "SUBMITTED", "PM_APPROVED")
 
 
 def _ho_mr_floor(qs, user, doc_type):
-    if doc_type == "MR" and user.is_ho:
+    if doc_type == "MR" and user.role == "HO_PURCHASING":
         return qs.exclude(status__in=PRE_HO_MR_STATES)
     return qs
 
