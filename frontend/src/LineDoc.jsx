@@ -1022,6 +1022,39 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
     }
   }
 
+  // Submitting a PR whose items aren't line-matched to quotations is blocked by
+  // the coverage gate. A big miscellaneous order is usually covered by vendor
+  // totals, not line matches — so on that block, let Purchasing submit anyway
+  // with a reason (allow_uncovered), which the backend already supports.
+  async function submitPr() {
+    setError(null);
+    try {
+      const fresh = await api(`/documents/${doc.ref}/actions/submit`,
+                              { method: "POST", body: {} });
+      setDoc(fresh); onChanged?.();
+    } catch (e) {
+      const d = e.data || {};
+      const flagged = [...(d.uncovered || []), ...(d.unawarded || [])];
+      if (!flagged.length && !/quoted\/awarded/i.test(e.message)) {
+        setError(e.message);   // a different problem (e.g. provisional items)
+        return;
+      }
+      const shown = flagged.slice(0, 15).join(", ")
+        + (flagged.length > 15 ? `, +${flagged.length - 15} more` : "");
+      const reason = window.prompt(
+        `${flagged.length} item(s) on this PR aren't matched to a quotation `
+        + `line:\n${shown}\n\nThey'll still be ordered from the vendors on the `
+        + `PR. Submit anyway? Type a reason:`);
+      if (!reason || !reason.trim()) return;
+      try {
+        const fresh = await api(`/documents/${doc.ref}/actions/submit`,
+          { method: "POST",
+            body: { allow_uncovered: true, comment: reason.trim() } });
+        setDoc(fresh); onChanged?.();
+      } catch (e2) { setError(e2.message); }
+    }
+  }
+
   async function amend() {
     setError(null);
     try {
@@ -1097,7 +1130,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         {actions.map(([action, label, , , prompt]) => (
           <button key={action} style={buttonStyle}
             onClick={() => {
-              if (prompt === "comment") {
+              if (action === "submit" && isPR) {
+                submitPr();
+              } else if (prompt === "comment") {
                 const comment = window.prompt("Comment (required):");
                 if (comment) act(action, { comment });
               } else if (prompt === "action_taken") {

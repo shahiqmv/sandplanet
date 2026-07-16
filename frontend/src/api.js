@@ -39,7 +39,12 @@ export async function apiUpload(path, formData, method = "POST") {
     body: formData,
   });
   const data = await res.json().catch(() => null);
-  if (!res.ok) throw new Error(readError(data, res.status));
+  if (!res.ok) {
+    const err = new Error(readError(data, res.status));
+    err.data = data;
+    err.status = res.status;
+    throw err;
+  }
   return data;
 }
 
@@ -55,7 +60,10 @@ export async function api(path, { method = "GET", body } = {}) {
   });
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
-    throw new Error(readError(data, res.status));
+    const err = new Error(readError(data, res.status));
+    err.data = data;
+    err.status = res.status;
+    throw err;
   }
   return data;
 }
