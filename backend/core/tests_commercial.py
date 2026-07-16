@@ -321,3 +321,81 @@ class ProgressClaimTests(TestCase):
         self.client.force_authenticate(self.se)
         r = self.client.get(f"/api/v1/projects/{self.project.id}/claims")
         self.assertEqual(r.status_code, 403)
+
+    # ---- P4: certified revenue + client receipts --------------------------
+
+    def _certify(self, cid):
+        self.client.post(f"/api/v1/claims/{cid}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        return self.client.post(f"/api/v1/claims/{cid}/status",
+                                {"status": "CERTIFIED"}, format="json")
+
+    def _revenue(self):
+        return self.client.get(
+            f"/api/v1/projects/{self.project.id}/claims").data["revenue"]
+
+    def test_certified_claim_becomes_project_revenue(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})   # K gross 1000
+        r = self._certify(c["id"])
+        self.assertEqual(r.data["claim"]["status"], "CERTIFIED")
+        rev = self._revenue()
+        self.assertEqual(float(rev["certified_revenue"]), 1000.0)  # ex-GST
+        self.assertEqual(float(rev["billed"]), 540.0)              # incl GST
+        self.assertEqual(float(rev["retention_held"]), 100.0)
+        self.assertEqual(float(rev["received"]), 0.0)
+        self.assertEqual(float(rev["outstanding"]), 540.0)
+        self.assertEqual(rev["claims_certified"], 1)
+
+    def test_draft_claim_is_not_revenue(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})   # left DRAFT
+        rev = self._revenue()
+        self.assertEqual(float(rev["certified_revenue"]), 0.0)
+        self.assertEqual(rev["claims_certified"], 0)
+
+    def test_receipt_reduces_outstanding_and_settles_claim(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})
+        self._certify(c["id"])
+        url = f"/api/v1/projects/{self.project.id}/receipts"
+        self.client.post(url, {"amount": "200", "received_on": "2026-07-16",
+                               "claim_id": c["id"], "reference": "TT-1"},
+                         format="json")
+        rev = self._revenue()
+        self.assertEqual(float(rev["received"]), 200.0)
+        self.assertEqual(float(rev["outstanding"]), 340.0)
+        # settle the balance → claim auto-advances to PAID
+        self.client.post(url, {"amount": "340", "received_on": "2026-07-16",
+                               "claim_id": c["id"]}, format="json")
+        payload = self.client.get(
+            f"/api/v1/projects/{self.project.id}/claims").data
+        self.assertEqual(float(payload["revenue"]["outstanding"]), 0.0)
+        claim = next(x for x in payload["claims"] if x["id"] == c["id"])
+        self.assertEqual(claim["status"], "PAID")
+        self.assertEqual(len(payload["receipts"]), 2)
+
+    def test_receipt_validation_and_delete(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})
+        self._certify(c["id"])
+        url = f"/api/v1/projects/{self.project.id}/receipts"
+        bad = self.client.post(url, {"amount": "0",
+                                     "received_on": "2026-07-16"},
+                               format="json")
+        self.assertEqual(bad.status_code, 400)
+        r = self.client.post(url, {"amount": "540",
+                                   "received_on": "2026-07-16"},
+                             format="json")
+        self.assertEqual(r.status_code, 201)
+        rid = r.data["receipts"][0]["id"]
+        d = self.client.delete(f"/api/v1/receipts/{rid}/delete")
+        self.assertEqual(d.status_code, 200)
+        self.assertEqual(float(d.data["revenue"]["received"]), 0.0)
+
+    def test_site_staff_cannot_record_receipt(self):
+        self.client.force_authenticate(self.se)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/receipts",
+            {"amount": "100", "received_on": "2026-07-16"}, format="json")
+        self.assertEqual(r.status_code, 403)

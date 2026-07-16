@@ -9,8 +9,8 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import commercial
-from .models import (BoqItem, ProgressClaim, Project, Variation,
-                     VariationItem)
+from .models import (BoqItem, ClientReceipt, ProgressClaim, Project,
+                     Variation, VariationItem)
 from .views_projects import PROJECT_EDIT_ROLES, _can_view_value
 
 
@@ -327,9 +327,19 @@ def _claim_meta(claim):
     }
 
 
+def _receipt_json(r):
+    return {
+        "id": r.id, "amount": r.amount, "currency": r.currency,
+        "received_on": r.received_on, "reference": r.reference,
+        "note": r.note, "claim_ref": r.claim.ref if r.claim_id else None,
+        "claim_id": r.claim_id,
+        "recorded_by": (r.recorded_by.full_name if r.recorded_by_id else None),
+    }
+
+
 def _claims_payload(project):
     """The claims register: each claim's header plus its net-due / total from
-    the waterfall, and the contract summary strip."""
+    the waterfall, the contract summary, the money-in position and receipts."""
     claims = list(project.claims.all())
     rows = []
     for c in claims:
@@ -337,6 +347,7 @@ def _claims_payload(project):
         rows.append({**_claim_meta(c),
                      "k_gross": w["k_gross"], "net_due": w["net_due"],
                      "gst": w["gst"], "total": w["total"]})
+    receipts = project.receipts.all()
     return {
         "currency": (getattr(project, "boq", None).currency
                      if getattr(project, "boq", None) else "USD"),
@@ -345,6 +356,8 @@ def _claims_payload(project):
         "can_raise": bool(getattr(project, "boq", None)
                           and project.boq.items.exists()),
         "claims": rows,
+        "revenue": commercial.project_revenue_summary(project),
+        "receipts": [_receipt_json(r) for r in receipts],
     }
 
 
@@ -457,4 +470,36 @@ def claim_delete(request, pk):
                         status=400)
     project = c.project
     c.delete()
+    return Response(_claims_payload(project))
+
+
+# ---- Client receipts (money-in, P4) -------------------------------------
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def receipt_create(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.record_client_receipt(p, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claims_payload(p), status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def receipt_delete(request, pk):
+    try:
+        r = ClientReceipt.objects.select_related("project__site").get(pk=pk)
+    except ClientReceipt.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_view_value(request.user, r.project):
+        return Response({"detail": "Not permitted."}, status=403)
+    if (bad := _require_editor(request)):
+        return bad
+    project = r.project
+    commercial.delete_client_receipt(r, request.user)
     return Response(_claims_payload(project))

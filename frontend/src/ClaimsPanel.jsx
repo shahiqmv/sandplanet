@@ -21,6 +21,7 @@ export default function ClaimsPanel({ projectId, me }) {
   const [error, setError] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [receiptForm, setReceiptForm] = useState(null);   // null = closed
   const canEdit = EDIT_ROLES.includes(me.role);
 
   function load() {
@@ -41,9 +42,26 @@ export default function ClaimsPanel({ projectId, me }) {
     setBusy(false);
   }
 
+  async function recordReceipt() {
+    setError(null); setBusy(true);
+    try {
+      setData(await api(`/projects/${projectId}/receipts`,
+        { method: "POST", body: receiptForm }));
+      setReceiptForm(null);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  async function delReceipt(id) {
+    if (!window.confirm("Delete this receipt?")) return;
+    setError(null);
+    try { setData(await api(`/receipts/${id}/delete`, { method: "DELETE" })); }
+    catch (e) { setError(e.message); }
+  }
+
   if (error && !data) return <section style={card}>{error}</section>;
   if (!data) return <section style={card}>Loading…</section>;
   const ccy = data.currency;
+  const rev = data.revenue || {};
 
   return (
     <section style={card}>
@@ -61,6 +79,25 @@ export default function ClaimsPanel({ projectId, me }) {
       {!data.can_raise && (
         <p style={{ color: "var(--muted)", fontSize: 13 }}>
           Enter the BOQ first — claims are valued against it.</p>
+      )}
+
+      {/* Money-in position (P4) */}
+      {data.claims.length > 0 && (
+        <div style={{ display: "flex", gap: 18, flexWrap: "wrap", fontSize: 13,
+                      margin: "4px 0 14px", padding: "10px 12px",
+                      background: "var(--sp-tint,#f5f8fb)", borderRadius: 8 }}>
+          <Fig label="Revised contract"
+               v={`${ccy} ${fmt(rev.contract_revised)}`} />
+          <Fig label="Certified revenue"
+               v={`${ccy} ${fmt(rev.certified_revenue)}`}
+               sub={`${fmt(rev.pct_complete)}% complete · ex-GST`} strong />
+          <Fig label="Retention held" v={`${ccy} ${fmt(rev.retention_held)}`} />
+          <Fig label="Billed (incl GST)" v={`${ccy} ${fmt(rev.billed)}`} />
+          <Fig label="Received" v={`${ccy} ${fmt(rev.received)}`} />
+          <Fig label="Outstanding" v={`${ccy} ${fmt(rev.outstanding)}`}
+               tone={Number(rev.outstanding) > 0 ? "#b0402f" : undefined}
+               strong />
+        </div>
       )}
 
       {data.claims.length === 0 && data.can_raise ? (
@@ -109,7 +146,109 @@ export default function ClaimsPanel({ projectId, me }) {
           </table>
         </div>
       )}
+
+      {/* Client receipts (P4) */}
+      {data.claims.length > 0 && (
+        <div style={{ marginTop: 16 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <Eyebrow meta={`${data.receipts.length}`}>Client receipts</Eyebrow>
+            {canEdit && !receiptForm && (
+              <button style={{ ...ghostButton, marginLeft: "auto",
+                               padding: "4px 12px" }}
+                      onClick={() => setReceiptForm({ amount: "",
+                        received_on: "", claim_id: "", reference: "",
+                        note: "" })}>+ Record receipt</button>
+            )}
+          </div>
+          {receiptForm && (
+            <ReceiptForm form={receiptForm} setForm={setReceiptForm} ccy={ccy}
+                         claims={data.claims} busy={busy}
+                         onSave={recordReceipt} />
+          )}
+          {data.receipts.length === 0 ? (
+            <p style={{ color: "var(--muted)", fontSize: 13, margin: "6px 0 0" }}>
+              No client receipts recorded yet.</p>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse",
+                              fontSize: 13, marginTop: 6 }}>
+                <thead><tr>
+                  <th style={th}>Date</th><th style={th}>Against</th>
+                  <th style={th}>Reference</th>
+                  <th style={{ ...th, textAlign: "right" }}>Amount {ccy}</th>
+                  <th style={th} />
+                </tr></thead>
+                <tbody>
+                  {data.receipts.map((r) => (
+                    <tr key={r.id}>
+                      <td style={td}>{r.received_on}</td>
+                      <td style={td}>{r.claim_ref || "—"}</td>
+                      <td style={td}>{r.reference || "—"}</td>
+                      <td style={{ ...td, textAlign: "right",
+                                   fontWeight: 600 }}>{fmt(r.amount)}</td>
+                      <td style={{ ...td, textAlign: "right" }}>
+                        {canEdit && (
+                          <button style={{ ...ghostButton, padding: "2px 8px",
+                            fontSize: 12, color: "#c0392b" }}
+                            onClick={() => delReceipt(r.id)}>delete</button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </section>
+  );
+}
+
+function Fig({ label, v, sub, strong, tone }) {
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: "var(--muted)",
+                    textTransform: "uppercase", letterSpacing: ".04em" }}>
+        {label}</div>
+      <div style={{ fontWeight: strong ? 700 : 500, fontSize: strong ? 15 : 13,
+                    color: tone || (strong ? "var(--navy)" : "inherit") }}>
+        {v}</div>
+      {sub && <div style={{ fontSize: 11, color: "var(--muted)" }}>{sub}</div>}
+    </div>
+  );
+}
+
+function ReceiptForm({ form, setForm, ccy, claims, busy, onSave }) {
+  const set = (k, v) => setForm({ ...form, [k]: v });
+  const billable = claims.filter(
+    (c) => ["CERTIFIED", "PAID"].includes(c.status));
+  return (
+    <div style={{ ...card, margin: "8px 0",
+                  background: "var(--sp-tint,#f5f8fb)", display: "flex",
+                  gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+      <input type="number" placeholder={`Amount (${ccy})`} value={form.amount}
+             onChange={(e) => set("amount", e.target.value)}
+             style={{ ...inputStyle, width: 140 }} />
+      <input type="date" value={form.received_on}
+             onChange={(e) => set("received_on", e.target.value)}
+             style={{ ...inputStyle, width: 150 }} />
+      <select value={form.claim_id}
+              onChange={(e) => set("claim_id", e.target.value)}
+              style={{ ...inputStyle, width: 180 }}>
+        <option value="">Against claim… (optional)</option>
+        {billable.map((c) => (
+          <option key={c.id} value={c.id}>{c.ref}</option>
+        ))}
+      </select>
+      <input placeholder="Bank / TT ref" value={form.reference}
+             onChange={(e) => set("reference", e.target.value)}
+             style={{ ...inputStyle, width: 160 }} />
+      <button style={{ ...buttonStyle, padding: "4px 14px" }} disabled={busy}
+              onClick={onSave}>Save receipt</button>
+      <button style={ghostButton}
+              onClick={() => setForm(null)}>Cancel</button>
+    </div>
   );
 }
 

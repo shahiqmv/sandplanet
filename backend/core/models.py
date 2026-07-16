@@ -1916,6 +1916,32 @@ class ProgressClaimItem(models.Model):
             else self.variation_item
 
 
+class ClientReceipt(models.Model):
+    """Money received from the client against a certified claim (the money-IN
+    completion, P4). Contracts are USD, so receipts are USD. A receipt is tied
+    to the interim claim (IPA) it settles, and to the project for the revenue
+    roll-up."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="receipts")
+    claim = models.ForeignKey(ProgressClaim, on_delete=models.SET_NULL,
+                              null=True, blank=True, related_name="receipts")
+    amount = models.DecimalField(max_digits=16, decimal_places=2)  # USD
+    currency = models.CharField(max_length=3, default="USD")
+    received_on = models.DateField()
+    reference = models.CharField(max_length=120, blank=True)  # bank / TT ref
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-received_on", "-id"]
+
+    def __str__(self):
+        return f"{self.project.code} receipt {self.amount} {self.currency}"
+
+
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
 
 

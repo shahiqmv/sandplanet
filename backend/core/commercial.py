@@ -6,7 +6,7 @@ the client. Slice 1 is the BOQ itself.
 """
 from decimal import Decimal, InvalidOperation
 
-from django.db.models import Max
+from django.db.models import Max, Sum
 
 from .audit import audit
 
@@ -468,4 +468,82 @@ def claim_valuation(claim):
             "previously_certified": previously,
             "net_due": net_due, "gst": gst, "total": total,
         },
+    }
+
+
+# ---- Client receipts + project revenue (money-in, P4) --------------------
+
+def record_client_receipt(project, data, actor):
+    """Record money received from the client (USD) against a certified claim.
+    Fully settling a certified claim marks it Paid. Returns (receipt, error)."""
+    from .models import ClientReceipt, ProgressClaim
+    amt = _dec(data.get("amount"))
+    if amt is None or amt <= ZERO:
+        return None, "Enter the amount received."
+    if not data.get("received_on"):
+        return None, "Enter the date the money was received."
+    claim = None
+    if data.get("claim_id"):
+        claim = ProgressClaim.objects.filter(
+            pk=data["claim_id"], project=project).first()
+        if claim is None:
+            return None, "That claim isn't on this project."
+    receipt = ClientReceipt.objects.create(
+        project=project, claim=claim, amount=amt,
+        received_on=data["received_on"], reference=data.get("reference") or "",
+        note=data.get("note") or "", recorded_by=actor)
+    if claim and claim.status == "CERTIFIED":
+        due = claim_valuation(claim)["waterfall"]["total"]
+        got = (ClientReceipt.objects.filter(claim=claim)
+               .aggregate(s=Sum("amount"))["s"] or ZERO)
+        if got >= due:
+            set_claim_status(claim, "PAID", actor)
+    audit("project", project.id, "CLIENT_RECEIPT", actor=actor,
+          detail={"amount": str(amt), "claim": claim.ref if claim else None})
+    return receipt, None
+
+
+def delete_client_receipt(receipt, actor):
+    pid, amt = receipt.project_id, str(receipt.amount)
+    receipt.delete()
+    audit("project", pid, "CLIENT_RECEIPT_DELETED", actor=actor,
+          detail={"amount": amt})
+    return None
+
+
+def project_revenue_summary(project):
+    """The project's money-in position (USD): certified revenue to date (gross
+    value of work certified, ex-GST), amount billed incl GST, retention still
+    held, client money received and what's still outstanding."""
+    from .models import ClientReceipt
+    csum = contract_summary(project)
+    certified = list(project.claims.filter(
+        status__in=["CERTIFIED", "PAID"]).order_by("seq"))
+    revenue = billed = gst_billed = retention_held = ZERO
+    last = None
+    for c in certified:
+        w = claim_valuation(c)["waterfall"]
+        gst_billed += w["gst"]
+        billed += w["total"]
+        last = w
+    if last is not None:
+        revenue = last["k_gross"]                       # ex-GST earned revenue
+        retention_held = last["retention_held"] - last["retention_released"]
+    received = (ClientReceipt.objects.filter(project=project)
+                .aggregate(s=Sum("amount"))["s"] or ZERO)
+    revised = csum["revised"]
+    boq = getattr(project, "boq", None)
+    return {
+        "currency": boq.currency if boq else "USD",
+        "contract_original": csum["original"],
+        "contract_revised": revised,
+        "certified_revenue": revenue,
+        "gst_billed": gst_billed,
+        "retention_held": retention_held,
+        "billed": billed,
+        "received": received,
+        "outstanding": billed - received,
+        "pct_complete": (revenue / revised * Decimal("100")
+                         if revised else ZERO),
+        "claims_certified": len(certified),
     }
