@@ -1248,6 +1248,17 @@ OPEN_STATUSES = {
     "LM": ["DRAFT", "LOADING", "DEPARTED"],
 }
 
+# An MR is the site's own document until it is sent to Head Office; HO staff
+# (Purchasing etc.) shouldn't see a site's DRAFT/PM-review stages (owner
+# 2026-07-16).
+PRE_HO_MR_STATES = ("DRAFT", "SUBMITTED", "PM_APPROVED")
+
+
+def _ho_mr_floor(qs, user, doc_type):
+    if doc_type == "MR" and user.is_ho:
+        return qs.exclude(status__in=PRE_HO_MR_STATES)
+    return qs
+
 
 @api_view(["GET"])
 def documents_list(request):
@@ -1255,6 +1266,8 @@ def documents_list(request):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None:
         qs = qs.filter(site_id__in=site_ids)
+    qs = _ho_mr_floor(qs, request.user,
+                      (request.GET.get("doc_type") or "").upper())
     if request.GET.get("site"):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("doc_type"):
@@ -1353,6 +1366,7 @@ def register_generic(request, doc_type):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None:
         qs = qs.filter(site_id__in=site_ids)
+    qs = _ho_mr_floor(qs, request.user, doc_type)
     if request.GET.get("site"):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("status"):

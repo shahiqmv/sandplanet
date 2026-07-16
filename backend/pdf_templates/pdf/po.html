@@ -84,7 +84,7 @@
     <th style="width:10%" class="num">Qty</th>
     <th style="width:8%">Unit</th>
     <th style="width:14%" class="num">Unit Price</th>
-    <th style="width:16%" class="num">Amount (MVR)</th>
+    <th style="width:16%" class="num">Amount ({{ currency }})</th>
   </tr></thead>
   {% for line in lines %}
   <tr>
@@ -99,9 +99,13 @@
 </table>
 
 <table class="totals">
-  <tr><td>Untaxed Amount</td><td class="num">MVR {{ totals.untaxed }}</td></tr>
-  <tr><td>GST ({{ totals.gst_rate }}%)</td><td class="num">MVR {{ totals.gst }}</td></tr>
-  <tr class="grand"><td>Total</td><td class="num">MVR {{ totals.total }}</td></tr>
+  {% if show_gst %}
+  <tr><td>Untaxed Amount</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
+  <tr><td>GST ({{ totals.gst_rate }}%)</td><td class="num">{{ currency }} {{ totals.gst }}</td></tr>
+  <tr class="grand"><td>Total</td><td class="num">{{ currency }} {{ totals.total }}</td></tr>
+  {% else %}
+  <tr class="grand"><td>Total</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
+  {% endif %}
 </table>
 
 {% if payload.notes %}

@@ -224,6 +224,24 @@ class IprFlowTests(IprBase):
         self.assertEqual(float(pool_leg.amount), 6000.0)
         self.assertEqual(float(sum(p.amount for p in posts)), 15000.0)
 
+    def test_authorising_generates_supplier_po(self):
+        # Owner 2026-07-16: authorising an IPR raises the supplier PO, like a
+        # domestic PR — one PO for the whole order, in the order currency.
+        ref = self.create_and_authorise()
+        ipr = Document.objects.get(ref=ref)
+        links = ipr.links_from.filter(link_type="IPR_PO")
+        self.assertEqual(links.count(), 1)
+        po = links.first().to_document
+        self.assertEqual(po.doc_type, "PO")
+        self.assertEqual(po.status, "DRAFT")
+        self.assertEqual(po.supplier_id, self.supplier.id)
+        rev = po.current_revision
+        self.assertEqual(rev.payload["currency"], "USD")
+        self.assertEqual(rev.payload["tax_rate"], 0)      # no domestic GST
+        line = rev.lines.first()
+        self.assertEqual(float(line.qty_required), 10.0)
+        self.assertEqual(float(line.rate), 100.0)         # order ccy, not MVR
+
     def test_allocations_must_sum_to_order_qty(self):
         self.client.force_authenticate(self.ho)
         body = self.order_body(proj_qty=6, stock_qty=1)  # sums to 7, qty 10

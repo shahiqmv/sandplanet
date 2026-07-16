@@ -76,6 +76,7 @@ def _on_live_payable():
     """Payables sitting on a voucher still being processed (DRAFT/SUBMITTED)."""
     return PaymentVoucherLine.objects.filter(
         voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__is_void=False,
         source_payable__isnull=False).values_list(
         "source_payable_id", flat=True)
 
@@ -108,6 +109,7 @@ def _on_live_voucher():
     source's own status is what gates re-eligibility."""
     return PaymentVoucherLine.objects.filter(
         voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__is_void=False,
         source_document__isnull=False).values_list(
         "source_document_id", flat=True)
 
@@ -130,6 +132,7 @@ def _on_live_milestone():
     """Milestones sitting on a voucher still being processed."""
     return PaymentVoucherLine.objects.filter(
         voucher__status__in=("DRAFT", "SUBMITTED"),
+        voucher__is_void=False,
         source_milestone__isnull=False).values_list(
         "source_milestone_id", flat=True)
 
@@ -311,6 +314,95 @@ def _return_source(doc, actor, note):
                             comment=f"Queried on voucher: {note}")
     audit("document", doc.id, "RETURN", actor=actor, to_state="DRAFT",
           detail={"ref": doc.ref, "note": note})
+
+
+def _source_paid(line):
+    """Has money actually gone out for this voucher line's source yet?"""
+    if line.source_milestone_id:
+        return line.source_milestone.status == "PAID"
+    if line.source_payable_id:
+        return line.source_payable.status == "SETTLED"
+    doc = line.source_document
+    if doc is None:
+        return False
+    from .models import CostPosting
+    return CostPosting.objects.filter(
+        document=doc, state="PAID", reversal_of__isnull=True).exists()
+
+
+def _unauthorise_source(doc, actor):
+    """Reverse a requisition's authorisation and return it to its pre-voucher
+    approved state, ready to be vouchered again."""
+    if doc.doc_type == "PR":
+        from .procurement import reverse_pr_authorisation
+        reverse_pr_authorisation(doc, actor)   # reverse postings + payables
+        for link in doc.links_to.filter(link_type="PR_PO"):  # void its POs
+            po = link.from_document
+            if not po.is_void:
+                po.is_void = True
+                po.void_reason = "Payment voucher voided"
+                po.voided_by = actor
+                po.voided_at = timezone.now()
+                po.save(update_fields=["is_void", "void_reason",
+                                       "voided_by", "voided_at"])
+        if doc.current_revision:
+            doc.current_revision.lines.exclude(po_ref="").update(po_ref="")
+        doc.status = "APPROVED"
+    elif doc.doc_type == "PYR":
+        costing.reverse_document(doc, actor=actor)
+        pr = doc.payment_request
+        pr.authorised_by = None
+        pr.authorised_at = None
+        pr.save(update_fields=["authorised_by", "authorised_at"])
+        doc.status = "DIRECTOR_APPROVED"
+    doc.save(update_fields=["status", "updated_at"])
+    Approval.objects.create(document=doc, revision=doc.current_revision,
+                            action="RETURN", actor=actor, actor_role=actor.role,
+                            comment="Authorisation reversed — voucher voided")
+    audit("document", doc.id, "AUTH_REVERSED", actor=actor,
+          to_state=doc.status, detail={"ref": doc.ref})
+
+
+def void_voucher(pv, actor, reason):
+    """Void a payment voucher and unwind its commitments: reverse each approved
+    line's source (postings, payables, generated POs) and return the source to
+    its pre-voucher approved state so it can be re-vouchered; free a milestone
+    back to DUE. Blocked once any payment has been recorded on the voucher —
+    that must be reversed first (owner 2026-07-16)."""
+    if pv.is_void:
+        return "This voucher is already void."
+    if not (reason or "").strip():
+        return "A reason is required to void a voucher."
+    lines = list(pv.voucher_lines.select_related(
+        "source_document", "source_milestone", "source_payable"))
+    if any(_source_paid(ln) for ln in lines if ln.status == "APPROVED"):
+        return ("A payment has already been recorded against this voucher — "
+                "reverse the payment before voiding it.")
+    with transaction.atomic():
+        for ln in lines:
+            if ln.status != "APPROVED":
+                continue                       # INCLUDED/QUERIED: no commitment
+            if ln.source_document_id:
+                _unauthorise_source(ln.source_document, actor)
+            elif ln.source_milestone_id:
+                m = ln.source_milestone
+                m.status = "DUE"
+                m.voucher = None
+                m.save(update_fields=["status", "voucher"])
+            # a payable line posted nothing at approval; marking the PV void
+            # (below) releases the payable to be vouchered again.
+        pv.is_void = True
+        pv.void_reason = reason
+        pv.voided_by = actor
+        pv.voided_at = timezone.now()
+        pv.save(update_fields=["is_void", "void_reason", "voided_by",
+                               "voided_at"])
+        Approval.objects.create(document=pv, revision=pv.current_revision,
+                                action="VOID", actor=actor,
+                                actor_role=actor.role, comment=reason)
+    audit("document", pv.id, "DOC_VOIDED", actor=actor, from_state=pv.status,
+          to_state="VOID", detail={"ref": pv.ref, "reason": reason})
+    return None
 
 
 def approve_voucher(pv, actor, queried_ids=None, note=""):

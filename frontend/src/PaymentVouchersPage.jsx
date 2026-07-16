@@ -115,6 +115,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
     voucherAction(pv.ref, "approve", { queried_ids, note });
   };
 
+  const voidVoucher = (pv) => {
+    const reason = window.prompt(
+      `Void ${pv.ref}? This reverses its commitments and returns the `
+      + "requisitions to be re-vouchered. Reason:");
+    if (reason && reason.trim()) voucherAction(pv.ref, "void", { reason });
+  };
+
   const openVoucher = (ref) => {
     setOpen(open === ref ? null : ref);
     setQueries({}); setNote(""); setError(null); cancelPay();
@@ -368,6 +375,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             const canSubmit = isFinance && pv.status === "DRAFT";
             const canApprove = isSignatory && pv.status === "SUBMITTED";
             const canPay = isFinance && pv.status === "APPROVED";
+            // Signatory/Admin can void a not-yet-paid voucher (reverses it)
+            const canVoid = isSignatory && !pv.is_void
+              && pv.status !== "CANCELLED" && !(pv.paid_count > 0);
             const payable = pv.lines.filter((l) => l.status === "APPROVED"
               && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE");
             return (
@@ -496,6 +506,26 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                              onClick={() => voucherAction(pv.ref, "cancel")}>
                           Cancel</Btn>
                       </div>
+                    )}
+
+                    {canVoid && pv.status !== "DRAFT" && (
+                      <div style={{ marginTop: 12 }}>
+                        <button disabled={busy} onClick={() => voidVoucher(pv)}
+                          style={{ ...ghostButton, color: "#c0392b",
+                                   borderColor: "#e3b7b0" }}>
+                          Void voucher</button>
+                        {pv.status === "APPROVED" && (
+                          <span style={{ fontSize: 12, color: "var(--muted)",
+                                         marginLeft: 10 }}>
+                            reverses commitments; blocked once any line is paid
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {pv.is_void && pv.void_reason && (
+                      <p style={{ marginTop: 10, fontSize: 13,
+                                  color: "#b0402f" }}>
+                        Voided — {pv.void_reason}</p>
                     )}
 
                     {/* Finance disbursement — record each payment + slip */}

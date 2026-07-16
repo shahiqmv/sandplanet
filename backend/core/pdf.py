@@ -525,6 +525,10 @@ def _po_context(document, revision):
             "rate": _money(line.rate or 0),
             "amount": _money(amount or 0),
         })
+    # Domestic POs are MVR with GST; an import PO (from an IPR) is in the order
+    # currency with no domestic GST — both drive this one template via the
+    # payload's `currency` and `tax_rate` (owner 2026-07-16).
+    currency = payload.get("currency") or "MVR"
     gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
     gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
     issue_stamp = ""
@@ -540,6 +544,8 @@ def _po_context(document, revision):
         "supplier": supplier,
         "logo_src": logo_src(),
         "lines": lines,
+        "currency": currency,
+        "show_gst": gst_rate > 0,
         "totals": {
             "untaxed": _money(untaxed),
             "gst_rate": _fmt(float(gst_rate)),

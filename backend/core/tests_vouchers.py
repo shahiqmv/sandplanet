@@ -242,3 +242,60 @@ class VoucherGuardTests(VoucherBase):
         a = self.director_approved_pyr()
         r = self.create_voucher([a], user=self.sa)
         self.assertEqual(r.status_code, 403)
+
+
+class VoucherVoidTests(VoucherBase):
+    """Voiding a payment voucher unwinds its commitments (owner 2026-07-16)."""
+
+    def _approved_voucher(self, amount=3000):
+        a = self.director_approved_pyr(amount=amount, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)
+        self.voucher_action(pv, "approve", self.signatory)
+        return a, pv
+
+    def test_void_reverses_commitment_and_returns_source(self):
+        from django.db.models import Sum
+        a, pv = self._approved_voucher(3000)
+        pyr = Document.objects.get(ref=a)
+        self.assertEqual(pyr.status, "AUTHORISED")
+        committed = CostPosting.objects.filter(
+            document=pyr, state="COMMITTED",
+            reversal_of__isnull=True).aggregate(s=Sum("amount"))["s"]
+        self.assertEqual(committed, Decimal("3000"))
+        # void
+        r = self.voucher_action(pv, "void", self.signatory,
+                                reason="wrong batch")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "VOID")
+        # PYR returned to its pre-voucher state; commitment nets to zero
+        pyr.refresh_from_db()
+        self.assertEqual(pyr.status, "DIRECTOR_APPROVED")
+        net = CostPosting.objects.filter(
+            document=pyr, state="COMMITTED").aggregate(s=Sum("amount"))["s"]
+        self.assertEqual(net or Decimal("0"), Decimal("0"))
+        # and it's available to be vouchered again
+        self.client.force_authenticate(self.finance)
+        awaiting = [x["ref"] for x in
+                    self.client.get("/api/v1/finance/awaiting-voucher").data]
+        self.assertIn(a, awaiting)
+
+    def test_void_needs_a_signatory_and_a_reason(self):
+        a, pv = self._approved_voucher(1000)
+        # Finance can't void
+        self.assertEqual(
+            self.voucher_action(pv, "void", self.finance,
+                                reason="x").status_code, 403)
+        # reason required
+        self.assertEqual(
+            self.voucher_action(pv, "void", self.signatory).status_code, 400)
+
+    def test_cannot_void_after_a_payment_is_recorded(self):
+        a, pv = self._approved_voucher(1000)
+        pyr = Document.objects.get(ref=a)
+        costing.post(site=self.site, cost_head=self.head, state="PAID",
+                     source="PYR", amount=Decimal("1000"), document=pyr,
+                     actor=self.finance)
+        r = self.voucher_action(pv, "void", self.signatory, reason="too late")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("payment", r.data["detail"].lower())

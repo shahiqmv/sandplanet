@@ -245,11 +245,34 @@ class MRFlowTests(ProcBase):
     def test_register_shows_one_row_per_mr_current_revision(self):
         ref = self.mr_to_sent()
         self.client.post(f"/api/v1/documents/{ref}/revisions")  # revise -> R1
-        self.as_user(self.purchasing)
+        # amending restarts the MR at DRAFT — its own site still sees it (HO
+        # only sees an MR once it's sent, owner 2026-07-16).
+        self.as_user(self.sa)
         r = self.client.get("/api/v1/registers/mr")
         rows = [row for row in r.data["rows"] if row["ref"] == ref]
         self.assertEqual(len(rows), 1)         # one row per MR, not per revision
         self.assertEqual(rows[0]["rev"], "R1")  # showing the current revision
+
+    def test_purchasing_sees_mr_only_after_it_reaches_ho(self):
+        # A site's DRAFT / PM-review MR is invisible to HO; it appears once
+        # sent to HO (owner 2026-07-16).
+        mr = self.make_mr()                     # DRAFT
+        self.as_user(self.purchasing)
+        reg = self.client.get("/api/v1/registers/mr").data["rows"]
+        lst = self.client.get(
+            "/api/v1/documents/list?doc_type=MR").data
+        self.assertNotIn(mr["ref"], [r["ref"] for r in reg])
+        self.assertNotIn(mr["ref"], [d["ref"] for d in lst])
+        # advance it to HO
+        self.as_user(self.sa)
+        self.act(mr["ref"], "submit")
+        self.as_user(self.pm)
+        self.act(mr["ref"], "approve")
+        self.as_user(self.sa)
+        self.act(mr["ref"], "send")
+        self.as_user(self.purchasing)
+        reg = self.client.get("/api/v1/registers/mr").data["rows"]
+        self.assertIn(mr["ref"], [r["ref"] for r in reg])
 
 
 class ChainTests(ProcBase):

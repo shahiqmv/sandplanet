@@ -221,12 +221,55 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
                              ipr_milestone=milestone, actor=actor)
 
 
+def generate_po_for_ipr(doc, actor):
+    """Generate the supplier purchase order for an authorised import order —
+    the overseas counterpart of a domestic PR's PO (owner 2026-07-16). One PO
+    for the whole order, in the order currency, with no domestic GST. Created
+    as a DRAFT PO; HO Purchasing issues it to the supplier (same as a PR PO)."""
+    from datetime import date
+    from .models import DocumentLine
+    order = doc.import_order
+    if doc.links_from.filter(link_type="IPR_PO").exists():
+        return None                       # already generated (idempotent)
+    with transaction.atomic():
+        po = Document.objects.create(
+            doc_type="PO", ref=next_ref("PO", doc.site), site=doc.site,
+            doc_date=date.today(), status="DRAFT", created_by=actor,
+            supplier=order.supplier)
+        revision = DocumentRevision.objects.create(
+            document=po, rev_label="R0", created_by=actor, payload={
+                "ipr_ref": doc.ref,        # internal only — not on the PO PDF
+                "supplier_name": order.supplier.name,
+                "supplier_contact": order.supplier.contact_person,
+                "currency": order.order_currency,
+                "tax_rate": 0,             # imports: no domestic GST on the PO
+                "payment_terms": order.incoterm or "",
+                "pi_ref": order.pi_ref,
+            })
+        po.current_revision = revision
+        po.save(update_fields=["current_revision"])
+        for line in order.lines.all():
+            DocumentLine.objects.create(
+                revision=revision, line_no=line.line_no, item=line.item,
+                free_text_desc="" if line.item else line.free_text_desc,
+                unit=line.unit, spec=line.spec, qty_required=line.order_qty,
+                rate=line.unit_price, amount=line.line_value,
+                remarks=line.remarks)
+        DocumentLink.objects.get_or_create(
+            from_document=doc, to_document=po, link_type="IPR_PO")
+    audit("document", po.id, "PO_GENERATED", actor=actor,
+          detail={"ref": po.ref, "ipr": doc.ref, "supplier": order.supplier.name})
+    return po
+
+
 def authorise_ipr(doc, actor):
     """Commit the order when a signatory authorises it on a voucher (§6C.2).
-    Posts COMMITTED in MVR at the agreed rate across the order's allocations."""
+    Posts COMMITTED in MVR at the agreed rate across the order's allocations,
+    then raises the supplier PO (owner 2026-07-16)."""
     order = doc.import_order
     _post_split(order, doc, "COMMITTED", Decimal("1"), order.exchange_rate,
                 actor)
+    generate_po_for_ipr(doc, actor)
 
 
 def set_milestones(order, rows):

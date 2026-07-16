@@ -88,7 +88,9 @@ def _voucher_info(pv):
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     currency = lines[0]["currency"] if lines else "MVR"
     return {
-        "ref": pv.ref, "status": pv.status, "doc_date": pv.doc_date,
+        "ref": pv.ref, "status": "VOID" if pv.is_void else pv.status,
+        "is_void": pv.is_void, "void_reason": pv.void_reason,
+        "doc_date": pv.doc_date,
         "prepared_by": pv.created_by.full_name if pv.created_by else None,
         "currency": currency,
         "total": sum(ln["amount"] for ln in lines),
@@ -351,6 +353,14 @@ def payment_voucher_action(request, ref, action):
                              "on this voucher."}, status=400)
         err = vouchers.settle_payable(line.source_payable, user,
                                       request.data.get("payment_ref") or "")
+    elif action == "void":
+        # Voiding reverses commitments and returns the sources — a signatory
+        # (who authorised it) or Admin can, with a reason (owner 2026-07-16).
+        if user.role not in ("SIGNATORY", "ADMIN"):
+            return Response({"detail": "Only a signatory or Admin can void a "
+                             "voucher."}, status=403)
+        err = vouchers.void_voucher(pv, user,
+                                    request.data.get("reason") or "")
     else:
         return Response({"detail": f"Unknown action '{action}'."}, status=400)
     if err:
