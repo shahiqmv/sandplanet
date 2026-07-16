@@ -375,9 +375,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
             const canSubmit = isFinance && pv.status === "DRAFT";
             const canApprove = isSignatory && pv.status === "SUBMITTED";
             const canPay = isFinance && pv.status === "APPROVED";
-            // Signatory/Admin can void a not-yet-paid voucher (reverses it)
-            const canVoid = isSignatory && !pv.is_void
-              && pv.status !== "CANCELLED" && !(pv.paid_count > 0);
+            // Void: an authorised voucher needs a signatory (reverses its
+            // commitments); a submitted-but-unauthorised one Finance can void
+            // with a reason (owner 2026-07-16).
+            const canVoid = !pv.is_void && !(pv.paid_count > 0)
+              && (pv.status === "APPROVED" ? isSignatory
+                : pv.status === "SUBMITTED" ? (isFinance || isSignatory)
+                : false);
             const payable = pv.lines.filter((l) => l.status === "APPROVED"
               && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE");
             return (

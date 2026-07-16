@@ -280,15 +280,34 @@ class VoucherVoidTests(VoucherBase):
                     self.client.get("/api/v1/finance/awaiting-voucher").data]
         self.assertIn(a, awaiting)
 
-    def test_void_needs_a_signatory_and_a_reason(self):
+    def test_authorised_voucher_needs_a_signatory_to_void(self):
         a, pv = self._approved_voucher(1000)
-        # Finance can't void
+        # Finance can't void an AUTHORISED voucher — signatory authorisation
         self.assertEqual(
             self.voucher_action(pv, "void", self.finance,
                                 reason="x").status_code, 403)
         # reason required
         self.assertEqual(
             self.voucher_action(pv, "void", self.signatory).status_code, 400)
+
+    def test_finance_voids_an_unauthorised_voucher_with_a_reason(self):
+        a = self.director_approved_pyr(amount=1000, payee="A")
+        pv = self.create_voucher([a]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)   # SUBMITTED, unapproved
+        # reason is required
+        self.assertEqual(
+            self.voucher_action(pv, "void", self.finance).status_code, 400)
+        # Finance voids the not-yet-authorised voucher with an explanation
+        r = self.voucher_action(pv, "void", self.finance, reason="wrong payee")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "VOID")
+        # nothing was committed, so the PYR is untouched and free to re-voucher
+        self.assertEqual(Document.objects.get(ref=a).status,
+                         "DIRECTOR_APPROVED")
+        self.client.force_authenticate(self.finance)
+        awaiting = [x["ref"] for x in
+                    self.client.get("/api/v1/finance/awaiting-voucher").data]
+        self.assertIn(a, awaiting)
 
     def test_cannot_void_after_a_payment_is_recorded(self):
         a, pv = self._approved_voucher(1000)

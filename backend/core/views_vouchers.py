@@ -355,10 +355,15 @@ def payment_voucher_action(request, ref, action):
         err = vouchers.settle_payable(line.source_payable, user,
                                       request.data.get("payment_ref") or "")
     elif action == "void":
-        # Voiding reverses commitments and returns the sources — a signatory
-        # (who authorised it) or Admin can, with a reason (owner 2026-07-16).
-        if user.role not in ("SIGNATORY", "ADMIN"):
-            return Response({"detail": "Only a signatory or Admin can void a "
+        # An AUTHORISED (approved) voucher can only be reversed with signatory
+        # authorisation; a not-yet-authorised one (draft/submitted) can be
+        # voided by Finance with an explanation (owner 2026-07-16).
+        if pv.status == "APPROVED":
+            if user.role not in ("SIGNATORY", "ADMIN"):
+                return Response({"detail": "An authorised voucher can only be "
+                                 "voided by a signatory."}, status=403)
+        elif user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
+            return Response({"detail": "Only Finance or a signatory can void a "
                              "voucher."}, status=403)
         err = vouchers.void_voucher(pv, user,
                                     request.data.get("reason") or "")
