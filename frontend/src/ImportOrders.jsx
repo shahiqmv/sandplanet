@@ -820,8 +820,27 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
   const [docType, setDocType] = useState("BL_AWB");
   const [charges, setCharges] = useState(Object.fromEntries(
     CHARGE_LABELS.map(([k]) => [k, s[k] ?? ""])));
+  const [editing, setEditing] = useState(false);
+  const [ef, setEf] = useState(null);
+  const [carriers, setCarriers] = useState([]);
   const at = SHIP_STEPS.indexOf(s.status);
   const arrived = at >= SHIP_STEPS.indexOf("ARRIVED");
+
+  function startEdit() {
+    setEf({ mode: s.mode, forwarder_name: s.forwarder_display || "",
+      vessel_flight: s.vessel_flight || "", carrier_scac: s.carrier_scac || "",
+      bl_no: s.bl_no || "", container_awb: s.container_awb || "",
+      etd: s.etd || "", eta: s.eta || "" });
+    if (!carriers.length) api("/tracking/carriers")
+      .then((d) => setCarriers(d.carriers || [])).catch(() => {});
+    setEditing(true);
+  }
+  async function saveEdit() {
+    onError(null);
+    try { await api(`/ipr/${refIpr}/shipments/${s.id}/update`,
+      { method: "POST", body: ef }); setEditing(false); onChanged(); }
+    catch (e) { onError(e.message); }
+  }
 
   async function upload(file) {
     if (!file) return;
@@ -848,10 +867,67 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
         <strong style={{ color: "var(--sp-navy)" }}>
           Shipment {s.seq} · {s.mode}</strong>
         <span style={{ fontSize: 12, color: "#5a6b78" }}>
-          {s.forwarder_display}{s.vessel_flight ? ` · ${s.vessel_flight}` : ""}
+          {s.forwarder_display}
+          {s.carrier_scac ? ` · ${s.carrier_scac}` : ""}
+          {s.bl_no ? ` · B/L ${s.bl_no}` : ""}
+          {s.vessel_flight ? ` · ${s.vessel_flight}` : ""}
           {s.container_awb ? ` · ${s.container_awb}` : ""}
           {s.eta ? ` · ETA ${s.eta}` : ""}</span>
+        {canManage && s.status !== "CLEARED" && !editing && (
+          <button style={{ ...ghostButton, padding: "1px 9px", marginLeft:
+            "auto", fontSize: 12 }} onClick={startEdit}>Edit details</button>
+        )}
       </div>
+      {editing && (
+        <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                      padding: 10, marginTop: 8, background: "#f7f9fb" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+                        gap: 8 }}>
+            <select value={ef.mode} style={inputStyle}
+              onChange={(e) => setEf({ ...ef, mode: e.target.value })}>
+              <option value="SEA">Sea</option><option value="AIR">Air</option>
+            </select>
+            <input placeholder="Forwarder" value={ef.forwarder_name}
+              style={inputStyle}
+              onChange={(e) => setEf({ ...ef, forwarder_name: e.target.value })} />
+            <input placeholder="Vessel / flight" value={ef.vessel_flight}
+              style={inputStyle}
+              onChange={(e) => setEf({ ...ef, vessel_flight: e.target.value })} />
+            {ef.mode === "SEA" ? (
+              <select value={ef.carrier_scac} style={inputStyle}
+                onChange={(e) => setEf({ ...ef, carrier_scac: e.target.value })}>
+                <option value="">Carrier (line)…</option>
+                {carriers.map((c) => (
+                  <option key={c.scac} value={c.scac}>{c.name}</option>
+                ))}
+              </select>
+            ) : <span />}
+            {ef.mode === "SEA" && (
+              <input placeholder="Booking / B/L no." value={ef.bl_no}
+                style={inputStyle}
+                onChange={(e) => setEf({ ...ef, bl_no: e.target.value })} />
+            )}
+            <input placeholder={ef.mode === "AIR" ? "AWB (11 digits)"
+              : "Container no."} value={ef.container_awb} style={inputStyle}
+              onChange={(e) => setEf({ ...ef, container_awb: e.target.value })} />
+            <label style={{ fontSize: 11, color: "#5a6b78" }}>ETD
+              <input type="date" value={ef.etd} style={inputStyle}
+                onChange={(e) => setEf({ ...ef, etd: e.target.value })} /></label>
+            <label style={{ fontSize: 11, color: "#5a6b78" }}>ETA
+              <input type="date" value={ef.eta} style={inputStyle}
+                onChange={(e) => setEf({ ...ef, eta: e.target.value })} /></label>
+          </div>
+          <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
+            Adding the carrier + B/L on a shipped consignment starts live
+            tracking automatically.</p>
+          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+            <button style={{ ...buttonStyle, padding: "4px 12px" }}
+              onClick={saveEdit}>Save details</button>
+            <button style={ghostButton}
+              onClick={() => setEditing(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
       {s.lines && s.lines.length > 0 && (
         <div style={{ fontSize: 12, color: "#5a6b78", marginTop: 3 }}>
           <strong style={{ color: "#41505c" }}>Contents:</strong>{" "}
@@ -861,6 +937,16 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
       )}
       <TrackingBlock s={s} canManage={canManage} onChanged={onChanged}
                      onError={onError} />
+      {canManage && !s.tracking && !editing
+        && at >= SHIP_STEPS.indexOf("SHIPPED") && (
+        <div style={{ fontSize: 11.5, color: "#8a5a00", marginTop: 6 }}>
+          🚢 Not tracked yet —{" "}
+          <button onClick={startEdit} style={{ background: "none", border: 0,
+            color: "var(--sp-navy)", cursor: "pointer", padding: 0,
+            textDecoration: "underline", fontSize: 11.5 }}>
+            add the carrier &amp; B/L</button>{" "}to start live tracking.
+        </div>
+      )}
       {/* status stepper */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" }}>
         {SHIP_STEPS.map((st, i) => (

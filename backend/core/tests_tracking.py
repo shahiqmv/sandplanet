@@ -216,6 +216,27 @@ class RegistrationTests(TestCase):
             ship.order, {"mode": "AIR", "container_awb": "17612345676"}, actor)
         self.assertIn("awb", (msg or "").lower())
 
+    def test_adding_bl_after_shipping_registers_a_multishipment_leg(self):
+        # A shipment booked + shipped with no key (common: B/L arrives later).
+        ship, actor = _make_shipment()
+        ipr_svc.advance_shipment(ship, "SHIPPED", actor)
+        self.assertFalse(ShipmentTracking.objects.filter(shipment=ship)
+                         .exists())      # nothing to track yet
+        # editing in the carrier + B/L now spins up + registers tracking
+        with patch("core.tracking.get_provider", return_value=_Fake()):
+            err = ipr_svc.update_shipment_details(
+                ship, {"carrier_scac": "MSCU", "bl_no": "MEDUQY000009"}, actor)
+        self.assertIsNone(err)
+        t = ShipmentTracking.objects.get(shipment=ship)
+        self.assertEqual(t.state, "ACTIVE")
+        self.assertEqual(t.tracking_key, "MEDUQY000009")
+
+    def test_update_rejects_bad_key(self):
+        ship, actor = _make_shipment()
+        err = ipr_svc.update_shipment_details(
+            ship, {"mode": "AIR", "container_awb": "17612345676"}, actor)
+        self.assertIn("awb", err.lower())
+
 
 class WebhookSignatureTests(TestCase):
     def test_matches_shipsgo_reference_vector(self):

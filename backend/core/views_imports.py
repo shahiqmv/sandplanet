@@ -322,6 +322,26 @@ def ipr_shipment_status(request, ref, pk):
 
 
 @api_view(["POST"])
+def ipr_shipment_update(request, ref, pk):
+    """Edit a booked shipment's carrier / routing details (incl. the tracking
+    keys). Real imports enter the B/L after departure, so this also re-registers
+    live tracking when keys change."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office manages shipments."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.update_shipment_details(s, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
 def ipr_shipment_charges(request, ref, pk):
     doc, err = _get_ipr(request, ref)
     if err:

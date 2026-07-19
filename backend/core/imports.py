@@ -499,18 +499,77 @@ def advance_shipment(shipment, to_status, actor):
           actor=actor, from_state=old, to_state=to_status,
           detail={"shipment": shipment.seq})
     if to_status == "SHIPPED":
-        # Auto-register live tracking (D40). Best-effort — a provider outage or
-        # a missing key must never block the shipment moving to Shipped.
-        try:
-            from . import tracking as trk
+        _register_tracking(shipment)
+    if to_status == "ARRIVED":
+        fire_milestones(shipment.order, "ARRIVAL", actor)
+    return None
+
+
+def _register_tracking(shipment):
+    """Best-effort live-tracking (re)registration for a shipped-or-later
+    shipment (D40). Handles the common case where the B/L is entered after
+    the shipment already left — a pending/failed tracking is refreshed with
+    the new key and retried. Never raises: tracking must not break the
+    shipment workflow."""
+    from . import tracking as trk
+    from .models import ShipmentTracking
+    try:
+        if shipment.status == "BOOKED":
+            return                       # nothing to track until it ships
+        t = ShipmentTracking.objects.filter(shipment=shipment).first()
+        if t is None:
             t = trk.ensure_tracking(shipment)
             if t and t.state == t.State.PENDING:
                 trk.register_tracking(t)
-        except Exception:               # pragma: no cover - defensive
-            log.exception("tracking registration failed for shipment %s",
-                          shipment.id)
-    if to_status == "ARRIVED":
-        fire_milestones(shipment.order, "ARRIVAL", actor)
+            return
+        key = (shipment.container_awb.strip() if shipment.mode == "AIR"
+               else trk._sea_key(shipment))
+        if t.state in (t.State.PENDING, t.State.FAILED) and key:
+            t.mode = shipment.mode
+            t.carrier_scac = (shipment.carrier_scac or "").strip().upper()
+            t.tracking_key = trk.normalise_key(key)
+            t.state = t.State.PENDING
+            t.save()
+            trk.register_tracking(t)
+    except Exception:                   # pragma: no cover - defensive
+        log.exception("tracking (re)registration failed for shipment %s",
+                      shipment.id)
+
+
+def update_shipment_details(shipment, data, actor):
+    """Edit a shipment's carrier / routing metadata after it has been booked
+    (owner 2026-07-20). Real imports enter the B/L after departure and split an
+    order across several shipments, so each shipment's tracking keys must be
+    editable and (re)register tracking when they change."""
+    from . import tracking as trk
+    from .models import Supplier
+    if shipment.status == "CLEARED":
+        return "This shipment is already cleared — nothing to edit."
+    mode = data.get("mode") or shipment.mode
+    err = trk.validate_shipment_keys(
+        mode, data.get("bl_no", shipment.bl_no),
+        data.get("container_awb", shipment.container_awb),
+        data.get("carrier_scac", shipment.carrier_scac))
+    if err:
+        return err
+    if "forwarder_id" in data:
+        shipment.forwarder = Supplier.objects.filter(
+            pk=data["forwarder_id"]).first()
+    shipment.mode = mode
+    for f in ("forwarder_name", "vessel_flight", "carrier_scac", "bl_no",
+              "container_awb", "tracking_ref"):
+        if f in data:
+            val = (data.get(f) or "")
+            setattr(shipment, f, val.strip().upper() if f == "carrier_scac"
+                    else val)
+    if "etd" in data:
+        shipment.etd = data.get("etd") or None
+    if "eta" in data:
+        shipment.eta = data.get("eta") or None
+    shipment.save()
+    audit("document", shipment.order.document_id, "SHIPMENT_UPDATED",
+          actor=actor, detail={"shipment": shipment.seq})
+    _register_tracking(shipment)
     return None
 
 
