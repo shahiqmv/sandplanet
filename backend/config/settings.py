@@ -15,6 +15,14 @@ SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY", "insecure-local-dev-key-change-in-staging"
 )
 DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+
+# --- Shipment tracking (ShipsGo, D40). Secrets set in platform env, never here.
+SHIPSGO_BASE_URL = os.environ.get("SHIPSGO_BASE_URL",
+                                  "https://api.shipsgo.com/v2")
+SHIPSGO_API_KEY = os.environ.get("SHIPSGO_API_KEY", "")
+SHIPSGO_WEBHOOK_SECRET = os.environ.get("SHIPSGO_WEBHOOK_SECRET", "")
+TRACKING_ETA_SLIP_HOURS = int(os.environ.get("TRACKING_ETA_SLIP_HOURS", "24"))
+TRACKING_CREDIT_FLOOR = int(os.environ.get("TRACKING_CREDIT_FLOOR", "10"))
 # Dev default "*" lets the team-review tunnel (trycloudflare.com) reach the
 # dev server; production always sets DJANGO_ALLOWED_HOSTS explicitly.
 ALLOWED_HOSTS = os.environ.get(

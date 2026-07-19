@@ -961,11 +961,17 @@ class ImportShipment(models.Model):
                                   null=True, blank=True, related_name="+")
     forwarder_name = models.CharField(max_length=120, blank=True)
     vessel_flight = models.CharField(max_length=80, blank=True)
+    # Live-tracking keys (ShipsGo, D40). Sea registers by carrier SCAC + a
+    # booking/master-B/L number (one credit per B/L) or a container number;
+    # air by the 11-digit AWB. container_awb holds the container (sea) or the
+    # AWB (air); bl_no holds the booking/master-B/L (sea).
+    carrier_scac = models.CharField(max_length=8, blank=True)   # sea line, e.g. MSCU
+    bl_no = models.CharField(max_length=40, blank=True)         # booking / master B/L
     container_awb = models.CharField(max_length=80, blank=True)
     etd = models.DateField(null=True, blank=True)
     eta = models.DateField(null=True, blank=True)
     tracking_ref = models.CharField(max_length=80, blank=True)
-    carrier_link = models.CharField(max_length=300, blank=True)
+    carrier_link = models.CharField(max_length=300, blank=True)  # ShipsGo live-map URL
     status = models.CharField(max_length=14, choices=Status.choices,
                               default=Status.BOOKED)
     shared_with_agent_at = models.DateTimeField(null=True, blank=True)
@@ -1059,6 +1065,94 @@ class ShipmentDocument(models.Model):
     uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                     blank=True, related_name="+")
     uploaded_at = models.DateTimeField(auto_now_add=True)
+
+
+class ShipmentTracking(models.Model):
+    """Live carrier tracking for one shipment (D40/D41). Sits behind the
+    TrackingProvider adapter — Planet core only reads normalised TrackingEvents
+    off this row. One provider registration per shipment (one credit per B/L).
+    """
+
+    class Mode(models.TextChoices):
+        SEA = "SEA", "Sea"
+        AIR = "AIR", "Air"
+
+    class State(models.TextChoices):
+        PENDING = "PENDING_REGISTRATION", "Pending registration"
+        ACTIVE = "ACTIVE", "Active"
+        ARRIVED = "ARRIVED", "Arrived"
+        FAILED = "FAILED", "Failed"
+        MANUAL = "MANUAL", "Manual"
+
+    shipment = models.OneToOneField(ImportShipment, on_delete=models.CASCADE,
+                                    related_name="tracking")
+    mode = models.CharField(max_length=3, choices=Mode.choices,
+                            default=Mode.SEA)
+    provider = models.CharField(max_length=20, default="shipsgo")
+    # what we registered on: SCAC + booking/BL / container (sea) or AWB (air)
+    carrier_scac = models.CharField(max_length=8, blank=True)
+    tracking_key = models.CharField(max_length=80, blank=True)
+    provider_tracking_id = models.CharField(max_length=64, blank=True)
+    provider_ref = models.CharField(max_length=128, blank=True)  # our reference
+    state = models.CharField(max_length=22, choices=State.choices,
+                             default=State.PENDING)
+    raw_status = models.CharField(max_length=20, blank=True)   # provider status
+    current_eta = models.DateTimeField(null=True, blank=True)
+    eta_initial = models.DateTimeField(null=True, blank=True)
+    map_url = models.CharField(max_length=300, blank=True)
+    last_event_at = models.DateTimeField(null=True, blank=True)
+    last_polled_at = models.DateTimeField(null=True, blank=True)
+    register_attempts = models.IntegerField(default=0)
+    credits_consumed = models.BooleanField(default=False)
+    last_error = models.CharField(max_length=300, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Tracking {self.shipment_id} ({self.state})"
+
+
+class TrackingEvent(models.Model):
+    """One normalised movement on a ShipmentTracking. Raw provider payload is
+    kept verbatim; only the normalised set surfaces on the stakeholder
+    timeline. Idempotent on (tracking, provider_event_id)."""
+
+    class Code(models.TextChoices):
+        DEPARTED = "DEPARTED", "Departed origin"
+        TRANSSHIPMENT = "TRANSSHIPMENT", "Transshipment"
+        ARRIVED = "ARRIVED", "Arrived Malé"
+        ETA_UPDATED = "ETA_UPDATED", "ETA updated"
+        OTHER = "OTHER", "Other"        # stored, admin-only (raw expander)
+
+    class Source(models.TextChoices):
+        WEBHOOK = "WEBHOOK", "Webhook"
+        POLL = "POLL", "Poll"
+        MANUAL = "MANUAL", "Manual"
+
+    tracking = models.ForeignKey(ShipmentTracking, on_delete=models.CASCADE,
+                                 related_name="events")
+    code = models.CharField(max_length=16, choices=Code.choices)
+    provider_event_code = models.CharField(max_length=16, blank=True)  # DEPA…
+    provider_event_id = models.CharField(max_length=120, blank=True)
+    description = models.CharField(max_length=200, blank=True)
+    location = models.CharField(max_length=120, blank=True)
+    vessel_flight = models.CharField(max_length=120, blank=True)
+    event_time = models.DateTimeField(null=True, blank=True)
+    is_actual = models.BooleanField(default=True)   # ACT vs EST
+    eta_at_event = models.DateTimeField(null=True, blank=True)
+    source = models.CharField(max_length=8, choices=Source.choices,
+                              default=Source.WEBHOOK)
+    raw = models.JSONField(default=dict, blank=True)
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["event_time", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tracking", "provider_event_id"],
+                condition=models.Q(provider_event_id__gt=""),
+                name="uniq_tracking_event"),
+        ]
 
 
 class ImportReceipt(models.Model):
