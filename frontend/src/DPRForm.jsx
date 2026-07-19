@@ -302,6 +302,19 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
     }
   }
 
+  async function removePhoto(id) {
+    if (!doc) return;
+    if (!window.confirm("Remove this photo?")) return;
+    try {
+      await api(`/documents/${doc.ref}/attachments/${id}`,
+                { method: "DELETE" });
+      const fresh = await api(`/documents/${doc.ref}`);
+      setDoc(fresh);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   function offProgrammeMissingRemark() {
     return workDone.some((r) => {
       const acts = programmes[r.project] || [];
@@ -714,10 +727,22 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 12 }}>
             {photos.map((ph) => (
-              <figure key={ph.id} style={{ margin: 0, width: 150 }}>
+              <figure key={ph.id} style={{ margin: 0, width: 150,
+                                            position: "relative" }}>
                 <img src={ph.url} alt={ph.caption}
                      style={{ width: "100%", borderRadius: 6,
                               border: "1px solid var(--sp-border)" }} />
+                <button type="button" onClick={() => removePhoto(ph.id)}
+                        title="Remove this photo"
+                        style={{ position: "absolute", top: 4, right: 4,
+                                 width: 22, height: 22, borderRadius: "50%",
+                                 border: "none", cursor: "pointer",
+                                 background: "rgba(192,57,43,0.9)",
+                                 color: "#fff", fontSize: 13, lineHeight: 1,
+                                 display: "flex", alignItems: "center",
+                                 justifyContent: "center" }}>
+                  ×
+                </button>
                 <figcaption style={{ fontSize: 11, color: "#5a6b78" }}>
                   {ph.caption || "(no caption)"}
                   {ph.project_code && (

@@ -1237,6 +1237,27 @@ def document_attachments(request, ref):
                     status=201)
 
 
+@api_view(["DELETE"])
+def document_attachment_delete(request, ref, pk):
+    """Remove an attachment from a draft — e.g. a photo uploaded by mistake.
+    Only while the document is still a draft, same as uploading."""
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if doc.is_void or doc.status != "DRAFT":
+        return Response({"detail": "Attachments can only be removed while the "
+                                   "document is a draft."}, status=400)
+    attachment = doc.attachments.filter(pk=pk).first()
+    if attachment is None:
+        return Response({"detail": "Attachment not found on this document."},
+                        status=404)
+    stored = attachment.file
+    attachment.delete()
+    if stored:
+        stored.delete(save=False)   # drop the file from storage too
+    return Response(status=204)
+
+
 # ===== Lists, registers, dashboards =====
 
 

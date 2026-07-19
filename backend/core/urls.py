@@ -142,6 +142,8 @@ urlpatterns = [
          name="document-action"),
     path("documents/<str:ref>/attachments", docs.document_attachments,
          name="document-attachments"),
+    path("documents/<str:ref>/attachments/<int:pk>",
+         docs.document_attachment_delete, name="document-attachment-delete"),
     path("documents/<str:ref>/edit-manifest", docs.lm_edit,
          name="lm-edit"),
     path("documents/<str:ref>/load-store", docs.lm_load_store,

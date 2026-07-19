@@ -123,6 +123,30 @@ class DprLifecycleTests(DocBase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.data["status"], "ISSUED")
 
+    def test_photo_can_be_removed_from_a_draft(self):
+        # A wrong photo can be deleted while the DPR is still a draft.
+        ref = self.create_dpr().data["ref"]
+        self.add_photos(ref, 2)
+        doc = self.client.get(f"/api/v1/documents/{ref}").data
+        photos = [a for a in doc["attachments"] if a["kind"] == "PHOTO"]
+        self.assertEqual(len(photos), 2)
+        r = self.client.delete(
+            f"/api/v1/documents/{ref}/attachments/{photos[0]['id']}")
+        self.assertEqual(r.status_code, 204)
+        doc = self.client.get(f"/api/v1/documents/{ref}").data
+        left = [a for a in doc["attachments"] if a["kind"] == "PHOTO"]
+        self.assertEqual([a["id"] for a in left], [photos[1]["id"]])
+
+    def test_photo_cannot_be_removed_after_issue(self):
+        ref = self.create_dpr().data["ref"]
+        self.add_photos(ref, 1)
+        pid = [a for a in self.client.get(f"/api/v1/documents/{ref}").data
+               ["attachments"] if a["kind"] == "PHOTO"][0]["id"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/issue")
+        r = self.client.delete(
+            f"/api/v1/documents/{ref}/attachments/{pid}")
+        self.assertEqual(r.status_code, 400)
+
     def test_dpr_consumption_posts_stock_issue(self):
         # Closing the inventory loop: a key-material 'Consumed' figure on an
         # issued DPR draws that quantity down from site stock.
