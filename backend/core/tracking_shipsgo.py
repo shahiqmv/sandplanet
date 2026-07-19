@@ -6,6 +6,8 @@ provider-agnostic `Snapshot`/`NormEvent` values to `tracking.py`.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import urllib.error
 import urllib.request
@@ -107,12 +109,18 @@ class ShipsGoProvider(TrackingProvider):
         return self._normalise(resp.get("shipment") or {}, tracking.mode)
 
     def parse_webhook(self, request):
+        # ShipsGo signs each delivery with HMAC-SHA256 over the raw body using
+        # the dashboard Secret Key, in the X-Shipsgo-Webhook-Signature header.
         secret = getattr(settings, "SHIPSGO_WEBHOOK_SECRET", "")
-        supplied = (request.headers.get("X-Webhook-Secret")
-                    or request.GET.get("token") or "")
-        if not secret or supplied != secret:
-            raise PermissionError("Bad or missing webhook secret.")
-        body = json.loads(request.body.decode() or "{}")
+        signature = request.headers.get("X-Shipsgo-Webhook-Signature", "")
+        raw = request.body                                  # bytes, verbatim
+        if not secret or not signature:
+            raise PermissionError("Missing webhook secret or signature.")
+        expected = hmac.new(secret.encode(), raw,
+                            hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):   # constant-time
+            raise PermissionError("Bad webhook signature.")
+        body = json.loads(raw.decode() or "{}")
         shipment = body.get("shipment") or {}
         mode = "AIR" if "awb_number" in shipment else "SEA"
         snap = self._normalise(shipment, mode)

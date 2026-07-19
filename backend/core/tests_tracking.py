@@ -217,6 +217,20 @@ class RegistrationTests(TestCase):
         self.assertIn("awb", (msg or "").lower())
 
 
+class WebhookSignatureTests(TestCase):
+    def test_matches_shipsgo_reference_vector(self):
+        # ShipsGo's documented test vector — proves our HMAC-SHA256 hex digest
+        # is computed exactly as they sign it.
+        import hashlib
+        import hmac
+        sig = hmac.new(b"SUPER_LONG_AND_SECURE_SECRET_KEY",
+                       b'{"message":"You shall not pass!"}',
+                       hashlib.sha256).hexdigest()
+        self.assertEqual(
+            sig, "9527e0c9463e6f5b01a0af50aecb4658ff50c6b25d3efa8e5c8dea7"
+                 "e4b763772")
+
+
 @override_settings(SHIPSGO_WEBHOOK_SECRET="s3cr3t")
 class WebhookTests(TestCase):
     def setUp(self):
@@ -226,23 +240,26 @@ class WebhookTests(TestCase):
             provider_ref="IPR-HO-001-S1", provider_tracking_id="123456")
         self.client = APIClient()
 
-    def _post(self, token="s3cr3t"):
-        body = {"event": {"id": "evt-1", "name": "OCEAN.SHIPMENTS."
-                          "SHIPMENT_UPDATED"},
-                "shipment": _ocean_payload()}
+    def _post(self, secret="s3cr3t"):
+        import hashlib
+        import hmac
+        body = json.dumps({"event": {"id": "evt-1", "name": "OCEAN.SHIPMENTS."
+                           "SHIPMENT_UPDATED"},
+                           "shipment": _ocean_payload()}).encode()
+        sig = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         return self.client.post(
-            f"/api/webhooks/tracking/shipsgo/?token={token}",
-            data=json.dumps(body), content_type="application/json")
+            "/api/webhooks/tracking/shipsgo/", data=body,
+            content_type="application/json",
+            HTTP_X_SHIPSGO_WEBHOOK_SIGNATURE=sig)
 
-    def test_bad_secret_rejected(self):
-        self.assertEqual(self._post(token="wrong").status_code, 401)
+    def test_bad_signature_rejected(self):
+        self.assertEqual(self._post(secret="wrong").status_code, 401)
         self.assertFalse(self.tr.events.exists())
 
     def test_valid_webhook_ingests_and_is_idempotent(self):
         r = self._post()
         self.assertEqual(r.status_code, 200, r.data)
-        n = self.tr.events.filter(code="ARRIVED").count()
-        self.assertEqual(n, 1)
+        self.assertEqual(self.tr.events.filter(code="ARRIVED").count(), 1)
         self._post()   # redelivery
         self.assertEqual(self.tr.events.filter(code="ARRIVED").count(), 1)
 
