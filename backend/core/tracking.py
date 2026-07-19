@@ -186,3 +186,96 @@ def apply_snapshot(tracking, snapshot: Snapshot, source: str):
             sh.carrier_link = snapshot.map_url
         sh.save(update_fields=["eta", "carrier_link"])
     return {"created": created, "eta_slipped": eta_slipped}
+
+
+# ---- Registration + lifecycle service ---------------------------------------
+
+def _sea_key(shipment):
+    """Prefer the booking / master B/L (one credit per B/L) over a container."""
+    return (shipment.bl_no or "").strip() or normalise_key(
+        shipment.container_awb)
+
+
+def ensure_tracking(shipment):
+    """Create the PENDING ShipmentTracking for a shipment from its entered keys
+    (if it has none and a key is present). Idempotent."""
+    from .models import ShipmentTracking
+    existing = ShipmentTracking.objects.filter(shipment=shipment).first()
+    if existing:
+        return existing
+    key = (shipment.container_awb.strip() if shipment.mode == "AIR"
+           else _sea_key(shipment))
+    if not key:
+        return None
+    return ShipmentTracking.objects.create(
+        shipment=shipment, mode=shipment.mode,
+        carrier_scac=(shipment.carrier_scac or "").strip().upper(),
+        tracking_key=normalise_key(key),
+        provider_ref=f"{shipment.order.document.ref}-S{shipment.seq}",
+        state=ShipmentTracking.State.PENDING)
+
+
+def register_tracking(tracking, max_attempts=5):
+    """Call the provider to register the tracking. On success → ACTIVE + fold
+    the first snapshot. On insufficient credits or after max_attempts → FAILED.
+    Never raises — registration must not break the shipment workflow."""
+    from .models import ShipmentTracking
+    from .tracking_shipsgo import ShipsGoError
+    if tracking.state not in (ShipmentTracking.State.PENDING,):
+        return {"skipped": True}
+    tracking.register_attempts += 1
+    try:
+        snap = get_provider(tracking.provider).register(tracking)
+    except ShipsGoError as e:
+        tracking.last_error = str(e)[:300]
+        if e.insufficient_credits or tracking.register_attempts >= max_attempts:
+            tracking.state = ShipmentTracking.State.FAILED
+        tracking.save()
+        if tracking.state == ShipmentTracking.State.FAILED:
+            from . import notify
+            notify.notify_tracking_problem(tracking, "failed")
+        return {"error": str(e), "credits": e.insufficient_credits,
+                "failed": tracking.state == ShipmentTracking.State.FAILED}
+    except Exception as e:                  # pragma: no cover - defensive
+        tracking.last_error = str(e)[:300]
+        tracking.save()
+        return {"error": str(e)}
+    tracking.credits_consumed = True
+    tracking.last_error = ""
+    tracking.state = ShipmentTracking.State.ACTIVE
+    tracking.save()
+    return ingest_snapshot(tracking, snap, source="POLL")
+
+
+def ingest_snapshot(tracking, snapshot, source):
+    """apply_snapshot + fire the milestone notifications for anything new."""
+    from . import notify
+    result = apply_snapshot(tracking, snapshot, source)
+    if result["created"] or result["eta_slipped"]:
+        notify.notify_tracking(tracking, result)
+    return result
+
+
+def switch_manual(tracking):
+    tracking.state = tracking.State.MANUAL
+    tracking.save(update_fields=["state", "updated_at"])
+
+
+def add_manual_event(tracking, code, description, location="",
+                     vessel_flight="", event_time=None):
+    """Purchasing logs a milestone by hand (gapped carrier / mid-voyage
+    failure). Renders identically to an automatic one."""
+    from .models import TrackingEvent
+    return TrackingEvent.objects.create(
+        tracking=tracking, code=code, description=description,
+        location=location, vessel_flight=vessel_flight,
+        event_time=event_time or timezone.now(), is_actual=True,
+        source=TrackingEvent.Source.MANUAL)
+
+
+def is_stale(tracking, days=7):
+    """No event in `days` and not yet arrived — a candidate for a stale alert."""
+    if tracking.state != tracking.State.ACTIVE:
+        return False
+    ref = tracking.last_event_at or tracking.created_at
+    return (timezone.now() - ref).days >= days

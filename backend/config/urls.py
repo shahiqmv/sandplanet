@@ -4,12 +4,15 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
-from core import views_pwa
+from core import views_pwa, views_tracking
 
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/", include("core.urls")),
     path("api/mobile/v1/", include("core.urls_mobile")),
+    # Public, secret-verified provider webhook (outside the session-auth API).
+    path("api/webhooks/tracking/shipsgo/", views_tracking.shipsgo_webhook,
+         name="shipsgo-webhook"),
 ]
 
 if settings.DEBUG:  # local-disk media fallback only (DECISIONS.md D3)

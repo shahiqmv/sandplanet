@@ -563,15 +563,121 @@ const CHARGE_LABELS = [["freight", "Freight"], ["insurance", "Insurance"],
   ["port_handling", "Port & handling"], ["agent_charges", "Agent charges"],
   ["local_transport", "Local transport"]];
 
+const TRACK_STATE_STYLE = {
+  ACTIVE: { bg: "#e7f4ea", fg: "#1f7a3d", label: "Tracking active" },
+  ARRIVED: { bg: "#e7f0fb", fg: "#1f5fae", label: "Arrived Malé" },
+  PENDING_REGISTRATION: { bg: "#fdf3e7", fg: "#8a5a00", label: "Registering…" },
+  FAILED: { bg: "#fbeae8", fg: "#b0402f", label: "Tracking failed" },
+  MANUAL: { bg: "#eef0f2", fg: "#41505c", label: "Manual updates" },
+};
+const MILE_LABEL = { DEPARTED: "Departed origin",
+  TRANSSHIPMENT: "Transshipment", ARRIVED: "Arrived Malé",
+  ETA_UPDATED: "ETA updated", OTHER: "Update" };
+
+function TrackingBlock({ s, canManage, onChanged, onError }) {
+  const t = s.tracking;
+  const [logging, setLogging] = useState(false);
+  const [ev, setEv] = useState({ code: "DEPARTED", description: "",
+    location: "" });
+  if (!t) return null;
+  const st = TRACK_STATE_STYLE[t.state] || TRACK_STATE_STYLE.MANUAL;
+
+  async function post(action, body) {
+    onError(null);
+    try { await api(`/tracking/shipments/${s.id}/${action}`,
+      { method: "POST", body }); onChanged(); }
+    catch (e) { onError(e.message); }
+  }
+
+  return (
+    <div style={{ marginTop: 8, borderTop: "1px dashed var(--sp-border)",
+                  paddingTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8,
+                    flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 600, padding: "2px 8px",
+          borderRadius: 10, background: st.bg, color: st.fg }}>
+          🚢 {st.label}</span>
+        {t.current_eta && (<span style={{ fontSize: 12, color: "#5a6b78" }}>
+          Live ETA {t.current_eta.slice(0, 10)}</span>)}
+        {t.map_url && (<a href={t.map_url} target="_blank" rel="noreferrer"
+          style={{ fontSize: 12, color: "var(--sp-navy)" }}>Live map ↗</a>)}
+        {canManage && (t.state === "FAILED"
+          || t.state === "PENDING_REGISTRATION") && (
+          <button style={{ ...ghostButton, padding: "2px 10px" }}
+            onClick={() => post("retry", {})}>Retry</button>)}
+        {canManage && t.state !== "MANUAL" && t.state !== "ARRIVED" && (
+          <button style={{ ...ghostButton, padding: "2px 10px" }}
+            onClick={() => post("manual", { action: "switch" })}>
+            Switch to manual</button>)}
+      </div>
+      {t.last_error && t.state === "FAILED" && (
+        <div style={{ fontSize: 11.5, color: "#b0402f", marginTop: 4 }}>
+          {t.last_error}</div>)}
+      {t.events && t.events.length > 0 && (
+        <div style={{ marginTop: 6 }}>
+          {t.events.map((e, i) => (
+            <div key={i} style={{ fontSize: 12, color: "#41505c",
+              display: "flex", gap: 8 }}>
+              <span style={{ color: e.is_actual ? "#1f7a3d" : "#8a97a1" }}>
+                ●</span>
+              <span style={{ fontWeight: 500 }}>
+                {MILE_LABEL[e.code] || e.code}</span>
+              <span style={{ color: "#5a6b78" }}>
+                {[e.location, e.vessel_flight,
+                  e.event_time && e.event_time.slice(0, 10),
+                  e.is_actual ? "" : "(est.)"].filter(Boolean).join(" · ")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {canManage && (logging ? (
+        <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap",
+                      alignItems: "center" }}>
+          <select value={ev.code} style={{ ...inputStyle, width: 150 }}
+            onChange={(e) => setEv({ ...ev, code: e.target.value })}>
+            {Object.entries(MILE_LABEL).filter(([k]) => k !== "OTHER")
+              .map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+          <input placeholder="Location" value={ev.location}
+            style={{ ...inputStyle, width: 120 }}
+            onChange={(e) => setEv({ ...ev, location: e.target.value })} />
+          <input placeholder="Note" value={ev.description}
+            style={{ ...inputStyle, width: 140 }}
+            onChange={(e) => setEv({ ...ev, description: e.target.value })} />
+          <button style={{ ...buttonStyle, padding: "3px 10px" }}
+            onClick={async () => { await post("manual",
+              { action: "event", ...ev }); setLogging(false);
+              setEv({ code: "DEPARTED", description: "", location: "" }); }}>
+            Log</button>
+          <button style={ghostButton}
+            onClick={() => setLogging(false)}>Cancel</button>
+        </div>
+      ) : (t.state === "MANUAL" && (
+        <button style={{ ...ghostButton, padding: "2px 10px", marginTop: 6 }}
+          onClick={() => setLogging(true)}>+ Log milestone</button>
+      )))}
+    </div>
+  );
+}
+
 function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
   const blankF = { mode: "SEA", forwarder_name: "", vessel_flight: "",
-    container_awb: "", etd: "", eta: "", tracking_ref: "" };
+    carrier_scac: "", bl_no: "", container_awb: "", etd: "", eta: "",
+    tracking_ref: "" };
   const [f, setF] = useState(blankF);
   const [split, setSplit] = useState(false);
   const [alloc, setAlloc] = useState([]);
+  const [carriers, setCarriers] = useState([]);
+
+  useEffect(() => {
+    if (!adding || f.mode !== "SEA" || carriers.length) return;
+    api("/tracking/carriers").then((d) => setCarriers(d.carriers || []))
+      .catch(() => {});
+  }, [adding, f.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const orderLines = (doc.order && doc.order.lines) || [];
   const shippable = orderLines.filter((l) => num(l.remaining_qty) > 0);
@@ -634,7 +740,25 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
             <input placeholder="Vessel / flight" value={f.vessel_flight}
               style={inputStyle}
               onChange={(e) => setF({ ...f, vessel_flight: e.target.value })} />
-            <input placeholder="Container / AWB" value={f.container_awb}
+            {f.mode === "SEA" ? (
+              <select value={f.carrier_scac} style={inputStyle}
+                title="Shipping line — needed for live tracking"
+                onChange={(e) => setF({ ...f, carrier_scac: e.target.value })}>
+                <option value="">Carrier (line)…</option>
+                {carriers.map((c) => (
+                  <option key={c.scac} value={c.scac}>{c.name}</option>
+                ))}
+              </select>
+            ) : (
+              <span />
+            )}
+            {f.mode === "SEA" && (
+              <input placeholder="Booking / B/L no." value={f.bl_no}
+                style={inputStyle}
+                onChange={(e) => setF({ ...f, bl_no: e.target.value })} />
+            )}
+            <input placeholder={f.mode === "AIR" ? "AWB (11 digits)"
+              : "Container no."} value={f.container_awb}
               style={inputStyle}
               onChange={(e) => setF({ ...f, container_awb: e.target.value })} />
             <label style={{ fontSize: 11, color: "#5a6b78" }}>ETD
@@ -735,6 +859,8 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
             + `${l.description}`).join(" · ")}
         </div>
       )}
+      <TrackingBlock s={s} canManage={canManage} onChanged={onChanged}
+                     onError={onError} />
       {/* status stepper */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 5, margin: "8px 0" }}>
         {SHIP_STEPS.map((st, i) => (
@@ -1282,6 +1408,61 @@ const SHIP_TONE = { BOOKED: "#8a97a1", SHIPPED: "#1d6fb8",
   IN_TRANSIT: "#1d6fb8", ARRIVED: "#b35900", UNDER_CLEARING: "#b35900",
   CLEARED: "#1a7f37" };
 
+const HEALTH_TONE = { ACTIVE: "#1a7f37", ARRIVED: "#1d6fb8",
+  PENDING_REGISTRATION: "#b35900", FAILED: "#c0392b", MANUAL: "#6b7681",
+  STALE: "#c0392b" };
+
+function TrackingHealth() {
+  const [rows, setRows] = useState(null);
+  const load = () => api("/tracking/health")
+    .then((d) => setRows(d.items || [])).catch(() => setRows([]));
+  useEffect(() => { load(); }, []);
+  if (!rows || rows.length === 0) return null;
+  const attention = rows.filter((r) =>
+    ["FAILED", "STALE", "PENDING_REGISTRATION"].includes(r.health)).length;
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <h3 style={{ margin: 0, fontSize: 14, color: "var(--sp-navy)" }}>
+          🚢 Shipment tracking health</h3>
+        {attention > 0 && (
+          <span style={{ fontSize: 11.5, color: "#c0392b" }}>
+            {attention} need attention</span>)}
+        <button style={{ ...ghostButton, padding: "2px 10px", marginLeft:
+          "auto" }} onClick={load}>Refresh</button>
+      </div>
+      <div style={{ overflowX: "auto", marginTop: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 12.5 }}>
+          <thead><tr>
+            <th style={th}>Order</th><th style={th}>Mode</th>
+            <th style={th}>Key</th><th style={th}>State</th>
+            <th style={th}>Live status</th><th style={th}>ETA</th>
+            <th style={th}>Last event</th>
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td style={td}>{r.ipr_ref} · S{r.shipment_seq}</td>
+                <td style={td}>{r.mode}</td>
+                <td style={td}>{r.carrier_scac ? r.carrier_scac + " · " : ""}
+                  {r.tracking_key || "—"}</td>
+                <td style={{ ...td, color: HEALTH_TONE[r.health] || "#41505c",
+                  fontWeight: 600 }}>{r.health}</td>
+                <td style={td}>{r.raw_status || "—"}</td>
+                <td style={td}>{r.current_eta
+                  ? r.current_eta.slice(0, 10) : "—"}</td>
+                <td style={td}>{r.last_event_at
+                  ? r.last_event_at.slice(0, 10) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 export function ImportTracker({ onOpenIpr }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -1298,6 +1479,8 @@ export function ImportTracker({ onOpenIpr }) {
           → shipment → receipt (IRN) → payments.</p>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+
+      <TrackingHealth />
 
       {data?.awaiting_order?.length > 0 && (
         <section style={card}>

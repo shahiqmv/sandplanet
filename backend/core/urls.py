@@ -6,7 +6,8 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
-    views_stock as stock, views_tools as tools_api, views_vouchers as vouchers
+    views_stock as stock, views_tools as tools_api, \
+    views_tracking as tracking_api, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -89,6 +90,15 @@ urlpatterns = [
          imports_api.ipr_shipment_document, name="ipr-shipment-document"),
     path("ipr/<str:ref>/shipments/<int:pk>/receive",
          imports_api.ipr_shipment_receive, name="ipr-shipment-receive"),
+    # --- shipment tracking (ShipsGo) ---
+    path("tracking/carriers", tracking_api.tracking_carriers,
+         name="tracking-carriers"),
+    path("tracking/health", tracking_api.tracking_health,
+         name="tracking-health"),
+    path("tracking/shipments/<int:pk>/retry", tracking_api.tracking_retry,
+         name="tracking-retry"),
+    path("tracking/shipments/<int:pk>/manual", tracking_api.tracking_manual,
+         name="tracking-manual"),
     path("store/lots", imports_api.store_lots, name="store-lots"),
     path("store/opening-stock", imports_api.store_opening_stock,
          name="store-opening-stock"),

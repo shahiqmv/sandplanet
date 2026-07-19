@@ -156,6 +156,54 @@ def notify_document(doc, actor=None):
         log.exception("notify_document failed for %s", getattr(doc, "ref", "?"))
 
 
+def notify_tracking(tracking, result):
+    """Milestone-only pushes for a shipment tracking update (D43): departed /
+    arrived to the originator + Purchasing (+ dest PM on arrival); ETA slip to
+    Purchasing + dest PM; transshipment is timeline-only (no push). Never
+    raises — a notification failure must not roll back an event ingest."""
+    from .models import TrackingEvent
+    try:
+        doc = tracking.shipment.order.document
+        ref = doc.ref
+        purchasing = _role_users("HO_PURCHASING")
+        originator = ([doc.created_by] if doc.created_by_id else [])
+        pm = _pm_for(doc)
+        seen = set()
+
+        def emit(users, title, body):
+            for u in users:
+                if u and u.id not in seen:
+                    seen.add(u.id)
+                    notify_user(u, title, body, doc=doc, category="alert")
+
+        for ev in result.get("created", []):
+            if ev.code == TrackingEvent.Code.DEPARTED:
+                emit(list(purchasing) + originator,
+                     f"{ref} — shipment departed origin", ev.description)
+            elif ev.code == TrackingEvent.Code.ARRIVED:
+                emit(list(purchasing) + pm + originator,
+                     f"{ref} — shipment arrived Malé", ev.description)
+        if result.get("eta_slipped"):
+            eta = tracking.current_eta
+            emit(list(purchasing) + pm, f"{ref} — ETA changed",
+                 f"New ETA {eta:%Y-%m-%d}" if eta else "ETA updated")
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("notify_tracking failed")
+
+
+def notify_tracking_problem(tracking, kind):
+    """Failed registration / gone stale → Purchasing only."""
+    try:
+        doc = tracking.shipment.order.document
+        title = (f"{doc.ref} — tracking failed" if kind == "failed"
+                 else f"{doc.ref} — tracking has gone stale")
+        for u in _role_users("HO_PURCHASING"):
+            notify_user(u, title, tracking.last_error or "", doc=doc,
+                        category="alert")
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("notify_tracking_problem failed")
+
+
 def notify_void_request(pv, actor=None):
     """Tell the signatories that Finance has asked to void an authorised
     voucher, so they can authorise (or decline) the reversal."""

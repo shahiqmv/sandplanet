@@ -139,20 +139,41 @@ class ShipmentSerializer(serializers.ModelSerializer):
                                               read_only=True)
     missing_clearing = serializers.SerializerMethodField()
     next_statuses = serializers.SerializerMethodField()
+    tracking = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportShipment
         fields = ["id", "seq", "mode", "forwarder", "forwarder_display",
-                  "vessel_flight", "container_awb", "etd", "eta",
-                  "tracking_ref", "carrier_link", "status", "status_display",
-                  "shared_with_agent_at", "freight", "insurance",
-                  "customs_duty", "import_gst", "port_handling",
+                  "vessel_flight", "carrier_scac", "bl_no", "container_awb",
+                  "etd", "eta", "tracking_ref", "carrier_link", "status",
+                  "status_display", "shared_with_agent_at", "freight",
+                  "insurance", "customs_duty", "import_gst", "port_handling",
                   "agent_charges", "local_transport",
                   "clearing_total", "documents", "lines", "missing_clearing",
-                  "next_statuses", "notes"]
+                  "next_statuses", "notes", "tracking"]
 
     def get_forwarder_display(self, obj):
         return obj.forwarder.name if obj.forwarder_id else obj.forwarder_name
+
+    def get_tracking(self, obj):
+        t = getattr(obj, "tracking", None)
+        if t is None:
+            return None
+        # stakeholder timeline shows only the normalised milestones, newest last
+        events = [e for e in t.events.all() if e.code != "OTHER"]
+        return {
+            "state": t.state, "state_display": t.get_state_display(),
+            "mode": t.mode, "carrier_scac": t.carrier_scac,
+            "raw_status": t.raw_status, "map_url": t.map_url,
+            "current_eta": t.current_eta, "last_event_at": t.last_event_at,
+            "last_error": t.last_error,
+            "events": [{
+                "code": e.code, "code_display": e.get_code_display(),
+                "description": e.description, "location": e.location,
+                "vessel_flight": e.vessel_flight, "event_time": e.event_time,
+                "is_actual": e.is_actual, "source": e.source,
+            } for e in events],
+        }
 
     def get_missing_clearing(self, obj):
         return ipr_svc.missing_clearing_docs(obj)

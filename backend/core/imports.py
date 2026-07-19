@@ -7,6 +7,7 @@ converted to MVR at the manually agreed rate (D4). Commitment splits per line:
 each project allocation commits to that project's site; the general-stock
 balance commits to the General Stock pool (never a project).
 """
+import logging
 from decimal import Decimal
 
 from django.db import transaction
@@ -17,6 +18,7 @@ from .models import (Document, DocumentLink, DocumentRevision, ImportAllocation,
                      ImportOrder, ImportOrderLine, Item, Project, Supplier)
 from .numbering import next_ref
 
+log = logging.getLogger(__name__)
 ZERO = Decimal("0")
 
 
@@ -417,7 +419,15 @@ def create_shipment(order, data, actor):
     within that line's still-to-ship balance. With no allocation given, the
     shipment carries the whole remaining order (single-shipment / 'ship the
     rest' default)."""
+    from . import tracking as trk
     from .models import ImportShipment, ImportShipmentLine, Supplier
+    # Reject a malformed tracking key at data entry (D40, AC5).
+    mode = data.get("mode") or "SEA"
+    key_err = trk.validate_shipment_keys(
+        mode, data.get("bl_no", ""), data.get("container_awb", ""),
+        data.get("carrier_scac", ""))
+    if key_err:
+        return None, key_err
     seq = (order.shipments.count() or 0) + 1
     forwarder = None
     if data.get("forwarder_id"):
@@ -450,9 +460,11 @@ def create_shipment(order, data, actor):
             return None, "The whole order is already on shipments."
 
     shipment = ImportShipment.objects.create(
-        order=order, seq=seq, mode=(data.get("mode") or "SEA"),
+        order=order, seq=seq, mode=mode,
         forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
         vessel_flight=data.get("vessel_flight", ""),
+        carrier_scac=(data.get("carrier_scac", "") or "").strip().upper(),
+        bl_no=data.get("bl_no", ""),
         container_awb=data.get("container_awb", ""),
         etd=data.get("etd") or None, eta=data.get("eta") or None,
         tracking_ref=data.get("tracking_ref", ""),
@@ -486,6 +498,17 @@ def advance_shipment(shipment, to_status, actor):
     audit("document", shipment.order.document_id, "SHIPMENT_STATUS",
           actor=actor, from_state=old, to_state=to_status,
           detail={"shipment": shipment.seq})
+    if to_status == "SHIPPED":
+        # Auto-register live tracking (D40). Best-effort — a provider outage or
+        # a missing key must never block the shipment moving to Shipped.
+        try:
+            from . import tracking as trk
+            t = trk.ensure_tracking(shipment)
+            if t and t.state == t.State.PENDING:
+                trk.register_tracking(t)
+        except Exception:               # pragma: no cover - defensive
+            log.exception("tracking registration failed for shipment %s",
+                          shipment.id)
     if to_status == "ARRIVED":
         fire_milestones(shipment.order, "ARRIVAL", actor)
     return None
