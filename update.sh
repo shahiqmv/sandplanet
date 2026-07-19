@@ -65,6 +65,25 @@ ensure_swap() {
 
 ensure_swap
 
+ensure_tracking_cron() {
+  # Daily backstop poll for shipment tracking (ShipsGo webhooks are primary).
+  # Idempotent: only added once, keyed on a marker comment.
+  APP_DIR="$(pwd)"
+  MARK="# planet-poll-trackings"
+  if crontab -l 2>/dev/null | grep -qF "$MARK"; then
+    return 0
+  fi
+  echo "==> Scheduling the daily shipment-tracking poll (06:00) in cron…"
+  LINE="0 6 * * * cd $APP_DIR && docker compose -f docker-compose.prod.yml exec -T web python manage.py poll_trackings >> $APP_DIR/tracking-poll.log 2>&1"
+  ( crontab -l 2>/dev/null; echo "$MARK"; echo "$LINE" ) | crontab - \
+    && echo "    tracking poll scheduled (log: tracking-poll.log)." \
+    || echo "!! Could not install the cron entry automatically — add it by hand:
+    crontab -e   then add:
+    $LINE"
+}
+
+ensure_tracking_cron
+
 # Run the deploy detached (setsid + nohup) so a dropped console can't kill it,
 # then follow the log. Ctrl-C or a lost console only stops the tail.
 : > "$DEPLOY_LOG"
