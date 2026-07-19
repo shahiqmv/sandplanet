@@ -167,21 +167,83 @@ def _pv_line_ref(ln):
         return m.label or "—"
 
 
+def _pr_vendor_summary(pr):
+    """Short 'who we're paying' line for a PR: the awarded vendors."""
+    names = []
+    rev = pr.current_revision
+    if rev is not None:
+        for ln in rev.lines.all():
+            net = (ln.amount_cash or 0) + (ln.amount_credit or 0)
+            name = (ln.vendor or ln.free_text_desc or "").strip()
+            if net > 0 and name and name not in names:
+                names.append(name)
+    if not names:
+        return ""
+    if len(names) <= 2:
+        return ", ".join(names)
+    return f"{names[0]}, {names[1]} +{len(names) - 2} more"
+
+
+def _pv_line_detail(ln):
+    """A readable summary of one voucher line so the signatory knows what the
+    payment is for — payee, purpose, vendors — not just a document ref."""
+    d = {"ref": _pv_line_ref(ln), "amount": float(ln.amount or 0),
+         "currency": ln.currency, "kind": "", "title": "", "subtitle": "",
+         "site_code": ""}
+    src = ln.source_document
+    if src is not None:
+        d["site_code"] = src.site.code if src.site_id else ""
+        if src.doc_type == "PYR" and hasattr(src, "payment_request"):
+            pr = src.payment_request
+            d["kind"] = "Payment request"
+            d["title"] = pr.payee or "Payment"
+            d["subtitle"] = " · ".join(
+                x for x in (pr.purpose, getattr(pr.cost_head, "name", None))
+                if x)
+        elif src.doc_type == "PR":
+            d["kind"] = "Procurement"
+            d["title"] = _pr_vendor_summary(src) or "Materials procurement"
+            d["subtitle"] = "Local purchase"
+        else:
+            d["kind"] = src.doc_type
+            d["title"] = src.ref
+    elif ln.source_milestone_id:
+        m = ln.source_milestone
+        d["kind"] = "Import payment"
+        d["site_code"] = "HO"
+        try:
+            d["title"] = m.order.supplier.name
+            d["subtitle"] = f"{m.order.document.ref} · {m.label}"
+        except Exception:           # pragma: no cover - defensive
+            d["title"] = m.label or "Milestone"
+    elif ln.source_payable_id:
+        p = ln.source_payable
+        d["kind"] = "Credit payable"
+        d["site_code"] = p.site.code if p.site_id else ""
+        d["title"] = p.vendor or "Payable"
+        d["subtitle"] = f"terms {p.terms or '—'} · due {p.due_date or '—'}"
+    return d
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
     from .serializers_documents import DocumentSerializer
     if doc.doc_type == "PV":
         qs = (PaymentVoucherLine.objects.filter(voucher=doc)
-              .select_related("source_document",
-                              "source_milestone__order__document"))
-        lines = [{"ref": _pv_line_ref(ln),
-                  "amount": float(ln.amount or 0), "currency": ln.currency}
-                 for ln in qs]
+              .select_related("source_document__site",
+                              "source_document__payment_request__cost_head",
+                              "source_milestone__order__document",
+                              "source_milestone__order__supplier",
+                              "source_payable__site")
+              .order_by("id"))
+        lines = [_pv_line_detail(ln) for ln in qs]
         return {"ref": doc.ref, "doc_type": "PV", "status": doc.status,
                 "doc_date": doc.doc_date,
+                "prepared_by": (doc.created_by.full_name
+                                if doc.created_by_id else None),
                 "amount": float(sum(x["amount"] for x in lines)),
-                "lines": lines}
+                "line_count": len(lines), "lines": lines}
     return DocumentSerializer(doc, context={"request": request}).data
 
 

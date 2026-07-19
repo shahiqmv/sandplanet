@@ -261,7 +261,7 @@ function Row({ k, v }) {
 function FieldsGrid({ d }) {
   return (
     <dl className="detail-grid">
-      <Row k="Raised by" v={d.created_by_name} />
+      <Row k="Raised by" v={d.created_by_name || d.prepared_by} />
       <Row k="Date" v={d.doc_date} />
       <Row k="Project" v={d.project_title || d.project_code} />
       <Row k="Supplier" v={d.supplier_name} />
@@ -295,7 +295,8 @@ function PaymentBlock({ d }) {
   );
 }
 
-// PV lines come as {ref, amount, currency}; document lines as rich rows.
+// PV lines come as rich {ref, kind, title, subtitle, site_code, amount,
+// currency} summaries; document lines as item rows.
 function Lines({ d }) {
   const lines = d.lines || [];
   if (!lines.length) return null;
@@ -307,33 +308,51 @@ function Lines({ d }) {
   return (
     <div className="card">
       <div className="card-hd">
-        <span className="dtype">{isPV ? "Vouchered" : "Line items"}</span>
+        <span className="dtype">
+          {isPV ? `Paying for — ${lines.length} item${lines.length > 1 ? "s" : ""}`
+                : "Line items"}
+        </span>
         {total ? <span className="amount">{money(total)}</span> : null}
       </div>
       <div className="card-bd" style={{ padding: 0 }}>
         <table className="lines">
           <tbody>
-            {lines.map((l, i) => (
-              <tr key={l.id || i}>
-                <td>
-                  <div style={{ fontWeight: 500 }}>
-                    {l.description || l.free_text_desc || l.ref || l.item_code || "—"}
-                  </div>
-                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
-                    {[
-                      l.qty_required != null &&
-                        `${l.qty_required}${l.unit ? " " + l.unit : ""}`,
-                      l.item_code && !l.description ? null : l.item_code,
-                    ]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </div>
-                </td>
-                <td className="num">
-                  {money(l.amount, isPV ? l.currency : undefined)}
-                </td>
-              </tr>
-            ))}
+            {lines.map((l, i) =>
+              isPV ? (
+                <tr key={l.ref || i}>
+                  <td>
+                    <div style={{ fontWeight: 600 }}>{l.title || l.ref}</div>
+                    {l.subtitle && (
+                      <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                        {l.subtitle}
+                      </div>
+                    )}
+                    <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 2 }}>
+                      {[l.kind, l.ref, l.site_code].filter(Boolean).join(" · ")}
+                    </div>
+                  </td>
+                  <td className="num">{money(l.amount, l.currency)}</td>
+                </tr>
+              ) : (
+                <tr key={l.id || i}>
+                  <td>
+                    <div style={{ fontWeight: 500 }}>
+                      {l.description || l.free_text_desc || l.ref || l.item_code || "—"}
+                    </div>
+                    <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                      {[
+                        l.qty_required != null &&
+                          `${l.qty_required}${l.unit ? " " + l.unit : ""}`,
+                        l.item_code && !l.description ? null : l.item_code,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </div>
+                  </td>
+                  <td className="num">{money(l.amount)}</td>
+                </tr>
+              )
+            )}
           </tbody>
         </table>
       </div>

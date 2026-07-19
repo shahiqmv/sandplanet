@@ -68,6 +68,20 @@ class VoucherHappyPathTests(VoucherBase):
         self.assertIn(a, refs)
         self.assertIn(b, refs)
 
+    def test_mobile_voucher_summary_names_payee_and_purpose(self):
+        # The signatory's mobile detail summarises each line so they know what
+        # the payment is for — not just a document ref (owner 2026-07-19).
+        from .views_mobile import _document_payload
+        a = self.director_approved_pyr(amount=3000, payee="Boat Co")
+        pv = self.create_voucher([a]).data["ref"]
+        payload = _document_payload(Document.objects.get(ref=pv), None)
+        self.assertEqual(payload["doc_type"], "PV")
+        line = payload["lines"][0]
+        self.assertEqual(line["kind"], "Payment request")
+        self.assertEqual(line["title"], "Boat Co")
+        self.assertIn("Boat hire", line["subtitle"])
+        self.assertEqual(line["ref"], a)
+
     def test_create_submit_approve_commits_each_line(self):
         a = self.director_approved_pyr(amount=3000, payee="A")
         b = self.director_approved_pyr(amount=1500, payee="B")
