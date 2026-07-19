@@ -40,7 +40,13 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [booting, setBooting] = useState(true);
   const [tab, setTab] = useState(null);
-  const [detail, setDetail] = useState(null); // {mode:'doc'|'timeline', ref}
+  // Navigation stack of {mode:'doc'|'timeline', ref}; last entry is on screen.
+  // A stack (not a single value) lets a tapped voucher line drill into its
+  // source doc and Back return to the voucher.
+  const [nav, setNav] = useState([]);
+  const detail = nav[nav.length - 1] || null;
+  const openDetail = (d) => setNav((n) => [...n, d]);
+  const goBack = () => setNav((n) => n.slice(0, -1));
   const [toast, setToast] = useState(null);
   const [stamp, setStamp] = useState(null);
   const [online, setOnline] = useState(navigator.onLine);
@@ -77,7 +83,7 @@ export default function App() {
     if (!user) return;
     const ref = parseTrack(window.location.pathname);
     if (ref) {
-      setDetail({ mode: "timeline", ref });
+      setNav([{ mode: "timeline", ref }]);
       window.history.replaceState({}, "", "/m/");
     }
   }, [user]);
@@ -89,7 +95,7 @@ export default function App() {
       const url = e.data && e.data.url;
       if (!url) return;
       const ref = parseTrack(new URL(url, window.location.origin).pathname);
-      if (ref) setDetail({ mode: "timeline", ref });
+      if (ref) setNav([{ mode: "timeline", ref }]);
     };
     navigator.serviceWorker.addEventListener("message", onMsg);
     return () => navigator.serviceWorker.removeEventListener("message", onMsg);
@@ -120,7 +126,7 @@ export default function App() {
     setStamp({ text, tone });
     setTimeout(() => {
       setStamp(null);
-      setDetail(null);
+      setNav([]);
       setRefreshKey((k) => k + 1);
       showToast({ msg: `${text} — done.`, tone: tone || "ok" });
     }, 900);
@@ -140,7 +146,7 @@ export default function App() {
     }
     setToken("");
     setUser(null);
-    setDetail(null);
+    setNav([]);
     setTab(null);
   }
 
@@ -157,7 +163,7 @@ export default function App() {
     <div className="app">
       {detail ? (
         <div className="topbar">
-          <button className="back" onClick={() => setDetail(null)}>
+          <button className="back" onClick={goBack}>
             ← Back
           </button>
           <div className="topbar-row">
@@ -216,6 +222,7 @@ export default function App() {
             online={online}
             onActioned={afterAction}
             onToast={showToast}
+            onOpen={openDetail}
           />
         )
       ) : (
@@ -227,17 +234,17 @@ export default function App() {
           {tab === "pending" && (
             <PendingInbox
               key={`pending-${refreshKey}`}
-              onOpen={setDetail}
+              onOpen={openDetail}
               onCount={(n) => setCounts((c) => ({ ...c, pending: n }))}
             />
           )}
           {tab === "requests" && (
-            <MyRequests key={`requests-${refreshKey}`} onOpen={setDetail} />
+            <MyRequests key={`requests-${refreshKey}`} onOpen={openDetail} />
           )}
           {tab === "alerts" && (
             <Alerts
               key={`alerts-${refreshKey}`}
-              onOpen={setDetail}
+              onOpen={openDetail}
               onCount={(n) => setCounts((c) => ({ ...c, alerts: n }))}
             />
           )}

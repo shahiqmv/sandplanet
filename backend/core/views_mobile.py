@@ -4,6 +4,8 @@ A thin, token-authenticated client surface over the existing business logic.
 No new rules live here: queues reuse the desktop 'waiting on you' computation,
 actions call the same transition service, and scoping is server-enforced.
 """
+from decimal import Decimal
+
 from django.contrib.auth import authenticate as dj_authenticate
 from rest_framework.decorators import (api_view, authentication_classes,
                                        permission_classes)
@@ -225,10 +227,138 @@ def _pv_line_detail(ln):
     return d
 
 
+def _money(v, ccy="MVR"):
+    return f"{ccy} {float(v or 0):,.2f}"
+
+
+def _pr_mobile_payload(doc, request):
+    """A concise 'what am I awarding' summary of a PR for the Director: the
+    quoted vendors with amounts, the cash/credit/GST split, and which MRs it
+    covers — not the full quotation comparison (that stays on desktop)."""
+    from .procurement import pr_cash_total, pr_gst_total, pr_grand_total
+    base = _base_header(doc, request)
+    lines, credit = [], Decimal("0")
+    rev = doc.current_revision
+    if rev is not None:
+        for ln in rev.lines.all():
+            cash = ln.amount_cash or 0
+            cr = ln.amount_credit or 0
+            gst = ln.gst_amount or 0
+            net = cash + cr
+            if net <= 0:
+                continue
+            is_credit = cr > 0
+            credit += cr
+            terms = ("Credit" if is_credit else "Cash")
+            if ln.quotation_ref:
+                terms += f" · quote {ln.quotation_ref}"
+            lines.append({
+                "ref": "", "kind": terms, "title": ln.vendor
+                or ln.free_text_desc or "Vendor",
+                "subtitle": "", "amount": float(net + gst), "currency": "MVR",
+                "site_code": ""})
+    mr_refs = [l.to_document.ref for l in doc.links_from.filter(
+        link_type="MR_PR").select_related("to_document")]
+    summary = [
+        {"k": "Cash", "v": _money(pr_cash_total(doc))},
+        {"k": "Credit", "v": _money(credit)},
+        {"k": "GST (input)", "v": _money(pr_gst_total(doc))},
+        {"k": "Total", "v": _money(pr_grand_total(doc))},
+    ]
+    if mr_refs:
+        summary.append({"k": "For", "v": ", ".join(mr_refs)})
+    base.update({"amount": float(pr_grand_total(doc)), "currency": "MVR",
+                 "line_label": "Quoted vendors", "summary": summary,
+                 "lines": lines})
+    return base
+
+
+def _ipr_mobile_payload(doc, request):
+    """A concise overseas-order summary for the Director/Signatory: supplier,
+    order value in the order currency and MVR, incoterm, the line items, and
+    the payment-milestone schedule."""
+    from .imports import ipr_mvr_total, ipr_order_total
+    base = _base_header(doc, request)
+    order = getattr(doc, "import_order", None)
+    if order is None:
+        base.update({"lines": [], "summary": []})
+        return base
+    ccy = order.order_currency
+    total = ipr_order_total(order)
+    lines = []
+    for ln in order.lines.all():
+        qty = float(ln.order_qty or 0)
+        lines.append({
+            "ref": "", "kind": "", "title": ln.description or "Item",
+            "subtitle": f"{qty:g} {ln.unit or ''} × {ccy} "
+                        f"{float(ln.unit_price or 0):,.2f}".strip(),
+            "amount": float(ln.line_value), "currency": ccy, "site_code": ""})
+    milestones = []
+    for m in order.milestones.order_by("seq"):
+        if m.fixed_amount is not None:
+            amt = m.fixed_amount
+        elif m.percent is not None:
+            amt = (total * m.percent / Decimal("100"))
+        else:
+            amt = Decimal("0")
+        milestones.append({
+            "label": m.label, "when": m.get_trigger_display(),
+            "amount": _money(amt, ccy), "status": m.status})
+    summary = [
+        {"k": "Order value", "v": _money(total, ccy)},
+        {"k": "In MVR", "v": f"{_money(ipr_mvr_total(order))} "
+                             f"@ {order.exchange_rate}"},
+    ]
+    if order.incoterm:
+        summary.append({"k": "Incoterm", "v": order.incoterm})
+    base.update({"amount": float(total), "currency": ccy,
+                 "supplier_name": order.supplier.name,
+                 "line_label": "Order items", "summary": summary,
+                 "lines": lines, "milestones": milestones})
+    return base
+
+
+def _base_header(doc, request):
+    return {"ref": doc.ref, "doc_type": doc.doc_type, "status": doc.status,
+            "rev_label": doc.current_revision.rev_label
+            if doc.current_revision_id else "",
+            "doc_date": doc.doc_date,
+            "site_code": doc.site.code if doc.site_id else "",
+            "project_code": getattr(doc.project, "code", None)
+            if doc.project_id else None,
+            "created_by_name": (doc.created_by.full_name
+                                if doc.created_by_id else None),
+            "attachments": _attachment_list(doc, request),
+            "approvals": _approval_list(doc)}
+
+
+def _attachment_list(doc, request):
+    out = []
+    for a in doc.attachments.all():
+        url = a.file.url if a.file else None
+        if url and request is not None:
+            url = request.build_absolute_uri(url)
+        out.append({"id": a.id, "kind": a.kind, "file_name": a.file_name,
+                    "caption": a.caption, "url": url})
+    return out
+
+
+def _approval_list(doc):
+    return [{"action": a.action, "result": a.result or a.action,
+             "actor_name": a.actor.full_name if a.actor_id else "",
+             "actor_role": a.actor_role, "acted_at": a.acted_at,
+             "comment": a.comment}
+            for a in doc.approvals.select_related("actor").order_by("acted_at")]
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
     from .serializers_documents import DocumentSerializer
+    if doc.doc_type == "PR":
+        return _pr_mobile_payload(doc, request)
+    if doc.doc_type == "IPR":
+        return _ipr_mobile_payload(doc, request)
     if doc.doc_type == "PV":
         qs = (PaymentVoucherLine.objects.filter(voucher=doc)
               .select_related("source_document__site",

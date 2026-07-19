@@ -460,6 +460,31 @@ class ChainTests(ProcBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
 
+    def test_pr_mobile_summary_lists_vendors_and_split(self):
+        # The Director's mobile PR view summarises the cash/credit split and the
+        # quoted vendors so they know what they're awarding (owner 2026-07-19).
+        from .views_mobile import _document_payload
+        mr_ref = self.mr_to_sent()
+        self.as_user(self.purchasing)
+        pr = self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr_ref],
+            "lines": [
+                {"free_text_desc": "Vendor A", "vendor": "Vendor A",
+                 "amount_cash": 5000},
+                {"free_text_desc": "Vendor B", "vendor": "Vendor B",
+                 "amount_credit": 7000},
+            ]}, format="json").data
+        self.act(pr["ref"], "submit")
+        self.as_user(self.director)
+        self.act(pr["ref"], "approve")
+        p = _document_payload(Document.objects.get(ref=pr["ref"]), None)
+        facts = {f["k"]: f["v"] for f in p["summary"]}
+        self.assertEqual(facts["Cash"], "MVR 5,000.00")
+        self.assertEqual(facts["Credit"], "MVR 7,000.00")
+        self.assertIn(mr_ref, facts["For"])
+        self.assertEqual([(l["title"], l["kind"]) for l in p["lines"]],
+                         [("Vendor A", "Cash"), ("Vendor B", "Credit")])
+
     def test_lm_departure_creates_pending_and_updates_mr(self):
         mr_ref = self.mr_to_sent()
         lm = self.make_lm(mr_ref)

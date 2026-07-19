@@ -115,7 +115,7 @@ export function ActionedList({ onOpen }) {
 // on a PYR (and everything else) read as "approve".
 const AUTHORISE_TYPES = new Set(["PV"]);
 
-export function DocumentDetail({ docRef, online, onActioned, onToast }) {
+export function DocumentDetail({ docRef, online, onActioned, onToast, onOpen }) {
   const { data, error, loading } = useAsync(() => api.document(docRef), [docRef]);
   const [busy, setBusy] = useState(false);
   const [returning, setReturning] = useState(false);
@@ -180,7 +180,10 @@ export function DocumentDetail({ docRef, online, onActioned, onToast }) {
         </div>
 
         <PaymentBlock d={d} />
-        <Lines d={d} />
+        <SummaryFacts d={d} />
+        <Lines d={d} onOpenRef={onOpen && d.doc_type === "PV"
+          ? (ref) => onOpen({ mode: "doc", ref }) : null} />
+        <Milestones d={d} />
         <Remarks d={d} />
         <Attachments d={d} />
         <ApprovalTrail d={d} />
@@ -295,12 +298,62 @@ function PaymentBlock({ d }) {
   );
 }
 
-// PV lines come as rich {ref, kind, title, subtitle, site_code, amount,
-// currency} summaries; document lines as item rows.
-function Lines({ d }) {
+// Key facts as a small label/value grid (PR split, IPR supplier & value…).
+function SummaryFacts({ d }) {
+  const facts = d.summary || [];
+  if (!facts.length) return null;
+  return (
+    <div className="card">
+      <div className="card-bd">
+        <dl className="detail-grid">
+          {facts.map((f, i) => <Row key={i} k={f.k} v={f.v} />)}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+// Import payment schedule (IPR).
+function Milestones({ d }) {
+  const ms = d.milestones || [];
+  if (!ms.length) return null;
+  return (
+    <div className="card">
+      <div className="card-hd">
+        <span className="dtype">Payment schedule</span>
+      </div>
+      <div className="card-bd" style={{ padding: 0 }}>
+        <table className="lines">
+          <tbody>
+            {ms.map((m, i) => (
+              <tr key={i}>
+                <td>
+                  <div style={{ fontWeight: 500 }}>{m.label}</div>
+                  <div style={{ color: "var(--muted)", fontSize: 12 }}>
+                    {[m.when, m.status].filter(Boolean).join(" · ")}
+                  </div>
+                </td>
+                <td className="num">{m.amount}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Rich lines (PV/PR/IPR: title + subtitle + amount) vs plain item rows.
+// PV lines are tappable to drill into the source doc when onOpenRef is given.
+function Lines({ d, onOpenRef }) {
   const lines = d.lines || [];
   if (!lines.length) return null;
-  const isPV = d.doc_type === "PV";
+  const rich = !!(d.line_label || d.doc_type === "PV");
+  const label =
+    d.line_label ||
+    (d.doc_type === "PV"
+      ? `Paying for — ${lines.length} item${lines.length > 1 ? "s" : ""}`
+      : "Line items");
   const total =
     d.amount != null
       ? d.amount
@@ -308,18 +361,21 @@ function Lines({ d }) {
   return (
     <div className="card">
       <div className="card-hd">
-        <span className="dtype">
-          {isPV ? `Paying for — ${lines.length} item${lines.length > 1 ? "s" : ""}`
-                : "Line items"}
-        </span>
-        {total ? <span className="amount">{money(total)}</span> : null}
+        <span className="dtype">{label}</span>
+        {total ? (
+          <span className="amount">{money(total, d.currency)}</span>
+        ) : null}
       </div>
       <div className="card-bd" style={{ padding: 0 }}>
         <table className="lines">
           <tbody>
             {lines.map((l, i) =>
-              isPV ? (
-                <tr key={l.ref || i}>
+              rich ? (
+                <tr
+                  key={l.ref || i}
+                  className={onOpenRef && l.ref ? "tap" : ""}
+                  onClick={onOpenRef && l.ref ? () => onOpenRef(l.ref) : undefined}
+                >
                   <td>
                     <div style={{ fontWeight: 600 }}>{l.title || l.ref}</div>
                     {l.subtitle && (
@@ -327,9 +383,12 @@ function Lines({ d }) {
                         {l.subtitle}
                       </div>
                     )}
-                    <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 2 }}>
-                      {[l.kind, l.ref, l.site_code].filter(Boolean).join(" · ")}
-                    </div>
+                    {[l.kind, l.ref, l.site_code].filter(Boolean).length > 0 && (
+                      <div style={{ color: "var(--muted)", fontSize: 11.5, marginTop: 2 }}>
+                        {[l.kind, l.ref, l.site_code].filter(Boolean).join(" · ")}
+                        {onOpenRef && l.ref ? "  ›" : ""}
+                      </div>
+                    )}
                   </td>
                   <td className="num">{money(l.amount, l.currency)}</td>
                 </tr>

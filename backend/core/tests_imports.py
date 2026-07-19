@@ -770,6 +770,23 @@ class QsOverseasAuthTests(IprBase):
         self.assertEqual(Document.objects.get(ref=ref).status, "SUBMITTED")
 
 
+class IprMobileSummaryTests(IprBase):
+    """The mobile IPR detail shows supplier, order value and items so the
+    Director/Signatory can review the overseas order (owner 2026-07-19)."""
+
+    def test_ipr_mobile_summary_shows_order_and_items(self):
+        from .views_mobile import _document_payload
+        ref = self.create_and_authorise()
+        p = _document_payload(Document.objects.get(ref=ref), None)
+        self.assertEqual(p["supplier_name"], "Guangzhou Pumps Co")
+        self.assertEqual(p["currency"], "USD")
+        facts = {f["k"]: f["v"] for f in p["summary"]}
+        self.assertIn("Order value", facts)
+        self.assertIn("In MVR", facts)
+        self.assertTrue(p["lines"])
+        self.assertTrue(p["lines"][0]["title"])
+
+
 class MobileIprAuthoriseTests(IprBase):
     """The signatory authorises a Director-awarded overseas order from the
     mobile app, raising its PO (owner 2026-07-16)."""
