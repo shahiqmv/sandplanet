@@ -226,6 +226,21 @@ def notify_void_request(pv, actor=None):
             body=pv.void_reason or "", doc=pv, category="approval")
 
 
+def notify_subcontractor(sub, actor=None):
+    """Route a subcontractor activation forward: PM approval → Directors act
+    next; Director activation → tell the creator it's live."""
+    from .models import Subcontractor
+    body = f"{sub.name} · {sub.site.code}"
+    if sub.status == Subcontractor.Status.PM_APPROVED:
+        for user in _role_users("DIRECTOR"):
+            notify_user(user, f"Subcontractor {sub.name} — activate",
+                        body=body, category="approval")
+    elif sub.status == Subcontractor.Status.APPROVED:
+        if sub.created_by_id and (not actor or sub.created_by_id != actor.id):
+            notify_user(sub.created_by, f"Subcontractor {sub.name} — approved",
+                        body=body, category="alert")
+
+
 def notify_user(user, title, body="", doc=None, category="alert"):
     """Ad-hoc notification (e.g. an import payment falling due)."""
     try:

@@ -6,7 +6,8 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
-    views_stock as stock, views_tools as tools_api, \
+    views_stock as stock, views_subcontract as subcontract_api, \
+    views_tools as tools_api, \
     views_tracking as tracking_api, views_vouchers as vouchers
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -265,6 +266,16 @@ urlpatterns = [
     path("payroll-export/<int:year>/<int:month>", hr.payroll_export,
          name="payroll-export"),
     path("overtime-rates", hr.overtime_rates, name="overtime-rates"),
+    path("subcontractors", subcontract_api.subcontractors,
+         name="subcontractors"),
+    path("subcontractors/<int:pk>", subcontract_api.subcontractor_detail,
+         name="subcontractor-detail"),
+    path("subcontractors/<int:pk>/action", subcontract_api.subcontractor_action,
+         name="subcontractor-action"),
+    path("subcontractors/<int:pk>/workers",
+         subcontract_api.subcontractor_workers, name="subcontractor-workers"),
+    path("subcontract-workers/<int:emp_id>/action",
+         subcontract_api.subcontract_worker_action, name="subcontract-worker"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),

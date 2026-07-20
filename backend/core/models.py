@@ -1431,6 +1431,9 @@ class Employee(models.Model):
     subcontractor = models.ForeignKey(
         "Subcontractor", on_delete=models.PROTECT, null=True, blank=True,
         related_name="workers")
+    # A newly-added subcontract worker awaits PM approval; until then is_active
+    # is False so it stays out of every attendance roster + manpower count.
+    sub_pending = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1469,8 +1472,9 @@ class Subcontractor(models.Model):
     Subcontract Valuation Certificates, never payroll."""
 
     class Status(models.TextChoices):
-        DRAFT = "DRAFT", "Draft"            # created, not yet approved
-        APPROVED = "APPROVED", "Approved"   # PM+Director approved — SCAs allowed
+        DRAFT = "DRAFT", "Draft"            # created by site, not submitted
+        PM_APPROVED = "PM_APPROVED", "PM approved"   # awaiting Director
+        APPROVED = "APPROVED", "Approved"   # Director approved — SCAs allowed
         ACTIVE = "ACTIVE", "Active"
         SUSPENDED = "SUSPENDED", "Suspended"
         CLOSED = "CLOSED", "Closed"
@@ -1482,7 +1486,7 @@ class Subcontractor(models.Model):
     contact_person = models.CharField(max_length=120, blank=True)
     phone = models.CharField(max_length=40, blank=True)
     bank_details = models.TextField(blank=True)          # PYR/PV payee
-    status = models.CharField(max_length=10, choices=Status.choices,
+    status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
