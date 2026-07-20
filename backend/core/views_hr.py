@@ -326,13 +326,15 @@ def attendance_grid(request):
     roster = Employee.objects.filter(
         is_active=True, site_allocations__site=site,
         site_allocations__to_date__isnull=True,
-    ).select_related("job_category").order_by("emp_no").distinct()
+    ).select_related("job_category", "subcontractor") \
+        .order_by("emp_no").distinct()
     existing = {a.employee_id: a for a in Attendance.objects.filter(
         site=site, day=day)}
     rows = []
     for employee in roster:
         att = existing.get(employee.id)
         default_remark = "OFF" if is_rest_day else "PRESENT"
+        is_sub = employee.engagement_type == Employee.Engagement.SUBCONTRACT
         rows.append({
             "attendance_id": att.id if att else None,
             "employee_id": employee.id,
@@ -340,10 +342,16 @@ def attendance_grid(request):
             "full_name": employee.full_name,
             "category": employee.job_category.name
             if employee.job_category else "",
+            # Internal split (this form is not client-facing): a subcontract
+            # worker attends like everyone else but takes extra hours, not OT.
+            "is_subcontract": is_sub,
+            "subcontractor": employee.subcontractor.name
+            if is_sub and employee.subcontractor_id else "",
             "check_in": att.check_in if att else site.working_hours_from,
             "check_out": att.check_out if att else site.working_hours_to,
             "ot_requested": att.ot_requested if att else 0,
             "ot_approved": att.ot_approved if att else None,
+            "sub_extra_hours": att.sub_extra_hours if att else 0,
             "remark": att.remark if att else default_remark,
             "saved": att is not None,
         })
@@ -485,16 +493,25 @@ def attendance_bulk(request):
             continue
         check_in = parse_time(row.get("check_in"))
         check_out = parse_time(row.get("check_out"))
+        is_sub = employee.engagement_type == Employee.Engagement.SUBCONTRACT
+        # Subcontract workers never enter the OT request/approval pipeline —
+        # their beyond-window time is plain extra hours for the subcontractor.
+        defaults = {
+            "site": site, "check_in": check_in, "check_out": check_out,
+            "remark": remark, "entered_by": request.user,
+        }
+        if is_sub:
+            defaults["sub_extra_hours"] = Decimal(
+                str(row.get("sub_extra_hours") or 0))
+            defaults["ot_requested"] = Decimal("0")
+            defaults["ot_approved"] = None
+            defaults["ot_approved_by"] = None
+            defaults["ot_approved_at"] = None
+        else:
+            defaults["ot_requested"] = Decimal(str(row.get("ot_requested") or 0))
+            defaults["sub_extra_hours"] = Decimal("0")
         record, _created = Attendance.objects.update_or_create(
-            employee=employee, day=day,
-            defaults={
-                "site": site,
-                "check_in": check_in, "check_out": check_out,
-                "remark": remark,
-                "ot_requested": Decimal(str(row.get("ot_requested") or 0)),
-                "entered_by": request.user,
-            },
-        )
+            employee=employee, day=day, defaults=defaults)
         record.normal_hours = _normal_hours(
             site, record.check_in, record.check_out, remark)
         record.save(update_fields=["normal_hours"])
@@ -783,7 +800,8 @@ def dashboard_hr(request):
     todays = Attendance.objects.filter(day=today)
     present = todays.exclude(remark__in=("ABSENT", "LEAVE", "SICK")).count()
     ot_pending = Attendance.objects.filter(
-        ot_requested__gt=0, ot_approved__isnull=True).count()
+        ot_requested__gt=0, ot_approved__isnull=True,
+        employee__engagement_type="DIRECT").count()
 
     return Response({
         "month": f"{today.year}-{today.month:02d}",

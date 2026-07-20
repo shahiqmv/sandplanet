@@ -175,16 +175,27 @@ export default function AttendancePage({ site, me, onClose }) {
           <th style={th}>Emp No</th><th style={th}>Name</th>
           <th style={th}>Category</th><th style={th}>In</th>
           <th style={th}>Out</th><th style={th}>Remark</th>
-          <th style={th}>OT req (h)</th><th style={th}>OT approved</th>
+          <th style={th}>OT / Extra (h)</th><th style={th}>OT approved</th>
         </tr></thead>
         <tbody>
           {rows.map((row, i) => {
             const off = row.remark === "OFF";
+            const sub = row.is_subcontract;
             return (
-            <tr key={row.employee_id}>
+            <tr key={row.employee_id}
+                style={sub ? { background: "#eef5fb" } : undefined}>
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
-              <td style={td}>{row.full_name}</td>
+              <td style={td}>{row.full_name}
+                {sub && (
+                  <span style={{ marginLeft: 6, fontSize: 10.5,
+                                 fontWeight: 700, color: "#1a6091",
+                                 background: "#d5e6f3", borderRadius: 4,
+                                 padding: "1px 5px" }}>
+                    SUB{row.subcontractor ? ` · ${row.subcontractor}` : ""}
+                  </span>
+                )}
+              </td>
               <td style={td}>{row.category}</td>
               <td style={{ padding: 3 }}>
                 <input type="time" value={row.check_in || ""}
@@ -205,18 +216,35 @@ export default function AttendancePage({ site, me, onClose }) {
                   {remarkOptions.map((r) => <option key={r}>{r}</option>)}
                 </select>
               </td>
-              <td style={{ padding: 3 }}>
-                <input type="number" min="0" step="0.5"
-                       value={row.ot_requested ?? 0}
-                       disabled={grid?.locked || !canEnter || off}
-                       onChange={(e) => setRow(i, { ot_requested:
-                                                    e.target.value })}
-                       style={{ ...inputStyle, width: 75 }} />
-              </td>
-              <td style={{ ...td, color: row.ot_approved ? "#1a7f37"
-                                                         : "#5a6b78" }}>
-                {row.ot_approved ?? "—"}
-              </td>
+              {sub ? (
+                <td style={{ padding: 3 }} colSpan={2}>
+                  <input type="number" min="0" step="0.5"
+                         value={row.sub_extra_hours ?? 0}
+                         disabled={grid?.locked || !canEnter || off}
+                         onChange={(e) => setRow(i, { sub_extra_hours:
+                                                      e.target.value })}
+                         style={{ ...inputStyle, width: 75 }} />
+                  <span style={{ marginLeft: 8, fontSize: 11,
+                                 color: "#5a6b78" }}>
+                    extra hrs — passed to the subcontractor, no OT approval
+                  </span>
+                </td>
+              ) : (
+                <>
+                  <td style={{ padding: 3 }}>
+                    <input type="number" min="0" step="0.5"
+                           value={row.ot_requested ?? 0}
+                           disabled={grid?.locked || !canEnter || off}
+                           onChange={(e) => setRow(i, { ot_requested:
+                                                        e.target.value })}
+                           style={{ ...inputStyle, width: 75 }} />
+                  </td>
+                  <td style={{ ...td, color: row.ot_approved ? "#1a7f37"
+                                                             : "#5a6b78" }}>
+                    {row.ot_approved ?? "—"}
+                  </td>
+                </>
+              )}
             </tr>
             );
           })}

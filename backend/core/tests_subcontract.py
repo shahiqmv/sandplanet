@@ -296,3 +296,62 @@ class SubcontractAgreementTests(TestCase):
         self._auth(self.hr)
         r = self.client.get(f"/api/v1/documents/{ref}")
         self.assertEqual(r.status_code, 404)
+
+
+class SubcontractAttendanceTests(TestCase):
+    """Subcontract workers attend like the crew but take extra hours, not OT
+    (subcontractor module — attendance form update)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.sa = make_user("sa", User.Role.SITE_ADMIN, site=self.site)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Alif Gang",
+            status=Subcontractor.Status.APPROVED)
+        self.direct = Employee.objects.create(
+            emp_no="EMP-0001", full_name="Direct", job_category=self.mason,
+            is_active=True)
+        self.subw = Employee.objects.create(
+            emp_no="EMP-0002", full_name="SubW", job_category=self.mason,
+            engagement_type="SUBCONTRACT", subcontractor=self.sub,
+            is_active=True)
+        for e in (self.direct, self.subw):
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+        self.today = date.today().isoformat()
+
+    def test_grid_flags_subcontract_rows(self):
+        r = self.client.get(f"/api/v1/attendance?site={self.site.id}"
+                            f"&date={self.today}")
+        rows = {row["emp_no"]: row for row in r.data["rows"]}
+        self.assertFalse(rows["EMP-0001"]["is_subcontract"])
+        self.assertTrue(rows["EMP-0002"]["is_subcontract"])
+        self.assertEqual(rows["EMP-0002"]["subcontractor"], "Alif Gang")
+        self.assertIn("sub_extra_hours", rows["EMP-0002"])
+
+    def test_bulk_routes_extra_hours_and_bypasses_ot(self):
+        from .models import Attendance
+        payload = {"site": self.site.id, "date": self.today, "rows": [
+            {"employee_id": self.direct.id, "remark": "PRESENT",
+             "check_in": "07:00", "check_out": "17:00", "ot_requested": "3"},
+            {"employee_id": self.subw.id, "remark": "PRESENT",
+             "check_in": "07:00", "check_out": "17:00",
+             "ot_requested": "3", "sub_extra_hours": "2.5"},
+        ]}
+        r = self.client.put("/api/v1/attendance/bulk", payload, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d = Attendance.objects.get(employee=self.direct, day=date.today())
+        s = Attendance.objects.get(employee=self.subw, day=date.today())
+        # direct: OT recorded, awaiting approval; no extra hours
+        self.assertEqual(d.ot_requested, Decimal("3"))
+        self.assertEqual(d.sub_extra_hours, Decimal("0"))
+        # subcontract: extra hours recorded, OT forced clear (even though the
+        # client sent ot_requested)
+        self.assertEqual(s.sub_extra_hours, Decimal("2.5"))
+        self.assertEqual(s.ot_requested, Decimal("0"))
+        self.assertIsNone(s.ot_approved)

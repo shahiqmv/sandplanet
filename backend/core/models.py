@@ -1781,6 +1781,12 @@ class Attendance(models.Model):
     ot_approved_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                        null=True, blank=True, related_name="+")
     ot_approved_at = models.DateTimeField(null=True, blank=True)
+    # Subcontract workers don't take internal OT: any hours beyond the site
+    # window are just extra hours worked, recorded here to pass on to the
+    # subcontractor. Kept entirely out of the OT request/approval + payroll
+    # pipeline (subcontractor module).
+    sub_extra_hours = models.DecimalField(max_digits=4, decimal_places=2,
+                                          default=0)
     remark = models.CharField(max_length=12, choices=REMARKS, default="PRESENT")
     entered_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    null=True, blank=True, related_name="+")
