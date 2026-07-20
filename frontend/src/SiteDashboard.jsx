@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { twsDefaultDate } from "./QADocs.jsx";
+import SubcontractorsPanel from "./SubcontractorsPanel.jsx";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
+const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
+                                "DIRECTOR", "ADMIN"];
 const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
 const CAN_CREATE_MR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
 
@@ -539,6 +542,10 @@ that adds your existing quantities to the system"
         ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role)) && (
         <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc}
                      onOpenRegister={onPyrRegister} />
+      )}
+
+      {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
+        <SubcontractorsPanel me={me} site={site} />
       )}
 
       <section style={card}>
