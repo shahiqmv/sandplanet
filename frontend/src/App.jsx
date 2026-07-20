@@ -17,6 +17,7 @@ import PayrollRunPage from "./PayrollRunPage.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
+import WorkforcePage from "./WorkforcePage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import ManpowerPage from "./ManpowerPage.jsx";
 import ProjectPage from "./ProjectPage.jsx";
@@ -456,7 +457,8 @@ export default function App() {
         <ChangePassword forced onDone={() =>
           api("/auth/me").then(setMe)} />
       ) : (
-        <main style={{ maxWidth: docView?.mode === "attendance" ? 1160 : 900,
+        <main style={{ maxWidth: ["attendance", "workforce"]
+                         .includes(docView?.mode) ? 1160 : 900,
                        margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
@@ -724,6 +726,7 @@ export default function App() {
                 onNewQa={(docType) => setDocView({ mode: "qa-form", docType,
                                                    doc: null })}
                 onAttendance={() => setDocView({ mode: "attendance" })}
+                onWorkforce={() => setDocView({ mode: "workforce" })}
                 onDma={() => setDocView({ mode: "dma" })}
                 onManpower={() => setDocView({ mode: "manpower" })}
                 onNewPyr={() => setDocView({ mode: "pyr-form" })}
@@ -819,6 +822,9 @@ export default function App() {
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />
+          )}
+          {docView?.mode === "workforce" && openSite && (
+            <WorkforcePage site={openSite} me={me} onClose={closeDoc} />
           )}
           {docView?.mode === "dma" && openSite && (
             <DMAPage site={openSite} me={me} onClose={closeDoc} />

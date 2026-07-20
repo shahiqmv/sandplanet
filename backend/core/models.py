@@ -1591,21 +1591,23 @@ class EmployeeSiteAllocation(models.Model):
 
 
 class WorkerChangeRequest(models.Model):
-    """Site-Admin-driven change to a site's DIRECT (salaried) workforce, held
-    for approval because salary is involved (site-worker-management tool).
+    """A BATCH of site-driven changes to a site's DIRECT (salaried) workforce,
+    held for approval because salary is involved (site-worker-management tool).
+    Approvers act on the whole batch at once (owner: individual approvals would
+    swamp them). One kind per batch; the workers are `WorkerChangeItem` lines.
 
-    ADD:      the SA/SE enters a new hire (incl. salary); the Employee is
+    ADD:      the SA/SE enters new hires (incl. salary); each Employee is
               created inactive+hire_pending and goes live only on Director
               approval. Chain: SUBMITTED → PM_APPROVED → APPROVED (PM, Director).
-    REMOVE:   deactivate a worker. Chain: SUBMITTED → APPROVED (site PM).
-    TRANSFER: move a worker to another site. Chain: SUBMITTED → APPROVED (PM);
-              on approval the open allocation closes and one opens at `to_site`.
+    REMOVE:   deactivate the workers. Chain: SUBMITTED → APPROVED (site PM).
+    TRANSFER: move the workers to `to_site`. Chain: SUBMITTED → APPROVED (PM);
+              on approval each open allocation closes and one opens at to_site.
     """
 
     class Kind(models.TextChoices):
-        ADD = "ADD", "Add worker"
-        REMOVE = "REMOVE", "Remove worker"
-        TRANSFER = "TRANSFER", "Transfer worker"
+        ADD = "ADD", "Add workers"
+        REMOVE = "REMOVE", "Remove workers"
+        TRANSFER = "TRANSFER", "Transfer workers"
 
     class Status(models.TextChoices):
         SUBMITTED = "SUBMITTED", "Submitted"
@@ -1618,8 +1620,6 @@ class WorkerChangeRequest(models.Model):
     kind = models.CharField(max_length=10, choices=Kind.choices)
     status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.SUBMITTED)
-    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
-                                 related_name="change_requests")
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="worker_requests")     # home site
     to_site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
@@ -1638,12 +1638,28 @@ class WorkerChangeRequest(models.Model):
         ordering = ["-created_at"]
 
     def __str__(self):
-        return f"{self.kind} {self.employee.emp_no} ({self.status})"
+        return f"{self.kind} ×{self.items.count()} ({self.status})"
 
     @property
     def is_open(self):
         return self.status in (self.Status.SUBMITTED, self.Status.PM_APPROVED,
                                self.Status.RETURNED)
+
+    @property
+    def worker_count(self):
+        return self.items.count()
+
+
+class WorkerChangeItem(models.Model):
+    """One worker within a WorkerChangeRequest batch."""
+
+    request = models.ForeignKey(WorkerChangeRequest, on_delete=models.CASCADE,
+                                related_name="items")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="change_items")
+
+    class Meta:
+        ordering = ["id"]
 
 
 class WorkPermitRenewal(models.Model):

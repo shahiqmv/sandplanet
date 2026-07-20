@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { twsDefaultDate } from "./QADocs.jsx";
-import SubcontractorsPanel from "./SubcontractorsPanel.jsx";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
@@ -15,7 +14,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onManpower, onNewPyr, onPyrRegister,
                                         onPettyCash, onStock, onTools,
                                         onCreateGrn, onNewPmr, onOpenDoc,
-                                        refresh }) {
+                                        onWorkforce, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -162,6 +161,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
             <button onClick={onAttendance}
                     style={{ ...buttonStyle, background: "#1a7f37" }}>
               🕐 Attendance
+            </button>
+          )}
+          {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
+            <button onClick={onWorkforce}
+                    style={{ ...buttonStyle, background: "#5a3fa0" }}>
+              👷 Workforce
             </button>
           )}
         </span>
@@ -542,10 +547,6 @@ that adds your existing quantities to the system"
         ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role)) && (
         <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc}
                      onOpenRegister={onPyrRegister} />
-      )}
-
-      {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
-        <SubcontractorsPanel me={me} site={site} />
       )}
 
       <section style={card}>

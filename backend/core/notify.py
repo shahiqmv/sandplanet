@@ -230,22 +230,23 @@ def notify_void_request(pv, actor=None):
             body=pv.void_reason or "", doc=pv, category="approval")
 
 
-def notify_worker_request(req):
-    """Route a site worker-change request to whoever it now waits on: the site
-    PM for a submitted request; the Directors for a PM-approved new hire."""
+def notify_worker_request(batch):
+    """Route a site worker-change batch to whoever it now waits on: the site PM
+    for a submitted batch; the Directors for a PM-approved new-hire batch."""
     from .models import WorkerChangeRequest as WCR
-    emp, site = req.employee, req.site
-    label = {WCR.Kind.ADD: "new hire", WCR.Kind.REMOVE: "removal",
-             WCR.Kind.TRANSFER: "transfer"}.get(req.kind, "change")
-    body = f"{emp.full_name} · {site.code}"
-    if req.status == WCR.Status.SUBMITTED:
+    site = batch.site
+    n = batch.worker_count
+    label = {WCR.Kind.ADD: "new hires", WCR.Kind.REMOVE: "removals",
+             WCR.Kind.TRANSFER: "transfers"}.get(batch.kind, "changes")
+    body = f"{n} worker(s) · {site.code}"
+    if batch.status == WCR.Status.SUBMITTED:
         pm = site.current_pm()
         if pm:
             notify_user(pm, f"Worker {label} — needs your approval",
                         body=body, category="approval")
-    elif req.status == WCR.Status.PM_APPROVED:      # ADD awaiting Director
+    elif batch.status == WCR.Status.PM_APPROVED:    # ADD awaiting Director
         for user in _role_users("DIRECTOR"):
-            notify_user(user, f"New hire {emp.full_name} — activate",
+            notify_user(user, f"New hires ({n}) — activate",
                         body=body, category="approval")
 
 

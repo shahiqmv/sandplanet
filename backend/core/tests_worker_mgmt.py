@@ -1,5 +1,5 @@
-"""Site worker-management tool: SA/SE add/remove/transfer DIRECT workers with
-PM (and, for a new hire, Director) approval."""
+"""Site worker-management tool: SA/SE add/remove/transfer DIRECT workers in
+approval BATCHES; PM (and, for new hires, Director) approve the whole batch."""
 from datetime import date
 from decimal import Decimal
 
@@ -8,11 +8,10 @@ from rest_framework.test import APIClient
 
 from .models import (Employee, EmployeeSiteAllocation, ManpowerCategory, Site,
                      SitePmHistory, User)
-from .models import WorkerChangeRequest as WCR
 from .tests import make_user
 
 
-class WorkerManagementTests(TestCase):
+class WorkerBatchTests(TestCase):
     def setUp(self):
         self.site = Site.objects.create(code="VKR", name="Vakkaru",
                                         status=Site.Status.ACTIVE)
@@ -28,135 +27,144 @@ class WorkerManagementTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.sa)
 
-    ADD = {"full_name": "New Guy", "passport_no": "P123", "nationality": "IND",
-           "basic_pay": "6000", "currency": "MVR"}
-
     def _auth(self, u):
         self.client.force_authenticate(u)
 
-    def _add(self, extra=None):
-        body = {**self.ADD, **(extra or {})}
-        return self.client.post(
-            f"/api/v1/sites/{self.site.id}/worker-requests/add", body,
-            format="json")
+    def _worker(self, name, **kw):
+        return {"full_name": name, "passport_no": f"P-{name}",
+                "nationality": "IND", "basic_pay": "6000",
+                "job_category_id": self.mason.id, **kw}
+
+    def _add_batch(self, workers):
+        return self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                                {"kind": "ADD", "workers": workers},
+                                format="json")
+
+    def _direct(self, site, n=1):
+        out = []
+        for _ in range(n):
+            e = Employee.objects.create(
+                emp_no=f"EMP-{Employee.objects.count()+1:04d}",
+                full_name=f"W{Employee.objects.count()}",
+                job_category=self.mason, basic_pay=Decimal("6000"),
+                is_active=True)
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=site, from_date=date(2026, 1, 1))
+            out.append(e)
+        return out
 
     # ---- ADD -----------------------------------------------------------------
 
-    def test_add_requires_passport_and_nationality(self):
-        r = self._add({"passport_no": ""})
-        self.assertEqual(r.status_code, 400)
-        r = self._add({"nationality": ""})
-        self.assertEqual(r.status_code, 400)
-
-    def test_add_lifecycle_pm_then_director(self):
-        r = self._add({"job_category_id": self.mason.id})
+    def test_add_batch_lifecycle(self):
+        r = self._add_batch([self._worker("Aay"), self._worker("Bee")])
         self.assertEqual(r.status_code, 201, r.data)
-        req_id = r.data["id"]
-        emp_id = r.data["employee"]["id"]
-        # pending hire is inactive → out of attendance + payroll
-        emp = Employee.objects.get(pk=emp_id)
-        self.assertFalse(emp.is_active)
-        self.assertTrue(emp.hire_pending)
-        self.assertNotIn(emp.id, Employee.objects.payroll_eligible()
-                         .filter(is_active=True).values_list("id", flat=True))
-
-        # SA cannot approve
-        r = self.client.post(f"/api/v1/worker-requests/{req_id}/action",
+        self.assertEqual(r.data["worker_count"], 2)
+        bid = r.data["id"]
+        emp_ids = [w["id"] for w in r.data["workers"]]
+        # both pending + inactive → out of payroll
+        for eid in emp_ids:
+            e = Employee.objects.get(pk=eid)
+            self.assertFalse(e.is_active)
+            self.assertTrue(e.hire_pending)
+            self.assertNotIn(eid, Employee.objects.payroll_eligible()
+                             .filter(is_active=True).values_list("id",
+                                                                 flat=True))
+        # SA can't approve
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.status_code, 400)
-
-        # PM approves → PM_APPROVED (still inactive)
+        # PM → PM_APPROVED (still inactive)
         self._auth(self.pm)
-        r = self.client.post(f"/api/v1/worker-requests/{req_id}/action",
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.data["status"], "PM_APPROVED")
-        self.assertFalse(Employee.objects.get(pk=emp_id).is_active)
-
-        # PM cannot also do the Director step
-        r = self.client.post(f"/api/v1/worker-requests/{req_id}/action",
+        self.assertFalse(Employee.objects.get(pk=emp_ids[0]).is_active)
+        # PM can't do the Director step
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.status_code, 400)
-
-        # Director activates → APPROVED, live + allocated to the site
+        # Director activates the whole batch
         self._auth(self.director)
-        r = self.client.post(f"/api/v1/worker-requests/{req_id}/action",
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.data["status"], "APPROVED")
-        emp = Employee.objects.get(pk=emp_id)
-        self.assertTrue(emp.is_active)
-        self.assertFalse(emp.hire_pending)
-        self.assertEqual(emp.current_site_id(), self.site.id)
-        self.assertIn(emp.id, Employee.objects.payroll_eligible()
-                      .filter(is_active=True).values_list("id", flat=True))
+        for eid in emp_ids:
+            e = Employee.objects.get(pk=eid)
+            self.assertTrue(e.is_active)
+            self.assertFalse(e.hire_pending)
+            self.assertEqual(e.current_site_id(), self.site.id)
 
-    def test_edit_returned_add_resubmits(self):
-        req_id = self._add().data["id"]
+    def test_add_validates_each_worker(self):
+        r = self._add_batch([self._worker("Ok"),
+                            self._worker("Bad", passport_no="")])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Worker 2", r.data["detail"])
+
+    def test_edit_pending_hire_then_resubmit(self):
+        r = self._add_batch([self._worker("Cee")])
+        bid, eid = r.data["id"], r.data["workers"][0]["id"]
         self._auth(self.pm)
-        self.client.post(f"/api/v1/worker-requests/{req_id}/action",
-                         {"action": "return", "note": "wrong pay"},
+        self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                         {"action": "return", "note": "fix pay"},
                          format="json")
         self._auth(self.sa)
-        r = self.client.patch(f"/api/v1/worker-requests/{req_id}",
-                              {"basic_pay": "7000"}, format="json")
+        r = self.client.patch(f"/api/v1/worker-hires/{eid}",
+                              {"basic_pay": "9000"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Decimal(r.data["basic_pay"]), Decimal("9000"))
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                             {"action": "resubmit"}, format="json")
         self.assertEqual(r.data["status"], "SUBMITTED")
-        self.assertEqual(Decimal(r.data["employee"]["basic_pay"]),
-                         Decimal("7000"))
 
     # ---- REMOVE / TRANSFER ---------------------------------------------------
 
-    def _direct_worker(self, site):
-        e = Employee.objects.create(
-            emp_no=f"EMP-{Employee.objects.count()+1:04d}", full_name="Worker",
-            job_category=self.mason, basic_pay=Decimal("6000"), is_active=True)
-        EmployeeSiteAllocation.objects.create(
-            employee=e, site=site, from_date=date(2026, 1, 1))
-        return e
-
-    def test_remove_deactivates_on_pm_approval(self):
-        emp = self._direct_worker(self.site)
-        r = self.client.post(
-            f"/api/v1/workers/{emp.id}/worker-requests/remove",
-            {"reason": "left"}, format="json")
+    def test_remove_batch(self):
+        emps = self._direct(self.site, 2)
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "REMOVE",
+                              "employee_ids": [e.id for e in emps],
+                              "reason": "done"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        rid = r.data["id"]
+        bid = r.data["id"]
         self._auth(self.pm)
-        r = self.client.post(f"/api/v1/worker-requests/{rid}/action",
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.data["status"], "APPROVED")
-        emp.refresh_from_db()
-        self.assertFalse(emp.is_active)
-        self.assertIsNone(emp.current_site_id())
+        for e in emps:
+            e.refresh_from_db()
+            self.assertFalse(e.is_active)
 
-    def test_transfer_moves_allocation_on_pm_approval(self):
-        emp = self._direct_worker(self.site)
-        r = self.client.post(
-            f"/api/v1/workers/{emp.id}/worker-requests/transfer",
-            {"to_site_id": self.dest.id}, format="json")
+    def test_transfer_batch(self):
+        emps = self._direct(self.site, 2)
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "TRANSFER",
+                              "employee_ids": [e.id for e in emps],
+                              "to_site_id": self.dest.id}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        rid = r.data["id"]
+        bid = r.data["id"]
         self._auth(self.pm)
-        r = self.client.post(f"/api/v1/worker-requests/{rid}/action",
-                             {"action": "approve"}, format="json")
-        self.assertEqual(r.data["status"], "APPROVED")
-        emp.refresh_from_db()
-        self.assertEqual(emp.current_site_id(), self.dest.id)
+        self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                         {"action": "approve"}, format="json")
+        for e in emps:
+            e.refresh_from_db()
+            self.assertEqual(e.current_site_id(), self.dest.id)
 
-    def test_one_open_request_per_worker(self):
-        emp = self._direct_worker(self.site)
-        self.client.post(f"/api/v1/workers/{emp.id}/worker-requests/remove",
-                         {}, format="json")
-        r = self.client.post(
-            f"/api/v1/workers/{emp.id}/worker-requests/transfer",
-            {"to_site_id": self.dest.id}, format="json")
+    def test_worker_cannot_be_in_two_open_batches(self):
+        emp = self._direct(self.site, 1)[0]
+        self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                         {"kind": "REMOVE", "employee_ids": [emp.id]},
+                         format="json")
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "TRANSFER", "employee_ids": [emp.id],
+                              "to_site_id": self.dest.id}, format="json")
         self.assertEqual(r.status_code, 400)
 
     def test_other_site_pm_cannot_approve(self):
-        req_id = self._add().data["id"]
-        other_pm = make_user("pm2", User.Role.PM, site=self.dest)
-        SitePmHistory.objects.create(site=self.dest, pm_user=other_pm,
+        bid = self._add_batch([self._worker("Dee")]).data["id"]
+        other = make_user("pm2", User.Role.PM, site=self.dest)
+        SitePmHistory.objects.create(site=self.dest, pm_user=other,
                                      from_date=date(2026, 1, 1))
-        self._auth(other_pm)
-        r = self.client.post(f"/api/v1/worker-requests/{req_id}/action",
+        self._auth(other)
+        r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.status_code, 400)
