@@ -573,6 +573,24 @@ def update_shipment_details(shipment, data, actor):
     return None
 
 
+def delete_shipment(shipment, actor):
+    """Delete a booked shipment (admin correction — a duplicate, a test, or a
+    wrong booking). Frees its allocated quantities back to the order and drops
+    its tracking. Blocked once an IRN has counted it into stock, so inventory
+    can't be corrupted (owner 2026-07-20)."""
+    from .models import ImportReceipt
+    if ImportReceipt.objects.filter(shipment=shipment).exists():
+        return ("This shipment has already been received (IRN) — void the "
+                "receipt before deleting the shipment.")
+    seq = shipment.seq
+    order_doc_id = shipment.order.document_id
+    # cascades its lines, shipping documents, tracking + tracking events
+    shipment.delete()
+    audit("document", order_doc_id, "SHIPMENT_DELETED", actor=actor,
+          detail={"shipment": seq})
+    return None
+
+
 def set_clearing_charges(shipment, data, actor):
     for f in CHARGE_FIELDS:
         if f in data:

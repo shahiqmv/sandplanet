@@ -531,6 +531,57 @@ class ShipmentTests(IprBase):
         self.assertEqual(r.status_code, 404)   # site staff can't see IPRs
 
 
+class ShipmentDeleteTests(IprBase):
+    """Admin can delete a mis-booked shipment; blocked once received (an IRN
+    exists) so inventory stays intact (owner 2026-07-20)."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = make_user("adm", User.Role.ADMIN)
+
+    def _book(self):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                             format="json")
+        return ref, r.data["shipments"][0]["id"]
+
+    def _del(self, ref, sid):
+        return self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/delete")
+
+    def test_admin_deletes_and_frees_allocation(self):
+        ref, sid = self._book()
+        # whole order is on the shipment → nothing left to ship
+        ipr = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertTrue(all(float(l["remaining_qty"]) == 0
+                            for l in ipr["order"]["lines"]))
+        self.client.force_authenticate(self.admin)
+        r = self._del(ref, sid)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["shipments"]), 0)
+        # the quantity is shippable again
+        ipr = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertTrue(any(float(l["remaining_qty"]) > 0
+                            for l in ipr["order"]["lines"]))
+
+    def test_non_admin_cannot_delete(self):
+        ref, sid = self._book()
+        self.client.force_authenticate(self.ho)
+        self.assertEqual(self._del(ref, sid).status_code, 403)
+        self.client.force_authenticate(self.director)
+        self.assertEqual(self._del(ref, sid).status_code, 403)
+
+    def test_cannot_delete_received_shipment(self):
+        ref, sid = self._book()
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                         {"location": ""}, format="json")
+        self.client.force_authenticate(self.admin)
+        r = self._del(ref, sid)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("received", r.data["detail"].lower())
+
+
 class StoreReceiptTests(IprBase):
     def _shipment(self, ref):
         return self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},

@@ -84,6 +84,8 @@ urlpatterns = [
          imports_api.ipr_shipment_status, name="ipr-shipment-status"),
     path("ipr/<str:ref>/shipments/<int:pk>/update",
          imports_api.ipr_shipment_update, name="ipr-shipment-update"),
+    path("ipr/<str:ref>/shipments/<int:pk>/delete",
+         imports_api.ipr_shipment_delete, name="ipr-shipment-delete"),
     path("ipr/<str:ref>/shipments/<int:pk>/charges",
          imports_api.ipr_shipment_charges, name="ipr-shipment-charges"),
     path("ipr/<str:ref>/shipments/<int:pk>/share",

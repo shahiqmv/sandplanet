@@ -546,7 +546,8 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit }) {
       <MilestonePanel doc={doc} me={me} refIpr={refIpr} onChanged={load}
                       onError={setError} />
       <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
-                      onError={setError} onOpenIrn={onOpenIrn} />
+                      onError={setError} onOpenIrn={onOpenIrn}
+                      isAdmin={me.role === "ADMIN"} />
     </section>
   );
 }
@@ -661,7 +662,8 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
   );
 }
 
-function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
+function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
+                          isAdmin }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
@@ -722,7 +724,7 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
       {ships.map((s) => (
         <Shipment key={s.id} s={s} refIpr={refIpr} canManage={canManage}
                   call={call} onChanged={onChanged} onError={onError}
-                  onOpenIrn={onOpenIrn} />
+                  onOpenIrn={onOpenIrn} isAdmin={isAdmin} />
       ))}
 
       {canManage && (adding ? (
@@ -815,7 +817,7 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn }) {
 }
 
 function Shipment({ s, refIpr, canManage, call, onChanged, onError,
-                    onOpenIrn }) {
+                    onOpenIrn, isAdmin }) {
   const fileRef = useRef(null);
   const [docType, setDocType] = useState("BL_AWB");
   const [charges, setCharges] = useState(Object.fromEntries(
@@ -839,6 +841,15 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
     onError(null);
     try { await api(`/ipr/${refIpr}/shipments/${s.id}/update`,
       { method: "POST", body: ef }); setEditing(false); onChanged(); }
+    catch (e) { onError(e.message); }
+  }
+  async function removeShip() {
+    if (!window.confirm(`Delete Shipment ${s.seq}? This frees its allocated `
+      + `quantities back to the order and removes its tracking. This can't be `
+      + `undone.`)) return;
+    onError(null);
+    try { await api(`/ipr/${refIpr}/shipments/${s.id}/delete`,
+      { method: "POST" }); onChanged(); }
     catch (e) { onError(e.message); }
   }
 
@@ -876,6 +887,13 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
         {canManage && s.status !== "CLEARED" && !editing && (
           <button style={{ ...ghostButton, padding: "1px 9px", marginLeft:
             "auto", fontSize: 12 }} onClick={startEdit}>Edit details</button>
+        )}
+        {isAdmin && !editing && (
+          <button title="Admin — delete this shipment"
+            style={{ ...ghostButton, padding: "1px 9px", fontSize: 12,
+              color: "#c0392b", borderColor: "#e3b7b0",
+              marginLeft: canManage && s.status !== "CLEARED" ? 0 : "auto" }}
+            onClick={removeShip}>Delete</button>
         )}
       </div>
       {editing && (

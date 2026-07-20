@@ -342,6 +342,25 @@ def ipr_shipment_update(request, ref, pk):
 
 
 @api_view(["POST"])
+def ipr_shipment_delete(request, ref, pk):
+    """Delete a shipment — admin only (destructive; frees its allocation and
+    removes its tracking). Blocked once an IRN exists for it."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role != "ADMIN":
+        return Response({"detail": "Only an administrator can delete a "
+                                   "shipment."}, status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.delete_shipment(s, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
 def ipr_shipment_charges(request, ref, pk):
     doc, err = _get_ipr(request, ref)
     if err:
