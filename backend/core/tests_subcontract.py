@@ -2,12 +2,13 @@
 inclusion, and the client-facing render guard (acceptance #1, #3, #8)."""
 import json
 from datetime import date
+from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import (Employee, EmployeeSiteAllocation, ManpowerCategory, Site,
-                     Subcontractor, User)
+from .models import (Document, Employee, EmployeeSiteAllocation,
+                     ManpowerCategory, Site, SitePmHistory, Subcontractor, User)
 from .tests import make_user
 from .views_hr import site_manpower_data
 
@@ -185,3 +186,113 @@ class SubcontractorTeamTests(TestCase):
         self.assertEqual(emp.engagement_type, "SUBCONTRACT")
         self.assertNotIn(emp.id, Employee.objects.payroll_eligible()
                          .values_list("id", flat=True))
+
+
+class SubcontractAgreementTests(TestCase):
+    """SCA lifecycle (subcontractor module Phase 3): create → submit → PM →
+    Director, scope math, role gates, and doc-type visibility."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("sa", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.director = make_user("dir", User.Role.DIRECTOR)
+        self.hr = make_user("hr", User.Role.HO_HR)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Alif Gang",
+            status=Subcontractor.Status.APPROVED)
+        self.client = APIClient()
+
+    def _auth(self, u):
+        self.client.force_authenticate(u)
+
+    ROWS = [
+        {"section": "Blockwork", "is_heading": True},
+        {"description": "200mm block wall", "unit": "m2",
+         "qty": "100", "rate": "150"},
+        {"description": "Plaster", "unit": "m2", "qty": "100", "rate": "50"},
+    ]
+
+    def _create(self):
+        self._auth(self.sa)
+        r = self.client.post(f"/api/v1/subcontractors/{self.sub.id}/agreements",
+                             {"title": "Blockwork package", "rows": self.ROWS},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data["ref"]
+
+    def test_create_computes_value_and_excludes_heading(self):
+        ref = self._create()
+        doc = Document.objects.get(ref=ref)
+        # 100*150 + 100*50 = 20000; the heading row carries no money
+        self.assertEqual(doc.subcontract_agreement.value, Decimal("20000"))
+        self.assertEqual(doc.subcontract_agreement.items.count(), 3)
+
+    def test_cannot_create_under_unapproved_subcontractor(self):
+        self.sub.status = Subcontractor.Status.DRAFT
+        self.sub.save()
+        self._auth(self.sa)
+        r = self.client.post(f"/api/v1/subcontractors/{self.sub.id}/agreements",
+                             {"title": "X", "rows": self.ROWS}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_lifecycle_submit_pm_director(self):
+        ref = self._create()
+        # submit (SA)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+
+        # the Director cannot do the PM step (SUBMITTED needs the site PM)
+        self._auth(self.director)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertEqual(r.status_code, 403)
+
+        # site PM approves → PM_APPROVED
+        self._auth(self.pm)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "PM_APPROVED")
+
+        # Director activates → APPROVED
+        self._auth(self.director)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "APPROVED")
+        self.assertEqual(Decimal(r.data["subcontract_agreement"]["value"]), Decimal("20000"))
+
+    def test_submit_requires_scope(self):
+        self._auth(self.sa)
+        r = self.client.post(f"/api/v1/subcontractors/{self.sub.id}/agreements",
+                             {"title": "Empty"}, format="json")
+        ref = r.data["ref"]
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_edit_only_in_draft(self):
+        ref = self._create()
+        # edit scope while draft
+        r = self.client.patch(f"/api/v1/subcontract-agreements/{ref}",
+                              {"rows": [{"description": "One", "unit": "no",
+                                         "qty": "1", "rate": "10"}]},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Decimal(r.data["subcontract_agreement"]["value"]), Decimal("10"))
+        # submit, then editing is blocked
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        r = self.client.patch(f"/api/v1/subcontract-agreements/{ref}",
+                              {"title": "Nope"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_hr_cannot_view_sca(self):
+        ref = self._create()
+        self._auth(self.hr)
+        r = self.client.get(f"/api/v1/documents/{ref}")
+        self.assertEqual(r.status_code, 404)

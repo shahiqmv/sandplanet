@@ -50,6 +50,10 @@ def targets_for(doc):
     if t == "PMR" and s == "SIZED_RELEASED":
         # sized & released — Purchasing must now place the overseas order
         return [(u, "to order") for u in _role_users("HO_PURCHASING")]
+    if t == "SCA" and s == "SUBMITTED":
+        return [(u, "needs your approval") for u in _pm_for(doc)]
+    if t == "SCA" and s == "PM_APPROVED":
+        return [(u, "to activate") for u in _role_users("DIRECTOR")]
     if t == "DPR" and s == "ISSUED":
         return [(u, "to verify") for u in _pm_for(doc)]
     if t == "GRN" and s == "COUNTED":

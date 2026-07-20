@@ -131,3 +131,110 @@ def remove_worker(emp, actor):
     emp.save(update_fields=["is_active", "sub_pending", "updated_at"])
     audit("employee", emp.id, "SUB_WORKER_REMOVED", actor=actor)
     return None
+
+
+# ---- Subcontract Agreements (SCA) --------------------------------------------
+# An SCA is a Document subtype (doc_type SCA) headed by SubcontractAgreement,
+# exactly the way an IPR is headed by ImportOrder. Lifecycle DRAFT→SUBMITTED→
+# PM_APPROVED→APPROVED runs on the generic Document approval engine
+# (views_documents._do_submit/_do_approve/_do_return); this module owns only
+# creation + draft editing of the header and its priced scope.
+
+def _dec(v):
+    from decimal import Decimal, InvalidOperation
+    if v in (None, ""):
+        return None
+    try:
+        return Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _scope_items(agreement, rows):
+    """(unsaved) SubcontractScopeItem instances from cleaned dict rows. A row
+    with no qty, rate or unit is a heading."""
+    from .models import SubcontractScopeItem
+    out = []
+    for i, r in enumerate(rows):
+        desc = str(r.get("description") or "").strip()
+        section = str(r.get("section") or "").strip()
+        code = str(r.get("item_code") or "").strip()
+        unit = str(r.get("unit") or "").strip()
+        if not (desc or section or code):
+            continue
+        qty, rate = _dec(r.get("qty")), _dec(r.get("rate"))
+        is_heading = bool(r.get("is_heading")) or (
+            qty is None and rate is None and not unit)
+        out.append(SubcontractScopeItem(
+            agreement=agreement, sort_order=i, section=section, item_code=code,
+            description=desc, unit=unit, qty=qty, rate=rate,
+            is_heading=is_heading))
+    return out
+
+
+def _set_scope(agreement, rows):
+    from .models import SubcontractScopeItem
+    items = _scope_items(agreement, rows)
+    agreement.items.all().delete()
+    SubcontractScopeItem.objects.bulk_create(items)
+    return len(items)
+
+
+def create_sca(sub, data, actor):
+    """Draft a Subcontract Agreement under an approved subcontractor."""
+    from datetime import date
+
+    from .models import (Document, DocumentRevision, Project,
+                         SubcontractAgreement)
+    from .numbering import next_ref
+    if not sub.can_raise_sca:
+        return None, "Only an approved subcontractor can hold an agreement."
+    if not (data.get("title") or "").strip():
+        return None, "Give the agreement a title."
+    project = None
+    if data.get("project_id"):
+        project = Project.objects.filter(pk=data["project_id"],
+                                         site=sub.site).first()
+    with transaction.atomic():
+        doc = Document.objects.create(
+            doc_type="SCA", ref=next_ref("SCA", sub.site), site=sub.site,
+            project=project, doc_date=data.get("doc_date") or date.today(),
+            status="DRAFT", created_by=actor)
+        DocumentRevision.objects.create(document=doc, rev_label="R0",
+                                        payload={}, created_by=actor)
+        doc.current_revision = doc.revisions.first()
+        doc.save(update_fields=["current_revision"])
+        agreement = SubcontractAgreement.objects.create(
+            document=doc, subcontractor=sub, project=project,
+            title=data["title"].strip(),
+            currency=(data.get("currency") or "MVR")[:3].upper(),
+            start_date=data.get("start_date") or None,
+            end_date=data.get("end_date") or None,
+            notes=data.get("notes", ""))
+        _set_scope(agreement, data.get("rows") or [])
+    audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
+          detail={"ref": doc.ref, "sub": sub.name})
+    return doc, None
+
+
+def update_sca(doc, data, actor):
+    """Edit a draft SCA in place — header + scope."""
+    if doc.status != "DRAFT":
+        return None, "Only a draft agreement can be edited."
+    agreement = doc.subcontract_agreement
+    if "title" in data and (data.get("title") or "").strip():
+        agreement.title = data["title"].strip()
+    if "currency" in data:
+        agreement.currency = (data.get("currency")
+                              or agreement.currency)[:3].upper()
+    for f in ("start_date", "end_date"):
+        if f in data:
+            setattr(agreement, f, data.get(f) or None)
+    if "notes" in data:
+        agreement.notes = data.get("notes") or ""
+    agreement.save()
+    if "rows" in data:
+        _set_scope(agreement, data.get("rows") or [])
+    audit("document", doc.id, "SCA_EDITED", actor=actor,
+          detail={"ref": doc.ref})
+    return doc, None

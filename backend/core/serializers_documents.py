@@ -124,6 +124,7 @@ class DocumentSerializer(serializers.ModelSerializer):
                                           read_only=True, default=None)
     resubmitted_as = serializers.SerializerMethodField()
     payment_request = serializers.SerializerMethodField()
+    subcontract_agreement = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -132,8 +133,27 @@ class DocumentSerializer(serializers.ModelSerializer):
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
                   "previous_ir_ref", "resubmitted_as", "supplier_name",
-                  "payment_request",
+                  "payment_request", "subcontract_agreement",
                   "attachments", "approvals", "created_by_name", "created_at"]
+
+    def get_subcontract_agreement(self, obj):
+        if obj.doc_type != "SCA" or not hasattr(obj, "subcontract_agreement"):
+            return None
+        a = obj.subcontract_agreement
+        return {
+            "subcontractor": a.subcontractor.name,
+            "subcontractor_id": a.subcontractor_id,
+            "title": a.title, "currency": a.currency,
+            "start_date": a.start_date, "end_date": a.end_date,
+            "notes": a.notes, "value": a.value,
+            "items": [
+                {"id": i.id, "sort_order": i.sort_order, "section": i.section,
+                 "item_code": i.item_code, "description": i.description,
+                 "unit": i.unit, "qty": i.qty, "rate": i.rate,
+                 "amount": i.amount, "is_heading": i.is_heading}
+                for i in a.items.all()
+            ],
+        }
 
     def get_payment_request(self, obj):
         if obj.doc_type != "PYR" or not hasattr(obj, "payment_request"):

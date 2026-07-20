@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import AgreementsPanel from "./AgreementsPanel.jsx";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
@@ -253,6 +254,8 @@ function Detail({ sub, me, cats, onBack, onChanged }) {
           </tbody>
         </table>
       )}
+
+      {sub.can_raise_sca && <AgreementsPanel sub={sub} me={me} />}
     </section>
   );
 }

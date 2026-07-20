@@ -5,7 +5,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import subcontract
-from .models import Employee, Site, Subcontractor
+from .models import Document, Employee, Site, Subcontractor
 from .permissions import scoped_site_ids
 
 VIEW_ALL = ("PM", "DIRECTOR", "SIGNATORY", "FINANCE", "QS", "ADMIN")
@@ -160,3 +160,57 @@ def subcontract_worker_action(request, emp_id):
     if err:
         return Response({"detail": err}, status=400)
     return Response(_worker_json(emp))
+
+
+# ---- Subcontract Agreements (SCA) --------------------------------------------
+# Create + draft-edit live here; view/submit/approve/return reuse the generic
+# document endpoints (/documents/<ref> and /documents/<ref>/actions/<action>).
+
+def _agreement_row(doc):
+    a = doc.subcontract_agreement
+    return {"ref": doc.ref, "status": doc.status, "title": a.title,
+            "value": a.value, "currency": a.currency, "doc_date": doc.doc_date,
+            "project_code": doc.project.code if doc.project_id else None,
+            "item_count": a.items.count()}
+
+
+@api_view(["GET", "POST"])
+def subcontractor_agreements(request, pk):
+    sub = _get_visible(request, pk)
+    if sub is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST":
+        if request.user.role not in subcontract.SITE_MANAGE_ROLES + ("PM",):
+            return Response({"detail": "Site Admin / Engineer / PM only."},
+                            status=403)
+        doc, err = subcontract.create_sca(sub, request.data, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(_agreement_row(doc), status=201)
+    rows = [_agreement_row(d) for d in Document.objects.filter(
+        doc_type="SCA", is_void=False,
+        subcontract_agreement__subcontractor=sub)
+        .select_related("project", "subcontract_agreement")
+        .order_by("-id")]
+    return Response(rows)
+
+
+@api_view(["PATCH"])
+def subcontract_agreement_edit(request, ref):
+    try:
+        doc = Document.objects.select_related(
+            "site", "subcontract_agreement__subcontractor").get(
+                ref=ref, doc_type="SCA")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    scoped = scoped_site_ids(request.user)
+    if scoped is not None and doc.site_id not in scoped:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in subcontract.SITE_MANAGE_ROLES + ("PM",):
+        return Response({"detail": "Site Admin / Engineer / PM only."},
+                        status=403)
+    doc, err = subcontract.update_sca(doc, request.data, request.user)
+    if err:
+        return Response({"detail": err}, status=400)
+    from .serializers_documents import DocumentSerializer
+    return Response(DocumentSerializer(doc, context={"request": request}).data)

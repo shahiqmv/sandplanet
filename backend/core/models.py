@@ -267,6 +267,7 @@ class Document(models.Model):
         IPR = "IPR"  # international purchase requisition — the order (§5.10)
         IRN = "IRN"  # import receipt note — count at the HO store (§5.10.8)
         SIN = "SIN"  # store issue note — issue stock to a site (§6D.3, P1B-f)
+        SCA = "SCA"  # subcontract agreement (subcontractor module)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -329,6 +330,15 @@ class Document(models.Model):
         "PO": {  # generated per awarded supplier on PR approval (R2)
             "DRAFT": {"ISSUED"},
             "ISSUED": {"CLOSED"},
+        },
+        # Subcontract Agreement (subcontractor module): the site raises it,
+        # the PM approves, the Director activates. Approved = SVCs may value
+        # against it. DRAFT = returned; CANCELLED/REJECTED terminal.
+        "SCA": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT", "REJECTED"},
+            "PM_APPROVED": {"APPROVED", "DRAFT", "REJECTED"},
+            "APPROVED": {"CLOSED"},
         },
         # Morning allocation off the previous day's TWSs; internal only (R5)
         "DMA": {"DRAFT": {"ISSUED"}},
@@ -1503,6 +1513,61 @@ class Subcontractor(models.Model):
     @property
     def can_raise_sca(self):
         return self.status in (self.Status.APPROVED, self.Status.ACTIVE)
+
+
+class SubcontractAgreement(models.Model):
+    """SCA typed header — one per SCA document (doc_type SCA), the way
+    ImportOrder heads an IPR. The priced scope a subcontractor is engaged on;
+    approved PM→Director, after which its work is valued via SVCs. No retention
+    (owner). Cost enters projects only through valuations, never here."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="subcontract_agreement")
+    subcontractor = models.ForeignKey(Subcontractor, on_delete=models.PROTECT,
+                                      related_name="agreements")
+    project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    title = models.CharField(max_length=200)
+    currency = models.CharField(max_length=3, default="MVR")
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    def __str__(self):
+        return f"SCA {self.document.ref}"
+
+    @property
+    def value(self):
+        from decimal import Decimal
+        return sum((i.amount for i in self.items.all()), Decimal("0"))
+
+
+class SubcontractScopeItem(models.Model):
+    """One priced line of an SCA's scope — qty × the agreed rate. A heading row
+    (is_heading) is a section title/preamble carrying no money."""
+
+    agreement = models.ForeignKey(SubcontractAgreement,
+                                  on_delete=models.CASCADE, related_name="items")
+    sort_order = models.IntegerField(default=0)
+    section = models.CharField(max_length=120, blank=True)      # bill / trade
+    item_code = models.CharField(max_length=30, blank=True)
+    description = models.TextField(blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
+                              blank=True)
+    rate = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                               blank=True)
+    is_heading = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    @property
+    def amount(self):
+        from decimal import Decimal
+        if self.is_heading:
+            return Decimal("0")
+        return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
 
 
 class EmployeeSiteAllocation(models.Model):

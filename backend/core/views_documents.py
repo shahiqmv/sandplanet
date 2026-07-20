@@ -61,6 +61,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "HO_HR",
             "FINANCE", "DIRECTOR", "SIGNATORY", "QS"},
     "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},  # import requirement (§5.10)
+    "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # subcontract agreement
 }
 SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec. 1)
 RESULTS = {  # client results per type (spec §5.3/§5.4)
@@ -90,6 +91,10 @@ def _serialize(doc, request):
     return data
 
 
+SCA_VIEW_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "SIGNATORY",
+                  "FINANCE", "QS", "ADMIN"}  # HR/HO have no subcontract role
+
+
 def _get_scoped_document(request, ref):
     try:
         doc = Document.objects.select_related("site", "current_revision").get(ref=ref)
@@ -97,6 +102,8 @@ def _get_scoped_document(request, ref):
         return None, Response({"detail": "Not found."}, status=404)
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None and doc.site_id not in site_ids:
+        return None, Response({"detail": "Not found."}, status=404)
+    if doc.doc_type == "SCA" and request.user.role not in SCA_VIEW_ROLES:
         return None, Response({"detail": "Not found."}, status=404)
     return doc, None
 
@@ -644,6 +651,15 @@ def pending_groups(user):
               "project_code": None, "doc_date": d.doc_date,
               "status": d.status, "hint": "PM issues the allocation"}
              for d in dmas])
+        scas = [d for d in scoped(base.filter(doc_type="SCA",
+                                              status="SUBMITTED"))
+                .select_related("site", "project")
+                if user.role == "ADMIN" or _is_pm_for(user, d)]
+        add("To approve — submitted subcontract agreements",
+            [{"ref": d.ref, "doc_type": "SCA", "site_code": d.site.code,
+              "project_code": d.project.code if d.project else None,
+              "doc_date": d.doc_date, "status": d.status,
+              "hint": "PM approval"} for d in scas])
     if user.role in ("DIRECTOR", "ADMIN"):
         add("To award — submitted PRs",
             rows(scoped(base.filter(doc_type="PR", status="SUBMITTED")),
@@ -660,6 +676,9 @@ def pending_groups(user):
         add("To size & release — reviewed import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
                  "Size the order (MOQ) and release to sourcing"))
+        add("To activate — PM-approved subcontract agreements",
+            rows(base.filter(doc_type="SCA", status="PM_APPROVED"),
+                 "Director activation of the agreement"))
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.
@@ -837,10 +856,14 @@ def _do_submit(request, doc, comment):
              "IR": {"SITE_ENGINEER", "PM"},
              "MAR": {"SITE_ENGINEER", "PM"},
              "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
+             "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
              "IPR": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/IPR."},
+        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/SCA/IPR."},
                         status=400)
+    if doc.doc_type == "SCA" and not doc.subcontract_agreement.items.exists():
+        return Response({"detail": "Add at least one scope line before "
+                                   "submitting."}, status=400)
     if doc.doc_type == "PR" and doc.quotations.exists():
         # Coverage tally (R2): every MR line quoted AND awarded, or an
         # explicit override with a reason.
@@ -875,6 +898,12 @@ def _do_submit(request, doc, comment):
 def _do_approve(request, doc, comment):
     if doc.doc_type in ("MR", "IR", "MAR", "PMR"):  # PM gate (spec §5.3–§5.5)
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
+                      comment=comment)
+    if doc.doc_type == "SCA":  # subcontractor module: PM then Director
+        if doc.status == "SUBMITTED":
+            return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
+                          comment=comment)
+        return _apply(request, doc, "APPROVED", "APPROVE", roles={"DIRECTOR"},
                       comment=comment)
     if doc.doc_type == "PR":  # Director approval = award (§5.7); NO
         # commitment or PO here — a signatory authorises next (§6C.2, M6c)
@@ -966,7 +995,13 @@ def _do_return(request, doc, comment):
         # Director/QS returns a submitted order for rework (no commitment yet)
         return _apply(request, doc, "DRAFT", "RETURN",
                       roles={"DIRECTOR", "QS", "HO_PURCHASING"}, comment=comment)
-    return Response({"detail": "Return applies to MR/PR/IR/MAR/IPR."},
+    if doc.doc_type == "SCA":
+        # PM returns a submitted agreement; Director returns a PM-approved one.
+        roles = {"SUBMITTED": {"PM"},
+                 "PM_APPROVED": {"DIRECTOR"}}.get(doc.status, set())
+        return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
+                      comment=comment)
+    return Response({"detail": "Return applies to MR/PR/IR/MAR/IPR/SCA."},
                     status=400)
 
 
@@ -1178,7 +1213,12 @@ def _do_cancel(request, doc, comment):
     if doc.doc_type == "IPR":
         return _apply(request, doc, "CANCELLED", "CANCEL",
                       roles={"HO_PURCHASING"}, comment=comment)
-    return Response({"detail": "cancel applies to PMR/IPR here."}, status=400)
+    if doc.doc_type == "SCA":
+        return _apply(request, doc, "CANCELLED", "CANCEL",
+                      roles={"SITE_ADMIN", "SITE_ENGINEER", "PM"},
+                      comment=comment)
+    return Response({"detail": "cancel applies to PMR/IPR/SCA here."},
+                    status=400)
 
 
 def _do_void(request, doc, comment):
