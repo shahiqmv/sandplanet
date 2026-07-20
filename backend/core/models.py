@@ -1365,10 +1365,33 @@ class QuotationLine(models.Model):
 # ===== Employees & timesheets (spec §6A, design §2) =====
 
 
+class EmployeeQuerySet(models.QuerySet):
+    def payroll_eligible(self):
+        """Only DIRECT employees may ever enter payroll (D-b). Subcontract
+        workers are excluded here, at the query level — not by UI hiding — so a
+        payroll run is structurally incapable of including one."""
+        return self.filter(engagement_type="DIRECT")
+
+    def hr_managed(self):
+        """HR owns direct employees only; subcontract workers are absent from
+        every HR/Payroll module view (not greyed)."""
+        return self.filter(engagement_type="DIRECT")
+
+
 class Employee(models.Model):
     """Employee database, maintained by HO HR/Payroll (+Admin). Employees
     are NOT app users (spec §6A.1). passport_no and basic_pay are sensitive:
-    HR/Admin only — API-gated, never in site-level exports or logs."""
+    HR/Admin only — API-gated, never in site-level exports or logs.
+
+    Direct employees are on payroll; subcontract workers (engagement_type
+    SUBCONTRACT) are full site-workforce members for attendance and DPR
+    manpower but a complete stranger to payroll (subcontractor module)."""
+
+    class Engagement(models.TextChoices):
+        DIRECT = "DIRECT", "Direct (payroll)"
+        SUBCONTRACT = "SUBCONTRACT", "Subcontract"
+
+    objects = EmployeeQuerySet.as_manager()
 
     emp_no = models.CharField(max_length=10, unique=True)  # EMP-0231, server-issued
     full_name = models.TextField()
@@ -1400,11 +1423,23 @@ class Employee(models.Model):
     emergency_contact = models.TextField(blank=True)
     join_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)  # deactivate, never delete
+    # Workforce classification (subcontractor module). DIRECT = payroll worker;
+    # SUBCONTRACT = engaged through a Subcontractor, payroll-excluded, no pay
+    # fields. Never renders on client-facing documents (D-a).
+    engagement_type = models.CharField(
+        max_length=12, choices=Engagement.choices, default=Engagement.DIRECT)
+    subcontractor = models.ForeignKey(
+        "Subcontractor", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="workers")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return f"{self.emp_no} — {self.full_name}"
+
+    @property
+    def is_subcontract(self):
+        return self.engagement_type == self.Engagement.SUBCONTRACT
 
     def current_site_id(self):
         row = self.site_allocations.filter(to_date__isnull=True).first()
@@ -1424,6 +1459,46 @@ class Employee(models.Model):
         if applies is None:
             applies = rate.applies_by_default
         return rate.rate_per_hour if applies else Decimal("0")
+
+
+class Subcontractor(models.Model):
+    """A gang/company engaged at a site on an internal contract (subcontractor
+    module, D-4). Site-managed — created by the site's SA/SE, activated by
+    PM→Director; HR/HO have no management role. Not a system user. Its workers
+    are Employees with engagement_type SUBCONTRACT; its cost enters projects via
+    Subcontract Valuation Certificates, never payroll."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"            # created, not yet approved
+        APPROVED = "APPROVED", "Approved"   # PM+Director approved — SCAs allowed
+        ACTIVE = "ACTIVE", "Active"
+        SUSPENDED = "SUSPENDED", "Suspended"
+        CLOSED = "CLOSED", "Closed"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="subcontractors")
+    name = models.CharField(max_length=160)             # company / gang name
+    registration_no = models.CharField(max_length=60, blank=True)
+    contact_person = models.CharField(max_length=120, blank=True)
+    phone = models.CharField(max_length=40, blank=True)
+    bank_details = models.TextField(blank=True)          # PYR/PV payee
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} ({self.site.code})"
+
+    @property
+    def can_raise_sca(self):
+        return self.status in (self.Status.APPROVED, self.Status.ACTIVE)
 
 
 class EmployeeSiteAllocation(models.Model):
@@ -1580,6 +1655,16 @@ class PayrollLine(models.Model):
             models.UniqueConstraint(fields=["run", "employee"],
                                     name="uniq_payroll_line")
         ]
+
+    def save(self, *args, **kwargs):
+        # Structural payroll exclusion (D-b): a subcontract worker can NEVER
+        # get a payroll line, whatever path tries to create one.
+        emp = self.employee if self.employee_id else None
+        if emp and emp.engagement_type == Employee.Engagement.SUBCONTRACT:
+            raise ValueError(
+                "A subcontract worker cannot be added to payroll — their cost "
+                "goes through a Subcontract Valuation Certificate.")
+        super().save(*args, **kwargs)
 
 
 class TimesheetMonth(models.Model):

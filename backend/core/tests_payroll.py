@@ -354,3 +354,67 @@ class FridayPrefillTests(TestCase):
         from .models import Attendance
         self.assertFalse(Attendance.objects.filter(
             employee=self.emp, day=self.friday).exists())
+
+
+class SubcontractorPayrollExclusionTests(TestCase):
+    """Acceptance #2 — a subcontract worker is structurally excluded from
+    payroll and absent from the HR register (subcontractor module Phase 1)."""
+
+    def setUp(self):
+        from .models import (EmployeeSiteAllocation, PayrollLine, PayrollRun,
+                             Subcontractor)
+        self.PayrollLine, self.PayrollRun = PayrollLine, PayrollRun
+        self.hr = make_user("hr1", User.Role.HO_HR)
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Alif Gang", status="APPROVED")
+        self.direct = Employee.objects.create(
+            emp_no="EMP-0001", full_name="Direct", job_category=self.mason,
+            basic_pay=Decimal("6000"), currency="MVR")
+        self.subw = Employee.objects.create(
+            emp_no="EMP-0002", full_name="SubWorker", job_category=self.mason,
+            currency="MVR", engagement_type="SUBCONTRACT", subcontractor=self.sub)
+        for e in (self.direct, self.subw):
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_manager_excludes_subcontract(self):
+        ids = set(Employee.objects.payroll_eligible()
+                  .values_list("id", flat=True))
+        self.assertIn(self.direct.id, ids)
+        self.assertNotIn(self.subw.id, ids)
+
+    def _run(self):
+        r = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "currency": "MVR",
+            "year": 2026, "month": 5, "working_days": 31}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return self.PayrollRun.objects.get(
+            site=self.site, currency="MVR", year=2026, month=5)
+
+    def test_payroll_run_has_no_line_for_subcontract(self):
+        run = self._run()
+        lines = self.PayrollLine.objects.filter(run=run)
+        self.assertTrue(lines.filter(employee=self.direct).exists())
+        self.assertFalse(lines.filter(employee=self.subw).exists())
+
+    def test_forcing_a_line_for_a_subcontract_worker_raises(self):
+        run = self._run()
+        with self.assertRaises(ValueError):
+            self.PayrollLine.objects.create(run=run, employee=self.subw,
+                                            basic_pay=0)
+
+    def test_hr_register_omits_subcontract_unless_opted_in(self):
+        data = self.client.get("/api/v1/employees").data
+        rows = data.get("results", data) if isinstance(data, dict) else data
+        nos = {r["emp_no"] for r in rows}
+        self.assertIn("EMP-0001", nos)
+        self.assertNotIn("EMP-0002", nos)
+        data2 = self.client.get("/api/v1/employees?include_subcontract=1").data
+        rows2 = data2.get("results", data2) if isinstance(data2, dict) else data2
+        self.assertIn("EMP-0002", {r["emp_no"] for r in rows2})

@@ -83,11 +83,11 @@ def generate_run(*, site, currency, year, month, working_days, actor):
             emp_ids = EmployeeSiteAllocation.objects.filter(
                 site=site, to_date__isnull=True).values_list(
                 "employee_id", flat=True)
-            workers = Employee.objects.filter(
+            workers = Employee.objects.payroll_eligible().filter(
                 id__in=emp_ids, is_active=True, currency=currency)
         else:  # USD combined across all sites
-            workers = Employee.objects.filter(is_active=True,
-                                              currency=currency)
+            workers = Employee.objects.payroll_eligible().filter(
+                is_active=True, currency=currency)
         for emp in workers.select_related("job_category").order_by("emp_no"):
             days, ot, fridays = _attendance_prefill(emp, site, year, month,
                                                     working_days)
@@ -105,8 +105,11 @@ def unlocked_sites(year, month):
     payroll can only be generated once every one of these is locked."""
     from .models import EmployeeSiteAllocation, Site, TimesheetMonth
 
+    # Only direct workers gate payroll — a site staffed solely by subcontract
+    # workers has no payroll and must not block the run.
     staffed = set(EmployeeSiteAllocation.objects.filter(
-        to_date__isnull=True, employee__is_active=True).values_list(
+        to_date__isnull=True, employee__is_active=True,
+        employee__engagement_type="DIRECT").values_list(
         "site_id", flat=True))
     out = []
     for site in Site.objects.filter(status=Site.Status.ACTIVE,
@@ -132,8 +135,8 @@ def generate_month(year, month, actor):
     working_days = month_days(year, month)
     created, skipped = [], []
     for currency in ("MVR", "USD"):
-        if not Employee.objects.filter(is_active=True,
-                                       currency=currency).exists():
+        if not Employee.objects.payroll_eligible().filter(
+                is_active=True, currency=currency).exists():
             continue
         label = f"{currency} — all sites"
         if PayrollRun.objects.filter(site__isnull=True, currency=currency,

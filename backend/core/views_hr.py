@@ -123,6 +123,10 @@ class EmployeeViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = Employee.objects.select_related("job_category").order_by("emp_no")
+        # HR owns direct employees only — subcontract workers are absent from the
+        # register (D-b). Site workforce views opt in with include_subcontract=1.
+        if self.request.GET.get("include_subcontract") != "1":
+            qs = qs.hr_managed()
         site_ids = scoped_site_ids(self.request.user)
         if site_ids is not None:  # site roles: own roster only
             qs = qs.filter(site_allocations__site_id__in=site_ids,
@@ -789,7 +793,8 @@ def dashboard_hr(request):
         "reallocation_alerts": stranded,
         "workforce_today": present,
         "ot_pending_approval": ot_pending,
-        "active_employees": Employee.objects.filter(is_active=True).count(),
+        "active_employees": Employee.objects.hr_managed().filter(
+            is_active=True).count(),
     })
 
 

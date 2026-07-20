@@ -135,8 +135,8 @@ def payroll_readiness(request):
         emp_ids = EmployeeSiteAllocation.objects.filter(
             site=site, to_date__isnull=True).values_list("employee_id",
                                                           flat=True)
-        mvr = Employee.objects.filter(id__in=emp_ids, is_active=True,
-                                      currency="MVR").count()
+        mvr = Employee.objects.payroll_eligible().filter(
+            id__in=emp_ids, is_active=True, currency="MVR").count()
         if not mvr:
             continue
         rows.append({
@@ -149,8 +149,8 @@ def payroll_readiness(request):
         })
     return Response({
         "sites": rows,
-        "usd_staff": Employee.objects.filter(is_active=True,
-                                             currency="USD").count(),
+        "usd_staff": Employee.objects.payroll_eligible().filter(
+            is_active=True, currency="USD").count(),
         "usd_has_run": PayrollRun.objects.filter(
             site__isnull=True, currency="USD", year=year, month=month).exists(),
     })
