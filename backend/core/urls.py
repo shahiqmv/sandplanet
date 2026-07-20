@@ -8,7 +8,8 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_tools as tools_api, \
-    views_tracking as tracking_api, views_vouchers as vouchers
+    views_tracking as tracking_api, views_vouchers as vouchers, \
+    views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
 router.register("sites", views.SiteViewSet, basename="site")
@@ -280,6 +281,20 @@ urlpatterns = [
          subcontract_api.subcontractor_agreements, name="sca-list"),
     path("subcontract-agreements/<str:ref>",
          subcontract_api.subcontract_agreement_edit, name="sca-edit"),
+    # Site worker management (direct/salaried workforce)
+    path("worker-requests", worker_api.worker_requests, name="worker-requests"),
+    path("worker-requests/<int:pk>", worker_api.worker_request_edit,
+         name="worker-request-edit"),
+    path("worker-requests/<int:pk>/action",
+         worker_api.worker_request_action, name="worker-request-action"),
+    path("sites/<int:site_id>/direct-workers",
+         worker_api.site_direct_workers, name="site-direct-workers"),
+    path("sites/<int:site_id>/worker-requests/add",
+         worker_api.worker_add, name="worker-add"),
+    path("workers/<int:emp_id>/worker-requests/remove",
+         worker_api.worker_remove, name="worker-remove"),
+    path("workers/<int:emp_id>/worker-requests/transfer",
+         worker_api.worker_transfer, name="worker-transfer"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),

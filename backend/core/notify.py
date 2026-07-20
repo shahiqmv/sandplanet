@@ -230,6 +230,25 @@ def notify_void_request(pv, actor=None):
             body=pv.void_reason or "", doc=pv, category="approval")
 
 
+def notify_worker_request(req):
+    """Route a site worker-change request to whoever it now waits on: the site
+    PM for a submitted request; the Directors for a PM-approved new hire."""
+    from .models import WorkerChangeRequest as WCR
+    emp, site = req.employee, req.site
+    label = {WCR.Kind.ADD: "new hire", WCR.Kind.REMOVE: "removal",
+             WCR.Kind.TRANSFER: "transfer"}.get(req.kind, "change")
+    body = f"{emp.full_name} · {site.code}"
+    if req.status == WCR.Status.SUBMITTED:
+        pm = site.current_pm()
+        if pm:
+            notify_user(pm, f"Worker {label} — needs your approval",
+                        body=body, category="approval")
+    elif req.status == WCR.Status.PM_APPROVED:      # ADD awaiting Director
+        for user in _role_users("DIRECTOR"):
+            notify_user(user, f"New hire {emp.full_name} — activate",
+                        body=body, category="approval")
+
+
 def notify_subcontractor(sub, actor=None):
     """Route a subcontractor activation forward: PM approval → Directors act
     next; Director activation → tell the creator it's live."""

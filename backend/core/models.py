@@ -1444,6 +1444,10 @@ class Employee(models.Model):
     # A newly-added subcontract worker awaits PM approval; until then is_active
     # is False so it stays out of every attendance roster + manpower count.
     sub_pending = models.BooleanField(default=False)
+    # A site-added DIRECT hire awaits PM→Director approval; is_active is False
+    # (so it's out of every attendance + payroll query) until the Director
+    # approves it (site-worker-management tool).
+    hire_pending = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1584,6 +1588,62 @@ class EmployeeSiteAllocation(models.Model):
 
     class Meta:
         ordering = ["-from_date"]
+
+
+class WorkerChangeRequest(models.Model):
+    """Site-Admin-driven change to a site's DIRECT (salaried) workforce, held
+    for approval because salary is involved (site-worker-management tool).
+
+    ADD:      the SA/SE enters a new hire (incl. salary); the Employee is
+              created inactive+hire_pending and goes live only on Director
+              approval. Chain: SUBMITTED → PM_APPROVED → APPROVED (PM, Director).
+    REMOVE:   deactivate a worker. Chain: SUBMITTED → APPROVED (site PM).
+    TRANSFER: move a worker to another site. Chain: SUBMITTED → APPROVED (PM);
+              on approval the open allocation closes and one opens at `to_site`.
+    """
+
+    class Kind(models.TextChoices):
+        ADD = "ADD", "Add worker"
+        REMOVE = "REMOVE", "Remove worker"
+        TRANSFER = "TRANSFER", "Transfer worker"
+
+    class Status(models.TextChoices):
+        SUBMITTED = "SUBMITTED", "Submitted"
+        PM_APPROVED = "PM_APPROVED", "PM approved"      # ADD only, awaiting Dir
+        APPROVED = "APPROVED", "Approved"
+        RETURNED = "RETURNED", "Returned"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.SUBMITTED)
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="change_requests")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="worker_requests")     # home site
+    to_site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")    # transfer dest
+    reason = models.TextField(blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind} {self.employee.emp_no} ({self.status})"
+
+    @property
+    def is_open(self):
+        return self.status in (self.Status.SUBMITTED, self.Status.PM_APPROVED,
+                               self.Status.RETURNED)
 
 
 class WorkPermitRenewal(models.Model):
