@@ -172,10 +172,14 @@ export default function AttendancePage({ site, me, onClose }) {
       <table style={{ width: "100%", borderCollapse: "collapse",
                       marginTop: 10 }}>
         <thead><tr>
-          <th style={th}>Emp No</th><th style={th}>Name</th>
-          <th style={th}>Category</th><th style={th}>In</th>
-          <th style={th}>Out</th><th style={th}>Remark</th>
-          <th style={th}>OT / Extra (h)</th><th style={th}>OT approved</th>
+          <th style={{ ...th, width: 80 }}>Emp No</th>
+          <th style={{ ...th, width: 240 }}>Name</th>
+          <th style={{ ...th, width: 130 }}>Category</th>
+          <th style={{ ...th, width: 120 }}>In</th>
+          <th style={{ ...th, width: 120 }}>Out</th>
+          <th style={{ ...th, width: 130 }}>Remark</th>
+          <th style={{ ...th, width: 90 }}>OT / Extra (h)</th>
+          <th style={th}>OT approved</th>
         </tr></thead>
         <tbody>
           {rows.map((row, i) => {
@@ -188,11 +192,12 @@ export default function AttendancePage({ site, me, onClose }) {
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
               <td style={td}>{row.full_name}
                 {sub && (
-                  <span style={{ marginLeft: 6, fontSize: 10.5,
+                  <span title={row.subcontractor || "Subcontract worker"}
+                        style={{ marginLeft: 6, fontSize: 10.5,
                                  fontWeight: 700, color: "#1a6091",
                                  background: "#d5e6f3", borderRadius: 4,
                                  padding: "1px 5px" }}>
-                    SUB{row.subcontractor ? ` · ${row.subcontractor}` : ""}
+                    SUB
                   </span>
                 )}
               </td>
@@ -217,7 +222,7 @@ export default function AttendancePage({ site, me, onClose }) {
                 </select>
               </td>
               {sub ? (
-                <td style={{ padding: 3 }} colSpan={2}>
+                <td style={{ padding: 3, whiteSpace: "nowrap" }} colSpan={2}>
                   <input type="number" min="0" step="0.5"
                          value={row.sub_extra_hours ?? 0}
                          disabled={grid?.locked || !canEnter || off}
@@ -226,7 +231,7 @@ export default function AttendancePage({ site, me, onClose }) {
                          style={{ ...inputStyle, width: 75 }} />
                   <span style={{ marginLeft: 8, fontSize: 11,
                                  color: "#5a6b78" }}>
-                    extra hrs — passed to the subcontractor, no OT approval
+                    extra hours
                   </span>
                 </td>
               ) : (

@@ -456,7 +456,8 @@ export default function App() {
         <ChangePassword forced onDone={() =>
           api("/auth/me").then(setMe)} />
       ) : (
-        <main style={{ maxWidth: 900, margin: "28px auto", padding: "0 20px" }}>
+        <main style={{ maxWidth: docView?.mode === "attendance" ? 1160 : 900,
+                       margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
           {!docView && !openSite && activeGroup &&
