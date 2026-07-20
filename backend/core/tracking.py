@@ -25,8 +25,33 @@ def normalise_key(value: str) -> str:
     return (value or "").strip().upper().replace(" ", "")
 
 
+def _iso6346_check_digit(container: str) -> int:
+    """The ISO 6346 check digit for the first 10 chars of a container number.
+    Letters map A=10,B=12,… skipping every multiple of 11; each of the 10 chars
+    is weighted by 2**position; the check digit is the weighted sum mod 11
+    (10 wraps to 0)."""
+    letters, v = {}, 10
+    for ch in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        if v % 11 == 0:
+            v += 1
+        letters[ch] = v
+        v += 1
+    total = 0
+    for i, ch in enumerate(container[:10]):
+        n = letters[ch] if ch.isalpha() else int(ch)
+        total += n * (2 ** i)
+    return total % 11 % 10
+
+
 def is_valid_container(value: str) -> bool:
-    return bool(_CONTAINER_RE.match(normalise_key(value)))
+    """4 letters + 7 digits with a correct ISO 6346 check digit."""
+    v = normalise_key(value)
+    if not _CONTAINER_RE.match(v):
+        return False
+    try:
+        return int(v[10]) == _iso6346_check_digit(v)
+    except (KeyError, ValueError):          # pragma: no cover - regex guards
+        return False
 
 
 def is_valid_booking(value: str) -> bool:
@@ -56,8 +81,12 @@ def validate_shipment_keys(mode: str, bl_no: str, container_awb: str,
     if bl_no and not is_valid_booking(bl_no):
         return "The booking / B/L number looks malformed."
     if container_awb and not is_valid_container(container_awb):
-        return ("The container number must be 4 letters + 7 digits, "
-                "e.g. MSCU1234567.")
+        return ("The container number must be 4 letters + 7 digits with a "
+                "valid ISO 6346 check digit (e.g. CSQU3054383).")
+    if (bl_no and container_awb
+            and normalise_key(bl_no) == normalise_key(container_awb)):
+        return ("The B/L field holds the same value as the container — the "
+                "B/L field is for the carrier's master B/L only.")
     if carrier_scac and not re.match(r"^(SG_)?[A-Z0-9]{4}$", carrier_scac):
         return "The carrier code (SCAC) looks malformed."
     return None
@@ -101,6 +130,10 @@ class TrackingProvider:
         raise NotImplementedError
 
     def fetch(self, tracking) -> Snapshot:               # pragma: no cover
+        raise NotImplementedError
+
+    def list_carriers(self):                             # pragma: no cover
+        """[{scac, name, status}, …] — the full carrier list."""
         raise NotImplementedError
 
     def parse_webhook(self, request):                    # pragma: no cover

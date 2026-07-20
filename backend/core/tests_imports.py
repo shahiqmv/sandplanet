@@ -429,7 +429,7 @@ class ShipmentTests(IprBase):
 
         r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
                              {"mode": "SEA", "vessel_flight": "MV Test",
-                              "container_awb": "MSCU1234567"}, format="json")
+                              "container_awb": "MSCU1234566"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         ship = r.data["shipments"][0]
         sid = ship["id"]

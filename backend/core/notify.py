@@ -204,6 +204,17 @@ def notify_tracking_problem(tracking, kind):
         log.exception("notify_tracking_problem failed")
 
 
+def notify_carrier_sync_failed(error):
+    """The ocean-carrier list sync failed — alert admins + Purchasing so they
+    know the picklist may be stale (never a silent degrade)."""
+    try:
+        for u in _role_users("ADMIN", "HO_PURCHASING"):
+            notify_user(u, "Shipment carrier list sync failed",
+                        (error or "")[:200], category="alert")
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("notify_carrier_sync_failed failed")
+
+
 def notify_void_request(pv, actor=None):
     """Tell the signatories that Finance has asked to void an authorised
     voucher, so they can authorise (or decline) the reversal."""

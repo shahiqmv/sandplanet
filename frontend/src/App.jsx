@@ -775,7 +775,7 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho &&
             hoPage === "import-tracker" && (
-            <ImportTracker onOpenIpr={(ref) =>
+            <ImportTracker me={me} onOpenIpr={(ref) =>
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho &&

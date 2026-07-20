@@ -1155,6 +1155,29 @@ class TrackingEvent(models.Model):
         ]
 
 
+class TrackingCarrier(models.Model):
+    """An ocean carrier synced verbatim from the tracking provider's list
+    (ShipsGo v2 GET /ocean/carriers). The shipment-form dropdown reads this
+    table; registration submits the SCAC. Never hand-edited — the daily sync is
+    the source of truth, so a name/SCAC always matches the provider exactly."""
+
+    provider = models.CharField(max_length=20, default="shipsgo")
+    scac = models.CharField(max_length=8)
+    name = models.CharField(max_length=120)
+    status = models.CharField(max_length=10, default="ACTIVE")  # ACTIVE/PASSIVE
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(fields=["provider", "scac"],
+                                    name="uniq_carrier_scac"),
+        ]
+
+    def __str__(self):
+        return f"{self.name} ({self.scac})"
+
+
 class ImportReceipt(models.Model):
     """IRN header (§5.10.8) — one per IRN document. Counts a shipment against
     its order at the HO store; posting creates stock lots at landed cost."""

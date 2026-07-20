@@ -37,8 +37,10 @@ def _make_shipment(mode="SEA", bl_no="", container="", awb=""):
 
 
 class KeyValidationTests(TestCase):
-    def test_container_format(self):
-        self.assertTrue(tracking.is_valid_container("MSCU1234567"))
+    def test_container_iso6346_check_digit(self):
+        self.assertTrue(tracking.is_valid_container("CSQU3054383"))    # canonical
+        self.assertTrue(tracking.is_valid_container("MSCU1234566"))
+        self.assertFalse(tracking.is_valid_container("MSCU1234567"))  # bad check
         self.assertFalse(tracking.is_valid_container("MSCU123456"))   # 6 digits
         self.assertFalse(tracking.is_valid_container("1234MSCU567"))
 
@@ -50,11 +52,16 @@ class KeyValidationTests(TestCase):
 
     def test_validate_per_mode(self):
         self.assertIsNone(tracking.validate_shipment_keys(
-            "SEA", "MEDUQY000000", "MSCU1234567", "MSCU"))
+            "SEA", "MEDUQY000000", "MSCU1234566", "MSCU"))
         self.assertIn("container", tracking.validate_shipment_keys(
             "SEA", "", "BADCONTAINER", "").lower())
         self.assertIn("awb", tracking.validate_shipment_keys(
             "AIR", "", "17612345676", "").lower())
+
+    def test_bl_equal_to_container_is_rejected(self):
+        msg = tracking.validate_shipment_keys(
+            "SEA", "MSCU1234566", "MSCU1234566", "MSCU")
+        self.assertIn("b/l", (msg or "").lower())
 
 
 def _ocean_payload():
@@ -295,3 +302,68 @@ class ManualFallbackTests(TestCase):
             t, TrackingEvent.Code.DEPARTED, "Left Shanghai", location="Shanghai")
         self.assertEqual(ev.source, "MANUAL")
         self.assertEqual(t.events.filter(code="DEPARTED").count(), 1)
+
+
+class _FakeCarriers:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def list_carriers(self):
+        return self.rows
+
+
+class CarrierSyncTests(TestCase):
+    def test_sync_upserts_prunes_and_records_state(self):
+        from core import carriers as csvc
+        from core.models import TrackingCarrier
+        rows = [{"scac": "MSCU", "name": "MSC", "status": "ACTIVE"},
+                {"scac": "RCLU", "name": "Regional Container Lines",
+                 "status": "ACTIVE"}]
+        with patch("core.tracking.get_provider",
+                   return_value=_FakeCarriers(rows)):
+            ok, n = csvc.sync_carriers()
+        self.assertTrue(ok)
+        self.assertEqual(n, 2)
+        self.assertTrue(TrackingCarrier.objects.filter(scac="RCLU").exists())
+        self.assertTrue(csvc.sync_state()["ok"])
+        # a later, shorter list prunes carriers the provider dropped
+        with patch("core.tracking.get_provider",
+                   return_value=_FakeCarriers(rows[:1])):
+            csvc.sync_carriers()
+        self.assertFalse(TrackingCarrier.objects.filter(scac="RCLU").exists())
+
+    def test_sync_failure_keeps_list_and_flags_state(self):
+        from core import carriers as csvc
+        from core.models import TrackingCarrier
+        TrackingCarrier.objects.create(scac="MSCU", name="MSC")
+
+        class Boom:
+            def list_carriers(self):
+                raise RuntimeError("ShipsGo 401 TOKEN_MISSING")
+
+        with patch("core.tracking.get_provider", return_value=Boom()):
+            ok, err = csvc.sync_carriers()
+        self.assertFalse(ok)
+        self.assertEqual(TrackingCarrier.objects.count(), 1)   # NOT wiped
+        self.assertFalse(csvc.sync_state()["ok"])
+
+
+class CarrierEndpointTests(TestCase):
+    def setUp(self):
+        from core.models import TrackingCarrier
+        TrackingCarrier.objects.create(scac="MSCU", name="MSC")
+        self.admin = make_user("adm", User.Role.ADMIN)
+        self.ho = make_user("ho2", User.Role.HO_PURCHASING)
+        self.client = APIClient()
+
+    def test_list_reads_the_synced_table_no_fallback(self):
+        self.client.force_authenticate(self.ho)
+        r = self.client.get("/api/v1/tracking/carriers")
+        self.assertEqual(r.data["count"], 1)
+        self.assertEqual(r.data["carriers"][0]["scac"], "MSCU")
+
+    def test_refresh_is_admin_only(self):
+        self.client.force_authenticate(self.ho)
+        self.assertEqual(
+            self.client.post("/api/v1/tracking/carriers/refresh").status_code,
+            403)

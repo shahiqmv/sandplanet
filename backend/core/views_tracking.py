@@ -27,28 +27,39 @@ def _shipment_for(request, pk):
 
 @api_view(["GET"])
 def tracking_carriers(request):
-    """Carrier picklist for the shipment form — ShipsGo's ACTIVE ocean
-    carriers (SCAC + name). Falls back to a small static list if the provider
-    is unreachable or unconfigured, so the form still works offline."""
-    from django.conf import settings
-    fallback = [
-        {"scac": "MSCU", "name": "MSC"}, {"scac": "MAEU", "name": "Maersk"},
-        {"scac": "CMDU", "name": "CMA CGM"},
-        {"scac": "HLCU", "name": "Hapag-Lloyd"},
-        {"scac": "COSU", "name": "COSCO"}, {"scac": "ONEY", "name": "ONE"},
-    ]
-    if not getattr(settings, "SHIPSGO_API_KEY", ""):
-        return Response({"carriers": fallback, "source": "fallback"})
-    try:
-        from .tracking_shipsgo import ShipsGoProvider
-        resp = ShipsGoProvider()._request("GET", "/ocean/carriers")
-        rows = [{"scac": c.get("scac"), "name": c.get("name")}
-                for c in resp.get("carriers", [])
-                if c.get("status") == "ACTIVE"]
-        return Response({"carriers": rows or fallback,
-                         "source": "shipsgo" if rows else "fallback"})
-    except Exception:
-        return Response({"carriers": fallback, "source": "fallback"})
+    """The full ocean-carrier picklist for the shipment form, read from the
+    locally-synced table (ShipsGo v2 list, ~130+ lines). Never substitutes a
+    stub list: if the sync has never run or last failed, we say so and return
+    whatever we have, so the UI can show a stale banner instead of pretending."""
+    from . import carriers as csvc
+    from .models import TrackingCarrier
+    rows = [{"scac": c.scac, "name": c.name, "status": c.status}
+            for c in TrackingCarrier.objects.all()]
+    state = csvc.sync_state()
+    return Response({
+        "carriers": rows, "count": len(rows),
+        "synced_at": (state or {}).get("at"),
+        "sync_ok": bool(state and state.get("ok")),
+        "sync_error": (state or {}).get("error", "") if state else "",
+        "never_synced": state is None,
+    })
+
+
+@api_view(["POST"])
+def tracking_carriers_refresh(request):
+    """Admin 'refresh now' — re-sync the carrier list from the provider.
+    On failure the existing list is kept and Purchasing/admin are alerted."""
+    if request.user.role != "ADMIN":
+        return Response({"detail": "Only an administrator can refresh the "
+                                   "carrier list."}, status=403)
+    from . import carriers as csvc
+    ok, result = csvc.sync_carriers()
+    if not ok:
+        from . import notify
+        notify.notify_carrier_sync_failed(str(result))
+        return Response({"detail": f"Carrier sync failed: {result}"},
+                        status=502)
+    return Response({"count": result})
 
 
 @api_view(["GET"])

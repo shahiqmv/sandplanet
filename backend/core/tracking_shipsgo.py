@@ -102,6 +102,21 @@ class ShipsGoProvider(TrackingProvider):
             resp = self._request("POST", "/ocean/shipments", body)
         return self._normalise(resp.get("shipment") or {}, tracking.mode)
 
+    def list_carriers(self):
+        """Every ocean carrier, paging skip/take until meta.more is false
+        (ShipsGo v2 defaults to 25 per page — max 100)."""
+        out, skip = [], 0
+        while True:
+            resp = self._request(
+                "GET", f"/ocean/carriers?take=100&skip={skip}")
+            page = resp.get("carriers") or []
+            out.extend(page)
+            meta = resp.get("meta") or {}
+            if not page or not meta.get("more"):
+                break
+            skip += len(page)
+        return out
+
     def fetch(self, tracking) -> Snapshot:
         leg = "air" if tracking.mode == "AIR" else "ocean"
         sid = tracking.provider_tracking_id

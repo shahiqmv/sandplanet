@@ -564,6 +564,55 @@ const CHARGE_LABELS = [["freight", "Freight"], ["insurance", "Insurance"],
   ["port_handling", "Port & handling"], ["agent_charges", "Agent charges"],
   ["local_transport", "Local transport"]];
 
+// Searchable carrier picker over the full synced list (~130+). The stored
+// value is the SCAC; the input shows the name. An unknown / "Other" entry maps
+// to an empty SCAC → ShipsGo v2 auto-detects the line from the container/booking.
+function CarrierPicker({ scac, onPick, carriers, id }) {
+  const nameFor = (code) =>
+    (carriers.find((x) => x.scac === code) || {}).name || "";
+  const [text, setText] = useState(nameFor(scac));
+  useEffect(() => { setText(nameFor(scac)); },
+    [scac, carriers.length]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dlId = `carriers-${id}`;
+  function commit(v) {
+    setText(v);
+    const t = v.trim().toUpperCase();
+    if (!t || t === "OTHER / AUTO-DETECT") { onPick(""); return; }
+    const c = carriers.find((x) => (x.name || "").toUpperCase() === t);
+    onPick(c ? c.scac : "");        // unknown line → auto-detect
+  }
+  return (
+    <>
+      <input list={dlId} value={text} style={inputStyle}
+        placeholder="Carrier (line) — type to search"
+        title="Shipping line — needed for live tracking"
+        onChange={(e) => commit(e.target.value)} />
+      <datalist id={dlId}>
+        <option value="Other / auto-detect" />
+        {carriers.map((c) => <option key={c.scac} value={c.name} />)}
+      </datalist>
+    </>
+  );
+}
+
+function CarrierWarning({ meta }) {
+  if (!meta) return null;
+  const problem = meta.never_synced || !meta.sync_ok || meta.count === 0;
+  if (!problem) return null;
+  const what = meta.never_synced ? "hasn't synced yet"
+    : !meta.sync_ok ? "failed to sync" : "is empty";
+  return (
+    <div style={{ fontSize: 11.5, color: "#b0402f", background: "#fbeae8",
+      border: "1px solid #e3b7b0", borderRadius: 6, padding: "5px 8px",
+      marginTop: 6 }}>
+      ⚠ Carrier list {what}
+      {meta.synced_at ? ` (last ok ${meta.synced_at.slice(0, 10)})` : ""} —
+      showing {meta.count || 0} carrier{meta.count === 1 ? "" : "s"}. An admin
+      can refresh it from the Import tracker.
+    </div>
+  );
+}
+
 const TRACK_STATE_STYLE = {
   ACTIVE: { bg: "#e7f4ea", fg: "#1f7a3d", label: "Tracking active" },
   ARRIVED: { bg: "#e7f0fb", fg: "#1f5fae", label: "Arrived Malé" },
@@ -674,11 +723,13 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
   const [split, setSplit] = useState(false);
   const [alloc, setAlloc] = useState([]);
   const [carriers, setCarriers] = useState([]);
+  const [carrierMeta, setCarrierMeta] = useState(null);
 
   useEffect(() => {
     if (!adding || f.mode !== "SEA" || carriers.length) return;
-    api("/tracking/carriers").then((d) => setCarriers(d.carriers || []))
-      .catch(() => {});
+    api("/tracking/carriers").then((d) => {
+      setCarriers(d.carriers || []); setCarrierMeta(d);
+    }).catch(() => {});
   }, [adding, f.mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const orderLines = (doc.order && doc.order.lines) || [];
@@ -743,14 +794,8 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
               style={inputStyle}
               onChange={(e) => setF({ ...f, vessel_flight: e.target.value })} />
             {f.mode === "SEA" ? (
-              <select value={f.carrier_scac} style={inputStyle}
-                title="Shipping line — needed for live tracking"
-                onChange={(e) => setF({ ...f, carrier_scac: e.target.value })}>
-                <option value="">Carrier (line)…</option>
-                {carriers.map((c) => (
-                  <option key={c.scac} value={c.scac}>{c.name}</option>
-                ))}
-              </select>
+              <CarrierPicker scac={f.carrier_scac} carriers={carriers} id="book"
+                onPick={(v) => setF({ ...f, carrier_scac: v })} />
             ) : (
               <span />
             )}
@@ -770,6 +815,7 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
               <input type="date" value={f.eta} style={inputStyle}
                 onChange={(e) => setF({ ...f, eta: e.target.value })} /></label>
           </div>
+          {f.mode === "SEA" && <CarrierWarning meta={carrierMeta} />}
           {shippable.length > 0 && (
             <div style={{ marginTop: 8, borderTop: "1px solid var(--sp-border)",
                           paddingTop: 8 }}>
@@ -825,6 +871,7 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
   const [editing, setEditing] = useState(false);
   const [ef, setEf] = useState(null);
   const [carriers, setCarriers] = useState([]);
+  const [carrierMeta, setCarrierMeta] = useState(null);
   const at = SHIP_STEPS.indexOf(s.status);
   const arrived = at >= SHIP_STEPS.indexOf("ARRIVED");
 
@@ -834,7 +881,8 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
       bl_no: s.bl_no || "", container_awb: s.container_awb || "",
       etd: s.etd || "", eta: s.eta || "" });
     if (!carriers.length) api("/tracking/carriers")
-      .then((d) => setCarriers(d.carriers || [])).catch(() => {});
+      .then((d) => { setCarriers(d.carriers || []); setCarrierMeta(d); })
+      .catch(() => {});
     setEditing(true);
   }
   async function saveEdit() {
@@ -912,13 +960,9 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
               style={inputStyle}
               onChange={(e) => setEf({ ...ef, vessel_flight: e.target.value })} />
             {ef.mode === "SEA" ? (
-              <select value={ef.carrier_scac} style={inputStyle}
-                onChange={(e) => setEf({ ...ef, carrier_scac: e.target.value })}>
-                <option value="">Carrier (line)…</option>
-                {carriers.map((c) => (
-                  <option key={c.scac} value={c.scac}>{c.name}</option>
-                ))}
-              </select>
+              <CarrierPicker scac={ef.carrier_scac} carriers={carriers}
+                id={`edit-${s.id}`}
+                onPick={(v) => setEf({ ...ef, carrier_scac: v })} />
             ) : <span />}
             {ef.mode === "SEA" && (
               <input placeholder="Booking / B/L no." value={ef.bl_no}
@@ -935,6 +979,7 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
               <input type="date" value={ef.eta} style={inputStyle}
                 onChange={(e) => setEf({ ...ef, eta: e.target.value })} /></label>
           </div>
+          {ef.mode === "SEA" && <CarrierWarning meta={carrierMeta} />}
           <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "6px 0 0" }}>
             Adding the carrier + B/L on a shipped consignment starts live
             tracking automatically.</p>
@@ -1567,7 +1612,47 @@ function TrackingHealth() {
   );
 }
 
-export function ImportTracker({ onOpenIpr }) {
+function CarrierAdmin({ isAdmin }) {
+  const [meta, setMeta] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const load = () => api("/tracking/carriers").then(setMeta).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!meta) return null;
+  const problem = meta.never_synced || !meta.sync_ok || meta.count === 0;
+  async function refresh() {
+    setBusy(true); setMsg("");
+    try {
+      const r = await api("/tracking/carriers/refresh", { method: "POST" });
+      setMsg(`Synced ${r.count} carriers.`); load();
+    } catch (e) { setMsg(e.message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <section style={{ ...card, display: "flex", alignItems: "center",
+      gap: 10, flexWrap: "wrap", padding: "10px 14px",
+      borderColor: problem ? "#e3b7b0" : "var(--sp-border)" }}>
+      <span style={{ fontSize: 13, color: "var(--sp-navy)", fontWeight: 600 }}>
+        🚢 Shipping lines</span>
+      <span style={{ fontSize: 12.5, color: problem ? "#b0402f" : "#5a6b78" }}>
+        {problem
+          ? `⚠ ${meta.never_synced ? "never synced" : !meta.sync_ok
+              ? "last sync failed" : "empty"} — ${meta.count || 0} available`
+          : `${meta.count} carriers · last synced ${(meta.synced_at || "")
+              .slice(0, 10)}`}
+        {meta.sync_error ? ` — ${meta.sync_error}` : ""}
+      </span>
+      {isAdmin && (
+        <button style={{ ...ghostButton, padding: "3px 12px", marginLeft:
+          "auto" }} disabled={busy} onClick={refresh}>
+          {busy ? "Refreshing…" : "Refresh now"}</button>
+      )}
+      {msg && <span style={{ fontSize: 12, color: "#5a6b78" }}>{msg}</span>}
+    </section>
+  );
+}
+
+export function ImportTracker({ me, onOpenIpr }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   useEffect(() => {
@@ -1584,6 +1669,7 @@ export function ImportTracker({ onOpenIpr }) {
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
+      <CarrierAdmin isAdmin={me && me.role === "ADMIN"} />
       <TrackingHealth />
 
       {data?.awaiting_order?.length > 0 && (

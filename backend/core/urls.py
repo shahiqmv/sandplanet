@@ -97,6 +97,8 @@ urlpatterns = [
     # --- shipment tracking (ShipsGo) ---
     path("tracking/carriers", tracking_api.tracking_carriers,
          name="tracking-carriers"),
+    path("tracking/carriers/refresh", tracking_api.tracking_carriers_refresh,
+         name="tracking-carriers-refresh"),
     path("tracking/health", tracking_api.tracking_health,
          name="tracking-health"),
     path("tracking/shipments/<int:pk>/retry", tracking_api.tracking_retry,

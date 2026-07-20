@@ -24,8 +24,16 @@ class Command(BaseCommand):
                             help="Only poll ACTIVE trackings quiet this long.")
 
     def handle(self, *args, **opts):
-        from core import notify, tracking as trk
+        from core import carriers as csvc, notify, tracking as trk
         from core.models import ShipmentTracking, TrackingEvent
+
+        # Keep the carrier picklist fresh (webhook-independent).
+        ok, res = csvc.sync_carriers()
+        if ok:
+            self.stdout.write(f"Carriers synced: {res}.")
+        else:
+            notify.notify_carrier_sync_failed(str(res))
+            self.stderr.write(f"Carrier sync failed: {res}")
 
         gap = timezone.now() - timedelta(hours=opts["gap_hours"])
         registered = polled = stale = 0
