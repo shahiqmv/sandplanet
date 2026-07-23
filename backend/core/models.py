@@ -979,6 +979,13 @@ class ImportShipment(models.Model):
     forwarder = models.ForeignKey(Supplier, on_delete=models.PROTECT,
                                   null=True, blank=True, related_name="+")
     forwarder_name = models.CharField(max_length=120, blank=True)
+    # Shipper's local agent (raises the DO/delivery-order invoice) and the
+    # clearing agent (settles port charges + import duty on our behalf) — the
+    # payees for the shipment's charge PYRs (import-charge-payments).
+    shipping_agent = models.ForeignKey(Supplier, on_delete=models.PROTECT,
+                                       null=True, blank=True, related_name="+")
+    clearing_agent = models.ForeignKey(Supplier, on_delete=models.PROTECT,
+                                       null=True, blank=True, related_name="+")
     vessel_flight = models.CharField(max_length=80, blank=True)
     # Live-tracking keys (ShipsGo, D40). Sea registers by carrier SCAC + a
     # booking/master-B/L number (one credit per B/L) or a container number;
@@ -1054,6 +1061,58 @@ class ImportShipmentLine(models.Model):
             models.UniqueConstraint(fields=["shipment", "ipr_line"],
                                     name="uniq_shipment_line"),
         ]
+
+
+def shipment_invoice_path(instance, filename):
+    return (f"import-docs/{instance.shipment.order.document.ref}/"
+            f"charge-{instance.kind}-{filename}")
+
+
+class ShipmentPayment(models.Model):
+    """One import charge tagged to a shipment, paid to a specific agent via a
+    PYR (import-charge-payments). Purchasing enters the amount + uploads the
+    payee's invoice, then raises a PYR that rides the normal approval → voucher
+    → payment chain. Freight applies only when a forwarder handles shipping."""
+
+    class Kind(models.TextChoices):
+        FREIGHT = "FREIGHT", "Forwarding agent freight"
+        DO = "DO", "Delivery-order charges"
+        PORT = "PORT", "Port charges"
+        DUTY = "DUTY", "Import duty"
+
+    shipment = models.ForeignKey(ImportShipment, on_delete=models.CASCADE,
+                                 related_name="payments")
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    payee = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True,
+                              blank=True, related_name="+")
+    payee_name = models.CharField(max_length=160, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                                 blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    invoice = models.FileField(upload_to=shipment_invoice_path, null=True,
+                               blank=True)
+    invoice_ref = models.CharField(max_length=60, blank=True)
+    # The PYR raised to pay this charge; its status is the payment status.
+    pyr = models.ForeignKey("Document", on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="shipment_payments")
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["kind"]
+        constraints = [
+            models.UniqueConstraint(fields=["shipment", "kind"],
+                                    name="uniq_shipment_payment_kind"),
+        ]
+
+    def __str__(self):
+        return f"{self.kind} on shipment {self.shipment_id}"
+
+    def resolved_payee(self):
+        return self.payee.name if self.payee_id else self.payee_name
 
 
 def shipment_doc_path(instance, filename):
