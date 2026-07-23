@@ -74,7 +74,9 @@ def worker_batches(request):
 
 @api_view(["GET"])
 def site_direct_workers(request, site_id):
-    """Active DIRECT workers at a site — the pick-list for remove / transfer."""
+    """Active DIRECT workers at a site — the roster the SA/SE/PM see, and the
+    pick-list for remove / transfer. Salary is shown, except a Site Admin does
+    not see the pay of STAFF-grade (senior) workers (owner 2026-07-23)."""
     site, err = _site_for(request, site_id)
     if err:
         return err
@@ -85,12 +87,20 @@ def site_direct_workers(request, site_id):
         site_allocations__site=site,
         site_allocations__to_date__isnull=True,
     ).select_related("job_category").order_by("emp_no").distinct()
-    return Response([
-        {"id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
-         "nationality": e.nationality,
-         "job_title": e.job_category.name if e.job_category_id else "",
-         "busy": e.id in open_ids}
-        for e in qs])
+    is_admin_staff = request.user.role == "SITE_ADMIN"
+    out = []
+    for e in qs:
+        grp = e.job_category.grp if e.job_category_id else ""
+        hide_pay = is_admin_staff and grp == "STAFF"   # senior staff pay
+        out.append({
+            "id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+            "nationality": e.nationality,
+            "job_title": e.job_category.name if e.job_category_id else "",
+            "join_date": e.join_date,
+            "basic_pay": None if hide_pay else e.basic_pay,
+            "currency": e.currency, "pay_hidden": hide_pay,
+            "busy": e.id in open_ids})
+    return Response(out)
 
 
 @api_view(["POST"])

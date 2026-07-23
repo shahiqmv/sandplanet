@@ -33,7 +33,8 @@ def _worker_json(emp):
         "id": emp.id, "emp_no": emp.emp_no, "full_name": emp.full_name,
         "nationality": emp.nationality,
         "job_title": emp.job_category.name if emp.job_category_id else "",
-        "job_category_id": emp.job_category_id, "state": state,
+        "job_category_id": emp.job_category_id, "join_date": emp.join_date,
+        "state": state,
     }
 
 

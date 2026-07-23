@@ -3,7 +3,7 @@ import AgreementsPanel from "./AgreementsPanel.jsx";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
-const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "ADMIN"];
+const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
 const STATUS_TONE = {
   DRAFT: "info", PM_APPROVED: "warn", APPROVED: "ok", ACTIVE: "ok",
   SUSPENDED: "warn", CLOSED: "alert",
@@ -230,6 +230,7 @@ function Detail({ sub, me, cats, onBack, onChanged }) {
                         marginTop: 8 }}>
           <thead><tr>
             <th style={th}>Worker</th><th style={th}>Trade</th>
+            <th style={th}>Nationality</th><th style={th}>Joined</th>
             <th style={th}>Status</th><th style={th}></th>
           </tr></thead>
           <tbody>
@@ -239,6 +240,8 @@ function Detail({ sub, me, cats, onBack, onChanged }) {
                   <span style={{ color: "var(--muted)" }}>
                     {" "}· {w.emp_no}</span></td>
                 <td style={td}>{w.job_title || "—"}</td>
+                <td style={td}>{w.nationality || "—"}</td>
+                <td style={td}>{w.join_date || "—"}</td>
                 <td style={td}><Chip tone={WORKER_TONE[w.state]}>
                   {w.state}</Chip></td>
                 <td style={{ ...td, textAlign: "right" }}>

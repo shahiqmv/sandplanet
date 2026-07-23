@@ -13,7 +13,7 @@ from .numbering import next_ref
 
 log = logging.getLogger(__name__)
 
-SITE_MANAGE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "ADMIN")
+SITE_MANAGE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN")
 _FIELDS = ("name", "registration_no", "contact_person", "phone",
            "bank_details", "notes")
 

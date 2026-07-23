@@ -168,3 +168,42 @@ class WorkerBatchTests(TestCase):
         r = self.client.post(f"/api/v1/worker-batches/{bid}/action",
                              {"action": "approve"}, format="json")
         self.assertEqual(r.status_code, 400)
+
+
+class RosterSalaryVisibilityTests(TestCase):
+    """The workforce roster shows salary, but a Site Admin can't see the pay of
+    STAFF-grade (senior) workers (owner 2026-07-23)."""
+
+    def setUp(self):
+        from decimal import Decimal
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        labour = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        staff = ManpowerCategory.objects.create(
+            list_type="DPR", grp="STAFF", name="Site Engineer", sort_order=1)
+        for cat, pay, no in ((labour, "6000", "EMP-0001"),
+                             (staff, "20000", "EMP-0002")):
+            e = Employee.objects.create(emp_no=no, full_name=cat.name,
+                                        job_category=cat,
+                                        basic_pay=Decimal(pay), is_active=True)
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+        self.client = APIClient()
+
+    def _roster(self, user):
+        self.client.force_authenticate(user)
+        return {r["job_title"]: r for r in self.client.get(
+            f"/api/v1/sites/{self.site.id}/direct-workers").data}
+
+    def test_site_admin_cannot_see_staff_pay(self):
+        r = self._roster(make_user("sa", User.Role.SITE_ADMIN, site=self.site))
+        self.assertIsNotNone(r["Mason"]["basic_pay"])        # labour visible
+        self.assertIsNone(r["Site Engineer"]["basic_pay"])   # staff hidden
+        self.assertTrue(r["Site Engineer"]["pay_hidden"])
+
+    def test_engineer_and_pm_see_all_pay(self):
+        for role in (User.Role.SITE_ENGINEER, User.Role.PM):
+            r = self._roster(make_user(f"u{role}", role, site=self.site))
+            self.assertIsNotNone(r["Site Engineer"]["basic_pay"])
+            self.assertFalse(r["Site Engineer"]["pay_hidden"])

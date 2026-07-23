@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
-const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "ADMIN"];
+const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
 const KIND_LABEL = { ADD: "New hires", REMOVE: "Removals", TRANSFER: "Transfers" };
 const STATUS_TONE = {
   SUBMITTED: "warn", PM_APPROVED: "warn", APPROVED: "ok",
@@ -16,6 +16,7 @@ const money = (v) => v == null ? "—"
 // the Director activates new hires) a whole batch at once.
 export default function WorkerManagementPanel({ site, me }) {
   const [batches, setBatches] = useState(null);
+  const [roster, setRoster] = useState(null);
   const [view, setView] = useState(null);   // 'add' | 'roster'
   const [error, setError] = useState(null);
   const canManage = SITE_MANAGE.includes(me.role);
@@ -23,6 +24,7 @@ export default function WorkerManagementPanel({ site, me }) {
   function load() {
     api(`/worker-batches?site_id=${site.id}`).then(setBatches)
       .catch((e) => setError(e.message));
+    api(`/sites/${site.id}/direct-workers`).then(setRoster).catch(() => {});
   }
   useEffect(load, [site.id]);
 
@@ -83,6 +85,42 @@ export default function WorkerManagementPanel({ site, me }) {
             </details>
           )}
         </>
+      )}
+
+      <h4 style={{ margin: "16px 0 6px", color: "var(--navy)" }}>
+        On site — {(roster || []).length} worker(s)</h4>
+      {roster === null ? <p style={{ color: "var(--muted)" }}>Loading…</p>
+       : roster.length === 0 ? (
+        <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          No active direct workers here.</p>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={th}>Emp No</th><th style={th}>Name</th>
+              <th style={th}>Category</th><th style={th}>Nationality</th>
+              <th style={th}>Joined</th>
+              <th style={{ ...th, textAlign: "right" }}>Salary</th>
+            </tr></thead>
+            <tbody>
+              {roster.map((w) => (
+                <tr key={w.id}>
+                  <td style={td}>{w.emp_no}</td>
+                  <td style={td}>{w.full_name}</td>
+                  <td style={td}>{w.job_title || "—"}</td>
+                  <td style={td}>{w.nationality || "—"}</td>
+                  <td style={td}>{w.join_date || "—"}</td>
+                  <td style={{ ...td, textAlign: "right",
+                               fontFamily: "var(--font-mono)" }}>
+                    {w.pay_hidden ? <span style={{ color: "var(--muted)" }}
+                      title="Senior-staff pay is hidden">—</span>
+                      : w.basic_pay == null ? "—"
+                      : `${w.currency} ${money(w.basic_pay)}`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   );
