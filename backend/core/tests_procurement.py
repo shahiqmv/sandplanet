@@ -701,6 +701,19 @@ class PartialPRTests(ProcBase):
                          "PARTIALLY_ORDERED")
         self.assertIn(mr_ref, self._for_pr())
 
+    def test_partially_ordered_mr_visible_to_lm_loader(self):
+        """Regression (owner 2026-07-21): a split MR parked at PARTIALLY_ORDERED
+        must still show in the LM loader's open-MR list (open=1)."""
+        mr_ref = self.mr_to_sent()
+        lines = self._lines(mr_ref)
+        self._approve(self._pr(mr_ref, [lines[self.cement.id]["id"]]).data["ref"])
+        self.assertEqual(Document.objects.get(ref=mr_ref).status,
+                         "PARTIALLY_ORDERED")
+        self.as_user(self.purchasing)
+        r = self.client.get("/api/v1/documents/list?doc_type=MR&open=1"
+                            f"&site={self.site.id}")
+        self.assertIn(mr_ref, {d["ref"] for d in r.data})
+
     def test_second_pr_covers_the_rest_and_closes_mr(self):
         mr_ref = self.mr_to_sent()
         lines = self._lines(mr_ref)

@@ -94,7 +94,7 @@ class ApprovalsQueueTests(TestCase):
         assert r.status_code == 200, r.data
 
         p = self.pending(self.purchasing)
-        self.assertIn("To action — MRs sent to Head Office", self.titles(p))
+        self.assertIn("To action — MRs at Head Office", self.titles(p))
         self.assertEqual([i["ref"] for i in p["groups"][0]["items"]],
                          [mr["ref"]])
 

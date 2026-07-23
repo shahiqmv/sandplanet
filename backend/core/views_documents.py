@@ -699,8 +699,10 @@ def pending_groups(user):
             rows(base.filter(doc_type="IPR", status="APPROVED"),
                  "Authorise the order — posts the MVR commitment"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
-        add("To action — MRs sent to Head Office",
-            rows(scoped(base.filter(doc_type="MR", status="SENT_TO_HO")),
+        add("To action — MRs at Head Office",
+            rows(scoped(base.filter(
+                doc_type="MR",
+                status__in=["SENT_TO_HO", "PARTIALLY_ORDERED"])),
                  "Raise PR or plan loading"))
         add("To issue — draft POs",
             rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
@@ -1303,7 +1305,11 @@ def document_attachment_delete(request, ref, pk):
 
 # "Open" = still actionable in the chain (for reference pick-lists)
 OPEN_STATUSES = {
-    "MR": ["SENT_TO_HO", "PR_RAISED", "LOADING_PLANNED", "PARTIALLY_LOADED"],
+    # PARTIALLY_ORDERED is a live "open" MR too — the split-PR feature parks a
+    # part-covered MR there, and the loader/registers must still offer it
+    # (owner-reported: split MRs vanished from the LM loader, 2026-07-21).
+    "MR": ["SENT_TO_HO", "PR_RAISED", "PARTIALLY_ORDERED", "LOADING_PLANNED",
+           "PARTIALLY_LOADED"],
     "PR": ["SUBMITTED", "APPROVED", "PAYMENT_PROCESSING", "PAID_PO_ISSUED"],
     "PO": ["DRAFT", "ISSUED"],
     "LM": ["DRAFT", "LOADING", "DEPARTED"],
@@ -1696,8 +1702,9 @@ def dashboard_ho(request):
     base = Document.objects.filter(is_void=False)
     pmr = base.filter(doc_type="PMR")
     return Response({
-        "mrs_awaiting_action": base.filter(doc_type="MR",
-                                           status="SENT_TO_HO").count(),
+        "mrs_awaiting_action": base.filter(
+            doc_type="MR",
+            status__in=["SENT_TO_HO", "PARTIALLY_ORDERED"]).count(),
         "prs_awaiting_approval": base.filter(doc_type="PR",
                                              status="SUBMITTED").count(),
         "prs_awaiting_payment": base.filter(
