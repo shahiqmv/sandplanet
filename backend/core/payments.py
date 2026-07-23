@@ -380,6 +380,11 @@ def pyr_action(request, doc, action_name):
             # labour expense is recognised in the payroll month-lock, so this
             # PYR posts nothing to the cost ledger to avoid double counting.
             pass
+        elif pr.is_capitalized:
+            # An import charge already capitalized into the material's landed
+            # cost at receipt — the PYR pays the agent but posts nothing here,
+            # to avoid double counting (import-charge-payments).
+            pass
         else:
             costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
                          source="PYR", amount=ledger_amount,

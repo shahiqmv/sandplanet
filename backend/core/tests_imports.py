@@ -1288,3 +1288,48 @@ class StoreOnManifestTests(MrFromStoreTests):
         again = CostPosting.objects.filter(site=self.site, state="INCURRED",
                                            source="STORE_ISSUE")
         self.assertEqual(float(sum(x.amount for x in again)), 4500.0)
+
+
+class ShipmentChargePyrTests(IprBase):
+    """Import-charge payments: raise a payment-only (capitalized) PYR to pay a
+    shipment charge to its agent — it pays but posts nothing to the ledger,
+    because the charge already rides the material's landed cost."""
+
+    def _file(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile("inv.pdf", b"%PDF-1.4",
+                                  content_type="application/pdf")
+
+    def _shipment(self):
+        from core.models import Document, ImportShipment
+        ref = self.create_and_authorise()
+        order = Document.objects.get(ref=ref).import_order
+        return ImportShipment.objects.create(order=order, seq=1)
+
+    def test_raise_capitalized_pyr_posts_nothing(self):
+        from decimal import Decimal
+
+        from core import imports, vouchers
+        from core.models import CostPosting, ShipmentPayment
+        pay = ShipmentPayment.objects.create(
+            shipment=self._shipment(), kind="FREIGHT", payee_name="SeaTranz",
+            amount=Decimal("5000"), invoice=self._file())
+        doc, err = imports.raise_charge_pyr(pay, self.signatory)
+        self.assertIsNone(err, err)
+        self.assertEqual(doc.doc_type, "PYR")
+        self.assertTrue(doc.payment_request.is_capitalized)
+        pay.refresh_from_db()
+        self.assertEqual(pay.pyr_id, doc.id)
+        # authorising the capitalized PYR posts NOTHING to the cost ledger
+        vouchers.authorise_source(doc, self.signatory)
+        self.assertFalse(
+            CostPosting.objects.filter(source="PYR", document=doc).exists())
+
+    def test_raise_requires_amount_payee_invoice(self):
+        from core import imports
+        from core.models import ShipmentPayment
+        pay = ShipmentPayment.objects.create(shipment=self._shipment(),
+                                             kind="DO")
+        _, err = imports.raise_charge_pyr(pay, self.signatory)
+        self.assertIsNotNone(err)      # no amount / payee / invoice
+        self.assertIsNone(pay.pyr_id)

@@ -264,14 +264,17 @@ def authorise_source(doc, actor):
         pr.save(update_fields=["authorised_by", "authorised_at"])
         # The (MVR) ledger holds the commitment in MVR; a USD request is
         # committed at the company rate (the actual rate lands on payment).
-        committed = pr.amount_requested
-        if pr.currency == "USD":
-            from . import fx
-            committed = (pr.amount_requested * fx.usd_rate()).quantize(
-                Decimal("0.01"))
-        costing.post(site=doc.site, cost_head=pr.cost_head, state="COMMITTED",
-                     source="PYR", amount=committed,
-                     currency="MVR", document=doc, actor=actor)
+        # A capitalized PYR (import charge already in landed cost) posts
+        # nothing, to avoid double counting.
+        if not pr.is_capitalized:
+            committed = pr.amount_requested
+            if pr.currency == "USD":
+                from . import fx
+                committed = (pr.amount_requested * fx.usd_rate()).quantize(
+                    Decimal("0.01"))
+            costing.post(site=doc.site, cost_head=pr.cost_head,
+                         state="COMMITTED", source="PYR", amount=committed,
+                         currency="MVR", document=doc, actor=actor)
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
     Approval.objects.create(document=doc, revision=doc.current_revision,

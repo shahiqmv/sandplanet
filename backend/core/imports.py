@@ -618,6 +618,89 @@ def set_clearing_charges(shipment, data, actor):
                                "total": str(shipment.clearing_total)})
 
 
+# ---- import-charge payments (forwarder / DO / port / duty) -------------------
+
+def set_shipment_payment(shipment, kind, data, actor):
+    """Create or edit a shipment charge (payee, amount, invoice ref) before its
+    PYR is raised. The charge itself is a landed cost; this row tracks who it's
+    paid to."""
+    from .models import ShipmentPayment, Supplier
+    if kind not in ShipmentPayment.Kind.values:
+        return None, "Unknown charge type."
+    payment, _ = ShipmentPayment.objects.get_or_create(
+        shipment=shipment, kind=kind, defaults={"created_by": actor})
+    if payment.pyr_id:
+        return None, "This charge already has a PYR — it can't be edited."
+    if "payee_id" in data:
+        payment.payee = Supplier.objects.filter(pk=data.get("payee_id")).first()
+    if "payee_name" in data:
+        payment.payee_name = data.get("payee_name") or ""
+    if "amount" in data:
+        payment.amount = _dec(data.get("amount"))
+    if "currency" in data:
+        payment.currency = (data.get("currency") or "MVR")[:3].upper()
+    if "invoice_ref" in data:
+        payment.invoice_ref = data.get("invoice_ref") or ""
+    if "notes" in data:
+        payment.notes = data.get("notes") or ""
+    payment.save()
+    return payment, None
+
+
+def raise_charge_pyr(payment, actor):
+    """Raise a PAYMENT-ONLY PYR to pay this shipment charge to its agent. The
+    charge already rides the material's landed cost, so the PYR is capitalized —
+    it pays the agent but posts nothing to the cost ledger (owner 2026-07-23)."""
+    from datetime import date
+
+    from .models import (CostHead, Document, DocumentLink, DocumentRevision)
+    from .payments import create_payment_request
+    if payment.pyr_id:
+        return None, "A PYR has already been raised for this charge."
+    if not payment.amount or payment.amount <= ZERO:
+        return None, "Enter the charge amount first."
+    if not payment.resolved_payee():
+        return None, "Choose the payee (agent) first."
+    if not payment.invoice:
+        return None, "Upload the agent's invoice before raising the PYR."
+    head, _ = CostHead.objects.get_or_create(
+        name="Import Charges", defaults={"sort_order": 90})
+    site = _ho_site()
+    order_doc = payment.shipment.order.document
+    with transaction.atomic():
+        doc = Document.objects.create(
+            doc_type="PYR", ref=next_ref("PYR", site), site=site,
+            doc_date=date.today(), status="DRAFT", created_by=actor)
+        DocumentRevision.objects.create(document=doc, rev_label="R0",
+                                        payload={}, created_by=actor)
+        doc.current_revision = doc.revisions.first()
+        doc.save(update_fields=["current_revision"])
+        pr, err = create_payment_request(doc, {
+            "cost_head_id": head.id,
+            "amount_requested": str(payment.amount),
+            "currency": payment.currency,
+            "payee": payment.resolved_payee(),
+            "payment_method": "BANK",
+            "purpose": f"{payment.get_kind_display()} — {order_doc.ref} "
+                       f"shipment {payment.shipment.seq}",
+            "has_supporting_doc": True,
+        }, actor)
+        if err:
+            transaction.set_rollback(True)
+            return None, err
+        pr.is_capitalized = True    # payment-only — never from arbitrary input
+        pr.save(update_fields=["is_capitalized"])
+        DocumentLink.objects.get_or_create(
+            from_document=doc, to_document=order_doc,
+            link_type="IPR_CHARGE_PYR")
+        payment.pyr = doc
+        payment.save(update_fields=["pyr", "updated_at"])
+    audit("document", doc.id, "SHIPMENT_CHARGE_PYR", actor=actor,
+          detail={"ref": doc.ref, "kind": payment.kind,
+                  "shipment": payment.shipment.seq})
+    return doc, None
+
+
 def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
     """Attach a typed shipping document. A B/L (or AWB) upload fires
     BL-triggered payment milestones (§5.10.7)."""

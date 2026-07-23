@@ -2480,6 +2480,10 @@ class PaymentRequest(models.Model):
                                     default=Type.DIRECT)
     cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
                                   related_name="payment_requests")
+    # A capitalized PYR pays a cost that is recognised elsewhere (an import
+    # charge already in the material's landed cost), so it posts NOTHING to the
+    # cost ledger — same idea as a salary advance (import-charge-payments).
+    is_capitalized = models.BooleanField(default=False)
     payee = models.TextField()
     payment_method = models.CharField(max_length=16, choices=Method.choices,
                                       default=Method.BANK)
