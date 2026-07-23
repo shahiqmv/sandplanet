@@ -309,3 +309,40 @@ Ordering a material on an authorised voucher is treated as consuming it;
 the GRN remains a delivery/QA record with no cost event. This retires the
 INCURRED-at-GRN task deferred at M6c. Revisit when the HO store / inventory
 module (Phase 1B §6D) lands — then Incurred can move to receipt.
+
+## 2026-07-24 — Client Portal & Site Cameras (approved brief 2026-07-22, with owner clarifications)
+Two new modules, biggest initiative to date and unusually infra + security
+heavy. NOT started — decisions recorded ahead of build.
+
+Owner clarifications that revise the brief:
+- Timelapse-first: ONE camera per site for the daily/weekly timelapse (the
+  headline feature); any additional cameras are inspection-only. No minimum
+  fleet — supersedes the brief's "~3× Reolink per site" costing. The pipeline
+  handles 1..n cameras generically.
+- Cameras are selective — Sand Planet decides which sites/projects get them
+  (commercial/relationship call, per project). A site with no camera shows no
+  video section anywhere; unregistered sites incur zero relay/snapshot cost.
+- Keep the client portal deliberately simple ("the simpler the better"): bias
+  every choice to the smallest surface; on-demand LIVE view is optional/
+  deferrable — lead with timelapse + snapshots + documents + manpower total.
+
+Standing decisions (from the brief, unchanged):
+- Read-only client access scoped to assigned sites (DPR, TWS, manpower totals,
+  flagged cameras). No client write actions, no commercial data. Cross-site by
+  id → 404, not 403.
+- Separate CLIENT auth realm, structurally isolated (client tokens rejected by
+  all staff endpoints at middleware). HO-admin-created accounts only.
+- Allowlist serializers on every portal endpoint; reuse the subcontractor
+  client-facing render guard + byte-identical test on portal endpoints.
+- Camera client-visibility opt-in per camera (default hidden); PM toggles for
+  their site. Health alerts internal-only; clients see last snapshot + time.
+- Self-hosted MediaMTX relay on a dedicated DO droplet, on-demand live only,
+  10-min snapshots to Spaces, server-side ffmpeg timelapse; SD cards are local
+  security recording only.
+
+Rollout: Phase 0 (ops — pilot site, bandwidth check, droplet, client domain/
+TLS, hardware) is the real starting gun; then cameras-internal → timelapse →
+CLIENT auth realm standalone → portal documents → portal video/manpower →
+hardening. Gating risks are outside the code: pilot-site uplink bandwidth, a
+second droplet to operate, and a real client domain (prod is still the
+sslip.io IP domain today). Full plan in the client-portal-cameras memory.
