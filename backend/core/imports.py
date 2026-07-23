@@ -643,8 +643,36 @@ def set_shipment_payment(shipment, kind, data, actor):
         payment.invoice_ref = data.get("invoice_ref") or ""
     if "notes" in data:
         payment.notes = data.get("notes") or ""
+    # Forwarder freight is always paid to the shipment's forwarder — no need to
+    # re-enter the payee (owner 2026-07-23).
+    if (payment.kind == ShipmentPayment.Kind.FREIGHT
+            and payment.shipment.forwarder_id):
+        payment.payee = payment.shipment.forwarder
+        payment.payee_name = ""
     payment.save()
+    _mirror_charge_to_landed_cost(payment)
     return payment, None
+
+
+# Each charge capitalizes into the material's landed cost. The existing
+# landed_cost / clearing_total reads the shipment's charge fields, so mirror the
+# charge's MVR amount into the field it maps to — this keeps capitalization
+# working without changing landed_cost, and never double-counts (the payment is
+# the single source; a USD charge converts at the order's agreed rate).
+_LANDED_FIELD = {"FREIGHT": "freight", "DO": "agent_charges",
+                 "PORT": "port_handling", "DUTY": "customs_duty"}
+
+
+def _mirror_charge_to_landed_cost(payment):
+    field = _LANDED_FIELD.get(payment.kind)
+    if not field:
+        return
+    amt = payment.amount
+    if amt is not None and payment.currency != "MVR":
+        amt = (amt * payment.shipment.order.exchange_rate).quantize(
+            Decimal("0.01"))
+    setattr(payment.shipment, field, amt)
+    payment.shipment.save(update_fields=[field])
 
 
 def raise_charge_pyr(payment, actor):
@@ -695,9 +723,23 @@ def raise_charge_pyr(payment, actor):
             link_type="IPR_CHARGE_PYR")
         payment.pyr = doc
         payment.save(update_fields=["pyr", "updated_at"])
+        # Submit it straight away — a raised charge goes into the approval queue
+        # (no orphan drafts for the user to chase). A capitalized import charge
+        # skips the Director (like an accounts-initiated PYR) and clears
+        # straight to a Payment Voucher for signatory approval, so routine
+        # freight/duty/port payments don't pile on the Director (owner
+        # 2026-07-23).
+        from .payments import _set_status
+        _set_status(doc, "SUBMITTED", "SUBMIT", actor,
+                    "Import charge — submitted for approval")
+        _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", actor,
+                    "Import charge — authorised on a Payment Voucher "
+                    "(no Director step)")
     audit("document", doc.id, "SHIPMENT_CHARGE_PYR", actor=actor,
           detail={"ref": doc.ref, "kind": payment.kind,
                   "shipment": payment.shipment.seq})
+    from .notify import notify_document
+    notify_document(doc, actor)     # alert whoever now approves it
     return doc, None
 
 

@@ -536,6 +536,7 @@ export default function App() {
           )}
           {docView?.mode === "ipr-view" && (
             <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc}
+                     onOpenDoc={openDoc}
                      onOpenIrn={(ref) =>
                        setDocView({ mode: "irn-view", doc: { ref } })}
                      onEdit={(doc) =>

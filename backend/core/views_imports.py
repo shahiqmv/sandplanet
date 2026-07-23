@@ -16,7 +16,8 @@ from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
                      ImportReceiptLine, ImportShipment, ImportShipmentLine,
-                     Project, ShipmentDocument, Site, StockLot, Supplier)
+                     Project, ShipmentDocument, ShipmentPayment, Site, StockLot,
+                     Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN",
@@ -130,8 +131,32 @@ class ShipmentLineSerializer(serializers.ModelSerializer):
         fields = ["id", "ipr_line", "line_no", "description", "unit", "qty"]
 
 
+class ShipmentPaymentSerializer(serializers.ModelSerializer):
+    kind_display = serializers.CharField(source="get_kind_display",
+                                         read_only=True)
+    payee_display = serializers.SerializerMethodField()
+    invoice_url = serializers.SerializerMethodField()
+    pyr_ref = serializers.CharField(source="pyr.ref", read_only=True,
+                                    default=None)
+    pyr_status = serializers.CharField(source="pyr.status", read_only=True,
+                                       default=None)
+
+    class Meta:
+        model = ShipmentPayment
+        fields = ["id", "kind", "kind_display", "payee", "payee_name",
+                  "payee_display", "amount", "currency", "invoice_url",
+                  "invoice_ref", "pyr_ref", "pyr_status", "notes"]
+
+    def get_payee_display(self, obj):
+        return obj.resolved_payee()
+
+    def get_invoice_url(self, obj):
+        return obj.invoice.url if obj.invoice else None
+
+
 class ShipmentSerializer(serializers.ModelSerializer):
     forwarder_display = serializers.SerializerMethodField()
+    payments = ShipmentPaymentSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display",
                                            read_only=True)
     documents = ShipmentDocumentSerializer(many=True, read_only=True)
@@ -151,7 +176,8 @@ class ShipmentSerializer(serializers.ModelSerializer):
                   "insurance", "customs_duty", "import_gst", "port_handling",
                   "agent_charges", "local_transport",
                   "clearing_total", "documents", "lines", "missing_clearing",
-                  "next_statuses", "notes", "tracking"]
+                  "next_statuses", "notes", "tracking",
+                  "shipping_agent", "clearing_agent", "payments"]
 
     def get_forwarder_display(self, obj):
         return obj.forwarder.name if obj.forwarder_id else obj.forwarder_name
@@ -202,6 +228,10 @@ def _serialize(doc, request):
     data["line_subtotal"] = ipr_svc.ipr_line_subtotal(order)
     data["order_total"] = total
     data["mvr_total"] = ipr_svc.ipr_mvr_total(order)
+    # When the supplier already charges freight on the PI, the forwarder-freight
+    # charge on the shipment doesn't apply (owner 2026-07-23).
+    data["supplier_charges_freight"] = bool(
+        order.freight_handling and order.freight_handling > 0)
     data["pmr_refs"] = list(
         ipr_svc.linked_pmrs(doc).values_list("ref", flat=True))
     data["milestones"] = MilestoneSerializer(
@@ -374,6 +404,53 @@ def ipr_shipment_charges(request, ref, pk):
     if not s:
         return Response({"detail": "Not found."}, status=404)
     ipr_svc.set_clearing_charges(s, request.data, request.user)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def ipr_shipment_payment(request, ref, pk, kind):
+    """Enter/edit a shipment charge (payee / amount / invoice-ref) and, if a
+    file is attached, its invoice."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES + ("FINANCE",):
+        return Response({"detail": "Head Office / Finance record charges."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    payment, msg = ipr_svc.set_shipment_payment(s, kind.upper(), request.data,
+                                                request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    upload = request.FILES.get("invoice")
+    if upload is not None:
+        payment.invoice = upload
+        payment.save(update_fields=["invoice", "updated_at"])
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_shipment_payment_raise(request, ref, pk, kind):
+    """Raise the capitalized PYR that pays this charge to its agent."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office raises the payment."},
+                        status=403)
+    s = _get_shipment(doc, pk)
+    if not s:
+        return Response({"detail": "Not found."}, status=404)
+    payment = ShipmentPayment.objects.filter(
+        shipment=s, kind=kind.upper()).first()
+    if not payment:
+        return Response({"detail": "Enter the charge first."}, status=400)
+    _, msg = ipr_svc.raise_charge_pyr(payment, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
     return Response(_serialize(doc, request))
 
 

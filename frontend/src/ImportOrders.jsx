@@ -410,7 +410,8 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
   );
 }
 
-export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit }) {
+export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
+                          onOpenDoc }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
 
@@ -597,6 +598,7 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit }) {
                       onError={setError} />
       <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
                       onError={setError} onOpenIrn={onOpenIrn}
+                      onOpenDoc={onOpenDoc}
                       isAdmin={me.role === "ADMIN"} />
     </section>
   );
@@ -762,11 +764,11 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
 }
 
 function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
-                          isAdmin }) {
+                          onOpenDoc, isAdmin }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
-  const blankF = { mode: "SEA", forwarder_name: "", vessel_flight: "",
+  const blankF = { mode: "SEA", forwarder_id: "", vessel_flight: "",
     carrier_scac: "", bl_no: "", container_awb: "", etd: "", eta: "",
     tracking_ref: "" };
   const [f, setF] = useState(blankF);
@@ -774,6 +776,18 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
   const [alloc, setAlloc] = useState([]);
   const [carriers, setCarriers] = useState([]);
   const [carrierMeta, setCarrierMeta] = useState(null);
+  const [forwarders, setForwarders] = useState([]);
+  const [agents, setAgents] = useState([]);
+
+  useEffect(() => {
+    Promise.all([
+      api("/suppliers?category=FORWARDER").catch(() => []),
+      api("/suppliers?category=CLEARING_AGENT").catch(() => []),
+    ]).then(([fw, cl]) => {
+      setForwarders(fw || []);
+      setAgents([...(fw || []), ...(cl || [])]);
+    });
+  }, []);
 
   useEffect(() => {
     if (!adding || f.mode !== "SEA" || carriers.length) return;
@@ -825,7 +839,10 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
       {ships.map((s) => (
         <Shipment key={s.id} s={s} refIpr={refIpr} canManage={canManage}
                   call={call} onChanged={onChanged} onError={onError}
-                  onOpenIrn={onOpenIrn} isAdmin={isAdmin} />
+                  onOpenIrn={onOpenIrn} isAdmin={isAdmin}
+                  forwarders={forwarders} agents={agents}
+                  onOpenDoc={onOpenDoc}
+                  supplierChargesFreight={doc.supplier_charges_freight} />
       ))}
 
       {canManage && (adding ? (
@@ -837,9 +854,13 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
                     onChange={(e) => setF({ ...f, mode: e.target.value })}>
               <option value="SEA">Sea</option><option value="AIR">Air</option>
             </select>
-            <input placeholder="Forwarder" value={f.forwarder_name}
-              style={inputStyle}
-              onChange={(e) => setF({ ...f, forwarder_name: e.target.value })} />
+            <select value={f.forwarder_id || ""} style={inputStyle}
+                    onChange={(e) => setF({ ...f,
+                      forwarder_id: e.target.value })}>
+              <option value="">Forwarder (agent)…</option>
+              {forwarders.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>))}
+            </select>
             <input placeholder="Vessel / flight" value={f.vessel_flight}
               style={inputStyle}
               onChange={(e) => setF({ ...f, vessel_flight: e.target.value })} />
@@ -913,7 +934,8 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
 }
 
 function Shipment({ s, refIpr, canManage, call, onChanged, onError,
-                    onOpenIrn, isAdmin }) {
+                    onOpenIrn, isAdmin, forwarders = [], agents = [],
+                    onOpenDoc, supplierChargesFreight }) {
   const fileRef = useRef(null);
   const [docType, setDocType] = useState("BL_AWB");
   const [charges, setCharges] = useState(Object.fromEntries(
@@ -926,7 +948,7 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
   const arrived = at >= SHIP_STEPS.indexOf("ARRIVED");
 
   function startEdit() {
-    setEf({ mode: s.mode, forwarder_name: s.forwarder_display || "",
+    setEf({ mode: s.mode, forwarder_id: s.forwarder || "",
       vessel_flight: s.vessel_flight || "", carrier_scac: s.carrier_scac || "",
       bl_no: s.bl_no || "", container_awb: s.container_awb || "",
       etd: s.etd || "", eta: s.eta || "" });
@@ -1003,9 +1025,13 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
               onChange={(e) => setEf({ ...ef, mode: e.target.value })}>
               <option value="SEA">Sea</option><option value="AIR">Air</option>
             </select>
-            <input placeholder="Forwarder" value={ef.forwarder_name}
-              style={inputStyle}
-              onChange={(e) => setEf({ ...ef, forwarder_name: e.target.value })} />
+            <select value={ef.forwarder_id || ""} style={inputStyle}
+                    onChange={(e) => setEf({ ...ef,
+                      forwarder_id: e.target.value })}>
+              <option value="">Forwarder (agent)…</option>
+              {forwarders.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>))}
+            </select>
             <input placeholder="Vessel / flight" value={ef.vessel_flight}
               style={inputStyle}
               onChange={(e) => setEf({ ...ef, vessel_flight: e.target.value })} />
@@ -1128,32 +1154,156 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
         </div>
       )}
 
-      {/* clearing charges */}
-      {(canManage || s.clearing_total > 0) && (
+      {/* import charge payments (forwarder / DO / port / duty) */}
+      {(canManage || (s.payments || []).length > 0) && (
         <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 11.5, color: "#5a6b78", marginBottom: 3 }}>
-            Clearing charges (MVR) — feed the landed cost</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
-                        alignItems: "center" }}>
-            {CHARGE_LABELS.map(([k, label]) => (
-              <input key={k} type="number" placeholder={label}
-                value={charges[k]} disabled={!canManage}
-                style={{ ...inputStyle, width: 120 }}
-                onChange={(e) => setCharges({ ...charges, [k]: e.target.value })}
-                title={label} />
-            ))}
-            {canManage && (
-              <button style={{ ...ghostButton, padding: "3px 10px",
-                               fontSize: 12 }}
-                      onClick={() => call(`/shipments/${s.id}/charges`,
-                                          charges)}>Save charges</button>
-            )}
-            <span style={{ fontSize: 12.5, fontWeight: 600,
-                           color: "var(--sp-navy)" }}>
-              Total: MVR {money(s.clearing_total)}</span>
-          </div>
+          <div style={{ fontSize: 11.5, color: "#5a6b78", marginBottom: 4 }}>
+            Import charges — paid to agents, capitalized into landed cost</div>
+          <ChargePayments s={s} refIpr={refIpr} canManage={canManage}
+                          onChanged={onChanged} onError={onError}
+                          agents={agents} onOpenDoc={onOpenDoc}
+                          supplierChargesFreight={supplierChargesFreight} />
+          <span style={{ fontSize: 12.5, fontWeight: 600,
+                         color: "var(--sp-navy)" }}>
+            Landed-cost charges: MVR {money(s.clearing_total)}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+const CHARGE_KINDS = [
+  ["FREIGHT", "Forwarding agent freight"],
+  ["DO", "Delivery-order charges"],
+  ["PORT", "Port charges"],
+  ["DUTY", "Import duty"],
+];
+
+function ChargePayments({ s, refIpr, canManage, onChanged, onError, agents = [],
+                          onOpenDoc, supplierChargesFreight }) {
+  const byKind = Object.fromEntries((s.payments || []).map((p) => [p.kind, p]));
+  return (
+    <div style={{ marginBottom: 6 }}>
+      {CHARGE_KINDS.map(([kind, label]) => {
+        if (kind === "FREIGHT" && supplierChargesFreight) {
+          return (
+            <div key={kind} style={{ fontSize: 12, color: "#8a97a3",
+                                     padding: "3px 0" }}>
+              {label}: n/a — the supplier charges freight on the order</div>
+          );
+        }
+        return <ChargeRow key={kind} kind={kind} label={label}
+                          p={byKind[kind]} s={s} refIpr={refIpr}
+                          canManage={canManage} onChanged={onChanged}
+                          onError={onError} agents={agents}
+                          onOpenDoc={onOpenDoc} />;
+      })}
+    </div>
+  );
+}
+
+function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
+                    onError, agents = [], onOpenDoc }) {
+  // Forwarder freight is always paid to the shipment's forwarder — no picker.
+  const freightToForwarder = kind === "FREIGHT" && !!s.forwarder;
+  const [payeeId, setPayeeId] = useState(p?.payee || "");
+  const [amount, setAmount] = useState(p?.amount ?? "");
+  const [currency, setCurrency] = useState(p?.currency || "MVR");
+  const [invRef, setInvRef] = useState(p?.invoice_ref || "");
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const raised = !!p?.pyr_ref;
+
+  async function save() {
+    onError(null);
+    const fd = new FormData();
+    // Freight-to-forwarder needs no payee (the server uses the forwarder).
+    if (!freightToForwarder) fd.append("payee_id", payeeId || "");
+    fd.append("amount", amount);
+    fd.append("currency", currency); fd.append("invoice_ref", invRef);
+    if (file) fd.append("invoice", file);
+    try {
+      await apiUpload(`/ipr/${refIpr}/shipments/${s.id}/payments/${kind}`, fd);
+      setFile(null); onChanged();
+    } catch (e) { onError(e.message); }
+  }
+  async function raise() {
+    onError(null);
+    try {
+      await api(`/ipr/${refIpr}/shipments/${s.id}/payments/${kind}/raise`,
+                { method: "POST" });
+      onChanged();
+    } catch (e) { onError(e.message); }
+  }
+
+  return (
+    <div style={{ border: "1px solid #e6ebf0", borderRadius: 6,
+                  padding: "5px 8px", marginBottom: 4 }}>
+      <div style={{ display: "flex", gap: 6, alignItems: "center",
+                    flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, width: 160,
+                       color: "var(--sp-navy)" }}>{label}</span>
+        {raised ? (
+          <>
+            <span style={{ fontSize: 12.5 }}>{p.payee_display} · {p.currency}
+              {" "}{money(p.amount)}</span>
+            {p.invoice_url && (
+              <a href={p.invoice_url} target="_blank" rel="noreferrer"
+                 style={{ fontSize: 12 }}>📎 invoice</a>)}
+            <span style={{ fontSize: 12, marginLeft: "auto" }}>
+              {onOpenDoc ? (
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              onOpenDoc(p.pyr_ref); }}
+                   style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                  PYR {p.pyr_ref}</a>
+              ) : <b>PYR {p.pyr_ref}</b>}
+              {" "}· {String(p.pyr_status).replace(/_/g, " ")}</span>
+          </>
+        ) : (
+          <>
+            {freightToForwarder ? (
+              <span style={{ fontSize: 12, color: "#5a6b78", width: 150 }}>
+                → {s.forwarder_display}</span>
+            ) : (
+              <select value={payeeId} disabled={!canManage}
+                      style={{ ...inputStyle, width: 150 }}
+                      onChange={(e) => setPayeeId(e.target.value)}>
+                <option value="">Payee (agent)…</option>
+                {agents.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>))}
+              </select>
+            )}
+            <input type="number" placeholder="Amount" value={amount}
+                   disabled={!canManage} style={{ ...inputStyle, width: 90 }}
+                   onChange={(e) => setAmount(e.target.value)} />
+            <select value={currency} disabled={!canManage}
+                    style={{ ...inputStyle, width: 68 }}
+                    onChange={(e) => setCurrency(e.target.value)}>
+              <option>MVR</option><option>USD</option></select>
+            <input placeholder="Inv #" value={invRef} disabled={!canManage}
+                   style={{ ...inputStyle, width: 80 }}
+                   onChange={(e) => setInvRef(e.target.value)} />
+            <input ref={fileRef} type="file" style={{ display: "none" }}
+                   onChange={(e) => setFile(e.target.files[0])} />
+            {canManage && (
+              <button style={{ ...ghostButton, padding: "3px 8px",
+                               fontSize: 12 }}
+                      onClick={() => fileRef.current?.click()}>
+                {file ? `✓ ${file.name.slice(0, 14)}`
+                      : p?.invoice_url ? "Replace invoice" : "Attach invoice"}
+              </button>)}
+            {p?.invoice_url && !file && (
+              <a href={p.invoice_url} target="_blank" rel="noreferrer"
+                 style={{ fontSize: 12 }}>📎</a>)}
+            {canManage && (
+              <button style={{ ...ghostButton, padding: "3px 8px",
+                               fontSize: 12 }} onClick={save}>Save</button>)}
+            {canManage && (
+              <button style={{ ...buttonStyle, padding: "3px 10px",
+                               fontSize: 12 }} onClick={raise}>Raise PYR</button>)}
+          </>
+        )}
+      </div>
     </div>
   );
 }

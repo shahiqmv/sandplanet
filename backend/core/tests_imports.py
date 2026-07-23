@@ -1318,6 +1318,8 @@ class ShipmentChargePyrTests(IprBase):
         self.assertIsNone(err, err)
         self.assertEqual(doc.doc_type, "PYR")
         self.assertTrue(doc.payment_request.is_capitalized)
+        # auto-submitted AND cleared past the Director straight to a voucher
+        self.assertEqual(doc.status, "DIRECTOR_APPROVED")
         pay.refresh_from_db()
         self.assertEqual(pay.pyr_id, doc.id)
         # authorising the capitalized PYR posts NOTHING to the cost ledger

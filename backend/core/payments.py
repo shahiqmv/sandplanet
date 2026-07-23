@@ -274,11 +274,12 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin == "FINANCE":
-            # Accounts-initiated (rent, salaries, utilities…): no Director step
-            # — cleared straight to a Payment Voucher for signatory approval.
+        if pr.origin == "FINANCE" or pr.is_capitalized:
+            # Accounts-initiated (rent, salaries, utilities…) and capitalized
+            # import charges skip the Director — no Director step; cleared
+            # straight to a Payment Voucher for signatory approval.
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
-                        "Accounts-initiated — authorised on a Payment Voucher")
+                        "No Director step — authorised on a Payment Voucher")
         return None
 
     if action_name == "approve":
