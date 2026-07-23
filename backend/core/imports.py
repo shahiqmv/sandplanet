@@ -31,9 +31,16 @@ def _ho_site():
     return ho_site()
 
 
-def ipr_order_total(order):
-    """Order value in the order currency (sum of line values)."""
+def ipr_line_subtotal(order):
+    """Sum of the line values in the order currency (before adjustments)."""
     return sum((ln.line_value for ln in order.lines.all()), ZERO)
+
+
+def ipr_order_total(order):
+    """Order value in the order currency: line subtotal − discount + supplier
+    freight/handling (owner 2026-07-21)."""
+    return (ipr_line_subtotal(order) - (order.discount or ZERO)
+            + (order.freight_handling or ZERO))
 
 
 def ipr_mvr_total(order):
@@ -110,7 +117,9 @@ def create_ipr(data, actor):
         exchange_rate=rate, incoterm=data.get("incoterm", ""),
         loading_port=data.get("loading_port", ""),
         discharge_port=data.get("discharge_port", ""),
-        pi_ref=data.get("pi_ref", ""), notes=data.get("notes", ""))
+        pi_ref=data.get("pi_ref", ""), notes=data.get("notes", ""),
+        discount=_dec(data.get("discount")) or None,
+        freight_handling=_dec(data.get("freight_handling")) or None)
     _save_lines(order, lines_data)
 
     for pmr in pmrs:
@@ -149,6 +158,9 @@ def update_ipr(doc, data, actor):
     for f in ("incoterm", "loading_port", "discharge_port", "pi_ref", "notes"):
         if f in data:
             setattr(order, f, data.get(f) or "")
+    for f in ("discount", "freight_handling"):
+        if f in data:
+            setattr(order, f, _dec(data.get(f)) or None)
     order.save()
     _save_lines(order, lines_data)
     audit("document", doc.id, "IPR_EDITED", actor=actor,
@@ -205,8 +217,12 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
     General Stock pool (never a project). Shared by commitment and payment."""
     gs_head = costing.head("General Stock")
     ho = _ho_site()
+    # Apportion the order-level discount / freight across every line so the
+    # committed MVR equals the real order value, not just the goods subtotal.
+    subtotal = ipr_line_subtotal(order)
+    net_factor = (ipr_order_total(order) / subtotal) if subtotal else Decimal("1")
     for line in order.lines.all():
-        unit_mvr = (line.unit_price or ZERO) * rate
+        unit_mvr = (line.unit_price or ZERO) * rate * net_factor
         for alloc in line.allocations.select_related("project__site"):
             amount = (alloc.qty * unit_mvr * fraction).quantize(Decimal("0.01"))
             if amount <= ZERO:

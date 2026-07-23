@@ -224,6 +224,37 @@ class IprFlowTests(IprBase):
         self.assertEqual(float(pool_leg.amount), 6000.0)
         self.assertEqual(float(sum(p.amount for p in posts)), 15000.0)
 
+    def test_discount_and_freight_fold_into_total_and_commitment(self):
+        """Order-level discount / supplier freight adjust the order total and
+        apportion across the committed legs (owner 2026-07-21)."""
+        self.client.force_authenticate(self.ho)
+        body = self.order_body()
+        body["discount"] = "100"
+        body["freight_handling"] = "50"
+        r = self.client.post("/api/v1/ipr", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.assertEqual(float(r.data["line_subtotal"]), 1000.0)
+        self.assertEqual(float(r.data["order_total"]), 950.0)     # 1000-100+50
+        self.assertEqual(float(r.data["mvr_total"]), 14250.0)     # 950 * 15
+
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        posts = CostPosting.objects.filter(source="IPR", state="COMMITTED")
+        # net_factor 0.95: project 9000*0.95=8550, pool 6000*0.95=5700
+        self.assertAlmostEqual(
+            float(posts.get(is_stock_pool=False).amount), 8550.0, places=1)
+        self.assertAlmostEqual(
+            float(posts.get(is_stock_pool=True).amount), 5700.0, places=1)
+        self.assertAlmostEqual(
+            float(sum(p.amount for p in posts)), 14250.0, places=1)
+
     def test_authorising_generates_supplier_po(self):
         # Owner 2026-07-16: authorising an IPR raises the supplier PO, like a
         # domestic PR — one PO for the whole order, in the order currency.

@@ -99,9 +99,10 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
     exchange_rate: String(o.exchange_rate ?? ""), incoterm: o.incoterm || "",
     loading_port: o.loading_port || "", discharge_port: o.discharge_port || "",
     pi_ref: o.pi_ref || "", notes: o.notes || "",
+    discount: o.discount ?? "", freight_handling: o.freight_handling ?? "",
   } : { supplier_id: "", order_currency: "USD",
     exchange_rate: "", incoterm: "", loading_port: "", discharge_port: "",
-    pi_ref: "", notes: "" });
+    pi_ref: "", notes: "", discount: "", freight_handling: "" });
   const [pmrRefs, setPmrRefs] = useState(existing?.pmr_refs || []);
   const [lines, setLines] = useState(o ? o.lines.map((l) => ({
     ...newLine(), item_id: l.item || null,
@@ -159,8 +160,10 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
     if (rows.length) setLines(rows);
   }
 
-  const orderTotal = useMemo(() =>
+  const lineSubtotal = useMemo(() =>
     lines.reduce((a, l) => a + num(l.order_qty) * num(l.unit_price), 0), [lines]);
+  const orderTotal = lineSubtotal - num(hdr.discount)
+    + num(hdr.freight_handling);
   const mvrTotal = orderTotal * num(hdr.exchange_rate);
 
   // Promote a free-text "new item" line to a real catalog item, so it becomes
@@ -375,7 +378,24 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
       <button onClick={() => setLines([...lines, newLine()])}
               style={{ ...ghostButton, padding: "4px 12px" }}>+ Add line</button>
 
-      <p style={{ marginTop: 14, fontSize: 14, fontWeight: 600,
+      <div style={{ marginTop: 14, display: "grid", gap: 8, maxWidth: 420,
+                    gridTemplateColumns: "1fr auto" }}>
+        <span style={{ fontSize: 13, color: "#5a6b78" }}>Line subtotal</span>
+        <span style={{ fontSize: 13, textAlign: "right",
+                       fontFamily: "var(--font-mono)" }}>
+          {hdr.order_currency} {money(lineSubtotal)}</span>
+        <label style={{ fontSize: 13, alignSelf: "center" }}>
+          Discount ({hdr.order_currency})</label>
+        <input type="number" value={hdr.discount} placeholder="0"
+               onChange={(e) => setH("discount", e.target.value)}
+               style={{ ...inputStyle, width: 130, textAlign: "right" }} />
+        <label style={{ fontSize: 13, alignSelf: "center" }}>
+          Freight / handling ({hdr.order_currency})</label>
+        <input type="number" value={hdr.freight_handling} placeholder="0"
+               onChange={(e) => setH("freight_handling", e.target.value)}
+               style={{ ...inputStyle, width: 130, textAlign: "right" }} />
+      </div>
+      <p style={{ marginTop: 12, fontSize: 14, fontWeight: 600,
                   color: "var(--sp-navy)" }}>
         Order total: {hdr.order_currency} {money(orderTotal)}
         {num(hdr.exchange_rate) > 0 &&
@@ -519,6 +539,36 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit }) {
             ))}
           </tbody>
           <tfoot>
+            {(Number(o.discount) > 0 || Number(o.freight_handling) > 0) && (
+              <>
+                <tr>
+                  <td colSpan={4} style={{ ...td, textAlign: "right",
+                                           color: "#5a6b78" }}>Line subtotal</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {o.order_currency} {money(doc.line_subtotal)}</td>
+                  <td colSpan={2} style={td}></td>
+                </tr>
+                {Number(o.discount) > 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ ...td, textAlign: "right",
+                                             color: "#5a6b78" }}>Discount</td>
+                    <td style={{ ...td, textAlign: "right", color: "#c0392b" }}>
+                      − {o.order_currency} {money(o.discount)}</td>
+                    <td colSpan={2} style={td}></td>
+                  </tr>
+                )}
+                {Number(o.freight_handling) > 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ ...td, textAlign: "right",
+                                             color: "#5a6b78" }}>
+                      Freight / handling</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      + {o.order_currency} {money(o.freight_handling)}</td>
+                    <td colSpan={2} style={td}></td>
+                  </tr>
+                )}
+              </>
+            )}
             <tr>
               <td colSpan={4} style={{ ...td, textAlign: "right",
                                        fontWeight: 600 }}>Order total</td>

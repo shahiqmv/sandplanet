@@ -74,6 +74,7 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = ["supplier", "supplier_name", "supplier_country",
                   "order_currency", "exchange_rate", "incoterm",
                   "loading_port", "discharge_port", "pi_ref",
+                  "discount", "freight_handling",
                   "proforma_invoice_url", "notes", "lines"]
 
     def get_proforma_invoice_url(self, obj):
@@ -198,6 +199,7 @@ def _serialize(doc, request):
     total = ipr_svc.ipr_order_total(order)
     data = DocumentSerializer(doc, context={"request": request}).data
     data["order"] = OrderSerializer(order).data
+    data["line_subtotal"] = ipr_svc.ipr_line_subtotal(order)
     data["order_total"] = total
     data["mvr_total"] = ipr_svc.ipr_mvr_total(order)
     data["pmr_refs"] = list(

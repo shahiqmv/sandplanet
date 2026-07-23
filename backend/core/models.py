@@ -820,6 +820,15 @@ class ImportOrder(models.Model):
     loading_port = models.CharField(max_length=60, blank=True)
     discharge_port = models.CharField(max_length=60, blank=True)
     pi_ref = models.CharField(max_length=40, blank=True)  # proforma invoice no.
+    # Order-currency adjustments the supplier quotes on the PI (owner
+    # 2026-07-21): a discount off the goods, and freight/handling the supplier
+    # bills as a separate line. Order total = Σ line values − discount +
+    # freight_handling; they apportion across the lines when the commitment
+    # posts, so the committed MVR matches the real order value.
+    discount = models.DecimalField(max_digits=14, decimal_places=2,
+                                   null=True, blank=True)
+    freight_handling = models.DecimalField(max_digits=14, decimal_places=2,
+                                           null=True, blank=True)
     # The supplier's proforma invoice file, uploaded by HO for the Director /
     # Signatory to view before authorising the order (owner 2026-07-13).
     proforma_invoice = models.FileField(upload_to="import-docs/pi/", null=True,
