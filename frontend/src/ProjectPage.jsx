@@ -386,6 +386,8 @@ function ContractTermsCard({ project }) {
   const rows = [
     ["Contract type", CONTRACT_TYPE_LABEL[project.contract_type] || "—"],
     ["Payment terms", project.payment_terms],
+    ["Client credit period", project.client_credit_days != null
+      ? `${project.client_credit_days} days` : null],
     ["Advance payment", pct(project.advance_payment_pct)],
     ["Advance guarantee", project.advance_guarantee],
     ["Retention", pct(project.retention_pct)],
@@ -434,6 +436,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
     qs: project.qs ?? "",
     contract_type: project.contract_type || "",
     payment_terms: project.payment_terms || "",
+    client_credit_days: project.client_credit_days ?? "",
     advance_payment_pct: project.advance_payment_pct ?? "",
     advance_guarantee: project.advance_guarantee || "",
     retention_pct: project.retention_pct ?? "",
@@ -468,6 +471,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
         qs: form.qs === "" ? null : Number(form.qs),
         contract_type: form.contract_type,
         payment_terms: form.payment_terms,
+        client_credit_days: num(form.client_credit_days),
         advance_payment_pct: num(form.advance_payment_pct),
         advance_guarantee: form.advance_guarantee,
         retention_pct: num(form.retention_pct),
@@ -554,6 +558,10 @@ function EditProjectModal({ project, onClose, onSaved }) {
           <label style={full}>Payment terms
             <textarea value={form.payment_terms} rows={2}
                       onChange={set("payment_terms")} style={ta} /></label>
+          <label style={field}>Client credit period (days)
+            <input type="number" min="0" value={form.client_credit_days}
+                   onChange={set("client_credit_days")}
+                   placeholder="e.g. 30" style={inputStyle} /></label>
           <label style={field}>Advance payment %
             <input type="number" min="0" value={form.advance_payment_pct}
                    onChange={set("advance_payment_pct")}

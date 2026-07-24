@@ -1,0 +1,110 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* Client statement of account — same commercial stationery as the tax
+     invoice: centered masthead, company details in the fixed footer. */
+  @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9pt;
+         color: #1c2b36; }
+  .masthead { text-align: center; margin-bottom: 6mm; }
+  .masthead img { height: 16mm; }
+  h1 { text-align: center; font-weight: 400; font-size: 17pt; color: #1c2b36;
+       margin: 0 0 5mm; letter-spacing: .5px; }
+  h1 strong { font-weight: 700; }
+  .parties { width: 100%; border-collapse: collapse; margin-bottom: 4mm; }
+  .parties td { border: none; vertical-align: top; padding: 0 6px; }
+  .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
+         letter-spacing: .05em; }
+  .parties .nm { font-weight: 700; font-size: 10.5pt; color: #10344F; }
+  .meta { border-collapse: collapse; margin-left: auto; }
+  .meta td { border: none; padding: 1px 0 1px 10px; font-size: 9pt;
+             text-align: right; }
+  .meta td.k { color: #6a7681; text-transform: uppercase; font-size: 7.5pt;
+               letter-spacing: .05em; }
+  table.stmt { width: 100%; border-collapse: collapse; margin-top: 2mm; }
+  table.stmt th, table.stmt td { border: 0.5px solid #C4D0DA;
+    padding: 3px 6px; font-size: 8.4pt; }
+  table.stmt thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+    text-align: right; }
+  table.stmt thead th.l { text-align: left; }
+  table.stmt td.num { text-align: right; font-variant-numeric: tabular-nums;
+    white-space: nowrap; }
+  table.stmt tr.open td, table.stmt tr.close td { font-weight: 700;
+    background: #F3F7FA; }
+  table.stmt tr.close td { border-top: 1.2px solid #16527E; color: #10344F; }
+  .baldue { margin-top: 5mm; text-align: right; font-size: 11pt;
+            font-weight: 800; color: #16527E; }
+  .foot-note { margin-top: 4mm; font-size: 8pt; color: #6a7681; }
+  .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
+            border-top: 0.8px solid #d6e2ec; padding-top: 3mm;
+            font-size: 8pt; color: #5a6b78; }
+  thead { display: table-header-group; }
+  table.stmt tbody tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+<div class="footer">
+  {{ co.address }}{% if co.reg_no %} · Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} · TIN {{ co.tin }}{% endif %}<br>
+  {% if co.phone %}{{ co.phone }} · {% endif %}{% if co.email %}{{ co.email }}{% endif %}{% if co.website %} · {{ co.website }}{% endif %}
+</div>
+
+<div class="masthead"><img src="{{ logo_src }}"></div>
+<h1>STATEMENT OF <strong>ACCOUNT</strong></h1>
+
+<table class="parties"><tr>
+  <td style="width: 55%">
+    <div class="lbl">Account</div>
+    <div class="nm">{{ stmt.client }}</div>
+    {% if stmt.client_address %}<div>{{ stmt.client_address }}</div>{% endif %}
+  </td>
+  <td>
+    <table class="meta">
+      <tr><td class="k">Statement date</td><td>{{ stmt.date_to|date:"d M Y" }}</td></tr>
+      {% if stmt.date_from %}<tr><td class="k">Period from</td><td>{{ stmt.date_from|date:"d M Y" }}</td></tr>{% endif %}
+      <tr><td class="k">Site</td><td>{{ stmt.site_code }}</td></tr>
+    </table>
+  </td>
+</tr></table>
+
+<table class="stmt">
+  <thead><tr>
+    <th class="l">Date</th><th class="l">Reference</th>
+    <th class="l">Project</th><th class="l">Description</th>
+    <th class="l">Due</th>
+    <th>Invoiced</th><th>Received</th><th>Balance</th>
+  </tr></thead>
+  <tbody>
+    <tr class="open">
+      <td colspan="7">Opening balance{% if stmt.date_from %} as at {{ stmt.date_from|date:"d M Y" }}{% endif %}</td>
+      <td class="num">{{ stmt.opening|floatformat:2 }}</td>
+    </tr>
+    {% for r in stmt.rows %}
+    <tr>
+      <td>{{ r.date|date:"d M Y" }}</td>
+      <td>{{ r.ref|default:"—" }}</td>
+      <td>{{ r.project_code }}</td>
+      <td>{{ r.description }}</td>
+      <td>{% if r.due_date %}{{ r.due_date|date:"d M Y" }}{% else %}—{% endif %}</td>
+      <td class="num">{% if r.debit %}{{ r.debit|floatformat:2 }}{% else %}—{% endif %}</td>
+      <td class="num">{% if r.credit %}{{ r.credit|floatformat:2 }}{% else %}—{% endif %}</td>
+      <td class="num">{{ r.balance|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="close">
+      <td colspan="5">Closing balance</td>
+      <td class="num">{{ stmt.billed|floatformat:2 }}</td>
+      <td class="num">{{ stmt.received|floatformat:2 }}</td>
+      <td class="num">{{ stmt.closing|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="baldue">Balance due: {{ currency }} {{ stmt.closing|floatformat:2 }}</div>
+<div class="foot-note">
+  E &amp; O.E. All amounts in {{ currency }}. Please quote the invoice reference
+  when remitting. Balances shown are as at the statement date.
+</div>
+</body>
+</html>

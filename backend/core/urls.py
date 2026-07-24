@@ -9,6 +9,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_tools as tools_api, \
     views_tracking as tracking_api, views_vouchers as vouchers, \
+    views_receivables as receivables_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -262,6 +263,14 @@ urlpatterns = [
          name="claim-ipa-pdf"),
     path("claims/<int:pk>/invoice.pdf", commercial.claim_invoice_pdf,
          name="claim-invoice-pdf"),
+    # Receivables (Finance / QS / Director): aging + client statements
+    path("receivables/aging", receivables_api.aging, name="rcv-aging"),
+    path("receivables/clients", receivables_api.clients, name="rcv-clients"),
+    path("receivables/invoices", receivables_api.invoices, name="rcv-invoices"),
+    path("receivables/statement", receivables_api.statement,
+         name="rcv-statement"),
+    path("receivables/statement.pdf", receivables_api.statement_pdf,
+         name="rcv-statement-pdf"),
     path("sites/<int:site_id>/manpower", hr.site_manpower,
          name="site-manpower"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),

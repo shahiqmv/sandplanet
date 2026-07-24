@@ -1981,6 +1981,9 @@ class Project(models.Model):
                                      choices=ContractType.choices, blank=True)
     # payment & money terms
     payment_terms = models.TextField(blank=True)
+    # Client credit period (days) — a certified claim's tax invoice falls due
+    # this many days after its issue date; drives the receivables aging.
+    client_credit_days = models.PositiveIntegerField(null=True, blank=True)
     advance_payment_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                               null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,

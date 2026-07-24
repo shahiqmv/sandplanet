@@ -20,7 +20,8 @@ PROJECT_EDIT_ROLES = ("ADMIN", "DIRECTOR", "PM", "QS")
 # Contract terms + value are commercial data — shown only to those who may see
 # the contract value (HO roles incl. QS, and the assigned PM).
 CONTRACT_FIELDS = (
-    "contract_value", "contract_type", "payment_terms", "advance_payment_pct",
+    "contract_value", "contract_type", "payment_terms", "client_credit_days",
+    "advance_payment_pct",
     "retention_pct", "retention_release_terms", "output_gst_pct",
     "defects_liability_months",
     "liquidated_damages", "price_escalation", "performance_bond_pct",
@@ -56,7 +57,8 @@ class ProjectSerializer(serializers.ModelSerializer):
                   "planned_completion", "actual_completion", "status",
                   "activity_count", "overall_progress", "latest_manpower",
                   # contract terms (QS)
-                  "contract_type", "payment_terms", "advance_payment_pct",
+                  "contract_type", "payment_terms", "client_credit_days",
+                  "advance_payment_pct",
                   "retention_pct", "retention_release_terms", "output_gst_pct",
                   "defects_liability_months", "liquidated_damages",
                   "price_escalation", "performance_bond_pct",

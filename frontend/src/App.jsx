@@ -26,6 +26,7 @@ import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
+import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
@@ -71,11 +72,13 @@ const NAV_GROUPS = [
            ["suppliers", "Suppliers",
             ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"]]] },
   { key: "finance", label: "Finance",
-    roles: ["FINANCE", "SIGNATORY", "ADMIN"],
+    roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS"],
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
-           ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]]] },
+           ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
+           ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
+                                           "QS"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
@@ -787,6 +790,11 @@ export default function App() {
             hoPage === "import-payments" && (
             <ImportPaymentsDue onOpenIpr={(ref) =>
               setDocView({ mode: "ipr-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite &&
+            ["FINANCE", "DIRECTOR", "ADMIN", "QS"].includes(me.role) &&
+            hoPage === "receivables" && (
+            <ReceivablesPage me={me} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>
