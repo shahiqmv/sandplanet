@@ -12,6 +12,22 @@
   .neg { color: #b0402f; }
   .words { margin-top: 3mm; font-style: italic; font-size: 9pt;
            color: #10344F; }
+  table.dv { width: 100%; border-collapse: collapse; margin-top: 3mm; }
+  table.dv th, table.dv td { border: 0.5px solid #C4D0DA; padding: 2.5px 6px;
+                             font-size: 8.4pt; vertical-align: top; }
+  table.dv thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+                      text-align: right; }
+  table.dv thead th.l { text-align: left; }
+  table.dv td.num { text-align: right; font-variant-numeric: tabular-nums;
+                    white-space: nowrap; }
+  table.dv td.code { white-space: nowrap; font-weight: 600; }
+  table.dv tr.sec td { background: #F3F7FA; font-weight: 700; color: #10344F;
+                       text-transform: uppercase; letter-spacing: .03em;
+                       font-size: 8pt; }
+  table.dv tr.sub td { font-weight: 700; background: #FAFCFD; }
+  table.dv tr.grand td { background: #BFD3E3; font-weight: 800; color: #10344F;
+                         font-size: 8.8pt; }
+  table.dv tbody tr { page-break-inside: avoid; }
 </style>
 </head>
 <body>
@@ -43,19 +59,43 @@
 {% include "pdf/_payment_summary.html" %}
 <div class="words">{{ amount_words }}</div>
 
-{% if sections %}
-<h2>Summary by bill</h2>
-<table>
+{% if detail_sections %}
+<h2>Detailed valuation ({{ currency }})</h2>
+<table class="dv">
   <thead><tr>
-    <th style="text-align:left">Bill / section</th>
-    <th class="num">This application</th><th class="num">Cumulative</th>
+    <th class="l">Code</th><th class="l">Description</th>
+    <th>Contract</th><th>% done</th>
+    <th>Previous</th><th>This claim</th><th>Cumulative</th>
   </tr></thead>
   <tbody>
-    {% for s in sections %}
-    <tr><td>{{ s.section }}</td>
-        <td class="num">{{ s.current|floatformat:2 }}</td>
-        <td class="num">{{ s.cumulative|floatformat:2 }}</td></tr>
+    {% for s in detail_sections %}
+    {% if s.section %}<tr class="sec"><td colspan="7">{{ s.section }}</td></tr>{% endif %}
+    {% for ln in s.lines %}
+    <tr>
+      <td class="code">{{ ln.item_code }}</td>
+      <td>{{ ln.description }}</td>
+      <td class="num">{{ ln.contract_amount|floatformat:2 }}</td>
+      <td class="num">{% if ln.cumulative_pct != None %}{{ ln.cumulative_pct|floatformat:2 }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ ln.previous_value|floatformat:2 }}</td>
+      <td class="num">{{ ln.current_value|floatformat:2 }}</td>
+      <td class="num">{{ ln.cumulative_value|floatformat:2 }}</td>
+    </tr>
     {% endfor %}
+    <tr class="sub">
+      <td colspan="2">{% if s.section %}{{ s.section }} — subtotal{% else %}Subtotal{% endif %}</td>
+      <td class="num">{{ s.contract|floatformat:2 }}</td><td></td>
+      <td class="num">{{ s.previous|floatformat:2 }}</td>
+      <td class="num">{{ s.current|floatformat:2 }}</td>
+      <td class="num">{{ s.cumulative|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="grand">
+      <td colspan="2">Total value of works</td>
+      <td class="num">{{ detail_totals.contract|floatformat:2 }}</td><td></td>
+      <td class="num">{{ detail_totals.previous|floatformat:2 }}</td>
+      <td class="num">{{ detail_totals.current|floatformat:2 }}</td>
+      <td class="num">{{ detail_totals.cumulative|floatformat:2 }}</td>
+    </tr>
   </tbody>
 </table>
 {% endif %}

@@ -342,6 +342,9 @@ class ProgressClaimTests(TestCase):
         # deduction sits above the taxable subtotal, GST is the net, then total
         self.assertIn("Total amount", ipa2)
         self.assertIn("Total with GST", ipa2)
+        # the detailed item-by-item valuation follows the summary sheet
+        self.assertIn("Detailed valuation", ipa2)
+        self.assertIn("Total value of works", ipa2)
         inv = render_to_string("pdf/tax_invoice.html",
                                commercial.invoice_pdf_context(cc))
         self.assertIn("Diesel from store", inv)

@@ -782,6 +782,30 @@ def claim_payment_summary(claim):
     return rows
 
 
+def _valuation_detail(lines):
+    """Group the priced claim lines into bill/section blocks with per-bill
+    subtotals and a grand total — the detailed valuation appended to the IPA
+    (its length follows the BOQ). Each line carries contract / % done /
+    previous / this-claim / cumulative."""
+    from collections import OrderedDict
+    secs = OrderedDict()
+    tot = {"contract": ZERO, "previous": ZERO, "current": ZERO,
+           "cumulative": ZERO}
+    for ln in lines:
+        key = ln["section"] or ""
+        g = secs.setdefault(key, {"section": key, "lines": [],
+                                  "contract": ZERO, "previous": ZERO,
+                                  "current": ZERO, "cumulative": ZERO})
+        g["lines"].append(ln)
+        for k in ("contract", "previous", "current", "cumulative"):
+            src = {"contract": "contract_amount", "previous": "previous_value",
+                   "current": "current_value",
+                   "cumulative": "cumulative_value"}[k]
+            g[k] += ln[src]
+            tot[k] += ln[src]
+    return list(secs.values()), tot
+
+
 def claim_pdf_context(claim):
     """Context for the interim payment application / certificate PDF."""
     from .pdf import company_info, logo_src
@@ -790,12 +814,14 @@ def claim_pdf_context(claim):
     w = val["waterfall"]
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
+    detail_sections, detail_totals = _valuation_detail(val["lines"])
     return {
         "logo_src": logo_src(), "co": company_info(),
         "claim": claim, "project": project,
         "employer": _employer(project), "currency": ccy,
         "waterfall": w, "approved_vos": w["revised"] - w["original"],
         "lines": val["lines"], "sections": val["section_summary"],
+        "detail_sections": detail_sections, "detail_totals": detail_totals,
         "deductions": val["deduction_lines"],
         "summary": claim_payment_summary(claim),
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
