@@ -1,0 +1,130 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* Official receipt — same commercial stationery as the tax invoice:
+     centered masthead, company details in the fixed footer. */
+  @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt;
+         color: #1c2b36; }
+  .masthead { text-align: center; margin-bottom: 6mm; }
+  .masthead img { height: 16mm; }
+  h1 { text-align: center; font-weight: 400; font-size: 18pt; color: #1c2b36;
+       margin: 0 0 6mm; letter-spacing: .5px; }
+  h1 strong { font-weight: 700; }
+  .parties { width: 100%; border-collapse: collapse; }
+  .parties td { border: none; vertical-align: top; padding: 0 6px; }
+  .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
+         letter-spacing: .05em; }
+  .parties .nm { font-weight: 700; font-size: 10.5pt; color: #10344F; }
+  .meta { border-collapse: collapse; margin-left: auto; }
+  .meta td { border: none; padding: 1px 0 1px 10px; font-size: 9pt;
+             text-align: right; }
+  .meta td.k { color: #6a7681; text-transform: uppercase; font-size: 7.5pt;
+               letter-spacing: .05em; }
+  hr.rule { border: none; border-top: 1px solid #16527E; margin: 5mm 0 0; }
+  .narrative { font-size: 9.5pt; color: #26333d; line-height: 1.55;
+               margin: 5mm 0 4mm; }
+  table.doc { width: 100%; border-collapse: collapse; }
+  table.doc th { background: #E9EEF2; color: #10344F; font-weight: 700;
+    font-size: 8pt; text-transform: uppercase; letter-spacing: .06em;
+    text-align: left; padding: 3mm 4mm; border: 0.6px solid #cdd8e1; }
+  table.doc th.n { text-align: right; }
+  table.doc td { padding: 4px 4mm; font-size: 9.5pt;
+    border: 0.6px solid #cdd8e1; border-top: none; }
+  table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
+    white-space: nowrap; width: 34mm; }
+  table.doc tr.grand td { border-top: 1.4px solid #16527E; font-weight: 800;
+    font-size: 11.5pt; color: #16527E; }
+  .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
+  .payinfo { width: 100%; border-collapse: collapse; margin-top: 6mm; }
+  .payinfo td { border: 0.6px solid #cdd8e1; padding: 5px 8px; font-size: 8.6pt;
+    vertical-align: top; }
+  .payinfo td.k { background: #F3F7FA; color: #10344F; font-weight: 700;
+    width: 34mm; }
+  .note { margin-top: 6mm; font-size: 8pt; color: #6a7681; }
+  .sig { margin-top: 14mm; text-align: right; }
+  .sig .line { display: inline-block; border-top: 0.8px solid #1c2b36;
+    width: 70mm; padding-top: 2mm; font-size: 9pt; }
+  .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
+            border-top: 0.8px solid #d6e2ec; padding-top: 3mm;
+            font-size: 8pt; color: #5a6b78; }
+  thead { display: table-header-group; }
+</style>
+</head>
+<body>
+<div class="footer">
+  {{ co.address }}{% if co.reg_no %} · Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} · TIN {{ co.tin }}{% endif %}<br>
+  {% if co.phone %}{{ co.phone }} · {% endif %}{% if co.email %}{{ co.email }}{% endif %}{% if co.website %} · {{ co.website }}{% endif %}
+</div>
+
+<div class="masthead"><img src="{{ logo_src }}"></div>
+<h1>OFFICIAL <strong>RECEIPT</strong></h1>
+
+<table class="parties"><tr>
+  <td style="width: 55%">
+    <div class="lbl">Received with thanks from</div>
+    <div class="nm">{{ payer.name }}</div>
+    {% if payer.address %}<div>{{ payer.address }}</div>{% endif %}
+    {% if payer.contact %}<div>Attn: {{ payer.contact }}{% if payer.designation %}, {{ payer.designation }}{% endif %}</div>{% endif %}
+  </td>
+  <td>
+    <table class="meta">
+      <tr><td class="k">Receipt No</td><td><strong>{{ r.receipt_no }}</strong></td></tr>
+      <tr><td class="k">Date</td><td>{{ r.receipt_date|date:"d M Y" }}</td></tr>
+      <tr><td class="k">Method</td><td>{{ r.method_label }}</td></tr>
+      {% if r.reference %}<tr><td class="k">Reference</td><td>{{ r.reference }}</td></tr>{% endif %}
+    </table>
+  </td>
+</tr></table>
+
+<hr class="rule">
+
+<p class="narrative">
+  Being payment received{% if invoice_list %} against tax invoice{{ r.lines|pluralize }}
+  {{ invoice_list }}{% endif %} for {{ r.client }}.
+</p>
+
+<table class="doc">
+  <thead>
+    <tr><th>Invoice</th><th>Project</th>
+        <th class="n">Invoice total</th><th class="n">Amount received {{ currency }}</th></tr>
+  </thead>
+  <tbody>
+    {% for l in r.lines %}
+    <tr>
+      <td>{{ l.invoice_no|default:l.claim_ref }}</td>
+      <td>{{ l.project_code }}</td>
+      <td class="n">{% if l.invoice_amount != None %}{{ l.invoice_amount|floatformat:2 }}{% else %}—{% endif %}</td>
+      <td class="n">{{ l.amount|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="grand">
+      <td colspan="3">Total amount received</td>
+      <td class="n">{{ currency }} {{ r.total|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="words">{{ amount_words }}</div>
+
+{% if bank_account %}
+<table class="payinfo">
+  <tr><td class="k">Account credited</td>
+      <td>{{ bank_account.label }}{% if bank_account.bank_name %} — {{ bank_account.bank_name }}{% endif %}
+        {% if bank_account.account_no %}<br>A/C {{ bank_account.account_no }}{% if bank_account.currency %} ({{ bank_account.currency }}){% endif %}{% endif %}
+        {% if bank_account.account_name %}<br>{{ bank_account.account_name }}{% endif %}</td></tr>
+</table>
+{% endif %}
+
+<div class="note">
+  This receipt acknowledges the sum stated above received on the date shown.
+  All amounts in {{ currency }}. Cheques are subject to realisation.
+</div>
+
+<div class="sig">
+  <div class="line">For {{ co.legal_name }} — Authorised Signature</div>
+</div>
+</body>
+</html>

@@ -2391,16 +2391,85 @@ class ClaimDeduction(models.Model):
         return f"{self.label}: {self.cumulative_amount}"
 
 
+class CompanyBankAccount(models.Model):
+    """A company bank account money can be received into — the selectable
+    'account credited' on an official receipt. Seeded from the company_bank_*
+    parameters; more accounts can be added on the Company page."""
+
+    label = models.CharField(max_length=80)        # e.g. "BML USD Current"
+    bank_name = models.CharField(max_length=120, blank=True)
+    branch = models.CharField(max_length=120, blank=True)
+    account_name = models.CharField(max_length=120, blank=True)
+    account_no = models.CharField(max_length=60, blank=True)
+    currency = models.CharField(max_length=3, default="USD")
+    swift = models.CharField(max_length=40, blank=True)
+    iban = models.CharField(max_length=60, blank=True)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return self.label
+
+
+class OfficialReceipt(models.Model):
+    """A finance-issued official receipt acknowledging money received from a
+    client, allocated across one or more tax invoices (progress claims). Each
+    allocation is a ClientReceipt line linked back here; a part payment has one
+    line, a lump remittance settling several invoices has many."""
+
+    class Method(models.TextChoices):
+        TT = "TT", "Telegraphic transfer"
+        CHEQUE = "CHEQUE", "Cheque"
+        CASH = "CASH", "Cash"
+        CARD = "CARD", "Card"
+        OTHER = "OTHER", "Other"
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="official_receipts")   # the client
+    receipt_no = models.CharField(max_length=20, unique=True)    # OR-0001
+    receipt_date = models.DateField()
+    method = models.CharField(max_length=8, choices=Method.choices,
+                              default=Method.TT)
+    reference = models.CharField(max_length=120, blank=True)     # TT / cheque no
+    bank_account = models.ForeignKey(CompanyBankAccount,
+                                     on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    currency = models.CharField(max_length=3, default="USD")
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-receipt_date", "-id"]
+
+    @property
+    def total(self):
+        from decimal import Decimal
+        return sum((r.amount for r in self.receipts.all()), Decimal("0"))
+
+    def __str__(self):
+        return self.receipt_no
+
+
 class ClientReceipt(models.Model):
     """Money received from the client against a certified claim (the money-IN
     completion, P4). Contracts are USD, so receipts are USD. A receipt is tied
     to the interim claim (IPA) it settles, and to the project for the revenue
-    roll-up."""
+    roll-up. When issued as part of an official receipt it points back to it;
+    a standalone quick-record (QS) leaves official_receipt null."""
 
     project = models.ForeignKey(Project, on_delete=models.CASCADE,
                                 related_name="receipts")
     claim = models.ForeignKey(ProgressClaim, on_delete=models.SET_NULL,
                               null=True, blank=True, related_name="receipts")
+    official_receipt = models.ForeignKey(OfficialReceipt,
+                                         on_delete=models.CASCADE, null=True,
+                                         blank=True, related_name="receipts")
     amount = models.DecimalField(max_digits=16, decimal_places=2)  # USD
     currency = models.CharField(max_length=3, default="USD")
     received_on = models.DateField()

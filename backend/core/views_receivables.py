@@ -7,17 +7,27 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import receipts as receipts_svc
 from . import receivables
-from .models import Site
+from .models import CompanyBankAccount, OfficialReceipt, Site
 
 # Who may see the receivables ledger: Finance runs it; the QS owns the
 # billing and the Director oversees cash-in (owner 2026-07-24).
 RECEIVABLE_ROLES = ("FINANCE", "DIRECTOR", "ADMIN", "QS")
+# Who may issue/void an official receipt + manage bank accounts: Finance.
+RECEIPT_ROLES = ("FINANCE", "ADMIN")
 
 
 def _gate(request):
     if request.user.role not in RECEIVABLE_ROLES:
         return Response({"detail": "Not permitted."}, status=403)
+    return None
+
+
+def _manage_gate(request):
+    if request.user.role not in RECEIPT_ROLES:
+        return Response({"detail": "Only Finance can issue receipts."},
+                        status=403)
     return None
 
 
@@ -105,3 +115,111 @@ def statement_pdf(request):
            "stmt": stmt, "currency": "USD"}
     return _render_pdf("pdf/client_statement.html", ctx,
                        f"Statement-{site.code}")
+
+
+# ---- Company bank accounts (the "account credited" list) -----------------
+
+def _bank_dict(b):
+    return {"id": b.id, "label": b.label, "bank_name": b.bank_name,
+            "branch": b.branch, "account_name": b.account_name,
+            "account_no": b.account_no, "currency": b.currency,
+            "swift": b.swift, "iban": b.iban, "is_active": b.is_active,
+            "sort_order": b.sort_order}
+
+
+BANK_FIELDS = ("label", "bank_name", "branch", "account_name", "account_no",
+               "currency", "swift", "iban", "is_active", "sort_order")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def bank_accounts(request):
+    if request.method == "POST":
+        if (bad := _manage_gate(request)):
+            return bad
+        if not (request.data.get("label") or "").strip():
+            return Response({"detail": "Give the account a label."}, status=400)
+        b = CompanyBankAccount.objects.create(
+            **{f: request.data.get(f, "") for f in BANK_FIELDS
+               if f not in ("is_active", "sort_order")},
+            is_active=bool(request.data.get("is_active", True)),
+            sort_order=int(request.data.get("sort_order") or 0))
+        return Response(_bank_dict(b), status=201)
+    if (bad := _gate(request)):
+        return bad
+    active_only = request.query_params.get("active") == "1"
+    qs = CompanyBankAccount.objects.all()
+    if active_only:
+        qs = qs.filter(is_active=True)
+    return Response({"accounts": [_bank_dict(b) for b in qs]})
+
+
+@api_view(["PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def bank_account_detail(request, pk):
+    if (bad := _manage_gate(request)):
+        return bad
+    try:
+        b = CompanyBankAccount.objects.get(pk=pk)
+    except CompanyBankAccount.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        b.is_active = False          # keep history; just deactivate
+        b.save(update_fields=["is_active"])
+        return Response(status=204)
+    for f in BANK_FIELDS:
+        if f in request.data:
+            setattr(b, f, request.data[f])
+    b.save()
+    return Response(_bank_dict(b))
+
+
+# ---- Official receipts ---------------------------------------------------
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def receipts(request):
+    if request.method == "POST":
+        if (bad := _manage_gate(request)):
+            return bad
+        r, msg = receipts_svc.create_official_receipt(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(receipts_svc.receipt_dict(r), status=201)
+    if (bad := _gate(request)):
+        return bad
+    site_id = request.query_params.get("site")
+    site_id = int(site_id) if site_id and site_id.isdigit() else None
+    return Response({"receipts": receipts_svc.list_receipts(site_id)})
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsAuthenticated])
+def receipt_detail(request, pk):
+    try:
+        r = OfficialReceipt.objects.select_related("site").get(pk=pk)
+    except OfficialReceipt.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        if (bad := _manage_gate(request)):
+            return bad
+        receipts_svc.delete_official_receipt(r, request.user)
+        return Response(status=204)
+    if (bad := _gate(request)):
+        return bad
+    return Response(receipts_svc.receipt_dict(r))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def receipt_pdf(request, pk):
+    if (bad := _gate(request)):
+        return bad
+    try:
+        r = OfficialReceipt.objects.select_related(
+            "site", "bank_account").get(pk=pk)
+    except OfficialReceipt.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    from .views_commercial import _render_pdf
+    return _render_pdf("pdf/official_receipt.html",
+                       receipts_svc.receipt_pdf_context(r), r.receipt_no)

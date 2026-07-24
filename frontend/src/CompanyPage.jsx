@@ -70,6 +70,7 @@ export default function CompanyPage() {
   }
 
   return (
+    <div style={{ maxWidth: 620 }}>
     <section style={{ ...card, maxWidth: 620 }}>
       <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
         Company
@@ -131,5 +132,115 @@ export default function CompanyPage() {
         {busy ? "Saving…" : "Save company details"}
       </button>
     </section>
+    <BankAccounts />
+    </div>
   );
 }
+
+// Receiving bank accounts — the accounts money lands in, selectable as the
+// "account credited" when Finance issues an official receipt. Separate from
+// the single "pay to" account printed on invoices above.
+const BLANK_ACC = { label: "", bank_name: "", branch: "", account_name: "",
+  account_no: "", currency: "USD", swift: "", iban: "" };
+
+function BankAccounts() {
+  const [accts, setAccts] = useState(null);
+  const [draft, setDraft] = useState(null);   // new/edit form or null
+  const [error, setError] = useState(null);
+
+  const load = () => api("/receivables/bank-accounts")
+    .then((r) => setAccts(r.accounts)).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  async function save() {
+    setError(null);
+    if (!draft.label.trim()) { setError("Give the account a label."); return; }
+    try {
+      if (draft.id)
+        await api(`/receivables/bank-accounts/${draft.id}`,
+          { method: "PUT", body: draft });
+      else
+        await api("/receivables/bank-accounts", { method: "POST", body: draft });
+      setDraft(null); load();
+    } catch (e) { setError(e.message); }
+  }
+  async function deactivate(a) {
+    if (!window.confirm(`Deactivate "${a.label}"?`)) return;
+    try { await api(`/receivables/bank-accounts/${a.id}`, { method: "DELETE" }); load(); }
+    catch (e) { setError(e.message); }
+  }
+
+  return (
+    <section style={{ ...card, maxWidth: 620, marginTop: 16 }}>
+      <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+        Receiving bank accounts
+      </h2>
+      <p style={{ fontSize: 12, color: "#5a6b78", marginTop: -6 }}>
+        Accounts client payments land in — picked as the “account credited” on
+        official receipts. Deactivating keeps past receipts intact.
+      </p>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+
+      {accts == null ? <p style={{ fontSize: 13 }}>Loading…</p> : (
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 13, margin: "8px 0" }}>
+          <tbody>
+            {accts.map((a) => (
+              <tr key={a.id} style={{ borderTop: "1px solid var(--sp-border)",
+                opacity: a.is_active ? 1 : 0.5 }}>
+                <td style={{ padding: "6px 4px" }}>
+                  <strong>{a.label}</strong>
+                  {!a.is_active && <span style={{ fontSize: 11,
+                    color: "#5a6b78" }}> (inactive)</span>}
+                  <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                    {[a.bank_name, a.account_no, a.currency]
+                      .filter(Boolean).join(" · ")}</div>
+                </td>
+                <td style={{ padding: "6px 4px", textAlign: "right",
+                             whiteSpace: "nowrap" }}>
+                  <button onClick={() => setDraft({ ...a })}
+                    style={linkBtn}>Edit</button>
+                  {a.is_active && (
+                    <button onClick={() => deactivate(a)}
+                      style={{ ...linkBtn, color: "#c0392b" }}>Deactivate</button>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {!accts.length && (
+              <tr><td style={{ padding: "6px 4px", color: "#5a6b78" }}>
+                No receiving accounts yet.</td></tr>
+            )}
+          </tbody>
+        </table>
+      )}
+
+      {draft ? (
+        <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                      padding: 12, marginTop: 8 }}>
+          {[["label", "Label (e.g. BML USD Current)"], ["bank_name", "Bank name"],
+            ["branch", "Branch"], ["account_name", "Account name"],
+            ["account_no", "Account number"], ["currency", "Currency"],
+            ["swift", "SWIFT / BIC"], ["iban", "IBAN"]].map(([k, label]) => (
+            <label key={k} style={{ display: "block", fontSize: 13,
+                                    marginBottom: 8 }}>
+              {label}
+              <input value={draft[k] || ""}
+                onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
+                style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
+            </label>
+          ))}
+          <button onClick={save} style={buttonStyle}>Save account</button>
+          <button onClick={() => setDraft(null)}
+            style={{ ...linkBtn, marginLeft: 10 }}>Cancel</button>
+        </div>
+      ) : (
+        <button onClick={() => setDraft({ ...BLANK_ACC })} style={buttonStyle}>
+          + Add receiving account</button>
+      )}
+    </section>
+  );
+}
+
+const linkBtn = { border: "none", background: "none", cursor: "pointer",
+  color: "var(--sp-navy)", fontSize: 13, marginLeft: 8 };
