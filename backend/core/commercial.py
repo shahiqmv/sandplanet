@@ -4,13 +4,20 @@ This is the client-revenue counterpart to the cost-control ledger: the QS
 prices the contract (BOQ), values work done progressively, and claims it from
 the client. Slice 1 is the BOQ itself.
 """
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.db.models import Max, Sum
 
 from .audit import audit
 
 ZERO = Decimal("0")
+_CENT = Decimal("0.01")
+
+
+def _q2(v):
+    """Round a money figure to 2 dp (bankers' half-up) so certificates,
+    invoices and amount-in-words all agree to the cent."""
+    return Decimal(str(v)).quantize(_CENT, rounding=ROUND_HALF_UP)
 
 
 def _dec(v):
@@ -489,10 +496,10 @@ def claim_valuation(claim):
 
     k2 = Decimal(str(claim.material_on_site or 0))     # material on site
     k3 = Decimal(str(claim.material_off_site or 0))    # material off site
-    k_gross = k1 + k2 + k3 + k4                        # K gross cumulative
+    k_gross = _q2(k1 + k2 + k3 + k4)                   # K gross cumulative
 
     from .models import ProgressClaim
-    advance_total = claim.advance_pct / Decimal("100") * original    # L1
+    advance_total = _q2(claim.advance_pct / Decimal("100") * original)  # L1
     # The advance is paid on the Advance claim, then recovered pro-rata as work
     # is valued. It rides the cumulative waterfall as +received / −recovered, so
     # each claim's "now due" comes out right (advance received once, recovery
@@ -507,20 +514,18 @@ def claim_valuation(claim):
     else:
         advance_recovered = min(
             claim.recovery_pct / Decimal("100") * k_gross, advance_total)
-    retention_held = (claim.retention_pct / Decimal("100")
-                      * (k1 + k2 + k4))                 # M1 (not on off-site)
+    advance_recovered = _q2(advance_recovered)
+    retention_held = _q2(claim.retention_pct / Decimal("100")
+                         * (k1 + k2 + k4))              # M1 (not on off-site)
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
-    net_cumulative = (k_gross + advance_received - advance_recovered
-                      + net_retention)                  # N
-    previously = _claim_net(prev)                                    # P
-    net_due = net_cumulative - previously                           # Q
-    gst = claim.gst_pct / Decimal("100") * net_due                  # R
-    total = net_due + gst                        # total with GST (present)
 
-    # Back charges (client-provided items/services) — deducted flat, AFTER GST,
-    # from the amount payable (owner's IPC format). Cumulative to date; present
-    # = this claim's cumulative less the previous claim's line of same label.
+    # Back charges (client-provided items/services) reduce the value we invoice,
+    # so they come off the certified value BEFORE output GST — GST is only ever
+    # charged on the net consideration we actually bill (owner 2026-07-24;
+    # charging GST then deducting after would over-remit GST, against GST rules).
+    # Cumulative to date; present = this claim's cumulative less the previous
+    # claim's line of the same label.
     prev_ded = {}
     if prev:
         for d in prev.deductions.all():
@@ -535,12 +540,19 @@ def claim_valuation(claim):
                                 "present": cum - pv, "cumulative": cum})
         ded_cum += cum
         ded_present += (cum - pv)
-    net_to_pay = total - ded_present             # the amount actually payable
+
+    net_cumulative = _q2(k_gross + advance_received - advance_recovered
+                         + net_retention - ded_cum)     # N (net of back charges)
+    previously = _claim_net(prev)                                    # P
+    net_due = net_cumulative - previously                           # Q (taxable)
+    gst = _q2(claim.gst_pct / Decimal("100") * net_due)             # R
+    total = net_due + gst                        # total with GST (present)
+    net_to_pay = total                           # nothing deducted after GST
     # Cumulative-to-date counterparts (for the 4-column IPA summary: the
     # "previous" column is the prior claim's cumulative, "present" = the delta).
-    gst_cumulative = claim.gst_pct / Decimal("100") * net_cumulative
+    gst_cumulative = _q2(claim.gst_pct / Decimal("100") * net_cumulative)
     total_cumulative = net_cumulative + gst_cumulative
-    net_to_pay_cumulative = total_cumulative - ded_cum
+    net_to_pay_cumulative = total_cumulative
 
     secs = OrderedDict()
     for ln in lines:
@@ -757,17 +769,16 @@ def claim_payment_summary(claim):
     if w["retention_released"]:
         add("Retention released", ZERO, w["retention_released"],
             P("retention_released"))
+    # Back charges come off before GST (net taxable value).
+    for d in val["deduction_lines"]:
+        add(f"Deduction: {d['label']}", ZERO, d["cumulative"], d["previous"],
+            sign=-1)
     add("Total amount", revised, w["net_cumulative"], P("net_cumulative"),
         style="total")
     add(f"GST @ {claim.gst_pct:.0f}%", contract_gst, w["gst_cumulative"],
         P("gst_cumulative"))
     add("Total with GST", revised + contract_gst, w["total_cumulative"],
-        P("total_cumulative"), style="total")
-    for d in val["deduction_lines"]:
-        add(f"Deduction: {d['label']}", ZERO, d["cumulative"], d["previous"],
-            sign=-1)
-    add("Net amount to pay", revised + contract_gst, w["net_to_pay_cumulative"],
-        P("net_to_pay_cumulative"), style="net")
+        P("total_cumulative"), style="net")
     return rows
 
 

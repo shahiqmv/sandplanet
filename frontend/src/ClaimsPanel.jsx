@@ -520,6 +520,11 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, onChange, reloadList }
               {Number(w.retention_released) !== 0 &&
                 <W label="Add retention released" v={w.retention_released}
                    ccy={ccy} />}
+              {/* Back charges come off before GST (net taxable value) */}
+              {(d.deduction_lines || []).map((dl, i) => (
+                <W key={i} label={`Less: ${dl.label}`} v={-dl.cumulative}
+                   ccy={ccy} neg />
+              ))}
               <W label="Net cumulative certified" v={w.net_cumulative}
                  ccy={ccy} strong />
               <W label="Less previously certified" v={-w.previously_certified}
@@ -527,16 +532,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, onChange, reloadList }
               <W label="Net now due (ex-GST)" v={w.net_due} ccy={ccy} strong />
               <W label={`Output GST @ ${fmt(c.gst_pct)}%`} v={w.gst}
                  ccy={ccy} />
-              <W label="Total incl. GST" v={w.total} ccy={ccy}
-                 big={!(d.deduction_lines || []).length}
-                 strong={!!(d.deduction_lines || []).length} />
-              {(d.deduction_lines || []).map((dl, i) => (
-                <W key={i} label={`Less: ${dl.label}`} v={-dl.present}
-                   ccy={ccy} neg />
-              ))}
-              {(d.deduction_lines || []).length > 0 && (
-                <W label="Net amount to pay" v={w.net_to_pay} ccy={ccy} big />
-              )}
+              <W label="Total incl. GST" v={w.total} ccy={ccy} big />
             </tbody>
           </table>
         </div>
