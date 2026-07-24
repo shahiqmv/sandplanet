@@ -2352,6 +2352,42 @@ class ProgressClaimItem(models.Model):
             else self.variation_item
 
 
+class DeductionPreset(models.Model):
+    """A non-inventory preset for a claim back-charge — the client-provided
+    items/services deducted from a payment (e.g. diesel, materials, equipment
+    rental). A pick-list to save re-typing; deductions themselves stay per-claim
+    and free-form (they vary project to project)."""
+
+    name = models.CharField(max_length=120, unique=True)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.IntegerField(default=100)
+
+    class Meta:
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+class ClaimDeduction(models.Model):
+    """A back-charge line on a claim (client-provided items/services), deducted
+    flat — after GST — from the amount payable. Cumulative to date; 'present' is
+    this claim's cumulative less the previous claim's line of the same label."""
+
+    claim = models.ForeignKey(ProgressClaim, on_delete=models.CASCADE,
+                              related_name="deductions")
+    label = models.CharField(max_length=160)
+    cumulative_amount = models.DecimalField(max_digits=16, decimal_places=2,
+                                            default=0)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.label}: {self.cumulative_amount}"
+
+
 class ClientReceipt(models.Model):
     """Money received from the client against a certified claim (the money-IN
     completion, P4). Contracts are USD, so receipts are USD. A receipt is tied

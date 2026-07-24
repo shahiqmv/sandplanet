@@ -259,6 +259,23 @@ class ProgressClaimTests(TestCase):
         w2 = self._detail(c2["id"])["waterfall"]
         self.assertEqual(float(w2["advance_recovered"]), 1200.0)   # cumulative
 
+    def test_back_charge_deducted_after_gst(self):
+        # A back charge is deducted flat from the amount payable, AFTER GST.
+        c = self._create()
+        self._value_pct(c["id"], {"A": "65", "B": "65"})
+        r = self.client.post(
+            f"/api/v1/claims/{c['id']}/deductions",
+            {"rows": [{"label": "Materials from store",
+                       "cumulative_amount": "112.52"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d = self._detail(c["id"])
+        w = d["waterfall"]
+        self.assertEqual(float(w["deductions_present"]), 112.52)
+        # net to pay = total-with-GST − the deduction (deduction has no GST)
+        self.assertEqual(round(float(w["net_to_pay"]), 2),
+                         round(float(w["total"]) - 112.52, 2))
+        self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
+
     def test_create_locks_boq_and_seeds_lines(self):
         c = self._create()
         self.assertEqual(c["ref"], "IPA-01")

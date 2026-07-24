@@ -442,6 +442,38 @@ def claim_meta(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def claim_deductions(request, pk):
+    c, err = _get_claim(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.set_claim_deductions(
+        c, request.data.get("rows") or [], request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_claim_detail(c))
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def deduction_presets(request):
+    """The non-inventory back-charge pick-list (QS/PM/Director/Admin maintain)."""
+    from .models import DeductionPreset
+    if request.method == "POST":
+        if request.user.role not in PROJECT_EDIT_ROLES:
+            return Response({"detail": "Not permitted."}, status=403)
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"detail": "A name is required."}, status=400)
+        p, _ = DeductionPreset.objects.get_or_create(name=name)
+        return Response({"id": p.id, "name": p.name}, status=201)
+    return Response([{"id": p.id, "name": p.name}
+                     for p in DeductionPreset.objects.filter(is_active=True)])
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def claim_status(request, pk):
     c, err = _get_claim(request, pk)
     if err:

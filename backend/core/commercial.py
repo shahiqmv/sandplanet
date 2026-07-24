@@ -299,6 +299,15 @@ def create_claim(project, data, actor):
                     cumulative_pct=(pci.cumulative_pct if pci else None),
                     cumulative_qty=(pci.cumulative_qty if pci else None)))
         ProgressClaimItem.objects.bulk_create(new_items)
+    # Carry the previous claim's back-charge lines forward (labels + cumulative
+    # to date); the QS bumps the cumulative on the new claim.
+    if not is_advance and previous:
+        from .models import ClaimDeduction
+        ClaimDeduction.objects.bulk_create([
+            ClaimDeduction(claim=claim, label=d.label,
+                           cumulative_amount=d.cumulative_amount,
+                           sort_order=d.sort_order)
+            for d in previous.deductions.all()])
     audit("project", project.id, "CLAIM_CREATED", actor=actor,
           detail={"ref": claim.ref, "lines": len(new_items)})
     return claim, None
@@ -326,6 +335,28 @@ def set_claim_items(claim, rows, actor):
             changed, ["cumulative_pct", "cumulative_qty"])
     audit("project", claim.project_id, "CLAIM_VALUED", actor=actor,
           detail={"ref": claim.ref, "lines": len(changed)})
+    return claim, None
+
+
+def set_claim_deductions(claim, rows, actor):
+    """Replace a draft claim's back-charge lines. Rows: [{label,
+    cumulative_amount}] — free-form (a preset only feeds the pick-list)."""
+    from .models import ClaimDeduction
+    if claim.status != "DRAFT":
+        return None, "Only a draft claim can be edited."
+    cleaned = []
+    for i, r in enumerate(rows or []):
+        label = (r.get("label") or "").strip()
+        if not label:
+            continue
+        cleaned.append(ClaimDeduction(
+            claim=claim, label=label,
+            cumulative_amount=_dec(r.get("cumulative_amount")) or ZERO,
+            sort_order=i))
+    claim.deductions.all().delete()
+    ClaimDeduction.objects.bulk_create(cleaned)
+    audit("project", claim.project_id, "CLAIM_DEDUCTIONS", actor=actor,
+          detail={"ref": claim.ref, "lines": len(cleaned)})
     return claim, None
 
 
@@ -481,7 +512,26 @@ def claim_valuation(claim):
     previously = _claim_net(prev)                                    # P
     net_due = net_cumulative - previously                           # Q
     gst = claim.gst_pct / Decimal("100") * net_due                  # R
-    total = net_due + gst
+    total = net_due + gst                        # total with GST (present)
+
+    # Back charges (client-provided items/services) — deducted flat, AFTER GST,
+    # from the amount payable (owner's IPC format). Cumulative to date; present
+    # = this claim's cumulative less the previous claim's line of same label.
+    prev_ded = {}
+    if prev:
+        for d in prev.deductions.all():
+            prev_ded[d.label.strip().lower()] = Decimal(
+                str(d.cumulative_amount or 0))
+    deduction_lines = []
+    ded_cum = ded_present = ZERO
+    for d in claim.deductions.all():
+        cum = Decimal(str(d.cumulative_amount or 0))
+        pv = prev_ded.get(d.label.strip().lower(), ZERO)
+        deduction_lines.append({"id": d.id, "label": d.label, "previous": pv,
+                                "present": cum - pv, "cumulative": cum})
+        ded_cum += cum
+        ded_present += (cum - pv)
+    net_to_pay = total - ded_present             # the amount actually payable
 
     secs = OrderedDict()
     for ln in lines:
@@ -495,6 +545,7 @@ def claim_valuation(claim):
     return {
         "lines": lines,
         "section_summary": list(secs.values()),
+        "deduction_lines": deduction_lines,
         "waterfall": {
             "original": original, "revised": revised,
             "k1_work_done": k1, "k2_material_on_site": k2,
@@ -509,6 +560,9 @@ def claim_valuation(claim):
             "net_cumulative": net_cumulative,
             "previously_certified": previously,
             "net_due": net_due, "gst": gst, "total": total,
+            "deductions_present": ded_present,
+            "deductions_cumulative": ded_cum,
+            "net_to_pay": net_to_pay,
         },
     }
 
@@ -535,7 +589,7 @@ def record_client_receipt(project, data, actor):
         received_on=data["received_on"], reference=data.get("reference") or "",
         note=data.get("note") or "", recorded_by=actor)
     if claim and claim.status == "CERTIFIED":
-        due = claim_valuation(claim)["waterfall"]["total"]
+        due = claim_valuation(claim)["waterfall"]["net_to_pay"]
         got = (ClientReceipt.objects.filter(claim=claim)
                .aggregate(s=Sum("amount"))["s"] or ZERO)
         if got >= due:
@@ -566,7 +620,7 @@ def project_revenue_summary(project):
     for c in certified:
         w = claim_valuation(c)["waterfall"]
         gst_billed += w["gst"]
-        billed += w["total"]
+        billed += w["net_to_pay"]           # after back-charge deductions
         last = w
     if last is not None:
         revenue = last["k_gross"]                       # ex-GST earned revenue
