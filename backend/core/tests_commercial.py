@@ -286,7 +286,11 @@ class ProgressClaimTests(TestCase):
         ac = ProgressClaim.objects.get(pk=a["id"])
         ipa = render_to_string("pdf/claim_ipa.html",
                                commercial.claim_pdf_context(ac))
-        self.assertIn("Add advance received", ipa)
+        self.assertIn("Advance received", ipa)
+        # the 4-column Payment Summary (Contract / Cumulative / Previous /
+        # Present) is present
+        for col in ("Cumulative", "Previous", "Present"):
+            self.assertIn(col, ipa)
         self._status(a["id"], "SUBMITTED")
         self._status(a["id"], "CERTIFIED")
         # interim with a back-charge → IPA + invoice show it + net-to-pay

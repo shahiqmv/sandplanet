@@ -1,0 +1,35 @@
+<style>
+  table.paysum { width: 100%; border-collapse: collapse; margin-top: 3mm; }
+  table.paysum th, table.paysum td {
+    border: 0.6px solid #B9C4CD; padding: 3.5px 7px; font-size: 8.6pt; }
+  table.paysum thead th {
+    background: #FBEEE3; color: #10344F; font-weight: 700;
+    text-align: right; }
+  table.paysum thead th.lbl { text-align: left; }
+  table.paysum td.lbl { text-align: left; }
+  table.paysum td.amt, table.paysum th.amt { text-align: right;
+    font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.paysum tr.total td { font-weight: 700; background: #F3F7FA; }
+  table.paysum tr.net td { font-weight: 800; color: #B02418;
+    background: #FBEEE3; border-top: 1.2px solid #B02418; }
+</style>
+<table class="paysum">
+  <thead><tr>
+    <th class="lbl">Item</th>
+    <th class="amt">Contract ({{ currency }})</th>
+    <th class="amt">Cumulative ({{ currency }})</th>
+    <th class="amt">Previous ({{ currency }})</th>
+    <th class="amt">Present ({{ currency }})</th>
+  </tr></thead>
+  <tbody>
+  {% for r in summary %}
+    <tr class="{{ r.style }}">
+      <td class="lbl">{{ r.label }}</td>
+      <td class="amt">{{ r.contract }}</td>
+      <td class="amt">{{ r.cumulative }}</td>
+      <td class="amt">{{ r.previous }}</td>
+      <td class="amt">{{ r.present }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>

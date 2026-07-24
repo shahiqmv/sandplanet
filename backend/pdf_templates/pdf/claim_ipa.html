@@ -39,50 +39,8 @@
       <td class="amt">{{ waterfall.revised|floatformat:2 }}</td></tr>
 </table>
 
-<h2>Valuation of work done ({{ currency }})</h2>
-<table class="wf">
-  <tr><td>K1 — Value of work done (BOQ)</td>
-      <td class="amt">{{ waterfall.k1_work_done|floatformat:2 }}</td></tr>
-  <tr><td>K2 — Materials on site</td>
-      <td class="amt">{{ waterfall.k2_material_on_site|floatformat:2 }}</td></tr>
-  <tr><td>K3 — Materials off site</td>
-      <td class="amt">{{ waterfall.k3_material_off_site|floatformat:2 }}</td></tr>
-  <tr><td>K4 — Variations</td>
-      <td class="amt">{{ waterfall.k4_variations|floatformat:2 }}</td></tr>
-  <tr class="sub"><td>K — Gross value certified</td>
-      <td class="amt">{{ waterfall.k_gross|floatformat:2 }}</td></tr>
-  {% if waterfall.advance_received %}
-  <tr><td>Add advance received</td>
-      <td class="amt">{{ waterfall.advance_received|floatformat:2 }}</td></tr>
-  {% endif %}
-  <tr><td>Less recovery of advance</td>
-      <td class="amt neg">({{ waterfall.advance_recovered|floatformat:2 }})</td></tr>
-  <tr><td>Less retention</td>
-      <td class="amt neg">({{ waterfall.retention_held|floatformat:2 }})</td></tr>
-  {% if waterfall.retention_released %}
-  <tr><td>Add retention released</td>
-      <td class="amt">{{ waterfall.retention_released|floatformat:2 }}</td></tr>
-  {% endif %}
-  <tr class="sub"><td>N — Net value certified to date</td>
-      <td class="amt">{{ waterfall.net_cumulative|floatformat:2 }}</td></tr>
-  <tr><td>Less previously certified</td>
-      <td class="amt neg">({{ waterfall.previously_certified|floatformat:2 }})</td></tr>
-  <tr class="sub"><td>Q — Net amount due this application</td>
-      <td class="amt">{{ waterfall.net_due|floatformat:2 }}</td></tr>
-  <tr><td>Output GST @ {{ claim.gst_pct|floatformat:2 }}%</td>
-      <td class="amt">{{ waterfall.gst|floatformat:2 }}</td></tr>
-  <tr class="{% if deductions %}sub{% else %}grand{% endif %}">
-      <td>Total due (incl. GST)</td>
-      <td class="amt">{{ currency }} {{ waterfall.total|floatformat:2 }}</td></tr>
-  {% for d in deductions %}
-  <tr><td>Deduction — {{ d.label }}</td>
-      <td class="amt neg">({{ d.present|floatformat:2 }})</td></tr>
-  {% endfor %}
-  {% if deductions %}
-  <tr class="grand"><td>Net amount to pay</td>
-      <td class="amt">{{ currency }} {{ waterfall.net_to_pay|floatformat:2 }}</td></tr>
-  {% endif %}
-</table>
+<h2>Payment Summary ({{ currency }})</h2>
+{% include "pdf/_payment_summary.html" %}
 <div class="words">{{ amount_words }}</div>
 
 {% if sections %}

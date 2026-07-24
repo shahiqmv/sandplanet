@@ -532,6 +532,11 @@ def claim_valuation(claim):
         ded_cum += cum
         ded_present += (cum - pv)
     net_to_pay = total - ded_present             # the amount actually payable
+    # Cumulative-to-date counterparts (for the 4-column IPA summary: the
+    # "previous" column is the prior claim's cumulative, "present" = the delta).
+    gst_cumulative = claim.gst_pct / Decimal("100") * net_cumulative
+    total_cumulative = net_cumulative + gst_cumulative
+    net_to_pay_cumulative = total_cumulative - ded_cum
 
     secs = OrderedDict()
     for ln in lines:
@@ -560,9 +565,12 @@ def claim_valuation(claim):
             "net_cumulative": net_cumulative,
             "previously_certified": previously,
             "net_due": net_due, "gst": gst, "total": total,
+            "gst_cumulative": gst_cumulative,
+            "total_cumulative": total_cumulative,
             "deductions_present": ded_present,
             "deductions_cumulative": ded_cum,
             "net_to_pay": net_to_pay,
+            "net_to_pay_cumulative": net_to_pay_cumulative,
         },
     }
 
@@ -704,6 +712,61 @@ def _employer(project):
     }
 
 
+def _fmt_money(v):
+    v = Decimal(str(v or 0)).quantize(Decimal("0.01"))
+    if v == 0:
+        return "-"
+    return f"({-v:,.2f})" if v < 0 else f"{v:,.2f}"
+
+
+def claim_payment_summary(claim):
+    """The 4-column Payment Summary (Contract / Cumulative / Previous / Present)
+    the client's IPC uses — present = this claim's cumulative less the previous
+    claim's. Amounts pre-formatted (dash for zero, parens for negatives)."""
+    val = claim_valuation(claim)
+    w = val["waterfall"]
+    wp = (claim_valuation(claim.previous)["waterfall"]
+          if claim.previous_id else None)
+
+    def P(key):
+        return Decimal(str(wp[key])) if wp else ZERO
+
+    revised = Decimal(str(w["revised"]))
+    contract_gst = revised * claim.gst_pct / Decimal("100")
+    rows = []
+
+    def add(label, contract, cum, prev, style="", sign=1):
+        cum, prev = Decimal(str(cum)) * sign, Decimal(str(prev)) * sign
+        rows.append({
+            "label": label, "style": style,
+            "contract": _fmt_money(Decimal(str(contract)) * sign),
+            "cumulative": _fmt_money(cum), "previous": _fmt_money(prev),
+            "present": _fmt_money(cum - prev)})
+
+    add("Value of work certified to date", revised, w["k_gross"], P("k_gross"))
+    if w["advance_received"]:
+        add("Advance received", w["advance_total"], w["advance_received"],
+            P("advance_received"))
+        add("Less: recovery of advance", ZERO, w["advance_recovered"],
+            P("advance_recovered"), sign=-1)
+    add("Retention", ZERO, w["retention_held"], P("retention_held"), sign=-1)
+    if w["retention_released"]:
+        add("Retention released", ZERO, w["retention_released"],
+            P("retention_released"))
+    add("Total amount", revised, w["net_cumulative"], P("net_cumulative"),
+        style="total")
+    add(f"GST @ {claim.gst_pct:.0f}%", contract_gst, w["gst_cumulative"],
+        P("gst_cumulative"))
+    add("Total with GST", revised + contract_gst, w["total_cumulative"],
+        P("total_cumulative"), style="total")
+    for d in val["deduction_lines"]:
+        add(f"Deduction: {d['label']}", ZERO, d["cumulative"], d["previous"],
+            sign=-1)
+    add("Net amount to pay", revised + contract_gst, w["net_to_pay_cumulative"],
+        P("net_to_pay_cumulative"), style="net")
+    return rows
+
+
 def claim_pdf_context(claim):
     """Context for the interim payment application / certificate PDF."""
     from .pdf import company_info, logo_src
@@ -719,6 +782,7 @@ def claim_pdf_context(claim):
         "waterfall": w, "approved_vos": w["revised"] - w["original"],
         "lines": val["lines"], "sections": val["section_summary"],
         "deductions": val["deduction_lines"],
+        "summary": claim_payment_summary(claim),
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
@@ -743,6 +807,7 @@ def invoice_pdf_context(claim):
         "net_due": w["net_due"], "gst": w["gst"], "gst_pct": claim.gst_pct,
         "total": w["total"], "deductions": val["deduction_lines"],
         "net_to_pay": w["net_to_pay"],
+        "summary": claim_payment_summary(claim),
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
     }

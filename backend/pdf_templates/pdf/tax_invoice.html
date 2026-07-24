@@ -26,11 +26,6 @@
 {% include "pdf/_footer.html" with footer_doc="TAX INVOICE" %}
 {% include "pdf/_letterhead.html" with title="TAX INVOICE" subline=subline %}
 
-<div class="frm">
-  <span class="fn">{{ co.legal_name }}</span>{% if co.reg_no %} &nbsp;·&nbsp; Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} &nbsp;·&nbsp; TIN {{ co.tin }}{% endif %}
-  {% if co.address %}<br>{{ co.address }}{% endif %}{% if co.phone %} &nbsp;·&nbsp; {{ co.phone }}{% endif %}{% if co.email %} &nbsp;·&nbsp; {{ co.email }}{% endif %}
-</div>
-
 <table class="biller"><tr>
   <td style="width: 55%">
     <div class="lbl2" style="margin-top:0">Bill to</div>
@@ -47,38 +42,12 @@
   </td>
 </tr></table>
 
-<table>
-  <thead><tr>
-    <th style="text-align:left">Description</th>
-    <th class="num" style="width:34mm">Amount ({{ currency }})</th>
-  </tr></thead>
-  <tbody>
-    <tr>
-      <td>{{ type_label }} payment application {{ claim.ref }} — value of work
-        certified to date{% if claim.work_done_upto %} ({{ claim.work_done_upto|date:"d M Y" }}){% endif %},
-        net of advance recovery and retention.</td>
-      <td class="num">{{ net_due|floatformat:2 }}</td>
-    </tr>
-  </tbody>
-</table>
-
-<table class="tot" style="width: 95mm; margin-left: auto; margin-top: 4mm">
-  <tr><td>Net amount (work certified, net of advance &amp; retention)</td>
-      <td class="num">{{ currency }} {{ net_due|floatformat:2 }}</td></tr>
-  <tr><td>Output GST @ {{ gst_pct|floatformat:2 }}%</td>
-      <td class="num">{{ currency }} {{ gst|floatformat:2 }}</td></tr>
-  <tr class="{% if deductions %}sub{% else %}grand{% endif %}">
-      <td>Total with GST</td>
-      <td class="num">{{ currency }} {{ total|floatformat:2 }}</td></tr>
-  {% for d in deductions %}
-  <tr><td>Less: {{ d.label }}</td>
-      <td class="num">({{ d.present|floatformat:2 }})</td></tr>
-  {% endfor %}
-  {% if deductions %}
-  <tr class="grand"><td>Net amount to pay</td>
-      <td class="num">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
-  {% endif %}
-</table>
+<div style="font-size:9pt; color:#33424e; margin: 1mm 0 2mm">
+  {{ type_label }} payment application {{ claim.ref }} — value of work certified
+  to date{% if claim.work_done_upto %} ({{ claim.work_done_upto|date:"d M Y" }}){% endif %},
+  net of advance recovery and retention.
+</div>
+{% include "pdf/_payment_summary.html" %}
 <div class="words">{{ amount_words }}</div>
 
 {% if co.bank.name or co.bank.account_no %}
