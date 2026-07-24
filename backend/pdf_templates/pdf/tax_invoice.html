@@ -1,53 +1,112 @@
 <!doctype html>
 <html>
 <head>
-{% include "pdf/_styles.html" %}
+<meta charset="utf-8">
 <style>
-  .biller { width: 100%; margin: 5mm 0 6mm; }
-  .biller td { border: none; vertical-align: top; padding: 0 6px 0 0;
-               font-size: 9pt; }
-  .biller .lbl2 { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
-                  letter-spacing: .04em; margin-top: 2mm; }
-  .biller .nm { font-weight: 700; font-size: 10.5pt; }
-  .tot td { border: none; padding: 3px 8px; font-size: 10pt; }
-  .tot .grand td { font-weight: 800; border-top: 1.2px solid #16527E;
-                   font-size: 12pt; color: #16527E; padding-top: 5px; }
+  /* Tax invoice on the commercial stationery used by the PO — masthead top,
+     all company details in the fixed footer. Single "present" column. */
+  @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt;
+         color: #1c2b36; }
+  .masthead { text-align: center; margin-bottom: 7mm; }
+  .masthead img { height: 16mm; }
+  .masthead .legal { color: #5a6b78; font-size: 10pt; margin-top: 2mm; }
+  h1 { text-align: center; font-weight: 400; font-size: 19pt; color: #1c2b36;
+       margin: 0 0 7mm; letter-spacing: .5px; }
+  h1 strong { font-weight: 700; }
+  .parties { width: 100%; border-collapse: collapse; margin-bottom: 6mm; }
+  .parties td { border: none; vertical-align: top; padding: 0 6px; }
+  .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
+         letter-spacing: .05em; }
+  .parties .nm { font-weight: 700; font-size: 10.5pt; color: #10344F; }
+  .meta { border-collapse: collapse; margin-left: auto; }
+  .meta td { border: none; padding: 1px 0 1px 10px; font-size: 9pt;
+             text-align: right; }
+  .meta td.k { color: #6a7681; text-transform: uppercase; font-size: 7.5pt;
+               letter-spacing: .05em; }
+  .desc { font-size: 9.5pt; color: #26333d; line-height: 1.5;
+          border-left: 2.5px solid #16527E; padding: 1mm 0 1mm 4mm;
+          margin: 2mm 0 5mm; }
+  table.amt { width: 92mm; margin-left: auto; border-collapse: collapse; }
+  table.amt td { padding: 3.5px 8px; font-size: 9.5pt; }
+  table.amt td.n { text-align: right; font-variant-numeric: tabular-nums;
+                   white-space: nowrap; }
+  table.amt tr.sub td { border-top: 0.6px solid #cdd8e1; font-weight: 700; }
+  table.amt tr.grand td { border-top: 1.4px solid #16527E; font-weight: 800;
+                          font-size: 11.5pt; color: #16527E; padding-top: 5px; }
   .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
-  .frm { font-size: 8.5pt; color: #33424e; line-height: 1.45; margin: 1mm 0 5mm; }
-  .frm .fn { font-weight: 700; color: #10344F; font-size: 9.5pt; }
-  .bankbox { width: 100%; border: 0.6px solid #A9B6C0; margin-top: 8mm;
+  .bankbox { width: 100%; border: 0.6px solid #A9B6C0; margin-top: 7mm;
              border-collapse: collapse; }
   .bankbox .bh { background: #EAF1F6; font-weight: 700; color: #10344F;
                  padding: 3px 8px; font-size: 8.5pt; }
   .bankbox td { padding: 5px 8px; font-size: 8.5pt; line-height: 1.5; }
+  .sig { margin-top: 13mm; }
+  .sig .line { margin-top: 10mm; border-top: 0.8px solid #1c2b36; width: 70mm;
+               padding-top: 2mm; font-size: 9pt; }
+  .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
+            border-top: 0.8px solid #d6e2ec; padding-top: 3mm;
+            font-size: 8pt; color: #5a6b78; }
+  thead { display: table-header-group; }
 </style>
 </head>
 <body>
-{% include "pdf/_footer.html" with footer_doc="TAX INVOICE" %}
-{% include "pdf/_letterhead.html" with title="TAX INVOICE" subline=subline %}
+<div class="footer">
+  {{ co.address }}{% if co.reg_no %} · Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} · TIN {{ co.tin }}{% endif %}<br>
+  {% if co.phone %}{{ co.phone }} · {% endif %}{% if co.email %}{{ co.email }}{% endif %}{% if co.website %} · {{ co.website }}{% endif %}
+</div>
 
-<table class="biller"><tr>
-  <td style="width: 55%">
-    <div class="lbl2" style="margin-top:0">Bill to</div>
+<div class="masthead">
+  <img src="{{ logo_src }}">
+  <div class="legal">{{ co.legal_name }}</div>
+</div>
+
+<h1>TAX <strong>INVOICE</strong></h1>
+
+<table class="parties"><tr>
+  <td style="width: 52%">
+    <div class="lbl">Bill to</div>
     <div class="nm">{{ employer.name }}</div>
     {% if employer.address %}<div>{{ employer.address }}</div>{% endif %}
     {% if employer.contact %}<div>Attn: {{ employer.contact }}{% if employer.designation %}, {{ employer.designation }}{% endif %}</div>{% endif %}
   </td>
   <td>
-    <div class="lbl2" style="margin-top:0">Invoice No</div>
-    <div class="nm">{{ claim.invoice_no|default:"—" }}</div>
-    <div class="lbl2">Date</div>
-    <div>{% if claim.certified_at %}{{ claim.certified_at|date:"d M Y" }}{% else %}—{% endif %}</div>
-    <div class="lbl2">Project</div><div>{{ project.title }}</div>
+    <table class="meta">
+      <tr><td class="k">Invoice No</td><td><strong>{{ claim.invoice_no|default:"—" }}</strong></td></tr>
+      <tr><td class="k">Date</td><td>{% if claim.certified_at %}{{ claim.certified_at|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+      <tr><td class="k">Project</td><td>{{ project.code }}</td></tr>
+      <tr><td class="k">Reference</td><td>{{ claim.ref }}</td></tr>
+      {% if co.tin %}<tr><td class="k">GST TIN</td><td>{{ co.tin }}</td></tr>{% endif %}
+    </table>
   </td>
 </tr></table>
 
-<div style="font-size:9pt; color:#33424e; margin: 1mm 0 2mm">
-  {{ type_label }} payment application {{ claim.ref }} — value of work certified
-  to date{% if claim.work_done_upto %} ({{ claim.work_done_upto|date:"d M Y" }}){% endif %},
-  net of advance recovery and retention.
+{% if is_advance %}
+<div class="desc">
+  Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the contract value
+  for {{ project.title }}, per Interim Payment Application {{ claim.ref }}.
 </div>
-{% include "pdf/_payment_summary.html" %}
+<table class="amt">
+  <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of contract value)</td>
+      <td class="n">{{ net_due|floatformat:2 }}</td></tr>
+  <tr><td>Output GST @ {{ gst_pct|floatformat:"-2" }}%</td>
+      <td class="n">{{ gst|floatformat:2 }}</td></tr>
+  <tr class="grand"><td>Total amount payable</td>
+      <td class="n">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
+</table>
+{% else %}
+<div class="desc">
+  Being value of work certified to date under Interim Payment Application
+  {{ claim.ref }} for {{ project.title }}{% if claim.work_done_upto %}, up to {{ claim.work_done_upto|date:"d M Y" }}{% endif %} —
+  net of advance recovery, retention and agreed deductions.
+</div>
+<table class="amt">
+  {% for r in summary %}{% if r.present != "-" %}
+  <tr class="{% if r.style == 'net' %}grand{% elif r.style == 'total' %}sub{% endif %}">
+    <td>{{ r.label }}</td><td class="n">{% if r.style == 'net' %}{{ currency }} {% endif %}{{ r.present }}</td></tr>
+  {% endif %}{% endfor %}
+</table>
+{% endif %}
+
 <div class="words">{{ amount_words }}</div>
 
 {% if co.bank.name or co.bank.account_no %}
@@ -67,5 +126,9 @@
   </tr>
 </table>
 {% endif %}
+
+<div class="sig">
+  <div class="line">For {{ co.legal_name }} — Authorised Signature</div>
+</div>
 </body>
 </html>

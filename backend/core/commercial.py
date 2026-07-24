@@ -808,6 +808,8 @@ def invoice_pdf_context(claim):
         "total": w["total"], "deductions": val["deduction_lines"],
         "net_to_pay": w["net_to_pay"],
         "summary": claim_payment_summary(claim),
+        "is_advance": claim.claim_type == "ADVANCE",
+        "advance_pct": claim.advance_pct,
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
     }
