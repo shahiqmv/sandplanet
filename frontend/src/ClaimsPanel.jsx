@@ -31,11 +31,11 @@ export default function ClaimsPanel({ projectId, me }) {
   }
   useEffect(load, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function raise() {
+  async function raise(claimType) {
     setError(null); setBusy(true);
     try {
       const d = await api(`/projects/${projectId}/claims/create`,
-        { method: "POST", body: {} });
+        { method: "POST", body: claimType ? { claim_type: claimType } : {} });
       setData(d);
       setOpenId(d.claims[d.claims.length - 1].id);
     } catch (e) { setError(e.message); }
@@ -69,10 +69,16 @@ export default function ClaimsPanel({ projectId, me }) {
                     marginBottom: 8 }}>
         <Eyebrow meta={`${data.claims.length}`}>Progress claims</Eyebrow>
         {canEdit && data.can_raise && (
-          <button style={{ ...ghostButton, marginLeft: "auto",
-                           padding: "4px 12px" }}
-                  disabled={busy} onClick={raise}>
-            {busy ? "…" : "+ New claim"}</button>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {data.claims.length === 0 && (
+              <button style={{ ...ghostButton, padding: "4px 12px" }}
+                      disabled={busy} onClick={() => raise("ADVANCE")}>
+                {busy ? "…" : "+ Advance claim"}</button>
+            )}
+            <button style={{ ...ghostButton, padding: "4px 12px" }}
+                    disabled={busy} onClick={() => raise()}>
+              {busy ? "…" : "+ New claim"}</button>
+          </span>
         )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
@@ -262,6 +268,8 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
   // local editable copies
   const [meta, setMeta] = useState(null);
   const [vals, setVals] = useState({});   // line id -> {pct, qty}
+  const [deds, setDeds] = useState([]);   // back-charge lines being edited
+  const [presets, setPresets] = useState([]);
 
   function hydrate(detail) {
     setD(detail);
@@ -269,15 +277,20 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
     setMeta({ claim_type: c.claim_type, basis: c.basis,
       work_done_upto: c.work_done_upto || "",
       material_on_site: c.material_on_site, material_off_site: c.material_off_site,
-      retention_released: c.retention_released });
+      retention_released: c.retention_released,
+      recovery_pct: c.recovery_pct,
+      advance_recovered_override: c.advance_recovered_override ?? "" });
     const v = {};
     detail.lines.forEach((ln) => {
       v[ln.id] = { pct: ln.cumulative_pct ?? "", qty: ln.cumulative_qty ?? "" };
     });
     setVals(v);
+    setDeds((detail.deduction_lines || []).map((dl) => ({
+      label: dl.label, cumulative_amount: dl.cumulative })));
   }
   useEffect(() => {
     api(`/claims/${claimId}`).then(hydrate).catch((e) => setError(e.message));
+    api("/deduction-presets").then(setPresets).catch(() => {});
   }, [claimId]);
 
   if (error && !d) return <div style={{ padding: 12,
@@ -297,12 +310,16 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
         work_done_upto: meta.work_done_upto || null,
         material_on_site: meta.material_on_site || 0,
         material_off_site: meta.material_off_site || 0,
-        retention_released: meta.retention_released || 0 } });
+        retention_released: meta.retention_released || 0,
+        recovery_pct: meta.recovery_pct || 0,
+        advance_recovered_override: meta.advance_recovered_override } });
       const rows = d.lines.map((ln) => ({ id: ln.id,
         cumulative_pct: vals[ln.id]?.pct === "" ? null : vals[ln.id]?.pct,
         cumulative_qty: vals[ln.id]?.qty === "" ? null : vals[ln.id]?.qty }));
-      const fresh = await api(`/claims/${claimId}/items`,
-        { method: "POST", body: { rows } });
+      await api(`/claims/${claimId}/items`, { method: "POST", body: { rows } });
+      await api(`/claims/${claimId}/deductions`, { method: "POST", body: {
+        rows: deds.filter((x) => (x.label || "").trim()) } });
+      const fresh = await api(`/claims/${claimId}`);
       hydrate(fresh);
       reloadList();
     } catch (e) { setError(e.message); }
@@ -420,9 +437,58 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
           <label>Retention released{" "}
             <input type="number" style={numCell} value={meta.retention_released}
               onChange={(e) => setM("retention_released", e.target.value)} /></label>
+          {Number(c.advance_pct) > 0 && (
+            <>
+              <label title="Recovery rate — carries forward; set once">
+                Recovery %{" "}
+                <input type="number" style={numCell} value={meta.recovery_pct}
+                  onChange={(e) => setM("recovery_pct", e.target.value)} /></label>
+              <label title="Override this claim's cumulative recovery to recover less (blank = use the rate)">
+                Recovered override{" "}
+                <input type="number" style={numCell}
+                  value={meta.advance_recovered_override}
+                  placeholder={fmt(w.advance_recovered)}
+                  onChange={(e) => setM("advance_recovered_override",
+                    e.target.value)} /></label>
+            </>
+          )}
           <button style={{ ...buttonStyle, padding: "4px 16px" }}
                   disabled={busy} onClick={save}>
             {busy ? "Saving…" : "Save & recalc"}</button>
+        </div>
+      )}
+
+      {editable && meta.claim_type !== "ADVANCE" && (
+        <div style={{ margin: "6px 0 10px", fontSize: 12 }}>
+          <div style={{ fontWeight: 600, color: "var(--navy)",
+                        marginBottom: 4 }}>
+            Back charges (client deductions — cumulative, taken after GST)</div>
+          {deds.map((row, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4,
+                                  alignItems: "center" }}>
+              <input list="ded-presets" placeholder="Item / service"
+                value={row.label} style={{ ...inputStyle, width: 260 }}
+                onChange={(e) => { const n = deds.slice();
+                  n[i] = { ...n[i], label: e.target.value }; setDeds(n); }} />
+              <input type="number" placeholder="Cumulative"
+                value={row.cumulative_amount} style={numCell}
+                onChange={(e) => { const n = deds.slice();
+                  n[i] = { ...n[i], cumulative_amount: e.target.value };
+                  setDeds(n); }} />
+              <button style={{ ...ghostButton, padding: "2px 8px" }}
+                onClick={() => setDeds(deds.filter((_, j) => j !== i))}>
+                ✕</button>
+            </div>
+          ))}
+          <datalist id="ded-presets">
+            {presets.map((p) => <option key={p.id} value={p.name} />)}
+          </datalist>
+          <button style={{ ...ghostButton, padding: "2px 10px" }}
+            onClick={() => setDeds([...deds,
+              { label: "", cumulative_amount: "" }])}>
+            + Add deduction</button>
+          <span style={{ marginLeft: 8, color: "var(--muted)" }}>
+            (saved with “Save &amp; recalc”)</span>
         </div>
       )}
 
@@ -442,6 +508,8 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
                 <W label="Material off site" v={w.k3_material_off_site}
                    ccy={ccy} />}
               <W label="Gross cumulative" v={w.k_gross} ccy={ccy} strong />
+              {Number(w.advance_received) !== 0 &&
+                <W label="Advance received" v={w.advance_received} ccy={ccy} />}
               <W label="Less advance recovery" v={-w.advance_recovered}
                  ccy={ccy} neg />
               <W label="Less retention" v={-w.retention_held} ccy={ccy} neg />
@@ -455,7 +523,16 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
               <W label="Net now due (ex-GST)" v={w.net_due} ccy={ccy} strong />
               <W label={`Output GST @ ${fmt(c.gst_pct)}%`} v={w.gst}
                  ccy={ccy} />
-              <W label="Total due incl. GST" v={w.total} ccy={ccy} big />
+              <W label="Total incl. GST" v={w.total} ccy={ccy}
+                 big={!(d.deduction_lines || []).length}
+                 strong={!!(d.deduction_lines || []).length} />
+              {(d.deduction_lines || []).map((dl, i) => (
+                <W key={i} label={`Less: ${dl.label}`} v={-dl.present}
+                   ccy={ccy} neg />
+              ))}
+              {(d.deduction_lines || []).length > 0 && (
+                <W label="Net amount to pay" v={w.net_to_pay} ccy={ccy} big />
+              )}
             </tbody>
           </table>
         </div>
