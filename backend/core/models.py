@@ -437,6 +437,12 @@ class Document(models.Model):
         "Supplier", on_delete=models.PROTECT, null=True, blank=True,
         related_name="purchase_orders",
     )
+    # PVs only: the company bank account the voucher is paid from (owner
+    # 2026-07-24). Null on older vouchers until Finance sets it.
+    debit_account = models.ForeignKey(
+        "CompanyBankAccount", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -2392,9 +2398,11 @@ class ClaimDeduction(models.Model):
 
 
 class CompanyBankAccount(models.Model):
-    """A company bank account money can be received into — the selectable
-    'account credited' on an official receipt. Seeded from the company_bank_*
-    parameters; more accounts can be added on the Company page."""
+    """A company bank account, used across the money flows: the 'account
+    credited' on an official receipt (money-in) and the 'debit account' a
+    payment voucher is paid from (money-out). Seeded from the legacy
+    company_bank_* parameters; managed on the Company page. The primary
+    account is the remittance ('pay to') account printed on client invoices."""
 
     label = models.CharField(max_length=80)        # e.g. "BML USD Current"
     bank_name = models.CharField(max_length=120, blank=True)
@@ -2405,6 +2413,7 @@ class CompanyBankAccount(models.Model):
     swift = models.CharField(max_length=40, blank=True)
     iban = models.CharField(max_length=60, blank=True)
     is_active = models.BooleanField(default=True)
+    is_primary = models.BooleanField(default=False)   # 'pay to' on invoices
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 

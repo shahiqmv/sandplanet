@@ -16,18 +16,9 @@ const IDENTITY = [
   ["company_website", "Website", "www.sandplanet.mv"],
   ["company_tagline", "Tagline (external documents)", ""],
 ];
-// Bank / remittance details — printed on client invoices so they know
-// where to pay (owner 2026-07-16).
-const BANK = [
-  ["company_bank_name", "Bank name", "e.g. Bank of Maldives"],
-  ["company_bank_branch", "Branch", ""],
-  ["company_bank_account_name", "Account name", ""],
-  ["company_bank_account_no", "Account number", ""],
-  ["company_bank_currency", "Account currency", "USD"],
-  ["company_bank_swift", "SWIFT / BIC", ""],
-  ["company_bank_iban", "IBAN (if any)", ""],
-];
-const FIELDS = [...IDENTITY, ...BANK];
+// Bank accounts are managed as a list below (used for receipts + PVs); the
+// primary account is the 'pay to' printed on invoices.
+const FIELDS = IDENTITY;
 
 export default function CompanyPage() {
   const [values, setValues] = useState({});
@@ -110,22 +101,6 @@ export default function CompanyPage() {
         </label>
       ))}
 
-      <h3 style={{ color: "var(--sp-navy)", fontSize: 14,
-                   margin: "16px 0 2px" }}>Bank account</h3>
-      <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 10px" }}>
-        Shown as the remittance details on client tax invoices.
-      </p>
-      {BANK.map(([key, label, placeholder]) => (
-        <label key={key}
-               style={{ display: "block", fontSize: 13, marginBottom: 10 }}>
-          {label}
-          <input value={values[key] || ""} placeholder={placeholder}
-                 onChange={(e) => setValues({ ...values,
-                                              [key]: e.target.value })}
-                 style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
-        </label>
-      ))}
-
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       <button onClick={save} disabled={busy} style={buttonStyle}>
@@ -169,15 +144,24 @@ function BankAccounts() {
     try { await api(`/receivables/bank-accounts/${a.id}`, { method: "DELETE" }); load(); }
     catch (e) { setError(e.message); }
   }
+  async function makePrimary(a) {
+    try {
+      await api(`/receivables/bank-accounts/${a.id}`,
+        { method: "PUT", body: { is_primary: true } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
 
   return (
     <section style={{ ...card, maxWidth: 620, marginTop: 16 }}>
       <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-        Receiving bank accounts
+        Bank accounts
       </h2>
       <p style={{ fontSize: 12, color: "#5a6b78", marginTop: -6 }}>
-        Accounts client payments land in — picked as the “account credited” on
-        official receipts. Deactivating keeps past receipts intact.
+        The company’s bank accounts — picked as the “account credited” on client
+        receipts and the “debit account” on payment vouchers. The
+        <strong> primary</strong> account is the “pay to” shown on invoices.
+        Deactivating keeps past documents intact.
       </p>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
@@ -190,6 +174,9 @@ function BankAccounts() {
                 opacity: a.is_active ? 1 : 0.5 }}>
                 <td style={{ padding: "6px 4px" }}>
                   <strong>{a.label}</strong>
+                  {a.is_primary && <span style={{ fontSize: 10, marginLeft: 6,
+                    padding: "1px 6px", borderRadius: 4, background: "#e6f0f7",
+                    color: "var(--sp-navy)", fontWeight: 700 }}>PRIMARY</span>}
                   {!a.is_active && <span style={{ fontSize: 11,
                     color: "#5a6b78" }}> (inactive)</span>}
                   <div style={{ fontSize: 11, color: "#5a6b78" }}>
@@ -198,6 +185,10 @@ function BankAccounts() {
                 </td>
                 <td style={{ padding: "6px 4px", textAlign: "right",
                              whiteSpace: "nowrap" }}>
+                  {a.is_active && !a.is_primary && (
+                    <button onClick={() => makePrimary(a)}
+                      style={linkBtn}>Make primary</button>
+                  )}
                   <button onClick={() => setDraft({ ...a })}
                     style={linkBtn}>Edit</button>
                   {a.is_active && (
@@ -209,7 +200,7 @@ function BankAccounts() {
             ))}
             {!accts.length && (
               <tr><td style={{ padding: "6px 4px", color: "#5a6b78" }}>
-                No receiving accounts yet.</td></tr>
+                No bank accounts yet.</td></tr>
             )}
           </tbody>
         </table>

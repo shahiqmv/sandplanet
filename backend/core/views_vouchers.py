@@ -88,9 +88,13 @@ def _voucher_info(pv):
         "source_payable__document", "source_payable__site").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     currency = lines[0]["currency"] if lines else "MVR"
+    ba = pv.debit_account
     return {
         "ref": pv.ref, "status": "VOID" if pv.is_void else pv.status,
         "is_void": pv.is_void, "void_reason": pv.void_reason,
+        "debit_account": ({"id": ba.id, "label": ba.label,
+                           "bank_name": ba.bank_name, "account_no": ba.account_no,
+                           "currency": ba.currency} if ba else None),
         "void_requested": bool(pv.void_requested_by_id) and not pv.is_void,
         "void_requested_by": (pv.void_requested_by.full_name
                               if pv.void_requested_by_id else None),
@@ -163,7 +167,8 @@ def payment_vouchers(request):
         pv, err = vouchers.create_voucher(
             request.data.get("source_refs") or [], request.user,
             milestone_ids=request.data.get("milestone_ids") or [],
-            payable_ids=request.data.get("payable_ids") or [])
+            payable_ids=request.data.get("payable_ids") or [],
+            bank_account_id=request.data.get("bank_account_id"))
         if err:
             return Response({"detail": err}, status=400)
         return Response(_voucher_info(pv), status=201)
@@ -218,7 +223,7 @@ def _pv_pdf_context(pv):
     return {
         "doc": pv, "logo_src": logo_src(), "co": company_info(),
         "lines": rows, "total": _money(total), "settled": info["settled"],
-        "currency": info["currency"],
+        "currency": info["currency"], "debit_account": pv.debit_account,
         "prepared_by": pv.created_by.full_name if pv.created_by else "",
         "submit_stamp": _stamp_for(approvals, "SUBMIT"),
         "approve_stamp": _stamp_for(approvals, "APPROVE"),
@@ -408,6 +413,14 @@ def payment_voucher_action(request, ref, action):
                                  "void a voucher."}, status=403)
             reason = request.data.get("reason") or ""
         err = vouchers.void_voucher(pv, user, reason)
+    elif action == "set-debit-account":
+        # Record (or back-fill) the bank account a voucher is paid from —
+        # allowed at any status; it doesn't move money (owner 2026-07-24).
+        if user.role not in ("FINANCE", "ADMIN"):
+            return Response({"detail": "Finance sets the debit account."},
+                            status=403)
+        _, err = vouchers.set_voucher_debit_account(
+            pv, request.data.get("bank_account_id"), user)
     else:
         return Response({"detail": f"Unknown action '{action}'."}, status=400)
     if err:

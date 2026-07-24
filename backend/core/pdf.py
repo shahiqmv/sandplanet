@@ -59,17 +59,33 @@ def company_info():
         "email": _param("company_email", ""),
         "website": _param("company_website", "www.sandplanet.mv"),
         "tagline": _param("company_tagline", ""),
-        # Bank / remittance details (owner 2026-07-16): shown on invoices so
-        # the client knows where to pay. All edited on the Company page.
-        "bank": {
-            "name": _param("company_bank_name", ""),
-            "account_name": _param("company_bank_account_name", ""),
-            "account_no": _param("company_bank_account_no", ""),
-            "currency": _param("company_bank_currency", ""),
-            "swift": _param("company_bank_swift", ""),
-            "iban": _param("company_bank_iban", ""),
-            "branch": _param("company_bank_branch", ""),
-        },
+        # Bank / remittance details shown on invoices so the client knows where
+        # to pay = the primary company bank account (owner 2026-07-24: the bank
+        # accounts are now a managed list, used for receipts + PVs too).
+        "bank": _primary_bank(),
+    }
+
+
+def _primary_bank():
+    """The remittance ('pay to') account printed on client invoices — the
+    account flagged primary, else the first active one; falls back to the
+    legacy company_bank_* parameters if no account exists yet."""
+    from .models import CompanyBankAccount
+    b = (CompanyBankAccount.objects.filter(is_active=True, is_primary=True)
+         .first()
+         or CompanyBankAccount.objects.filter(is_active=True).first())
+    if b:
+        return {"name": b.bank_name, "account_name": b.account_name,
+                "account_no": b.account_no, "currency": b.currency,
+                "swift": b.swift, "iban": b.iban, "branch": b.branch}
+    return {
+        "name": _param("company_bank_name", ""),
+        "account_name": _param("company_bank_account_name", ""),
+        "account_no": _param("company_bank_account_no", ""),
+        "currency": _param("company_bank_currency", ""),
+        "swift": _param("company_bank_swift", ""),
+        "iban": _param("company_bank_iban", ""),
+        "branch": _param("company_bank_branch", ""),
     }
 
 

@@ -124,11 +124,21 @@ def _bank_dict(b):
             "branch": b.branch, "account_name": b.account_name,
             "account_no": b.account_no, "currency": b.currency,
             "swift": b.swift, "iban": b.iban, "is_active": b.is_active,
-            "sort_order": b.sort_order}
+            "is_primary": b.is_primary, "sort_order": b.sort_order}
 
 
 BANK_FIELDS = ("label", "bank_name", "branch", "account_name", "account_no",
-               "currency", "swift", "iban", "is_active", "sort_order")
+               "currency", "swift", "iban", "is_active", "is_primary",
+               "sort_order")
+_BANK_STR = ("label", "bank_name", "branch", "account_name", "account_no",
+             "currency", "swift", "iban")
+
+
+def _apply_primary(bank):
+    """A primary account is the invoice 'pay to' — only one at a time."""
+    if bank.is_primary:
+        CompanyBankAccount.objects.exclude(pk=bank.pk).filter(
+            is_primary=True).update(is_primary=False)
 
 
 @api_view(["GET", "POST"])
@@ -140,10 +150,11 @@ def bank_accounts(request):
         if not (request.data.get("label") or "").strip():
             return Response({"detail": "Give the account a label."}, status=400)
         b = CompanyBankAccount.objects.create(
-            **{f: request.data.get(f, "") for f in BANK_FIELDS
-               if f not in ("is_active", "sort_order")},
+            **{f: request.data.get(f, "") for f in _BANK_STR},
             is_active=bool(request.data.get("is_active", True)),
+            is_primary=bool(request.data.get("is_primary", False)),
             sort_order=int(request.data.get("sort_order") or 0))
+        _apply_primary(b)
         return Response(_bank_dict(b), status=201)
     if (bad := _gate(request)):
         return bad
@@ -165,12 +176,14 @@ def bank_account_detail(request, pk):
         return Response({"detail": "Not found."}, status=404)
     if request.method == "DELETE":
         b.is_active = False          # keep history; just deactivate
-        b.save(update_fields=["is_active"])
+        b.is_primary = False
+        b.save(update_fields=["is_active", "is_primary"])
         return Response(status=204)
     for f in BANK_FIELDS:
         if f in request.data:
             setattr(b, f, request.data[f])
     b.save()
+    _apply_primary(b)
     return Response(_bank_dict(b))
 
 

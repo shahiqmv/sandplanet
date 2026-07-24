@@ -46,6 +46,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [note, setNote] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [banks, setBanks] = useState([]);        // company bank accounts
+  const [debitPick, setDebitPick] = useState(""); // debit account for a new PV
 
   // Inline payment form: one active target at a time
   const [payKey, setPayKey] = useState(null);    // "pyr:REF" | "pr:REF:LINEID"
@@ -65,6 +67,11 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
       .catch((e) => setError(e.message));
   };
   useEffect(reload, []);
+  useEffect(() => {
+    if (isFinance)
+      api("/receivables/bank-accounts?active=1")
+        .then((r) => setBanks(r.accounts)).catch(() => {});
+  }, [isFinance]);
 
   const pickedRows = awaiting.filter((d) => picked[awKey(d)]);
   const pickedTotal = pickedRows.reduce((s, d) => s + Number(d.amount || 0), 0);
@@ -95,9 +102,15 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
       .map((d) => d.payable_id);
     await api("/payment-vouchers",
               { method: "POST", body: { source_refs, milestone_ids,
-                                        payable_ids } });
-    setPicked({}); reload();
+                                        payable_ids,
+                                        bank_account_id: debitPick || null } });
+    setPicked({}); setDebitPick(""); reload();
   });
+
+  // Active bank accounts whose currency fits the picked payments.
+  const debitOptions = banks.filter(
+    (b) => !mixed && (!b.currency || !pickedCurrencies.length
+                      || b.currency === pickedCurrencies[0]));
 
   const voucherAction = (ref, action, body) => run(async () => {
     await api(`/payment-vouchers/${ref}/actions/${action}`,
@@ -244,6 +257,15 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
           : <strong style={mono}>
               {cur(pickedTotal, pickedCurrencies[0])}</strong>}
       </span>
+      <select value={debitPick} onChange={(e) => setDebitPick(e.target.value)}
+        title="Bank account to pay from"
+        style={{ ...inputStyle, padding: "4px 8px", fontSize: 13 }}>
+        <option value="">Debit account…</option>
+        {debitOptions.map((b) => (
+          <option key={b.id} value={b.id}>
+            {b.label}{b.currency ? ` (${b.currency})` : ""}</option>
+        ))}
+      </select>
       <Btn variant="primary" disabled={busy || mixed}
            onClick={createVoucher}>Create voucher</Btn>
     </span>
@@ -446,6 +468,33 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                   <span>{pv.lines.length} line
                     {pv.lines.length === 1 ? "" : "s"}</span>
                   {pv.prepared_by && <span>· prepared by {pv.prepared_by}</span>}
+                  <span onClick={(e) => e.stopPropagation()}
+                        style={{ display: "flex", alignItems: "center",
+                                 gap: 6 }}>
+                    · paid from{" "}
+                    {isFinance ? (
+                      <select
+                        value={pv.debit_account ? pv.debit_account.id : ""}
+                        onChange={(e) => voucherAction(pv.ref,
+                          "set-debit-account",
+                          { bank_account_id: e.target.value || null })}
+                        style={{ ...inputStyle, padding: "2px 6px",
+                                 fontSize: 12 }}>
+                        <option value="">— set account —</option>
+                        {banks.filter((b) => !b.currency
+                          || b.currency === pv.currency).map((b) => (
+                          <option key={b.id} value={b.id}>
+                            {b.label}{b.currency ? ` (${b.currency})` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <strong style={{ color: pv.debit_account
+                        ? "var(--navy)" : "var(--red-fg)" }}>
+                        {pv.debit_account ? pv.debit_account.label
+                          : "not set"}</strong>
+                    )}
+                  </span>
                   <a href={`/api/v1/payment-vouchers/${pv.ref}/pdf`}
                      target="_blank" rel="noreferrer"
                      onClick={(e) => e.stopPropagation()}

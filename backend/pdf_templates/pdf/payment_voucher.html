@@ -18,6 +18,8 @@
       <td class="k">Date</td><td>{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
   <tr><td class="k">Prepared By</td><td>{{ prepared_by }}</td>
       <td class="k">Status</td><td>{{ doc.status }}{% if settled %} · fully paid{% endif %}</td></tr>
+  <tr><td class="k">Debit Account</td>
+      <td colspan="3">{% if debit_account %}{{ debit_account.label }}{% if debit_account.bank_name %} — {{ debit_account.bank_name }}{% endif %}{% if debit_account.account_no %} · A/C {{ debit_account.account_no }}{% endif %}{% if debit_account.currency %} ({{ debit_account.currency }}){% endif %}{% else %}—{% endif %}</td></tr>
 </table>
 
 <table>

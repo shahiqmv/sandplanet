@@ -147,7 +147,25 @@ def awaiting_milestones():
         "order__document", "order__supplier")
 
 
-def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None):
+def _resolve_debit_account(bank_account_id, currency):
+    """Look up a debit account and check its currency matches the voucher's
+    (a USD voucher cannot be paid from an MVR account). Returns (account, err);
+    (None, None) when no account was chosen."""
+    if not bank_account_id:
+        return None, None
+    from .models import CompanyBankAccount
+    acc = CompanyBankAccount.objects.filter(pk=bank_account_id,
+                                            is_active=True).first()
+    if acc is None:
+        return None, "That debit account no longer exists."
+    if acc.currency and currency and acc.currency != currency:
+        return None, (f"The {acc.currency} account {acc.label} can't pay a "
+                      f"{currency} voucher — pick a {currency} account.")
+    return acc, None
+
+
+def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
+                   bank_account_id=None):
     """Finance creates a draft voucher from chosen requisitions, overseas TT
     milestones and/or credit-vendor payables."""
     source_refs = list(source_refs or [])
@@ -201,11 +219,17 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None):
         return None, ("A voucher must be a single currency — "
                       + " and ".join(sorted(currencies))
                       + " payments cannot share one voucher.")
+    voucher_currency = next(iter(currencies), None)
+    debit_account, err = _resolve_debit_account(bank_account_id,
+                                                 voucher_currency)
+    if err:
+        return None, err
     with transaction.atomic():
         ref = next_ref("PV", None)
         pv = Document.objects.create(
             doc_type="PV", ref=ref, site=ho_site(),
-            doc_date=timezone.now().date(), status="DRAFT", created_by=actor)
+            doc_date=timezone.now().date(), status="DRAFT", created_by=actor,
+            debit_account=debit_account)
         revision = DocumentRevision.objects.create(
             document=pv, rev_label="R0", payload={}, created_by=actor)
         pv.current_revision = revision
@@ -225,6 +249,26 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None):
     audit("document", pv.id, "PV_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": ref,
                   "lines": len(sources) + len(milestones) + len(payables)})
+    return pv, None
+
+
+def voucher_currency(pv):
+    """The single currency of a voucher's lines (they are all one currency)."""
+    line = pv.voucher_lines.first()
+    return line.currency if line else None
+
+
+def set_voucher_debit_account(pv, bank_account_id, actor):
+    """Set or change the bank account a voucher is paid from. Allowed at any
+    status (owner 2026-07-24: back-fill the debit account on live vouchers);
+    it records which account paid, it doesn't move money."""
+    acc, err = _resolve_debit_account(bank_account_id, voucher_currency(pv))
+    if err:
+        return None, err
+    pv.debit_account = acc
+    pv.save(update_fields=["debit_account", "updated_at"])
+    audit("document", pv.id, "PV_DEBIT_ACCOUNT", actor=actor,
+          detail={"ref": pv.ref, "account": acc.label if acc else None})
     return pv, None
 
 
