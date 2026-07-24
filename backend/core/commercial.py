@@ -401,6 +401,10 @@ def set_claim_status(claim, to_status, actor):
     if (to_status == "SUBMITTED" and claim.claim_type != "ADVANCE"
             and not claim.items.exists()):
         return None, "Value at least one line before submitting the claim."
+    # Certifying an IPA is the Director's clearance — the QS prepares and
+    # submits, the Director signs it off (owner 2026-07-24).
+    if to_status == "CERTIFIED" and actor.role not in ("DIRECTOR", "ADMIN"):
+        return None, "Only a Director can certify (clear) a claim."
     claim.status = to_status
     fields = ["status"]
     if to_status == "CERTIFIED":

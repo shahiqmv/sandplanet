@@ -4,17 +4,17 @@
 <meta charset="utf-8">
 <style>
   /* Tax invoice on the commercial stationery used by the PO — masthead top,
-     all company details in the fixed footer. Single "present" column. */
+     all company details in the fixed footer. Single "present" column;
+     description and breakdown share one bordered document table. */
   @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt;
          color: #1c2b36; }
   .masthead { text-align: center; margin-bottom: 7mm; }
   .masthead img { height: 16mm; }
-  .masthead .legal { color: #5a6b78; font-size: 10pt; margin-top: 2mm; }
   h1 { text-align: center; font-weight: 400; font-size: 19pt; color: #1c2b36;
-       margin: 0 0 7mm; letter-spacing: .5px; }
+       margin: 0 0 6mm; letter-spacing: .5px; }
   h1 strong { font-weight: 700; }
-  .parties { width: 100%; border-collapse: collapse; margin-bottom: 6mm; }
+  .parties { width: 100%; border-collapse: collapse; }
   .parties td { border: none; vertical-align: top; padding: 0 6px; }
   .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
          letter-spacing: .05em; }
@@ -24,16 +24,22 @@
              text-align: right; }
   .meta td.k { color: #6a7681; text-transform: uppercase; font-size: 7.5pt;
                letter-spacing: .05em; }
-  .desc { font-size: 9.5pt; color: #26333d; line-height: 1.5;
-          border-left: 2.5px solid #16527E; padding: 1mm 0 1mm 4mm;
-          margin: 2mm 0 5mm; }
-  table.amt { width: 92mm; margin-left: auto; border-collapse: collapse; }
-  table.amt td { padding: 3.5px 8px; font-size: 9.5pt; }
-  table.amt td.n { text-align: right; font-variant-numeric: tabular-nums;
-                   white-space: nowrap; }
-  table.amt tr.sub td { border-top: 0.6px solid #cdd8e1; font-weight: 700; }
-  table.amt tr.grand td { border-top: 1.4px solid #16527E; font-weight: 800;
-                          font-size: 11.5pt; color: #16527E; padding-top: 5px; }
+  hr.rule { border: none; border-top: 1px solid #16527E; margin: 5mm 0 0; }
+
+  table.doc { width: 100%; border-collapse: collapse; margin-top: 5mm; }
+  table.doc th.desc-h { text-align: left; font-weight: 400; font-size: 9.5pt;
+    color: #26333d; line-height: 1.55; padding: 3.5mm 4mm;
+    background: #F3F7FA; border: 0.6px solid #cdd8e1; }
+  table.doc th.desc-h .t { display: block; font-weight: 700; color: #10344F;
+    font-size: 7.5pt; text-transform: uppercase; letter-spacing: .06em;
+    margin-bottom: 1.5mm; }
+  table.doc td { padding: 4px 4mm; font-size: 9.5pt;
+    border: 0.6px solid #cdd8e1; border-top: none; }
+  table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
+    white-space: nowrap; width: 40mm; }
+  table.doc tr.sub td { font-weight: 700; background: #FAFCFD; }
+  table.doc tr.grand td { border-top: 1.4px solid #16527E; font-weight: 800;
+    font-size: 11.5pt; color: #16527E; }
   .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
   .bankbox { width: 100%; border: 0.6px solid #A9B6C0; margin-top: 7mm;
              border-collapse: collapse; }
@@ -57,7 +63,6 @@
 
 <div class="masthead">
   <img src="{{ logo_src }}">
-  <div class="legal">{{ co.legal_name }}</div>
 </div>
 
 <h1>TAX <strong>INVOICE</strong></h1>
@@ -80,30 +85,43 @@
   </td>
 </tr></table>
 
+<hr class="rule">
+
 {% if is_advance %}
-<div class="desc">
-  Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the contract value
-  for {{ project.title }}, per Interim Payment Application {{ claim.ref }}.
-</div>
-<table class="amt">
-  <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of contract value)</td>
-      <td class="n">{{ net_due|floatformat:2 }}</td></tr>
-  <tr><td>Output GST @ {{ gst_pct|floatformat:"-2" }}%</td>
-      <td class="n">{{ gst|floatformat:2 }}</td></tr>
-  <tr class="grand"><td>Total amount payable</td>
-      <td class="n">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
+<table class="doc">
+  <thead>
+    <tr><th class="desc-h" colspan="2">
+      <span class="t">Description</span>
+      Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the contract
+      value for {{ project.title }}, per Interim Payment Application {{ claim.ref }}.
+    </th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of contract value)</td>
+        <td class="n">{{ net_due|floatformat:2 }}</td></tr>
+    <tr><td>Output GST @ {{ gst_pct|floatformat:"-2" }}%</td>
+        <td class="n">{{ gst|floatformat:2 }}</td></tr>
+    <tr class="grand"><td>Total amount payable</td>
+        <td class="n">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
+  </tbody>
 </table>
 {% else %}
-<div class="desc">
-  Being value of work certified to date under Interim Payment Application
-  {{ claim.ref }} for {{ project.title }}{% if claim.work_done_upto %}, up to {{ claim.work_done_upto|date:"d M Y" }}{% endif %} —
-  net of advance recovery, retention and agreed deductions.
-</div>
-<table class="amt">
-  {% for r in summary %}{% if r.present != "-" %}
-  <tr class="{% if r.style == 'net' %}grand{% elif r.style == 'total' %}sub{% endif %}">
-    <td>{{ r.label }}</td><td class="n">{% if r.style == 'net' %}{{ currency }} {% endif %}{{ r.present }}</td></tr>
-  {% endif %}{% endfor %}
+<table class="doc">
+  <thead>
+    <tr><th class="desc-h" colspan="2">
+      <span class="t">Description</span>
+      Being value of work certified to date under Interim Payment Application
+      {{ claim.ref }} for {{ project.title }}{% if claim.work_done_upto %}, up to {{ claim.work_done_upto|date:"d M Y" }}{% endif %} —
+      net of advance recovery, retention and agreed deductions.
+    </th></tr>
+  </thead>
+  <tbody>
+    {% for r in summary %}{% if r.present != "-" %}
+    <tr class="{% if r.style == 'net' %}grand{% elif r.style == 'total' %}sub{% endif %}">
+      <td>{{ r.label }}</td>
+      <td class="n">{% if r.style == 'net' %}{{ currency }} {% endif %}{{ r.present }}</td></tr>
+    {% endif %}{% endfor %}
+  </tbody>
 </table>
 {% endif %}
 

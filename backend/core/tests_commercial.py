@@ -181,6 +181,7 @@ class ProgressClaimTests(TestCase):
             advance_payment_pct="40", retention_pct="10", output_gst_pct="8")
         self.qs = make_user("qs1", User.Role.QS)
         self.se = make_user("se1", User.Role.SITE_ENGINEER, site=self.site)
+        self.director = make_user("dir1", User.Role.DIRECTOR)
         self.client = APIClient()
         self.client.force_authenticate(self.qs)
         # BOQ: A = 100 × 10 = 1000, B = 100 × 20 = 2000  (total 3000)
@@ -211,8 +212,34 @@ class ProgressClaimTests(TestCase):
                                 {"rows": rows}, format="json").data
 
     def _status(self, cid, s):
+        # Certifying is the Director's clearance; other moves stay with the QS.
+        if s == "CERTIFIED":
+            self.client.force_authenticate(self.director)
+            r = self.client.post(f"/api/v1/claims/{cid}/status",
+                                 {"status": s}, format="json")
+            self.client.force_authenticate(self.qs)
+            return r
         return self.client.post(f"/api/v1/claims/{cid}/status",
                                 {"status": s}, format="json")
+
+    def test_only_director_can_certify_claim(self):
+        cid = self._create({"claim_type": "ADVANCE"})["id"]
+        self._status(cid, "SUBMITTED")
+        # QS submits but cannot clear the IPA.
+        r = self.client.post(f"/api/v1/claims/{cid}/status",
+                             {"status": "CERTIFIED"}, format="json")
+        self.assertIn(r.status_code, (400, 403))
+        from .models import ProgressClaim
+        self.assertEqual(ProgressClaim.objects.get(pk=cid).status, "SUBMITTED")
+        # Director clears it.
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/claims/{cid}/status",
+                             {"status": "CERTIFIED"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.client.force_authenticate(self.qs)
+        c = ProgressClaim.objects.get(pk=cid)
+        self.assertEqual(c.status, "CERTIFIED")
+        self.assertEqual(c.certified_by_id, self.director.id)
 
     def test_advance_claim_then_interim_recovers_it(self):
         # Advance = 40% of 3000 = 1200; + 8% GST = 1296. No work lines.
@@ -411,8 +438,7 @@ class ProgressClaimTests(TestCase):
         blocked = self.client.post(f"/api/v1/claims/{cid}/items",
                                    {"rows": []}, format="json")
         self.assertEqual(blocked.status_code, 400)
-        r = self.client.post(f"/api/v1/claims/{cid}/status",
-                             {"status": "CERTIFIED"}, format="json")
+        r = self._status(cid, "CERTIFIED")   # Director clears it
         self.assertEqual(r.data["claim"]["status"], "CERTIFIED")
         self.assertIsNotNone(r.data["claim"]["certified_at"])
 
@@ -427,8 +453,7 @@ class ProgressClaimTests(TestCase):
     def _certify(self, cid):
         self.client.post(f"/api/v1/claims/{cid}/status",
                          {"status": "SUBMITTED"}, format="json")
-        return self.client.post(f"/api/v1/claims/{cid}/status",
-                                {"status": "CERTIFIED"}, format="json")
+        return self._status(cid, "CERTIFIED")   # Director clears it
 
     def _revenue(self):
         return self.client.get(

@@ -4,6 +4,8 @@ import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
 const EDIT_ROLES = ["PM", "ADMIN", "DIRECTOR", "QS"];
+// Certifying an IPA is the Director's clearance (the QS prepares + submits).
+const CERTIFY_ROLES = ["DIRECTOR", "ADMIN"];
 const fmt = (v) =>
   Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2,
     maximumFractionDigits: 2 });
@@ -23,6 +25,7 @@ export default function ClaimsPanel({ projectId, me }) {
   const [busy, setBusy] = useState(false);
   const [receiptForm, setReceiptForm] = useState(null);   // null = closed
   const canEdit = EDIT_ROLES.includes(me.role);
+  const canCertify = CERTIFY_ROLES.includes(me.role);
 
   function load() {
     setError(null);
@@ -142,6 +145,7 @@ export default function ClaimsPanel({ projectId, me }) {
                   {openId === c.id && (
                     <tr><td colSpan={7} style={{ padding: 0 }}>
                       <ClaimEditor claimId={c.id} ccy={ccy} canEdit={canEdit}
+                                   canCertify={canCertify}
                                    onChange={(d) => d && setData(d)}
                                    reloadList={load} />
                     </td></tr>
@@ -261,7 +265,7 @@ function ReceiptForm({ form, setForm, ccy, claims, busy, onSave }) {
 const numCell = { ...inputStyle, width: 84, padding: "3px 5px", fontSize: 12,
   textAlign: "right" };
 
-function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
+function ClaimEditor({ claimId, ccy, canEdit, canCertify, onChange, reloadList }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -590,12 +594,18 @@ function ClaimEditor({ claimId, ccy, canEdit, onChange, reloadList }) {
                     disabled={busy} onClick={del}>Delete</button>
           </>)}
           {c.status === "SUBMITTED" && (<>
-            <button style={{ ...buttonStyle, padding: "4px 14px" }}
-                    disabled={busy} onClick={() => status("CERTIFIED")}>
-              Certify</button>
-            <button style={{ ...ghostButton, color: "#c0392b" }}
-                    disabled={busy} onClick={() => status("REJECTED")}>
-              Reject</button>
+            {canCertify ? (<>
+              <button style={{ ...buttonStyle, padding: "4px 14px" }}
+                      disabled={busy} onClick={() => status("CERTIFIED")}>
+                Certify (Director)</button>
+              <button style={{ ...ghostButton, color: "#c0392b" }}
+                      disabled={busy} onClick={() => status("REJECTED")}>
+                Reject</button>
+            </>) : (
+              <span style={{ fontSize: 12, color: "#8a94a0",
+                             alignSelf: "center" }}>
+                Awaiting Director clearance</span>
+            )}
             <button style={ghostButton} disabled={busy}
                     onClick={() => status("DRAFT")}>Reopen</button>
           </>)}
