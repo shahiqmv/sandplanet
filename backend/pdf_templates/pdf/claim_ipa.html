@@ -51,6 +51,10 @@
       <td class="amt">{{ waterfall.k4_variations|floatformat:2 }}</td></tr>
   <tr class="sub"><td>K — Gross value certified</td>
       <td class="amt">{{ waterfall.k_gross|floatformat:2 }}</td></tr>
+  {% if waterfall.advance_received %}
+  <tr><td>Add advance received</td>
+      <td class="amt">{{ waterfall.advance_received|floatformat:2 }}</td></tr>
+  {% endif %}
   <tr><td>Less recovery of advance</td>
       <td class="amt neg">({{ waterfall.advance_recovered|floatformat:2 }})</td></tr>
   <tr><td>Less retention</td>
@@ -67,8 +71,17 @@
       <td class="amt">{{ waterfall.net_due|floatformat:2 }}</td></tr>
   <tr><td>Output GST @ {{ claim.gst_pct|floatformat:2 }}%</td>
       <td class="amt">{{ waterfall.gst|floatformat:2 }}</td></tr>
-  <tr class="grand"><td>Total due (incl. GST)</td>
+  <tr class="{% if deductions %}sub{% else %}grand{% endif %}">
+      <td>Total due (incl. GST)</td>
       <td class="amt">{{ currency }} {{ waterfall.total|floatformat:2 }}</td></tr>
+  {% for d in deductions %}
+  <tr><td>Deduction — {{ d.label }}</td>
+      <td class="amt neg">({{ d.present|floatformat:2 }})</td></tr>
+  {% endfor %}
+  {% if deductions %}
+  <tr class="grand"><td>Net amount to pay</td>
+      <td class="amt">{{ currency }} {{ waterfall.net_to_pay|floatformat:2 }}</td></tr>
+  {% endif %}
 </table>
 <div class="words">{{ amount_words }}</div>
 

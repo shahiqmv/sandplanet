@@ -276,6 +276,36 @@ class ProgressClaimTests(TestCase):
                          round(float(w["total"]) - 112.52, 2))
         self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
 
+    def test_ipa_and_invoice_pdfs_show_advance_and_deductions(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import ProgressClaim
+        # advance claim → IPA shows the advance-received line
+        a = self._create({"claim_type": "ADVANCE"})
+        ac = ProgressClaim.objects.get(pk=a["id"])
+        ipa = render_to_string("pdf/claim_ipa.html",
+                               commercial.claim_pdf_context(ac))
+        self.assertIn("Add advance received", ipa)
+        self._status(a["id"], "SUBMITTED")
+        self._status(a["id"], "CERTIFIED")
+        # interim with a back-charge → IPA + invoice show it + net-to-pay
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "50"})
+        self.client.post(
+            f"/api/v1/claims/{c['id']}/deductions",
+            {"rows": [{"label": "Diesel from store",
+                       "cumulative_amount": "112.52"}]}, format="json")
+        cc = ProgressClaim.objects.get(pk=c["id"])
+        ipa2 = render_to_string("pdf/claim_ipa.html",
+                                commercial.claim_pdf_context(cc))
+        self.assertIn("Diesel from store", ipa2)
+        self.assertIn("Net amount to pay", ipa2)
+        inv = render_to_string("pdf/tax_invoice.html",
+                               commercial.invoice_pdf_context(cc))
+        self.assertIn("Diesel from store", inv)
+        self.assertIn("Net amount to pay", inv)
+
     def test_create_locks_boq_and_seeds_lines(self):
         c = self._create()
         self.assertEqual(c["ref"], "IPA-01")

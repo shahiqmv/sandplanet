@@ -718,7 +718,8 @@ def claim_pdf_context(claim):
         "employer": _employer(project), "currency": ccy,
         "waterfall": w, "approved_vos": w["revised"] - w["original"],
         "lines": val["lines"], "sections": val["section_summary"],
-        "amount_words": amount_in_words(w["total"], ccy),
+        "deductions": val["deduction_lines"],
+        "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
         "subline": f"Application {claim.ref}  ·  {project.code}",
@@ -729,7 +730,8 @@ def invoice_pdf_context(claim):
     """Context for the client tax invoice PDF (the GST bill for this claim)."""
     from .pdf import company_info, logo_src
     project = claim.project
-    w = claim_valuation(claim)["waterfall"]
+    val = claim_valuation(claim)
+    w = val["waterfall"]
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
     return {
@@ -739,6 +741,8 @@ def invoice_pdf_context(claim):
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
         "net_due": w["net_due"], "gst": w["gst"], "gst_pct": claim.gst_pct,
-        "total": w["total"], "amount_words": amount_in_words(w["total"], ccy),
+        "total": w["total"], "deductions": val["deduction_lines"],
+        "net_to_pay": w["net_to_pay"],
+        "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
     }

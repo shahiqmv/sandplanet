@@ -62,13 +62,22 @@
   </tbody>
 </table>
 
-<table class="tot" style="width: 82mm; margin-left: auto; margin-top: 4mm">
-  <tr><td>Net amount</td>
+<table class="tot" style="width: 95mm; margin-left: auto; margin-top: 4mm">
+  <tr><td>Net amount (work certified, net of advance &amp; retention)</td>
       <td class="num">{{ currency }} {{ net_due|floatformat:2 }}</td></tr>
   <tr><td>Output GST @ {{ gst_pct|floatformat:2 }}%</td>
       <td class="num">{{ currency }} {{ gst|floatformat:2 }}</td></tr>
-  <tr class="grand"><td>Total due</td>
+  <tr class="{% if deductions %}sub{% else %}grand{% endif %}">
+      <td>Total with GST</td>
       <td class="num">{{ currency }} {{ total|floatformat:2 }}</td></tr>
+  {% for d in deductions %}
+  <tr><td>Less: {{ d.label }}</td>
+      <td class="num">({{ d.present|floatformat:2 }})</td></tr>
+  {% endfor %}
+  {% if deductions %}
+  <tr class="grand"><td>Net amount to pay</td>
+      <td class="num">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
+  {% endif %}
 </table>
 <div class="words">{{ amount_words }}</div>
 
