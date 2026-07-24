@@ -317,6 +317,7 @@ def _claim_meta(claim):
         "claim_type": claim.claim_type, "basis": claim.basis,
         "status": claim.status, "work_done_upto": claim.work_done_upto,
         "advance_pct": claim.advance_pct, "recovery_pct": claim.recovery_pct,
+        "advance_recovered_override": claim.advance_recovered_override,
         "retention_pct": claim.retention_pct, "gst_pct": claim.gst_pct,
         "material_on_site": claim.material_on_site,
         "material_off_site": claim.material_off_site,

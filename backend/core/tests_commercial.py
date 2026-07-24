@@ -210,6 +210,55 @@ class ProgressClaimTests(TestCase):
         return self.client.post(f"/api/v1/claims/{cid}/items",
                                 {"rows": rows}, format="json").data
 
+    def _status(self, cid, s):
+        return self.client.post(f"/api/v1/claims/{cid}/status",
+                                {"status": s}, format="json")
+
+    def test_advance_claim_then_interim_recovers_it(self):
+        # Advance = 40% of 3000 = 1200; + 8% GST = 1296. No work lines.
+        a = self._create({"claim_type": "ADVANCE"})
+        self.assertEqual(a["claim_type"], "ADVANCE")
+        wa = self._detail(a["id"])["waterfall"]
+        self.assertEqual(float(wa["advance_received"]), 1200.0)
+        self.assertEqual(float(wa["net_due"]), 1200.0)
+        self.assertEqual(float(wa["total"]), 1296.0)
+        self.assertEqual(self._detail(a["id"])["lines"], [])   # no work lines
+        # it submits + certifies without any valued line
+        self.assertEqual(self._status(a["id"], "SUBMITTED").status_code, 200)
+        self.assertEqual(self._status(a["id"], "CERTIFIED").status_code, 200)
+        # Interim: value work at 50% (k_gross 1500). Recovery = 40%×1500 = 600.
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "50"})
+        wc = self._detail(c["id"])["waterfall"]
+        self.assertEqual(float(wc["k_gross"]), 1500.0)
+        self.assertEqual(float(wc["advance_recovered"]), 600.0)
+        self.assertEqual(float(wc["previously_certified"]), 1200.0)
+        # net due = work 1500 − recovery 600 − retention 150 = 750
+        self.assertEqual(float(wc["net_due"]), 750.0)
+
+    def test_recovery_can_be_reduced_then_caught_up(self):
+        # advance 1200; interim work 50% (k_gross 1500) → formula recovery 600
+        self._status(self._create({"claim_type": "ADVANCE"})["id"], "SUBMITTED")
+        adv = self.project.claims.get(claim_type="ADVANCE")
+        self._status(adv.id, "CERTIFIED")
+        c1 = self._create()
+        self._value_pct(c1["id"], {"A": "50", "B": "50"})
+        # client agrees to recover only 200 on this claim
+        self.client.post(f"/api/v1/claims/{c1['id']}/meta",
+                         {"advance_recovered_override": "200"}, format="json")
+        w1 = self._detail(c1["id"])["waterfall"]
+        self.assertEqual(float(w1["advance_recovered"]), 200.0)
+        # net due rises vs the 600 default: 1500 − 200 − 150 = 1150
+        self.assertEqual(float(w1["net_due"]), 1150.0)
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        # next claim (work 100%, k_gross 3000) uses the formula again and
+        # catches the deferred recovery up to the full 1200
+        c2 = self._create()
+        self._value_pct(c2["id"], {"A": "100", "B": "100"})
+        w2 = self._detail(c2["id"])["waterfall"]
+        self.assertEqual(float(w2["advance_recovered"]), 1200.0)   # cumulative
+
     def test_create_locks_boq_and_seeds_lines(self):
         c = self._create()
         self.assertEqual(c["ref"], "IPA-01")

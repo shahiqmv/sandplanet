@@ -232,12 +232,23 @@ def create_claim(project, data, actor):
     BOQ item and approved-variation item — each seeded from the previous
     claim's cumulative valuation so the QS only bumps the figures that moved."""
     from .models import ProgressClaim, ProgressClaimItem
+    claim_type = data.get("claim_type") or "INTERIM"
     boq = getattr(project, "boq", None)
-    if boq is None or not boq.items.exists():
-        return None, "Add a BOQ before raising a claim."
-    if not boq.is_locked:
-        boq.is_locked = True
-        boq.save(update_fields=["is_locked"])
+    is_advance = claim_type == "ADVANCE"
+    if is_advance:
+        # The advance is a flat % of the contract value — it needs the terms,
+        # not a BOQ, and it carries no work lines.
+        if not project.contract_value:
+            return None, "Set the project's contract value first."
+        if not _dec(project.advance_payment_pct):
+            return None, ("Set the advance payment % in the project's contract "
+                          "terms first.")
+    else:
+        if boq is None or not boq.items.exists():
+            return None, "Add a BOQ before raising a claim."
+        if not boq.is_locked:
+            boq.is_locked = True
+            boq.save(update_fields=["is_locked"])
 
     seq = (project.claims.aggregate(m=Max("seq"))["m"] or 0) + 1
     previous = project.claims.order_by("-seq").first()
@@ -250,7 +261,10 @@ def create_claim(project, data, actor):
         basis=data.get("basis") or default_basis,
         work_done_upto=data.get("work_done_upto") or None, previous=previous,
         advance_pct=_dec(project.advance_payment_pct) or ZERO,
-        recovery_pct=_dec(project.advance_payment_pct) or ZERO,
+        # The recovery rate carries forward from the previous claim (so an
+        # agreed rate set once sticks); defaults to the advance % (pro-rata).
+        recovery_pct=(previous.recovery_pct if previous
+                      else _dec(project.advance_payment_pct) or ZERO),
         retention_pct=_dec(project.retention_pct) or ZERO,
         gst_pct=gst if gst is not None else Decimal("8"),
         material_on_site=(previous.material_on_site if previous else ZERO),
@@ -264,25 +278,27 @@ def create_claim(project, data, actor):
             prev_map[(pci.source, pci.boq_item_id,
                       pci.variation_item_id)] = pci
     new_items = []
-    for it in boq.items.all():
-        if it.is_heading:
-            continue
-        pci = prev_map.get(("BOQ", it.id, None))
-        new_items.append(ProgressClaimItem(
-            claim=claim, source="BOQ", boq_item=it,
-            cumulative_pct=(pci.cumulative_pct if pci else None),
-            cumulative_qty=(pci.cumulative_qty if pci else None)))
-    for v in project.variations.filter(
-            status="APPROVED").prefetch_related("items"):
-        for it in v.items.all():
+    # An advance claim carries no work lines — its value is the flat advance %.
+    if not is_advance and boq:
+        for it in boq.items.all():
             if it.is_heading:
                 continue
-            pci = prev_map.get(("VO", None, it.id))
+            pci = prev_map.get(("BOQ", it.id, None))
             new_items.append(ProgressClaimItem(
-                claim=claim, source="VO", variation_item=it,
+                claim=claim, source="BOQ", boq_item=it,
                 cumulative_pct=(pci.cumulative_pct if pci else None),
                 cumulative_qty=(pci.cumulative_qty if pci else None)))
-    ProgressClaimItem.objects.bulk_create(new_items)
+        for v in project.variations.filter(
+                status="APPROVED").prefetch_related("items"):
+            for it in v.items.all():
+                if it.is_heading:
+                    continue
+                pci = prev_map.get(("VO", None, it.id))
+                new_items.append(ProgressClaimItem(
+                    claim=claim, source="VO", variation_item=it,
+                    cumulative_pct=(pci.cumulative_pct if pci else None),
+                    cumulative_qty=(pci.cumulative_qty if pci else None)))
+        ProgressClaimItem.objects.bulk_create(new_items)
     audit("project", project.id, "CLAIM_CREATED", actor=actor,
           detail={"ref": claim.ref, "lines": len(new_items)})
     return claim, None
@@ -326,6 +342,13 @@ def set_claim_meta(claim, data, actor):
     for f in ("material_on_site", "material_off_site", "retention_released"):
         if f in data:
             setattr(claim, f, _dec(data.get(f)) or ZERO)
+    if "recovery_pct" in data:
+        claim.recovery_pct = _dec(data.get("recovery_pct")) or ZERO
+    if "advance_recovered_override" in data:
+        # blank/None clears the override → back to the rate formula
+        v = data.get("advance_recovered_override")
+        claim.advance_recovered_override = (_dec(v) if v not in (None, "")
+                                            else None)
     claim.save()
     return claim, None
 
@@ -344,7 +367,8 @@ def set_claim_status(claim, to_status, actor):
     allowed = CLAIM_FLOW.get(claim.status, set())
     if to_status not in allowed:
         return None, f"Cannot move a {claim.status} claim to {to_status}."
-    if to_status == "SUBMITTED" and not claim.items.exists():
+    if (to_status == "SUBMITTED" and claim.claim_type != "ADVANCE"
+            and not claim.items.exists()):
         return None, "Value at least one line before submitting the claim."
     claim.status = to_status
     fields = ["status"]
@@ -432,14 +456,28 @@ def claim_valuation(claim):
     k3 = Decimal(str(claim.material_off_site or 0))    # material off site
     k_gross = k1 + k2 + k3 + k4                        # K gross cumulative
 
-    advance_total = claim.advance_pct / Decimal("100") * original   # L1
-    advance_recovered = min(
-        claim.recovery_pct / Decimal("100") * k_gross, advance_total)  # L2
+    from .models import ProgressClaim
+    advance_total = claim.advance_pct / Decimal("100") * original    # L1
+    # The advance is paid on the Advance claim, then recovered pro-rata as work
+    # is valued. It rides the cumulative waterfall as +received / −recovered, so
+    # each claim's "now due" comes out right (advance received once, recovery
+    # nets it back over the interims).
+    has_advance = ProgressClaim.objects.filter(
+        project=project, claim_type=ProgressClaim.Type.ADVANCE,
+        seq__lte=claim.seq).exists()
+    advance_received = advance_total if has_advance else ZERO        # L0
+    if claim.advance_recovered_override is not None:                 # L2
+        advance_recovered = min(Decimal(str(claim.advance_recovered_override)),
+                                advance_total)
+    else:
+        advance_recovered = min(
+            claim.recovery_pct / Decimal("100") * k_gross, advance_total)
     retention_held = (claim.retention_pct / Decimal("100")
                       * (k1 + k2 + k4))                 # M1 (not on off-site)
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
-    net_cumulative = k_gross - advance_recovered + net_retention     # N
+    net_cumulative = (k_gross + advance_received - advance_recovered
+                      + net_retention)                  # N
     previously = _claim_net(prev)                                    # P
     net_due = net_cumulative - previously                           # Q
     gst = claim.gst_pct / Decimal("100") * net_due                  # R
@@ -463,6 +501,7 @@ def claim_valuation(claim):
             "k3_material_off_site": k3, "k4_variations": k4,
             "k_gross": k_gross,
             "advance_total": advance_total,
+            "advance_received": advance_received,
             "advance_recovered": advance_recovered,
             "retention_held": retention_held,
             "retention_released": retention_released,

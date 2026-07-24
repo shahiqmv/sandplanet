@@ -2280,6 +2280,12 @@ class ProgressClaim(models.Model):
                                       default=0)   # advance as % of contract
     recovery_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                        default=0)  # recovered per work done
+    # Per-claim override of the CUMULATIVE advance recovered to date. Null =
+    # use the rate formula; set it to recover less on a given claim (the client
+    # allows more payable). Later claims catch up so the advance still fully
+    # recovers.
+    advance_recovered_override = models.DecimalField(
+        max_digits=16, decimal_places=2, null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                         default=0)
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
