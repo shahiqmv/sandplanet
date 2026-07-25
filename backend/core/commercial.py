@@ -677,9 +677,13 @@ def project_revenue_summary(project):
 # ---- Claim / invoice PDFs (P5) -------------------------------------------
 
 def _next_invoice_no():
+    """Sequential tax-invoice number carrying the year, reset each year:
+    INV-2026-0001 (owner 2026-07-25)."""
+    from django.utils import timezone
     from .models import ProgressClaim
-    n = ProgressClaim.objects.exclude(invoice_no="").count() + 1
-    return f"INV-{n:04d}"
+    prefix = f"INV-{timezone.now().year}-"
+    n = ProgressClaim.objects.filter(invoice_no__startswith=prefix).count() + 1
+    return f"{prefix}{n:04d}"
 
 
 _ONES = ["", "one", "two", "three", "four", "five", "six", "seven", "eight",
