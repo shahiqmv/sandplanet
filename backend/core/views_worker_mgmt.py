@@ -5,8 +5,9 @@ worker_mgmt.py for the rules."""
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
+from . import salary_revision as sr
 from . import worker_mgmt as wm
-from .models import Employee, Site
+from .models import Employee, SalaryRevision, Site
 from .models import WorkerChangeRequest as WCR
 from .permissions import scoped_site_ids
 
@@ -170,6 +171,50 @@ def batch_action(request, pk):
         return Response({"detail": msg}, status=400)
     batch.refresh_from_db()
     return Response(_batch_json(batch))
+
+
+# ---- Salary revisions (site PM → Director) ------------------------------
+
+@api_view(["GET", "POST"])
+def salary_revisions(request):
+    if request.method == "POST":
+        site, err = _site_for(request, request.data.get("site_id"))
+        if err:
+            return err
+        rev, msg = sr.create_revision(site, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(sr.revision_dict(rev), status=201)
+    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", *VIEW_ALL):
+        return Response({"detail": "Not permitted."}, status=403)
+    qs = SalaryRevision.objects.select_related(
+        "employee", "site", "from_category", "to_category",
+        "requested_by", "decided_by")
+    if not _can_see_all(request.user):
+        qs = qs.filter(site_id__in=(scoped_site_ids(request.user) or []))
+    if request.GET.get("site_id"):
+        qs = qs.filter(site_id=request.GET["site_id"])
+    if request.GET.get("open") == "1":
+        qs = qs.filter(status__in=sr.OPEN)
+    return Response([sr.revision_dict(r) for r in qs[:200]])
+
+
+@api_view(["POST"])
+def salary_revision_action(request, pk):
+    try:
+        rev = SalaryRevision.objects.select_related("site", "employee").get(pk=pk)
+    except SalaryRevision.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_all(request.user):
+        ids = scoped_site_ids(request.user)
+        if ids is not None and rev.site_id not in ids:
+            return Response({"detail": "Not found."}, status=404)
+    msg = sr.decide_revision(rev, request.data.get("action"), request.user,
+                             request.data.get("note", ""))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    rev.refresh_from_db()
+    return Response(sr.revision_dict(rev))
 
 
 @api_view(["PATCH"])

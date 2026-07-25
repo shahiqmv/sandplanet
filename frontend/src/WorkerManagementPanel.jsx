@@ -17,7 +17,9 @@ const money = (v) => v == null ? "—"
 export default function WorkerManagementPanel({ site, me }) {
   const [batches, setBatches] = useState(null);
   const [roster, setRoster] = useState(null);
+  const [revisions, setRevisions] = useState(null);
   const [view, setView] = useState(null);   // 'add' | 'roster'
+  const [revising, setRevising] = useState(null);  // worker being revised
   const [error, setError] = useState(null);
   const canManage = SITE_MANAGE.includes(me.role);
 
@@ -25,8 +27,13 @@ export default function WorkerManagementPanel({ site, me }) {
     api(`/worker-batches?site_id=${site.id}`).then(setBatches)
       .catch((e) => setError(e.message));
     api(`/sites/${site.id}/direct-workers`).then(setRoster).catch(() => {});
+    api(`/salary-revisions?site_id=${site.id}`).then(setRevisions)
+      .catch(() => {});
   }
   useEffect(load, [site.id]);
+
+  const openRev = (revisions || []).filter((r) => r.is_open);
+  const openRevIds = new Set(openRev.map((r) => r.employee_id));
 
   const open = (batches || []).filter((b) =>
     ["SUBMITTED", "PM_APPROVED", "RETURNED"].includes(b.status));
@@ -60,6 +67,21 @@ export default function WorkerManagementPanel({ site, me }) {
       {view === "roster" && (
         <RosterPicker site={site} onCancel={() => setView(null)}
                       onDone={() => { setView(null); load(); }} />
+      )}
+      {revising && (
+        <ReviseForm site={site} worker={revising}
+                    onCancel={() => setRevising(null)}
+                    onDone={() => { setRevising(null); load(); }} />
+      )}
+
+      {openRev.length > 0 && (
+        <div style={{ marginTop: 8 }}>
+          <h4 style={{ margin: "10px 0 6px", color: "var(--navy)" }}>
+            Salary revisions — awaiting approval</h4>
+          {openRev.map((r) => (
+            <RevisionCard key={r.id} rev={r} me={me} onChanged={load} />
+          ))}
+        </div>
       )}
 
       {batches === null ? <p style={{ color: "var(--muted)" }}>Loading…</p> : (
@@ -101,6 +123,7 @@ export default function WorkerManagementPanel({ site, me }) {
               <th style={th}>Category</th><th style={th}>Nationality</th>
               <th style={th}>Joined</th>
               <th style={{ ...th, textAlign: "right" }}>Salary</th>
+              {canManage && <th style={th}></th>}
             </tr></thead>
             <tbody>
               {roster.map((w) => (
@@ -116,6 +139,16 @@ export default function WorkerManagementPanel({ site, me }) {
                       title="Senior-staff pay is hidden">—</span>
                       : w.basic_pay == null ? "—"
                       : `${w.currency} ${money(w.basic_pay)}`}</td>
+                  {canManage && (
+                    <td style={{ ...td, textAlign: "right" }}>
+                      {w.pay_hidden ? null : openRevIds.has(w.id)
+                        ? <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                            revision pending</span>
+                        : <a href="#" onClick={(e) => { e.preventDefault();
+                            setRevising(w); }} style={{ fontSize: 12 }}>
+                            Revise salary</a>}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -222,6 +255,128 @@ function BatchCard({ batch, me, onChanged }) {
 
 const lbl = { display: "flex", flexDirection: "column", gap: 3, fontSize: 11.5,
               color: "var(--muted)" };
+
+// A site team member proposes a category/salary change for one worker. If the
+// PM raises it, it skips to the Director; a Site Admin/Engineer's goes to the
+// PM first. The new pay applies to the whole month once approved.
+function ReviseForm({ site, worker, onCancel, onDone }) {
+  const [cats, setCats] = useState([]);
+  const [toCat, setToCat] = useState("");
+  const [toPay, setToPay] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    api("/manpower-categories")
+      .then((all) => setCats(all.filter((c) => c.list_type === "DPR")))
+      .catch(() => setCats([]));
+  }, []);
+
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api("/salary-revisions", { method: "POST", body: {
+        site_id: site.id, employee_id: worker.id,
+        to_category_id: toCat || null, to_basic_pay: toPay, reason } });
+      onDone();
+    } catch (err) { setError(err.message); setBusy(false); }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ ...card, background: "var(--paper)",
+                                     marginBottom: 12 }}>
+      <h4 style={{ margin: "0 0 4px", color: "var(--navy)" }}>
+        Revise salary — {worker.full_name}</h4>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
+        Currently {worker.job_title || "—"} ·{" "}
+        {worker.currency} {money(worker.basic_pay)}. The change is subject to
+        Director approval and applies to the whole current month.</p>
+      {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      <div style={{ display: "grid", gap: 6,
+                    gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <label style={lbl}>New category
+          <select style={inputStyle} value={toCat}
+                  onChange={(e) => setToCat(e.target.value)}>
+            <option value="">(keep {worker.job_title || "—"})</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>))}
+          </select></label>
+        <label style={lbl}>Revised salary ({worker.currency})
+          <input style={inputStyle} value={toPay} inputMode="decimal"
+                 onChange={(e) => setToPay(e.target.value)} /></label>
+      </div>
+      <label style={{ ...lbl, marginTop: 6 }}>Reason (performance note)
+        <textarea style={{ ...inputStyle, minHeight: 44 }} value={reason}
+                  onChange={(e) => setReason(e.target.value)} /></label>
+      <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+        <Btn variant="navy" disabled={busy}>Submit for approval</Btn>
+        <Btn type="button" variant="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
+function RevisionCard({ rev, me, onChanged }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const isPM = ["PM", "ADMIN"].includes(me.role);
+  const isDir = ["DIRECTOR", "ADMIN"].includes(me.role);
+  const isSite = SITE_MANAGE.includes(me.role);
+  const s = rev.status;
+
+  async function act(action, needNote) {
+    let note = "";
+    if (needNote) {
+      note = window.prompt("Reason:") || "";
+      if (!note.trim()) return;
+    }
+    setBusy(true); setError(null);
+    try {
+      await api(`/salary-revisions/${rev.id}/action`,
+                { method: "POST", body: { action, note } });
+      onChanged();
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
+
+  const acts = [];
+  if (s === "SUBMITTED" && isPM) acts.push(["approve", "Approve (PM)", "navy", false]);
+  if (s === "PM_APPROVED" && isDir) acts.push(["approve", "Approve (Director)", "navy", false]);
+  if (isDir) acts.push(["reject", "Reject", "danger", true]);
+  if (isPM || isDir) acts.push(["return", "Return", "secondary", true]);
+  if (isSite) acts.push(["cancel", "Cancel", "ghost", false]);
+
+  const cat = rev.from_category !== rev.to_category
+    ? `${rev.from_category || "—"} → ${rev.to_category || "—"}` : rev.to_category;
+  return (
+    <div style={{ border: "1px solid #e2e8f0", borderRadius: 8,
+                  padding: "8px 10px", marginBottom: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8,
+                    flexWrap: "wrap" }}>
+        <b style={{ color: "var(--navy)" }}>{rev.employee}</b>
+        <Chip tone={STATUS_TONE[s]}>{rev.status_label}</Chip>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
+          {rev.currency} {money(rev.from_basic_pay)} →{" "}
+          <b>{money(rev.to_basic_pay)}</b></span>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+        {cat ? `${cat} · ` : ""}by {rev.requested_by}
+        {rev.reason ? ` · "${rev.reason}"` : ""}
+        {rev.decision_note ? ` · note: ${rev.decision_note}` : ""}
+      </div>
+      {error && <p style={{ color: "var(--red-fg)", margin: "4px 0" }}>{error}</p>}
+      {acts.length > 0 && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+          {acts.map(([action, label, variant, needNote]) => (
+            <Btn key={label} variant={variant} disabled={busy}
+                 onClick={() => act(action, needNote)}>{label}</Btn>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 const BLANK = { full_name: "", passport_no: "", nationality: "",
   job_category_id: "", basic_pay: "", currency: "MVR",
   employment_type: "PERMANENT", work_permit_no: "", work_permit_expiry: "" };

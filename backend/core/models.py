@@ -1737,6 +1737,54 @@ class WorkerChangeItem(models.Model):
         ordering = ["id"]
 
 
+class SalaryRevision(models.Model):
+    """A site PM's performance-based revision of a DIRECT worker's category +
+    salary, subject to Director approval. New hires start on an agreed salary
+    for a skill; if they don't measure up the PM re-grades them. Once approved,
+    the new figures apply to the WHOLE month it was initiated — payroll
+    snapshots salary per month, so an existing draft line for that month is
+    re-synced to the new pay (owner 2026-07-25)."""
+
+    class Status(models.TextChoices):
+        SUBMITTED = "SUBMITTED", "Awaiting PM"
+        PM_APPROVED = "PM_APPROVED", "Awaiting Director"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        RETURNED = "RETURNED", "Returned"
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE,
+                                 related_name="salary_revisions")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, related_name="+")
+    from_category = models.ForeignKey(ManpowerCategory, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    to_category = models.ForeignKey(ManpowerCategory, on_delete=models.PROTECT,
+                                    null=True, blank=True, related_name="+")
+    from_basic_pay = models.DecimalField(max_digits=12, decimal_places=2,
+                                         null=True, blank=True)
+    to_basic_pay = models.DecimalField(max_digits=12, decimal_places=2)
+    currency = models.CharField(max_length=3, default="MVR")
+    effective_month = models.DateField()          # 1st of the month it applies
+    reason = models.TextField(blank=True)          # performance note
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.SUBMITTED)
+    requested_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    requested_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-requested_at"]
+
+    @property
+    def is_open(self):
+        return self.status in (self.Status.SUBMITTED, self.Status.PM_APPROVED,
+                               self.Status.RETURNED)
+
+
 class WorkPermitRenewal(models.Model):
     """One record per work-permit renewal — HR picks a number of months and
     the employee's expiry is pushed forward by that much. Keeps an audit

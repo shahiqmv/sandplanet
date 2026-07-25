@@ -250,6 +250,27 @@ def notify_worker_request(batch):
                         body=body, category="approval")
 
 
+def notify_salary_revision(rev):
+    """Route a salary revision to whoever it now waits on: the site PM for a
+    submitted one, the Directors once PM-approved; on a final decision the
+    requester is told the outcome."""
+    from .models import SalaryRevision as SR
+    body = f"{rev.employee.full_name} · {rev.site.code}"
+    if rev.status == SR.Status.SUBMITTED:
+        pm = rev.site.current_pm()
+        if pm:
+            notify_user(pm, "Salary revision — needs your approval",
+                        body=body, category="approval")
+    elif rev.status == SR.Status.PM_APPROVED:
+        for user in _role_users("DIRECTOR"):
+            notify_user(user, "Salary revision — needs approval",
+                        body=body, category="approval")
+    elif rev.requested_by_id:
+        notify_user(rev.requested_by,
+                    f"Salary revision {rev.get_status_display().lower()}",
+                    body=body, category="alert")
+
+
 def notify_subcontractor(sub, actor=None):
     """Route a subcontractor activation forward: PM approval → Directors act
     next; Director activation → tell the creator it's live."""
