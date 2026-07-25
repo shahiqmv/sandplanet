@@ -9,6 +9,7 @@ const SITE_FIELDS = [
   ["name", "Site name", "text"],
   ["client_name", "Client name", "text"],
   ["client_address", "Client address", "text"],
+  ["client_tin", "Client GST TIN", "text"],
   ["client_contact", "Client contact person", "text"],
   ["client_designation", "Designation", "text"],
   ["client_phone", "Client phone", "text"],

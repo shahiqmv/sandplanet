@@ -728,7 +728,7 @@ def _employer(project):
     return {
         "name": s.client_name or s.name,
         "address": s.client_address, "contact": s.client_contact,
-        "designation": s.client_designation,
+        "designation": s.client_designation, "tin": s.client_tin,
         "phone": s.client_phone, "email": s.client_email,
     }
 
@@ -861,4 +861,20 @@ def invoice_pdf_context(claim):
         "advance_pct": claim.advance_pct,
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
+        # Prepared-by (QS) + the Director's digital certification stamp.
+        "prepared_by": (claim.created_by.full_name
+                        if claim.created_by else ""),
+        "certified_name": (claim.certified_by.full_name
+                           if claim.certified_by else ""),
+        "certified_title": _certifier_title(claim.certified_by),
+        "certified_at": claim.certified_at,
     }
+
+
+def _certifier_title(user):
+    """A clean role line for the invoice's digital-authorisation stamp."""
+    if not user:
+        return ""
+    return {"DIRECTOR": "Director, Projects",
+            "ADMIN": "Administrator"}.get(
+        user.role, user.get_role_display())

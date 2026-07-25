@@ -90,6 +90,7 @@ class Site(models.Model):
     )
     client_name = models.TextField(blank=True)
     client_address = models.TextField(blank=True)
+    client_tin = models.CharField(max_length=30, blank=True)  # client GST TIN
     client_contact = models.TextField(blank=True)
     client_designation = models.TextField(blank=True)
     client_phone = models.TextField(blank=True)
