@@ -520,12 +520,12 @@ def claim_valuation(claim):
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
 
-    # Back charges (client-provided items/services) reduce the value we invoice,
-    # so they come off the certified value BEFORE output GST — GST is only ever
-    # charged on the net consideration we actually bill (owner 2026-07-24;
-    # charging GST then deducting after would over-remit GST, against GST rules).
-    # Cumulative to date; present = this claim's cumulative less the previous
-    # claim's line of the same label.
+    # Back charges (client-provided items/services) are a SEPARATE, GST-inclusive
+    # supply from the client to us; the client settles them by contra against our
+    # payment. They are NOT part of our claim, so GST is charged on the full
+    # certified work and the back charges come off AFTER GST as a contra (owner
+    # 2026-07-25). Cumulative to date; present = this claim's cumulative less the
+    # previous claim's line of the same label.
     prev_ded = {}
     if prev:
         for d in prev.deductions.all():
@@ -542,17 +542,17 @@ def claim_valuation(claim):
         ded_present += (cum - pv)
 
     net_cumulative = _q2(k_gross + advance_received - advance_recovered
-                         + net_retention - ded_cum)     # N (net of back charges)
+                         + net_retention)              # N (certified, ex GST)
     previously = _claim_net(prev)                                    # P
     net_due = net_cumulative - previously                           # Q (taxable)
     gst = _q2(claim.gst_pct / Decimal("100") * net_due)             # R
     total = net_due + gst                        # total with GST (present)
-    net_to_pay = total                           # nothing deducted after GST
+    net_to_pay = total - ded_present             # less back-charge contra
     # Cumulative-to-date counterparts (for the 4-column IPA summary: the
     # "previous" column is the prior claim's cumulative, "present" = the delta).
     gst_cumulative = _q2(claim.gst_pct / Decimal("100") * net_cumulative)
     total_cumulative = net_cumulative + gst_cumulative
-    net_to_pay_cumulative = total_cumulative
+    net_to_pay_cumulative = total_cumulative - ded_cum
 
     secs = OrderedDict()
     for ln in lines:
@@ -769,16 +769,19 @@ def claim_payment_summary(claim):
     if w["retention_released"]:
         add("Retention released", ZERO, w["retention_released"],
             P("retention_released"))
-    # Back charges come off before GST (net taxable value).
-    for d in val["deduction_lines"]:
-        add(f"Deduction: {d['label']}", ZERO, d["cumulative"], d["previous"],
-            sign=-1)
     add("Total amount", revised, w["net_cumulative"], P("net_cumulative"),
         style="total")
     add(f"GST @ {claim.gst_pct:.0f}%", contract_gst, w["gst_cumulative"],
         P("gst_cumulative"))
     add("Total with GST", revised + contract_gst, w["total_cumulative"],
-        P("total_cumulative"), style="net")
+        P("total_cumulative"), style="total")
+    # Back charges are a GST-inclusive client contra, deducted after GST — not
+    # part of the certified claim above.
+    for d in val["deduction_lines"]:
+        add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
+            d["previous"], sign=-1)
+    add("Net amount to pay", revised + contract_gst, w["net_to_pay_cumulative"],
+        P("net_to_pay_cumulative"), style="net")
     return rows
 
 

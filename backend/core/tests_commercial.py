@@ -286,9 +286,10 @@ class ProgressClaimTests(TestCase):
         w2 = self._detail(c2["id"])["waterfall"]
         self.assertEqual(float(w2["advance_recovered"]), 1200.0)   # cumulative
 
-    def test_back_charge_deducted_before_gst(self):
-        # A back charge reduces the net taxable value BEFORE output GST — we
-        # never deduct after GST (that would over-remit GST, against GST rules).
+    def test_back_charge_is_contra_after_gst(self):
+        # A back charge is a GST-inclusive client contra: GST is charged on the
+        # full certified work, then the back charge is deducted AFTER GST (owner
+        # 2026-07-25). It never reduces the taxable value / our output GST.
         c = self._create()
         self._value_pct(c["id"], {"A": "65", "B": "65"})
         r = self.client.post(
@@ -299,16 +300,18 @@ class ProgressClaimTests(TestCase):
         d = self._detail(c["id"])
         w = d["waterfall"]
         self.assertEqual(float(w["deductions_present"]), 112.52)
-        # net due (taxable) = gross − advance recovery − retention − deduction
+        # net due (taxable) = gross − advance recovery − retention (NO back charge)
         self.assertEqual(
             round(float(w["net_due"]), 2),
             round(float(w["k_gross"]) - float(w["advance_recovered"])
-                  - float(w["retention_held"]) - 112.52, 2))
-        # GST is charged on that net (8% here), and nothing is taken off after
+                  - float(w["retention_held"]), 2))
+        # GST is on the full certified work; the back charge comes off after
         self.assertEqual(round(float(w["gst"]), 2),
                          round(float(w["net_due"]) * 8 / 100, 2))
-        self.assertEqual(round(float(w["net_to_pay"]), 2),
+        self.assertEqual(round(float(w["total"]), 2),
                          round(float(w["net_due"]) + float(w["gst"]), 2))
+        self.assertEqual(round(float(w["net_to_pay"]), 2),
+                         round(float(w["total"]) - 112.52, 2))
         self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
 
     def test_ipa_and_invoice_pdfs_show_advance_and_deductions(self):
@@ -339,9 +342,10 @@ class ProgressClaimTests(TestCase):
         ipa2 = render_to_string("pdf/claim_ipa.html",
                                 commercial.claim_pdf_context(cc))
         self.assertIn("Diesel from store", ipa2)
-        # deduction sits above the taxable subtotal, GST is the net, then total
+        # back charge is a contra AFTER the certified claim + GST, then net pay
         self.assertIn("Total amount", ipa2)
         self.assertIn("Total with GST", ipa2)
+        self.assertIn("Net amount to pay", ipa2)
         # the detailed item-by-item valuation follows the summary sheet
         self.assertIn("Detailed valuation", ipa2)
         self.assertIn("Total value of works", ipa2)
