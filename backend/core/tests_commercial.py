@@ -182,6 +182,7 @@ class ProgressClaimTests(TestCase):
         self.qs = make_user("qs1", User.Role.QS)
         self.se = make_user("se1", User.Role.SITE_ENGINEER, site=self.site)
         self.director = make_user("dir1", User.Role.DIRECTOR)
+        self.admin = make_user("adm1", User.Role.ADMIN)
         self.client = APIClient()
         self.client.force_authenticate(self.qs)
         # BOQ: A = 100 × 10 = 1000, B = 100 × 20 = 2000  (total 3000)
@@ -240,6 +241,28 @@ class ProgressClaimTests(TestCase):
         c = ProgressClaim.objects.get(pk=cid)
         self.assertEqual(c.status, "CERTIFIED")
         self.assertEqual(c.certified_by_id, self.director.id)
+
+    def test_admin_reopens_certified_claim_to_amend(self):
+        from .models import ProgressClaim
+        cid = self._create({"claim_type": "ADVANCE"})["id"]
+        self._status(cid, "SUBMITTED")
+        self._status(cid, "CERTIFIED")          # director certifies
+        inv = ProgressClaim.objects.get(pk=cid).invoice_no
+        self.assertTrue(inv)
+        # the QS cannot reopen a certified claim
+        r = self.client.post(f"/api/v1/claims/{cid}/status",
+                             {"status": "DRAFT"}, format="json")
+        self.assertIn(r.status_code, (400, 403))
+        self.assertEqual(ProgressClaim.objects.get(pk=cid).status, "CERTIFIED")
+        # an Admin can — and the invoice number is preserved
+        self.client.force_authenticate(self.admin)
+        r = self.client.post(f"/api/v1/claims/{cid}/status",
+                             {"status": "DRAFT"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.qs)
+        c = ProgressClaim.objects.get(pk=cid)
+        self.assertEqual(c.status, "DRAFT")
+        self.assertEqual(c.invoice_no, inv)
 
     def test_advance_claim_then_interim_recovers_it(self):
         # Advance = 40% of 3000 = 1200; + 8% GST = 1296. No work lines.

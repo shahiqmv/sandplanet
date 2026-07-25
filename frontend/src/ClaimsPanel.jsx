@@ -146,6 +146,7 @@ export default function ClaimsPanel({ projectId, me }) {
                     <tr><td colSpan={7} style={{ padding: 0 }}>
                       <ClaimEditor claimId={c.id} ccy={ccy} canEdit={canEdit}
                                    canCertify={canCertify}
+                                   isAdmin={me.role === "ADMIN"}
                                    onChange={(d) => d && setData(d)}
                                    reloadList={load} />
                     </td></tr>
@@ -265,7 +266,8 @@ function ReceiptForm({ form, setForm, ccy, claims, busy, onSave }) {
 const numCell = { ...inputStyle, width: 84, padding: "3px 5px", fontSize: 12,
   textAlign: "right" };
 
-function ClaimEditor({ claimId, ccy, canEdit, canCertify, onChange, reloadList }) {
+function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
+                       reloadList }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -607,11 +609,21 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, onChange, reloadList }
             <button style={ghostButton} disabled={busy}
                     onClick={() => status("DRAFT")}>Reopen</button>
           </>)}
-          {c.status === "CERTIFIED" && (
+          {c.status === "CERTIFIED" && (<>
             <button style={{ ...buttonStyle, padding: "4px 14px" }}
                     disabled={busy} onClick={() => status("PAID")}>
               Mark paid</button>
-          )}
+            {isAdmin && (
+              <button style={ghostButton} disabled={busy}
+                      title={"Reopen this certified claim to amend it (e.g. a "
+                        + "back charge). The invoice number is kept."}
+                      onClick={() => { if (window.confirm("Reopen this "
+                        + "certified claim to amend it? It returns to Draft "
+                        + "for editing; the invoice number is kept and it must "
+                        + "be re-certified.")) status("DRAFT"); }}>
+                Reopen to amend</button>
+            )}
+          </>)}
           {c.status === "REJECTED" && (
             <button style={ghostButton} disabled={busy}
                     onClick={() => status("DRAFT")}>Reopen</button>

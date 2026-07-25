@@ -394,7 +394,7 @@ def set_claim_meta(claim, data, actor):
 CLAIM_FLOW = {
     "DRAFT": {"SUBMITTED"},
     "SUBMITTED": {"CERTIFIED", "REJECTED", "DRAFT"},
-    "CERTIFIED": {"PAID"},
+    "CERTIFIED": {"PAID", "DRAFT"},   # DRAFT = Admin reopens to amend
     "PAID": set(),
     "REJECTED": {"DRAFT"},
 }
@@ -412,6 +412,11 @@ def set_claim_status(claim, to_status, actor):
     # submits, the Director signs it off (owner 2026-07-24).
     if to_status == "CERTIFIED" and actor.role not in ("DIRECTOR", "ADMIN"):
         return None, "Only a Director can certify (clear) a claim."
+    # Reopening a certified claim to amend it (e.g. correct a back charge) is an
+    # Admin action — the invoice number is kept (owner 2026-07-25).
+    if (claim.status == "CERTIFIED" and to_status == "DRAFT"
+            and actor.role != "ADMIN"):
+        return None, "Only an Admin can reopen a certified claim to amend it."
     claim.status = to_status
     fields = ["status"]
     if to_status == "CERTIFIED":
