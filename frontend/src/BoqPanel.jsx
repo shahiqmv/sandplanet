@@ -16,13 +16,18 @@ export default function BoqPanel({ projectId, project, me }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);   // BOQ-capture review draft
+  const [pending, setPending] = useState(null); // an un-committed capture draft
   const fileRef = useRef(null);
+  const captureRef = useRef(null);
   const canEdit = EDIT_ROLES.includes(me.role);
 
   function load() {
     setError(null);
     api(`/projects/${projectId}/boq`).then(setBoq)
       .catch((e) => setError(e.message));
+    api(`/projects/${projectId}/boq/capture/draft`).then(setPending)
+      .catch(() => {});
   }
   useEffect(load, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -34,6 +39,16 @@ export default function BoqPanel({ projectId, project, me }) {
     try {
       const data = await apiUpload(`/projects/${projectId}/boq/import`, fd);
       setBoq(data);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  async function captureFile(file) {
+    if (!file) return;
+    setError(null); setBusy(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      setDraft(await apiUpload(`/projects/${projectId}/boq/capture`, fd));
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
@@ -63,6 +78,13 @@ export default function BoqPanel({ projectId, project, me }) {
     }} />;
   }
 
+  if (draft) {
+    return <BoqCaptureReview draft={draft} onDone={(loaded) => {
+      if (loaded) setBoq(loaded);
+      setDraft(null); setPending(null);
+    }} />;
+  }
+
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 12,
@@ -83,10 +105,19 @@ export default function BoqPanel({ projectId, project, me }) {
                         padding: "4px 12px" }}>⬇ Template</a>
             {editable && (
               <>
+                <button style={{ ...buttonStyle, padding: "4px 12px" }}
+                        disabled={busy}
+                        onClick={() => captureRef.current?.click()}
+                        title={"Extract a client BOQ PDF or Excel into a "
+                          + "reviewable draft"}>
+                  {busy ? "Reading…" : "✦ Capture from PDF/Excel"}</button>
+                <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
+                       style={{ display: "none" }}
+                       onChange={(e) => captureFile(e.target.files[0])} />
                 <button style={{ ...ghostButton, padding: "4px 12px" }}
                         disabled={busy}
                         onClick={() => fileRef.current?.click()}>
-                  ⬆ Import Excel</button>
+                  ⬆ Import template</button>
                 <input ref={fileRef} type="file" accept=".xlsx"
                        style={{ display: "none" }}
                        onChange={(e) => importFile(e.target.files[0])} />
@@ -110,6 +141,19 @@ export default function BoqPanel({ projectId, project, me }) {
         )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+
+      {pending && editable && !draft && (
+        <div style={{ display: "flex", alignItems: "center", gap: 10,
+          padding: "8px 10px", borderRadius: 8, background: "#eef6f0",
+          fontSize: 13, marginBottom: 8 }}>
+          <span>A captured draft from <strong>{pending.filename
+            || "a file"}</strong> is awaiting review
+            ({pending.rows.length} lines).</span>
+          <button style={{ ...buttonStyle, padding: "3px 12px",
+            marginLeft: "auto" }} onClick={() => setDraft(pending)}>
+            Resume review</button>
+        </div>
+      )}
 
       {!boq.exists ? (
         <p style={{ color: "var(--muted)", fontSize: 13 }}>
@@ -298,3 +342,162 @@ function BoqEditor({ projectId, boq, onDone }) {
 
 const cell = (w) => ({ ...inputStyle, width: w, padding: "3px 5px",
   fontSize: 12 });
+
+// Review the draft captured from a client PDF/Excel: correct any cell, watch
+// the reconciliation banner, then load it into the live BOQ.
+function BoqCaptureReview({ draft, onDone }) {
+  const clean = (rows) => rows.map((r) => ({
+    section: r.section || "", item_code: r.item_code || "",
+    description: r.description || "", unit: r.unit || "",
+    qty: r.qty ?? "", rate_supply: r.rate_supply ?? "",
+    rate_install: r.rate_install ?? "", rate_combined: r.rate_combined ?? "",
+    is_heading: !!r.is_heading }));
+  const [d, setD] = useState(draft);
+  const [rows, setRows] = useState(clean(draft.rows));
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const split = d.rate_mode === "SPLIT";
+  const set = (i, k, v) =>
+    setRows(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
+
+  async function save() {
+    setError(null); setBusy(true);
+    try {
+      const upd = await api(`/boq-imports/${d.id}`,
+        { method: "PUT", body: { rows } });
+      setD(upd); setRows(clean(upd.rows));
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  async function confirm() {
+    setError(null); setBusy(true);
+    try {
+      await api(`/boq-imports/${d.id}`, { method: "PUT", body: { rows } });
+      const boq = await api(`/boq-imports/${d.id}/commit`, { method: "POST" });
+      onDone(boq);
+    } catch (e) { setError(e.message); setBusy(false); }
+  }
+  async function discard() {
+    if (!window.confirm("Discard this captured draft?")) return;
+    try { await api(`/boq-imports/${d.id}`, { method: "DELETE" }); } catch { /* */ }
+    onDone(null);
+  }
+
+  const m = d.meta || {};
+  const priced = rows.filter((r) => !r.is_heading).length;
+  const warnCount = (d.rows || []).reduce(
+    (s, r) => s + (r.warnings?.length || 0), 0);
+
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+                    marginBottom: 8, flexWrap: "wrap" }}>
+        <Eyebrow meta={d.filename}>Review captured BOQ</Eyebrow>
+        <Chip tone="info">{split ? "Supply + Install" : "Single rate"}</Chip>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <button style={{ ...ghostButton, color: "#c0392b" }} disabled={busy}
+                  onClick={discard}>Discard</button>
+          <button style={ghostButton} disabled={busy} onClick={save}>
+            {busy ? "…" : "Save draft"}</button>
+          <button style={{ ...buttonStyle, padding: "4px 14px" }} disabled={busy}
+                  onClick={confirm}>Confirm &amp; load into BOQ</button>
+        </div>
+      </div>
+
+      {/* reconciliation + warnings banner */}
+      <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 12.5,
+        padding: "8px 10px", borderRadius: 8, marginBottom: 8,
+        background: m.reconciled === false ? "#fff4e5" : "#eef6f0" }}>
+        <span>Extracted total <strong>{fmt(m.extracted_total)}</strong></span>
+        {m.printed_total != null && (
+          <span>PDF total <strong>{fmt(m.printed_total)}</strong>{" "}
+            {m.reconciled === true ? "✓ matches"
+              : m.reconciled === false ? "⚠ differs — check for missed lines"
+              : ""}</span>
+        )}
+        {m.printed_total == null && (
+          <span style={{ color: "var(--muted)" }}>
+            no printed total found to reconcile against</span>
+        )}
+        <span style={{ marginLeft: "auto" }}>{priced} priced lines ·{" "}
+          {warnCount > 0
+            ? <strong style={{ color: "#b35900" }}>{warnCount} to check</strong>
+            : "no warnings"}</span>
+      </div>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 6px" }}>
+        Correct anything the extractor got wrong, then confirm. Nothing touches
+        the live BOQ until you load it. Save draft keeps your edits for later.
+      </p>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
+          <thead><tr>
+            {["", "Section", "Code", "Description", "Unit", "Qty",
+              ...(split ? ["Material", "Labour"] : ["Rate"]), "⚠", ""]
+              .map((h, i) => <th key={i} style={th}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const w = d.rows[i]?.warnings || [];
+              return (
+                <tr key={i} style={w.length
+                  ? { background: "#fff8ef" } : undefined}>
+                  <td style={td}>
+                    <input type="checkbox" checked={r.is_heading}
+                      title="Heading row"
+                      onChange={(e) => set(i, "is_heading", e.target.checked)} />
+                  </td>
+                  <td style={td}><input value={r.section} style={cell(110)}
+                    onChange={(e) => set(i, "section", e.target.value)} /></td>
+                  <td style={td}><input value={r.item_code} style={cell(52)}
+                    onChange={(e) => set(i, "item_code", e.target.value)} /></td>
+                  <td style={td}><input value={r.description} style={cell(260)}
+                    onChange={(e) => set(i, "description", e.target.value)} /></td>
+                  <td style={td}><input value={r.unit} style={cell(46)}
+                    disabled={r.is_heading}
+                    onChange={(e) => set(i, "unit", e.target.value)} /></td>
+                  <td style={td}><input value={r.qty} style={cell(66)}
+                    disabled={r.is_heading}
+                    onChange={(e) => set(i, "qty", e.target.value)} /></td>
+                  {split ? (
+                    <>
+                      <td style={td}><input value={r.rate_supply} style={cell(74)}
+                        disabled={r.is_heading}
+                        onChange={(e) => set(i, "rate_supply",
+                          e.target.value)} /></td>
+                      <td style={td}><input value={r.rate_install} style={cell(74)}
+                        disabled={r.is_heading}
+                        onChange={(e) => set(i, "rate_install",
+                          e.target.value)} /></td>
+                    </>
+                  ) : (
+                    <td style={td}><input value={r.rate_combined} style={cell(74)}
+                      disabled={r.is_heading}
+                      onChange={(e) => set(i, "rate_combined",
+                        e.target.value)} /></td>
+                  )}
+                  <td style={{ ...td, color: "#b35900", fontSize: 11,
+                    maxWidth: 130 }} title={w.join(", ")}>
+                    {w.length ? w.join(", ") : ""}</td>
+                  <td style={td}>
+                    <button style={{ ...ghostButton, color: "#c0392b",
+                      padding: "2px 8px" }}
+                      onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                      ×</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <button style={{ ...ghostButton, padding: "3px 10px", marginTop: 8 }}
+        onClick={() => setRows([...rows, { section: "", item_code: "",
+          description: "", unit: "", qty: "", rate_supply: "",
+          rate_install: "", rate_combined: "", is_heading: false }])}>
+        + row</button>
+      <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 10 }}>
+        Warnings refresh on Save draft.</span>
+    </section>
+  );
+}

@@ -175,6 +175,96 @@ def boq_template(request, pid):
     return resp
 
 
+# ---- BOQ capture from PDF / Excel (extract → review → commit) ------------
+
+def _get_import(request, pk):
+    from .models import BoqImport
+    try:
+        imp = BoqImport.objects.select_related("project__site").get(pk=pk)
+    except BoqImport.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    if not _can_view_value(request.user, imp.project):
+        return None, Response({"detail": "Not permitted."}, status=403)
+    return imp, None
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def boq_import_extract(request, pid):
+    """Upload a client BOQ (PDF/Excel) and extract it into a review draft."""
+    from . import boq_extract
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    upload = request.FILES.get("file")
+    if not upload:
+        return Response({"detail": "Attach the BOQ PDF or Excel."}, status=400)
+    try:
+        imp, msg = boq_extract.run_import(p, upload, request.user)
+    except boq_extract.ExtractionError as e:
+        return Response({"detail": str(e)}, status=400)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(boq_extract.import_payload(imp), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def boq_import_latest(request, pid):
+    """The most recent open (un-committed) import draft for the project."""
+    from . import boq_extract
+    from .models import BoqImport
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    imp = (BoqImport.objects.filter(project=p, status="DRAFT")
+           .order_by("-created_at").first())
+    return Response(boq_extract.import_payload(imp) if imp else None)
+
+
+@api_view(["PUT", "DELETE"])
+@permission_classes([IsAuthenticated])
+def boq_import_detail(request, pk):
+    from . import boq_extract
+    from .models import BoqImport
+    imp, err = _get_import(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    if request.method == "DELETE":
+        imp.delete()
+        return Response(status=204)
+    if imp.status == BoqImport.Status.COMMITTED:
+        return Response({"detail": "This import is already loaded."}, status=400)
+    rows = boq_extract.normalise_rows(request.data.get("rows") or [])
+    imp.rows = rows
+    rec = boq_extract.reconcile(
+        rows, [imp.meta.get("printed_total")] if imp.meta.get("printed_total")
+        else [])
+    imp.meta = {**imp.meta, **rec}
+    imp.save(update_fields=["rows", "meta", "updated_at"])
+    return Response(boq_extract.import_payload(imp))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def boq_import_commit(request, pk):
+    from . import boq_extract
+    imp, err = _get_import(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    boq, msg = boq_extract.commit(imp, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_boq_payload(imp.project))
+
+
 # ---- Variations (VOs) ---------------------------------------------------
 
 class VariationItemSerializer(serializers.ModelSerializer):

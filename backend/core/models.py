@@ -2151,6 +2151,44 @@ class BoqItem(models.Model):
         return self._amount(self.rate_total)
 
 
+class BoqImport(models.Model):
+    """A staging area for importing a BOQ from a client PDF/Excel. The document
+    is extracted (pdfplumber/openpyxl + Claude) into draft rows the QS reviews
+    and corrects, then commits into the live BOQ — nothing touches the real BOQ
+    until confirmed (owner 2026-07-25)."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Under review"
+        COMMITTED = "COMMITTED", "Loaded into BOQ"
+
+    class Source(models.TextChoices):
+        PDF = "PDF", "PDF"
+        XLSX = "XLSX", "Excel"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="boq_imports")
+    source = models.CharField(max_length=4, choices=Source.choices)
+    filename = models.CharField(max_length=200, blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    rate_mode = models.CharField(max_length=8, blank=True)   # SINGLE / SPLIT
+    # Draft rows in the committer's shape: section / item_code / description /
+    # unit / qty / rate_supply / rate_install / rate_combined / is_heading.
+    rows = models.JSONField(default=list, blank=True)
+    # {page_count, model, printed_total, extracted_total, reconciled, note}
+    meta = models.JSONField(default=dict, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.project.code} BOQ import {self.id}"
+
+
 class Variation(models.Model):
     """A variation order (VO) on a project's contract — an addition or omission
     the QS raises, sends for client approval, and (once approved) claims like
