@@ -93,8 +93,8 @@ def targets_for(doc):
         return [(u, "to confirm") for u in _role_users("HO_PURCHASING")]
     if t == "PSC" and s == "CONFIRMED":
         return [(u, "to sign off") for u in _role_users("DIRECTOR")]
-    if t == "PSC" and s == "DRAFT":
-        return [(u, "returned — revise and resubmit") for u in _pm_for(doc)]
+    if t == "PSC" and s == "DRAFT" and doc.created_by_id:
+        return [(doc.created_by, "returned — revise and resubmit")]
     return []
 
 

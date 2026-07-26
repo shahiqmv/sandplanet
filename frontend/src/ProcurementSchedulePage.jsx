@@ -10,6 +10,8 @@ const STATE_TONE = {
   PROPOSED: "info", CONFIRMED: "warn", SIGNED_OFF: "ok", CANCELLED: "alert",
 };
 const SUPPLY = [["CONTRACTOR", "Contractor"], ["CLIENT", "Client"]];
+// The commercial/project team proposes lines; Purchasing + PD are the gates.
+const PROPOSE = ["QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR", "ADMIN"];
 const money = (v, c) => v == null ? "—"
   : `${c || ""} ${Number(v).toLocaleString("en-US",
       { minimumFractionDigits: 2 })}`.trim();
@@ -35,7 +37,7 @@ export default function ProcurementSchedulePage({ me, sites }) {
     return <NewSchedule sites={sites} onCancel={() => setView("list")}
              onDone={(d) => { setView("list"); setOpenId(d.id); load(); }} />;
 
-  const canOpen = me.role === "PM" || me.is_ho;
+  const canOpen = PROPOSE.includes(me.role);
   return (
     <div style={{ maxWidth: 980 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12,
@@ -78,6 +80,42 @@ export default function ProcurementSchedulePage({ me, sites }) {
       )}
     </div>
   );
+}
+
+// The schedule as a tab inside a project (next to Commercials). Opens the
+// project's schedule, offering to start one if it doesn't exist yet.
+export function ProjectScheduleTab({ project, me }) {
+  const [id, setId] = useState(null);
+  const [state, setState] = useState("loading");   // loading|none|ready|error
+  const [error, setError] = useState(null);
+
+  function load() {
+    setState("loading");
+    api(`/projects/${project.id}/procurement-schedule`)
+      .then((d) => { setId(d.id); setState("ready"); })
+      .catch((e) => { if (e.status === 404) setState("none");
+        else { setError(e.message); setState("error"); } });
+  }
+  useEffect(() => { load(); }, [project.id]);   // eslint-disable-line
+
+  async function start() {
+    try {
+      const d = await api(`/projects/${project.id}/procurement-schedule`,
+        { method: "POST" });
+      setId(d.id); setState("ready");
+    } catch (e) { setError(e.message); }
+  }
+
+  if (state === "loading") return <div style={card}>Loading…</div>;
+  if (state === "error") return <div style={card}>{error}</div>;
+  if (state === "none") return (
+    <div style={card}>
+      <p style={{ marginTop: 0 }}>No procurement schedule for this project yet.</p>
+      {PROPOSE.includes(me.role) && <Btn variant="primary" onClick={start}>
+        Start the procurement schedule</Btn>}
+    </div>
+  );
+  return <ScheduleDetail id={id} me={me} onBack={null} />;
 }
 
 function NewSchedule({ sites, onCancel, onDone }) {
@@ -174,7 +212,8 @@ function ScheduleDetail({ id, me, onBack }) {
 
   return (
     <div style={{ maxWidth: 1100 }}>
-      <button style={linkBtn} onClick={onBack}>← All schedules</button>
+      {onBack && <button style={linkBtn} onClick={onBack}>
+        ← All schedules</button>}
       <div style={{ ...card, marginTop: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10,
           flexWrap: "wrap" }}>
@@ -191,7 +230,7 @@ function ScheduleDetail({ id, me, onBack }) {
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           {c.can_edit_plan && <Btn variant="secondary" disabled={busy}
             onClick={() => setAdding(true)}>+ Add line</Btn>}
-          {c.status === "DRAFT" && me.role === "PM" &&
+          {c.can_submit &&
             <Btn variant="primary" disabled={busy}
               onClick={submit}>Submit to Purchasing</Btn>}
           {c.can_confirm && <>

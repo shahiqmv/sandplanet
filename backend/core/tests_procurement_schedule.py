@@ -21,6 +21,7 @@ class ProcurementScheduleTests(TestCase):
         self.purch = make_user("psched_buy", User.Role.HO_PURCHASING)
         self.director = make_user("psched_dir", User.Role.DIRECTOR)
         self.se = make_user("psched_se", User.Role.SITE_ENGINEER, site=self.site)
+        self.qs = make_user("psched_qs", User.Role.QS)
         self.client = APIClient()
 
     def _open(self):
@@ -47,6 +48,29 @@ class ProcurementScheduleTests(TestCase):
         r2 = self.client.post(
             f"/api/v1/projects/{self.project.id}/procurement-schedule")
         self.assertEqual(r2.data["id"], pk)
+
+    def test_qs_and_site_engineer_can_also_propose(self):
+        # QS opens the schedule (starts from the commercial side)
+        self.client.force_authenticate(self.qs)
+        pk = self.client.post(
+            f"/api/v1/projects/{self.project.id}/procurement-schedule").data["id"]
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/lines",
+                             {"description": "Chiller unit", "section_code": "B"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        # a site engineer can add a line too (no over-segregation)
+        self.client.force_authenticate(self.se)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/lines",
+                             {"description": "Cable tray", "section_code": "B"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertFalse(r.data["show_values"])          # SE still no values
+        # Purchasing is the gate, not a proposer
+        self.client.force_authenticate(self.purch)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/lines",
+                             {"description": "x", "section_code": "B"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
 
     def test_propose_confirm_signoff(self):
         pk = self._open()

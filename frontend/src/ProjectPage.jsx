@@ -4,6 +4,7 @@ import BoqPanel from "./BoqPanel.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import VariationsPanel from "./VariationsPanel.jsx";
 import ClaimsPanel from "./ClaimsPanel.jsx";
+import { ProjectScheduleTab } from "./ProcurementSchedulePage.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
 
@@ -18,6 +19,7 @@ const TABS = [
   ["manpower", "Manpower plan", true],
   ["documents", "Documents", true],
   ["commercial", "Commercial", true],  // QS: BOQ (claims follow)
+  ["procurement", "Procurement", true],  // procurement schedule (QS-led)
   ["budget", "Budget · later", false],
   ["tender", "Tender · later", false],
 ];
@@ -206,6 +208,10 @@ manpower histogram, on the letterhead — send to the client"
           <VariationsPanel projectId={projectId} me={me} />
           <ClaimsPanel projectId={projectId} me={me} />
         </>
+      )}
+
+      {tab === "procurement" && (
+        <ProjectScheduleTab project={{ id: projectId }} me={me} />
       )}
 
       {tab === "documents" && (

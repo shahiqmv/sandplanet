@@ -20,7 +20,11 @@ from .numbering import next_ref
 
 log = logging.getLogger(__name__)
 
-PROPOSE_ROLES = ("PM", "ADMIN")              # who proposes / edits planning
+# The schedule starts from the commercial side (the QS is its natural
+# custodian), but proposing lines isn't locked down — the whole project/
+# commercial team can add lines; Purchasing and the PD are the real gates.
+PROPOSE_ROLES = ("QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR",
+                 "ADMIN")                        # who proposes / edits planning
 CONFIRM_ROLES = ("HO_PURCHASING", "ADMIN")     # who confirms commercial fields
 SIGNOFF_ROLES = ("DIRECTOR", "ADMIN")          # the PD sign-off gate
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
@@ -356,6 +360,8 @@ def schedule_dict(sched, user):
                                if sched.baseline_signed_by_id else ""),
         "can_edit_plan": (user.role in PROPOSE_ROLES
                           and doc.status in ("DRAFT", "SIGNED_OFF")),
+        "can_submit": (user.role in PROPOSE_ROLES and doc.status == "DRAFT"
+                       and any(ln.state == "PROPOSED" for ln in lines)),
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
         "show_values": values,
