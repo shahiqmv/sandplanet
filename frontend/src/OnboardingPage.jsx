@@ -369,6 +369,8 @@ function Processing({ c, me, onReload }) {
   const [bvExp, setBvExp] = useState("");
   const [portal, setPortal] = useState(c.portal_status || "SUBMITTED");
   const [medical, setMedical] = useState("PASS");
+  const [amount, setAmount] = useState("");
+  const [payee, setPayee] = useState("");
 
   async function run(fn) {
     setBusy(true); setError(null);
@@ -379,6 +381,8 @@ function Processing({ c, me, onReload }) {
     api(`/onboarding/${c.id}/stage`, { method: "POST", body: body || {} }));
   const setData = (body) => run(() =>
     api(`/onboarding/${c.id}/stage-data`, { method: "POST", body }));
+  const raiseFee = () => run(() =>
+    api(`/onboarding/${c.id}/fee`, { method: "POST", body: { amount, payee } }));
 
   const err = error && <p style={{ color: "var(--red-fg)" }}>{error}</p>;
 
@@ -464,6 +468,34 @@ function Processing({ c, me, onReload }) {
                 Record</Btn>
             </div>
           )}
+          {c.at_payment && c.fee && (
+            <div style={{ border: "1px solid var(--line)", borderRadius: 8,
+              padding: 10, background: "var(--sky-soft)" }}>
+              <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 6 }}>
+                {c.fee.label}
+                {c.fee.refundable && <span style={{ fontWeight: 400,
+                  color: "var(--muted)" }}> · refundable deposit</span>}</div>
+              {!c.fee.raised ? (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                  alignItems: "center" }}>
+                  <input style={{ ...inputStyle, width: 130 }} type="number"
+                         placeholder="Amount (MVR)" value={amount}
+                         onChange={(e) => setAmount(e.target.value)} />
+                  <input style={{ ...inputStyle, width: 200 }} placeholder="Pay to"
+                         value={payee} onChange={(e) => setPayee(e.target.value)} />
+                  <Btn variant="secondary" disabled={busy || !amount || !payee}
+                       onClick={raiseFee}>Raise fee PYR</Btn>
+                </div>
+              ) : c.fee.paid ? (
+                <div style={{ fontSize: 12.5, color: "var(--green-fg)" }}>
+                  ✓ {c.fee.pyr_ref} paid — clear to advance.</div>
+              ) : (
+                <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                  Awaiting payment — {c.fee.pyr_ref} ({c.fee.pyr_status}). The
+                  Finance team settles the PYR before this stage can close.</div>
+              )}
+            </div>
+          )}
           {c.next_needs && (
             <div style={ctl}>
               <span>Arrival date</span>
@@ -477,7 +509,8 @@ function Processing({ c, me, onReload }) {
           )}
           {c.next_stage && (
             <div>
-              <Btn variant="primary" disabled={busy}
+              <Btn variant="primary"
+                   disabled={busy || (c.at_payment && !c.fee?.paid)}
                    onClick={() => advance(c.next_needs
                      ? { arrived_date: arrived, bv_expiry: bvExp } : {})}>
                 Advance → {c.next_label}</Btn>

@@ -400,6 +400,11 @@ def pyr_action(request, doc, action_name):
             from . import permits
 
             permits.apply_for_document(doc, user)
+        # An onboarding fee paid clears that stage's gate — tell HR
+        if hasattr(doc, "onboarding_fee"):
+            from . import onboarding
+
+            onboarding.on_fee_paid(doc, user)
         _set_status(doc, "PAID", "PAY", user, comment)
         return None
 

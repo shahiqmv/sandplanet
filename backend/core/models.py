@@ -1861,6 +1861,27 @@ class OnboardingCase(models.Model):
         return f"{self.document.ref} — {self.full_name}"
 
 
+class OnboardingFee(models.Model):
+    """A fee PYR raised for an onboarding payment stage (deposit / ticket /
+    insurance / visa fee). The case can't advance past the stage until this
+    PYR is paid; a refundable deposit is capitalized so it posts nothing to the
+    cost ledger."""
+
+    case = models.ForeignKey(OnboardingCase, on_delete=models.CASCADE,
+                             related_name="fees")
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="onboarding_fee")  # the PYR
+    stage = models.CharField(max_length=30)      # the payment stage it settles
+    refundable = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["case", "stage"],
+                                    name="uniq_onboarding_fee_per_stage"),
+        ]
+
+
 class WorkPermitRenewal(models.Model):
     """One record per work-permit renewal — HR picks a number of months and
     the employee's expiry is pushed forward by that much. Keeps an audit

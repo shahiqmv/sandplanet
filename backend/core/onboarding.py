@@ -267,6 +267,13 @@ def _can_leave(case, stage):
             return "Medical failed — the case is with the Director to decide."
         if case.medical_result != "PASS":
             return "Record the medical result (PASS) before advancing."
+    if stage in PAYMENT_STAGES:
+        fee = fee_for(case, stage)
+        if fee is None:
+            return "Raise the fee PYR for this stage first."
+        if fee.document.status != "PAID":
+            return (f"Awaiting payment of {fee.document.ref} before "
+                    "advancing.")
     return None
 
 
@@ -385,6 +392,95 @@ def _notify_medical_fail(case):
                            category="approval")
 
 
+# ---- fee PYRs + payment gate (Phase 3) -----------------------------------
+
+# stage -> (purpose label, refundable). The WP deposit is refundable (a deposit,
+# not a cost), so its PYR posts nothing to the ledger.
+FEE_META = {
+    "WP_DEPOSIT": ("Work-permit deposit", True),
+    "WP_TICKET": ("Air ticket", False),
+    "BV_INSURANCE": ("Travel insurance premium", False),
+    "BV_VISA_FEE": ("Business visa fee", False),
+    "BV_TICKET": ("Air ticket", False),
+}
+
+
+def fee_for(case, stage):
+    return case.fees.filter(stage=stage).select_related("document").first()
+
+
+def raise_fee(case, data, actor):
+    """HR raises the fee PYR for the case's current payment stage. It rides the
+    normal PYR approval → voucher → paid chain; the case can't advance until
+    it's paid."""
+    from django.db import transaction
+    from .models import (CostHead, Document, DocumentRevision, OnboardingFee)
+    from .payments import _set_status, create_payment_request
+    if actor.role not in PROCESS_ROLES:
+        return None, "Only HR raises an onboarding fee."
+    doc = case.document
+    if doc.status != "IN_PROGRESS":
+        return None, "The case is not in processing."
+    stage = case.stage
+    if stage not in PAYMENT_STAGES:
+        return None, "This stage has no fee."
+    if fee_for(case, stage) is not None:
+        return None, "A fee PYR has already been raised for this stage."
+    amount = _dec(data.get("amount"))
+    if amount is None or amount <= Decimal("0"):
+        return None, "Enter the fee amount."
+    payee = (data.get("payee") or "").strip()
+    if not payee:
+        return None, "Enter the payee."
+    label, refundable = FEE_META[stage]
+    head, _ = CostHead.objects.get_or_create(
+        name="Recruitment & Mobilisation", defaults={"sort_order": 95})
+    with transaction.atomic():
+        pyr = Document.objects.create(
+            doc_type="PYR", ref=next_ref("PYR", doc.site), site=doc.site,
+            doc_date=timezone.localdate(), status="DRAFT", created_by=actor)
+        rev = DocumentRevision.objects.create(
+            document=pyr, rev_label="R0", payload={}, created_by=actor)
+        pyr.current_revision = rev
+        pyr.save(update_fields=["current_revision"])
+        pr, err = create_payment_request(pyr, {
+            "cost_head_id": head.id, "amount_requested": str(amount),
+            "currency": "MVR", "payee": payee, "payment_method": "BANK",
+            "purpose": f"{label} — {doc.ref} · {case.full_name}"
+                       + (" (refundable deposit)" if refundable else ""),
+            "has_supporting_doc": bool(data.get("has_supporting_doc")),
+        }, actor)
+        if err:
+            transaction.set_rollback(True)
+            return None, err
+        if refundable:                          # deposit posts nothing
+            pr.is_capitalized = True
+            pr.save(update_fields=["is_capitalized"])
+        OnboardingFee.objects.create(case=case, document=pyr, stage=stage,
+                                     refundable=refundable)
+        _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
+                    f"{label} — onboarding {doc.ref}")
+    audit("document", doc.id, "OBR_FEE_RAISED", actor=actor,
+          detail={"stage": stage, "pyr": pyr.ref, "amount": str(amount)})
+    return pyr, None
+
+
+def on_fee_paid(pyr_doc, actor):
+    """Called from the PYR pay action when an onboarding fee is paid — tells HR
+    the case's payment gate is now clear."""
+    fee = getattr(pyr_doc, "onboarding_fee", None)
+    if fee is None:
+        return
+    from . import notify
+    case = fee.case
+    doc = case.document
+    label = FEE_META.get(fee.stage, (fee.stage,))[0]
+    for u in notify._role_users("HO_HR"):
+        notify.notify_user(u, f"Onboarding {doc.ref} — {label} paid",
+                           body=f"{case.full_name} · {doc.site.code} — "
+                                "the case can now advance", category="alert")
+
+
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):
@@ -407,11 +503,20 @@ def stage_view(case):
         needs = "arrival"
     elif nxt == "BV_ARRIVED":
         needs = "arrival_bv"
+    fee = None
+    if case.stage in PAYMENT_STAGES:
+        f = fee_for(case, case.stage)
+        label, refundable = FEE_META.get(case.stage, ("", False))
+        fee = {"label": label, "refundable": refundable, "raised": bool(f),
+               "pyr_ref": f.document.ref if f else None,
+               "pyr_status": f.document.status if f else None,
+               "paid": bool(f) and f.document.status == "PAID"}
     return {"stages": stages, "next_stage": nxt,
             "next_label": STAGE_LABEL.get(nxt) if nxt else None,
             "next_needs": needs,
             "at_application": case.stage in APPLICATION_STAGES,
             "at_medical": case.stage in MEDICAL_STAGES,
+            "at_payment": case.stage in PAYMENT_STAGES, "fee": fee,
             "at_last": idx == len(seq) - 1}
 
 

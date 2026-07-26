@@ -346,6 +346,8 @@ urlpatterns = [
          name="onboarding-stage"),
     path("onboarding/<int:pk>/stage-data", onboarding_api.onboarding_stage_data,
          name="onboarding-stage-data"),
+    path("onboarding/<int:pk>/fee", onboarding_api.onboarding_fee,
+         name="onboarding-fee"),
     path("onboarding/<int:pk>/documents", onboarding_api.onboarding_document,
          name="onboarding-document"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),

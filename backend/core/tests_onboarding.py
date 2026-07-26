@@ -154,6 +154,17 @@ class OnboardingSpineTests(TestCase):
         return self.client.post(f"/api/v1/onboarding/{pk}/stage-data", data,
                                 format="json")
 
+    def _pay_fee(self, pk, stage):
+        """Raise the fee PYR for the current payment stage and mark it PAID."""
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "Vendor"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        from .models import OnboardingCase
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage=stage)
+        fee.document.status = "PAID"
+        fee.document.save(update_fields=["status"])
+
     def test_wp_track_walks_to_completion(self):
         pk = self._approved()
         r = self._adv(pk)                              # begin
@@ -164,7 +175,9 @@ class OnboardingSpineTests(TestCase):
         self._sdata(pk, portal_status="APPROVED")
         self.assertEqual(self._adv(pk).data["stage"], "WP_APPROVED")
         self.assertEqual(self._adv(pk).data["stage"], "WP_DEPOSIT")
+        self._pay_fee(pk, "WP_DEPOSIT")
         self.assertEqual(self._adv(pk).data["stage"], "WP_TICKET")
+        self._pay_fee(pk, "WP_TICKET")
         self.assertEqual(self._adv(pk).status_code, 400)   # arrival needs a date
         r = self._adv(pk, arrived_date="2026-08-01")
         self.assertEqual(r.data["stage"], "WP_ARRIVED")
@@ -200,12 +213,61 @@ class OnboardingSpineTests(TestCase):
         r = self.client.post(f"/api/v1/onboarding/{pk}/stage", {}, format="json")
         self.assertEqual(r.status_code, 400)
 
+    def _to_deposit(self, pk):
+        self._adv(pk)                    # WP_APPOINTMENT
+        self._adv(pk)                    # WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk)                    # WP_APPROVED
+        self._adv(pk)                    # WP_DEPOSIT
+
+    def test_payment_gate_blocks_until_fee_paid(self):
+        pk = self._approved()            # WP, Indian
+        self._to_deposit(pk)
+        # blocked — no fee raised
+        self.assertEqual(self._adv(pk).status_code, 400)
+        # HR raises the fee PYR
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "Immigration Maldives"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["fee"]["raised"])
+        self.assertTrue(r.data["fee"]["refundable"])   # deposit is refundable
+        self.assertFalse(r.data["fee"]["paid"])
+        self.assertEqual(self._adv(pk).status_code, 400)   # not paid yet
+        # the refundable deposit PYR is capitalized (posts nothing)
+        from .models import OnboardingCase
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
+        self.assertTrue(fee.document.payment_request.is_capitalized)
+        # pay it → the gate opens
+        fee.document.status = "PAID"
+        fee.document.save(update_fields=["status"])
+        self.assertEqual(self._adv(pk).data["stage"], "WP_TICKET")
+
+    def test_fee_paid_notifies_hr(self):
+        from . import onboarding as ob
+        from .models import Notification, OnboardingCase
+        pk = self._approved()
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                         {"amount": "1500", "payee": "Immigration"},
+                         format="json")
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
+        Notification.objects.filter(recipient=self.hr).delete()
+        ob.on_fee_paid(fee.document, self.hr)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__icontains="paid").exists())
+
     def test_medical_fail_blocks_and_flags_pd(self):
         from .models import Notification
         pk = self._approved()
         self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
-        self._adv(pk); self._adv(pk); self._adv(pk)    # → WP_TICKET
+        self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
+        self._pay_fee(pk, "WP_DEPOSIT")
+        self._adv(pk)                                  # → WP_TICKET
+        self._pay_fee(pk, "WP_TICKET")
         self._adv(pk, arrived_date="2026-08-01")       # → WP_ARRIVED
         self.assertEqual(self._adv(pk).data["stage"], "WP_MEDICAL")
         self._sdata(pk, medical_result="FAIL")

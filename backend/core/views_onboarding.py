@@ -140,6 +140,20 @@ def onboarding_stage(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def onboarding_fee(request, pk):
+    """HR raises the fee PYR for the current payment stage."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    pyr, msg = ob.raise_fee(case, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case), status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def onboarding_stage_data(request, pk):
     """HR mirrors the portal status / records the medical result."""
     case, err = _get_case(request, pk)
