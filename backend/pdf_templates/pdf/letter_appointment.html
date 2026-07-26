@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+</head>
+<body>
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="lettertitle">Letter of Appointment</div>
+<div class="lettertitle-rule"></div>
+
+<div class="section">
+  <div class="section-title">Employer</div>
+  <table class="fields">
+    <tr><td class="k">Name</td><td class="v">{{ co.legal_name }}</td></tr>
+    <tr><td class="k">Address</td><td class="v">{{ co.address|default:"Ma. Maaraadha aage', Dhanburuh Magu, 20162, Male', Maldives" }}</td></tr>
+    <tr><td class="k">Contact</td><td class="v">{{ co.phone|default:"+960 3013665" }} &nbsp;·&nbsp; {{ co.email|default:"shahiq@sandplanet.mv" }}</td></tr>
+    <tr><td class="k">Country of registration</td><td class="v">Republic of Maldives</td></tr>
+    <tr><td class="k">Company registration no.</td><td class="v">{{ co.reg_no|default:"C-0059/2015" }}</td></tr>
+    <tr><td class="k">Nature of business</td><td class="v">Construction</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-title">Employee</div>
+  <table class="fields">
+    <tr><td class="k">Full name</td><td class="v">{{ employee_name }}</td></tr>
+    <tr><td class="k">Passport number</td><td class="v">{{ passport_no }}</td></tr>
+    <tr><td class="k">Nationality</td><td class="v">{{ nationality }}</td></tr>
+    <tr><td class="k">Date of birth</td><td class="v">{{ dob }}</td></tr>
+    <tr><td class="k">Gender</td><td class="v">{{ gender }}</td></tr>
+    <tr><td class="k">Permanent address</td><td class="v">{{ permanent_address }}</td></tr>
+    <tr><td class="k">Emergency contact</td><td class="v">{{ emergency_contact }}</td></tr>
+  </table>
+</div>
+
+<div class="section">
+  <div class="section-title">Terms of Employment</div>
+  <table class="fields">
+    <tr><td class="k">Employment status</td><td class="v">{{ employment_status }}</td></tr>
+    <tr><td class="k">Job title / occupation</td><td class="v">{{ job_title }}</td></tr>
+    <tr><td class="k">Quota work type</td><td class="v">{{ quota_work_type }}</td></tr>
+    <tr><td class="k">Basic salary</td><td class="v">{{ basic_salary }} per month</td></tr>
+    <tr><td class="k">Salary payment</td><td class="v">On or before the 10th day of the following month</td></tr>
+    <tr><td class="k">Work site</td><td class="v">{{ work_site }}</td></tr>
+    <tr><td class="k">Commencement of employment</td><td class="v">On the date of arrival in the Maldives</td></tr>
+    <tr><td class="k">Principal duties</td><td class="v">{{ job_description }}</td></tr>
+    <tr><td class="k">Duration of contract</td><td class="v">{{ contract_duration }}</td></tr>
+    <tr><td class="k">Working hours</td><td class="v">{{ working_hours }}</td></tr>
+  </table>
+</div>
+
+<div class="body-text">
+  <p>We are pleased to confirm the appointment of the above-named employee on the terms stated in this letter. Employment is offered subject to the grant of a valid work permit by the relevant authorities of the Republic of Maldives, and the particulars given above are confirmed by the employer as true and correct.</p>
+</div>
+
+<table class="sigrow">
+  <tr>
+    <td>
+      <div class="sigfor">For and on behalf of the employer</div>
+      <div class="sigline">
+        <span class="signame">{{ signatory_name }}</span><br>
+        <span class="sigrole">{{ signatory_designation }} &nbsp;·&nbsp; Date: {{ issue_date }}</span>
+      </div>
+    </td>
+    <td>
+      <div class="sigfor">Accepted by the employee</div>
+      <div class="sigline">
+        <span class="signame">{{ employee_name }}</span><br>
+        <span class="sigrole">Passport {{ passport_no }} &nbsp;·&nbsp; Date: ____________</span>
+      </div>
+    </td>
+  </tr>
+</table>
+
+</body>
+</html>

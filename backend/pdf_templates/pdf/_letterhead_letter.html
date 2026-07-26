@@ -1,0 +1,34 @@
+{% comment %}
+Official-correspondence letterhead (ring mark + wordmark left, address right,
+double navy/sky rule) + running footer, shared by the onboarding letters.
+Requires mark_src + co in context; footer/address fall back to the owner's
+printed stationery when a CompanyParameter isn't set.
+{% endcomment %}
+<div class="docfooter">
+  <div class="footer-rule-a"></div>
+  <div class="footer-rule-b"></div>
+  <div class="footer-text">{{ co.legal_name }} &nbsp;·&nbsp; Reg. {{ co.reg_no|default:"C-0059/2015" }} &nbsp;·&nbsp; {{ co.address|default:"Ma. Maaraadha aage', Dhanburuh Magu, 20162, Male', Maldives" }} &nbsp;·&nbsp; Tel {{ co.phone|default:"+960 3013665" }} &nbsp;·&nbsp; {{ co.email|default:"shahiq@sandplanet.mv" }}</div>
+</div>
+
+<table class="letterhead">
+  <tr>
+    <td style="width:42pt;"><img src="{{ mark_src }}" style="height:36pt;"></td>
+    <td>
+      <div class="lh-name"><span class="dim">SAND</span>PLANET</div>
+      <div class="lh-tag">{{ co.legal_name }}</div>
+    </td>
+    <td class="lh-addr">
+      {{ co.address|default:"Ma. Maaraadha aage', Dhanburuh Magu, 20162, Male', Republic of Maldives" }}<br>
+      Tel {{ co.phone|default:"+960 3013665" }} &nbsp;·&nbsp; {{ co.email|default:"shahiq@sandplanet.mv" }} &nbsp;·&nbsp; Reg. {{ co.reg_no|default:"C-0059/2015" }}
+    </td>
+  </tr>
+</table>
+<div class="lh-rule-a"></div>
+<div class="lh-rule-b"></div>
+
+<table class="refline">
+  <tr>
+    <td>Ref: <span class="mono">{{ ref }}</span></td>
+    <td style="text-align:right;">Date: <span class="mono">{{ issue_date }}</span></td>
+  </tr>
+</table>

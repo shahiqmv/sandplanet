@@ -1882,6 +1882,29 @@ class OnboardingFee(models.Model):
         ]
 
 
+class OnboardingLetter(models.Model):
+    """A generated official letter for an onboarding case — the Letter of
+    Appointment (LOA, work-permit track) or the Sponsor Letter (SPL, business-
+    visa track). HR generates it at the relevant stage; the merge fields it was
+    built from are stored for the record, the PDF as a GENERATED_PDF attachment
+    on the case. Regenerating keeps the old copy and bumps the version."""
+
+    case = models.ForeignKey(OnboardingCase, on_delete=models.CASCADE,
+                             related_name="letters")
+    kind = models.CharField(max_length=3)         # LOA | SPL
+    ref = models.CharField(max_length=20)         # global sequence, e.g. LOA-001
+    attachment = models.ForeignKey(Attachment, on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+    fields = models.JSONField(default=dict)       # merge fields it was built from
+    version = models.PositiveIntegerField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(User, null=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
 class WorkPermitRenewal(models.Model):
     """One record per work-permit renewal — HR picks a number of months and
     the employee's expiry is pushed forward by that much. Keeps an audit

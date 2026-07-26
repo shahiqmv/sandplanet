@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+</head>
+<body>
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="body-text" style="margin-top:12pt;">
+  <p style="margin-bottom:2pt;">{{ addressee_line_1|default:"The Controller of Immigration and Emigration" }},</p>
+  <p style="margin-bottom:2pt;">{{ addressee_line_2|default:"Maldives Immigration, Male'" }},</p>
+  <p>Republic of Maldives.</p>
+
+  <p style="margin-top:10pt;">Dear Sir / Madam,</p>
+
+  <p class="subject">Subject: Application for a business visa &mdash; {{ candidate_name }} ({{ nationality }}, Passport No. {{ passport_no }})</p>
+
+  <p>We write to request the issuance of a business visa for the individual named below, whose presence is required as {{ role }} in connection with our project at {{ project_site }}. The particulars of the applicant are as follows:</p>
+</div>
+
+<div class="section">
+  <table class="fields">
+    <tr><td class="k">Full name</td><td class="v">{{ candidate_name }}</td></tr>
+    <tr><td class="k">Nationality</td><td class="v">{{ nationality }}</td></tr>
+    <tr><td class="k">Date of birth</td><td class="v">{{ dob }}</td></tr>
+    <tr><td class="k">Passport number</td><td class="v">{{ passport_no }}</td></tr>
+    <tr><td class="k">Mobile number</td><td class="v">{{ mobile }}</td></tr>
+    <tr><td class="k">Qualification</td><td class="v">{{ qualification }}</td></tr>
+    <tr><td class="k">Purpose of stay</td><td class="v">{{ role }}</td></tr>
+    <tr><td class="k">Intended duration of stay</td><td class="v">{{ duration }}</td></tr>
+    <tr><td class="k">Address of accommodation</td><td class="v">{{ accommodation }}</td></tr>
+    <tr><td class="k">Contact person in the Maldives</td><td class="v">{{ local_contact }}</td></tr>
+  </table>
+</div>
+
+<div class="body-text">
+  <p>{{ co.legal_name }} sponsors the above-named applicant for the full duration of the stay and undertakes responsibility for their accommodation, maintenance, and repatriation. Valid travel health insurance covering the period of stay accompanies this application.</p>
+  <p>We would be grateful for your kind assistance in processing this application. Should any further information or documentation be required, please contact the undersigned.</p>
+</div>
+
+<table class="sigrow">
+  <tr>
+    <td>
+      <div class="sigfor">Yours faithfully,<br>for {{ co.legal_name }}</div>
+      <div class="sigline" style="margin-top:40pt;">
+        <span class="signame">{{ signatory_name }}</span><br>
+        <span class="sigrole">{{ signatory_designation }}</span>
+      </div>
+    </td>
+    <td></td>
+  </tr>
+</table>
+
+</body>
+</html>

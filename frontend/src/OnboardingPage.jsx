@@ -522,6 +522,81 @@ function Processing({ c, me, onReload }) {
           )}
         </div>
       )}
+      {canProcess && <Letters c={c} busy={busy} run={run} />}
+    </div>
+  );
+}
+
+const humanize = (k) => k.replace(/_/g, " ")
+  .replace(/\b\w/g, (ch) => ch.toUpperCase());
+
+function Letters({ c, busy, run }) {
+  const [openKind, setOpenKind] = useState(null);
+  const [fields, setFields] = useState({});
+  const opts = (c.letter_options || []).filter((o) => o.available);
+  const done = c.letters || [];
+  const gen = (kind) => run(async () => {
+    await api(`/onboarding/${c.id}/letter`,
+              { method: "POST", body: { kind, fields } });
+    setOpenKind(null);
+  });
+  function begin(o) { setOpenKind(o.kind); setFields({ ...(o.fields || {}) }); }
+
+  if (!opts.length && !done.length) return null;
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px solid var(--line)",
+      paddingTop: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+        Official letters</div>
+      {done.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3,
+          marginBottom: 8 }}>
+          {done.map((l) => (
+            <div key={l.id} style={{ display: "flex", gap: 8,
+              alignItems: "baseline", fontSize: 12.5 }}>
+              <a href={`/api/v1${l.download}`} target="_blank" rel="noreferrer"
+                 style={{ color: "var(--navy)", fontWeight: 600 }}>{l.ref}</a>
+              <span style={{ color: "var(--muted)" }}>
+                {l.title} · v{l.version} · {fmtDate(l.created_at)}
+                {l.created_by ? ` · ${l.created_by}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {opts.map((o) => (
+        <div key={o.kind} style={{ marginBottom: 6 }}>
+          {openKind === o.kind ? (
+            <div style={{ border: "1px solid var(--line)", borderRadius: 8,
+              padding: 10 }}>
+              <div style={{ fontWeight: 600, fontSize: 12.5, marginBottom: 8 }}>
+                {o.title}</div>
+              <div style={{ display: "grid",
+                gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {Object.keys(o.fields || {}).map((k) => (
+                  <label key={k} style={{ fontSize: 11, color: "var(--muted)",
+                    display: "flex", flexDirection: "column", gap: 2 }}>
+                    {humanize(k)}
+                    <input style={{ ...inputStyle, width: "100%" }}
+                           value={fields[k] ?? ""}
+                           onChange={(e) => setFields((f) =>
+                             ({ ...f, [k]: e.target.value }))} />
+                  </label>
+                ))}
+              </div>
+              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                <Btn variant="primary" disabled={busy}
+                     onClick={() => gen(o.kind)}>Generate {o.kind}</Btn>
+                <Btn variant="ghost" disabled={busy}
+                     onClick={() => setOpenKind(null)}>Cancel</Btn>
+              </div>
+            </div>
+          ) : (
+            <Btn variant="secondary" disabled={busy} onClick={() => begin(o)}>
+              {done.some((l) => l.kind === o.kind)
+                ? `Regenerate ${o.title}` : `Generate ${o.title}`}</Btn>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

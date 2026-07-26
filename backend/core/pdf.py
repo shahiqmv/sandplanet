@@ -47,6 +47,20 @@ def logo_src():
     return f"file:///{asset}"
 
 
+def mark_src():
+    """The ring brandmark used on official-correspondence letterheads."""
+    asset = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-mark.svg"
+    return f"file:///{asset}"
+
+
+def _font_dir():
+    """file:// URL of the bundled-fonts directory. The letter templates point
+    their @font-face rules here; if the TTFs aren't present WeasyPrint falls
+    back to Helvetica cleanly (see pdf_templates/fonts/README.md)."""
+    d = settings.BASE_DIR / "pdf_templates" / "fonts"
+    return f"file:///{str(d).replace(chr(92), '/')}"
+
+
 def company_info():
     """Company identity block shown on every PDF footer (owner request:
     tax info, registration no, address on the reports)."""
@@ -502,6 +516,50 @@ def _lines_context(document, revision):
             for title, action in config["sigs"]
         ],
     }
+
+
+# ===== Onboarding letters: Letter of Appointment / Sponsor Letter =====
+
+LETTER_TEMPLATES = {
+    "LOA": "letter_appointment.html",
+    "SPL": "letter_sponsor.html",
+}
+
+
+def render_onboarding_letter(document, kind, ref, fields, issue_date):
+    """Render an onboarding letter (LOA/SPL) from HR-supplied merge fields and
+    archive it as a GENERATED_PDF attachment on the case. Returns the Attachment
+    (or None when the PDF engine is unavailable locally, per D4)."""
+    template = LETTER_TEMPLATES[kind]
+    context = {
+        "mark_src": mark_src(),
+        "font_dir": _font_dir(),
+        "co": company_info(),
+        "ref": ref,
+        "issue_date": issue_date,
+        **fields,
+    }
+    html = render_to_string(f"pdf/{template}", context)
+    try:
+        from weasyprint import HTML
+
+        pdf_bytes = HTML(string=html,
+                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:
+        if settings.PDF_REQUIRED:
+            raise
+        logger.warning("PDF engine unavailable; skipped letter %s", ref)
+        return None
+    attachment = Attachment(
+        document=document,
+        revision=document.current_revision,
+        kind="GENERATED_PDF",
+        file_name=f"{ref}.pdf",
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+    attachment.file.save(f"{ref}.pdf", ContentFile(pdf_bytes), save=True)
+    return attachment
 
 
 # ===== External Purchase Order (owner format, R2) =====

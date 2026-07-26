@@ -1,0 +1,79 @@
+{% comment %}
+Shared brand stylesheet for official onboarding letters (LOA / SPL).
+Owner-approved correspondence sheet. Brand faces load from pdf_templates/fonts/
+when present, else the stacks fall back to Helvetica/Arial cleanly. Requires
+font_dir in context (core/pdf._font_dir()).
+{% endcomment %}
+<style>
+  @font-face { font-family: "Barlow Condensed"; src: url("{{ font_dir }}/BarlowCondensed-SemiBold.ttf"); font-weight: 600; }
+  @font-face { font-family: "Barlow Condensed"; src: url("{{ font_dir }}/BarlowCondensed-Bold.ttf"); font-weight: 700; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("{{ font_dir }}/IBMPlexMono-Medium.ttf"); font-weight: 500; }
+  @font-face { font-family: "IBM Plex Mono"; src: url("{{ font_dir }}/IBMPlexMono-SemiBold.ttf"); font-weight: 600; }
+  @font-face { font-family: "Inter"; src: url("{{ font_dir }}/Inter-var.ttf"); font-weight: 100 900; }
+
+  @page {
+    size: A4;
+    margin: 12mm 15mm 18mm 15mm;
+    @bottom-center { content: element(docfooter); }
+  }
+  * { box-sizing: border-box; }
+  body { font-family: "Inter", Helvetica, Arial, sans-serif; font-size: 9pt;
+         color: #1A2530; line-height: 1.4; margin: 0; }
+
+  .letterhead { width: 100%; border-collapse: collapse; }
+  .letterhead td { vertical-align: middle; }
+  .lh-name { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+             font-weight: 700; font-size: 17pt; letter-spacing: 3pt; color: #16527E; }
+  .lh-name .dim { color: #9AA4AD; }
+  .lh-tag { font-size: 6.5pt; color: #5B6672; letter-spacing: 1.6pt;
+            text-transform: uppercase; margin-top: 1pt; }
+  .lh-addr { text-align: right; font-size: 7.5pt; color: #5B6672; line-height: 1.5; }
+  .lh-rule-a { height: 2pt; background: #16527E; margin-top: 5pt; }
+  .lh-rule-b { height: 1pt; background: #29ABE2; margin-top: 1.5pt; }
+
+  .refline { width: 100%; border-collapse: collapse; margin-top: 8pt; }
+  .refline td { font-size: 9pt; color: #1A2530; }
+  .mono { font-family: "IBM Plex Mono", "Courier New", monospace;
+          font-weight: 500; font-size: 8.5pt; }
+
+  .lettertitle { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+                 font-weight: 700; font-size: 13.5pt; letter-spacing: 2.5pt;
+                 text-transform: uppercase; color: #16527E; text-align: center;
+                 margin-top: 7pt; }
+  .lettertitle-rule { width: 120pt; height: 1.5pt; background: #29ABE2;
+                      margin: 3pt auto 0 auto; }
+
+  .section { margin-top: 6pt; }
+  .section-title { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+                   font-weight: 700; font-size: 10.5pt; letter-spacing: 1.5pt;
+                   text-transform: uppercase; color: #16527E;
+                   border-bottom: 1.5pt solid #29ABE2; padding-bottom: 1.5pt;
+                   margin-bottom: 4pt; }
+  table.fields { width: 100%; border-collapse: collapse; border: 1pt solid #C9D9E5; }
+  table.fields td { padding: 2.3pt 10pt; border-bottom: 1pt solid #EAF1F6;
+                    vertical-align: top; }
+  table.fields tr:last-child td { border-bottom: none; }
+  table.fields td.k { width: 38%; font-weight: 600; color: #16527E; font-size: 8.5pt;
+                      background: #F6F2E9; border-right: 1pt solid #EAF1F6; }
+  table.fields td.v { font-size: 9pt; color: #1A2530; }
+
+  p { margin: 0 0 6pt 0; }
+  .body-text { margin-top: 9pt; }
+  .subject { font-weight: 600; color: #16527E; }
+
+  .sigrow { margin-top: 9pt; width: 100%; border-collapse: collapse; }
+  .sigrow td { width: 50%; vertical-align: bottom; padding-right: 24pt; }
+  .sigline { border-top: 1pt solid #1A2530; margin-top: 24pt; padding-top: 4pt;
+             font-size: 8.5pt; }
+  .signame { font-weight: 600; color: #1A2530; }
+  .sigrole { color: #5B6672; font-size: 8pt; }
+  .sigfor { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+            font-weight: 600; font-size: 9.5pt; letter-spacing: 1pt;
+            text-transform: uppercase; color: #16527E; margin-bottom: 2pt; }
+
+  .docfooter { position: running(docfooter); width: 100%; }
+  .footer-rule-a { height: 2.5pt; background: #16527E; }
+  .footer-rule-b { height: 1.5pt; background: #29ABE2; margin-top: 1.5pt; }
+  .footer-text { font-size: 7pt; color: #5B6672; padding-top: 4pt;
+                 text-align: center; letter-spacing: 0.3pt; }
+</style>

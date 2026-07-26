@@ -481,6 +481,141 @@ def on_fee_paid(pyr_doc, actor):
                                 "the case can now advance", category="alert")
 
 
+# ---- official letters (Phase 4) ------------------------------------------
+
+# kind -> {stage it belongs to, human title}. LOA is issued at the appointment
+# stage (WP track, and the BV→WP conversion); SPL at the BV sponsor stage.
+LETTER_META = {
+    "LOA": {"stage": "WP_APPOINTMENT", "title": "Letter of Appointment"},
+    "SPL": {"stage": "BV_SPONSOR", "title": "Sponsor Letter"},
+}
+_QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"}
+
+
+def letter_available(case, kind):
+    """A letter can be generated once the case is in processing and has reached
+    the stage the letter belongs to (so it stays available for regeneration)."""
+    meta = LETTER_META.get(kind)
+    if not meta or case.document.status != "IN_PROGRESS":
+        return False
+    seq = sequence(case)
+    if meta["stage"] not in seq or case.stage not in seq:
+        return False
+    return seq.index(case.stage) >= seq.index(meta["stage"])
+
+
+def _fmt_date(d):
+    return d.strftime("%d %b %Y") if d else ""
+
+
+def _salary_str(case):
+    if case.proposed_salary is None:
+        return ""
+    cur = case.currency or "MVR"
+    return f"{cur} {case.proposed_salary:,.2f}"
+
+
+def _default_signatory():
+    """The company signatory who signs correspondence — a SIGNATORY if set,
+    else the Director. HR can override both name and title at generation."""
+    from . import notify
+    for role, title in (("SIGNATORY", "Authorised Signatory"),
+                        ("DIRECTOR", "Director")):
+        u = next(iter(notify._role_users(role)), None)
+        if u:
+            return u.full_name, title
+    return "", "Director"
+
+
+def letter_defaults(case, kind):
+    """Prefilled merge fields for a letter, from the case + company. Fields the
+    owner marked HR-editable (work site, accommodation, addressee, …) default
+    blank for HR to complete at generation."""
+    sig_name, sig_title = _default_signatory()
+    common = {
+        "passport_no": case.passport_no or "",
+        "nationality": case.nationality or "",
+        "dob": _fmt_date(case.date_of_birth),
+        "signatory_name": sig_name,
+        "signatory_designation": sig_title,
+    }
+    if kind == "LOA":
+        return {
+            **common,
+            "employee_name": case.full_name or "",
+            "gender": case.gender or "",
+            "permanent_address": case.permanent_address or "",
+            "emergency_contact": case.emergency_contact or "",
+            "employment_status": "Full-time",
+            "job_title": case.trade_designation or "",
+            "quota_work_type": _QUOTA_LABEL.get(case.category, ""),
+            "basic_salary": _salary_str(case),
+            "work_site": "",
+            "job_description": case.trade_designation or "",
+            "contract_duration": "2 years",
+            "working_hours": "8 hours per day, 6 days per week",
+        }
+    return {
+        **common,
+        "candidate_name": case.full_name or "",
+        "mobile": case.mobile or "",
+        "qualification": "",
+        "role": case.trade_designation or "",
+        "duration": "90 days",
+        "accommodation": "",
+        "local_contact": "",
+        "project_site": "",
+        "addressee_line_1": "",
+        "addressee_line_2": "",
+    }
+
+
+def generate_letter(case, kind, overrides, actor):
+    """HR generates an official letter for the case: prefill from the case,
+    overlay HR's edits, allocate a global LOA-/SPL- ref, render the PDF and store
+    it as a case attachment. Regenerating keeps prior copies and bumps version."""
+    from . import pdf
+    from .models import OnboardingLetter
+    if actor.role not in PROCESS_ROLES:
+        return None, "Only HR generates onboarding letters."
+    if kind not in LETTER_META:
+        return None, "Unknown letter type."
+    if not letter_available(case, kind):
+        return None, (f"The {LETTER_META[kind]['title']} isn't available at "
+                      "this stage.")
+    defaults = letter_defaults(case, kind)
+    clean = {k: str(v) for k, v in (overrides or {}).items()
+             if k in defaults and v is not None}
+    fields = {**defaults, **clean}
+    issue_date = timezone.localdate().strftime("%d %b %Y")
+    with transaction.atomic():
+        ref = next_ref(kind, None)
+        att = pdf.render_onboarding_letter(case.document, kind, ref, fields,
+                                           issue_date)
+        if att is None:
+            transaction.set_rollback(True)
+            return None, "The PDF engine is unavailable in this environment."
+        version = case.letters.filter(kind=kind).count() + 1
+        letter = OnboardingLetter.objects.create(
+            case=case, kind=kind, ref=ref, attachment=att, fields=fields,
+            version=version, created_by=actor)
+    audit("document", case.document_id, "OBR_LETTER", actor=actor,
+          detail={"kind": kind, "ref": ref, "version": version})
+    return letter, None
+
+
+def _letter_dict(letter):
+    return {
+        "id": letter.id, "kind": letter.kind, "ref": letter.ref,
+        "version": letter.version, "created_at": letter.created_at,
+        "title": LETTER_META.get(letter.kind, {}).get("title", letter.kind),
+        "created_by": (letter.created_by.full_name
+                       if letter.created_by_id else ""),
+        "download": (f"/onboarding/{letter.case_id}/letters/{letter.id}.pdf"
+                     if letter.attachment_id else None),
+    }
+
+
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):
@@ -547,6 +682,14 @@ def case_dict(case):
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),
+        "letters": [_letter_dict(ltr) for ltr
+                    in case.letters.select_related("created_by")],
+        "letter_options": [
+            {"kind": k, "title": m["title"],
+             "available": letter_available(case, k),
+             "fields": letter_defaults(case, k)
+             if letter_available(case, k) else None}
+            for k, m in LETTER_META.items()],
         "approvals": [{"action": a.action, "by": a.actor.full_name,
                        "role": a.actor_role, "at": a.acted_at,
                        "comment": a.comment}

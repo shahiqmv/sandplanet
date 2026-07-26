@@ -259,6 +259,70 @@ class OnboardingSpineTests(TestCase):
         self.assertTrue(Notification.objects.filter(
             recipient=self.hr, title__icontains="paid").exists())
 
+    def _gen_letter(self, pk, kind, **fields):
+        self.client.force_authenticate(self.hr)
+        return self.client.post(f"/api/v1/onboarding/{pk}/letter",
+                                {"kind": kind, "fields": fields}, format="json")
+
+    def test_loa_generates_at_appointment(self):
+        pk = self._approved()                 # WP, Indian
+        self._adv(pk)                          # begin → WP_APPOINTMENT
+        detail = self.client.get(f"/api/v1/onboarding/{pk}").data
+        opts = {o["kind"]: o for o in detail["letter_options"]}
+        self.assertTrue(opts["LOA"]["available"])
+        self.assertFalse(opts["SPL"]["available"])   # not a BV case
+        r = self._gen_letter(pk, "LOA", work_site="Hulhumale' Tower")
+        self.assertEqual(r.status_code, 201, r.data)
+        letters = r.data["letters"]
+        self.assertEqual(len(letters), 1)
+        self.assertEqual(letters[0]["ref"], "LOA-001")
+        self.assertEqual(letters[0]["version"], 1)
+        self.assertTrue(letters[0]["download"].endswith(
+            f"/letters/{letters[0]['id']}.pdf"))
+
+    def test_spl_only_on_bv_track(self):
+        pk = self._approved(route="BV", bv_justification="urgent mobilisation",
+                            nationality="Sri Lankan")
+        self._adv(pk)                          # begin → BV_SPONSOR
+        detail = self.client.get(f"/api/v1/onboarding/{pk}").data
+        opts = {o["kind"]: o for o in detail["letter_options"]}
+        self.assertTrue(opts["SPL"]["available"])
+        self.assertFalse(opts["LOA"]["available"])   # conversion not reached
+        # asking for an LOA now is refused
+        self.assertEqual(self._gen_letter(pk, "LOA").status_code, 400)
+        r = self._gen_letter(pk, "SPL", project_site="Ha. Dhidhdhoo Harbour",
+                             addressee_line_1="The Controller of Immigration")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["letters"][0]["ref"], "SPL-001")
+
+    def test_regenerating_a_letter_bumps_version(self):
+        pk = self._approved()
+        self._adv(pk)                          # → WP_APPOINTMENT
+        self._gen_letter(pk, "LOA")
+        r = self._gen_letter(pk, "LOA", contract_duration="1 year")
+        self.assertEqual(r.status_code, 201, r.data)
+        refs = sorted(x["ref"] for x in r.data["letters"])
+        self.assertEqual(refs, ["LOA-001", "LOA-002"])
+        versions = sorted(x["version"] for x in r.data["letters"])
+        self.assertEqual(versions, [1, 2])
+
+    def test_only_hr_generates_letters(self):
+        pk = self._approved()
+        self._adv(pk)
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/letter",
+                             {"kind": "LOA"}, format="json")
+        self.assertIn(r.status_code, (400, 403))
+
+    def test_letter_pdf_downloads(self):
+        pk = self._approved()
+        self._adv(pk)
+        lid = self._gen_letter(pk, "LOA").data["letters"][0]["id"]
+        self.client.force_authenticate(self.hr)
+        r = self.client.get(f"/api/v1/onboarding/{pk}/letters/{lid}.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+
     def test_medical_fail_blocks_and_flags_pd(self):
         from .models import Notification
         pk = self._approved()

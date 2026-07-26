@@ -154,6 +154,39 @@ def onboarding_fee(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def onboarding_letter(request, pk):
+    """HR generates an official letter (LOA / SPL) for the case."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    letter, msg = ob.generate_letter(case, request.data.get("kind"),
+                                     request.data.get("fields") or {},
+                                     request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def onboarding_letter_download(request, pk, letter_id):
+    """Stream a generated letter PDF (same access gate as the case docs)."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    letter = case.letters.filter(pk=letter_id).select_related(
+        "attachment").first()
+    if letter is None or not letter.attachment_id or not letter.attachment.file:
+        return Response({"detail": "Not found."}, status=404)
+    from django.http import FileResponse
+    return FileResponse(letter.attachment.file.open("rb"),
+                        content_type="application/pdf",
+                        filename=f"{letter.ref}.pdf")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def onboarding_stage_data(request, pk):
     """HR mirrors the portal status / records the medical result."""
     case, err = _get_case(request, pk)
