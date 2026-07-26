@@ -352,6 +352,13 @@ def line_dict(line, values=True):
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
+        from .procurement_pipeline import line_committed
+        comm = line_committed(line)
+        d["committed"] = comm
+        d["variance"] = None
+        if (comm and line.estimated_value is not None
+                and comm["currency"] == (line.currency or "USD")):
+            d["variance"] = comm["value"] - line.estimated_value
     return d
 
 
@@ -366,10 +373,24 @@ def schedule_dict(sched, user):
                 for s in sched.sections.all()]
     line_dicts = [line_dict(ln, values=values) for ln in lines]
     counts, risk_counts = {}, {}
+    est_total = Decimal("0")
+    comm_total = Decimal("0")
+    section_est = {}
     for ln, ld in zip(lines, line_dicts):
         counts[ln.state] = counts.get(ln.state, 0) + 1
         lvl = ld["risk"]["level"]
         risk_counts[lvl] = risk_counts.get(lvl, 0) + 1
+        if values:
+            ev = ln.estimated_value or Decimal("0")
+            est_total += ev
+            key = ln.section_id or 0
+            section_est[key] = section_est.get(key, Decimal("0")) + ev
+            comm = ld.get("committed")
+            if comm and comm["currency"] == "USD":
+                comm_total += comm["value"]
+    totals = ({"currency": "USD", "estimated": est_total,
+               "committed": comm_total, "sections": section_est}
+              if values else None)
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "project_id": sched.project_id, "project_code": sched.project.code,
@@ -388,6 +409,7 @@ def schedule_dict(sched, user):
         "show_values": values,
         "line_counts": counts,
         "risk_counts": risk_counts,
+        "totals": totals,
         "sections": sections,
         "lines": line_dicts,
         "approvals": [{"action": a.action, "by": a.actor.full_name,

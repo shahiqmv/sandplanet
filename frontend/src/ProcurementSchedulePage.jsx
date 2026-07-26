@@ -37,6 +37,21 @@ const RISK_TONE = { LATE: "alert", AT_RISK: "warn", ON_TRACK: "ok",
 const RISK_LABEL = { LATE: "Late", AT_RISK: "At risk", ON_TRACK: "On track",
   DELIVERED: "Delivered" };
 
+function ValueCell({ ln }) {
+  return (
+    <div>
+      <div>{money(ln.estimated_value, ln.currency)}</div>
+      {ln.committed && <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+        ordered {money(ln.committed.value, ln.committed.currency)}</div>}
+      {ln.variance != null && ln.variance !== 0 && (
+        <div style={{ fontSize: 10.5, fontWeight: 600,
+          color: ln.variance > 0 ? "var(--red-fg)" : "var(--green-fg)" }}>
+          {ln.variance > 0 ? "over" : "under"}{" "}
+          {money(Math.abs(ln.variance), "")}</div>)}
+    </div>
+  );
+}
+
 function RiskCell({ risk }) {
   if (!risk || risk.level === "NONE")
     return <span style={{ color: "var(--muted)" }}>—</span>;
@@ -295,6 +310,14 @@ function ScheduleDetail({ id, me, onBack }) {
             {c.baseline_signed_by}</span>}
           <RiskSummary counts={c.risk_counts} />
         </div>
+        {c.show_values && c.totals && (
+          <div style={{ marginTop: 8, fontSize: 13 }}>
+            <span style={{ color: "var(--muted)" }}>Estimated </span>
+            <b>{money(c.totals.estimated, "USD")}</b>
+            {Number(c.totals.committed) > 0 && <>
+              <span style={{ color: "var(--muted)" }}> · Ordered </span>
+              <b>{money(c.totals.committed, "USD")}</b></>}
+          </div>)}
         {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
         {/* workflow bar */}
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
@@ -361,7 +384,7 @@ function ScheduleDetail({ id, me, onBack }) {
                     <td style={cell}>{ln.lead_time_days != null
                       ? `${ln.lead_time_days}d` : "—"}</td>
                     {c.show_values && <td style={cell}>
-                      {money(ln.estimated_value, ln.currency)}</td>}
+                      <ValueCell ln={ln} /></td>}
                     <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
                     <td style={cell}><RiskCell risk={ln.risk} /></td>
                     <td style={cell}><Chip tone={STATE_TONE[ln.state]}>
@@ -380,6 +403,16 @@ function ScheduleDetail({ id, me, onBack }) {
                 {!rows.length && <tr><td style={{ ...cell,
                   color: "var(--muted)" }} colSpan={c.show_values ? 15 : 14}>
                   No lines.</td></tr>}
+                {c.show_values && rows.length > 0 && (
+                  <tr style={{ borderTop: "2px solid var(--line)",
+                    fontWeight: 600 }}>
+                    <td style={{ ...cell, textAlign: "right" }} colSpan={10}>
+                      Section total</td>
+                    <td style={cell}>{money(
+                      c.totals?.sections?.[sec.id === "none" ? 0 : sec.id],
+                      "USD")}</td>
+                    <td colSpan={4}></td>
+                  </tr>)}
               </tbody>
             </table>
           </div>

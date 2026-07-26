@@ -12,14 +12,16 @@ numbering and audit are genuine; document links, the client-update backdating
 and a demo IPR are written via the ORM. Demo logins stay password planet-demo.
 """
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
 from rest_framework.test import APIClient
 
-from core.models import (Document, Item, ProcurementSchedule, Project,
-                         ScheduleLine, User)
+from core.models import (CostHead, Document, ImportOrder, ImportOrderLine, Item,
+                         ProcurementSchedule, Project, ScheduleLine, Supplier,
+                         User)
 
 # section, description, item(code/unit/category), qty, uom, category, supply,
 # required-day-offset, tds, make, supplier, country, value, lead, link, client
@@ -85,7 +87,15 @@ class Command(BaseCommand):
             raise CommandError("No project found — run seed / seed_demo first.")
         existing = ProcurementSchedule.objects.filter(project=project).first()
         if existing and opts["reset"]:
-            existing.document.delete()          # cascades schedule + lines
+            doc = existing.document
+            existing.lines.all().delete()       # lines before their sections
+            existing.sections.all().delete()
+            existing.delete()                   # then the schedule itself
+            doc.approvals.all().delete()        # PROTECT — clear before doc
+            doc.current_revision = None
+            doc.save(update_fields=["current_revision"])
+            doc.revisions.all().delete()        # PROTECT — clear before doc
+            doc.delete()
             existing = None
         if existing:
             self.stdout.write(self.style.WARNING(
@@ -177,11 +187,27 @@ class Command(BaseCommand):
         return item
 
     def _demo_ipr(self, project, actor, today):
-        """A minimal authorised IPR document so the Order stage reads 'done'.
-        Only its status + ref are surfaced by the pipeline."""
-        doc, _ = Document.objects.get_or_create(
+        """An authorised IPR document with a matching order line for the heat
+        pumps, so the Order stage reads 'done' and the schedule shows the
+        ordered value (78,200) beside the estimate (76,000) — over by 2,200."""
+        doc, created = Document.objects.get_or_create(
             ref="IPR-HO-D01", doc_type="IPR",
             defaults={"site": project.site,
                       "doc_date": today - timedelta(days=20),
                       "status": "AUTHORISED", "created_by": actor})
+        item = Item.objects.filter(code="HP-POOL-01").first()
+        if item and not hasattr(doc, "import_order"):
+            supplier, _ = Supplier.objects.get_or_create(
+                name="Zodiac GmbH",
+                defaults={"category": Supplier.Category.values[0],
+                          "country": "Germany", "default_currency": "USD"})
+            cost_head = (CostHead.objects.filter(name__icontains="import")
+                         .first()
+                         or CostHead.objects.get_or_create(name="Imports")[0])
+            order = ImportOrder.objects.create(
+                document=doc, supplier=supplier, order_currency="USD",
+                exchange_rate=Decimal("15.42"))
+            ImportOrderLine.objects.create(
+                order=order, line_no=1, item=item, order_qty=Decimal("17"),
+                unit_price=Decimal("4600"), cost_head=cost_head)
         return doc

@@ -16,6 +16,7 @@ is one click rather than a ref hunt.
 import logging
 from datetime import timedelta
 
+from django.db.models import F, Sum
 from django.utils import timezone
 
 from .audit import audit
@@ -178,6 +179,22 @@ def _client_pipeline(line):
             _stage("order", "Order (IPR)", "na", na),
             _production_stage(line), _stage("shipment", "Shipment", "na", na),
             delivery, eta]
+
+
+def line_committed(line):
+    """Committed order value for a line — the matching item's lines on the
+    linked IPR, in the order currency. None when there's no IPR order or no
+    item to match on. The schedule only displays this; it posts nothing."""
+    if not line.ipr_id or not line.item_id:
+        return None
+    order = ImportOrder.objects.filter(document_id=line.ipr_id).first()
+    if order is None:
+        return None
+    val = order.lines.filter(item_id=line.item_id).aggregate(
+        v=Sum(F("order_qty") * F("unit_price")))["v"]
+    if val is None:
+        return None
+    return {"value": val, "currency": order.order_currency}
 
 
 def line_pipeline(line):
