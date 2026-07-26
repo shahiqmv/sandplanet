@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import procurement_pipeline as pp
 from . import procurement_schedule as ps
 from .models import Project, ProcurementSchedule, ScheduleLine
 from .permissions import scoped_site_ids
@@ -134,6 +135,46 @@ def schedule_line_cancel(request, line_id):
     if err:
         return err
     msg = ps.cancel_line(line, request.data.get("note", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def schedule_line_link(request, line_id):
+    """Link (POST {slot, ref}) or unlink (DELETE {slot}) an execution document."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    slot = request.data.get("slot")
+    if request.method == "DELETE":
+        msg = pp.unlink_doc(line, slot, request.user)
+    else:
+        msg = pp.link_doc(line, slot, request.data.get("ref", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def schedule_line_candidates(request, line_id):
+    """Execution docs that could fulfil the line, for retroactive linking."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    return Response(pp.link_candidates(line, request.GET.get("slot", "")))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_line_production(request, line_id):
+    """Set the manual production flag (made-to-order items)."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    msg = pp.set_production(line, request.data.get("status"), request.user)
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(ps.schedule_dict(line.schedule, request.user))

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { Btn, Chip, card, inputStyle } from "./ui.jsx";
+import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
 const STATUS_TONE = {
   DRAFT: "info", SUBMITTED: "warn", CONFIRMED: "warn", SIGNED_OFF: "ok",
@@ -17,6 +17,40 @@ const money = (v, c) => v == null ? "—"
       { minimumFractionDigits: 2 })}`.trim();
 const fmt = (s) => s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—";
+
+// Derived pipeline — the schedule watches execution. Six stages in flow order.
+const STAGE_ABBR = { tds: "TDS", order: "ORD", production: "PRD",
+  shipment: "SHP", delivery: "DEL", eta: "ETA" };
+const STAGE_COLOR = { done: "var(--green-fg)", pending: "var(--amber-fg)",
+  warn: "var(--red-fg)", none: "#c9d6df", na: "#e2e8ee" };
+// Which stages are backed by a linkable execution document.
+const LINK_SLOTS = [
+  ["mar", "TDS / MAR", "mar_ref"],
+  ["ipr", "Order (IPR)", "ipr_ref"],
+  ["grn", "Delivery (GRN)", "grn_ref"],
+];
+const PRODUCTION = [["PENDING", "Pending"], ["IN_PRODUCTION", "In production"],
+  ["COMPLETED", "Completed"]];
+
+function PipelineStrip({ stages }) {
+  return (
+    <div style={{ display: "flex", gap: 3 }}>
+      {(stages || []).map((s) => (
+        <span key={s.key} title={`${s.label}: ${s.detail}`
+            + (s.ref ? ` (${s.ref})` : "")}
+          style={{ display: "flex", flexDirection: "column",
+            alignItems: "center", gap: 2, minWidth: 26 }}>
+          <span style={{ width: 9, height: 9, borderRadius: 999,
+            background: STAGE_COLOR[s.state] || "#c9d6df",
+            border: s.state === "none" || s.state === "na"
+              ? "1px solid #c9d6df" : "none" }} />
+          <span style={{ fontSize: 8.5, color: "var(--muted)",
+            letterSpacing: "0.02em" }}>{STAGE_ABBR[s.key]}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
 
 // Per-project procurement schedule: PM proposes lines, Purchasing confirms the
 // commercial fields, the Director signs off the baseline.
@@ -176,6 +210,7 @@ function ScheduleDetail({ id, me, onBack }) {
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [trackId, setTrackId] = useState(null);
 
   const load = () => api(`/procurement-schedules/${id}`).then(setC)
     .catch((e) => setError(e.message));
@@ -264,7 +299,7 @@ function ScheduleDetail({ id, me, onBack }) {
                 {["#", "Description", "Make", "Qty", "Category", "Supply",
                   "Required", "Supplier", "Country", "Lead",
                   ...(c.show_values ? ["Est. value"] : []),
-                  "State", ""].map((h, i) =>
+                  "Pipeline", "State", ""].map((h, i) =>
                   <th key={i} style={{ padding: "6px 10px",
                     whiteSpace: "nowrap" }}>{h}</th>)}
               </tr></thead>
@@ -290,17 +325,23 @@ function ScheduleDetail({ id, me, onBack }) {
                       ? `${ln.lead_time_days}d` : "—"}</td>
                     {c.show_values && <td style={cell}>
                       {money(ln.estimated_value, ln.currency)}</td>}
+                    <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
                     <td style={cell}><Chip tone={STATE_TONE[ln.state]}>
                       {ln.state.replace(/_/g, " ")}</Chip></td>
-                    <td style={cell}>
+                    <td style={{ ...cell, whiteSpace: "nowrap" }}>
                       {(c.can_edit_plan || c.can_confirm) &&
                         <button style={linkBtn}
                           onClick={() => setEditId(ln.id)}>Edit</button>}
+                      {c.can_link && <button style={{ ...linkBtn,
+                        marginLeft: 8, color: "var(--sky)" }}
+                        onClick={() => setTrackId(
+                          trackId === ln.id ? null : ln.id)}>Track</button>}
                     </td>
                   </tr>
                 ))}
                 {!rows.length && <tr><td style={{ ...cell,
-                  color: "var(--muted)" }} colSpan={13}>No lines.</td></tr>}
+                  color: "var(--muted)" }} colSpan={c.show_values ? 14 : 13}>
+                  No lines.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -311,6 +352,120 @@ function ScheduleDetail({ id, me, onBack }) {
         me={me} line={c.lines.find((l) => l.id === editId)}
         onCancel={() => setEditId(null)}
         onSaved={() => { setEditId(null); load(); }} />}
+
+      {trackId && <LinkPanel line={c.lines.find((l) => l.id === trackId)}
+        onClose={() => setTrackId(null)} onSaved={setC} />}
+    </div>
+  );
+}
+
+// Track panel: link the execution documents that fulfil a line (MAR/IPR/GRN)
+// and set the manual production flag. The pipeline above is derived from these.
+function LinkPanel({ line, onClose, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [openSlot, setOpenSlot] = useState(null);   // slot showing suggestions
+  const [cands, setCands] = useState([]);
+  const [ref, setRef] = useState("");
+  if (!line) return null;
+
+  async function run(fn) {
+    setBusy(true); setErr(null);
+    try { const d = await fn(); if (d) onSaved(d); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  const link = (slot, r) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/link`,
+      { method: "POST", body: { slot, ref: r } })
+      .then((d) => { setOpenSlot(null); setRef(""); return d; }));
+  const unlink = (slot) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/link`,
+      { method: "DELETE", body: { slot } }));
+  const setProduction = (status) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/production`,
+      { method: "POST", body: { status } }));
+  async function suggest(slot) {
+    if (openSlot === slot) { setOpenSlot(null); return; }
+    setOpenSlot(slot); setCands([]); setRef("");
+    try {
+      const l = await api(
+        `/procurement-schedule-lines/${line.id}/candidates?slot=${slot}`);
+      setCands(l);
+    } catch { setCands([]); }
+  }
+
+  const prodStage = (line.pipeline || []).find((s) => s.key === "production");
+  return (
+    <div style={{ ...card, marginTop: 10, border: "1px solid var(--sky)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center" }}>
+        <div style={{ fontWeight: 600 }}>Track — #{line.s_no}{" "}
+          {line.description}</div>
+        <button style={linkBtn} onClick={onClose}>Close</button>
+      </div>
+      {err && <p style={{ color: "var(--red-fg)" }}>{err}</p>}
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+        marginTop: 10 }}>
+        {LINK_SLOTS.map(([slot, label, refKey]) => (
+          <div key={slot} style={{ flex: 1, minWidth: 240,
+            border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)",
+              marginBottom: 6 }}>{label}</div>
+            {line[refKey] ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <RefStamp small>{line[refKey]}</RefStamp>
+                <button style={linkBtn} disabled={busy}
+                  onClick={() => unlink(slot)}>Unlink</button>
+              </div>
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input style={{ ...inputStyle, fontSize: 12 }}
+                    placeholder={`${slot.toUpperCase()} ref…`}
+                    value={openSlot === slot ? ref : ""}
+                    onFocus={() => setOpenSlot(slot)}
+                    onChange={(e) => setRef(e.target.value)} />
+                  <Btn variant="secondary" disabled={busy || !ref.trim()}
+                    style={{ padding: "4px 12px" }}
+                    onClick={() => link(slot, ref)}>Link</Btn>
+                </div>
+                <button style={{ ...linkBtn, fontSize: 11.5, marginTop: 6,
+                  color: "var(--sky)" }} onClick={() => suggest(slot)}>
+                  {openSlot === slot ? "Hide" : "Suggest matches"}</button>
+                {openSlot === slot && <div style={{ marginTop: 6 }}>
+                  {!cands.length ? <span style={{ fontSize: 11.5,
+                    color: "var(--muted)" }}>No matching documents.</span>
+                   : cands.map((c) => (
+                    <div key={c.doc_id} style={{ display: "flex", gap: 8,
+                      alignItems: "center", padding: "3px 0" }}>
+                      <button style={{ ...linkBtn, fontSize: 12 }}
+                        disabled={busy} onClick={() => link(slot, c.ref)}>
+                        {c.ref}</button>
+                      <Chip tone="info">{(c.status || "")
+                        .replace(/_/g, " ")}</Chip>
+                      {c.note && <span style={{ fontSize: 10.5,
+                        color: "var(--green-fg)" }}>{c.note}</span>}
+                    </div>
+                  ))}
+                </div>}
+              </>
+            )}
+          </div>
+        ))}
+
+        <div style={{ flex: 1, minWidth: 240,
+          border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
+          <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+            Production (made-to-order)</div>
+          <select style={{ ...inputStyle, fontSize: 12 }} disabled={busy}
+            value={prodStage ? line.production_status || "PENDING" : "PENDING"}
+            onChange={(e) => setProduction(e.target.value)}>
+            {PRODUCTION.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </div>
+      </div>
     </div>
   );
 }

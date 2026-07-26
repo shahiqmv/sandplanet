@@ -339,7 +339,12 @@ def line_dict(line, values=True):
         "client_update_note": line.client_update_note,
         "mar_id": line.mar_id, "ipr_id": line.ipr_id,
         "shipment_id": line.shipment_id, "grn_id": line.grn_id,
+        "mar_ref": line.mar.ref if line.mar_id else "",
+        "ipr_ref": line.ipr.ref if line.ipr_id else "",
+        "grn_ref": line.grn.ref if line.grn_id else "",
     }
+    from .procurement_pipeline import line_pipeline
+    d["pipeline"] = line_pipeline(line)
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
@@ -349,7 +354,8 @@ def line_dict(line, values=True):
 def schedule_dict(sched, user):
     doc = sched.document
     values = can_see_values(user, sched)
-    lines = list(sched.lines.select_related("section")
+    lines = list(sched.lines.select_related("section", "item", "mar", "ipr",
+                                            "grn", "shipment")
                  .exclude(state="CANCELLED"))
     sections = [{"id": s.id, "code": s.code, "title": s.title,
                  "sort_order": s.sort_order}
@@ -371,6 +377,7 @@ def schedule_dict(sched, user):
                        and any(ln.state == "PROPOSED" for ln in lines)),
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
+        "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),
         "show_values": values,
         "line_counts": counts,
         "sections": sections,
