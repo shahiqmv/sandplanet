@@ -81,6 +81,7 @@ APPROVABLE = {
     ("PV", "SUBMITTED"),
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
+    ("OBR", "SUBMITTED"),   # Director approves expat mobilisation on mobile
 }
 
 
@@ -351,6 +352,37 @@ def _approval_list(doc):
             for a in doc.approvals.select_related("actor").order_by("acted_at")]
 
 
+def _obr_mobile_payload(doc, request):
+    """Read-only render of an onboarding request for the Director's approval
+    screen — the candidate + terms as a summary, plus the checklist docs."""
+    case = doc.onboarding
+    base = _base_header(doc, request)
+    summary = [
+        {"k": "Candidate", "v": f"{case.full_name} · {case.nationality}"},
+        {"k": "Passport", "v": case.passport_no or "—"},
+        {"k": "Route", "v": case.get_route_display()},
+    ]
+    if case.route == "BV":
+        summary.append({"k": "BV purpose", "v": case.get_bv_purpose_display()
+                        if case.bv_purpose else "—"})
+        if case.bv_purpose == "SUBCONTRACT" and case.subcontractor_id:
+            summary.append({"k": "Subcontractor", "v": case.subcontractor.name})
+    else:
+        summary.append({"k": "Quota pool", "v": case.get_quota_pool_display()})
+    summary += [
+        {"k": "Trade / category",
+         "v": f"{case.trade_designation} · {case.category}"},
+        {"k": "Destination site", "v": doc.site.code},
+    ]
+    if case.proposed_salary is not None:
+        summary.append({"k": "Proposed salary",
+                        "v": f"{case.currency} {case.proposed_salary:,.2f}"})
+    if case.route == "BV" and case.bv_justification:
+        summary.append({"k": "BV reason", "v": case.bv_justification})
+    base.update({"summary": summary})
+    return base
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
@@ -359,6 +391,8 @@ def _document_payload(doc, request):
         return _pr_mobile_payload(doc, request)
     if doc.doc_type == "IPR":
         return _ipr_mobile_payload(doc, request)
+    if doc.doc_type == "OBR":
+        return _obr_mobile_payload(doc, request)
     if doc.doc_type == "PV":
         qs = (PaymentVoucherLine.objects.filter(voucher=doc)
               .select_related("source_document__site",
@@ -437,6 +471,14 @@ def _act(request, ref, kind):
             request, doc, comment)
         if isinstance(result, Response) and result.status_code >= 400:
             return result
+    elif doc.doc_type == "OBR":
+        # Director approves / returns an expat mobilisation request
+        from . import onboarding
+        msg = onboarding.decide_case(
+            doc.onboarding, "approve" if kind == "approve" else "return",
+            request.user, comment)
+        if msg:
+            return Response({"detail": msg}, status=400)
     else:
         from .views_documents import _do_approve, _do_return
         fn = _do_approve if kind == "approve" else _do_return

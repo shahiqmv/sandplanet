@@ -668,6 +668,48 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("subcontractor", r.data["detail"].lower())
 
+    def _mobile_as(self, user):
+        user.set_password("verify-123")
+        user.save()
+        m = APIClient()
+        tok = m.post("/api/mobile/v1/auth/login",
+                     {"username": user.username, "password": "verify-123"},
+                     format="json").data["token"]
+        m.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+        return m
+
+    def test_director_approves_onboarding_on_mobile(self):
+        r = self._create()
+        pk, ref = r.data["id"], r.data["ref"]
+        self._attach_all(pk)
+        self.client.post(f"/api/v1/onboarding/{pk}/submit")
+        m = self._mobile_as(self.director)
+        q = m.get("/api/mobile/v1/queue")
+        self.assertIn(ref, [i["ref"] for i in q.data["items"]])
+        detail = m.get(f"/api/mobile/v1/documents/{ref}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertTrue(any(f["k"] == "Candidate"
+                            for f in detail.data["summary"]))
+        a = m.post(f"/api/mobile/v1/documents/{ref}/approve", {}, format="json")
+        self.assertEqual(a.status_code, 200, a.data)
+        self.assertEqual(Document.objects.get(pk=pk).status, "APPROVED")
+        # second tap → 409 already actioned
+        self.assertEqual(m.post(f"/api/mobile/v1/documents/{ref}/approve", {},
+                                format="json").status_code, 409)
+
+    def test_mobile_onboarding_return_requires_reason(self):
+        r = self._create()
+        pk, ref = r.data["id"], r.data["ref"]
+        self._attach_all(pk)
+        self.client.post(f"/api/v1/onboarding/{pk}/submit")
+        m = self._mobile_as(self.director)
+        self.assertEqual(m.post(f"/api/mobile/v1/documents/{ref}/return", {},
+                                format="json").status_code, 400)
+        ok = m.post(f"/api/mobile/v1/documents/{ref}/return",
+                    {"comment": "Passport expires too soon"}, format="json")
+        self.assertEqual(ok.status_code, 200, ok.data)
+        self.assertEqual(Document.objects.get(pk=pk).status, "RETURNED")
+
     def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
         from datetime import date, timedelta
         from . import onboarding as ob
