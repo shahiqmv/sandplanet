@@ -3302,6 +3302,10 @@ class ScheduleLine(models.Model):
 
     # --- planning (PM) ---
     category = models.CharField(max_length=80, blank=True)
+    # Optional link to the Item Master, so descriptions stay disciplined; the
+    # text fields carry the (item-derived or free-typed) values for display.
+    item = models.ForeignKey(Item, on_delete=models.SET_NULL, null=True,
+                             blank=True, related_name="+")
     description = models.TextField(blank=True)
     make_brand = models.CharField(max_length=120, blank=True)
     specification = models.TextField(blank=True)

@@ -72,6 +72,21 @@ class ProcurementScheduleTests(TestCase):
                              format="json")
         self.assertEqual(r.status_code, 400)
 
+    def test_line_links_to_item_master(self):
+        from .models import Item
+        item = Item.objects.create(code="ITM-90001", description="SS316 rail",
+                                   unit="m", category="Steel & Metalwork")
+        pk = self._open()
+        r = self._add_line(pk, item_id=item.id, quantity="12", uom="m",
+                           category="Steel & Metalwork")
+        self.assertEqual(r.status_code, 201, r.data)
+        ln = r.data["lines"][0]
+        self.assertEqual(ln["item_id"], item.id)
+        self.assertEqual(ln["item_code"], "ITM-90001")
+        self.assertEqual(str(ln["quantity"]), "12.00")
+        self.assertEqual(ln["uom"], "m")
+        self.assertEqual(ln["category"], "Steel & Metalwork")
+
     def test_propose_confirm_signoff(self):
         pk = self._open()
         r = self._add_line(pk)

@@ -246,7 +246,7 @@ function ScheduleDetail({ id, me, onBack }) {
         </div>
       </div>
 
-      {adding && <LineForm mode="plan" c={c}
+      {adding && <LineForm mode="plan" c={c} me={me}
         onCancel={() => setAdding(false)}
         onSaved={() => { setAdding(false); load(); }} />}
 
@@ -261,7 +261,7 @@ function ScheduleDetail({ id, me, onBack }) {
             <table style={{ width: "100%", borderCollapse: "collapse",
               fontSize: 12.5 }}>
               <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                {["#", "Description", "Make", "Qty", "Trade", "Supply",
+                {["#", "Description", "Make", "Qty", "Category", "Supply",
                   "Required", "Supplier", "Country", "Lead",
                   ...(c.show_values ? ["Est. value"] : []),
                   "State", ""].map((h, i) =>
@@ -279,9 +279,10 @@ function ScheduleDetail({ id, me, onBack }) {
                     <td style={cell}>{ln.quantity != null
                       ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
                       : (ln.uom || "—")}</td>
-                    <td style={cell}>{ln.trade || "—"}</td>
+                    <td style={cell}>{ln.category || ln.trade || "—"}</td>
                     <td style={cell}>{ln.supply_by === "CLIENT"
-                      ? <Chip tone="warn">Client</Chip> : "Contractor"}</td>
+                      ? <Chip tone="warn">{c.site_code}</Chip>
+                      : "Sand Planet"}</td>
                     <td style={cell}>{fmt(ln.required_date)}</td>
                     <td style={cell}>{ln.planned_supplier || "—"}</td>
                     <td style={cell}>{ln.source_country || "—"}</td>
@@ -307,24 +308,63 @@ function ScheduleDetail({ id, me, onBack }) {
       })}
 
       {editId && <LineForm mode={c.can_confirm ? "commercial" : "plan"} c={c}
-        line={c.lines.find((l) => l.id === editId)}
+        me={me} line={c.lines.find((l) => l.id === editId)}
         onCancel={() => setEditId(null)}
         onSaved={() => { setEditId(null); load(); }} />}
     </div>
   );
 }
 
-function LineForm({ mode, c, line, onCancel, onSaved }) {
+const UOMS = ["nos", "set", "lot", "pcs", "pair", "box", "m", "m²", "m³",
+  "ft", "sqft", "kg", "ton", "litre", "bag", "drum", "roll", "sheet", "bundle"];
+
+function LineForm({ mode, c, me, line, onCancel, onSaved }) {
   const isNew = !line;
   const [f, setF] = useState(() => line ? { ...line,
     section_code: line.section_code, section_title: line.section_title }
     : { supply_by: "CONTRACTOR", section_code: "", section_title: "",
-        description: "", make_brand: "", specification: "", trade: "",
-        quantity: "", uom: "", required_date: "", tds_required: false });
+        description: "", item_id: null, make_brand: "", specification: "",
+        category: "", quantity: "", uom: "", required_date: "",
+        tds_required: false });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
+  const [items, setItems] = useState([]);
+  const [cats, setCats] = useState([]);
   const set = (k) => (e) => setF({ ...f,
     [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
+  const patch = (o) => setF((prev) => ({ ...prev, ...o }));
+
+  useEffect(() => {
+    api("/items").then(setItems).catch(() => setItems([]));
+    api("/item-categories").then(setCats).catch(() => setCats([]));
+  }, []);
+
+  const supplyLabel = { CONTRACTOR: "Sand Planet", CLIENT: c.site_code };
+  const canCreateItem = ["HO_PURCHASING", "ADMIN", "SITE_ADMIN",
+    "SITE_ENGINEER", "PM", "QS", "DIRECTOR"].includes(me?.role);
+  const noItemMatch = canCreateItem && (f.description || "").trim() &&
+    !f.item_id && !items.some((it) =>
+      it.description.toLowerCase() === f.description.trim().toLowerCase());
+
+  function pickDescription(v) {
+    const match = items.find((it) =>
+      it.description.toLowerCase() === v.trim().toLowerCase());
+    if (match) patch({ description: match.description, item_id: match.id,
+      uom: match.unit || f.uom, category: match.category || f.category });
+    else patch({ description: v, item_id: null });
+  }
+  async function addToCatalog() {
+    const description = (f.description || "").trim();
+    const unit = window.prompt(`Add "${description}" to the item catalog.\n`
+      + "Unit (nos, set, m, kg…):", f.uom || "");
+    if (unit === null) return;
+    try {
+      const item = await api("/items", { method: "POST",
+        body: { description, unit: unit.trim(), category: f.category || "" } });
+      setItems((l) => [...l, item]);
+      patch({ item_id: item.id, uom: item.unit });
+    } catch (e) { window.alert(e.message); }
+  }
 
   async function save() {
     setBusy(true); setErr(null);
@@ -362,18 +402,40 @@ function LineForm({ mode, c, line, onCancel, onSaved }) {
             value={f.section_title} onChange={set("section_title")}
             placeholder="Villa Upgrades" /></L>
           <L k="Supply"><select style={inputStyle} value={f.supply_by}
-            onChange={set("supply_by")}>{SUPPLY.map(([v, l]) =>
-              <option key={v} value={v}>{l}</option>)}</select></L>
-          <L k="Description *" wide><input style={inputStyle}
-            value={f.description} onChange={set("description")} /></L>
+            onChange={set("supply_by")}>{SUPPLY.map(([v]) =>
+              <option key={v} value={v}>{supplyLabel[v]}</option>)}</select></L>
+          <L k="Description *" wide>
+            <input style={inputStyle} list="psc-items" value={f.description}
+              placeholder="Search the item catalog…"
+              onChange={(e) => pickDescription(e.target.value)} />
+            <datalist id="psc-items">
+              {items.map((it) => <option key={it.id} value={it.description}
+                label={it.code} />)}
+            </datalist>
+            {f.item_id && <span style={{ fontSize: 11,
+              color: "var(--green-fg)" }}>✓ linked to catalog</span>}
+            {noItemMatch && <button type="button" onClick={addToCatalog}
+              style={{ ...linkBtn, fontSize: 11.5, color: "var(--sky)" }}>
+              + Add "{f.description.trim().slice(0, 28)}" to the catalog</button>}
+          </L>
           <L k="Make / brand"><input style={inputStyle} value={f.make_brand}
             onChange={set("make_brand")} /></L>
           <L k="Quantity"><input type="number" style={inputStyle}
             value={f.quantity ?? ""} onChange={set("quantity")} /></L>
-          <L k="Unit (UOM)"><input style={inputStyle} value={f.uom || ""}
-            onChange={set("uom")} placeholder="nos / m / set" /></L>
-          <L k="Trade"><input style={inputStyle} value={f.trade}
-            onChange={set("trade")} /></L>
+          <L k="Unit (UOM)">
+            <input style={inputStyle} list="psc-uoms" value={f.uom || ""}
+              onChange={set("uom")} placeholder="nos / m² / set" />
+            <datalist id="psc-uoms">
+              {UOMS.map((u) => <option key={u} value={u} />)}</datalist></L>
+          <L k="Trade / category">
+            <select style={inputStyle} value={f.category || ""}
+              onChange={set("category")}>
+              <option value="">—</option>
+              {f.category && !cats.some((x) => x.name === f.category) &&
+                <option value={f.category}>{f.category}</option>}
+              {cats.map((x) => <option key={x.id} value={x.name}>
+                {x.name}</option>)}
+            </select></L>
           <L k="Required on site"><input type="date" style={inputStyle}
             value={f.required_date || ""} onChange={set("required_date")} /></L>
           <L k="Specification" wide><input style={inputStyle}

@@ -212,6 +212,8 @@ def _apply_plan(line, data):
 
 
 def _apply_required(line, data):
+    if "item_id" in data:
+        line.item_id = data.get("item_id") or None
     if "quantity" in data:
         line.quantity = _dec(data.get("quantity"))
     if "required_date" in data:
@@ -322,6 +324,8 @@ def line_dict(line, values=True):
         "section_code": line.section.code if line.section_id else "",
         "section_title": line.section.title if line.section_id else "",
         "category": line.category, "description": line.description,
+        "item_id": line.item_id,
+        "item_code": line.item.code if line.item_id else "",
         "make_brand": line.make_brand, "specification": line.specification,
         "quantity": line.quantity, "uom": line.uom,
         "trade": line.trade, "supply_by": line.supply_by,
