@@ -323,6 +323,37 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_completion_hands_over_to_employee_db(self):
+        from .models import Notification, OnboardingCase
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
+        self._pay_fee(pk, "WP_DEPOSIT")
+        self._adv(pk)                                  # → WP_TICKET
+        self._pay_fee(pk, "WP_TICKET")
+        self._adv(pk, arrived_date="2026-08-01")       # → WP_ARRIVED
+        self._adv(pk)                                  # → WP_MEDICAL
+        self._sdata(pk, medical_result="PASS")
+        self._adv(pk)                                  # → WP_ISSUED
+        r = self._adv(pk)                              # → COMPLETED + handover
+        self.assertEqual(r.data["status"], "COMPLETED")
+        self.assertTrue(r.data["employee_no"].startswith("EMP-"))
+        case = OnboardingCase.objects.get(pk=pk)
+        emp = case.employee
+        self.assertIsNotNone(emp)
+        self.assertEqual(emp.engagement_type, "DIRECT")
+        self.assertEqual(emp.employment_type, "PERMANENT")
+        self.assertEqual(emp.full_name, case.full_name)
+        self.assertEqual(emp.passport_no, case.passport_no)
+        self.assertEqual(str(emp.join_date), "2026-08-01")   # arrival date
+        self.assertTrue(emp.is_active)
+        self.assertFalse(emp.hire_pending)                   # already approved
+        alloc = emp.site_allocations.filter(to_date__isnull=True).first()
+        self.assertEqual(alloc.site_id, case.document.site_id)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__icontains="Employee DB").exists())
+
     def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
         from datetime import date, timedelta
         from . import onboarding as ob

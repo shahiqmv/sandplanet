@@ -317,9 +317,12 @@ def advance_stage(case, data, actor):
         return err
     idx = seq.index(case.stage)
     if idx + 1 >= len(seq):                          # past the last stage
-        _set_status(doc, "COMPLETED", "COMPLETE", actor)
+        with transaction.atomic():
+            _set_status(doc, "COMPLETED", "COMPLETE", actor)
+            emp = _handover_employee(case, actor)
         audit("document", doc.id, "OBR_COMPLETED", actor=actor,
-              detail={"ref": doc.ref})
+              detail={"ref": doc.ref, "emp_no": emp.emp_no if emp else ""})
+        _notify_handover(case, emp)
         return None
     nxt = seq[idx + 1]
     err = _on_enter(case, nxt, data)
@@ -737,6 +740,53 @@ def run_clocks(today=None):
             "digest_sent": digest}
 
 
+# ---- employee handover (Phase 6) -----------------------------------------
+
+def _handover_employee(case, actor):
+    """On case completion, mobilise the candidate into the Employee DB as a
+    DIRECT (payroll) hire — no re-keying: name/passport/DOB/category/salary carry
+    over, allocated to the destination site from the arrival date. Idempotent."""
+    from .models import Employee, EmployeeSiteAllocation
+    if case.employee_id:
+        return case.employee
+    n = int(next_ref("EMP", None).split("-")[1])
+    join = case.arrived_date or timezone.localdate()
+    emp = Employee.objects.create(
+        emp_no=f"EMP-{n:04d}", full_name=case.full_name,
+        passport_no=case.passport_no or "",
+        nationality=case.nationality or "",
+        date_of_birth=case.date_of_birth,
+        job_category_id=case.job_category_id or None,
+        basic_pay=case.proposed_salary, currency=case.currency or "MVR",
+        employment_type=Employee.EmploymentType.PERMANENT,
+        emergency_contact=case.emergency_contact or "",
+        join_date=join, is_active=True,
+        engagement_type=Employee.Engagement.DIRECT)
+    EmployeeSiteAllocation.objects.create(
+        employee=emp, site=case.document.site, from_date=join)
+    case.employee = emp
+    case.save(update_fields=["employee", "updated_at"])
+    audit("employee", emp.id, "OBR_HANDOVER", actor=actor,
+          detail={"obr": case.document.ref, "emp_no": emp.emp_no})
+    return emp
+
+
+def _notify_handover(case, emp):
+    if not emp:
+        return
+    from . import notify
+    doc = case.document
+    recips = set(notify._role_users("HO_HR"))
+    pm = doc.site.current_pm()
+    if pm:
+        recips.add(pm)
+    for u in recips:
+        notify.notify_user(
+            u, f"Onboarding {doc.ref} — {emp.emp_no} now on the Employee DB",
+            body=f"{emp.full_name} · {doc.site.code} — mobilised as a DIRECT "
+                 "(payroll) hire", doc=doc, category="alert")
+
+
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):
@@ -801,6 +851,8 @@ def case_dict(case):
         "stage": case.stage, "bv_expiry": case.bv_expiry,
         "medical_due": case.medical_due,
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
+        "employee_id": case.employee_id,
+        "employee_no": case.employee.emp_no if case.employee_id else None,
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),
         "letters": [_letter_dict(ltr) for ltr

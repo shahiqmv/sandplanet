@@ -412,6 +412,13 @@ function Processing({ c, me, onReload }) {
               {c.stage_label}</span>}
       </div>
       {err}
+      {c.employee_no && (
+        <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8,
+          background: "var(--green-bg)", color: "var(--green-fg)",
+          fontSize: 12.5, fontWeight: 600 }}>
+          ✓ Mobilised to the Employee DB as {c.employee_no} · DIRECT (payroll)
+        </div>
+      )}
       {/* stepper */}
       <div style={{ margin: "10px 0" }}>
         {c.stages.map((s) => (
