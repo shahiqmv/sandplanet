@@ -269,9 +269,23 @@ class Document(models.Model):
         IRN = "IRN"  # import receipt note — count at the HO store (§5.10.8)
         SIN = "SIN"  # store issue note — issue stock to a site (§6D.3, P1B-f)
         SCA = "SCA"  # subcontract agreement (subcontractor module)
+        OBR = "OBR"  # onboarding request — expat recruitment/mobilisation
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
+        # Onboarding case: PM/HR raise → PD (Director) approves → HR processes
+        # the visa/permit stages (tracked on the OnboardingCase.stage) → the
+        # case completes into a DIRECT employee.
+        "OBR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"APPROVED", "RETURNED", "REJECTED"},
+            "RETURNED": {"SUBMITTED", "CANCELLED"},
+            "APPROVED": {"IN_PROGRESS", "CANCELLED"},
+            "IN_PROGRESS": {"COMPLETED", "CANCELLED"},
+            "COMPLETED": set(),
+            "REJECTED": set(),
+            "CANCELLED": set(),
+        },
         "DPR": {"DRAFT": {"ISSUED"}, "ISSUED": {"VERIFIED"}},
         "TWS": {"DRAFT": {"ISSUED"}, "ISSUED": {"ACKNOWLEDGED"}},
         "IR": {
@@ -508,6 +522,9 @@ class Attachment(models.Model):
         ("PHOTO", "Photo"), ("ENCLOSURE", "Enclosure"), ("QUOTATION", "Quotation"),
         ("EVIDENCE", "Evidence"), ("GENERATED_PDF", "Generated PDF"),
         ("PAYMENT_SLIP", "Payment slip / voucher"),
+        # Onboarding case documents (checklist + processing evidence)
+        ("PASSPORT_COPY", "Passport copy"), ("PASSPORT_PHOTO", "Passport photo"),
+        ("PASSPORT_OBS", "Passport observation page"), ("CV", "CV"),
     ]
 
     document = models.ForeignKey(
@@ -1783,6 +1800,63 @@ class SalaryRevision(models.Model):
     def is_open(self):
         return self.status in (self.Status.SUBMITTED, self.Status.PM_APPROVED,
                                self.Status.RETURNED)
+
+
+class OnboardingCase(models.Model):
+    """The typed sidecar on an OBR (onboarding request) Document — an expat
+    recruitment/visa/mobilisation case. PM/HR raise it, the Director (PD) is the
+    single approval gate, HR processes the visa/permit stages, and on completion
+    it hands the person to the Employee DB as a DIRECT hire (onboarding module,
+    owner 2026-07-20). Candidate/passport fields are sensitive: HR / PD / the
+    destination-site PM only."""
+
+    class Route(models.TextChoices):
+        WP = "WP", "Work permit (standard)"
+        BV = "BV", "Business visa (urgent)"
+
+    class Category(models.TextChoices):
+        SKILLED = "SKILLED", "Skilled"
+        UNSKILLED = "UNSKILLED", "Unskilled"
+        STAFF = "STAFF", "Staff"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    primary_key=True, related_name="onboarding")
+    # --- candidate (sensitive) ---
+    full_name = models.TextField()
+    nationality = models.TextField(blank=True)
+    date_of_birth = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=10, blank=True)
+    passport_no = models.TextField(blank=True)
+    passport_expiry = models.DateField(null=True, blank=True)
+    category = models.CharField(max_length=10, choices=Category.choices,
+                                blank=True)
+    trade_designation = models.TextField(blank=True)   # job title / occupation
+    job_category = models.ForeignKey(ManpowerCategory, on_delete=models.PROTECT,
+                                     null=True, blank=True, related_name="+")
+    proposed_salary = models.DecimalField(max_digits=12, decimal_places=2,
+                                          null=True, blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    permanent_address = models.TextField(blank=True)
+    mobile = models.TextField(blank=True)
+    emergency_contact = models.TextField(blank=True)
+    mobilisation_date = models.DateField(null=True, blank=True)   # expected
+    # --- route ---
+    route = models.CharField(max_length=2, choices=Route.choices)
+    bv_justification = models.TextField(blank=True)
+    # --- processing (set once approved; the HR track stage machine) ---
+    stage = models.CharField(max_length=30, blank=True)
+    arrived_date = models.DateField(null=True, blank=True)     # starts medical
+    medical_due = models.DateField(null=True, blank=True)      # arrival + 14d
+    bv_expiry = models.DateField(null=True, blank=True)        # the BV clock
+    bv_renewals = models.PositiveIntegerField(default=0)       # capped at 2
+    # --- handover ---
+    employee = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.full_name}"
 
 
 class WorkPermitRenewal(models.Model):

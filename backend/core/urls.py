@@ -10,6 +10,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_tools as tools_api, \
     views_tracking as tracking_api, views_vouchers as vouchers, \
     views_receivables as receivables_api, \
+    views_onboarding as onboarding_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -331,6 +332,18 @@ urlpatterns = [
          name="salary-revisions"),
     path("salary-revisions/<int:pk>/action",
          worker_api.salary_revision_action, name="salary-revision-action"),
+    # Onboarding cases (expat recruitment / visa / mobilisation)
+    path("onboarding", onboarding_api.onboarding_cases, name="onboarding-cases"),
+    path("sites/<int:site_id>/onboarding", onboarding_api.onboarding_create,
+         name="onboarding-create"),
+    path("onboarding/<int:pk>", onboarding_api.onboarding_detail,
+         name="onboarding-detail"),
+    path("onboarding/<int:pk>/submit", onboarding_api.onboarding_submit,
+         name="onboarding-submit"),
+    path("onboarding/<int:pk>/action", onboarding_api.onboarding_action,
+         name="onboarding-action"),
+    path("onboarding/<int:pk>/documents", onboarding_api.onboarding_document,
+         name="onboarding-document"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),

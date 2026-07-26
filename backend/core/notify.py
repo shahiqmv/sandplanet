@@ -79,6 +79,14 @@ def targets_for(doc):
         return [(u, "to pay") for u in _role_users("FINANCE")]
     if t == "PV" and s == "SUBMITTED":
         return [(u, "to approve") for u in _role_users("SIGNATORY")]
+    # Onboarding case (OBR): PD (Director) approves; HR processes once approved;
+    # a returned case goes back to whoever raised it.
+    if t == "OBR" and s == "SUBMITTED":
+        return [(u, "needs Director approval") for u in _role_users("DIRECTOR")]
+    if t == "OBR" and s == "APPROVED":
+        return [(u, "approved — to process") for u in _role_users("HO_HR")]
+    if t == "OBR" and s == "RETURNED" and doc.created_by_id:
+        return [(doc.created_by, "returned — revise and resubmit")]
     return []
 
 

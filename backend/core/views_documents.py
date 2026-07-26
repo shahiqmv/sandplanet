@@ -679,6 +679,9 @@ def pending_groups(user):
         add("To activate — PM-approved subcontract agreements",
             rows(base.filter(doc_type="SCA", status="PM_APPROVED"),
                  "Director activation of the agreement"))
+        add("To approve — onboarding requests (expat mobilisation)",
+            rows(scoped(base.filter(doc_type="OBR", status="SUBMITTED")),
+                 "Director approval to mobilise"))
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.
