@@ -371,6 +371,7 @@ function Processing({ c, me, onReload }) {
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
+  const [arrEdit, setArrEdit] = useState("");
 
   async function run(fn) {
     setBusy(true); setError(null);
@@ -416,7 +417,8 @@ function Processing({ c, me, onReload }) {
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8,
           background: "var(--green-bg)", color: "var(--green-fg)",
           fontSize: 12.5, fontWeight: 600 }}>
-          ✓ Mobilised to the Employee DB as {c.employee_no} · DIRECT (payroll)
+          ✓ On site payroll as {c.employee_no} · DIRECT — on the site manpower
+          list from arrival
         </div>
       )}
       {/* stepper */}
@@ -476,6 +478,20 @@ function Processing({ c, me, onReload }) {
               <Btn variant="secondary" disabled={busy}
                    onClick={() => setData({ medical_result: medical })}>
                 Record</Btn>
+            </div>
+          )}
+          {c.arrived_date && (
+            <div style={ctl}>
+              <span>Arrival date</span>
+              <input type="date" style={inputStyle}
+                     value={arrEdit || c.arrived_date}
+                     onChange={(e) => setArrEdit(e.target.value)} />
+              <Btn variant="secondary" disabled={busy}
+                   onClick={() => setData(
+                     { arrived_date: arrEdit || c.arrived_date })}>
+                Update</Btn>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                salary counts from this date</span>
             </div>
           )}
           {c.at_payment && c.fee && (

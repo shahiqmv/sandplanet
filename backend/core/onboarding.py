@@ -317,12 +317,14 @@ def advance_stage(case, data, actor):
         return err
     idx = seq.index(case.stage)
     if idx + 1 >= len(seq):                          # past the last stage
+        created = case.employee_id is None
         with transaction.atomic():
             _set_status(doc, "COMPLETED", "COMPLETE", actor)
-            emp = _handover_employee(case, actor)
+            emp = _handover_employee(case, actor)    # safety net (usually a no-op)
         audit("document", doc.id, "OBR_COMPLETED", actor=actor,
               detail={"ref": doc.ref, "emp_no": emp.emp_no if emp else ""})
-        _notify_handover(case, emp)
+        if created:
+            _notify_handover(case, emp)
         return None
     nxt = seq[idx + 1]
     err = _on_enter(case, nxt, data)
@@ -333,6 +335,11 @@ def advance_stage(case, data, actor):
     audit("document", doc.id, "OBR_STAGE", actor=actor,
           detail={"ref": doc.ref, "stage": nxt})
     _stage_notify(case, nxt)
+    # Salary + site manpower start on arrival (owner): mobilise into the
+    # Employee DB the moment the worker lands, not at case completion.
+    if nxt in ARRIVAL_STAGES and case.employee_id is None:
+        emp = _handover_employee(case, actor)
+        _notify_handover(case, emp)
     return None
 
 
@@ -358,6 +365,23 @@ def set_stage_data(case, data, actor):
         changed.append("medical_result")
         if mr == "FAIL":
             _notify_medical_fail(case)
+    # Correct the arrival date after the fact — HR often records the arrival a
+    # few days late, but salary counts from the day the worker actually landed,
+    # so the original date must be enterable and editable. Moving it realigns
+    # the medical window and the employee's join date + site allocation.
+    if "arrived_date" in data and case.arrived_date:
+        from datetime import date, timedelta
+        try:
+            ad = date.fromisoformat(str(data["arrived_date"]))
+        except (ValueError, TypeError):
+            return "Invalid arrival date."
+        case.arrived_date = ad
+        if not case.medical_result:
+            case.medical_due = ad + timedelta(days=14)
+        if case.employee_id:
+            _realign_join_date(case, ad)
+        case.medical_alert = ""            # window moved — let clocks re-alert
+        changed.append("arrived_date")
     if not changed:
         return "Nothing to update at this stage."
     case.save()
@@ -743,32 +767,48 @@ def run_clocks(today=None):
 # ---- employee handover (Phase 6) -----------------------------------------
 
 def _handover_employee(case, actor):
-    """On case completion, mobilise the candidate into the Employee DB as a
-    DIRECT (payroll) hire — no re-keying: name/passport/DOB/category/salary carry
-    over, allocated to the destination site from the arrival date. Idempotent."""
+    """Mobilise the candidate into the Employee DB as a DIRECT (payroll) hire —
+    no re-keying: name/passport/DOB/category/salary carry over, and an open
+    allocation to the destination site puts them on that site's manpower list
+    and payroll from the arrival date. Fired on arrival (owner). Idempotent."""
     from .models import Employee, EmployeeSiteAllocation
     if case.employee_id:
         return case.employee
-    n = int(next_ref("EMP", None).split("-")[1])
     join = case.arrived_date or timezone.localdate()
-    emp = Employee.objects.create(
-        emp_no=f"EMP-{n:04d}", full_name=case.full_name,
-        passport_no=case.passport_no or "",
-        nationality=case.nationality or "",
-        date_of_birth=case.date_of_birth,
-        job_category_id=case.job_category_id or None,
-        basic_pay=case.proposed_salary, currency=case.currency or "MVR",
-        employment_type=Employee.EmploymentType.PERMANENT,
-        emergency_contact=case.emergency_contact or "",
-        join_date=join, is_active=True,
-        engagement_type=Employee.Engagement.DIRECT)
-    EmployeeSiteAllocation.objects.create(
-        employee=emp, site=case.document.site, from_date=join)
-    case.employee = emp
-    case.save(update_fields=["employee", "updated_at"])
+    with transaction.atomic():
+        n = int(next_ref("EMP", None).split("-")[1])
+        emp = Employee.objects.create(
+            emp_no=f"EMP-{n:04d}", full_name=case.full_name,
+            passport_no=case.passport_no or "",
+            nationality=case.nationality or "",
+            date_of_birth=case.date_of_birth,
+            job_category_id=case.job_category_id or None,
+            basic_pay=case.proposed_salary, currency=case.currency or "MVR",
+            employment_type=Employee.EmploymentType.PERMANENT,
+            emergency_contact=case.emergency_contact or "",
+            join_date=join, is_active=True,
+            engagement_type=Employee.Engagement.DIRECT)
+        EmployeeSiteAllocation.objects.create(
+            employee=emp, site=case.document.site, from_date=join)
+        case.employee = emp
+        case.save(update_fields=["employee", "updated_at"])
     audit("employee", emp.id, "OBR_HANDOVER", actor=actor,
           detail={"obr": case.document.ref, "emp_no": emp.emp_no})
     return emp
+
+
+def _realign_join_date(case, join):
+    """A corrected arrival date moves when salary starts — carry it onto the
+    employee's join date and the open site-allocation's from-date."""
+    emp = case.employee
+    if emp.join_date != join:
+        emp.join_date = join
+        emp.save(update_fields=["join_date", "updated_at"])
+    alloc = (emp.site_allocations.filter(to_date__isnull=True)
+             .order_by("from_date").first())
+    if alloc and alloc.from_date != join:
+        alloc.from_date = join
+        alloc.save(update_fields=["from_date"])
 
 
 def _notify_handover(case, emp):
@@ -776,15 +816,17 @@ def _notify_handover(case, emp):
         return
     from . import notify
     doc = case.document
+    join = emp.join_date
     recips = set(notify._role_users("HO_HR"))
     pm = doc.site.current_pm()
     if pm:
         recips.add(pm)
     for u in recips:
         notify.notify_user(
-            u, f"Onboarding {doc.ref} — {emp.emp_no} now on the Employee DB",
-            body=f"{emp.full_name} · {doc.site.code} — mobilised as a DIRECT "
-                 "(payroll) hire", doc=doc, category="alert")
+            u, f"Onboarding {doc.ref} — {emp.emp_no} on site payroll",
+            body=f"{emp.full_name} · {doc.site.code} — added to the site "
+                 f"manpower list as a DIRECT hire from {join:%d %b %Y}",
+            doc=doc, category="alert")
 
 
 # ---- serialisation -------------------------------------------------------

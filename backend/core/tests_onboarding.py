@@ -323,8 +323,8 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
-    def test_completion_hands_over_to_employee_db(self):
-        from .models import Notification, OnboardingCase
+    def test_arrival_hands_over_to_employee_db(self):
+        from .models import Employee, Notification, OnboardingCase
         pk = self._approved()
         self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
@@ -332,13 +332,15 @@ class OnboardingSpineTests(TestCase):
         self._pay_fee(pk, "WP_DEPOSIT")
         self._adv(pk)                                  # → WP_TICKET
         self._pay_fee(pk, "WP_TICKET")
-        self._adv(pk, arrived_date="2026-08-01")       # → WP_ARRIVED
+        r = self._adv(pk, arrived_date="2026-08-01")   # → WP_ARRIVED + handover
+        # the worker joins the Employee DB on ARRIVAL (salary starts then),
+        # not at completion
+        self.assertTrue(r.data["employee_no"].startswith("EMP-"))
         self._adv(pk)                                  # → WP_MEDICAL
         self._sdata(pk, medical_result="PASS")
         self._adv(pk)                                  # → WP_ISSUED
-        r = self._adv(pk)                              # → COMPLETED + handover
+        r = self._adv(pk)                              # → COMPLETED
         self.assertEqual(r.data["status"], "COMPLETED")
-        self.assertTrue(r.data["employee_no"].startswith("EMP-"))
         case = OnboardingCase.objects.get(pk=pk)
         emp = case.employee
         self.assertIsNotNone(emp)
@@ -351,8 +353,33 @@ class OnboardingSpineTests(TestCase):
         self.assertFalse(emp.hire_pending)                   # already approved
         alloc = emp.site_allocations.filter(to_date__isnull=True).first()
         self.assertEqual(alloc.site_id, case.document.site_id)
+        self.assertEqual(str(alloc.from_date), "2026-08-01")
+        # only one employee across the whole walk (arrival + completion)
+        self.assertEqual(Employee.objects.filter(pk=emp.pk).count(), 1)
         self.assertTrue(Notification.objects.filter(
-            recipient=self.hr, title__icontains="Employee DB").exists())
+            recipient=self.hr, title__icontains="site payroll").exists())
+
+    def test_editing_arrival_date_moves_salary_start(self):
+        from .models import OnboardingCase
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
+        self._pay_fee(pk, "WP_DEPOSIT")
+        self._adv(pk)                                  # → WP_TICKET
+        self._pay_fee(pk, "WP_TICKET")
+        self._adv(pk, arrived_date="2026-08-10")       # → WP_ARRIVED (recorded late)
+        emp = OnboardingCase.objects.get(pk=pk).employee
+        self.assertEqual(str(emp.join_date), "2026-08-10")
+        # HR corrects it to the day the worker actually landed
+        self._sdata(pk, arrived_date="2026-08-03")
+        case = OnboardingCase.objects.get(pk=pk)
+        emp.refresh_from_db()
+        self.assertEqual(str(case.arrived_date), "2026-08-03")
+        self.assertEqual(str(case.medical_due), "2026-08-17")   # +14 recomputed
+        self.assertEqual(str(emp.join_date), "2026-08-03")      # salary start moved
+        alloc = emp.site_allocations.filter(to_date__isnull=True).first()
+        self.assertEqual(str(alloc.from_date), "2026-08-03")
 
     def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
         from datetime import date, timedelta
