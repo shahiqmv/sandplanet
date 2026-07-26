@@ -82,6 +82,7 @@ APPROVABLE = {
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
     ("OBR", "SUBMITTED"),   # Director approves expat mobilisation on mobile
+    ("PSC", "CONFIRMED"),   # Director signs off a procurement schedule on mobile
 }
 
 
@@ -383,6 +384,30 @@ def _obr_mobile_payload(doc, request):
     return base
 
 
+def _psc_mobile_payload(doc, request):
+    """Read-only render of a procurement schedule for the Director's sign-off
+    screen — the project + a per-section line count as a summary."""
+    sched = doc.procurement_schedule
+    base = _base_header(doc, request)
+    lines = list(sched.lines.exclude(state="CANCELLED")
+                 .select_related("section"))
+    per_section = {}
+    for ln in lines:
+        key = f"{ln.section.code} — {ln.section.title}" if ln.section_id \
+            else "Ungrouped"
+        per_section[key] = per_section.get(key, 0) + 1
+    summary = [
+        {"k": "Project", "v": f"{sched.project.code} · {sched.project.title}"},
+        {"k": "Site", "v": doc.site.code},
+        {"k": "Lines to sign off",
+         "v": str(sum(1 for ln in lines if ln.state == "CONFIRMED"))},
+        {"k": "Total lines", "v": str(len(lines))},
+    ]
+    summary += [{"k": sec, "v": str(n)} for sec, n in per_section.items()]
+    base.update({"summary": summary})
+    return base
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
@@ -393,6 +418,8 @@ def _document_payload(doc, request):
         return _ipr_mobile_payload(doc, request)
     if doc.doc_type == "OBR":
         return _obr_mobile_payload(doc, request)
+    if doc.doc_type == "PSC":
+        return _psc_mobile_payload(doc, request)
     if doc.doc_type == "PV":
         qs = (PaymentVoucherLine.objects.filter(voucher=doc)
               .select_related("source_document__site",
@@ -476,6 +503,15 @@ def _act(request, ref, kind):
         from . import onboarding
         msg = onboarding.decide_case(
             doc.onboarding, "approve" if kind == "approve" else "return",
+            request.user, comment)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    elif doc.doc_type == "PSC":
+        # Director signs off / returns a procurement schedule
+        from . import procurement_schedule as ps
+        msg = ps.decide(
+            doc.procurement_schedule,
+            "sign_off" if kind == "approve" else "return",
             request.user, comment)
         if msg:
             return Response({"detail": msg}, status=400)

@@ -87,6 +87,14 @@ def targets_for(doc):
         return [(u, "approved — to process") for u in _role_users("HO_HR")]
     if t == "OBR" and s == "RETURNED" and doc.created_by_id:
         return [(doc.created_by, "returned — revise and resubmit")]
+    # Procurement schedule (PSC): Purchasing confirms a submitted batch, the
+    # Director signs it off; a returned schedule goes back to the PM.
+    if t == "PSC" and s == "SUBMITTED":
+        return [(u, "to confirm") for u in _role_users("HO_PURCHASING")]
+    if t == "PSC" and s == "CONFIRMED":
+        return [(u, "to sign off") for u in _role_users("DIRECTOR")]
+    if t == "PSC" and s == "DRAFT":
+        return [(u, "returned — revise and resubmit") for u in _pm_for(doc)]
     return []
 
 

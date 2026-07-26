@@ -270,6 +270,7 @@ class Document(models.Model):
         SIN = "SIN"  # store issue note — issue stock to a site (§6D.3, P1B-f)
         SCA = "SCA"  # subcontract agreement (subcontractor module)
         OBR = "OBR"  # onboarding request — expat recruitment/mobilisation
+        PSC = "PSC"  # procurement schedule — per-project planning layer
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -284,6 +285,16 @@ class Document(models.Model):
             "IN_PROGRESS": {"COMPLETED", "CANCELLED"},
             "COMPLETED": set(),
             "REJECTED": set(),
+            "CANCELLED": set(),
+        },
+        # Procurement schedule sign-off cycle: PM drafts, Purchasing confirms,
+        # the Director (PD) signs off the baseline. A signed schedule reopens to
+        # DRAFT for a change batch (already-signed lines stay operational).
+        "PSC": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"CONFIRMED", "DRAFT"},     # Purchasing confirms / returns
+            "CONFIRMED": {"SIGNED_OFF", "DRAFT"},    # PD signs off / returns
+            "SIGNED_OFF": {"DRAFT", "CANCELLED"},    # reopen for a change batch
             "CANCELLED": set(),
         },
         "DPR": {"DRAFT": {"ISSUED"}, "ISSUED": {"VERIFIED"}},
@@ -3218,3 +3229,122 @@ class ToolAsset(models.Model):
 
     def __str__(self):
         return f"{self.name} @ {self.site.code}"
+
+
+# ===== Procurement Schedule (per-project planning layer) =====================
+
+
+class ProcurementSchedule(models.Model):
+    """A per-project forward view of key/import materials. The schedule WATCHES
+    the execution documents (MAR/IPR/shipment/IRN-GRN) rather than duplicating
+    them: once a line is linked, its pipeline status + ETA derive automatically.
+    The schedule is a Document subtype (doc_type PSC) so it rides the standard
+    sign-off queue — PM drafts, Purchasing confirms, the Director signs off."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    primary_key=True,
+                                    related_name="procurement_schedule")
+    project = models.OneToOneField(Project, on_delete=models.CASCADE,
+                                   related_name="procurement_schedule")
+    baseline_signed_at = models.DateTimeField(null=True, blank=True)
+    baseline_signed_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                           null=True, blank=True,
+                                           related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.project.code}"
+
+
+class ScheduleSection(models.Model):
+    """A grouping of schedule lines matching the client format's sections
+    (e.g. "A — Villa Upgrades"). Line serial numbers run per section."""
+
+    schedule = models.ForeignKey(ProcurementSchedule, on_delete=models.CASCADE,
+                                 related_name="sections")
+    code = models.CharField(max_length=8)          # "A", "B"
+    title = models.CharField(max_length=160)        # "Villa Upgrades"
+    sort_order = models.IntegerField(default=100)
+
+    class Meta:
+        ordering = ["sort_order", "code", "id"]
+
+    def __str__(self):
+        return f"{self.code} — {self.title}"
+
+
+class ScheduleLine(models.Model):
+    """One planned material. Planning fields are proposed by the PM and
+    commercial fields confirmed by Purchasing; links + manual stages drive the
+    derived pipeline and the late-risk engine (built in later phases)."""
+
+    class Supply(models.TextChoices):
+        CONTRACTOR = "CONTRACTOR", "Contractor-supplied"
+        CLIENT = "CLIENT", "Client-supplied"
+
+    class State(models.TextChoices):
+        PROPOSED = "PROPOSED", "Proposed"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        SIGNED_OFF = "SIGNED_OFF", "Signed off"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Production(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        IN_PRODUCTION = "IN_PRODUCTION", "In production"
+        COMPLETED = "COMPLETED", "Completed"
+
+    schedule = models.ForeignKey(ProcurementSchedule, on_delete=models.CASCADE,
+                                 related_name="lines")
+    section = models.ForeignKey(ScheduleSection, on_delete=models.PROTECT,
+                                null=True, blank=True, related_name="lines")
+    s_no = models.PositiveIntegerField(default=0)   # auto per section
+
+    # --- planning (PM) ---
+    category = models.CharField(max_length=80, blank=True)
+    description = models.TextField(blank=True)
+    make_brand = models.CharField(max_length=120, blank=True)
+    specification = models.TextField(blank=True)
+    trade = models.CharField(max_length=60, blank=True)   # discipline
+    supply_by = models.CharField(max_length=12, choices=Supply.choices,
+                                 default=Supply.CONTRACTOR)
+    required_date = models.DateField(null=True, blank=True)   # required on site
+    tds_required = models.BooleanField(default=False)
+    remarks = models.TextField(blank=True)
+
+    # --- commercial (Purchasing; internal-only values) ---
+    planned_supplier = models.CharField(max_length=160, blank=True)
+    source_country = models.CharField(max_length=60, blank=True)
+    estimated_value = models.DecimalField(max_digits=12, decimal_places=2,
+                                          null=True, blank=True)
+    currency = models.CharField(max_length=3, default="USD")
+    lead_time_days = models.PositiveIntegerField(null=True, blank=True)
+
+    # --- links to execution documents (populated in phase 2; nullable) ---
+    mar = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="+")
+    ipr = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="+")   # IPR/PMR order
+    shipment = models.ForeignKey("ImportShipment", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+    grn = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="+")   # IRN/GRN receipt
+
+    # --- manual stages ---
+    production_status = models.CharField(
+        max_length=14, choices=Production.choices, default=Production.PENDING)
+    # CLIENT lines carry a last-client-update stamp (phase 4)
+    client_last_update = models.DateField(null=True, blank=True)
+    client_update_note = models.CharField(max_length=200, blank=True)
+
+    state = models.CharField(max_length=12, choices=State.choices,
+                             default=State.PROPOSED)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   related_name="+")
+
+    class Meta:
+        ordering = ["section__sort_order", "section__code", "s_no", "id"]
+
+

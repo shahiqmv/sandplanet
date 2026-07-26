@@ -682,6 +682,9 @@ def pending_groups(user):
         add("To approve — onboarding requests (expat mobilisation)",
             rows(scoped(base.filter(doc_type="OBR", status="SUBMITTED")),
                  "Director approval to mobilise"))
+        add("To sign off — procurement schedules",
+            rows(scoped(base.filter(doc_type="PSC", status="CONFIRMED")),
+                 "Director signs off the schedule baseline"))
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.
@@ -702,6 +705,9 @@ def pending_groups(user):
             rows(base.filter(doc_type="IPR", status="APPROVED"),
                  "Authorise the order — posts the MVR commitment"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
+        add("To confirm — procurement schedules",
+            rows(scoped(base.filter(doc_type="PSC", status="SUBMITTED")),
+                 "Validate suppliers / lead times, then confirm to the Director"))
         add("To action — MRs at Head Office",
             rows(scoped(base.filter(
                 doc_type="MR",

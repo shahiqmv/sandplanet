@@ -11,6 +11,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_tracking as tracking_api, views_vouchers as vouchers, \
     views_receivables as receivables_api, \
     views_onboarding as onboarding_api, \
+    views_procurement_schedule as psched_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -367,6 +368,23 @@ urlpatterns = [
          name="onboarding-letter-download"),
     path("onboarding/<int:pk>/documents", onboarding_api.onboarding_document,
          name="onboarding-document"),
+    # --- procurement schedule (PSC) ---
+    path("procurement-schedules", psched_api.schedule_list,
+         name="psched-list"),
+    path("projects/<int:project_id>/procurement-schedule",
+         psched_api.project_schedule, name="psched-project"),
+    path("procurement-schedules/<int:pk>", psched_api.schedule_detail,
+         name="psched-detail"),
+    path("procurement-schedules/<int:pk>/lines", psched_api.schedule_lines,
+         name="psched-lines"),
+    path("procurement-schedules/<int:pk>/submit", psched_api.schedule_submit,
+         name="psched-submit"),
+    path("procurement-schedules/<int:pk>/action", psched_api.schedule_action,
+         name="psched-action"),
+    path("procurement-schedule-lines/<int:line_id>", psched_api.schedule_line,
+         name="psched-line"),
+    path("procurement-schedule-lines/<int:line_id>/cancel",
+         psched_api.schedule_line_cancel, name="psched-line-cancel"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),
