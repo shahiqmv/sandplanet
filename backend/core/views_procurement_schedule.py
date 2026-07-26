@@ -64,7 +64,8 @@ def schedule_list(request):
                     "project_id": s.project_id, "project_code": s.project.code,
                     "project_title": s.project.title,
                     "site_code": s.document.site.code,
-                    "line_counts": counts})
+                    "line_counts": counts,
+                    "risk_counts": pp.schedule_risk_counts(s)})
     return Response(out)
 
 

@@ -3346,6 +3346,9 @@ class ScheduleLine(models.Model):
 
     state = models.CharField(max_length=12, choices=State.choices,
                              default=State.PROPOSED)
+    # Watermark of the worst risk level already alerted on, so the daily
+    # late-risk sweep fires each escalation once (phase 3).
+    risk_alerted = models.CharField(max_length=12, blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,

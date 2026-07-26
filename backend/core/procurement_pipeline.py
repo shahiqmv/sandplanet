@@ -16,6 +16,8 @@ is one click rather than a ref hunt.
 import logging
 from datetime import timedelta
 
+from django.utils import timezone
+
 from .audit import audit
 from .models import (Document, ImportOrder, ImportOrderLine, ShipmentTracking,
                      ScheduleLine)
@@ -158,6 +160,192 @@ def line_pipeline(line):
     """The six derived stages for a line, in flow order."""
     return [_tds_stage(line), _order_stage(line), _production_stage(line),
             _shipment_stage(line), _delivery_stage(line), _eta_stage(line)]
+
+
+# ---- late-risk engine ----------------------------------------------------
+
+# A line is "at risk" when its projected arrival leaves this little slack.
+AT_RISK_WINDOW_DAYS = 14
+# Rough door-to-Male sea-freight allowance by source country until a config
+# screen exists (uppercased country string -> days).
+SHIPPING_ALLOWANCE_DAYS = {
+    "CHINA": 30, "INDIA": 21, "SRI LANKA": 14, "UAE": 18,
+    "UNITED ARAB EMIRATES": 18, "MALAYSIA": 21, "THAILAND": 21,
+    "SINGAPORE": 18, "TURKEY": 35, "ITALY": 35, "GERMANY": 35, "SPAIN": 35,
+}
+DEFAULT_ALLOWANCE_DAYS = 25
+RISK_ORDER = {"LATE": 0, "AT_RISK": 1, "ON_TRACK": 2, "DELIVERED": 3,
+              "NONE": 4}
+
+
+def _today():
+    return timezone.localdate()
+
+
+def _delivered(line):
+    return bool(line.grn_id) and line.grn.status in (
+        "COMPLETE", "SHORTAGE_REPORTED")
+
+
+def _shipping_allowance(line):
+    return SHIPPING_ALLOWANCE_DAYS.get(
+        (line.source_country or "").strip().upper(), DEFAULT_ALLOWANCE_DAYS)
+
+
+def _projected_onsite(line):
+    """Estimated arrival at site for a not-yet-delivered contractor line.
+    Shipped → tracker/shipment ETA + buffer; else base date (order date if
+    ordered, else today) + lead time + shipping allowance + site buffer."""
+    shipped_eta = _site_eta(_shipment_for(line))
+    if shipped_eta:
+        return shipped_eta
+    lead = line.lead_time_days or 0
+    allow = _shipping_allowance(line)
+    base = (line.ipr.doc_date if line.ipr_id and line.ipr.doc_date
+            else _today())
+    return base + timedelta(days=lead + allow + SITE_BUFFER_DAYS)
+
+
+def line_risk(line):
+    """On-track / at-risk / late assessment for a line — derived, read-only.
+    Late-while-unordered is the worst case: the date can't be met even if the
+    order goes out today."""
+    if _delivered(line):
+        return {"level": "DELIVERED", "reason": "Received at site",
+                "projected": None, "slack_days": None, "unordered": False}
+    req = line.required_date
+    if line.supply_by == "CLIENT":
+        if req and req < _today():
+            return {"level": "LATE", "reason": "Client supply overdue",
+                    "projected": None, "slack_days": (req - _today()).days,
+                    "unordered": False}
+        return {"level": "NONE", "reason": "Client-supplied", "projected": None,
+                "slack_days": None, "unordered": False}
+    if not req:
+        return {"level": "NONE", "reason": "No required date",
+                "projected": None, "slack_days": None, "unordered": False}
+    proj = _projected_onsite(line)
+    slack = (req - proj).days
+    unordered = not line.ipr_id
+    if proj > req:
+        level = "LATE"
+        reason = ("Can't make the date even if ordered today" if unordered
+                  else "Projected to land after the required date")
+    elif slack <= AT_RISK_WINDOW_DAYS:
+        level, reason = "AT_RISK", f"Only {slack}d of slack"
+    else:
+        level, reason = "ON_TRACK", f"{slack}d slack"
+    return {"level": level, "reason": reason, "projected": proj,
+            "slack_days": slack, "unordered": unordered}
+
+
+def schedule_risk_counts(sched):
+    """Roll up line risk levels for a schedule header ("3 late, 5 at risk")."""
+    counts = {}
+    lines = sched.lines.select_related("grn", "ipr", "shipment").exclude(
+        state="CANCELLED")
+    for line in lines:
+        lvl = line_risk(line)["level"]
+        counts[lvl] = counts.get(lvl, 0) + 1
+    return counts
+
+
+# ---- alerts + PD digest (driven by the procurement_risk command) ---------
+
+def _operational_lines():
+    """Signed-off (operational) lines of baselined schedules — the ones the
+    late-risk sweep watches."""
+    return (ScheduleLine.objects
+            .filter(schedule__baseline_signed_at__isnull=False,
+                    state="SIGNED_OFF")
+            .select_related("schedule__project__site", "schedule__document",
+                            "grn", "ipr", "shipment"))
+
+
+def _line_recipients(notify, sched, escalate):
+    recips = set(notify._role_users("HO_PURCHASING"))
+    proj = sched.project
+    pm = proj.pm or (proj.site.current_pm() if proj.site_id else None)
+    if pm:
+        recips.add(pm)
+    if escalate:
+        recips |= set(notify._role_users("DIRECTOR"))
+    return recips
+
+
+def _alert_line(notify, line, risk):
+    sched = line.schedule
+    tag = "LATE" if risk["level"] == "LATE" else "at risk"
+    unord = " — not yet ordered" if risk.get("unordered") else ""
+    what = (line.description or "item")[:60]
+    title = f"Procurement {tag}: {what}"
+    body = (f"{sched.project.code} · {sched.document.ref} · {what}{unord}. "
+            f"{risk['reason']}. Required {line.required_date}.")[:300]
+    for u in _line_recipients(notify, sched, risk["level"] == "LATE"):
+        notify.notify_user(u, title, body=body, doc=sched.document,
+                           category="alert")
+
+
+def sweep_risk_alerts(today=None):
+    """Fire a PM+Purchasing alert (Director too when LATE) the first time a
+    line escalates into at-risk / late. Watermarked so daily runs don't spam;
+    the watermark clears when a line recovers so a later slip re-fires."""
+    from . import notify
+    sent = 0
+    for line in _operational_lines():
+        risk = line_risk(line)
+        lvl = risk["level"]
+        prev = line.risk_alerted or ""
+        if lvl in ("AT_RISK", "LATE"):
+            if RISK_ORDER[lvl] < RISK_ORDER.get(prev or "NONE", 99):
+                _alert_line(notify, line, risk)
+                line.risk_alerted = lvl
+                line.save(update_fields=["risk_alerted"])
+                sent += 1
+        elif prev:
+            line.risk_alerted = ""
+            line.save(update_fields=["risk_alerted"])
+    return sent
+
+
+def send_pd_digest(today=None):
+    """One digest per Director of every late / at-risk line across all
+    projects, worst first (late-while-unordered at the top). Deduped so a
+    given day sends at most one digest per Director."""
+    from . import notify
+    from .models import Notification
+    today = today or _today()
+    at_risk = []
+    for line in _operational_lines():
+        risk = line_risk(line)
+        if risk["level"] in ("AT_RISK", "LATE"):
+            at_risk.append((line, risk))
+    if not at_risk:
+        return 0
+    at_risk.sort(key=lambda lr: (RISK_ORDER[lr[1]["level"]],
+                                 not lr[1].get("unordered"),
+                                 lr[1].get("slack_days")
+                                 if lr[1].get("slack_days") is not None
+                                 else 0))
+    late = sum(1 for _, r in at_risk if r["level"] == "LATE")
+    risky = len(at_risk) - late
+    title = f"Procurement digest: {late} late, {risky} at risk"
+    parts = [f"{ln.schedule.project.code}: {(ln.description or 'item')[:24]}"
+             f" ({r['level'].replace('_', ' ').lower()})"
+             for ln, r in at_risk[:8]]
+    body = "; ".join(parts)
+    if len(at_risk) > 8:
+        body += f"; +{len(at_risk) - 8} more"
+    body = body[:300]
+    sent = 0
+    for u in notify._role_users("DIRECTOR"):
+        if Notification.objects.filter(
+                recipient=u, title__startswith="Procurement digest:",
+                created_at__date=today).exists():
+            continue
+        notify.notify_user(u, title, body=body, category="alert")
+        sent += 1
+    return sent
 
 
 # ---- linking -------------------------------------------------------------

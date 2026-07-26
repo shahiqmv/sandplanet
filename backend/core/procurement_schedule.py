@@ -343,8 +343,9 @@ def line_dict(line, values=True):
         "ipr_ref": line.ipr.ref if line.ipr_id else "",
         "grn_ref": line.grn.ref if line.grn_id else "",
     }
-    from .procurement_pipeline import line_pipeline
+    from .procurement_pipeline import line_pipeline, line_risk
     d["pipeline"] = line_pipeline(line)
+    d["risk"] = line_risk(line)
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
@@ -360,9 +361,12 @@ def schedule_dict(sched, user):
     sections = [{"id": s.id, "code": s.code, "title": s.title,
                  "sort_order": s.sort_order}
                 for s in sched.sections.all()]
-    counts = {}
-    for ln in lines:
+    line_dicts = [line_dict(ln, values=values) for ln in lines]
+    counts, risk_counts = {}, {}
+    for ln, ld in zip(lines, line_dicts):
         counts[ln.state] = counts.get(ln.state, 0) + 1
+        lvl = ld["risk"]["level"]
+        risk_counts[lvl] = risk_counts.get(lvl, 0) + 1
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "project_id": sched.project_id, "project_code": sched.project.code,
@@ -380,8 +384,9 @@ def schedule_dict(sched, user):
         "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),
         "show_values": values,
         "line_counts": counts,
+        "risk_counts": risk_counts,
         "sections": sections,
-        "lines": [line_dict(ln, values=values) for ln in lines],
+        "lines": line_dicts,
         "approvals": [{"action": a.action, "by": a.actor.full_name,
                        "role": a.actor_role, "at": a.acted_at,
                        "comment": a.comment}

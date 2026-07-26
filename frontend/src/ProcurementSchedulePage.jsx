@@ -32,6 +32,36 @@ const LINK_SLOTS = [
 const PRODUCTION = [["PENDING", "Pending"], ["IN_PRODUCTION", "In production"],
   ["COMPLETED", "Completed"]];
 
+const RISK_TONE = { LATE: "alert", AT_RISK: "warn", ON_TRACK: "ok",
+  DELIVERED: "info" };
+const RISK_LABEL = { LATE: "Late", AT_RISK: "At risk", ON_TRACK: "On track",
+  DELIVERED: "Delivered" };
+
+function RiskCell({ risk }) {
+  if (!risk || risk.level === "NONE")
+    return <span style={{ color: "var(--muted)" }}>—</span>;
+  return (
+    <span title={risk.reason + (risk.projected
+      ? ` · projected ${fmt(risk.projected)}` : "")}>
+      <Chip tone={RISK_TONE[risk.level] || "info"}>
+        {RISK_LABEL[risk.level]}
+        {risk.unordered && risk.level === "LATE" ? " ⚠" : ""}</Chip>
+    </span>
+  );
+}
+
+// "3 late · 5 at risk" header summary, red-first.
+function RiskSummary({ counts }) {
+  const late = counts?.LATE || 0, risk = counts?.AT_RISK || 0;
+  if (!late && !risk) return null;
+  return (
+    <span style={{ display: "inline-flex", gap: 6 }}>
+      {late > 0 && <Chip tone="alert">{late} late</Chip>}
+      {risk > 0 && <Chip tone="warn">{risk} at risk</Chip>}
+    </span>
+  );
+}
+
 function PipelineStrip({ stages }) {
   return (
     <div style={{ display: "flex", gap: 3 }}>
@@ -87,7 +117,7 @@ export default function ProcurementSchedulePage({ me, sites }) {
           <table style={{ width: "100%", borderCollapse: "collapse",
             fontSize: 13 }}>
             <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
-              {["Ref", "Project", "Site", "Status", "Lines"].map((h) =>
+              {["Ref", "Project", "Site", "Status", "Lines", "Risk"].map((h) =>
                 <th key={h} style={{ padding: "8px 12px" }}>{h}</th>)}
             </tr></thead>
             <tbody>
@@ -106,6 +136,10 @@ export default function ProcurementSchedulePage({ me, sites }) {
                     {Object.entries(s.line_counts || {})
                       .map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ")
                       || "—"}</td>
+                  <td style={{ padding: "8px 12px" }}>
+                    <RiskSummary counts={s.risk_counts} />
+                    {!(s.risk_counts?.LATE || s.risk_counts?.AT_RISK) &&
+                      <span style={{ color: "var(--muted)" }}>—</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -259,6 +293,7 @@ function ScheduleDetail({ id, me, onBack }) {
           {c.baseline_signed_at && <span style={{ fontSize: 12,
             color: "var(--muted)" }}>baseline {fmt(c.baseline_signed_at)} ·{" "}
             {c.baseline_signed_by}</span>}
+          <RiskSummary counts={c.risk_counts} />
         </div>
         {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
         {/* workflow bar */}
@@ -299,7 +334,7 @@ function ScheduleDetail({ id, me, onBack }) {
                 {["#", "Description", "Make", "Qty", "Category", "Supply",
                   "Required", "Supplier", "Country", "Lead",
                   ...(c.show_values ? ["Est. value"] : []),
-                  "Pipeline", "State", ""].map((h, i) =>
+                  "Pipeline", "Risk", "State", ""].map((h, i) =>
                   <th key={i} style={{ padding: "6px 10px",
                     whiteSpace: "nowrap" }}>{h}</th>)}
               </tr></thead>
@@ -326,6 +361,7 @@ function ScheduleDetail({ id, me, onBack }) {
                     {c.show_values && <td style={cell}>
                       {money(ln.estimated_value, ln.currency)}</td>}
                     <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
+                    <td style={cell}><RiskCell risk={ln.risk} /></td>
                     <td style={cell}><Chip tone={STATE_TONE[ln.state]}>
                       {ln.state.replace(/_/g, " ")}</Chip></td>
                     <td style={{ ...cell, whiteSpace: "nowrap" }}>
@@ -340,7 +376,7 @@ function ScheduleDetail({ id, me, onBack }) {
                   </tr>
                 ))}
                 {!rows.length && <tr><td style={{ ...cell,
-                  color: "var(--muted)" }} colSpan={c.show_values ? 14 : 13}>
+                  color: "var(--muted)" }} colSpan={c.show_values ? 15 : 14}>
                   No lines.</td></tr>}
               </tbody>
             </table>
