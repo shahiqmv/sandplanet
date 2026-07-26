@@ -323,6 +323,47 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_passport_scan_extracts_and_normalises(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from . import passport_extract as px
+        orig = px._call_claude
+        px._call_claude = lambda block, model: {
+            "full_name": "  Ravi Kumar ", "passport_no": "N1234567",
+            "nationality": "Indian", "date_of_birth": "1990-03-14",
+            "passport_expiry": "not-a-date", "gender": "male"}
+        try:
+            f = SimpleUploadedFile("p.jpg", b"\xff\xd8fake",
+                                   content_type="image/jpeg")
+            fields = px.scan(f, model="x")
+        finally:
+            px._call_claude = orig
+        self.assertEqual(fields["full_name"], "Ravi Kumar")
+        self.assertEqual(fields["date_of_birth"], "1990-03-14")
+        self.assertEqual(fields["passport_expiry"], "")   # unparseable → blank
+        self.assertEqual(fields["gender"], "Male")
+
+    def test_passport_scan_endpoint_gated(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from . import passport_extract as px
+        orig = px.scan
+        px.scan = lambda up, model=None: {
+            "full_name": "Nuwan", "passport_no": "N9", "nationality": "Sri Lankan",
+            "date_of_birth": "", "passport_expiry": "", "gender": ""}
+        try:
+            self.client.force_authenticate(self.pm)      # a raiser
+            f = SimpleUploadedFile("p.jpg", b"x", content_type="image/jpeg")
+            r = self.client.post("/api/v1/onboarding/passport-scan",
+                                 {"file": f}, format="multipart")
+            self.assertEqual(r.status_code, 200, r.data)
+            self.assertEqual(r.data["fields"]["full_name"], "Nuwan")
+            self.client.force_authenticate(self.director)  # not a raiser
+            f2 = SimpleUploadedFile("p.jpg", b"x", content_type="image/jpeg")
+            r2 = self.client.post("/api/v1/onboarding/passport-scan",
+                                  {"file": f2}, format="multipart")
+            self.assertEqual(r2.status_code, 403)
+        finally:
+            px.scan = orig
+
     def test_stage_document_upload_and_download(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         pk = self._approved()

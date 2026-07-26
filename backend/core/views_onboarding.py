@@ -71,6 +71,25 @@ def onboarding_cases(request):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def onboarding_passport_scan(request):
+    """Read candidate details off an uploaded passport page to prefill the
+    new-case form (HR reviews before saving)."""
+    if request.user.role not in ob.RAISE_ROLES:
+        return Response({"detail": "Not permitted."}, status=403)
+    up = request.FILES.get("file")
+    if up is None:
+        return Response({"detail": "Attach the passport image."}, status=400)
+    from . import passport_extract
+    try:
+        fields = passport_extract.scan(up)
+    except passport_extract.ScanError as e:
+        return Response({"detail": str(e)}, status=400)
+    return Response({"fields": fields})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def onboarding_create(request, site_id):
     site, err = _site_for(request, site_id)
     if err:

@@ -173,6 +173,32 @@ function NewCase({ sites, onCancel, onDone }) {
   const [form, setForm] = useState({ ...BLANK });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanMsg, setScanMsg] = useState("");
+  const scanFile = useRef(null);
+
+  async function scanPassport(file) {
+    if (!file) return;
+    setScanning(true); setScanMsg(""); setError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const { fields } = await apiUpload("/onboarding/passport-scan", fd);
+      setForm((f) => {
+        const merged = { ...f };
+        for (const [k, v] of Object.entries(fields || {})) {
+          if (v) merged[k] = v;          // only overwrite with a read value
+        }
+        return merged;
+      });
+      scanFile.current = file;           // stored as the passport copy on create
+      const got = Object.values(fields || {}).filter(Boolean).length;
+      setScanMsg(got
+        ? `Read ${got} field${got > 1 ? "s" : ""} — review below before saving.`
+        : "Couldn't read it clearly — enter the details manually.");
+    } catch (err) { setError(err.message); }
+    setScanning(false);
+  }
 
   async function submit(e) {
     e.preventDefault();
@@ -181,6 +207,14 @@ function NewCase({ sites, onCancel, onDone }) {
     try {
       const c = await api(`/sites/${siteId}/onboarding`,
         { method: "POST", body: form });
+      if (scanFile.current) {            // keep the scanned image as the copy
+        try {
+          const fd = new FormData();
+          fd.append("kind", "PASSPORT_COPY");
+          fd.append("file", scanFile.current);
+          await apiUpload(`/onboarding/${c.id}/documents`, fd);
+        } catch { /* non-fatal — HR can attach it in the checklist */ }
+      }
       onDone(c);
     } catch (err) { setError(err.message); setBusy(false); }
   }
@@ -201,6 +235,21 @@ function NewCase({ sites, onCancel, onDone }) {
           {(sites || []).map((s) => (
             <option key={s.id} value={s.id}>{s.code} — {s.name}</option>))}
         </select></label>
+      <div style={{ border: "1px dashed var(--sky)", borderRadius: 8,
+        padding: 10, marginBottom: 10, background: "var(--sky-soft)",
+        display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+        <label style={{ fontSize: 12.5, fontWeight: 600, color: "var(--navy)",
+          cursor: scanning ? "default" : "pointer", whiteSpace: "nowrap" }}>
+          📷 Scan passport to autofill
+          <input type="file" accept="image/*,application/pdf"
+                 disabled={scanning} style={{ display: "none" }}
+                 onChange={(e) => scanPassport(e.target.files[0])} />
+        </label>
+        <span style={{ fontSize: 11, color: "var(--muted)" }}>
+          {scanning ? "Reading passport…" : scanMsg
+            || "Upload the passport photo page — details are read in and kept "
+               + "as the passport copy."}</span>
+      </div>
       <CaseForm value={form} onChange={setForm} />
       <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
         <Btn variant="primary" disabled={busy}>Create case</Btn>
@@ -562,8 +611,7 @@ function StageDocs({ c, canProcess, busy, run }) {
     const fd = new FormData();
     fd.append("slot", slot);
     fd.append("file", file);
-    run(() => api(`/onboarding/${c.id}/stage-doc`,
-                  { method: "POST", body: fd }));
+    run(() => apiUpload(`/onboarding/${c.id}/stage-doc`, fd));
   };
   return (
     <div style={{ marginTop: 12, borderTop: "1px solid var(--line)",

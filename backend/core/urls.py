@@ -334,6 +334,8 @@ urlpatterns = [
          worker_api.salary_revision_action, name="salary-revision-action"),
     # Onboarding cases (expat recruitment / visa / mobilisation)
     path("onboarding", onboarding_api.onboarding_cases, name="onboarding-cases"),
+    path("onboarding/passport-scan", onboarding_api.onboarding_passport_scan,
+         name="onboarding-passport-scan"),
     path("sites/<int:site_id>/onboarding", onboarding_api.onboarding_create,
          name="onboarding-create"),
     path("onboarding/<int:pk>", onboarding_api.onboarding_detail,
