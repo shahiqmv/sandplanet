@@ -12,6 +12,7 @@ import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
+import OnboardingPage from "./OnboardingPage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollRunPage from "./PayrollRunPage.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
@@ -80,8 +81,9 @@ const NAV_GROUPS = [
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
                                            "QS"]]] },
   { key: "people", label: "People",
-    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"],
+    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
+           ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM"]],
            ["employees", "Employees", null],
            ["worker-categories", "Worker Categories", ["ADMIN"]],
            ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN"]],
@@ -828,6 +830,11 @@ export default function App() {
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"].includes(me.role) &&
             hoPage === "staff-cost" && (
             <StaffCostPage />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "DIRECTOR", "ADMIN", "PM"].includes(me.role) &&
+            hoPage === "onboarding" && (
+            <OnboardingPage me={me} sites={sites} />
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />
