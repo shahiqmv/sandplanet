@@ -102,12 +102,13 @@ const BLANK = {
   full_name: "", nationality: "", date_of_birth: "", gender: "",
   passport_no: "", passport_expiry: "", category: "", trade_designation: "",
   proposed_salary: "", currency: "MVR", route: "WP", bv_justification: "",
+  bv_purpose: "", subcontractor_id: "",
   quota_pool: "SANDPLANET",
   permanent_address: "", mobile: "", emergency_contact: "",
   mobilisation_date: "",
 };
 
-function CaseForm({ value, onChange }) {
+function CaseForm({ value, onChange, subs = [] }) {
   const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
   const F = ({ label, k, type = "text", req }) => (
     <label style={fld}>{label}{req && <span style={{ color: "var(--red-fg)" }}> *</span>}
@@ -156,6 +157,29 @@ function CaseForm({ value, onChange }) {
         <F label="Expected mobilisation" k="mobilisation_date" type="date" />
       </div>
       {value.route === "BV" && (
+        <div style={{ display: "grid", gap: 8,
+          gridTemplateColumns: "1fr 1fr", marginTop: 8 }}>
+          <label style={fld}>BV purpose
+            <span style={{ color: "var(--red-fg)" }}> *</span>
+            <select style={inputStyle} value={value.bv_purpose || ""}
+                    onChange={set("bv_purpose")}>
+              <option value="">—</option>
+              <option value="RECRUITMENT">Recruitment (→ work permit)</option>
+              <option value="SUBCONTRACT">Subcontractor's worker</option>
+            </select></label>
+          {value.bv_purpose === "SUBCONTRACT" && (
+            <label style={fld}>Subcontractor
+              <span style={{ color: "var(--red-fg)" }}> *</span>
+              <select style={inputStyle} value={value.subcontractor_id || ""}
+                      onChange={set("subcontractor_id")}>
+                <option value="">
+                  {subs.length ? "Select…" : "No approved subcontractors"}</option>
+                {subs.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select></label>
+          )}
+        </div>
+      )}
+      {value.route === "BV" && (
         <label style={{ ...fld, marginTop: 8 }}>
           Business-visa justification <span style={{ color: "var(--red-fg)" }}>*</span>
           <textarea style={{ ...inputStyle, minHeight: 40 }}
@@ -181,7 +205,14 @@ function NewCase({ sites, onCancel, onDone }) {
   const [error, setError] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [scanMsg, setScanMsg] = useState("");
+  const [subs, setSubs] = useState([]);
   const scanFile = useRef(null);
+
+  useEffect(() => {
+    if (!siteId) { setSubs([]); return; }
+    api(`/onboarding/subcontractors?site_id=${siteId}`)
+      .then(setSubs).catch(() => setSubs([]));
+  }, [siteId]);
 
   async function scanPassport(file) {
     if (!file) return;
@@ -256,7 +287,7 @@ function NewCase({ sites, onCancel, onDone }) {
             || "Upload the passport photo page — details are read in and kept "
                + "as the passport copy."}</span>
       </div>
-      <CaseForm value={form} onChange={setForm} />
+      <CaseForm value={form} onChange={setForm} subs={subs} />
       <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
         <Btn variant="primary" disabled={busy}>Create case</Btn>
         <span style={{ fontSize: 12, color: "var(--muted)",
@@ -274,9 +305,14 @@ function CaseDetail({ id, me, onBack }) {
   const [editing, setEditing] = useState(false);
   const [form, setForm] = useState(null);
 
+  const [subs, setSubs] = useState([]);
   const load = () => api(`/onboarding/${id}`).then((d) => { setC(d); setForm(d); })
     .catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (c?.site_id) api(`/onboarding/subcontractors?site_id=${c.site_id}`)
+      .then(setSubs).catch(() => setSubs([]));
+  }, [c?.site_id]);
 
   if (error) return <div style={card}>{error}
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
@@ -329,7 +365,7 @@ function CaseDetail({ id, me, onBack }) {
 
         {editing ? (
           <div style={{ marginTop: 10 }}>
-            <CaseForm value={form} onChange={setForm} />
+            <CaseForm value={form} onChange={setForm} subs={subs} />
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
               <Btn variant="primary" disabled={busy} onClick={saveEdit}>Save</Btn>
               <button style={linkBtn} onClick={() => { setEditing(false);
@@ -349,6 +385,14 @@ function CaseDetail({ id, me, onBack }) {
             <Row k="Mobilisation" v={fmtDate(c.mobilisation_date)} />
             <Row k="Mobile" v={c.mobile || "—"} />
             <Row k="Emergency" v={c.emergency_contact || "—"} />
+            {c.route === "BV" && <Row k="BV purpose"
+              v={c.bv_purpose_label || "—"} />}
+            {c.is_subcontract && <Row k="Subcontractor"
+              v={c.subcontractor_name || "—"} />}
+            {c.bv_expiry && <Row k="Visa expiry"
+              v={`${fmtDate(c.bv_expiry)}${c.bv_renewals
+                ? ` · ${c.bv_renewals} extension${c.bv_renewals > 1 ? "s" : ""}`
+                : ""}`} />}
             {c.bv_justification && <Row k="BV reason" v={c.bv_justification} />}
             <Row k="Raised by" v={c.created_by} />
           </div>
@@ -622,15 +666,93 @@ function Processing({ c, me, onReload }) {
                 Advance → {c.next_label}</Btn>
             </div>
           )}
-          {c.at_last && (
+          {c.at_last && !c.on_site && (
             <div><Btn variant="primary" disabled={busy}
                       onClick={() => advance()}>Complete case</Btn></div>
           )}
+          {(c.can_extend || c.on_site) && <VisaActions c={c} run={run}
+            busy={busy} />}
         </div>
       )}
       {c.documents?.length > 0 &&
         <StageDocs c={c} canProcess={canProcess} busy={busy} run={run} />}
       {canProcess && <Letters c={c} busy={busy} run={run} />}
+    </div>
+  );
+}
+
+function VisaActions({ c, run, busy }) {
+  const [open, setOpen] = useState(null);     // 'extend' | 'depart' | null
+  const [expiry, setExpiry] = useState("");
+  const [amount, setAmount] = useState("");
+  const [payee, setPayee] = useState("");
+  const [invoice, setInvoice] = useState(null);
+  const [departed, setDeparted] = useState("");
+
+  const extend = () => run(async () => {
+    const fd = new FormData();
+    fd.append("new_expiry", expiry);
+    fd.append("amount", amount);
+    fd.append("payee", payee);
+    if (invoice) fd.append("file", invoice);
+    await apiUpload(`/onboarding/${c.id}/extend`, fd);
+    setOpen(null);
+  });
+  const depart = () => run(async () => {
+    await api(`/onboarding/${c.id}/close`,
+              { method: "POST", body: { departed_date: departed } });
+    setOpen(null);
+  });
+
+  return (
+    <div style={{ border: "1px solid var(--line)", borderRadius: 8, padding: 10,
+      background: "var(--sky-soft)", display: "flex", flexDirection: "column",
+      gap: 8 }}>
+      <div style={{ fontSize: 12.5, fontWeight: 600 }}>
+        {c.on_site ? "On site — subcontract worker" : "Business visa"}</div>
+      {open !== "extend" ? (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {c.can_extend && <Btn variant="secondary" disabled={busy}
+            onClick={() => setOpen("extend")}>Extend visa</Btn>}
+          {c.on_site && <Btn variant="secondary" disabled={busy}
+            onClick={() => setOpen(open === "depart" ? null : "depart")}>
+            Worker departed…</Btn>}
+        </div>
+      ) : (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+          alignItems: "center" }}>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>New expiry</span>
+          <input type="date" style={inputStyle} value={expiry}
+                 onChange={(e) => setExpiry(e.target.value)} />
+          <input style={{ ...inputStyle, width: 120 }} type="number"
+                 placeholder="Fee (MVR)" value={amount}
+                 onChange={(e) => setAmount(e.target.value)} />
+          <input style={{ ...inputStyle, width: 160 }} placeholder="Pay to"
+                 value={payee} onChange={(e) => setPayee(e.target.value)} />
+          <label style={{ fontSize: 11, color: "var(--navy)", cursor: "pointer",
+            fontWeight: 600 }}>
+            {invoice ? `✓ ${invoice.name}` : "Attach invoice"}
+            <input type="file" accept="image/*,application/pdf"
+                   style={{ display: "none" }}
+                   onChange={(e) => setInvoice(e.target.files[0])} />
+          </label>
+          <Btn variant="primary" disabled={busy || !expiry || !amount || !payee}
+               onClick={extend}>Extend</Btn>
+          <Btn variant="ghost" disabled={busy}
+               onClick={() => setOpen(null)}>Cancel</Btn>
+        </div>
+      )}
+      {open === "depart" && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center",
+          flexWrap: "wrap" }}>
+          <span style={{ fontSize: 11, color: "var(--muted)" }}>
+            Departure date</span>
+          <input type="date" style={inputStyle} value={departed}
+                 onChange={(e) => setDeparted(e.target.value)} />
+          <Btn variant="primary" disabled={busy} onClick={depart}>
+            Close case — departed</Btn>
+        </div>
+      )}
     </div>
   );
 }

@@ -28,10 +28,13 @@ class OnboardingSpineTests(TestCase):
         self.client = APIClient()
 
     def _body(self, **kw):
-        return {"full_name": "Ravi Kumar", "nationality": "Indian",
+        base = {"full_name": "Ravi Kumar", "nationality": "Indian",
                 "passport_no": "P1234567", "category": "SKILLED",
                 "trade_designation": "Mason", "proposed_salary": "8000",
                 "route": "WP", **kw}
+        if base.get("route") == "BV" and "bv_purpose" not in base:
+            base["bv_purpose"] = "RECRUITMENT"
+        return base
 
     def _create(self, actor=None, **kw):
         self.client.force_authenticate(actor or self.pm)
@@ -523,7 +526,7 @@ class OnboardingSpineTests(TestCase):
         # only one employee across the whole walk (arrival + completion)
         self.assertEqual(Employee.objects.filter(pk=emp.pk).count(), 1)
         self.assertTrue(Notification.objects.filter(
-            recipient=self.hr, title__icontains="site payroll").exists())
+            recipient=self.hr, title__icontains="on site").exists())
 
     def test_editing_arrival_date_moves_salary_start(self):
         from .models import OnboardingCase
@@ -546,6 +549,124 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(str(emp.join_date), "2026-08-03")      # salary start moved
         alloc = emp.site_allocations.filter(to_date__isnull=True).first()
         self.assertEqual(str(alloc.from_date), "2026-08-03")
+
+    def _subcontractor(self):
+        from .models import Subcontractor
+        return Subcontractor.objects.create(
+            site=self.site, name="Reef Builders",
+            status=Subcontractor.Status.APPROVED)
+
+    def test_no_medical_on_business_visa(self):
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        # recruitment BV — medical belongs to the WP conversion, not the BV
+        pk = self._approved(route="BV", bv_justification="urgent",
+                            nationality="Indian")
+        case = OnboardingCase.objects.get(pk=pk)
+        seq = ob.sequence(case)
+        self.assertNotIn("BV_MEDICAL", seq)
+        self.assertIn("WP_MEDICAL", seq)               # only in the conversion
+        self.assertLess(seq.index("WP_APPROVED"), seq.index("WP_MEDICAL"))
+
+    def test_subcontract_bv_has_no_conversion_or_medical(self):
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        sub = self._subcontractor()
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT",
+                            subcontractor_id=sub.id, proposed_salary="")
+        case = OnboardingCase.objects.get(pk=pk)
+        seq = ob.sequence(case)
+        self.assertEqual(seq[-1], "BV_ARRIVED")        # ends on arrival
+        self.assertNotIn("WP_ISSUED", seq)
+        self.assertNotIn("WP_MEDICAL", seq)
+
+    def test_subcontract_worker_joins_as_subcontract_not_payroll(self):
+        from .models import Employee, OnboardingCase
+        sub = self._subcontractor()
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT",
+                            subcontractor_id=sub.id, proposed_salary="")
+        # walk to arrival: begin → BV_SPONSOR, BV_INSURANCE(fee), BV_APPLICATION
+        # (portal), BV_APPROVED, BV_VISA_FEE(fee), BV_TICKET(fee), BV_ARRIVED
+        self._adv(pk)                                  # BV_SPONSOR
+        self._adv(pk)                                  # BV_INSURANCE
+        self._pay_fee(pk, "BV_INSURANCE")
+        self._adv(pk)                                  # BV_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk)                                  # BV_APPROVED
+        self._adv(pk)                                  # BV_VISA_FEE
+        self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk)                                  # BV_TICKET
+        self._pay_fee(pk, "BV_TICKET")
+        r = self._adv(pk, arrived_date="2026-08-01", bv_expiry="2026-10-30")
+        self.assertEqual(r.data["stage"], "BV_ARRIVED")
+        case = OnboardingCase.objects.get(pk=pk)
+        emp = case.employee
+        self.assertIsNotNone(emp)
+        self.assertEqual(emp.engagement_type, "SUBCONTRACT")
+        self.assertIsNone(emp.basic_pay)               # never on payroll
+        self.assertEqual(emp.subcontractor_id, sub.id)
+        self.assertTrue(emp.is_active)
+        self.assertIsNone(case.medical_due)            # no medical clock
+        # advancing past arrival is refused — close on departure instead
+        self.assertEqual(self._adv(pk).status_code, 400)
+
+    def test_subcontract_close_on_departure(self):
+        from .models import OnboardingCase
+        sub = self._subcontractor()
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT",
+                            subcontractor_id=sub.id, proposed_salary="")
+        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
+        self._adv(pk); self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk); self._pay_fee(pk, "BV_TICKET")
+        self._adv(pk, arrived_date="2026-08-01", bv_expiry="2026-10-30")
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/close",
+                             {"departed_date": "2026-09-15"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "COMPLETED")
+        case = OnboardingCase.objects.get(pk=pk)
+        emp = case.employee
+        self.assertFalse(emp.is_active)                # left the country
+        alloc = emp.site_allocations.first()
+        self.assertEqual(str(alloc.to_date), "2026-09-15")
+
+    def test_extend_visa_pushes_expiry_and_raises_fee(self):
+        from .models import OnboardingCase
+        sub = self._subcontractor()
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT",
+                            subcontractor_id=sub.id, proposed_salary="")
+        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
+        self._adv(pk); self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk); self._pay_fee(pk, "BV_TICKET")
+        self._adv(pk, arrived_date="2026-08-01", bv_expiry="2026-10-30")
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/extend",
+                             {"new_expiry": "2027-01-30", "amount": "800",
+                              "payee": "Immigration"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual(str(case.bv_expiry), "2027-01-30")
+        self.assertEqual(case.bv_renewals, 1)
+        self.assertTrue(case.fees.filter(stage="BV_EXT_1").exists())
+        # a shorter/earlier expiry is rejected
+        r2 = self.client.post(f"/api/v1/onboarding/{pk}/extend",
+                             {"new_expiry": "2026-12-01", "amount": "800",
+                              "payee": "x"}, format="json")
+        self.assertEqual(r2.status_code, 400)
+
+    def test_subcontract_needs_a_subcontractor(self):
+        pk = self._create(route="BV", bv_justification="job",
+                          bv_purpose="SUBCONTRACT", proposed_salary="").data["id"]
+        self._attach_all(pk)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/submit")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("subcontractor", r.data["detail"].lower())
 
     def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
         from datetime import date, timedelta

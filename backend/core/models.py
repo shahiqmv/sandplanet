@@ -1852,6 +1852,18 @@ class OnboardingCase(models.Model):
     # separate government-portal logins, so HR picks the right one up front.
     quota_pool = models.CharField(max_length=12, choices=QuotaPool.choices,
                                   default=QuotaPool.SANDPLANET)
+
+    class BvPurpose(models.TextChoices):
+        RECRUITMENT = "RECRUITMENT", "Recruitment (converts to work permit)"
+        SUBCONTRACT = "SUBCONTRACT", "Subcontractor's worker"
+
+    # A business visa is either a recruitment (converts to a work permit + goes
+    # on payroll) or a subcontractor's worker who comes for a specific job and
+    # leaves — never on payroll, costs to the site, case closes on departure.
+    bv_purpose = models.CharField(max_length=12, choices=BvPurpose.choices,
+                                  blank=True)
+    subcontractor = models.ForeignKey("Subcontractor", on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
     # --- processing (set once approved; the HR track stage machine) ---
     stage = models.CharField(max_length=30, blank=True)
     portal_status = models.CharField(max_length=20, blank=True)  # govt portal

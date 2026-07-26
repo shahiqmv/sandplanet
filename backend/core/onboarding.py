@@ -92,6 +92,13 @@ def _apply_fields(case, data):
         pool = (data.get("quota_pool") or "").upper()
         if pool in ("SANDPLANET", "MARINE"):
             case.quota_pool = pool
+    if "bv_purpose" in data:
+        p = (data.get("bv_purpose") or "").upper()
+        case.bv_purpose = p if p in ("RECRUITMENT", "SUBCONTRACT") else ""
+    if "subcontractor_id" in data:
+        case.subcontractor_id = data.get("subcontractor_id") or None
+    if ("route" in data or "bv_purpose" in data) and not _is_subcontract(case):
+        case.subcontractor_id = None             # only subcontract BV keeps one
     if "currency" in data:
         case.currency = (data.get("currency") or "MVR")[:3].upper()
     if "job_category_id" in data:
@@ -111,11 +118,23 @@ def _validate(case):
         return "Choose a route — Work Permit or Business Visa."
     if case.route == "BV" and not case.bv_justification.strip():
         return "A Business Visa needs a justification note (it is urgent-track)."
+    if case.route == "BV":
+        if case.bv_purpose not in ("RECRUITMENT", "SUBCONTRACT"):
+            return ("Choose the business-visa purpose — recruitment or a "
+                    "subcontractor's worker.")
+        if case.bv_purpose == "SUBCONTRACT":
+            if not case.subcontractor_id:
+                return "Pick the subcontractor this worker belongs to."
+            from .models import Subcontractor
+            sub = Subcontractor.objects.filter(pk=case.subcontractor_id).first()
+            if not sub or sub.site_id != case.document.site_id:
+                return "Pick a subcontractor at the destination site."
     if not case.category:
         return "Choose the category — Skilled / Unskilled / Staff."
     if not case.trade_designation.strip():
         return "Trade / designation is required."
-    if case.proposed_salary is None or case.proposed_salary <= 0:
+    if not _is_subcontract(case) and (case.proposed_salary is None
+                                      or case.proposed_salary <= 0):
         return "Proposed salary is required (it goes on the appointment letter)."
     return None
 
@@ -216,12 +235,13 @@ PROCESS_ROLES = ("HO_HR", "ADMIN")
 # Track A (WP): endorsement is inserted only for Sri Lankan nationals.
 _WP_HEAD = ["WP_APPOINTMENT", "WP_APPLICATION", "WP_APPROVED", "WP_DEPOSIT"]
 _WP_TAIL = ["WP_TICKET", "WP_ARRIVED", "WP_MEDICAL", "WP_ISSUED"]
-# Track B (BV): the BV chain, then the in-country WP conversion — appointment
-# letter onward, no ticketing, no endorsement (arrival/medical already done).
+# Track B (BV): no medical on the business visa itself (owner) — a recruitment
+# BV does the medical only during the in-country WP conversion; a subcontract BV
+# has no conversion and no medical at all.
 _BV = ["BV_SPONSOR", "BV_INSURANCE", "BV_APPLICATION", "BV_APPROVED",
-       "BV_VISA_FEE", "BV_TICKET", "BV_ARRIVED", "BV_MEDICAL"]
+       "BV_VISA_FEE", "BV_TICKET", "BV_ARRIVED"]
 _BV_CONVERSION = ["WP_APPOINTMENT", "WP_APPLICATION", "WP_APPROVED",
-                  "WP_DEPOSIT", "WP_ISSUED"]
+                  "WP_DEPOSIT", "WP_MEDICAL", "WP_ISSUED"]
 
 STAGE_LABEL = {
     "WP_APPOINTMENT": "Appointment letter issued",
@@ -240,11 +260,10 @@ STAGE_LABEL = {
     "BV_VISA_FEE": "Visa fee paid",
     "BV_TICKET": "Ticketed",
     "BV_ARRIVED": "Arrived (BV clock starts)",
-    "BV_MEDICAL": "Medical",
 }
 APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
 ARRIVAL_STAGES = {"WP_ARRIVED", "BV_ARRIVED"}
-MEDICAL_STAGES = {"WP_MEDICAL", "BV_MEDICAL"}
+MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
 # Payment-gated stages — Phase 3 will require a PAID PYR to leave these.
 PAYMENT_STAGES = {"WP_DEPOSIT", "WP_TICKET", "BV_INSURANCE", "BV_VISA_FEE",
                   "BV_TICKET"}
@@ -254,15 +273,21 @@ def _is_sri_lankan(case):
     return "sri lank" in (case.nationality or "").lower()
 
 
+def _is_subcontract(case):
+    return case.route == "BV" and case.bv_purpose == "SUBCONTRACT"
+
+
 def sequence(case):
     """The ordered stages for a case, factoring the route, the SL-only embassy
-    endorsement, and the BV→WP in-country conversion tail."""
+    endorsement, the BV purpose, and the BV→WP in-country conversion tail."""
     if case.route == "WP":
         seq = list(_WP_HEAD)
         if _is_sri_lankan(case):
             seq.append("WP_ENDORSEMENT")
         return seq + _WP_TAIL
-    return list(_BV) + list(_BV_CONVERSION)
+    if _is_subcontract(case):            # subcontract BV ends on arrival
+        return list(_BV)
+    return list(_BV) + list(_BV_CONVERSION)   # recruitment BV converts to WP
 
 
 def _can_leave(case, stage):
@@ -294,7 +319,10 @@ def _on_enter(case, stage, data):
         except ValueError:
             return "Invalid arrival date."
         case.arrived_date = ad
-        case.medical_due = ad + timedelta(days=14)   # company 14-day rule
+        # A medical clock only makes sense when the track actually has a medical
+        # step (WP, or a recruitment BV that converts). Subcontract BV has none.
+        if "WP_MEDICAL" in sequence(case):
+            case.medical_due = ad + timedelta(days=14)   # company 14-day rule
         if stage == "BV_ARRIVED":
             if not data.get("bv_expiry"):
                 return "Enter the BV expiry date shown on the visa."
@@ -323,6 +351,9 @@ def advance_stage(case, data, actor):
         return err
     idx = seq.index(case.stage)
     if idx + 1 >= len(seq):                          # past the last stage
+        if _is_subcontract(case):
+            return ("A subcontract worker's case closes when they leave — use "
+                    "'Worker departed' to close it.")
         created = case.employee_id is None
         with transaction.atomic():
             _set_status(doc, "COMPLETED", "COMPLETE", actor)
@@ -565,13 +596,59 @@ INVOICE_LABEL = {
 }
 
 
+def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
+                   refundable=False, invoice_label="Invoice"):
+    """Shared builder: draft + submit a purpose-coded fee PYR, link an
+    OnboardingFee, and attach the supplier invoice. Returns (pyr, err). Must be
+    called with validated inputs."""
+    from django.db import transaction
+    from .models import (Attachment, CostHead, Document, DocumentRevision,
+                         OnboardingFee)
+    from .payments import _set_status, create_payment_request
+    doc = case.document
+    head, _ = CostHead.objects.get_or_create(
+        name="Recruitment & Mobilisation", defaults={"sort_order": 95})
+    with transaction.atomic():
+        pyr = Document.objects.create(
+            doc_type="PYR", ref=next_ref("PYR", doc.site), site=doc.site,
+            doc_date=timezone.localdate(), status="DRAFT", created_by=actor)
+        rev = DocumentRevision.objects.create(
+            document=pyr, rev_label="R0", payload={}, created_by=actor)
+        pyr.current_revision = rev
+        pyr.save(update_fields=["current_revision"])
+        pr, err = create_payment_request(pyr, {
+            "cost_head_id": head.id, "amount_requested": str(amount),
+            "currency": "MVR", "payee": payee, "payment_method": "BANK",
+            "purpose": f"{label} — {doc.ref} · {case.full_name}"
+                       + (" (refundable deposit)" if refundable else ""),
+            "has_supporting_doc": bool(invoice is not None),
+        }, actor)
+        if err:
+            transaction.set_rollback(True)
+            return None, err
+        if refundable:                          # deposit posts nothing
+            pr.is_capitalized = True
+            pr.save(update_fields=["is_capitalized"])
+        if invoice is not None:                 # the supplier invoice for Finance
+            Attachment.objects.create(
+                document=pyr, revision=rev, kind="QUOTATION",
+                file=invoice, file_name=invoice.name,
+                content_type=getattr(invoice, "content_type", "") or "",
+                size_bytes=getattr(invoice, "size", 0),
+                caption=f"{invoice_label} — {label}", uploaded_by=actor)
+            pr.has_supporting_doc = True
+            pr.save(update_fields=["has_supporting_doc"])
+        OnboardingFee.objects.create(case=case, document=pyr, stage=stage,
+                                     refundable=refundable)
+        _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
+                    f"{label} — onboarding {doc.ref}")
+    return pyr, None
+
+
 def raise_fee(case, data, actor, invoice=None):
     """HR raises the fee PYR for the case's current payment stage, optionally
     attaching the supplier invoice for Finance. It rides the normal PYR approval
     → voucher → paid chain; the case can't advance until it's paid."""
-    from django.db import transaction
-    from .models import (CostHead, Document, DocumentRevision, OnboardingFee)
-    from .payments import _set_status, create_payment_request
     if actor.role not in PROCESS_ROLES:
         return None, "Only HR raises an onboarding fee."
     doc = case.document
@@ -589,47 +666,106 @@ def raise_fee(case, data, actor, invoice=None):
     if not payee:
         return None, "Enter the payee."
     label, refundable = FEE_META[stage]
-    head, _ = CostHead.objects.get_or_create(
-        name="Recruitment & Mobilisation", defaults={"sort_order": 95})
-    with transaction.atomic():
-        pyr = Document.objects.create(
-            doc_type="PYR", ref=next_ref("PYR", doc.site), site=doc.site,
-            doc_date=timezone.localdate(), status="DRAFT", created_by=actor)
-        rev = DocumentRevision.objects.create(
-            document=pyr, rev_label="R0", payload={}, created_by=actor)
-        pyr.current_revision = rev
-        pyr.save(update_fields=["current_revision"])
-        pr, err = create_payment_request(pyr, {
-            "cost_head_id": head.id, "amount_requested": str(amount),
-            "currency": "MVR", "payee": payee, "payment_method": "BANK",
-            "purpose": f"{label} — {doc.ref} · {case.full_name}"
-                       + (" (refundable deposit)" if refundable else ""),
-            "has_supporting_doc": bool(data.get("has_supporting_doc")),
-        }, actor)
-        if err:
-            transaction.set_rollback(True)
-            return None, err
-        if refundable:                          # deposit posts nothing
-            pr.is_capitalized = True
-            pr.save(update_fields=["is_capitalized"])
-        if invoice is not None:                 # the supplier invoice for Finance
-            from .models import Attachment
-            Attachment.objects.create(
-                document=pyr, revision=rev, kind="QUOTATION",
-                file=invoice, file_name=invoice.name,
-                content_type=getattr(invoice, "content_type", "") or "",
-                size_bytes=getattr(invoice, "size", 0),
-                caption=f"{INVOICE_LABEL.get(stage, 'Invoice')} — {label}",
-                uploaded_by=actor)
-            pr.has_supporting_doc = True
-            pr.save(update_fields=["has_supporting_doc"])
-        OnboardingFee.objects.create(case=case, document=pyr, stage=stage,
-                                     refundable=refundable)
-        _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
-                    f"{label} — onboarding {doc.ref}")
+    pyr, err = _build_fee_pyr(
+        case, stage, label, amount, payee, actor, invoice=invoice,
+        refundable=refundable, invoice_label=INVOICE_LABEL.get(stage, "Invoice"))
+    if err:
+        return None, err
     audit("document", doc.id, "OBR_FEE_RAISED", actor=actor,
           detail={"stage": stage, "pyr": pyr.ref, "amount": str(amount)})
     return pyr, None
+
+
+def extend_visa(case, data, actor, invoice=None):
+    """Extend a business visa before it lapses: push the expiry forward and raise
+    an extension-fee PYR (invoice attachable). Keeps the worker legal on site
+    until the job is done."""
+    from datetime import date
+    if actor.role not in PROCESS_ROLES:
+        return None, "Only HR extends a visa."
+    doc = case.document
+    if doc.status != "IN_PROGRESS":
+        return None, "The case is not in processing."
+    if case.route != "BV" or not case.bv_expiry:
+        return None, "Only an arrived business-visa case can be extended."
+    raw = data.get("new_expiry")
+    try:
+        new_expiry = date.fromisoformat(str(raw))
+    except (ValueError, TypeError):
+        return None, "Enter the new visa expiry date."
+    if new_expiry <= case.bv_expiry:
+        return None, "The new expiry must be later than the current one."
+    amount = _dec(data.get("amount"))
+    if amount is None or amount <= Decimal("0"):
+        return None, "Enter the extension fee amount."
+    payee = (data.get("payee") or "").strip()
+    if not payee:
+        return None, "Enter the payee."
+    n = case.bv_renewals + 1
+    stage = f"BV_EXT_{n}"
+    pyr, err = _build_fee_pyr(
+        case, stage, f"Business-visa extension #{n}", amount, payee, actor,
+        invoice=invoice, invoice_label="Visa extension invoice")
+    if err:
+        return None, err
+    case.bv_expiry = new_expiry
+    case.bv_renewals = n
+    case.bv_alert = ""                           # new window — let clocks re-alert
+    case.save(update_fields=["bv_expiry", "bv_renewals", "bv_alert",
+                             "updated_at"])
+    audit("document", doc.id, "OBR_VISA_EXTENDED", actor=actor,
+          detail={"new_expiry": str(new_expiry), "pyr": pyr.ref})
+    _stage_notify_text(case, f"business visa extended to {new_expiry:%d %b %Y}")
+    return pyr, None
+
+
+def close_departed(case, data, actor):
+    """Close a subcontract worker's case when they leave the country — the case
+    is done, the subcontract worker deactivated and their site allocation
+    closed."""
+    from datetime import date
+    if actor.role not in PROCESS_ROLES:
+        return "Only HR closes an onboarding case."
+    doc = case.document
+    if doc.status != "IN_PROGRESS":
+        return "The case is not in processing."
+    if not _is_subcontract(case):
+        return "Only a subcontract case is closed on departure."
+    raw = data.get("departed_date")
+    departed = timezone.localdate()
+    if raw:
+        try:
+            departed = date.fromisoformat(str(raw))
+        except (ValueError, TypeError):
+            return "Invalid departure date."
+    _set_status(doc, "COMPLETED", "COMPLETE", actor,
+                comment=f"Departed {departed:%d %b %Y}")
+    emp = case.employee
+    if emp:
+        emp.is_active = False
+        emp.save(update_fields=["is_active", "updated_at"])
+        alloc = emp.site_allocations.filter(to_date__isnull=True).first()
+        if alloc:
+            alloc.to_date = departed
+            alloc.save(update_fields=["to_date"])
+    audit("document", doc.id, "OBR_DEPARTED", actor=actor,
+          detail={"departed": str(departed),
+                  "emp_no": emp.emp_no if emp else ""})
+    _stage_notify_text(case, f"worker departed {departed:%d %b %Y}; case closed")
+    return None
+
+
+def _stage_notify_text(case, msg):
+    from . import notify
+    doc = case.document
+    recips = set(notify._role_users("HO_HR"))
+    pm = doc.site.current_pm()
+    if pm:
+        recips.add(pm)
+    for u in recips:
+        notify.notify_user(u, f"Onboarding {doc.ref} — {msg}",
+                           body=f"{case.full_name} · {doc.site.code}",
+                           doc=doc, category="alert")
 
 
 def on_fee_paid(pyr_doc, actor):
@@ -907,14 +1043,15 @@ def run_clocks(today=None):
 # ---- employee handover (Phase 6) -----------------------------------------
 
 def _handover_employee(case, actor):
-    """Mobilise the candidate into the Employee DB as a DIRECT (payroll) hire —
-    no re-keying: name/passport/DOB/category/salary carry over, and an open
-    allocation to the destination site puts them on that site's manpower list
-    and payroll from the arrival date. Fired on arrival (owner). Idempotent."""
+    """Mobilise the candidate into the Employee DB on arrival (owner). A
+    recruitment/WP case becomes a DIRECT (payroll) hire; a subcontract BV worker
+    becomes a SUBCONTRACT worker — on the site's manpower list but never on
+    payroll, linked to the chosen subcontractor. Idempotent."""
     from .models import Employee, EmployeeSiteAllocation
     if case.employee_id:
         return case.employee
     join = case.arrived_date or timezone.localdate()
+    sub = _is_subcontract(case)
     with transaction.atomic():
         n = int(next_ref("EMP", None).split("-")[1])
         emp = Employee.objects.create(
@@ -923,11 +1060,15 @@ def _handover_employee(case, actor):
             nationality=case.nationality or "",
             date_of_birth=case.date_of_birth,
             job_category_id=case.job_category_id or None,
-            basic_pay=case.proposed_salary, currency=case.currency or "MVR",
-            employment_type=Employee.EmploymentType.PERMANENT,
+            basic_pay=None if sub else case.proposed_salary,
+            currency=case.currency or "MVR",
+            employment_type=Employee.EmploymentType.CONTRACT if sub
+            else Employee.EmploymentType.PERMANENT,
             emergency_contact=case.emergency_contact or "",
             join_date=join, is_active=True,
-            engagement_type=Employee.Engagement.DIRECT)
+            engagement_type=Employee.Engagement.SUBCONTRACT if sub
+            else Employee.Engagement.DIRECT,
+            subcontractor_id=case.subcontractor_id if sub else None)
         EmployeeSiteAllocation.objects.create(
             employee=emp, site=case.document.site, from_date=join)
         photo = _photo_att(case)                 # carry the passport photo over
@@ -969,11 +1110,13 @@ def _notify_handover(case, emp):
     pm = doc.site.current_pm()
     if pm:
         recips.add(pm)
+    sub = emp.engagement_type == "SUBCONTRACT"
+    kind = "subcontract worker (no payroll)" if sub else "DIRECT hire"
     for u in recips:
         notify.notify_user(
-            u, f"Onboarding {doc.ref} — {emp.emp_no} on site payroll",
+            u, f"Onboarding {doc.ref} — {emp.emp_no} on site",
             body=f"{emp.full_name} · {doc.site.code} — added to the site "
-                 f"manpower list as a DIRECT hire from {join:%d %b %Y}",
+                 f"manpower list as a {kind} from {join:%d %b %Y}",
             doc=doc, category="alert")
 
 
@@ -1032,7 +1175,8 @@ def case_dict(case):
     sv = stage_view(case)
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
-        "site_code": doc.site.code, "doc_date": doc.doc_date,
+        "site_code": doc.site.code, "site_id": doc.site_id,
+        "doc_date": doc.doc_date,
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
         "portal_status": case.portal_status,
         "medical_result": case.medical_result,
@@ -1041,6 +1185,23 @@ def case_dict(case):
         "route": case.route, "category": case.category,
         "quota_pool": case.quota_pool,
         "quota_pool_label": case.get_quota_pool_display(),
+        "bv_purpose": case.bv_purpose,
+        "bv_purpose_label": (case.get_bv_purpose_display()
+                             if case.bv_purpose else ""),
+        "is_subcontract": _is_subcontract(case),
+        "subcontractor_id": case.subcontractor_id,
+        "subcontractor_name": (case.subcontractor.name
+                               if case.subcontractor_id else None),
+        "bv_renewals": case.bv_renewals,
+        "on_site": _is_subcontract(case) and case.stage == "BV_ARRIVED"
+        and doc.status == "IN_PROGRESS",
+        "can_extend": (case.route == "BV" and bool(case.bv_expiry)
+                       and doc.status == "IN_PROGRESS"),
+        "extensions": [
+            {"pyr_ref": f.document.ref, "pyr_status": f.document.status,
+             "paid": f.document.status == "PAID"}
+            for f in case.fees.filter(stage__startswith="BV_EXT_")
+            .select_related("document").order_by("created_at")],
         "full_name": case.full_name, "nationality": case.nationality,
         "date_of_birth": case.date_of_birth, "gender": case.gender,
         "passport_no": case.passport_no, "passport_expiry": case.passport_expiry,

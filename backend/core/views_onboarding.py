@@ -51,6 +51,58 @@ def _site_for(request, site_id):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def onboarding_subcontractors(request):
+    """Approved/active subcontractors at a site — for picking which one a
+    subcontract business-visa worker belongs to."""
+    if request.user.role not in (*VIEW_ROLES, "PM"):
+        return Response({"detail": "Not permitted."}, status=403)
+    from .models import Subcontractor
+    site_id = request.GET.get("site_id")
+    if not site_id:
+        return Response([])
+    ids = scoped_site_ids(request.user)
+    if ids is not None and int(site_id) not in ids:
+        return Response({"detail": "Not one of your sites."}, status=403)
+    subs = Subcontractor.objects.filter(
+        site_id=site_id,
+        status__in=(Subcontractor.Status.APPROVED,
+                    Subcontractor.Status.ACTIVE)).order_by("name")
+    return Response([{"id": s.id, "name": s.name,
+                      "status_label": s.get_status_display()} for s in subs])
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def onboarding_extend(request, pk):
+    """HR extends a business visa — new expiry + an extension-fee PYR."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    pyr, msg = ob.extend_visa(case, request.data, request.user,
+                              invoice=request.FILES.get("file"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case), status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_close(request, pk):
+    """HR closes a subcontract worker's case when they leave."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    msg = ob.close_departed(case, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def onboarding_cases(request):
     if request.user.role not in (*VIEW_ROLES, "PM"):
         return Response({"detail": "Not permitted."}, status=403)
