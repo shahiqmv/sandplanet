@@ -110,6 +110,9 @@ const BLANK = {
 
 function CaseForm({ value, onChange, subs = [] }) {
   const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
+  // A subcontractor's BV worker is never on payroll and never gets a work
+  // permit, so salary + quota pool don't apply to them.
+  const isSub = value.route === "BV" && value.bv_purpose === "SUBCONTRACT";
   const F = ({ label, k, type = "text", req }) => (
     <label style={fld}>{label}{req && <span style={{ color: "var(--red-fg)" }}> *</span>}
       <input style={inputStyle} type={type} value={value[k]}
@@ -134,25 +137,29 @@ function CaseForm({ value, onChange, subs = [] }) {
             {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select></label>
         <F label="Trade / designation" k="trade_designation" req />
-        <label style={fld}>Proposed salary
-          <span style={{ color: "var(--red-fg)" }}> *</span>
-          <div style={{ display: "flex", gap: 4 }}>
-            <input style={{ ...inputStyle, flex: 1 }} inputMode="decimal"
-                   value={value.proposed_salary}
-                   onChange={set("proposed_salary")} />
-            <select style={{ ...inputStyle, width: 70 }} value={value.currency}
-                    onChange={set("currency")}>
-              <option>MVR</option><option>USD</option></select>
-          </div></label>
+        {!isSub && (
+          <label style={fld}>Proposed salary
+            <span style={{ color: "var(--red-fg)" }}> *</span>
+            <div style={{ display: "flex", gap: 4 }}>
+              <input style={{ ...inputStyle, flex: 1 }} inputMode="decimal"
+                     value={value.proposed_salary}
+                     onChange={set("proposed_salary")} />
+              <select style={{ ...inputStyle, width: 70 }} value={value.currency}
+                      onChange={set("currency")}>
+                <option>MVR</option><option>USD</option></select>
+            </div></label>
+        )}
         <label style={fld}>Route <span style={{ color: "var(--red-fg)" }}>*</span>
           <select style={inputStyle} value={value.route} onChange={set("route")}>
             <option value="WP">Work permit (standard)</option>
             <option value="BV">Business visa (urgent)</option></select></label>
-        <label style={fld}>Quota pool (portal login)
-          <select style={inputStyle} value={value.quota_pool || "SANDPLANET"}
-                  onChange={set("quota_pool")}>
-            <option value="SANDPLANET">Sand Planet</option>
-            <option value="MARINE">Sand Planet Marine</option></select></label>
+        {!isSub && (
+          <label style={fld}>Quota pool (portal login)
+            <select style={inputStyle} value={value.quota_pool || "SANDPLANET"}
+                    onChange={set("quota_pool")}>
+              <option value="SANDPLANET">Sand Planet</option>
+              <option value="MARINE">Sand Planet Marine</option></select></label>
+        )}
         <F label="Mobile / contact" k="mobile" />
         <F label="Expected mobilisation" k="mobilisation_date" type="date" />
       </div>
@@ -162,7 +169,13 @@ function CaseForm({ value, onChange, subs = [] }) {
           <label style={fld}>BV purpose
             <span style={{ color: "var(--red-fg)" }}> *</span>
             <select style={inputStyle} value={value.bv_purpose || ""}
-                    onChange={set("bv_purpose")}>
+                    onChange={(e) => {
+                      const p = e.target.value;
+                      onChange({ ...value, bv_purpose: p,
+                        ...(p === "SUBCONTRACT"
+                          ? { proposed_salary: "", subcontractor_id: "" }
+                          : { subcontractor_id: "" }) });
+                    }}>
               <option value="">—</option>
               <option value="RECRUITMENT">Recruitment (→ work permit)</option>
               <option value="SUBCONTRACT">Subcontractor's worker</option>
