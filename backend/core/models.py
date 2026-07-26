@@ -3305,6 +3305,9 @@ class ScheduleLine(models.Model):
     description = models.TextField(blank=True)
     make_brand = models.CharField(max_length=120, blank=True)
     specification = models.TextField(blank=True)
+    quantity = models.DecimalField(max_digits=12, decimal_places=2,
+                                   null=True, blank=True)
+    uom = models.CharField(max_length=16, blank=True)     # unit of measure
     trade = models.CharField(max_length=60, blank=True)   # discipline
     supply_by = models.CharField(max_length=12, choices=Supply.choices,
                                  default=Supply.CONTRACTOR)

@@ -32,7 +32,7 @@ VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
 
 # Planning fields the PM owns; commercial fields Purchasing owns.
 _PLAN_FIELDS = ("category", "description", "make_brand", "specification",
-                "trade", "remarks")
+                "uom", "trade", "remarks")
 _COMM_FIELDS = ("planned_supplier", "source_country")
 
 
@@ -212,6 +212,8 @@ def _apply_plan(line, data):
 
 
 def _apply_required(line, data):
+    if "quantity" in data:
+        line.quantity = _dec(data.get("quantity"))
     if "required_date" in data:
         line.required_date = data.get("required_date") or None
     if "tds_required" in data:
@@ -321,6 +323,7 @@ def line_dict(line, values=True):
         "section_title": line.section.title if line.section_id else "",
         "category": line.category, "description": line.description,
         "make_brand": line.make_brand, "specification": line.specification,
+        "quantity": line.quantity, "uom": line.uom,
         "trade": line.trade, "supply_by": line.supply_by,
         "required_date": line.required_date, "tds_required": line.tds_required,
         "remarks": line.remarks, "state": line.state,

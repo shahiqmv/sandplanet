@@ -261,8 +261,8 @@ function ScheduleDetail({ id, me, onBack }) {
             <table style={{ width: "100%", borderCollapse: "collapse",
               fontSize: 12.5 }}>
               <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
-                {["#", "Description", "Make", "Trade", "Supply", "Required",
-                  "Supplier", "Country", "Lead",
+                {["#", "Description", "Make", "Qty", "Trade", "Supply",
+                  "Required", "Supplier", "Country", "Lead",
                   ...(c.show_values ? ["Est. value"] : []),
                   "State", ""].map((h, i) =>
                   <th key={i} style={{ padding: "6px 10px",
@@ -276,6 +276,9 @@ function ScheduleDetail({ id, me, onBack }) {
                       {ln.specification && <div style={{ color: "var(--muted)",
                         fontSize: 11 }}>{ln.specification}</div>}</td>
                     <td style={cell}>{ln.make_brand || "—"}</td>
+                    <td style={cell}>{ln.quantity != null
+                      ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
+                      : (ln.uom || "—")}</td>
                     <td style={cell}>{ln.trade || "—"}</td>
                     <td style={cell}>{ln.supply_by === "CLIENT"
                       ? <Chip tone="warn">Client</Chip> : "Contractor"}</td>
@@ -296,7 +299,7 @@ function ScheduleDetail({ id, me, onBack }) {
                   </tr>
                 ))}
                 {!rows.length && <tr><td style={{ ...cell,
-                  color: "var(--muted)" }} colSpan={12}>No lines.</td></tr>}
+                  color: "var(--muted)" }} colSpan={13}>No lines.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -317,7 +320,7 @@ function LineForm({ mode, c, line, onCancel, onSaved }) {
     section_code: line.section_code, section_title: line.section_title }
     : { supply_by: "CONTRACTOR", section_code: "", section_title: "",
         description: "", make_brand: "", specification: "", trade: "",
-        required_date: "", tds_required: false });
+        quantity: "", uom: "", required_date: "", tds_required: false });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const set = (k) => (e) => setF({ ...f,
@@ -365,6 +368,10 @@ function LineForm({ mode, c, line, onCancel, onSaved }) {
             value={f.description} onChange={set("description")} /></L>
           <L k="Make / brand"><input style={inputStyle} value={f.make_brand}
             onChange={set("make_brand")} /></L>
+          <L k="Quantity"><input type="number" style={inputStyle}
+            value={f.quantity ?? ""} onChange={set("quantity")} /></L>
+          <L k="Unit (UOM)"><input style={inputStyle} value={f.uom || ""}
+            onChange={set("uom")} placeholder="nos / m / set" /></L>
           <L k="Trade"><input style={inputStyle} value={f.trade}
             onChange={set("trade")} /></L>
           <L k="Required on site"><input type="date" style={inputStyle}
