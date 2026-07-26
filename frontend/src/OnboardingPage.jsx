@@ -108,35 +108,43 @@ const BLANK = {
   mobilisation_date: "",
 };
 
+// A text/date field bound to one key of the form. Defined at module level (not
+// inside CaseForm) so it keeps a stable identity across renders — otherwise
+// React remounts the <input> on every keystroke and it loses focus.
+function Field({ label, k, type = "text", req, value, onChange }) {
+  return (
+    <label style={fld}>{label}{req && <span style={{ color: "var(--red-fg)" }}> *</span>}
+      <input style={inputStyle} type={type} value={value[k]}
+             onChange={(e) => onChange({ ...value, [k]: e.target.value })} />
+    </label>
+  );
+}
+
 function CaseForm({ value, onChange, subs = [] }) {
   const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
   // A subcontractor's BV worker is never on payroll and never gets a work
   // permit, so salary + quota pool don't apply to them.
   const isSub = value.route === "BV" && value.bv_purpose === "SUBCONTRACT";
-  const F = ({ label, k, type = "text", req }) => (
-    <label style={fld}>{label}{req && <span style={{ color: "var(--red-fg)" }}> *</span>}
-      <input style={inputStyle} type={type} value={value[k]}
-             onChange={set(k)} /></label>
-  );
+  const F = (p) => <Field {...p} value={value} onChange={onChange} />;
   return (
     <>
       <div style={grid}>
-        <F label="Full name" k="full_name" req />
-        <F label="Nationality" k="nationality" req />
-        <F label="Passport no." k="passport_no" req />
-        <F label="Date of birth" k="date_of_birth" type="date" />
+        {F({ label: "Full name", k: "full_name", req: true })}
+        {F({ label: "Nationality", k: "nationality", req: true })}
+        {F({ label: "Passport no.", k: "passport_no", req: true })}
+        {F({ label: "Date of birth", k: "date_of_birth", type: "date" })}
         <label style={fld}>Gender
           <select style={inputStyle} value={value.gender} onChange={set("gender")}>
             <option value="">—</option><option>Male</option><option>Female</option>
           </select></label>
-        <F label="Passport expiry" k="passport_expiry" type="date" />
+        {F({ label: "Passport expiry", k: "passport_expiry", type: "date" })}
         <label style={fld}>Category <span style={{ color: "var(--red-fg)" }}>*</span>
           <select style={inputStyle} value={value.category}
                   onChange={set("category")}>
             <option value="">—</option>
             {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select></label>
-        <F label="Trade / designation" k="trade_designation" req />
+        {F({ label: "Trade / designation", k: "trade_designation", req: true })}
         {!isSub && (
           <label style={fld}>Proposed salary
             <span style={{ color: "var(--red-fg)" }}> *</span>
@@ -160,8 +168,9 @@ function CaseForm({ value, onChange, subs = [] }) {
               <option value="SANDPLANET">Sand Planet</option>
               <option value="MARINE">Sand Planet Marine</option></select></label>
         )}
-        <F label="Mobile / contact" k="mobile" />
-        <F label="Expected mobilisation" k="mobilisation_date" type="date" />
+        {F({ label: "Mobile / contact", k: "mobile" })}
+        {F({ label: "Expected mobilisation", k: "mobilisation_date",
+             type: "date" })}
       </div>
       {value.route === "BV" && (
         <div style={{ display: "grid", gap: 8,
