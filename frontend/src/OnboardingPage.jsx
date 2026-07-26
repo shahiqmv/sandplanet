@@ -548,7 +548,59 @@ function Processing({ c, me, onReload }) {
           )}
         </div>
       )}
+      {c.documents?.length > 0 &&
+        <StageDocs c={c} canProcess={canProcess} busy={busy} run={run} />}
       {canProcess && <Letters c={c} busy={busy} run={run} />}
+    </div>
+  );
+}
+
+function StageDocs({ c, canProcess, busy, run }) {
+  const dl = (att) => `/api/v1/onboarding/${c.id}/attachments/${att.id}`;
+  const upload = (slot, file) => {
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("slot", slot);
+    fd.append("file", file);
+    run(() => api(`/onboarding/${c.id}/stage-doc`,
+                  { method: "POST", body: fd }));
+  };
+  return (
+    <div style={{ marginTop: 12, borderTop: "1px solid var(--line)",
+      paddingTop: 10 }}>
+      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+        Stage documents</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {c.documents.map((d) => (
+          <div key={d.slot} style={{ display: "flex", gap: 10,
+            alignItems: "center", flexWrap: "wrap", fontSize: 12.5 }}>
+            <span style={{ minWidth: 170, fontWeight: 600 }}>{d.label}</span>
+            {d.pyr_ref && (
+              <span style={{ color: d.paid ? "var(--green-fg)"
+                : "var(--muted)" }}>
+                {d.pyr_ref} · {d.paid ? "PAID" : d.pyr_status}</span>
+            )}
+            {d.slip && (
+              <a href={dl(d.slip)} target="_blank" rel="noreferrer"
+                 style={{ color: "var(--navy)", fontWeight: 600 }}>
+                Payment slip</a>
+            )}
+            {d.doc
+              ? <a href={dl(d.doc)} target="_blank" rel="noreferrer"
+                   style={{ color: "var(--navy)", fontWeight: 600 }}>
+                  {d.doc.name || "Document"}</a>
+              : <span style={{ color: "var(--muted)" }}>— not uploaded</span>}
+            {canProcess && (
+              <label style={{ fontSize: 11, color: "var(--sky)",
+                cursor: "pointer", fontWeight: 600 }}>
+                {d.doc ? "Replace" : "Upload"}
+                <input type="file" style={{ display: "none" }}
+                       onChange={(e) => upload(d.slot, e.target.files[0])} />
+              </label>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

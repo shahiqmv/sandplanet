@@ -436,6 +436,119 @@ def fee_for(case, stage):
     return case.fees.filter(stage=stage).select_related("document").first()
 
 
+def _att_ref(att):
+    return {"id": att.id, "name": att.file_name} if att else None
+
+
+# ---- stage documents (Task B) --------------------------------------------
+
+# Uploadable documents, each anchored to the stage it belongs to. A slot shows
+# once its anchor stage is in the case's sequence AND reached. Fee-linked slots
+# (fee_stage set) also surface Finance's payment slip off the fee PYR. The BV→WP
+# conversion means a business-visa case also gets ENTRY_PASS / DEPOSIT_RECEIPT.
+DOC_SLOTS = [
+    {"key": "ENTRY_PASS", "label": "Work Permit Entry Pass",
+     "anchor": "WP_APPROVED", "fee_stage": None},
+    {"key": "DEPOSIT_RECEIPT", "label": "Deposit receipt",
+     "anchor": "WP_DEPOSIT", "fee_stage": "WP_DEPOSIT"},
+    {"key": "WP_TICKET_DOC", "label": "Air ticket",
+     "anchor": "WP_TICKET", "fee_stage": "WP_TICKET"},
+    {"key": "BV_CERTIFICATE", "label": "Business Visa Certificate",
+     "anchor": "BV_APPROVED", "fee_stage": None},
+    {"key": "INSURANCE_POLICY", "label": "Insurance policy",
+     "anchor": "BV_INSURANCE", "fee_stage": "BV_INSURANCE"},
+    {"key": "VISA_FEE_RECEIPT", "label": "Visa fee receipt",
+     "anchor": "BV_VISA_FEE", "fee_stage": "BV_VISA_FEE"},
+    {"key": "BV_TICKET_DOC", "label": "Air ticket",
+     "anchor": "BV_TICKET", "fee_stage": "BV_TICKET"},
+]
+_SLOT_BY_KEY = {s["key"]: s for s in DOC_SLOTS}
+
+
+def _slot_reached(case, seq, idx, slot):
+    a = slot["anchor"]
+    return a in seq and idx >= seq.index(a)
+
+
+def documents_list(case):
+    """Every stage-document slot the case has reached, in workflow order, each
+    with its uploaded file (if any) and the Finance payment slip for fee slots."""
+    seq = sequence(case)
+    idx = seq.index(case.stage) if case.stage in seq else -1
+    uploaded = {d.slot: d for d in
+                case.documents.select_related("attachment")}
+    out = []
+    slots = [s for s in DOC_SLOTS if _slot_reached(case, seq, idx, s)]
+    slots.sort(key=lambda s: seq.index(s["anchor"]))
+    for s in slots:
+        row = {"slot": s["key"], "label": s["label"], "anchor": s["anchor"],
+               "anchor_label": STAGE_LABEL.get(s["anchor"], s["anchor"]),
+               "doc": _att_ref(uploaded[s["key"]].attachment)
+               if s["key"] in uploaded else None,
+               "pyr_ref": None, "pyr_status": None, "paid": False, "slip": None}
+        if s["fee_stage"]:
+            fee = fee_for(case, s["fee_stage"])
+            if fee:
+                row["pyr_ref"] = fee.document.ref
+                row["pyr_status"] = fee.document.status
+                row["paid"] = fee.document.status == "PAID"
+                slip = (fee.document.attachments.filter(kind="PAYMENT_SLIP")
+                        .order_by("id").last())
+                row["slip"] = _att_ref(slip)
+        out.append(row)
+    return out
+
+
+def upload_document(case, slot_key, upload, actor):
+    """HR attaches (or replaces) the document for a stage slot."""
+    from .models import Attachment, OnboardingDocument
+    if actor.role not in PROCESS_ROLES:
+        return None, "Only HR uploads onboarding documents."
+    slot = _SLOT_BY_KEY.get(slot_key)
+    if slot is None:
+        return None, "Unknown document type."
+    seq = sequence(case)
+    idx = seq.index(case.stage) if case.stage in seq else -1
+    if not _slot_reached(case, seq, idx, slot):
+        return None, "The case hasn't reached this stage yet."
+    if upload is None:
+        return None, "Attach a file."
+    doc = case.document
+    att = Attachment.objects.create(
+        document=doc, revision=doc.current_revision, kind="EVIDENCE",
+        file=upload, file_name=upload.name,
+        content_type=upload.content_type or "", size_bytes=upload.size,
+        caption=slot["label"], uploaded_by=actor)
+    existing = case.documents.filter(slot=slot_key).first()
+    old_att = existing.attachment if existing else None
+    if existing:
+        existing.attachment = att
+        existing.created_by = actor
+        existing.save(update_fields=["attachment", "created_by"])
+    else:
+        OnboardingDocument.objects.create(case=case, slot=slot_key,
+                                          attachment=att, created_by=actor)
+    if old_att:
+        old_att.delete()
+    audit("document", doc.id, "OBR_STAGE_DOC", actor=actor,
+          detail={"slot": slot_key, "att": att.id})
+    return att, None
+
+
+def case_attachment(case, att_id):
+    """An attachment the case may expose for download — one on the OBR itself,
+    or a payment slip on one of its fee PYRs. Returns None otherwise."""
+    from .models import Attachment
+    att = Attachment.objects.filter(pk=att_id).select_related("document").first()
+    if att is None or not att.file:
+        return None
+    if att.document_id == case.document_id:
+        return att
+    if case.fees.filter(document_id=att.document_id).exists():
+        return att
+    return None
+
+
 def raise_fee(case, data, actor):
     """HR raises the fee PYR for the case's current payment stage. It rides the
     normal PYR approval → voucher → paid chain; the case can't advance until
@@ -895,6 +1008,7 @@ def case_dict(case):
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
         "employee_id": case.employee_id,
         "employee_no": case.employee.emp_no if case.employee_id else None,
+        "documents": documents_list(case),
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),
         "letters": [_letter_dict(ltr) for ltr

@@ -1886,6 +1886,28 @@ class OnboardingFee(models.Model):
         ]
 
 
+class OnboardingDocument(models.Model):
+    """An HR-uploaded document tagged to an onboarding stage/slot — the deposit
+    receipt, air ticket, insurance policy, Work Permit Entry Pass, Business Visa
+    Certificate, etc. One current file per slot (re-upload replaces). Finance's
+    own payment slip lives on the fee PYR and is surfaced alongside these."""
+
+    case = models.ForeignKey(OnboardingCase, on_delete=models.CASCADE,
+                             related_name="documents")
+    slot = models.CharField(max_length=24)       # DOC_SLOTS key
+    attachment = models.ForeignKey(Attachment, on_delete=models.CASCADE,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(User, null=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["case", "slot"],
+                                    name="uniq_onboarding_doc_per_slot"),
+        ]
+
+
 class OnboardingLetter(models.Model):
     """A generated official letter for an onboarding case — the Letter of
     Appointment (LOA, work-permit track) or the Sponsor Letter (SPL, business-

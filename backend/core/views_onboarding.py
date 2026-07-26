@@ -154,6 +154,41 @@ def onboarding_fee(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def onboarding_stage_doc(request, pk):
+    """HR uploads a stage document — deposit receipt, air ticket, entry pass,
+    business-visa certificate, insurance policy, etc."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    att, msg = ob.upload_document(case, request.data.get("slot"),
+                                  request.FILES.get("file"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case), status=201)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def onboarding_attachment(request, pk, att_id):
+    """Stream a case document — an OBR attachment or a fee PYR's payment slip
+    (same access gate as the case)."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    att = ob.case_attachment(case, att_id)
+    if att is None:
+        return Response({"detail": "Not found."}, status=404)
+    from django.http import FileResponse
+    return FileResponse(
+        att.file.open("rb"),
+        content_type=att.content_type or "application/octet-stream",
+        filename=att.file_name or f"attachment-{att.id}")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def onboarding_letter(request, pk):
     """HR generates an official letter (LOA / SPL) for the case."""
     case, err = _get_case(request, pk)

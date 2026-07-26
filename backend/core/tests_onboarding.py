@@ -323,6 +323,78 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_stage_document_upload_and_download(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk)                                  # → WP_APPROVED
+        self.client.force_authenticate(self.hr)
+        f = SimpleUploadedFile("entrypass.pdf", b"%PDF-1.4 pass",
+                               content_type="application/pdf")
+        r = self.client.post(f"/api/v1/onboarding/{pk}/stage-doc",
+                             {"slot": "ENTRY_PASS", "file": f},
+                             format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        docs = {d["slot"]: d for d in r.data["documents"]}
+        self.assertIn("ENTRY_PASS", docs)             # WP milestone, reached
+        self.assertIsNotNone(docs["ENTRY_PASS"]["doc"])
+        self.assertNotIn("DEPOSIT_RECEIPT", docs)     # its stage not reached yet
+        att_id = docs["ENTRY_PASS"]["doc"]["id"]
+        dl = self.client.get(f"/api/v1/onboarding/{pk}/attachments/{att_id}")
+        self.assertEqual(dl.status_code, 200)
+
+    def test_stage_document_refused_before_stage_reached(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        pk = self._approved()
+        self._adv(pk)                                  # WP_APPOINTMENT only
+        self.client.force_authenticate(self.hr)
+        f = SimpleUploadedFile("x.pdf", b"x")
+        r = self.client.post(f"/api/v1/onboarding/{pk}/stage-doc",
+                             {"slot": "ENTRY_PASS", "file": f},
+                             format="multipart")
+        self.assertEqual(r.status_code, 400)
+
+    def test_fee_slot_surfaces_finance_payment_slip(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Attachment, OnboardingCase
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                         {"amount": "1500", "payee": "Immigration"},
+                         format="json")
+        pyr = OnboardingCase.objects.get(pk=pk).fees.get(
+            stage="WP_DEPOSIT").document
+        Attachment.objects.create(
+            document=pyr, revision=pyr.current_revision, kind="PAYMENT_SLIP",
+            file=SimpleUploadedFile("slip.pdf", b"%PDF slip"),
+            file_name="slip.pdf", content_type="application/pdf",
+            size_bytes=9, uploaded_by=self.hr)
+        detail = self.client.get(f"/api/v1/onboarding/{pk}").data
+        dep = next(d for d in detail["documents"]
+                   if d["slot"] == "DEPOSIT_RECEIPT")
+        self.assertEqual(dep["pyr_ref"], pyr.ref)
+        self.assertIsNotNone(dep["slip"])             # Finance slip surfaced
+        dl = self.client.get(
+            f"/api/v1/onboarding/{pk}/attachments/{dep['slip']['id']}")
+        self.assertEqual(dl.status_code, 200)
+
+    def test_bv_certificate_slot_on_bv_track(self):
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        pk = self._approved(route="BV", bv_justification="urgent",
+                            nationality="Indian")
+        self._adv(pk)                                  # begin → BV_SPONSOR
+        OnboardingCase.objects.filter(pk=pk).update(stage="BV_APPROVED")
+        case = OnboardingCase.objects.get(pk=pk)
+        slots = {d["slot"] for d in ob.documents_list(case)}
+        self.assertIn("BV_CERTIFICATE", slots)
+        self.assertIn("INSURANCE_POLICY", slots)      # earlier BV fee slot
+        self.assertNotIn("ENTRY_PASS", slots)         # WP conversion not reached
+
     def test_arrival_hands_over_to_employee_db(self):
         from .models import Employee, Notification, OnboardingCase
         pk = self._approved()
