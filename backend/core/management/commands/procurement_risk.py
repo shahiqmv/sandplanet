@@ -31,5 +31,7 @@ class Command(BaseCommand):
                 f"PD procurement digest sent to {n} director(s)."))
         else:
             n = pp.sweep_risk_alerts()
+            c = pp.sweep_client_staleness()
             self.stdout.write(self.style.SUCCESS(
-                f"{n} procurement risk alert(s) fired."))
+                f"{n} procurement risk alert(s) fired, "
+                f"{c} client chase(s) sent."))

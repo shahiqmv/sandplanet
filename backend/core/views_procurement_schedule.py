@@ -183,6 +183,20 @@ def schedule_line_production(request, line_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def schedule_line_client_update(request, line_id):
+    """Log a client-supplied line's status: {note, delivered?}."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    msg = pp.record_client_update(line, request.data.get("note"),
+                                  request.data.get("delivered"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def schedule_submit(request, pk):
     sched, err = _get_sched(request, pk)
     if err:

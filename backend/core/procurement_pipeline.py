@@ -156,8 +156,34 @@ def _eta_stage(line):
                   ("Late — ~%s" if late else "~%s") % site_eta.isoformat())
 
 
+def _client_pipeline(line):
+    """CLIENT-supplied lines have no MAR/IPR/GRN — the client procures and
+    delivers, so the stages Sand Planet doesn't own read 'client' and delivery
+    is the manual mark."""
+    na = "Client-supplied"
+    delivered = bool(line.client_delivered_on)
+    delivery = _stage("delivery", "Delivery", "done" if delivered else "pending",
+                      f"Delivered {line.client_delivered_on.isoformat()}"
+                      if delivered else "Awaiting client")
+    if delivered:
+        eta = _stage("eta", "ETA to site", "done", "Delivered")
+    elif line.required_date and line.required_date < _today():
+        eta = _stage("eta", "ETA to site", "warn", "Overdue")
+    elif line.required_date:
+        eta = _stage("eta", "ETA to site", "pending",
+                     f"Due {line.required_date.isoformat()}")
+    else:
+        eta = _stage("eta", "ETA to site", "none", "—")
+    return [_stage("tds", "TDS / MAR", "na", na),
+            _stage("order", "Order (IPR)", "na", na),
+            _production_stage(line), _stage("shipment", "Shipment", "na", na),
+            delivery, eta]
+
+
 def line_pipeline(line):
     """The six derived stages for a line, in flow order."""
+    if line.supply_by == "CLIENT":
+        return _client_pipeline(line)
     return [_tds_stage(line), _order_stage(line), _production_stage(line),
             _shipment_stage(line), _delivery_stage(line), _eta_stage(line)]
 
@@ -166,6 +192,9 @@ def line_pipeline(line):
 
 # A line is "at risk" when its projected arrival leaves this little slack.
 AT_RISK_WINDOW_DAYS = 14
+# A client-supplied line with no update in this many days (and not delivered)
+# earns a chase to the PM.
+CLIENT_STALE_DAYS = 14
 # Rough door-to-Male sea-freight allowance by source country until a config
 # screen exists (uppercased country string -> days).
 SHIPPING_ALLOWANCE_DAYS = {
@@ -183,8 +212,9 @@ def _today():
 
 
 def _delivered(line):
-    return bool(line.grn_id) and line.grn.status in (
-        "COMPLETE", "SHORTAGE_REPORTED")
+    if line.grn_id and line.grn.status in ("COMPLETE", "SHORTAGE_REPORTED"):
+        return True
+    return bool(line.client_delivered_on)   # CLIENT lines are marked by hand
 
 
 def _shipping_allowance(line):
@@ -348,6 +378,45 @@ def send_pd_digest(today=None):
     return sent
 
 
+def _chase_client(notify, line):
+    sched = line.schedule
+    proj = sched.project
+    what = (line.description or "item")[:60]
+    title = f"Chase client update — {what}"
+    body = (f"{proj.code} · {sched.document.ref} · client-supplied {what}: "
+            f"no update in {CLIENT_STALE_DAYS}+ days. "
+            f"Required {line.required_date or '—'}.")[:300]
+    pm = proj.pm or (proj.site.current_pm() if proj.site_id else None)
+    recips = {pm} if pm else set(notify._role_users("HO_PURCHASING"))
+    for u in recips:
+        notify.notify_user(u, title, body=body, doc=sched.document,
+                           category="alert")
+
+
+def sweep_client_staleness(today=None):
+    """Chase the PM on client-supplied lines that have gone quiet. Re-chases at
+    most once per staleness window; a client update clears the watermark."""
+    from . import notify
+    today = today or _today()
+    sent = 0
+    lines = (ScheduleLine.objects
+             .filter(schedule__baseline_signed_at__isnull=False,
+                     state="SIGNED_OFF", supply_by="CLIENT",
+                     client_delivered_on__isnull=True)
+             .select_related("schedule__project__site", "schedule__document"))
+    for line in lines:
+        if not client_is_stale(line, today):
+            continue
+        chased = line.client_chased_on
+        if chased and (today - chased).days < CLIENT_STALE_DAYS:
+            continue
+        _chase_client(notify, line)
+        line.client_chased_on = today
+        line.save(update_fields=["client_chased_on"])
+        sent += 1
+    return sent
+
+
 # ---- linking -------------------------------------------------------------
 
 def _resolve(ref, doc_type):
@@ -396,6 +465,41 @@ def set_production(line, status, actor):
     audit("document", line.schedule.document_id, "PSC_LINE_PRODUCTION",
           actor=actor, detail={"line": line.id, "status": status})
     return None
+
+
+def record_client_update(line, note, delivered, actor):
+    """Log where a CLIENT-supplied line stands (client procures + delivers).
+    Stamps the update date, optionally marks/unmarks delivery, and clears the
+    chase watermark so freshness resets."""
+    if actor.role not in LINK_ROLES:
+        return "Not permitted to update client-supplied lines."
+    if line.supply_by != "CLIENT":
+        return "Client updates apply to client-supplied lines only."
+    line.client_last_update = _today()
+    if note is not None:
+        line.client_update_note = (note or "")[:200]
+    if delivered is True:
+        line.client_delivered_on = line.client_delivered_on or _today()
+    elif delivered is False:
+        line.client_delivered_on = None
+    line.client_chased_on = None
+    line.save(update_fields=["client_last_update", "client_update_note",
+                             "client_delivered_on", "client_chased_on",
+                             "updated_at"])
+    audit("document", line.schedule.document_id, "PSC_CLIENT_UPDATE",
+          actor=actor, detail={"line": line.id,
+                               "delivered": bool(line.client_delivered_on)})
+    return None
+
+
+def client_is_stale(line, today=None):
+    """A client line overdue for an update: not delivered and no update within
+    the staleness window."""
+    if line.supply_by != "CLIENT" or line.client_delivered_on:
+        return False
+    today = today or _today()
+    last = line.client_last_update
+    return last is None or (today - last).days >= CLIENT_STALE_DAYS
 
 
 def _cand(doc, note=""):

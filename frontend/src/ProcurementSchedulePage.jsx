@@ -344,7 +344,9 @@ function ScheduleDetail({ id, me, onBack }) {
                     <td style={cell}>{ln.s_no}</td>
                     <td style={cell}>{ln.description}
                       {ln.specification && <div style={{ color: "var(--muted)",
-                        fontSize: 11 }}>{ln.specification}</div>}</td>
+                        fontSize: 11 }}>{ln.specification}</div>}
+                      {ln.client_stale && <div style={{ color: "var(--amber-fg)",
+                        fontSize: 10.5 }}>⚠ client update overdue</div>}</td>
                     <td style={cell}>{ln.make_brand || "—"}</td>
                     <td style={cell}>{ln.quantity != null
                       ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
@@ -403,7 +405,9 @@ function LinkPanel({ line, onClose, onSaved }) {
   const [openSlot, setOpenSlot] = useState(null);   // slot showing suggestions
   const [cands, setCands] = useState([]);
   const [ref, setRef] = useState("");
+  const [note, setNote] = useState(line?.client_update_note || "");
   if (!line) return null;
+  const isClient = line.supply_by === "CLIENT";
 
   async function run(fn) {
     setBusy(true); setErr(null);
@@ -421,6 +425,9 @@ function LinkPanel({ line, onClose, onSaved }) {
   const setProduction = (status) => run(() =>
     api(`/procurement-schedule-lines/${line.id}/production`,
       { method: "POST", body: { status } }));
+  const clientUpdate = (delivered) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/client-update`,
+      { method: "POST", body: { note, delivered } }));
   async function suggest(slot) {
     if (openSlot === slot) { setOpenSlot(null); return; }
     setOpenSlot(slot); setCands([]); setRef("");
@@ -444,7 +451,38 @@ function LinkPanel({ line, onClose, onSaved }) {
 
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
         marginTop: 10 }}>
-        {LINK_SLOTS.map(([slot, label, refKey]) => (
+        {isClient && (
+          <div style={{ flex: 1, minWidth: 260,
+            border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)",
+              marginBottom: 6, display: "flex", gap: 8 }}>
+              Client update
+              {line.client_stale && <Chip tone="warn">chase overdue</Chip>}
+              {line.client_delivered_on &&
+                <Chip tone="ok">delivered {fmt(line.client_delivered_on)}</Chip>}
+            </div>
+            {line.client_last_update && <div style={{ fontSize: 11.5,
+              color: "var(--muted)", marginBottom: 6 }}>
+              Last update {fmt(line.client_last_update)}</div>}
+            <input style={{ ...inputStyle, fontSize: 12 }} value={note}
+              placeholder="Where is the client's supply?"
+              onChange={(e) => setNote(e.target.value)} />
+            <div style={{ display: "flex", gap: 6, marginTop: 6,
+              flexWrap: "wrap" }}>
+              <Btn variant="secondary" disabled={busy}
+                style={{ padding: "4px 12px" }}
+                onClick={() => clientUpdate(null)}>Record update</Btn>
+              {line.client_delivered_on
+                ? <Btn variant="ghost" disabled={busy}
+                    style={{ padding: "4px 12px" }}
+                    onClick={() => clientUpdate(false)}>Un-deliver</Btn>
+                : <Btn variant="primary" disabled={busy}
+                    style={{ padding: "4px 12px" }}
+                    onClick={() => clientUpdate(true)}>Mark delivered</Btn>}
+            </div>
+          </div>
+        )}
+        {!isClient && LINK_SLOTS.map(([slot, label, refKey]) => (
           <div key={slot} style={{ flex: 1, minWidth: 240,
             border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
             <div style={{ fontSize: 12, color: "var(--muted)",

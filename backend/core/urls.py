@@ -391,6 +391,8 @@ urlpatterns = [
          psched_api.schedule_line_candidates, name="psched-line-candidates"),
     path("procurement-schedule-lines/<int:line_id>/production",
          psched_api.schedule_line_production, name="psched-line-production"),
+    path("procurement-schedule-lines/<int:line_id>/client-update",
+         psched_api.schedule_line_client_update, name="psched-line-client"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),

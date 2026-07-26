@@ -3343,6 +3343,10 @@ class ScheduleLine(models.Model):
     # CLIENT lines carry a last-client-update stamp (phase 4)
     client_last_update = models.DateField(null=True, blank=True)
     client_update_note = models.CharField(max_length=200, blank=True)
+    # CLIENT lines never get a GRN — delivery is marked by hand.
+    client_delivered_on = models.DateField(null=True, blank=True)
+    # Watermark for the staleness chase, so the PM isn't nagged daily.
+    client_chased_on = models.DateField(null=True, blank=True)
 
     state = models.CharField(max_length=12, choices=State.choices,
                              default=State.PROPOSED)

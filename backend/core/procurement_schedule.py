@@ -343,9 +343,12 @@ def line_dict(line, values=True):
         "ipr_ref": line.ipr.ref if line.ipr_id else "",
         "grn_ref": line.grn.ref if line.grn_id else "",
     }
-    from .procurement_pipeline import line_pipeline, line_risk
+    from .procurement_pipeline import (client_is_stale, line_pipeline,
+                                       line_risk)
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
+    d["client_delivered_on"] = line.client_delivered_on
+    d["client_stale"] = client_is_stale(line)
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
