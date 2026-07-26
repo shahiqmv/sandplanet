@@ -1843,6 +1843,15 @@ class OnboardingCase(models.Model):
     # --- route ---
     route = models.CharField(max_length=2, choices=Route.choices)
     bv_justification = models.TextField(blank=True)
+
+    class QuotaPool(models.TextChoices):
+        SANDPLANET = "SANDPLANET", "Sand Planet"
+        MARINE = "MARINE", "Sand Planet Marine"
+
+    # Which company quota the work permit is applied under — the two pools have
+    # separate government-portal logins, so HR picks the right one up front.
+    quota_pool = models.CharField(max_length=12, choices=QuotaPool.choices,
+                                  default=QuotaPool.SANDPLANET)
     # --- processing (set once approved; the HR track stage machine) ---
     stage = models.CharField(max_length=30, blank=True)
     portal_status = models.CharField(max_length=20, blank=True)  # govt portal

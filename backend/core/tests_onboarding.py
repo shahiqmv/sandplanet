@@ -58,7 +58,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_submit_gated_on_checklist(self):
         pk = self._create().data["id"]
-        # missing all four docs
+        # missing the required docs
         r = self.client.post(f"/api/v1/onboarding/{pk}/submit")
         self.assertEqual(r.status_code, 400)
         self.assertIn("Passport copy", r.data["detail"])
@@ -66,6 +66,27 @@ class OnboardingSpineTests(TestCase):
         r = self.client.post(f"/api/v1/onboarding/{pk}/submit")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "SUBMITTED")
+
+    def test_cv_is_optional(self):
+        pk = self._create().data["id"]
+        # the three passport docs only — no CV
+        for kind in ("PASSPORT_COPY", "PASSPORT_PHOTO", "PASSPORT_OBS"):
+            f = SimpleUploadedFile(f"{kind}.pdf", b"x",
+                                   content_type="application/pdf")
+            self.client.post(f"/api/v1/onboarding/{pk}/documents",
+                             {"kind": kind, "file": f}, format="multipart")
+        r = self.client.post(f"/api/v1/onboarding/{pk}/submit")
+        self.assertEqual(r.status_code, 200, r.data)   # submits without a CV
+        cv = next(x for x in r.data["checklist"] if x["kind"] == "CV")
+        self.assertFalse(cv["required"])
+
+    def test_quota_pool_selected_and_stored(self):
+        r = self._create(quota_pool="MARINE")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["quota_pool"], "MARINE")
+        self.assertEqual(r.data["quota_pool_label"], "Sand Planet Marine")
+        # defaults to Sand Planet when not given
+        self.assertEqual(self._create().data["quota_pool"], "SANDPLANET")
 
     def test_bv_needs_justification(self):
         pk = self._create(route="BV").data["id"]
@@ -364,6 +385,37 @@ class OnboardingSpineTests(TestCase):
         finally:
             px.scan = orig
 
+    def test_checklist_document_is_downloadable(self):
+        pk = self._create().data["id"]
+        self._attach_all(pk)                           # pm is authenticated
+        detail = self.client.get(f"/api/v1/onboarding/{pk}").data
+        cv = next(x for x in detail["checklist"] if x["kind"] == "CV")
+        self.assertTrue(cv["present"])
+        self.assertIsNotNone(cv["att_id"])
+        dl = self.client.get(
+            f"/api/v1/onboarding/{pk}/attachments/{cv['att_id']}")
+        self.assertEqual(dl.status_code, 200)
+        self.assertIsNotNone(detail["photo_att_id"])   # passport photo exposed
+
+    def test_fee_invoice_attaches_to_pyr(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import OnboardingCase
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
+        self.client.force_authenticate(self.hr)
+        inv = SimpleUploadedFile("invoice.pdf", b"%PDF inv",
+                                 content_type="application/pdf")
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "Immigration",
+                              "file": inv}, format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        pyr = OnboardingCase.objects.get(pk=pk).fees.get(
+            stage="WP_DEPOSIT").document
+        self.assertTrue(pyr.attachments.filter(kind="QUOTATION").exists())
+        self.assertTrue(pyr.payment_request.has_supporting_doc)
+
     def test_stage_document_upload_and_download(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         pk = self._approved()
@@ -467,6 +519,7 @@ class OnboardingSpineTests(TestCase):
         alloc = emp.site_allocations.filter(to_date__isnull=True).first()
         self.assertEqual(alloc.site_id, case.document.site_id)
         self.assertEqual(str(alloc.from_date), "2026-08-01")
+        self.assertTrue(bool(emp.photo))              # passport photo carried over
         # only one employee across the whole walk (arrival + completion)
         self.assertEqual(Employee.objects.filter(pk=emp.pk).count(), 1)
         self.assertTrue(Notification.objects.filter(

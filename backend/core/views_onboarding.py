@@ -6,7 +6,7 @@ the single approval gate.
 """
 from rest_framework.decorators import (api_view, parser_classes,
                                        permission_classes)
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -15,7 +15,7 @@ from .models import Attachment, Document, OnboardingCase, Site
 from .permissions import scoped_site_ids
 
 VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN")      # see all cases
-DOC_KINDS = {k for k, _ in ob.REQUIRED_DOCS}
+DOC_KINDS = {k for k, _, _ in ob.CHECKLIST_DOCS}
 
 
 def _can_see(user, doc):
@@ -159,12 +159,15 @@ def onboarding_stage(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
 def onboarding_fee(request, pk):
-    """HR raises the fee PYR for the current payment stage."""
+    """HR raises the fee PYR for the current payment stage, optionally attaching
+    the supplier invoice."""
     case, err = _get_case(request, pk)
     if err:
         return err
-    pyr, msg = ob.raise_fee(case, request.data, request.user)
+    pyr, msg = ob.raise_fee(case, request.data, request.user,
+                            invoice=request.FILES.get("file"))
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()

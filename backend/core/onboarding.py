@@ -24,12 +24,14 @@ APPROVE_ROLES = ("DIRECTOR", "ADMIN")            # the PD gate
 OPEN = ("DRAFT", "SUBMITTED", "RETURNED")        # editable / pre-approval
 TERMINAL = ("COMPLETED", "REJECTED", "CANCELLED")  # closed
 # Mandatory checklist documents (Attachment kinds) before an OBR can be submitted
-REQUIRED_DOCS = [
-    ("PASSPORT_COPY", "Passport copy"),
-    ("PASSPORT_PHOTO", "Passport photo"),
-    ("PASSPORT_OBS", "Passport observation page"),
-    ("CV", "CV"),
+# (kind, label, required). The CV is optional — everything else gates submit.
+CHECKLIST_DOCS = [
+    ("PASSPORT_COPY", "Passport copy", True),
+    ("PASSPORT_PHOTO", "Passport photo", True),
+    ("PASSPORT_OBS", "Passport observation page", True),
+    ("CV", "CV", False),
 ]
+REQUIRED_DOCS = [(k, label) for k, label, req in CHECKLIST_DOCS if req]
 
 
 def _dec(v):
@@ -86,6 +88,10 @@ def _apply_fields(case, data):
         case.category = data.get("category") or ""
     if "route" in data:
         case.route = data.get("route") or ""
+    if "quota_pool" in data:
+        pool = (data.get("quota_pool") or "").upper()
+        if pool in ("SANDPLANET", "MARINE"):
+            case.quota_pool = pool
     if "currency" in data:
         case.currency = (data.get("currency") or "MVR")[:3].upper()
     if "job_category_id" in data:
@@ -549,10 +555,20 @@ def case_attachment(case, att_id):
     return None
 
 
-def raise_fee(case, data, actor):
-    """HR raises the fee PYR for the case's current payment stage. It rides the
-    normal PYR approval → voucher → paid chain; the case can't advance until
-    it's paid."""
+# The supplier invoice each fee PYR should carry, so Finance has the bill.
+INVOICE_LABEL = {
+    "WP_DEPOSIT": "Deposit fee invoice",
+    "WP_TICKET": "Air ticket invoice",
+    "BV_INSURANCE": "Insurance company invoice",
+    "BV_VISA_FEE": "Visa payment invoice",
+    "BV_TICKET": "Air ticket invoice",
+}
+
+
+def raise_fee(case, data, actor, invoice=None):
+    """HR raises the fee PYR for the case's current payment stage, optionally
+    attaching the supplier invoice for Finance. It rides the normal PYR approval
+    → voucher → paid chain; the case can't advance until it's paid."""
     from django.db import transaction
     from .models import (CostHead, Document, DocumentRevision, OnboardingFee)
     from .payments import _set_status, create_payment_request
@@ -596,6 +612,17 @@ def raise_fee(case, data, actor):
         if refundable:                          # deposit posts nothing
             pr.is_capitalized = True
             pr.save(update_fields=["is_capitalized"])
+        if invoice is not None:                 # the supplier invoice for Finance
+            from .models import Attachment
+            Attachment.objects.create(
+                document=pyr, revision=rev, kind="QUOTATION",
+                file=invoice, file_name=invoice.name,
+                content_type=getattr(invoice, "content_type", "") or "",
+                size_bytes=getattr(invoice, "size", 0),
+                caption=f"{INVOICE_LABEL.get(stage, 'Invoice')} — {label}",
+                uploaded_by=actor)
+            pr.has_supporting_doc = True
+            pr.save(update_fields=["has_supporting_doc"])
         OnboardingFee.objects.create(case=case, document=pyr, stage=stage,
                                      refundable=refundable)
         _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
@@ -903,6 +930,14 @@ def _handover_employee(case, actor):
             engagement_type=Employee.Engagement.DIRECT)
         EmployeeSiteAllocation.objects.create(
             employee=emp, site=case.document.site, from_date=join)
+        photo = _photo_att(case)                 # carry the passport photo over
+        if photo and photo.file:
+            from django.core.files.base import ContentFile
+            try:
+                emp.photo.save(photo.file_name or f"{emp.emp_no}.jpg",
+                               ContentFile(photo.file.read()), save=True)
+            except Exception:                    # pragma: no cover - storage
+                pass
         case.employee = emp
         case.save(update_fields=["employee", "updated_at"])
     audit("employee", emp.id, "OBR_HANDOVER", actor=actor,
@@ -945,9 +980,19 @@ def _notify_handover(case, emp):
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):
-    have = set(case.document.attachments.values_list("kind", flat=True))
-    return [{"kind": k, "label": label, "present": k in have}
-            for k, label in REQUIRED_DOCS]
+    kinds = [k for k, _, _ in CHECKLIST_DOCS]
+    atts = {}
+    for a in case.document.attachments.filter(kind__in=kinds).order_by("id"):
+        atts[a.kind] = a                 # last upload of each kind wins
+    return [{"kind": k, "label": label, "required": req,
+             "present": k in atts,
+             "att_id": atts[k].id if k in atts else None}
+            for k, label, req in CHECKLIST_DOCS]
+
+
+def _photo_att(case):
+    return (case.document.attachments.filter(kind="PASSPORT_PHOTO")
+            .order_by("id").last())
 
 
 def stage_view(case):
@@ -969,6 +1014,7 @@ def stage_view(case):
         f = fee_for(case, case.stage)
         label, refundable = FEE_META.get(case.stage, ("", False))
         fee = {"label": label, "refundable": refundable, "raised": bool(f),
+               "invoice_label": INVOICE_LABEL.get(case.stage, "Invoice"),
                "pyr_ref": f.document.ref if f else None,
                "pyr_status": f.document.status if f else None,
                "paid": bool(f) and f.document.status == "PAID"}
@@ -993,6 +1039,8 @@ def case_dict(case):
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
         "bv_expiry": case.bv_expiry, **sv,
         "route": case.route, "category": case.category,
+        "quota_pool": case.quota_pool,
+        "quota_pool_label": case.get_quota_pool_display(),
         "full_name": case.full_name, "nationality": case.nationality,
         "date_of_birth": case.date_of_birth, "gender": case.gender,
         "passport_no": case.passport_no, "passport_expiry": case.passport_expiry,
@@ -1008,6 +1056,7 @@ def case_dict(case):
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
         "employee_id": case.employee_id,
         "employee_no": case.employee.emp_no if case.employee_id else None,
+        "photo_att_id": (lambda p: p.id if p else None)(_photo_att(case)),
         "documents": documents_list(case),
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),

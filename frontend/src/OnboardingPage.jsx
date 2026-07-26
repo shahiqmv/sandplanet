@@ -102,6 +102,7 @@ const BLANK = {
   full_name: "", nationality: "", date_of_birth: "", gender: "",
   passport_no: "", passport_expiry: "", category: "", trade_designation: "",
   proposed_salary: "", currency: "MVR", route: "WP", bv_justification: "",
+  quota_pool: "SANDPLANET",
   permanent_address: "", mobile: "", emergency_contact: "",
   mobilisation_date: "",
 };
@@ -146,6 +147,11 @@ function CaseForm({ value, onChange }) {
           <select style={inputStyle} value={value.route} onChange={set("route")}>
             <option value="WP">Work permit (standard)</option>
             <option value="BV">Business visa (urgent)</option></select></label>
+        <label style={fld}>Quota pool (portal login)
+          <select style={inputStyle} value={value.quota_pool || "SANDPLANET"}
+                  onChange={set("quota_pool")}>
+            <option value="SANDPLANET">Sand Planet</option>
+            <option value="MARINE">Sand Planet Marine</option></select></label>
         <F label="Mobile / contact" k="mobile" />
         <F label="Expected mobilisation" k="mobilisation_date" type="date" />
       </div>
@@ -305,7 +311,9 @@ function CaseDetail({ id, me, onBack }) {
   return (
     <div style={{ maxWidth: 860 }}>
       <button style={linkBtn} onClick={onBack}>← All cases</button>
-      <div style={{ ...card, marginTop: 8 }}>
+      <div style={{ ...card, marginTop: 8, display: "flex", gap: 14,
+                    alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10,
                       flexWrap: "wrap" }}>
           <h2 style={{ margin: 0, fontFamily: "var(--font-mono)" }}>{c.ref}</h2>
@@ -335,6 +343,7 @@ function CaseDetail({ id, me, onBack }) {
             <Row k="Passport" v={`${c.passport_no}${c.passport_expiry
               ? " · exp " + fmtDate(c.passport_expiry) : ""}`} />
             <Row k="Trade / category" v={`${c.trade_designation} · ${c.category}`} />
+            <Row k="Quota pool" v={c.quota_pool_label || "Sand Planet"} />
             <Row k="Proposed salary" v={`${c.currency} ${money(c.proposed_salary)}`} />
             <Row k="DOB / gender" v={`${fmtDate(c.date_of_birth)} · ${c.gender || "—"}`} />
             <Row k="Mobilisation" v={fmtDate(c.mobilisation_date)} />
@@ -343,6 +352,14 @@ function CaseDetail({ id, me, onBack }) {
             {c.bv_justification && <Row k="BV reason" v={c.bv_justification} />}
             <Row k="Raised by" v={c.created_by} />
           </div>
+        )}
+        </div>
+        {c.photo_att_id && (
+          <img src={`/api/v1/onboarding/${c.id}/attachments/${c.photo_att_id}`}
+               alt="Passport photo"
+               style={{ width: 96, height: 120, objectFit: "cover",
+                 borderRadius: 6, border: "1px solid var(--line)",
+                 flexShrink: 0 }} />
         )}
       </div>
 
@@ -420,6 +437,7 @@ function Processing({ c, me, onReload }) {
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
+  const [invoice, setInvoice] = useState(null);
   const [arrEdit, setArrEdit] = useState("");
 
   async function run(fn) {
@@ -431,8 +449,13 @@ function Processing({ c, me, onReload }) {
     api(`/onboarding/${c.id}/stage`, { method: "POST", body: body || {} }));
   const setData = (body) => run(() =>
     api(`/onboarding/${c.id}/stage-data`, { method: "POST", body }));
-  const raiseFee = () => run(() =>
-    api(`/onboarding/${c.id}/fee`, { method: "POST", body: { amount, payee } }));
+  const raiseFee = () => run(() => {
+    const fd = new FormData();
+    fd.append("amount", amount);
+    fd.append("payee", payee);
+    if (invoice) fd.append("file", invoice);
+    return apiUpload(`/onboarding/${c.id}/fee`, fd);
+  });
 
   const err = error && <p style={{ color: "var(--red-fg)" }}>{error}</p>;
 
@@ -558,6 +581,14 @@ function Processing({ c, me, onReload }) {
                          onChange={(e) => setAmount(e.target.value)} />
                   <input style={{ ...inputStyle, width: 200 }} placeholder="Pay to"
                          value={payee} onChange={(e) => setPayee(e.target.value)} />
+                  <label style={{ fontSize: 11, color: "var(--navy)",
+                    cursor: "pointer", fontWeight: 600 }}>
+                    {invoice ? `✓ ${invoice.name}`
+                      : `Attach ${c.fee.invoice_label}`}
+                    <input type="file" accept="image/*,application/pdf"
+                           style={{ display: "none" }}
+                           onChange={(e) => setInvoice(e.target.files[0])} />
+                  </label>
                   <Btn variant="secondary" disabled={busy || !amount || !payee}
                        onClick={raiseFee}>Raise fee PYR</Btn>
                 </div>
@@ -754,7 +785,15 @@ function ChecklistRow({ caseId, item, editable, onChange }) {
                   padding: "5px 0", fontSize: 13 }}>
       <span style={{ color: item.present ? "var(--green-fg)" : "var(--muted)",
                      width: 16 }}>{item.present ? "✓" : "○"}</span>
-      <span style={{ flex: 1 }}>{item.label}</span>
+      <span style={{ flex: 1 }}>
+        {item.present && item.att_id
+          ? <a href={`/api/v1/onboarding/${caseId}/attachments/${item.att_id}`}
+               target="_blank" rel="noreferrer"
+               style={{ color: "var(--navy)" }}>{item.label}</a>
+          : item.label}
+        {item.required === false && (
+          <span style={{ color: "var(--muted)", fontSize: 11 }}> · optional</span>
+        )}</span>
       {editable && (
         <>
           <button style={linkBtn} disabled={busy}
