@@ -52,7 +52,7 @@ export default function OnboardingPage({ me, sites }) {
         )}
       </div>
       <div style={{ display: "flex", gap: 6, margin: "12px 0" }}>
-        {[["open", "Open"], ["mine", "Raised by me"], ["all", "All"]]
+        {[["open", "Active"], ["mine", "Raised by me"], ["all", "All"]]
           .map(([k, l]) => (
           <button key={k} onClick={() => setFilter(k)}
             style={{ padding: "5px 13px", border: "1px solid var(--line)",
@@ -297,6 +297,11 @@ function CaseDetail({ id, me, onBack }) {
         )}
       </div>
 
+      {/* processing */}
+      {["APPROVED", "IN_PROGRESS", "COMPLETED"].includes(c.status) && (
+        <Processing c={c} me={me} onReload={load} />
+      )}
+
       {/* checklist */}
       <div style={{ ...card, marginTop: 12 }}>
         <h3 style={{ marginTop: 0 }}>Documents</h3>
@@ -352,6 +357,142 @@ function CaseDetail({ id, me, onBack }) {
   );
 }
 
+const PORTAL_OPTS = [["SUBMITTED", "Submitted"],
+  ["ADDITIONAL_INFO", "Additional info requested"], ["APPROVED", "Approved"],
+  ["REJECTED", "Rejected"]];
+
+function Processing({ c, me, onReload }) {
+  const canProcess = ["HO_HR", "ADMIN"].includes(me.role);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [arrived, setArrived] = useState("");
+  const [bvExp, setBvExp] = useState("");
+  const [portal, setPortal] = useState(c.portal_status || "SUBMITTED");
+  const [medical, setMedical] = useState("PASS");
+
+  async function run(fn) {
+    setBusy(true); setError(null);
+    try { await fn(); onReload(); } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  const advance = (body) => run(() =>
+    api(`/onboarding/${c.id}/stage`, { method: "POST", body: body || {} }));
+  const setData = (body) => run(() =>
+    api(`/onboarding/${c.id}/stage-data`, { method: "POST", body }));
+
+  const err = error && <p style={{ color: "var(--red-fg)" }}>{error}</p>;
+
+  if (c.status === "APPROVED") {
+    return (
+      <div style={{ ...card, marginTop: 12 }}>
+        <h3 style={{ marginTop: 0 }}>Processing</h3>
+        <p style={{ fontSize: 13 }}>Approved — ready to start the{" "}
+          {ROUTE_LABEL[c.route]} track.</p>
+        {err}
+        {canProcess ? (
+          <Btn variant="primary" disabled={busy} onClick={() => advance()}>
+            Begin processing</Btn>
+        ) : <span style={{ fontSize: 13, color: "var(--muted)" }}>
+          Awaiting HR to start processing.</span>}
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ ...card, marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <h3 style={{ margin: 0 }}>Processing</h3>
+        {c.status === "COMPLETED"
+          ? <Chip tone="ok">Completed</Chip>
+          : <span style={{ color: "var(--muted)", fontSize: 13 }}>
+              {c.stage_label}</span>}
+      </div>
+      {err}
+      {/* stepper */}
+      <div style={{ margin: "10px 0" }}>
+        {c.stages.map((s) => (
+          <div key={s.key} style={{ display: "flex", alignItems: "center",
+            gap: 8, padding: "2px 0", fontSize: 12.5 }}>
+            <span style={{ width: 14, textAlign: "center", color:
+              s.state === "done" ? "var(--green-fg)"
+              : s.state === "current" ? "var(--navy)" : "var(--line)" }}>
+              {s.state === "done" ? "✓" : s.state === "current" ? "●" : "○"}</span>
+            <span style={{ fontWeight: s.state === "current" ? 700 : 400,
+              color: s.state === "future" ? "var(--muted)" : "var(--ink)" }}>
+              {s.label}</span>
+            {s.payment && <span style={{ fontSize: 10, color: "var(--muted)",
+              border: "1px solid var(--line)", borderRadius: 4,
+              padding: "0 4px" }}>fee</span>}
+          </div>
+        ))}
+      </div>
+      {/* captured data */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12,
+        color: "var(--muted)" }}>
+        {c.portal_status && <span>Portal: <b>{c.portal_status}</b></span>}
+        {c.arrived_date && <span>Arrived: <b>{fmtDate(c.arrived_date)}</b></span>}
+        {c.medical_due && <span>Medical by: <b>{fmtDate(c.medical_due)}</b></span>}
+        {c.medical_result && <span>Medical: <b>{c.medical_result}</b></span>}
+        {c.bv_expiry && <span>BV expiry: <b>{fmtDate(c.bv_expiry)}</b></span>}
+      </div>
+
+      {/* HR controls */}
+      {canProcess && c.status === "IN_PROGRESS" && (
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column",
+          gap: 8 }}>
+          {c.at_application && (
+            <div style={ctl}>
+              <span>Portal status</span>
+              <select style={{ ...inputStyle, width: 220 }} value={portal}
+                      onChange={(e) => setPortal(e.target.value)}>
+                {PORTAL_OPTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+              <Btn variant="secondary" disabled={busy}
+                   onClick={() => setData({ portal_status: portal })}>
+                Update</Btn>
+            </div>
+          )}
+          {c.at_medical && (
+            <div style={ctl}>
+              <span>Medical result</span>
+              <select style={{ ...inputStyle, width: 120 }} value={medical}
+                      onChange={(e) => setMedical(e.target.value)}>
+                <option value="PASS">Pass</option>
+                <option value="FAIL">Fail</option></select>
+              <Btn variant="secondary" disabled={busy}
+                   onClick={() => setData({ medical_result: medical })}>
+                Record</Btn>
+            </div>
+          )}
+          {c.next_needs && (
+            <div style={ctl}>
+              <span>Arrival date</span>
+              <input type="date" style={inputStyle} value={arrived}
+                     onChange={(e) => setArrived(e.target.value)} />
+              {c.next_needs === "arrival_bv" && (<>
+                <span>BV expiry</span>
+                <input type="date" style={inputStyle} value={bvExp}
+                       onChange={(e) => setBvExp(e.target.value)} /></>)}
+            </div>
+          )}
+          {c.next_stage && (
+            <div>
+              <Btn variant="primary" disabled={busy}
+                   onClick={() => advance(c.next_needs
+                     ? { arrived_date: arrived, bv_expiry: bvExp } : {})}>
+                Advance → {c.next_label}</Btn>
+            </div>
+          )}
+          {c.at_last && (
+            <div><Btn variant="primary" disabled={busy}
+                      onClick={() => advance()}>Complete case</Btn></div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChecklistRow({ caseId, item, editable, onChange }) {
   const ref = useRef(null);
   const [busy, setBusy] = useState(false);
@@ -400,3 +541,5 @@ const grid = { display: "grid", gap: 8,
   gridTemplateColumns: "repeat(3, 1fr)" };
 const linkBtn = { border: "none", background: "none", cursor: "pointer",
   color: "var(--navy)", fontSize: 13, padding: 0 };
+const ctl = { display: "flex", alignItems: "center", gap: 8, fontSize: 12.5,
+  color: "var(--muted)" };

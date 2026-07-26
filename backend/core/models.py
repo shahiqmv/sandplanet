@@ -1845,8 +1845,10 @@ class OnboardingCase(models.Model):
     bv_justification = models.TextField(blank=True)
     # --- processing (set once approved; the HR track stage machine) ---
     stage = models.CharField(max_length=30, blank=True)
+    portal_status = models.CharField(max_length=20, blank=True)  # govt portal
     arrived_date = models.DateField(null=True, blank=True)     # starts medical
     medical_due = models.DateField(null=True, blank=True)      # arrival + 14d
+    medical_result = models.CharField(max_length=10, blank=True)  # PASS / FAIL
     bv_expiry = models.DateField(null=True, blank=True)        # the BV clock
     bv_renewals = models.PositiveIntegerField(default=0)       # capped at 2
     # --- handover ---

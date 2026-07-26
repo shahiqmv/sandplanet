@@ -62,8 +62,8 @@ def onboarding_cases(request):
             qs = qs.filter(document__site_id__in=ids)
     if request.GET.get("site_id"):
         qs = qs.filter(document__site_id=request.GET["site_id"])
-    if request.GET.get("open") == "1":
-        qs = qs.filter(document__status__in=ob.OPEN)
+    if request.GET.get("open") == "1":   # active = anything not yet closed
+        qs = qs.exclude(document__status__in=ob.TERMINAL)
     if request.GET.get("mine") == "1":
         qs = qs.filter(document__created_by=request.user)
     return Response([ob.case_dict(c) for c in qs[:200]])
@@ -118,6 +118,34 @@ def onboarding_action(request, pk):
         return err
     msg = ob.decide_case(case, request.data.get("action"), request.user,
                          request.data.get("note", ""))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_stage(request, pk):
+    """HR advances the case one stage along its visa/permit track."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    msg = ob.advance_stage(case, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_stage_data(request, pk):
+    """HR mirrors the portal status / records the medical result."""
+    case, err = _get_case(request, pk)
+    if err:
+        return err
+    msg = ob.set_stage_data(case, request.data, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()

@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 
 RAISE_ROLES = ("PM", "HO_HR", "ADMIN")          # who logs a case
 APPROVE_ROLES = ("DIRECTOR", "ADMIN")            # the PD gate
-OPEN = ("DRAFT", "SUBMITTED", "RETURNED")
+OPEN = ("DRAFT", "SUBMITTED", "RETURNED")        # editable / pre-approval
+TERMINAL = ("COMPLETED", "REJECTED", "CANCELLED")  # closed
 # Mandatory checklist documents (Attachment kinds) before an OBR can be submitted
 REQUIRED_DOCS = [
     ("PASSPORT_COPY", "Passport copy"),
@@ -202,6 +203,188 @@ def decide_case(case, action, actor, note=""):
     return "Unknown action."
 
 
+# ---- track stage machines (Phase 2) --------------------------------------
+
+PROCESS_ROLES = ("HO_HR", "ADMIN")
+
+# Track A (WP): endorsement is inserted only for Sri Lankan nationals.
+_WP_HEAD = ["WP_APPOINTMENT", "WP_APPLICATION", "WP_APPROVED", "WP_DEPOSIT"]
+_WP_TAIL = ["WP_TICKET", "WP_ARRIVED", "WP_MEDICAL", "WP_ISSUED"]
+# Track B (BV): the BV chain, then the in-country WP conversion — appointment
+# letter onward, no ticketing, no endorsement (arrival/medical already done).
+_BV = ["BV_SPONSOR", "BV_INSURANCE", "BV_APPLICATION", "BV_APPROVED",
+       "BV_VISA_FEE", "BV_TICKET", "BV_ARRIVED", "BV_MEDICAL"]
+_BV_CONVERSION = ["WP_APPOINTMENT", "WP_APPLICATION", "WP_APPROVED",
+                  "WP_DEPOSIT", "WP_ISSUED"]
+
+STAGE_LABEL = {
+    "WP_APPOINTMENT": "Appointment letter issued",
+    "WP_APPLICATION": "WP application (portal)",
+    "WP_APPROVED": "WP approved on portal",
+    "WP_DEPOSIT": "WP deposit paid",
+    "WP_ENDORSEMENT": "SL Embassy endorsement",
+    "WP_TICKET": "Ticketed",
+    "WP_ARRIVED": "Arrived",
+    "WP_MEDICAL": "Medical",
+    "WP_ISSUED": "Work permit issued",
+    "BV_SPONSOR": "Sponsor letter issued",
+    "BV_INSURANCE": "Insurance policy",
+    "BV_APPLICATION": "BV application (portal)",
+    "BV_APPROVED": "BV approved",
+    "BV_VISA_FEE": "Visa fee paid",
+    "BV_TICKET": "Ticketed",
+    "BV_ARRIVED": "Arrived (BV clock starts)",
+    "BV_MEDICAL": "Medical",
+}
+APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
+ARRIVAL_STAGES = {"WP_ARRIVED", "BV_ARRIVED"}
+MEDICAL_STAGES = {"WP_MEDICAL", "BV_MEDICAL"}
+# Payment-gated stages — Phase 3 will require a PAID PYR to leave these.
+PAYMENT_STAGES = {"WP_DEPOSIT", "WP_TICKET", "BV_INSURANCE", "BV_VISA_FEE",
+                  "BV_TICKET"}
+
+
+def _is_sri_lankan(case):
+    return "sri lank" in (case.nationality or "").lower()
+
+
+def sequence(case):
+    """The ordered stages for a case, factoring the route, the SL-only embassy
+    endorsement, and the BV→WP in-country conversion tail."""
+    if case.route == "WP":
+        seq = list(_WP_HEAD)
+        if _is_sri_lankan(case):
+            seq.append("WP_ENDORSEMENT")
+        return seq + _WP_TAIL
+    return list(_BV) + list(_BV_CONVERSION)
+
+
+def _can_leave(case, stage):
+    if stage in APPLICATION_STAGES and case.portal_status != "APPROVED":
+        return "The government portal must show APPROVED before advancing."
+    if stage in MEDICAL_STAGES:
+        if case.medical_result == "FAIL":
+            return "Medical failed — the case is with the Director to decide."
+        if case.medical_result != "PASS":
+            return "Record the medical result (PASS) before advancing."
+    return None
+
+
+def _on_enter(case, stage, data):
+    from datetime import date, timedelta
+    if stage in ARRIVAL_STAGES:
+        d = data.get("arrived_date")
+        if not d:
+            return "Enter the arrival date."
+        try:
+            ad = date.fromisoformat(str(d))
+        except ValueError:
+            return "Invalid arrival date."
+        case.arrived_date = ad
+        case.medical_due = ad + timedelta(days=14)   # company 14-day rule
+        if stage == "BV_ARRIVED":
+            if not data.get("bv_expiry"):
+                return "Enter the BV expiry date shown on the visa."
+            case.bv_expiry = data["bv_expiry"]
+    return None
+
+
+def advance_stage(case, data, actor):
+    if actor.role not in PROCESS_ROLES:
+        return "Only HR processes onboarding stages."
+    doc = case.document
+    seq = sequence(case)
+    if doc.status == "APPROVED":                     # begin processing
+        case.stage = seq[0]
+        case.save(update_fields=["stage", "updated_at"])
+        _set_status(doc, "IN_PROGRESS", "BEGIN", actor,
+                    comment=STAGE_LABEL.get(seq[0], seq[0]))
+        _stage_notify(case, seq[0])
+        return None
+    if doc.status != "IN_PROGRESS":
+        return "This case is not in processing."
+    if case.stage not in seq:
+        return "The case stage is out of sync."
+    err = _can_leave(case, case.stage)
+    if err:
+        return err
+    idx = seq.index(case.stage)
+    if idx + 1 >= len(seq):                          # past the last stage
+        _set_status(doc, "COMPLETED", "COMPLETE", actor)
+        audit("document", doc.id, "OBR_COMPLETED", actor=actor,
+              detail={"ref": doc.ref})
+        return None
+    nxt = seq[idx + 1]
+    err = _on_enter(case, nxt, data)
+    if err:
+        return err
+    case.stage = nxt
+    case.save()
+    audit("document", doc.id, "OBR_STAGE", actor=actor,
+          detail={"ref": doc.ref, "stage": nxt})
+    _stage_notify(case, nxt)
+    return None
+
+
+def set_stage_data(case, data, actor):
+    """HR mirrors the portal status / records the medical result without
+    advancing the stage."""
+    if actor.role not in PROCESS_ROLES:
+        return "Only HR updates case processing data."
+    if case.document.status != "IN_PROGRESS":
+        return "The case is not in processing."
+    changed = []
+    if "portal_status" in data and case.stage in APPLICATION_STAGES:
+        ps = (data.get("portal_status") or "").upper()
+        if ps not in ("SUBMITTED", "ADDITIONAL_INFO", "APPROVED", "REJECTED"):
+            return "Invalid portal status."
+        case.portal_status = ps
+        changed.append("portal_status")
+    if "medical_result" in data and case.stage in MEDICAL_STAGES:
+        mr = (data.get("medical_result") or "").upper()
+        if mr not in ("PASS", "FAIL"):
+            return "Medical result must be PASS or FAIL."
+        case.medical_result = mr
+        changed.append("medical_result")
+        if mr == "FAIL":
+            _notify_medical_fail(case)
+    if not changed:
+        return "Nothing to update at this stage."
+    case.save()
+    audit("document", case.document_id, "OBR_STAGE_DATA", actor=actor,
+          detail={"fields": changed})
+    return None
+
+
+def _stage_notify(case, stage):
+    from . import notify
+    doc = case.document
+    msg = {"WP_APPROVED": "permit approved on the portal",
+           "BV_APPROVED": "business visa approved",
+           "WP_TICKET": "ticketed", "BV_TICKET": "ticketed",
+           "WP_ARRIVED": "arrived", "BV_ARRIVED": "arrived",
+           "WP_ISSUED": "work permit issued"}.get(stage)
+    if not msg:
+        return
+    body = f"{case.full_name} · {doc.site.code}"
+    recips = list(notify._role_users("HO_HR"))
+    pm = doc.site.current_pm()
+    if pm:
+        recips.append(pm)
+    for u in recips:
+        notify.notify_user(u, f"Onboarding {doc.ref} — {msg}",
+                           body=body, category="alert")
+
+
+def _notify_medical_fail(case):
+    from . import notify
+    doc = case.document
+    for u in notify._role_users("DIRECTOR", "HO_HR"):
+        notify.notify_user(u, f"Onboarding {doc.ref} — medical FAILED",
+                           body=f"{case.full_name} · {doc.site.code}",
+                           category="approval")
+
+
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):
@@ -210,11 +393,39 @@ def checklist(case):
             for k, label in REQUIRED_DOCS]
 
 
+def stage_view(case):
+    """The ordered stage stepper for the case + what the next advance needs."""
+    seq = sequence(case)
+    idx = seq.index(case.stage) if case.stage in seq else -1
+    stages = [{"key": s, "label": STAGE_LABEL.get(s, s),
+               "state": "done" if i < idx else "current" if i == idx
+               else "future", "payment": s in PAYMENT_STAGES}
+              for i, s in enumerate(seq)]
+    nxt = seq[idx + 1] if 0 <= idx < len(seq) - 1 else None
+    needs = None
+    if nxt == "WP_ARRIVED":
+        needs = "arrival"
+    elif nxt == "BV_ARRIVED":
+        needs = "arrival_bv"
+    return {"stages": stages, "next_stage": nxt,
+            "next_label": STAGE_LABEL.get(nxt) if nxt else None,
+            "next_needs": needs,
+            "at_application": case.stage in APPLICATION_STAGES,
+            "at_medical": case.stage in MEDICAL_STAGES,
+            "at_last": idx == len(seq) - 1}
+
+
 def case_dict(case):
     doc = case.document
+    sv = stage_view(case)
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "site_code": doc.site.code, "doc_date": doc.doc_date,
+        "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
+        "portal_status": case.portal_status,
+        "medical_result": case.medical_result,
+        "arrived_date": case.arrived_date, "medical_due": case.medical_due,
+        "bv_expiry": case.bv_expiry, **sv,
         "route": case.route, "category": case.category,
         "full_name": case.full_name, "nationality": case.nationality,
         "date_of_birth": case.date_of_birth, "gender": case.gender,

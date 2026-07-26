@@ -132,3 +132,83 @@ class OnboardingSpineTests(TestCase):
         r = self.client.post(f"/api/v1/onboarding/{pk}/documents",
                              {"kind": "CV", "file": f}, format="multipart")
         self.assertEqual(r.status_code, 400)
+
+    # ---- Phase 2: stage machines ----------------------------------------
+
+    def _approved(self, **kw):
+        pk = self._create(**kw).data["id"]
+        self._attach_all(pk)
+        self.client.post(f"/api/v1/onboarding/{pk}/submit")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/onboarding/{pk}/action",
+                         {"action": "approve"}, format="json")
+        return pk
+
+    def _adv(self, pk, **data):
+        self.client.force_authenticate(self.hr)
+        return self.client.post(f"/api/v1/onboarding/{pk}/stage", data,
+                                format="json")
+
+    def _sdata(self, pk, **data):
+        self.client.force_authenticate(self.hr)
+        return self.client.post(f"/api/v1/onboarding/{pk}/stage-data", data,
+                                format="json")
+
+    def test_wp_track_walks_to_completion(self):
+        pk = self._approved()
+        r = self._adv(pk)                              # begin
+        self.assertEqual(r.data["status"], "IN_PROGRESS")
+        self.assertEqual(r.data["stage"], "WP_APPOINTMENT")
+        self.assertEqual(self._adv(pk).data["stage"], "WP_APPLICATION")
+        self.assertEqual(self._adv(pk).status_code, 400)   # portal not approved
+        self._sdata(pk, portal_status="APPROVED")
+        self.assertEqual(self._adv(pk).data["stage"], "WP_APPROVED")
+        self.assertEqual(self._adv(pk).data["stage"], "WP_DEPOSIT")
+        self.assertEqual(self._adv(pk).data["stage"], "WP_TICKET")
+        self.assertEqual(self._adv(pk).status_code, 400)   # arrival needs a date
+        r = self._adv(pk, arrived_date="2026-08-01")
+        self.assertEqual(r.data["stage"], "WP_ARRIVED")
+        self.assertEqual(str(r.data["medical_due"]), "2026-08-15")   # +14 days
+        self.assertEqual(self._adv(pk).data["stage"], "WP_MEDICAL")
+        self.assertEqual(self._adv(pk).status_code, 400)   # no medical result
+        self._sdata(pk, medical_result="PASS")
+        self.assertEqual(self._adv(pk).data["stage"], "WP_ISSUED")
+        self.assertEqual(self._adv(pk).data["status"], "COMPLETED")
+
+    def test_sri_lankan_gets_endorsement_stage(self):
+        keys = [s["key"] for s in
+                self._adv(self._approved(nationality="Sri Lankan")).data["stages"]]
+        self.assertIn("WP_ENDORSEMENT", keys)
+        keys2 = [s["key"] for s in
+                 self._adv(self._approved(nationality="Indian")).data["stages"]]
+        self.assertNotIn("WP_ENDORSEMENT", keys2)
+
+    def test_bv_sequence_has_conversion_tail(self):
+        pk = self._approved(route="BV", bv_justification="urgent mobilisation",
+                            nationality="Sri Lankan")
+        keys = [s["key"] for s in self._adv(pk).data["stages"]]
+        self.assertEqual(keys[0], "BV_SPONSOR")
+        self.assertIn("BV_ARRIVED", keys)
+        self.assertIn("WP_APPOINTMENT", keys)          # in-country conversion
+        self.assertIn("WP_ISSUED", keys)
+        self.assertNotIn("WP_ENDORSEMENT", keys)       # no endorsement on BV
+        self.assertNotIn("WP_TICKET", keys)            # no ticket in conversion
+
+    def test_only_hr_advances_stages(self):
+        pk = self._approved()
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/stage", {}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_medical_fail_blocks_and_flags_pd(self):
+        from .models import Notification
+        pk = self._approved()
+        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk); self._adv(pk)    # → WP_TICKET
+        self._adv(pk, arrived_date="2026-08-01")       # → WP_ARRIVED
+        self.assertEqual(self._adv(pk).data["stage"], "WP_MEDICAL")
+        self._sdata(pk, medical_result="FAIL")
+        self.assertEqual(self._adv(pk).status_code, 400)   # blocked on fail
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.director, title__icontains="medical").exists())
