@@ -1851,6 +1851,10 @@ class OnboardingCase(models.Model):
     medical_result = models.CharField(max_length=10, blank=True)  # PASS / FAIL
     bv_expiry = models.DateField(null=True, blank=True)        # the BV clock
     bv_renewals = models.PositiveIntegerField(default=0)       # capped at 2
+    # Most-urgent countdown level already alerted, so daily clock runs don't
+    # repeat (medical: T7/T3/OVERDUE; BV expiry: T14/T7/T3/OVERDUE).
+    medical_alert = models.CharField(max_length=8, blank=True)
+    bv_alert = models.CharField(max_length=8, blank=True)
     # --- handover ---
     employee = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True,
                                  blank=True, related_name="+")

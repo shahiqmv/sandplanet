@@ -323,6 +323,96 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
+        from datetime import date, timedelta
+        from . import onboarding as ob
+        from .models import Notification, OnboardingCase
+        pk = self._approved()
+        self._adv(pk)                                  # begin → IN_PROGRESS
+        case = OnboardingCase.objects.get(pk=pk)
+        today = date(2026, 8, 1)
+        case.arrived_date = today - timedelta(days=8)
+        case.medical_due = today + timedelta(days=6)   # 6 days out → T-7 band
+        case.save()
+        res = ob.run_clocks(today=today)
+        self.assertEqual(res["medical"], 1)
+        case.refresh_from_db()
+        self.assertEqual(case.medical_alert, "T7")
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__icontains="medical due").exists())
+        self.assertFalse(Notification.objects.filter(   # not escalated yet
+            recipient=self.director, title__icontains="medical").exists())
+        # same day re-run → no repeat
+        before = Notification.objects.filter(recipient=self.hr).count()
+        ob.run_clocks(today=today)
+        self.assertEqual(before,
+                         Notification.objects.filter(recipient=self.hr).count())
+        # overdue → escalates to the Director
+        Notification.objects.all().delete()
+        ob.run_clocks(today=case.medical_due + timedelta(days=2))
+        case.refresh_from_db()
+        self.assertEqual(case.medical_alert, "OVERDUE")
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.director,
+            title__icontains="medical OVERDUE").exists())
+
+    def test_medical_clock_stops_once_result_recorded(self):
+        from datetime import date, timedelta
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        pk = self._approved()
+        self._adv(pk)
+        case = OnboardingCase.objects.get(pk=pk)
+        today = date(2026, 8, 1)
+        case.arrived_date = today - timedelta(days=10)
+        case.medical_due = today - timedelta(days=1)   # overdue…
+        case.medical_result = "PASS"                   # …but already passed
+        case.save()
+        res = ob.run_clocks(today=today)
+        self.assertEqual(res["medical"], 0)
+
+    def test_bv_expiry_clock_escalates_to_director(self):
+        from datetime import date, timedelta
+        from . import onboarding as ob
+        from .models import Notification, OnboardingCase
+        pk = self._approved(route="BV", bv_justification="urgent",
+                            nationality="Indian")
+        self._adv(pk)                                  # begin → BV_SPONSOR
+        case = OnboardingCase.objects.get(pk=pk)
+        today = date(2026, 8, 1)
+        case.bv_expiry = today + timedelta(days=12)    # T-14 band → HR only
+        case.save()
+        ob.run_clocks(today=today)
+        case.refresh_from_db()
+        self.assertEqual(case.bv_alert, "T14")
+        self.assertFalse(Notification.objects.filter(
+            recipient=self.director,
+            title__icontains="business visa").exists())
+        # 10 days on → 2 days left → T-3 escalates to the Director
+        ob.run_clocks(today=today + timedelta(days=10))
+        case.refresh_from_db()
+        self.assertEqual(case.bv_alert, "T3")
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.director,
+            title__icontains="business visa expires").exists())
+
+    def test_stale_pre_arrival_digest_dedupes(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from . import onboarding as ob
+        from .models import Notification, OnboardingCase
+        pk = self._approved()
+        self._adv(pk)                                  # pre-arrival, IN_PROGRESS
+        OnboardingCase.objects.filter(pk=pk).update(
+            updated_at=timezone.now() - timedelta(days=20))
+        res = ob.run_clocks()
+        self.assertEqual(res["stale"], 1)
+        self.assertTrue(res["digest_sent"])
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__icontains="stale").exists())
+        res2 = ob.run_clocks()                          # same day → deduped
+        self.assertFalse(res2["digest_sent"])
+
     def test_medical_fail_blocks_and_flags_pd(self):
         from .models import Notification
         pk = self._approved()

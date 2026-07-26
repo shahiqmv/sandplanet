@@ -616,6 +616,127 @@ def _letter_dict(letter):
     }
 
 
+# ---- countdown clocks + alerts (Phase 5) ---------------------------------
+
+# Most-urgent → least, so a re-run only fires when the level has worsened.
+_MED_ORDER = {"": 0, "T7": 1, "T3": 2, "OVERDUE": 3}
+_BV_ORDER = {"": 0, "T14": 1, "T7": 2, "T3": 3, "OVERDUE": 4}
+STALE_DAYS = 14
+
+
+def _medical_level(days):
+    if days < 0:
+        return "OVERDUE"
+    if days <= 3:
+        return "T3"
+    if days <= 7:
+        return "T7"
+    return None
+
+
+def _bv_level(days):
+    if days < 0:
+        return "OVERDUE"
+    if days <= 3:
+        return "T3"
+    if days <= 7:
+        return "T7"
+    if days <= 14:
+        return "T14"
+    return None
+
+
+def _clock_recipients(case, escalate):
+    from . import notify
+    recips = set(notify._role_users("HO_HR"))
+    pm = case.document.site.current_pm()
+    if pm:
+        recips.add(pm)
+    if escalate:                                     # T-3 / overdue → the PD
+        recips |= set(notify._role_users("DIRECTOR"))
+    return recips
+
+
+def _clock_notify(case, kind, level, days):
+    from . import notify
+    doc = case.document
+    if kind == "medical":
+        title = (f"Onboarding {doc.ref} — medical OVERDUE by {abs(days)} day(s)"
+                 if level == "OVERDUE"
+                 else f"Onboarding {doc.ref} — medical due in {days} day(s)")
+        escalate = level == "OVERDUE"
+    else:                                            # bv expiry
+        title = (f"Onboarding {doc.ref} — BUSINESS VISA EXPIRED "
+                 f"{abs(days)} day(s) ago" if level == "OVERDUE"
+                 else f"Onboarding {doc.ref} — business visa expires in "
+                      f"{days} day(s)")
+        escalate = level in ("T3", "OVERDUE")
+    body = f"{case.full_name} · {doc.site.code}"
+    cat = "approval" if escalate else "alert"
+    for u in _clock_recipients(case, escalate):
+        notify.notify_user(u, title, body=body, doc=doc, category=cat)
+
+
+def _stale_digest(cases, today):
+    """One nudge per HR user listing pre-arrival cases with no movement for
+    STALE_DAYS; deduped so a daily run sends at most one digest per day."""
+    if not cases:
+        return False
+    from . import notify
+    from .models import Notification
+    title = "Onboarding — stale cases need attention"
+    body = "; ".join(
+        f"{c.document.ref} · {c.full_name} · {c.document.site.code} "
+        f"(idle {(today - c.updated_at.date()).days}d)" for c in cases)
+    sent = False
+    for u in notify._role_users("HO_HR"):
+        if Notification.objects.filter(recipient=u, title=title,
+                                       created_at__date=today).exists():
+            continue
+        notify.notify_user(u, title, body=body, category="alert")
+        sent = True
+    return sent
+
+
+def run_clocks(today=None):
+    """Daily countdown alerts across all live cases: the medical deadline, the
+    business-visa expiry (the module's headline risk), and a stale-case digest.
+    Idempotent — each threshold fires once, tracked on the case."""
+    from .models import OnboardingCase
+    today = today or timezone.localdate()
+    med = bv = 0
+    stale = []
+    for case in (OnboardingCase.objects
+                 .filter(document__status="IN_PROGRESS")
+                 .select_related("document__site")):
+        # medical countdown — only after arrival, before the result is in
+        if case.medical_due and not case.medical_result:
+            days = (case.medical_due - today).days
+            level = _medical_level(days)
+            if level and _MED_ORDER[level] > _MED_ORDER.get(
+                    case.medical_alert, 0):
+                _clock_notify(case, "medical", level, days)
+                case.medical_alert = level
+                case.save(update_fields=["medical_alert", "updated_at"])
+                med += 1
+        # BV expiry countdown — while on a business visa, before WP is issued
+        if case.route == "BV" and case.bv_expiry and case.stage != "WP_ISSUED":
+            days = (case.bv_expiry - today).days
+            level = _bv_level(days)
+            if level and _BV_ORDER[level] > _BV_ORDER.get(case.bv_alert, 0):
+                _clock_notify(case, "bv", level, days)
+                case.bv_alert = level
+                case.save(update_fields=["bv_alert", "updated_at"])
+                bv += 1
+        # stale pre-arrival case
+        if (not case.arrived_date and case.updated_at
+                and (today - case.updated_at.date()).days >= STALE_DAYS):
+            stale.append(case)
+    digest = _stale_digest(stale, today)
+    return {"medical": med, "bv": bv, "stale": len(stale),
+            "digest_sent": digest}
+
+
 # ---- serialisation -------------------------------------------------------
 
 def checklist(case):

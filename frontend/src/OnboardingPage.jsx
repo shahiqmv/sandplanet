@@ -435,9 +435,12 @@ function Processing({ c, me, onReload }) {
         color: "var(--muted)" }}>
         {c.portal_status && <span>Portal: <b>{c.portal_status}</b></span>}
         {c.arrived_date && <span>Arrived: <b>{fmtDate(c.arrived_date)}</b></span>}
-        {c.medical_due && <span>Medical by: <b>{fmtDate(c.medical_due)}</b></span>}
+        {c.medical_due && <span>Medical by: <b>{fmtDate(c.medical_due)}</b>
+          {!c.medical_result && <Countdown d={c.medical_due} warnAt={7} />}</span>}
         {c.medical_result && <span>Medical: <b>{c.medical_result}</b></span>}
-        {c.bv_expiry && <span>BV expiry: <b>{fmtDate(c.bv_expiry)}</b></span>}
+        {c.bv_expiry && <span>BV expiry: <b>{fmtDate(c.bv_expiry)}</b>
+          {c.status === "IN_PROGRESS" && c.stage !== "WP_ISSUED" &&
+            <Countdown d={c.bv_expiry} warnAt={14} />}</span>}
       </div>
 
       {/* HR controls */}
@@ -529,6 +532,15 @@ function Processing({ c, me, onReload }) {
 
 const humanize = (k) => k.replace(/_/g, " ")
   .replace(/\b\w/g, (ch) => ch.toUpperCase());
+
+function Countdown({ d, warnAt }) {
+  const n = Math.round((new Date(d + "T00:00:00")
+    - new Date(new Date().toDateString())) / 86400000);
+  const tone = n < 0 ? "var(--red-fg)"
+    : n <= warnAt ? "var(--amber-fg)" : "var(--muted)";
+  return <span style={{ color: tone, fontWeight: 600 }}>
+    {" · "}{n < 0 ? `overdue ${Math.abs(n)}d` : `in ${n}d`}</span>;
+}
 
 function Letters({ c, busy, run }) {
   const [openKind, setOpenKind] = useState(null);
