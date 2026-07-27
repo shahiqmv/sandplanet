@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Procurement Plan — {{ plan.project_title }}</title>
+<style>
+  :root {
+    --navy: #10344F; --blue: #1685CC; --line: #D8E3EC; --ink: #22303B;
+    --muted: #61707C; --band: #E7F1F9; --tint: #F4F9FD;
+    --green: #1A7F37; --amber: #B35900; --red: #B02418; --grey: #8A94A0;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, Helvetica,
+         Arial, sans-serif; color: var(--ink); background: #eef2f6;
+         font-size: 14px; line-height: 1.4; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  .sheet { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+           overflow: hidden; box-shadow: 0 1px 3px rgba(16,52,79,.06); }
+  .masthead { padding: 20px 22px 14px; }
+  .accent { height: 3px; border-radius: 2px;
+    background: linear-gradient(90deg, #26A9E0, #1685CC 55%, #0C4E82); }
+  .contractor { font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--blue); font-weight: 700; }
+  h1 { margin: 4px 0 2px; font-size: 22px; color: var(--navy); font-weight: 800; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 26px; margin-top: 10px;
+    font-size: 13px; }
+  .meta div { color: var(--muted); }
+  .meta b { color: var(--navy); font-weight: 600; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+    color: var(--green); font-weight: 600; }
+  .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+    display: inline-block; }
+  .dl { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+    text-decoration: none; font-size: 12.5px; font-weight: 600; color: #fff;
+    background: var(--blue); padding: 7px 13px; border-radius: 7px; }
+  .dl:hover { background: #0f6fb0; }
+
+  .scroll { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px;
+    min-width: 900px; }
+  thead th { background: var(--blue); color: #fff; font-weight: 700;
+    font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+    padding: 8px 9px; text-align: left; white-space: nowrap; position: sticky;
+    top: 0; }
+  th.n, td.n { text-align: center; white-space: nowrap; }
+  tbody td { padding: 8px 9px; border-bottom: 1px solid var(--line);
+    vertical-align: top; }
+  tr.section td { background: var(--band); color: var(--navy); font-weight: 700;
+    text-transform: uppercase; letter-spacing: .03em; font-size: 11.5px; }
+  tbody tr:not(.section):nth-child(even) td { background: var(--tint); }
+  .item .desc { font-weight: 600; color: var(--navy); }
+  .item .sub { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+  .cat { display: inline-block; font-size: 10.5px; color: var(--muted);
+    background: #eef4f9; border-radius: 8px; padding: 1px 7px; margin-top: 3px; }
+  .chip { display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .chip.LATE { background: #fbe9e7; color: var(--red); }
+  .chip.AT_RISK { background: #fdf1e3; color: var(--amber); }
+  .chip.ON_TRACK { background: #e7f4ec; color: var(--green); }
+  .chip.DELIVERED { background: #eef1f4; color: var(--grey); }
+  .foot { padding: 12px 22px 18px; color: var(--muted); font-size: 11.5px;
+    border-top: 1px solid var(--line); }
+  @media (max-width: 640px) {
+    .wrap { padding: 8px; } h1 { font-size: 18px; }
+    .masthead { padding: 16px 14px 12px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="sheet">
+    <div class="masthead">
+      <div class="contractor">{{ plan.contractor }}</div>
+      <h1>Procurement Plan</h1>
+      <div class="meta">
+        <div>Project <b>{{ plan.project_title }}</b> ({{ plan.project_code }})</div>
+        <div>Client <b>{{ plan.client }}</b></div>
+        <div>Updated <b>{{ plan.last_update|date:"d M Y" }}</b></div>
+        <div class="live"><span class="dot"></span> Live status</div>
+        {% if download_url %}
+        <a class="dl" href="{{ download_url }}">⬇ Download Excel</a>
+        {% endif %}
+      </div>
+    </div>
+    <div class="accent"></div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th class="n">#</th>
+            <th>Item</th>
+            <th class="n">Qty</th>
+            <th class="n">Supply</th>
+            <th class="n">Country</th>
+            <th class="n">Required</th>
+            <th class="n">TDS</th>
+            <th class="n">Order</th>
+            <th class="n">Production</th>
+            <th class="n">Shipment</th>
+            <th class="n">Delivery</th>
+            <th class="n">ETA Resort</th>
+            <th class="n">Status</th>
+            <th>Remarks</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for sec in plan.sections %}
+          <tr class="section">
+            <td class="n">{{ sec.code }}</td><td colspan="13">{{ sec.title }}</td>
+          </tr>
+          {% for r in sec.rows %}
+          <tr>
+            <td class="n">{{ r.s_no }}</td>
+            <td class="item">
+              <div class="desc">{{ r.description }}</div>
+              {% if r.make_brand or r.specification %}
+              <div class="sub">{{ r.make_brand }}{% if r.make_brand and r.specification %} · {% endif %}{{ r.specification }}</div>
+              {% endif %}
+              {% if r.category %}<span class="cat">{{ r.category }}</span>{% endif %}
+            </td>
+            <td class="n">{% if r.quantity != None %}{{ r.quantity|floatformat:"-2" }} {{ r.uom }}{% endif %}</td>
+            <td class="n">{{ r.supply_by }}</td>
+            <td class="n">{{ r.source_country }}</td>
+            <td class="n">{{ r.required_date|date:"d M Y" }}</td>
+            <td class="n">{{ r.tds }}</td>
+            <td class="n">{{ r.order }}</td>
+            <td class="n">{{ r.production }}</td>
+            <td class="n">{{ r.shipment }}</td>
+            <td class="n">{{ r.delivery }}</td>
+            <td class="n">{% if r.eta %}{{ r.eta|date:"d M Y"|default:r.eta }}{% endif %}</td>
+            <td class="n">{% if r.status %}<span class="chip {{ r.status_level }}">{{ r.status }}</span>{% endif %}</td>
+            <td>{{ r.remarks }}</td>
+          </tr>
+          {% endfor %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="foot">
+      This is a live, read-only view — statuses update as the works progress.
+      Prepared by {{ plan.contractor }}{% if plan.updated_by %} · {{ plan.updated_by }}{% endif %}.
+    </div>
+  </div>
+</div>
+</body>
+</html>

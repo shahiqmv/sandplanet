@@ -195,6 +195,45 @@ def schedule_line_client_update(request, line_id):
     return Response(ps.schedule_dict(line.schedule, request.user))
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def schedule_export(request, pk):
+    """Download the client procurement plan (xlsx). Allowlist columns only — no
+    internal values or supplier names reach the client."""
+    from django.http import HttpResponse
+
+    from . import procurement_export
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    wb = procurement_export.build_client_xlsx(sched, request.user)
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet")
+    fname = f"{sched.project.code}-Procurement-Plan.xlsx"
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    wb.save(resp)
+    return resp
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def schedule_share(request, pk):
+    """Mint/rotate (POST) or revoke (DELETE) the client live-link token."""
+    from . import procurement_client as pc
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    if request.method == "DELETE":
+        msg = pc.revoke_share_token(sched, request.user)
+    else:
+        _, msg = pc.generate_share_token(sched, request.user)
+    if msg:
+        return Response({"detail": msg}, status=403)
+    sched.refresh_from_db()
+    return Response(ps.schedule_dict(sched, request.user))
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def schedule_submit(request, pk):

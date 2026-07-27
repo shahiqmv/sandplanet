@@ -4,7 +4,7 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
-from core import views_pwa, views_tracking
+from core import views_procurement_public, views_pwa, views_tracking
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -13,6 +13,11 @@ urlpatterns = [
     # Public, secret-verified provider webhook (outside the session-auth API).
     path("api/webhooks/tracking/shipsgo/", views_tracking.shipsgo_webhook,
          name="shipsgo-webhook"),
+    # Public, token-gated client view of a procurement schedule (no login).
+    path("share/procurement/<str:token>",
+         views_procurement_public.client_plan_page, name="psc-client-plan"),
+    path("share/procurement/<str:token>/plan.xlsx",
+         views_procurement_public.client_plan_xlsx, name="psc-client-xlsx"),
 ]
 
 if settings.DEBUG:  # local-disk media fallback only (DECISIONS.md D3)

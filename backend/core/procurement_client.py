@@ -1,0 +1,156 @@
+"""Procurement Schedule — the client-facing view (shared by the xlsx export and
+the live HTML share link).
+
+Single source of the client ALLOWLIST: what the employer is allowed to see —
+planning identity, the required-on-site date, the derived pipeline as plain
+words, source country, and an overall status. No internal money (estimated /
+committed / variance / lead time) and no supplier name ever leave through here.
+Both the spreadsheet export and the public web page render from `client_plan`,
+so the two can never drift apart.
+"""
+import secrets
+
+from .procurement_pipeline import line_pipeline, line_risk
+
+# ---- client-facing stage vocabulary (from the derived pipeline state) ----
+# Each derived stage carries state ∈ none|na|pending|done|warn; map it to a word
+# the client understands, per stage.
+STAGE_WORDS = {
+    "tds": {"done": "Approved", "pending": "Under review", "warn": "Revise",
+            "none": "Pending", "na": "—"},
+    "order": {"done": "Ordered", "pending": "Processing", "warn": "Cancelled",
+              "none": "Pending", "na": "—"},
+    "production": {"done": "Completed", "pending": "In production",
+                   "warn": "—", "none": "Pending", "na": "—"},
+    "shipment": {"done": "Arrived", "pending": "In transit", "warn": "—",
+                 "none": "Pending", "na": "—"},
+    "delivery": {"done": "Delivered", "pending": "Awaiting",
+                 "warn": "Shortage", "none": "Pending", "na": "—"},
+}
+RISK_WORD = {"LATE": "Late", "AT_RISK": "At risk", "ON_TRACK": "On track",
+             "DELIVERED": "Delivered", "NONE": ""}
+# hex (xlsx) — the HTML template maps the level to its own CSS class.
+RISK_COLOR = {"LATE": "B02418", "AT_RISK": "B35900", "ON_TRACK": "1A7F37",
+              "DELIVERED": "8A94A0", "NONE": None}
+
+
+def initials(user):
+    name = (getattr(user, "full_name", "") or getattr(user, "username", "")
+            or "").strip()
+    parts = [p for p in name.replace(".", " ").split() if p]
+    return "".join(p[0] for p in parts[:3]).upper() if parts else "—"
+
+
+def _stage_word(pipeline, key):
+    st = next((s for s in pipeline if s["key"] == key), None)
+    return STAGE_WORDS.get(key, {}).get(st["state"], "") if st else ""
+
+
+def _eta_value(line, risk):
+    if risk["level"] == "DELIVERED":
+        return "Delivered"
+    proj = risk.get("projected")
+    return proj if proj else ""
+
+
+def _last_update(sched):
+    dates = [sched.document.updated_at]
+    dates += [ln.updated_at for ln in sched.lines.all() if ln.updated_at]
+    return max(d for d in dates if d)
+
+
+def client_row(line):
+    """One line as the client sees it — allowlist fields only."""
+    pipe = line_pipeline(line)
+    risk = line_risk(line)
+    return {
+        "s_no": line.s_no, "category": line.category,
+        "description": line.description, "make_brand": line.make_brand,
+        "specification": line.specification,
+        "quantity": line.quantity, "uom": line.uom,
+        "supply_by": ("Sand Planet" if line.supply_by == "CONTRACTOR"
+                      else "Client"),
+        "source_country": line.source_country,
+        "required_date": line.required_date,
+        "tds_req": "Yes" if line.tds_required else "No",
+        "tds": _stage_word(pipe, "tds"), "order": _stage_word(pipe, "order"),
+        "production": _stage_word(pipe, "production"),
+        "shipment": _stage_word(pipe, "shipment"),
+        "delivery": _stage_word(pipe, "delivery"),
+        "eta": _eta_value(line, risk),
+        "status": RISK_WORD.get(risk["level"], ""),
+        "status_level": risk["level"],
+        "remarks": line.remarks,
+    }
+
+
+def client_plan(sched, updated_by=""):
+    """The whole client plan for a project: header identity + sectioned rows.
+    Rendered identically by the xlsx export and the public HTML page."""
+    from .pdf import company_info
+    doc = sched.document
+    project = sched.project
+    site = doc.site
+    co = company_info()
+    client_name = getattr(site, "client_name", "") or site.name
+
+    lines = list(sched.lines.select_related("section", "item")
+                 .exclude(state="CANCELLED"))
+    by_section = {}
+    for ln in lines:
+        by_section.setdefault(ln.section_id, []).append(ln)
+    ordered = [(s.code, s.title, s.id)
+               for s in sched.sections.order_by("sort_order", "id")]
+    if None in by_section:
+        ordered.append(("", "Unsectioned", None))
+
+    sections = []
+    for code, title, sid in ordered:
+        rows = sorted(by_section.get(sid, []),
+                      key=lambda x: (x.s_no or 0, x.id))
+        if not rows:
+            continue
+        sections.append({"code": code, "title": title,
+                         "rows": [client_row(ln) for ln in rows]})
+
+    return {
+        "project_title": project.title, "project_code": project.code,
+        "contractor": co["legal_name"], "client": client_name,
+        "last_update": _last_update(sched).date(),
+        "updated_by": updated_by,
+        "sections": sections,
+    }
+
+
+# ---- share token (the live client link) ----------------------------------
+
+# Roles allowed to mint / revoke the client link — the schedule's custodians.
+SHARE_ROLES = ("QS", "PM", "HO_PURCHASING", "DIRECTOR", "ADMIN")
+
+
+def generate_share_token(sched, actor):
+    """Mint (or rotate) the client link token. Rotating revokes the old URL."""
+    from .audit import audit
+    if actor.role not in SHARE_ROLES:
+        return None, "Not permitted to share this schedule."
+    sched.share_token = secrets.token_urlsafe(24)
+    sched.save(update_fields=["share_token", "updated_at"])
+    audit("document", sched.document_id, "PSC_SHARE_LINK", actor=actor,
+          detail={"action": "generated"})
+    return sched.share_token, None
+
+
+def revoke_share_token(sched, actor):
+    from .audit import audit
+    if actor.role not in SHARE_ROLES:
+        return "Not permitted to revoke this schedule's link."
+    sched.share_token = ""
+    sched.save(update_fields=["share_token", "updated_at"])
+    audit("document", sched.document_id, "PSC_SHARE_LINK", actor=actor,
+          detail={"action": "revoked"})
+    return None
+
+
+def share_path(sched):
+    """The public path for the client link, or '' when unshared."""
+    return f"/share/procurement/{sched.share_token}" if sched.share_token else ""

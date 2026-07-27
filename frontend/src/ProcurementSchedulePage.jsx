@@ -77,6 +77,34 @@ function RiskSummary({ counts }) {
   );
 }
 
+// The client live-link control: create/copy/regenerate/revoke the shareable,
+// login-free URL the employer bookmarks for the always-current plan.
+function ClientLink({ share, busy, onCreate, onRevoke }) {
+  const [copied, setCopied] = useState(false);
+  const url = share.path ? window.location.origin + share.path : "";
+  const copy = () => {
+    navigator.clipboard?.writeText(url).then(
+      () => { setCopied(true); setTimeout(() => setCopied(false), 1800); },
+      () => window.prompt("Client link:", url));
+  };
+  if (!share.path) {
+    return <button style={linkBtn} disabled={busy} onClick={onCreate}
+      title="Create a read-only live link to share with the client">
+      🔗 Create client link</button>;
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
+      <button style={linkBtn} disabled={busy} onClick={copy}
+        title={url}>🔗 {copied ? "Copied!" : "Copy client link"}</button>
+      <button style={linkBtn} disabled={busy} onClick={onCreate}
+        title="Issue a new link (revokes the current one)">Regenerate</button>
+      <button style={{ ...linkBtn, color: "var(--red-fg)" }} disabled={busy}
+        onClick={() => { if (window.confirm("Revoke the client link? The "
+          + "current URL will stop working.")) onRevoke(); }}>Revoke</button>
+    </span>
+  );
+}
+
 function PipelineStrip({ stages }) {
   return (
     <div style={{ display: "flex", gap: 3 }}>
@@ -281,6 +309,10 @@ function ScheduleDetail({ id, me, onBack }) {
   });
   const submit = () => run(() =>
     api(`/procurement-schedules/${id}/submit`, { method: "POST" }));
+  const share = () => run(() =>
+    api(`/procurement-schedules/${id}/share`, { method: "POST" }));
+  const revokeShare = () => run(() =>
+    api(`/procurement-schedules/${id}/share`, { method: "DELETE" }));
 
   if (error && !c) return <div style={card}>{error}
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
@@ -336,6 +368,12 @@ function ScheduleDetail({ id, me, onBack }) {
               onClick={() => act("sign_off")}>Sign off baseline</Btn>
             <Btn variant="ghost" disabled={busy}
               onClick={() => act("return")}>Return to PM</Btn></>}
+          <a href={`/api/v1/procurement-schedules/${c.id}/export`}
+            style={{ ...linkBtn, marginLeft: "auto", textDecoration: "none" }}
+            title="Download the client procurement plan (Excel)">
+            ⬇ Export client plan</a>
+          {c.share?.can_share && <ClientLink share={c.share} busy={busy}
+            onCreate={share} onRevoke={revokeShare} />}
         </div>
       </div>
 

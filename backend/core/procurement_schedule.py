@@ -362,6 +362,12 @@ def line_dict(line, values=True):
     return d
 
 
+def _share_block(sched, user):
+    """The client live-link state for the header control."""
+    from .procurement_client import SHARE_ROLES, share_path
+    return {"path": share_path(sched), "can_share": user.role in SHARE_ROLES}
+
+
 def schedule_dict(sched, user):
     doc = sched.document
     values = can_see_values(user, sched)
@@ -406,6 +412,7 @@ def schedule_dict(sched, user):
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
         "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),
+        "share": _share_block(sched, user),
         "show_values": values,
         "line_counts": counts,
         "risk_counts": risk_counts,

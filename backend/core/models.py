@@ -3285,6 +3285,10 @@ class ProcurementSchedule(models.Model):
     baseline_signed_by = models.ForeignKey(User, on_delete=models.SET_NULL,
                                            null=True, blank=True,
                                            related_name="+")
+    # Unguessable token for the client's read-only live plan link (no login).
+    # Empty = no active link; regenerating rotates it (revokes the old URL).
+    share_token = models.CharField(max_length=64, blank=True, default="",
+                                   db_index=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
