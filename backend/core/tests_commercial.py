@@ -461,6 +461,35 @@ class ProgressClaimTests(TestCase):
         r = self._value_pct(c["id"], {"V1": "100"})
         self.assertEqual(float(r["waterfall"]["k4_variations"]), 500.0)
 
+    def test_section_summary_rolls_up_to_bill_headings(self):
+        # A BOQ whose bills are heading rows; most priced lines leave their
+        # Section box blank, a couple carry a finer sub-tag.
+        self.client.post(
+            f"/api/v1/projects/{self.project.id}/boq/items", {"rows": [
+                {"section": "SUBSTRUCTURE", "is_heading": True},
+                {"item_code": "A", "description": "Excavation",
+                 "qty": "10", "rate_combined": "5"},          # blank section
+                {"item_code": "B", "description": "Concrete",
+                 "section": "Concrete Works", "qty": "2",
+                 "rate_combined": "100"},                     # sub-tag
+                {"section": "SUPERSTRUCTURE", "is_heading": True},
+                {"item_code": "C", "description": "Roof",
+                 "qty": "1", "rate_combined": "50"}]},        # blank section
+            format="json")
+        c = self._create()
+        self._value_pct(c["id"], {"A": "100", "B": "100", "C": "100"})
+        d = self._detail(c["id"])
+        secs = {s["section"] for s in d["section_summary"]}
+        # blank-section lines inherit their heading; the tagged one keeps it;
+        # nothing lands in the "—" bucket
+        self.assertEqual(secs, {"SUBSTRUCTURE", "Concrete Works",
+                                "SUPERSTRUCTURE"})
+        self.assertNotIn("—", secs)
+        by_code = {ln["item_code"]: ln["section"] for ln in d["lines"]}
+        self.assertEqual(by_code["A"], "SUBSTRUCTURE")   # inherited heading
+        self.assertEqual(by_code["B"], "Concrete Works")  # kept its sub-tag
+        self.assertEqual(by_code["C"], "SUPERSTRUCTURE")
+
     def test_measured_basis_uses_quantity(self):
         self.project.contract_type = "REMEASUREMENT"
         self.project.save(update_fields=["contract_type"])

@@ -464,6 +464,30 @@ def set_claim_status(claim, to_status, actor):
     return claim, None
 
 
+def _heading_map(items):
+    """Map each priced item id → the title of the heading row above it, walking
+    the schedule in order. Bills are defined by heading rows (the QS ticks a row
+    as a bill/section title), so a priced line belongs to the nearest heading
+    above it — its own `section` box is an optional finer sub-tag."""
+    out, current = {}, ""
+    for it in items:                       # Meta ordering: sort_order, id
+        if it.is_heading:
+            current = (it.section or it.description or "").strip()
+        else:
+            out[it.id] = current
+    return out
+
+
+def _effective_section(line, source, boq_head, vo_head):
+    """A priced line's section for the bill/section rollup: its own Section tag
+    if set, otherwise the heading (bill) above it, otherwise '—'."""
+    own = (line.section or "").strip()
+    if own:
+        return own
+    heading = (boq_head if source == "BOQ" else vo_head).get(line.id, "")
+    return heading or "—"
+
+
 def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
     """Cumulative value of a line: qty×rate for re-measurement, else a % of the
     (signed) contract amount for lump-sum."""
@@ -498,6 +522,15 @@ def claim_valuation(claim):
             prev_map[(pci.source, pci.boq_item_id,
                       pci.variation_item_id)] = pci
 
+    # Bill/section rollup: a priced line belongs to the heading (bill) above it
+    # unless it carries its own finer Section tag.
+    boq = getattr(project, "boq", None)
+    boq_head = _heading_map(boq.items.all()) if boq else {}
+    vo_head = {}
+    for v in project.variations.filter(status="APPROVED").prefetch_related(
+            "items"):
+        vo_head.update(_heading_map(v.items.all()))
+
     k1 = k4 = ZERO
     lines = []
     for ci in claim.items.select_related(
@@ -526,7 +559,8 @@ def claim_valuation(claim):
         else:
             k1 += cum_val
         lines.append({
-            "id": ci.id, "source": ci.source, "section": line.section,
+            "id": ci.id, "source": ci.source,
+            "section": _effective_section(line, ci.source, boq_head, vo_head),
             "item_code": line.item_code, "description": line.description,
             "unit": line.unit, "contract_qty": line.qty, "rate": rate,
             "contract_amount": contract_amt,
