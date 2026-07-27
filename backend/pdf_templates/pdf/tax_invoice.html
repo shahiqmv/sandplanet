@@ -110,7 +110,8 @@
     <table class="meta">
       <tr><td class="k">Invoice No</td><td class="inv">{{ claim.invoice_no|default:"—" }}</td></tr>
       <tr><td class="k">Date</td><td>{% if claim.certified_at %}{{ claim.certified_at|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
-      <tr><td class="k">Reference</td><td>{{ claim.ref }}</td></tr>
+      <tr><td class="k">IPC Ref</td><td>{{ ipc_ref }}</td></tr>
+      {% if loa_ref %}<tr><td class="k">LOA Ref</td><td>{{ loa_ref }}</td></tr>{% endif %}
     </table>
   </td>
 </tr></table>
@@ -120,7 +121,7 @@
 {% if is_advance %}
 <p class="narrative">
   Being advance payment — {{ advance_pct|floatformat:"-2" }}% of the contract
-  value for {{ project.title }}, per Interim Payment Application {{ claim.ref }}.
+  value for {{ project.title }}, per Interim Payment Certificate {{ ipc_ref }}.
 </p>
 <table class="doc">
   <thead>
@@ -128,17 +129,17 @@
   </thead>
   <tbody>
     <tr><td>Advance payment ({{ advance_pct|floatformat:"-2" }}% of contract value)</td>
-        <td class="n">{{ net_due|floatformat:2 }}</td></tr>
+        <td class="n">{{ net_due_f }}</td></tr>
     <tr><td>Output GST @ {{ gst_pct|floatformat:"-2" }}%</td>
-        <td class="n">{{ gst|floatformat:2 }}</td></tr>
+        <td class="n">{{ gst_f }}</td></tr>
     <tr class="net"><td>Total amount payable</td>
-        <td class="n">{{ currency }} {{ net_to_pay|floatformat:2 }}</td></tr>
+        <td class="n">{{ currency }} {{ net_to_pay_f }}</td></tr>
   </tbody>
 </table>
 {% else %}
 <p class="narrative">
-  Being value of work certified to date under Interim Payment Application
-  {{ claim.ref }} for {{ project.title }}.
+  Being value of work certified to date under Interim Payment Certificate
+  {{ ipc_ref }} for {{ project.title }}.
 </p>
 <table class="doc">
   <thead>

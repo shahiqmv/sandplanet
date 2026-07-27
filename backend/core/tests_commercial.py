@@ -348,6 +348,12 @@ class ProgressClaimTests(TestCase):
         ipa = render_to_string("pdf/claim_ipa.html",
                                commercial.claim_pdf_context(ac))
         self.assertIn("Advance received", ipa)
+        # advance invoice figures carry thousands separators like the interim
+        # Payment Summary (advance = 40% of 3000 = 1,200.00)
+        adv_inv = render_to_string(
+            "pdf/tax_invoice.html", commercial.invoice_pdf_context(ac))
+        self.assertIn("1,200.00", adv_inv)
+        self.assertNotIn(">1200.00<", adv_inv)
         # the 4-column Payment Summary (Contract / Cumulative / Previous /
         # Present) is present
         for col in ("Cumulative", "Previous", "Present"):
@@ -585,6 +591,162 @@ class ProgressClaimTests(TestCase):
         self._value_pct(c["id"], {"A": "50", "B": "25"})   # DRAFT
         r = self.client.get(f"/api/v1/claims/{c['id']}/invoice.pdf")
         self.assertEqual(r.status_code, 400)
+
+    # ---- Retention fix + amount override (owner 2026-07-27) ---------------
+
+    def test_retention_rate_refreshes_on_draft_when_set_late(self):
+        # Reproduces the reported bug: a project with NO retention % is set up,
+        # a claim is opened (snapshot = 0), THEN the retention % is entered on
+        # the project. A draft claim must pick the rate up on the next recalc.
+        self.project.retention_pct = None
+        self.project.save(update_fields=["retention_pct"])
+        c = self._create()
+        self.assertEqual(float(self._detail(c["id"])["claim"]["retention_pct"]),
+                         0.0)
+        # owner enters the retention % on the project afterwards
+        self.project.refresh_from_db()
+        self.project.retention_pct = "10"
+        self.project.save(update_fields=["retention_pct"])
+        # valuing the draft refreshes the snapshot → retention now bites
+        r = self._value_pct(c["id"], {"A": "50", "B": "50"})   # k_gross 1500
+        w = r["waterfall"]
+        self.assertEqual(float(self._detail(c["id"])["claim"]["retention_pct"]),
+                         10.0)
+        self.assertEqual(float(w["retention_held"]), 150.0)    # 10% of 1500
+
+    def test_certified_claim_keeps_frozen_retention_rate(self):
+        # A certified claim must NOT drift if the project rate later changes.
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "50"})
+        self._certify(c["id"])
+        self.project.refresh_from_db()
+        self.project.retention_pct = "25"
+        self.project.save(update_fields=["retention_pct"])
+        w = self._detail(c["id"])["waterfall"]
+        self.assertEqual(float(w["retention_held"]), 150.0)    # still 10%
+
+    def test_retention_held_override_pins_amount_then_clears(self):
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "50"})       # held = 150
+        self.client.post(f"/api/v1/claims/{c['id']}/meta",
+                         {"retention_held_override": "90"}, format="json")
+        w = self._detail(c["id"])["waterfall"]
+        self.assertEqual(float(w["retention_held"]), 90.0)
+        # net cumulative = work 1500 − advance recovery 600 − retention 90 = 810
+        # (60 higher than the 750 the 10% rate would give: 150 − 90)
+        self.assertEqual(float(w["net_cumulative"]), 810.0)
+        # blank clears it → back to the 10% rate formula (150)
+        self.client.post(f"/api/v1/claims/{c['id']}/meta",
+                         {"retention_held_override": ""}, format="json")
+        w = self._detail(c["id"])["waterfall"]
+        self.assertEqual(float(w["retention_held"]), 150.0)
+
+    # ---- BOQ discount line (owner 2026-07-27) -----------------------------
+
+    def test_discount_line_lowers_boq_and_accrues_by_percent(self):
+        # rebuild the BOQ with a discount line: A 1000 + B 2000 − 300 = 2700
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/boq/items",
+            {"rows": [
+                {"item_code": "A", "description": "Item A", "unit": "no",
+                 "qty": "100", "rate_combined": "10"},
+                {"item_code": "B", "description": "Item B", "unit": "no",
+                 "qty": "100", "rate_combined": "20"},
+                {"item_code": "DISC", "description": "Trade discount",
+                 "is_discount": True, "rate_supply": "300"}]},
+            format="json").data
+        self.assertEqual(float(r["total"]), 2700.0)
+        disc = next(i for i in r["items"] if i["is_discount"])
+        self.assertEqual(float(disc["amount"]), -300.0)
+        # claim it: work 50% + discount realised 50% → 1500 − 150 = 1350
+        c = self._create()
+        w = self._value_pct(
+            c["id"], {"A": "50", "B": "50", "DISC": "50"})["waterfall"]
+        self.assertEqual(float(w["k1_work_done"]), 1350.0)
+        self.assertEqual(float(w["k_gross"]), 1350.0)
+
+    def test_discount_line_is_percent_even_on_measured_claim(self):
+        self.project.contract_type = "REMEASUREMENT"
+        self.project.save(update_fields=["contract_type"])
+        self.client.post(
+            f"/api/v1/projects/{self.project.id}/boq/items",
+            {"rows": [
+                {"item_code": "A", "description": "Item A", "unit": "no",
+                 "qty": "100", "rate_combined": "10"},
+                {"item_code": "DISC", "description": "Trade discount",
+                 "is_discount": True, "rate_supply": "100"}]},
+            format="json")
+        c = self._create()
+        self.assertEqual(c["basis"], "MEASURED")
+        d = self._detail(c["id"])
+        disc = next(ln for ln in d["lines"] if ln["is_discount"])
+        # discount is valued by % even here
+        rows = [{"id": ln["id"], "cumulative_qty": "50"}
+                for ln in d["lines"] if ln["item_code"] == "A"]
+        rows.append({"id": disc["id"], "cumulative_pct": "100"})
+        w = self.client.post(f"/api/v1/claims/{c['id']}/items",
+                             {"rows": rows}, format="json").data["waterfall"]
+        # A: 50 × 10 = 500 ; discount fully realised −100 → 400
+        self.assertEqual(float(w["k1_work_done"]), 400.0)
+
+    # ---- 3 dp precision: IPA 3 dp, invoice 2 dp (owner 2026-07-27) --------
+
+    def test_ipa_shows_3dp_and_invoice_2dp(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import ProgressClaim
+        # a fractional rate so a third decimal actually appears
+        self.client.post(
+            f"/api/v1/projects/{self.project.id}/boq/items",
+            {"rows": [{"item_code": "A", "description": "Item A", "unit": "no",
+                       "qty": "3", "rate_combined": "33.333"}]},
+            format="json")
+        c = self._create()
+        self._value_pct(c["id"], {"A": "100"})     # 3 × 33.333 = 99.999
+        self._certify(c["id"])
+        cc = ProgressClaim.objects.get(pk=c["id"])
+        ipa = render_to_string("pdf/claim_ipa.html",
+                               commercial.claim_pdf_context(cc))
+        self.assertIn("99.999", ipa)               # IPA carries 3 dp
+        inv = render_to_string("pdf/tax_invoice.html",
+                               commercial.invoice_pdf_context(cc))
+        self.assertNotIn("99.999", inv)            # invoice rounds to 2 dp
+
+    # ---- IPA → IPC relabel + LOA reference (owner 2026-07-27) -------------
+
+    def test_ipa_becomes_ipc_on_certification_with_loa_ref(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import ProgressClaim
+        self.project.loa_ref = "LOA/2026/017"
+        self.project.save(update_fields=["loa_ref"])
+        c = self._create()
+        self._value_pct(c["id"], {"A": "50", "B": "25"})
+        cc = ProgressClaim.objects.get(pk=c["id"])
+        # submitted → prints as the Application (IPA)
+        self._status(c["id"], "SUBMITTED")
+        cc.refresh_from_db()
+        app = render_to_string("pdf/claim_ipa.html",
+                               commercial.claim_pdf_context(cc))
+        self.assertIn("INTERIM PAYMENT APPLICATION", app)
+        self.assertIn("LOA/2026/017", app)
+        self.assertNotIn("INTERIM PAYMENT CERTIFICATE", app)
+        # certified → the same document is issued as the Certificate (IPC)
+        self._status(c["id"], "CERTIFIED")
+        cc.refresh_from_db()
+        ipc = render_to_string("pdf/claim_ipa.html",
+                               commercial.claim_pdf_context(cc))
+        self.assertIn("INTERIM PAYMENT CERTIFICATE", ipc)
+        self.assertIn("IPC-01", ipc)
+        self.assertIn("LOA/2026/017", ipc)
+        # the tax invoice cites the IPC ref + LOA ref
+        inv = render_to_string("pdf/tax_invoice.html",
+                               commercial.invoice_pdf_context(cc))
+        self.assertIn("IPC-01", inv)
+        self.assertIn("LOA/2026/017", inv)
+        self.assertEqual(cc.ipc_ref, "IPC-01")
 
     def test_amount_in_words(self):
         from decimal import Decimal

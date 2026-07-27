@@ -12,12 +12,23 @@ from .audit import audit
 
 ZERO = Decimal("0")
 _CENT = Decimal("0.01")
+_MIL = Decimal("0.001")
 
 
 def _q2(v):
-    """Round a money figure to 2 dp (bankers' half-up) so certificates,
-    invoices and amount-in-words all agree to the cent."""
+    """Round a money figure to 2 dp (bankers' half-up) so the tax invoice and
+    amount-in-words agree to the cent."""
     return Decimal(str(v)).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def _q3(v):
+    """Round a BOQ / claim (IPA) money figure to 3 dp — the QS working precision
+    (owner 2026-07-27). The tax invoice rounds these back to 2 dp for the client."""
+    return Decimal(str(v)).quantize(_MIL, rounding=ROUND_HALF_UP)
+
+
+# The claim waterfall works at 3 dp; the invoice presentation rounds to 2 dp.
+_q = _q3
 
 
 def _dec(v):
@@ -71,12 +82,17 @@ def _row_items(boq, rows):
         if supply is None and install is None:
             supply = _dec(r.get("rate_combined"))   # combined rate → supply leg
         has_rate = supply is not None or install is not None
-        is_heading = bool(r.get("is_heading")) or (
-            qty is None and not has_rate and not unit)
+        # A discount is a lump-sum credit: its magnitude sits on the supply leg
+        # (entered positive; BoqItem.amount returns it negative) and it is never
+        # a heading.
+        is_discount = bool(r.get("is_discount"))
+        is_heading = (not is_discount) and (bool(r.get("is_heading")) or (
+            qty is None and not has_rate and not unit))
         out.append(BoqItem(
             boq=boq, sort_order=i, section=section, item_code=code,
             description=desc, unit=unit, qty=qty, rate_supply=supply,
-            rate_install=install, is_heading=is_heading))
+            rate_install=install, is_heading=is_heading,
+            is_discount=is_discount))
     return out
 
 
@@ -340,6 +356,9 @@ def set_claim_items(claim, rows, actor):
     if changed:
         ProgressClaimItem.objects.bulk_update(
             changed, ["cumulative_pct", "cumulative_qty"])
+    # Keep the retention rate current with the project terms while still a draft.
+    _refresh_draft_terms(claim)
+    claim.save(update_fields=["retention_pct"])
     audit("project", claim.project_id, "CLAIM_VALUED", actor=actor,
           detail={"ref": claim.ref, "lines": len(changed)})
     return claim, None
@@ -367,6 +386,17 @@ def set_claim_deductions(claim, rows, actor):
     return claim, None
 
 
+def _refresh_draft_terms(claim):
+    """Re-snapshot the money terms that are driven by the project's contract
+    terms onto a DRAFT claim. Fixes the case where a claim was opened before the
+    retention % (or GST) was entered on the project — the snapshot taken at
+    creation was 0 and never caught up (owner 2026-07-27). Certified claims keep
+    their frozen snapshot untouched."""
+    if claim.status != "DRAFT":
+        return
+    claim.retention_pct = _dec(claim.project.retention_pct) or ZERO
+
+
 def set_claim_meta(claim, data, actor):
     """Edit a draft claim's header — type, basis, date, and the cumulative
     material-on/off-site and retention-release figures the QS enters direct."""
@@ -382,11 +412,13 @@ def set_claim_meta(claim, data, actor):
             setattr(claim, f, _dec(data.get(f)) or ZERO)
     if "recovery_pct" in data:
         claim.recovery_pct = _dec(data.get("recovery_pct")) or ZERO
-    if "advance_recovered_override" in data:
-        # blank/None clears the override → back to the rate formula
-        v = data.get("advance_recovered_override")
-        claim.advance_recovered_override = (_dec(v) if v not in (None, "")
-                                            else None)
+    for f in ("advance_recovered_override", "retention_held_override"):
+        if f in data:
+            # blank/None clears the override → back to the rate formula
+            v = data.get(f)
+            setattr(claim, f, _dec(v) if v not in (None, "") else None)
+    # Keep the retention rate current with the project terms while still a draft.
+    _refresh_draft_terms(claim)
     claim.save()
     return claim, None
 
@@ -478,11 +510,16 @@ def claim_valuation(claim):
         sign = Decimal("-1") if omission else Decimal("1")
         rate = line.rate_total
         contract_amt = (line.amount or ZERO) * sign
-        cum_val = _cum_value(basis, ci.cumulative_pct, ci.cumulative_qty,
+        # A discount is a lump-sum credit (negative contract amount) — always
+        # valued by % complete, even on a re-measurement claim.
+        is_discount = getattr(line, "is_discount", False)
+        line_basis = "PERCENT" if is_discount else basis
+        cum_val = _cum_value(line_basis, ci.cumulative_pct, ci.cumulative_qty,
                              contract_amt, rate, sign)
         pci = prev_map.get((ci.source, ci.boq_item_id, ci.variation_item_id))
-        prev_val = (_cum_value(basis, pci.cumulative_pct, pci.cumulative_qty,
-                               contract_amt, rate, sign) if pci else ZERO)
+        prev_val = (_cum_value(line_basis, pci.cumulative_pct,
+                               pci.cumulative_qty, contract_amt, rate, sign)
+                    if pci else ZERO)
         cur_val = cum_val - prev_val
         if is_vo:
             k4 += cum_val
@@ -495,16 +532,17 @@ def claim_valuation(claim):
             "contract_amount": contract_amt,
             "cumulative_pct": ci.cumulative_pct,
             "cumulative_qty": ci.cumulative_qty,
+            "is_discount": is_discount,
             "previous_value": prev_val, "current_value": cur_val,
             "cumulative_value": cum_val,
         })
 
     k2 = Decimal(str(claim.material_on_site or 0))     # material on site
     k3 = Decimal(str(claim.material_off_site or 0))    # material off site
-    k_gross = _q2(k1 + k2 + k3 + k4)                   # K gross cumulative
+    k_gross = _q(k1 + k2 + k3 + k4)                    # K gross cumulative
 
     from .models import ProgressClaim
-    advance_total = _q2(claim.advance_pct / Decimal("100") * original)  # L1
+    advance_total = _q(claim.advance_pct / Decimal("100") * original)  # L1
     # The advance is paid on the Advance claim, then recovered pro-rata as work
     # is valued. It rides the cumulative waterfall as +received / −recovered, so
     # each claim's "now due" comes out right (advance received once, recovery
@@ -519,9 +557,15 @@ def claim_valuation(claim):
     else:
         advance_recovered = min(
             claim.recovery_pct / Decimal("100") * k_gross, advance_total)
-    advance_recovered = _q2(advance_recovered)
-    retention_held = _q2(claim.retention_pct / Decimal("100")
-                         * (k1 + k2 + k4))              # M1 (not on off-site)
+    advance_recovered = _q(advance_recovered)
+    # Retention held (M1) — the rate on work + on-site material + variations
+    # (never on off-site material). The QS may pin the exact cumulative held
+    # amount with an override before the claim is certified (owner 2026-07-27).
+    if claim.retention_held_override is not None:
+        retention_held = _q(claim.retention_held_override)
+    else:
+        retention_held = _q(claim.retention_pct / Decimal("100")
+                            * (k1 + k2 + k4))
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
 
@@ -546,16 +590,16 @@ def claim_valuation(claim):
         ded_cum += cum
         ded_present += (cum - pv)
 
-    net_cumulative = _q2(k_gross + advance_received - advance_recovered
-                         + net_retention)              # N (certified, ex GST)
+    net_cumulative = _q(k_gross + advance_received - advance_recovered
+                        + net_retention)               # N (certified, ex GST)
     previously = _claim_net(prev)                                    # P
     net_due = net_cumulative - previously                           # Q (taxable)
-    gst = _q2(claim.gst_pct / Decimal("100") * net_due)             # R
+    gst = _q(claim.gst_pct / Decimal("100") * net_due)              # R
     total = net_due + gst                        # total with GST (present)
     net_to_pay = total - ded_present             # less back-charge contra
     # Cumulative-to-date counterparts (for the 4-column IPA summary: the
     # "previous" column is the prior claim's cumulative, "present" = the delta).
-    gst_cumulative = _q2(claim.gst_pct / Decimal("100") * net_cumulative)
+    gst_cumulative = _q(claim.gst_pct / Decimal("100") * net_cumulative)
     total_cumulative = net_cumulative + gst_cumulative
     net_to_pay_cumulative = total_cumulative - ded_cum
 
@@ -737,17 +781,19 @@ def _employer(project):
     }
 
 
-def _fmt_money(v):
-    v = Decimal(str(v or 0)).quantize(Decimal("0.01"))
+def _fmt_money(v, dp=2):
+    q = Decimal(1).scaleb(-dp)                    # 0.01 (dp=2) / 0.001 (dp=3)
+    v = Decimal(str(v or 0)).quantize(q, rounding=ROUND_HALF_UP)
     if v == 0:
         return "-"
-    return f"({-v:,.2f})" if v < 0 else f"{v:,.2f}"
+    return f"({-v:,.{dp}f})" if v < 0 else f"{v:,.{dp}f}"
 
 
-def claim_payment_summary(claim):
+def claim_payment_summary(claim, dp=2):
     """The 4-column Payment Summary (Contract / Cumulative / Previous / Present)
     the client's IPC uses — present = this claim's cumulative less the previous
-    claim's. Amounts pre-formatted (dash for zero, parens for negatives)."""
+    claim's. Amounts pre-formatted (dash for zero, parens for negatives). The IPA
+    shows 3 dp (QS working precision); the tax invoice shows 2 dp."""
     val = claim_valuation(claim)
     w = val["waterfall"]
     wp = (claim_valuation(claim.previous)["waterfall"]
@@ -764,9 +810,9 @@ def claim_payment_summary(claim):
         cum, prev = Decimal(str(cum)) * sign, Decimal(str(prev)) * sign
         rows.append({
             "label": label, "style": style,
-            "contract": _fmt_money(Decimal(str(contract)) * sign),
-            "cumulative": _fmt_money(cum), "previous": _fmt_money(prev),
-            "present": _fmt_money(cum - prev)})
+            "contract": _fmt_money(Decimal(str(contract)) * sign, dp),
+            "cumulative": _fmt_money(cum, dp), "previous": _fmt_money(prev, dp),
+            "present": _fmt_money(cum - prev, dp)})
 
     add("Value of work certified to date", revised, w["k_gross"], P("k_gross"))
     if w["advance_received"]:
@@ -827,6 +873,12 @@ def claim_pdf_context(claim):
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
     detail_sections, detail_totals = _valuation_detail(val["lines"])
+    # A certified application (IPA) is issued as the Interim Payment Certificate
+    # (IPC) — same document + figures, relabelled with the certifier's stamp
+    # (owner 2026-07-27).
+    certified = claim.is_certified
+    doc_ref = claim.ipc_ref if certified else claim.ref
+    noun = "Certificate" if certified else "Application"
     return {
         "logo_src": logo_src(), "co": company_info(),
         "claim": claim, "project": project,
@@ -835,11 +887,23 @@ def claim_pdf_context(claim):
         "lines": val["lines"], "sections": val["section_summary"],
         "detail_sections": detail_sections, "detail_totals": detail_totals,
         "deductions": val["deduction_lines"],
-        "summary": claim_payment_summary(claim),
+        "summary": claim_payment_summary(claim, dp=3),
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
-        "subline": f"Application {claim.ref}  ·  {project.code}",
+        "is_certified": certified,
+        "doc_title": f"INTERIM PAYMENT {noun.upper()}",
+        "doc_no_label": f"{noun} No",
+        "doc_ref": doc_ref,
+        "loa_ref": project.loa_ref,
+        "subline": f"{noun} {doc_ref}  ·  {project.code}",
+        # Director's digital certification stamp (shown on the IPC).
+        "prepared_by": (claim.created_by.full_name
+                        if claim.created_by else ""),
+        "certified_name": (claim.certified_by.full_name
+                           if claim.certified_by else ""),
+        "certified_title": _certifier_title(claim.certified_by),
+        "certified_at": claim.certified_at,
     }
 
 
@@ -851,20 +915,34 @@ def invoice_pdf_context(claim):
     w = val["waterfall"]
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
+    # The tax invoice is the client's GST bill — round the QS's 3 dp working
+    # figures back to the conventional 2 dp so the numbers and amount-in-words
+    # agree to the cent (owner 2026-07-27).
+    inv_net_to_pay = _q2(w["net_to_pay"])
     return {
         "logo_src": logo_src(), "co": company_info(),
         "claim": claim, "project": project,
         "employer": _employer(project), "currency": ccy,
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),
-        "net_due": w["net_due"], "gst": w["gst"], "gst_pct": claim.gst_pct,
-        "total": w["total"], "deductions": val["deduction_lines"],
-        "net_to_pay": w["net_to_pay"],
-        "summary": claim_payment_summary(claim),
+        "net_due": _q2(w["net_due"]), "gst": _q2(w["gst"]),
+        "gst_pct": claim.gst_pct,
+        "total": _q2(w["total"]), "deductions": val["deduction_lines"],
+        "net_to_pay": inv_net_to_pay,
+        # Pre-formatted with thousands separators so the advance invoice's
+        # figures match the interim invoice's Payment Summary (owner 2026-07-27).
+        "net_due_f": _fmt_money(w["net_due"], 2),
+        "gst_f": _fmt_money(w["gst"], 2),
+        "net_to_pay_f": _fmt_money(inv_net_to_pay, 2),
+        "summary": claim_payment_summary(claim, dp=2),
         "is_advance": claim.claim_type == "ADVANCE",
         "advance_pct": claim.advance_pct,
-        "amount_words": amount_in_words(w["net_to_pay"], ccy),
+        "amount_words": amount_in_words(inv_net_to_pay, ccy),
         "subline": f"Invoice {claim.invoice_no or '—'}",
+        # The invoice is raised against the certified IPC and cites the contract
+        # LOA (owner 2026-07-27).
+        "ipc_ref": claim.ipc_ref,
+        "loa_ref": project.loa_ref,
         # Prepared-by (QS) + the Director's digital certification stamp.
         "prepared_by": (claim.created_by.full_name
                         if claim.created_by else ""),

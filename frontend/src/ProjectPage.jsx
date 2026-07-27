@@ -161,6 +161,7 @@ manpower histogram, on the letterhead — send to the client"
                   ..."qs_name" in project
                     ? [["Assigned QS", project.qs_name || "—"]] : [],
                   ["LOA date", project.loa_date || "—"],
+                  ["LOA reference", project.loa_ref || "—"],
                   ["Start date", project.start_date || "—"],
                   ["Planned finish", project.planned_completion || "—"],
                   ["Actual completion", project.actual_completion || "—"],
@@ -437,6 +438,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
     planned_completion: project.planned_completion || "",
     actual_completion: project.actual_completion || "",
     loa_date: project.loa_date || "",
+    loa_ref: project.loa_ref || "",
     contract_value: project.contract_value ?? "",
     status: project.status || "ACTIVE",
     qs: project.qs ?? "",
@@ -473,6 +475,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
         planned_completion: form.planned_completion || null,
         actual_completion: form.actual_completion || null,
         loa_date: form.loa_date || null,
+        loa_ref: form.loa_ref,
         contract_value: num(form.contract_value), status: form.status,
         qs: form.qs === "" ? null : Number(form.qs),
         contract_type: form.contract_type,
@@ -548,6 +551,9 @@ function EditProjectModal({ project, onClose, onSaved }) {
           <label style={field}>LOA date
             <input type="date" value={form.loa_date}
                    onChange={set("loa_date")} style={inputStyle} /></label>
+          <label style={field}>LOA reference
+            <input value={form.loa_ref} onChange={set("loa_ref")}
+                   placeholder="e.g. LOA/2026/017" style={inputStyle} /></label>
 
           <div style={heading}>Contract</div>
           <label style={field}>Contract value (USD)

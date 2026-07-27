@@ -2203,6 +2203,7 @@ class Project(models.Model):
     contract_value = models.DecimalField(
         max_digits=14, decimal_places=2, null=True, blank=True)
     loa_date = models.DateField(null=True, blank=True)  # letter of award
+    loa_ref = models.CharField(max_length=60, blank=True)  # LOA reference no.
 
     # --- Contract terms (owner: QS records these) -----------------------
     class ContractType(models.TextChoices):
@@ -2344,11 +2345,15 @@ class BoqItem(models.Model):
     unit = models.CharField(max_length=20, blank=True)
     qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
                               blank=True)
-    rate_supply = models.DecimalField(max_digits=14, decimal_places=2,
+    rate_supply = models.DecimalField(max_digits=14, decimal_places=3,
                                       null=True, blank=True)   # material
-    rate_install = models.DecimalField(max_digits=14, decimal_places=2,
+    rate_install = models.DecimalField(max_digits=14, decimal_places=3,
                                        null=True, blank=True)  # labour
     is_heading = models.BooleanField(default=False)
+    # A discount is a lump-sum credit line: its magnitude is entered on the
+    # supply leg (positive) and `amount` returns it negative, so it lowers the
+    # BOQ total and is claimed by % like any other line (owner 2026-07-27).
+    is_discount = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "id"]
@@ -2366,16 +2371,25 @@ class BoqItem(models.Model):
         return (self.qty or Decimal("0")) * (rate or Decimal("0"))
 
     @property
+    def _discount(self):
+        from decimal import Decimal
+        return -(self.rate_supply or Decimal("0"))   # negative credit
+
+    @property
     def amount_supply(self):
-        return self._amount(self.rate_supply)
+        return self._discount if self.is_discount else self._amount(
+            self.rate_supply)
 
     @property
     def amount_install(self):
-        return self._amount(self.rate_install)
+        from decimal import Decimal
+        return Decimal("0") if self.is_discount else self._amount(
+            self.rate_install)
 
     @property
     def amount(self):
-        return self._amount(self.rate_total)
+        return self._discount if self.is_discount else self._amount(
+            self.rate_total)
 
 
 class BoqImport(models.Model):
@@ -2474,9 +2488,9 @@ class VariationItem(models.Model):
     unit = models.CharField(max_length=20, blank=True)
     qty = models.DecimalField(max_digits=14, decimal_places=3, null=True,
                               blank=True)
-    rate_supply = models.DecimalField(max_digits=14, decimal_places=2,
+    rate_supply = models.DecimalField(max_digits=14, decimal_places=3,
                                       null=True, blank=True)
-    rate_install = models.DecimalField(max_digits=14, decimal_places=2,
+    rate_install = models.DecimalField(max_digits=14, decimal_places=3,
                                        null=True, blank=True)
     is_heading = models.BooleanField(default=False)
 
@@ -2559,16 +2573,21 @@ class ProgressClaim(models.Model):
     # allows more payable). Later claims catch up so the advance still fully
     # recovers.
     advance_recovered_override = models.DecimalField(
-        max_digits=16, decimal_places=2, null=True, blank=True)
+        max_digits=16, decimal_places=3, null=True, blank=True)
     retention_pct = models.DecimalField(max_digits=5, decimal_places=2,
                                         default=0)
+    # Per-claim override of the CUMULATIVE retention HELD to date. Null = use the
+    # rate formula; set it to pin the exact figure before the claim is certified
+    # (owner 2026-07-27).
+    retention_held_override = models.DecimalField(
+        max_digits=16, decimal_places=3, null=True, blank=True)
     gst_pct = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     # Cumulative header figures the QS enters directly (IPA K2/K3, M2).
-    material_on_site = models.DecimalField(max_digits=16, decimal_places=2,
+    material_on_site = models.DecimalField(max_digits=16, decimal_places=3,
                                            default=0)  # K2
-    material_off_site = models.DecimalField(max_digits=16, decimal_places=2,
+    material_off_site = models.DecimalField(max_digits=16, decimal_places=3,
                                             default=0)  # K3
-    retention_released = models.DecimalField(max_digits=16, decimal_places=2,
+    retention_released = models.DecimalField(max_digits=16, decimal_places=3,
                                              default=0)  # M2 (cumulative)
     note = models.TextField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
@@ -2591,6 +2610,22 @@ class ProgressClaim(models.Model):
 
     def __str__(self):
         return f"{self.project.code}/{self.ref}"
+
+    @property
+    def is_certified(self):
+        return self.status in (self.Status.CERTIFIED, self.Status.PAID)
+
+    @property
+    def ipc_ref(self):
+        """Once certified, the application (IPA-NN) becomes the Interim Payment
+        Certificate (IPC-NN) — the same document, 1:1 with the application
+        (owner 2026-07-27)."""
+        r = self.ref or ""
+        if "IPA" in r:
+            return r.replace("IPA", "IPC")
+        if "ipa" in r:
+            return r.replace("ipa", "ipc")
+        return f"IPC-{self.seq:02d}"
 
 
 class ProgressClaimItem(models.Model):
@@ -2651,7 +2686,7 @@ class ClaimDeduction(models.Model):
     claim = models.ForeignKey(ProgressClaim, on_delete=models.CASCADE,
                               related_name="deductions")
     label = models.CharField(max_length=160)
-    cumulative_amount = models.DecimalField(max_digits=16, decimal_places=2,
+    cumulative_amount = models.DecimalField(max_digits=16, decimal_places=3,
                                             default=0)
     sort_order = models.IntegerField(default=0)
 

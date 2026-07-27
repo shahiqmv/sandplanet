@@ -51,7 +51,8 @@ class ProjectSerializer(serializers.ModelSerializer):
     class Meta:
         model = Project
         fields = ["id", "site", "site_code", "code", "title", "scope",
-                  "boq_ref", "contract_value", "loa_date", "pm", "pm_name",
+                  "boq_ref", "contract_value", "loa_date", "loa_ref",
+                  "pm", "pm_name",
                   "qs", "qs_name",
                   "manpower_summary", "manpower_plan", "start_date",
                   "planned_completion", "actual_completion", "status",

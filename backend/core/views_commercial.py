@@ -32,20 +32,21 @@ def _require_editor(request):
 
 
 class BoqItemSerializer(serializers.ModelSerializer):
-    amount = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount = serializers.DecimalField(max_digits=18, decimal_places=3,
                                       read_only=True)
-    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=3,
                                              read_only=True)
-    amount_install = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount_install = serializers.DecimalField(max_digits=18, decimal_places=3,
                                               read_only=True)
-    rate_total = serializers.DecimalField(max_digits=16, decimal_places=2,
+    rate_total = serializers.DecimalField(max_digits=16, decimal_places=3,
                                           read_only=True)
 
     class Meta:
         model = BoqItem
         fields = ["id", "sort_order", "section", "item_code", "description",
                   "unit", "qty", "rate_supply", "rate_install", "rate_total",
-                  "is_heading", "amount", "amount_supply", "amount_install"]
+                  "is_heading", "is_discount", "amount", "amount_supply",
+                  "amount_install"]
 
 
 def _boq_payload(project):
@@ -268,13 +269,13 @@ def boq_import_commit(request, pk):
 # ---- Variations (VOs) ---------------------------------------------------
 
 class VariationItemSerializer(serializers.ModelSerializer):
-    amount = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount = serializers.DecimalField(max_digits=18, decimal_places=3,
                                       read_only=True)
-    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount_supply = serializers.DecimalField(max_digits=18, decimal_places=3,
                                              read_only=True)
-    amount_install = serializers.DecimalField(max_digits=18, decimal_places=2,
+    amount_install = serializers.DecimalField(max_digits=18, decimal_places=3,
                                               read_only=True)
-    rate_total = serializers.DecimalField(max_digits=16, decimal_places=2,
+    rate_total = serializers.DecimalField(max_digits=16, decimal_places=3,
                                           read_only=True)
 
     class Meta:
@@ -408,7 +409,9 @@ def _claim_meta(claim):
         "status": claim.status, "work_done_upto": claim.work_done_upto,
         "advance_pct": claim.advance_pct, "recovery_pct": claim.recovery_pct,
         "advance_recovered_override": claim.advance_recovered_override,
-        "retention_pct": claim.retention_pct, "gst_pct": claim.gst_pct,
+        "retention_pct": claim.retention_pct,
+        "retention_held_override": claim.retention_held_override,
+        "gst_pct": claim.gst_pct,
         "material_on_site": claim.material_on_site,
         "material_off_site": claim.material_off_site,
         "retention_released": claim.retention_released,
@@ -655,9 +658,11 @@ def claim_ipa_pdf(request, pk):
     if c.status == "DRAFT":
         return Response({"detail": "Submit the claim before printing the "
                                    "application."}, status=400)
+    # A certified application prints as the Interim Payment Certificate (IPC).
+    tag = f"{c.ipc_ref}-IPC" if c.is_certified else f"{c.ref}-IPA"
     return _render_pdf("pdf/claim_ipa.html",
                        commercial.claim_pdf_context(c),
-                       f"{c.project.code}-{c.ref}-IPA")
+                       f"{c.project.code}-{tag}")
 
 
 @api_view(["GET"])

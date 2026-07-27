@@ -31,28 +31,30 @@
 </style>
 </head>
 <body>
-{% include "pdf/_footer.html" with footer_doc="IPA" %}
-{% include "pdf/_letterhead.html" with title="INTERIM PAYMENT APPLICATION" subline=subline %}
+{% include "pdf/_footer.html" with footer_doc=doc_no_label %}
+{% include "pdf/_letterhead.html" with title=doc_title subline=subline %}
 
 <table class="kv">
   <tr><td class="k">Employer</td><td>{{ employer.name }}</td>
-      <td class="k">Application No</td><td>{{ claim.ref }} · {{ type_label }}</td></tr>
+      <td class="k">{{ doc_no_label }}</td><td>{{ doc_ref }} · {{ type_label }}</td></tr>
   <tr><td class="k">Contractor</td><td>{{ co.legal_name }}</td>
       <td class="k">Work done up to</td>
       <td>{% if claim.work_done_upto %}{{ claim.work_done_upto|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
   <tr><td class="k">Project</td><td>{{ project.title }}</td>
       <td class="k">Basis</td>
       <td>{% if claim.basis == "MEASURED" %}Re-measurement{% else %}% complete{% endif %}</td></tr>
+  <tr><td class="k">LOA reference</td><td>{{ loa_ref|default:"—" }}</td>
+      <td class="k">Application ref</td><td>{{ claim.ref }}</td></tr>
 </table>
 
 <h2>Contract sum ({{ currency }})</h2>
 <table class="wf">
   <tr><td>C — Original contract sum</td>
-      <td class="amt">{{ waterfall.original|floatformat:2 }}</td></tr>
+      <td class="amt">{{ waterfall.original|floatformat:3 }}</td></tr>
   <tr><td>D — Approved variations</td>
-      <td class="amt">{{ approved_vos|floatformat:2 }}</td></tr>
+      <td class="amt">{{ approved_vos|floatformat:3 }}</td></tr>
   <tr class="sub"><td>Revised contract sum</td>
-      <td class="amt">{{ waterfall.revised|floatformat:2 }}</td></tr>
+      <td class="amt">{{ waterfall.revised|floatformat:3 }}</td></tr>
 </table>
 
 <h2>Payment Summary ({{ currency }})</h2>
@@ -74,36 +76,37 @@
     <tr>
       <td class="code">{{ ln.item_code }}</td>
       <td>{{ ln.description }}</td>
-      <td class="num">{{ ln.contract_amount|floatformat:2 }}</td>
+      <td class="num">{{ ln.contract_amount|floatformat:3 }}</td>
       <td class="num">{% if ln.cumulative_pct != None %}{{ ln.cumulative_pct|floatformat:2 }}%{% else %}—{% endif %}</td>
-      <td class="num">{{ ln.previous_value|floatformat:2 }}</td>
-      <td class="num">{{ ln.current_value|floatformat:2 }}</td>
-      <td class="num">{{ ln.cumulative_value|floatformat:2 }}</td>
+      <td class="num">{{ ln.previous_value|floatformat:3 }}</td>
+      <td class="num">{{ ln.current_value|floatformat:3 }}</td>
+      <td class="num">{{ ln.cumulative_value|floatformat:3 }}</td>
     </tr>
     {% endfor %}
     <tr class="sub">
       <td colspan="2">{% if s.section %}{{ s.section }} — subtotal{% else %}Subtotal{% endif %}</td>
-      <td class="num">{{ s.contract|floatformat:2 }}</td><td></td>
-      <td class="num">{{ s.previous|floatformat:2 }}</td>
-      <td class="num">{{ s.current|floatformat:2 }}</td>
-      <td class="num">{{ s.cumulative|floatformat:2 }}</td>
+      <td class="num">{{ s.contract|floatformat:3 }}</td><td></td>
+      <td class="num">{{ s.previous|floatformat:3 }}</td>
+      <td class="num">{{ s.current|floatformat:3 }}</td>
+      <td class="num">{{ s.cumulative|floatformat:3 }}</td>
     </tr>
     {% endfor %}
     <tr class="grand">
       <td colspan="2">Total value of works</td>
-      <td class="num">{{ detail_totals.contract|floatformat:2 }}</td><td></td>
-      <td class="num">{{ detail_totals.previous|floatformat:2 }}</td>
-      <td class="num">{{ detail_totals.current|floatformat:2 }}</td>
-      <td class="num">{{ detail_totals.cumulative|floatformat:2 }}</td>
+      <td class="num">{{ detail_totals.contract|floatformat:3 }}</td><td></td>
+      <td class="num">{{ detail_totals.previous|floatformat:3 }}</td>
+      <td class="num">{{ detail_totals.current|floatformat:3 }}</td>
+      <td class="num">{{ detail_totals.cumulative|floatformat:3 }}</td>
     </tr>
   </tbody>
 </table>
 {% endif %}
 
 <table class="sig">
-  <tr><td class="t">Prepared — Quantity Surveyor</td>
-      <td class="t">Certified — Employer / Consultant</td></tr>
-  <tr><td></td><td></td></tr>
+  <tr><td class="t">Prepared — Quantity Surveyor{% if prepared_by %}<br>{{ prepared_by }}{% endif %}</td>
+      <td class="t">{% if is_certified %}Certified — {{ certified_title|default:"Director" }}{% else %}Certified — Employer / Consultant{% endif %}</td></tr>
+  <tr><td></td>
+      <td>{% if is_certified and certified_name %}<div style="font-size:9.5pt;color:#10344F;font-weight:700;">{{ certified_name }}</div><div style="font-size:8pt;color:#5a6b78;">Certified digitally{% if certified_at %} · {{ certified_at|date:"d M Y · H:i" }}{% endif %}</div>{% endif %}</td></tr>
 </table>
 </body>
 </html>

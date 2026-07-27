@@ -4,9 +4,10 @@ import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
 const EDIT_ROLES = ["PM", "ADMIN", "DIRECTOR", "QS"];
+// BOQ rates and values carry 3 dp (QS working precision, owner 2026-07-27).
 const fmt = (v) =>
-  Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2,
-    maximumFractionDigits: 2 });
+  Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 3,
+    maximumFractionDigits: 3 });
 
 // The project's Bill of Quantities — the priced contract schedule the QS runs
 // progress claims against. Import from Excel (or edit by hand), reconcile to
@@ -221,6 +222,17 @@ function BoqTable({ boq }) {
                 {it.item_code ? `${it.item_code}  ` : ""}{it.description
                   || it.section}</td>
             </tr>
+          ) : it.is_discount ? (
+            <tr key={it.id}>
+              <td style={td}>{it.item_code}</td>
+              <td style={{ ...td, whiteSpace: "pre-wrap" }}>{it.description}
+                <span style={{ marginLeft: 6, fontSize: 10, color: "#8a1f2f",
+                  background: "#fde8ec", padding: "0 5px", borderRadius: 8 }}>
+                  Discount</span></td>
+              <td style={td} colSpan={split ? 3 : 2} />
+              <td style={{ ...td, textAlign: "right", fontWeight: 600,
+                           color: "#b0402f" }}>{fmt(it.amount)}</td>
+            </tr>
           ) : (
             <tr key={it.id}>
               <td style={td}>{it.item_code}</td>
@@ -253,13 +265,15 @@ function BoqTable({ boq }) {
 // the bulk; this is for tweaks and small BOQs.
 function BoqEditor({ projectId, boq, onDone }) {
   const blank = () => ({ section: "", item_code: "", description: "",
-    unit: "", qty: "", rate_supply: "", rate_install: "", is_heading: false });
+    unit: "", qty: "", rate_supply: "", rate_install: "", is_heading: false,
+    is_discount: false });
   const [rows, setRows] = useState(
     boq.items.length
       ? boq.items.map((i) => ({ section: i.section, item_code: i.item_code,
           description: i.description, unit: i.unit,
           qty: i.qty ?? "", rate_supply: i.rate_supply ?? "",
-          rate_install: i.rate_install ?? "", is_heading: i.is_heading }))
+          rate_install: i.rate_install ?? "", is_heading: i.is_heading,
+          is_discount: i.is_discount }))
       : [blank()]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -281,8 +295,9 @@ function BoqEditor({ projectId, boq, onDone }) {
                     marginBottom: 8 }}>
         <Eyebrow>Edit BOQ</Eyebrow>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          Tick a row as a heading for a bill/section title. Leave Labour blank
-          for a combined rate.</span>
+          Tick <b>H</b> for a bill/section heading. Tick <b>D</b> for a discount
+          — enter the amount in Material; it lowers the BOQ total and is claimed
+          by % like any line. Leave Labour blank for a combined rate.</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={ghostButton} disabled={busy}
                   onClick={() => onDone(null)}>Cancel</button>
@@ -295,16 +310,23 @@ function BoqEditor({ projectId, boq, onDone }) {
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr>
-            {["", "Section", "Code", "Description", "Unit", "Qty", "Material",
-              "Labour", ""].map((h, i) => <th key={i} style={th}>{h}</th>)}
+            {["H", "D", "Section", "Code", "Description", "Unit", "Qty",
+              "Material", "Labour", ""].map((h, i) =>
+              <th key={i} style={th}>{h}</th>)}
           </tr></thead>
           <tbody>
             {rows.map((r, i) => (
               <tr key={i}>
                 <td style={td}>
                   <input type="checkbox" checked={r.is_heading}
-                         title="Heading row"
+                         title="Heading row" disabled={r.is_discount}
                          onChange={(e) => set(i, "is_heading",
+                           e.target.checked)} /></td>
+                <td style={td}>
+                  <input type="checkbox" checked={r.is_discount}
+                         title="Discount line (enter amount in Material)"
+                         disabled={r.is_heading}
+                         onChange={(e) => set(i, "is_discount",
                            e.target.checked)} /></td>
                 <td style={td}><input value={r.section} style={cell(120)}
                   onChange={(e) => set(i, "section", e.target.value)} /></td>
@@ -313,16 +335,17 @@ function BoqEditor({ projectId, boq, onDone }) {
                 <td style={td}><input value={r.description} style={cell(280)}
                   onChange={(e) => set(i, "description", e.target.value)} /></td>
                 <td style={td}><input value={r.unit} style={cell(50)}
-                  disabled={r.is_heading}
+                  disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "unit", e.target.value)} /></td>
                 <td style={td}><input value={r.qty} type="number" style={cell(70)}
-                  disabled={r.is_heading}
+                  disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "qty", e.target.value)} /></td>
                 <td style={td}><input value={r.rate_supply} type="number"
                   style={cell(80)} disabled={r.is_heading}
+                  placeholder={r.is_discount ? "Discount amt" : ""}
                   onChange={(e) => set(i, "rate_supply", e.target.value)} /></td>
                 <td style={td}><input value={r.rate_install} type="number"
-                  style={cell(80)} disabled={r.is_heading}
+                  style={cell(80)} disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "rate_install", e.target.value)} /></td>
                 <td style={td}>
                   <button style={{ ...ghostButton, color: "#c0392b",

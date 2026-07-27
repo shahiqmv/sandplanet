@@ -6,7 +6,12 @@ import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
 const EDIT_ROLES = ["PM", "ADMIN", "DIRECTOR", "QS"];
 // Certifying an IPA is the Director's clearance (the QS prepares + submits).
 const CERTIFY_ROLES = ["DIRECTOR", "ADMIN"];
+// BOQ + claim (IPA) values carry 3 dp — the QS working precision; the tax
+// invoice rounds back to 2 dp on its own PDF. Percentages stay at 2 dp.
 const fmt = (v) =>
+  Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 3,
+    maximumFractionDigits: 3 });
+const pct = (v) =>
   Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2,
     maximumFractionDigits: 2 });
 const signed = (v) => (Number(v) < 0 ? `(${fmt(-v)})` : fmt(v));
@@ -99,7 +104,7 @@ export default function ClaimsPanel({ projectId, me }) {
                v={`${ccy} ${fmt(rev.contract_revised)}`} />
           <Fig label="Certified revenue"
                v={`${ccy} ${fmt(rev.certified_revenue)}`}
-               sub={`${fmt(rev.pct_complete)}% complete · ex-GST`} strong />
+               sub={`${pct(rev.pct_complete)}% complete · ex-GST`} strong />
           <Fig label="Retention held" v={`${ccy} ${fmt(rev.retention_held)}`} />
           <Fig label="Billed (incl GST)" v={`${ccy} ${fmt(rev.billed)}`} />
           <Fig label="Received" v={`${ccy} ${fmt(rev.received)}`} />
@@ -285,7 +290,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
       material_on_site: c.material_on_site, material_off_site: c.material_off_site,
       retention_released: c.retention_released,
       recovery_pct: c.recovery_pct,
-      advance_recovered_override: c.advance_recovered_override ?? "" });
+      advance_recovered_override: c.advance_recovered_override ?? "",
+      retention_held_override: c.retention_held_override ?? "" });
     const v = {};
     detail.lines.forEach((ln) => {
       v[ln.id] = { pct: ln.cumulative_pct ?? "", qty: ln.cumulative_qty ?? "" };
@@ -307,6 +313,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
   const w = d.waterfall;
   const editable = canEdit && c.status === "DRAFT";
   const measured = meta.basis === "MEASURED";
+  // A discount line is always valued by % complete, even on a measured claim.
+  const measuredLine = (ln) => measured && !ln.is_discount;
 
   async function save() {
     setError(null); setBusy(true);
@@ -318,7 +326,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
         material_off_site: meta.material_off_site || 0,
         retention_released: meta.retention_released || 0,
         recovery_pct: meta.recovery_pct || 0,
-        advance_recovered_override: meta.advance_recovered_override } });
+        advance_recovered_override: meta.advance_recovered_override,
+        retention_held_override: meta.retention_held_override } });
       const rows = d.lines.map((ln) => ({ id: ln.id,
         cumulative_pct: vals[ln.id]?.pct === "" ? null : vals[ln.id]?.pct,
         cumulative_qty: vals[ln.id]?.qty === "" ? null : vals[ln.id]?.qty }));
@@ -404,6 +413,10 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                     <span style={{ marginLeft: 4, fontSize: 10,
                       color: "#8a6d00", background: "#fff4e0",
                       padding: "0 5px", borderRadius: 8 }}>VO</span>)}
+                  {ln.is_discount && (
+                    <span style={{ marginLeft: 4, fontSize: 10,
+                      color: "#8a1f2f", background: "#fde8ec",
+                      padding: "0 5px", borderRadius: 8 }}>Discount</span>)}
                 </td>
                 <td style={{ ...td, maxWidth: 260 }}>{ln.description}</td>
                 <td style={{ ...td, textAlign: "right" }}>
@@ -411,12 +424,12 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 <td style={{ ...td, textAlign: "right" }}>
                   {editable ? (
                     <input type="number" style={numCell}
-                      value={measured ? (vals[ln.id]?.qty ?? "")
+                      value={measuredLine(ln) ? (vals[ln.id]?.qty ?? "")
                         : (vals[ln.id]?.pct ?? "")}
-                      onChange={(e) => setV(ln.id, measured ? "qty" : "pct",
-                        e.target.value)} />
-                  ) : (measured ? fmt(ln.cumulative_qty)
-                    : `${fmt(ln.cumulative_pct)}%`)}
+                      onChange={(e) => setV(ln.id,
+                        measuredLine(ln) ? "qty" : "pct", e.target.value)} />
+                  ) : (measuredLine(ln) ? fmt(ln.cumulative_qty)
+                    : `${pct(ln.cumulative_pct)}%`)}
                 </td>
                 <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>
                   {fmt(ln.previous_value)}</td>
@@ -443,6 +456,15 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           <label>Retention released{" "}
             <input type="number" style={numCell} value={meta.retention_released}
               onChange={(e) => setM("retention_released", e.target.value)} /></label>
+          <label title={`Retention held override — pin the exact cumulative `
+            + `retention held (blank = rate ${pct(c.retention_pct)}% of work). `
+            + `Applies before the claim is certified.`}>
+            Retention held override{" "}
+            <input type="number" style={numCell}
+              value={meta.retention_held_override}
+              placeholder={fmt(w.retention_held)}
+              onChange={(e) => setM("retention_held_override",
+                e.target.value)} /></label>
           {Number(c.advance_pct) > 0 && (
             <>
               <label title="Recovery rate — carries forward; set once">
@@ -527,7 +549,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               <W label="Less previously certified" v={-w.previously_certified}
                  ccy={ccy} neg />
               <W label="Net now due (ex-GST)" v={w.net_due} ccy={ccy} strong />
-              <W label={`Output GST @ ${fmt(c.gst_pct)}%`} v={w.gst}
+              <W label={`Output GST @ ${pct(c.gst_pct)}%`} v={w.gst}
                  ccy={ccy} />
               <W label="Total incl. GST" v={w.total} ccy={ccy} strong />
               {/* Back charges: GST-inclusive client contra, after GST */}
@@ -572,7 +594,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           <a href={`/api/v1/claims/${claimId}/ipa.pdf`} target="_blank"
              rel="noreferrer" style={{ fontSize: 13, color: "var(--navy)",
                                        fontWeight: 600 }}>
-            ⬇ Payment application (IPA)</a>
+            ⬇ {["CERTIFIED", "PAID"].includes(c.status)
+              ? "Payment certificate (IPC)" : "Payment application (IPA)"}</a>
           {["CERTIFIED", "PAID"].includes(c.status) && (
             <a href={`/api/v1/claims/${claimId}/invoice.pdf`} target="_blank"
                rel="noreferrer" style={{ fontSize: 13, color: "var(--navy)",
