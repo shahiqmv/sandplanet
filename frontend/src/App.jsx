@@ -466,8 +466,13 @@ export default function App() {
         <ChangePassword forced onDone={() =>
           api("/auth/me").then(setMe)} />
       ) : (
-        <main style={{ maxWidth: ["attendance", "workforce"]
-                         .includes(docView?.mode) ? 1160 : 900,
+        <main style={{ maxWidth:
+                         ["attendance", "workforce"].includes(docView?.mode)
+                           ? 1160
+                         : (docView?.mode === "project"
+                            || (!docView && hoPage === "procurement-schedule"))
+                           ? 1500
+                         : 900,
                        margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 

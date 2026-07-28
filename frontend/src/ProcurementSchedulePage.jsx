@@ -328,7 +328,7 @@ function ScheduleDetail({ id, me, onBack }) {
     : [{ id: "none", code: "", title: "Ungrouped" }];
 
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div>
       {onBack && <button style={linkBtn} onClick={onBack}>
         ← All schedules</button>}
       <div style={{ ...card, marginTop: 8 }}>
