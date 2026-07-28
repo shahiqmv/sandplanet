@@ -303,6 +303,28 @@ def line_risk(line):
             "slack_days": slack, "unordered": unordered}
 
 
+def line_stage(line):
+    """A live execution-stage label for the row — the furthest point the line
+    has actually reached — so the status moves as it progresses (distinct from
+    the propose/confirm/sign-off approval state). None until execution starts."""
+    if _delivered(line):
+        return {"label": "Delivered", "tone": "ok"}
+    sh = _shipment_for(line)
+    if sh is not None:
+        if sh.status in ("ARRIVED", "CLEARED"):
+            return {"label": "Arrived", "tone": "ok"}
+        return {"label": "Shipped", "tone": "info"}
+    if line.production_status == "COMPLETED":
+        return {"label": "Produced", "tone": "info"}
+    if line.production_status == "IN_PRODUCTION":
+        return {"label": "In production", "tone": "warn"}
+    if line.ipr_id:
+        return {"label": "Ordered", "tone": "info"}
+    if line.mar_id and line.mar.status in ("APPROVED", "APPROVED_WITH_COMMENTS"):
+        return {"label": "TDS approved", "tone": "info"}
+    return None
+
+
 def schedule_risk_counts(sched):
     """Roll up line risk levels for a schedule header ("3 late, 5 at risk")."""
     counts = {}

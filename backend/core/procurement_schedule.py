@@ -344,9 +344,10 @@ def line_dict(line, values=True):
         "grn_ref": line.grn.ref if line.grn_id else "",
     }
     from .procurement_pipeline import (client_is_stale, line_pipeline,
-                                       line_risk)
+                                       line_risk, line_stage)
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
+    d["stage"] = line_stage(line)
     d["client_delivered_on"] = line.client_delivered_on
     d["client_stale"] = client_is_stale(line)
     if values:

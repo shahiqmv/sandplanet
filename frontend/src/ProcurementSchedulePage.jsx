@@ -422,14 +422,23 @@ function ScheduleDetail({ id, me, onBack }) {
                       || "—"}</td>
                     <td style={cell}>{ln.ipr_country || ln.source_country
                       || "—"}</td>
-                    <td style={cell}>{ln.lead_time_days != null
-                      ? `${ln.lead_time_days}d` : "—"}</td>
+                    <td style={cell}>{ln.ipr_ref && ln.risk?.projected
+                      ? fmt(ln.risk.projected)
+                      : (ln.lead_time_days != null
+                        ? `${ln.lead_time_days}d` : "—")}</td>
                     {c.show_values && <td style={cell}>
                       <ValueCell ln={ln} /></td>}
                     <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
                     <td style={cell}><RiskCell risk={ln.risk} /></td>
-                    <td style={cell}><Chip tone={STATE_TONE[ln.state]}>
-                      {ln.state.replace(/_/g, " ")}</Chip></td>
+                    <td style={cell}>
+                      {ln.stage
+                        ? <Chip tone={ln.stage.tone}>{ln.stage.label}</Chip>
+                        : <Chip tone={STATE_TONE[ln.state]}>
+                            {ln.state.replace(/_/g, " ")}</Chip>}
+                      {ln.stage && <div style={{ fontSize: 9.5,
+                        color: "var(--muted)", marginTop: 2 }}>
+                        {ln.state.replace(/_/g, " ").toLowerCase()}</div>}
+                    </td>
                     <td style={{ ...cell, whiteSpace: "nowrap" }}>
                       {(c.can_edit_plan || c.can_confirm) &&
                         <button style={linkBtn}

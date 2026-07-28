@@ -107,6 +107,23 @@ class ProcurementPipelineTests(TestCase):
         r = self._link("mar", "MAR-SJR-020")
         self.assertEqual(r.status_code, 400)
 
+    def test_stage_reflects_execution(self):
+        d = self.client.get(f"/api/v1/procurement-schedules/{self.pk}").data
+        self.assertIsNone(d["lines"][0]["stage"])          # nothing started
+        self._doc("IPR", "DRAFT", "IPR-HO-050")
+        r = self._link("ipr", "IPR-HO-050")
+        self.assertEqual(r.data["lines"][0]["stage"]["label"], "Ordered")
+        self.client.post(
+            f"/api/v1/procurement-schedule-lines/{self.line_id}/production",
+            {"status": "IN_PRODUCTION"}, format="json")
+        d = self.client.get(f"/api/v1/procurement-schedules/{self.pk}").data
+        self.assertEqual(d["lines"][0]["stage"]["label"], "In production")
+        # a completed site receipt wins over everything
+        grn = self._doc("GRN", "COMPLETE", "GRN-SJR-050")
+        self._link("grn", "GRN-SJR-050")
+        d = self.client.get(f"/api/v1/procurement-schedules/{self.pk}").data
+        self.assertEqual(d["lines"][0]["stage"]["label"], "Delivered")
+
     def test_link_unknown_ref_errors(self):
         r = self._link("mar", "MAR-NOPE-999")
         self.assertEqual(r.status_code, 400)
