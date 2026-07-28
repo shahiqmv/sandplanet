@@ -295,12 +295,15 @@ def withdraw_blocked(doc):
     anything downstream that a plain reversal would leave inconsistent. Returns
     a message, or None when it's safe."""
     order = doc.import_order
-    if order.milestones.filter(status="PAID").exists():
-        return ("A payment has already been made on this order — reverse the "
-                "payment before withdrawing the authorisation.")
     if order.shipments.exists():
         return ("This order already has a shipment — cancel the shipment "
                 "before withdrawing the authorisation.")
+    # A milestone past PENDING has a payment voucher raised against it (a
+    # voucher line PROTECT-references it), so it can't be unwound here.
+    if order.milestones.exclude(status="PENDING").exists():
+        return ("A payment voucher has been raised on this order's schedule — "
+                "cancel/void those payment vouchers before withdrawing the "
+                "authorisation.")
     return None
 
 
@@ -320,7 +323,9 @@ def reverse_ipr_authorisation(doc, actor):
     # order lines against the edit that follows. The withdrawal itself is
     # audited (IPR_AUTH_WITHDRAWN + the Draft transition record).
     CostPosting.objects.filter(document=doc, state="COMMITTED").delete()
-    order.milestones.exclude(status="PAID").delete()
+    # Only untouched (PENDING) schedule rows are removed; withdraw_blocked has
+    # already refused if any milestone carries a voucher.
+    order.milestones.filter(status="PENDING").delete()
     link = DocumentLink.objects.filter(
         from_document=doc, link_type="IPR_PO").select_related(
         "to_document").first()

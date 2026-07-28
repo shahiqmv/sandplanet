@@ -1,8 +1,8 @@
 """Withdraw the authorisation of a wrong IPR (owner 2026-07-27) — fix an order
 authorised against the wrong supplier: reverse the commitment, void the PO,
 back to Draft to edit and re-authorise."""
-from .models import (CostPosting, Document, DocumentLink, ImportShipment,
-                     Supplier)
+from .models import (CostPosting, Document, DocumentLink,
+                     ImportPaymentMilestone, ImportShipment, Supplier)
 from .tests_imports import IprBase
 
 
@@ -75,6 +75,32 @@ class IprWithdrawTests(IprBase):
             {"comment": "x"}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
+
+    def test_withdraw_blocked_by_raised_voucher_milestone(self):
+        ref = self.create_and_authorise()
+        order = Document.objects.get(ref=ref).import_order
+        ImportPaymentMilestone.objects.create(
+            order=order, seq=1, label="Advance", trigger="ADVANCE",
+            status="DUE")                        # a voucher was raised
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(
+            f"/api/v1/documents/{ref}/actions/withdraw-authorisation",
+            {"comment": "x"}, format="json")
+        self.assertEqual(r.status_code, 400)     # clean refusal, not a 500
+        self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
+
+    def test_withdraw_clears_pending_schedule(self):
+        ref = self.create_and_authorise()
+        order = Document.objects.get(ref=ref).import_order
+        ImportPaymentMilestone.objects.create(
+            order=order, seq=1, label="Advance", trigger="ADVANCE",
+            status="PENDING")
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(
+            f"/api/v1/documents/{ref}/actions/withdraw-authorisation",
+            {"comment": "wrong supplier"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(order.milestones.exists())   # pending rows removed
 
     def test_only_signatory_or_admin_can_withdraw(self):
         ref = self.create_and_authorise()
