@@ -182,20 +182,36 @@ def _client_pipeline(line):
             delivery, eta]
 
 
-def line_committed(line):
-    """Committed order value for a line — the matching item's lines on the
-    linked IPR, in the order currency. None when there's no IPR order or no
-    item to match on. The schedule only displays this; it posts nothing."""
-    if not line.ipr_id or not line.item_id:
+def line_ipr_actuals(line):
+    """The actuals the schedule surfaces once a line links to an IPR — the
+    order's supplier, that supplier's country, and the committed value
+    (item-matched when the line carries an item that's on the order, otherwise
+    the order's total, since an order is usually raised for the one line). None
+    when there's no IPR order. The schedule only displays this; it posts
+    nothing."""
+    if not line.ipr_id:
         return None
-    order = ImportOrder.objects.filter(document_id=line.ipr_id).first()
+    order = (ImportOrder.objects.filter(document_id=line.ipr_id)
+             .select_related("supplier").first())
     if order is None:
         return None
-    val = order.lines.filter(item_id=line.item_id).aggregate(
-        v=Sum(F("order_qty") * F("unit_price")))["v"]
+    val = None
+    if line.item_id:
+        val = order.lines.filter(item_id=line.item_id).aggregate(
+            v=Sum(F("order_qty") * F("unit_price")))["v"]
     if val is None:
-        return None
-    return {"value": val, "currency": order.order_currency}
+        val = order.lines.aggregate(v=Sum(F("order_qty") * F("unit_price")))["v"]
+    return {
+        "supplier": order.supplier.name if order.supplier_id else "",
+        "country": order.supplier.country if order.supplier_id else "",
+        "committed": ({"value": val, "currency": order.order_currency}
+                      if val is not None else None),
+    }
+
+
+def line_committed(line):
+    act = line_ipr_actuals(line)
+    return act["committed"] if act else None
 
 
 def line_pipeline(line):

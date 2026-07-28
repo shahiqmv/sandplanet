@@ -51,7 +51,8 @@ class ProcurementValuesTests(TestCase):
             doc_type="IPR", ref="IPR-HO-001", site=self.site,
             doc_date=date(2026, 8, 1), status="AUTHORISED", created_by=self.pm)
         supplier = Supplier.objects.create(
-            name="AquaPure", category=Supplier.Category.values[0])
+            name="AquaPure", category=Supplier.Category.values[0],
+            country="China")
         cost_head = CostHead.objects.create(name="Imports")
         order = ImportOrder.objects.create(
             document=ipr, supplier=supplier, order_currency="USD",
@@ -75,12 +76,27 @@ class ProcurementValuesTests(TestCase):
                          Decimal("1000"))
         self.assertEqual(ln["committed"]["currency"], "USD")
         self.assertEqual(Decimal(str(ln["variance"])), Decimal("100"))  # over
+        # the linked IPR's supplier + country surface on the row
+        self.assertEqual(ln["ipr_supplier"], "AquaPure")
+        self.assertEqual(ln["ipr_country"], "China")
 
     def test_committed_none_without_order(self):
         self._line()   # IPR not linked
         ln = self._detail(self.director)["lines"][0]
         self.assertIsNone(ln["committed"])
         self.assertIsNone(ln["variance"])
+        self.assertEqual(ln["ipr_supplier"], "")
+
+    def test_committed_falls_back_to_order_total_without_item_match(self):
+        # a line whose item isn't on the order still shows the order's value
+        line = self._line()
+        line.item = None
+        line.save(update_fields=["item"])
+        self._linked_ipr_order(line, "10", "100")   # order total 1000
+        ln = self._detail(self.director)["lines"][0]
+        self.assertEqual(Decimal(str(ln["committed"]["value"])),
+                         Decimal("1000"))
+        self.assertEqual(ln["ipr_supplier"], "AquaPure")
 
     def test_totals_sum_estimates(self):
         self._line()

@@ -352,14 +352,19 @@ def line_dict(line, values=True):
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
-        from .procurement_pipeline import line_committed, quote_dict
+        from .procurement_pipeline import line_ipr_actuals, quote_dict
         d["quotes"] = [quote_dict(q) for q in line.quotes.all()]
         d["award_is_new_supplier"] = line.award_is_new_supplier
         d["award_note"] = line.award_note
         d["awarded_by"] = (line.awarded_by.full_name
                            if line.awarded_by_id else "")
-        comm = line_committed(line)
+        # Once linked to an IPR, show the order's real supplier / country /
+        # value; fall back to the planned/estimated fields otherwise.
+        act = line_ipr_actuals(line)
+        comm = act["committed"] if act else None
         d["committed"] = comm
+        d["ipr_supplier"] = act["supplier"] if act else ""
+        d["ipr_country"] = act["country"] if act else ""
         d["variance"] = None
         if (comm and line.estimated_value is not None
                 and comm["currency"] == (line.currency or "USD")):

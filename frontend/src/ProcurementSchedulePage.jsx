@@ -418,8 +418,10 @@ function ScheduleDetail({ id, me, onBack }) {
                       ? <Chip tone="warn">{c.site_code}</Chip>
                       : "Sand Planet"}</td>
                     <td style={cell}>{fmt(ln.required_date)}</td>
-                    <td style={cell}>{ln.planned_supplier || "—"}</td>
-                    <td style={cell}>{ln.source_country || "—"}</td>
+                    <td style={cell}>{ln.ipr_supplier || ln.planned_supplier
+                      || "—"}</td>
+                    <td style={cell}>{ln.ipr_country || ln.source_country
+                      || "—"}</td>
                     <td style={cell}>{ln.lead_time_days != null
                       ? `${ln.lead_time_days}d` : "—"}</td>
                     {c.show_values && <td style={cell}>
