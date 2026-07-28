@@ -352,7 +352,12 @@ def line_dict(line, values=True):
     if values:
         d["estimated_value"] = line.estimated_value
         d["currency"] = line.currency
-        from .procurement_pipeline import line_committed
+        from .procurement_pipeline import line_committed, quote_dict
+        d["quotes"] = [quote_dict(q) for q in line.quotes.all()]
+        d["award_is_new_supplier"] = line.award_is_new_supplier
+        d["award_note"] = line.award_note
+        d["awarded_by"] = (line.awarded_by.full_name
+                           if line.awarded_by_id else "")
         comm = line_committed(line)
         d["committed"] = comm
         d["variance"] = None
@@ -372,7 +377,8 @@ def schedule_dict(sched, user):
     doc = sched.document
     values = can_see_values(user, sched)
     lines = list(sched.lines.select_related("section", "item", "mar", "ipr",
-                                            "grn", "shipment")
+                                            "grn", "shipment", "awarded_by")
+                 .prefetch_related("quotes")
                  .exclude(state="CANCELLED"))
     sections = [{"id": s.id, "code": s.code, "title": s.title,
                  "sort_order": s.sort_order}
@@ -412,6 +418,8 @@ def schedule_dict(sched, user):
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
         "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),
+        "can_quote": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES) and values,
+        "can_award": user.role in (*CONFIRM_ROLES, *SIGNOFF_ROLES) and values,
         "share": _share_block(sched, user),
         "show_values": values,
         "line_counts": counts,

@@ -20,8 +20,25 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from core.models import (CostHead, Document, ImportOrder, ImportOrderLine, Item,
-                         ProcurementSchedule, Project, ScheduleLine, Supplier,
-                         User)
+                         ProcurementSchedule, Project, ScheduleLine,
+                         ScheduleLineQuote, Supplier, User)
+
+# BOQ quotes to attach to a few lines (by description): supplier, country,
+# quoted value, lead days, recommended?, awarded?
+DEMO_QUOTES = {
+    "Pool circulation pumps": [
+        ("Hydro Systems Co.", "China", "68000", 45, True, False),
+        ("Marine Pumps Intl.", "Singapore", "71500", 30, False, False),
+    ],
+    "Glass mosaic pool tiles": [
+        ("Bisazza SpA", "Italy", "91000", 55, True, False),
+        ("Mosaico Veneto", "Italy", "88400", 60, False, False),
+    ],
+    "Pool heat pumps": [
+        ("Zodiac GmbH", "Germany", "78200", 50, True, True),   # awarded
+        ("PoolTherm Ltd.", "China", "74900", 45, False, False),
+    ],
+}
 
 # section, description, item(code/unit/category), qty, uom, category, supply,
 # required-day-offset, tds, make, supplier, country, value, lead, link, client
@@ -172,10 +189,27 @@ class Command(BaseCommand):
                 line.client_update_note = spec.get("client_note", "")
             line.save()
 
+        # BOQ quotes on a few lines (one awarded, to show the full flow)
+        for desc, rows in DEMO_QUOTES.items():
+            line = ScheduleLine.objects.filter(pk=by_desc.get(desc)).first()
+            if not line or line.quotes.exists():
+                continue
+            for name, country, val, lead, rec, won in rows:
+                ScheduleLineQuote.objects.create(
+                    line=line, supplier_name=name, country=country,
+                    quoted_value=Decimal(val), currency="USD",
+                    lead_time_days=lead, is_recommended=rec, is_awarded=won,
+                    created_by=admin)
+            if any(r[5] for r in rows):
+                line.awarded_by = director
+                line.awarded_at = timezone.now()
+                line.save(update_fields=["awarded_by", "awarded_at"])
+
         self.stdout.write(self.style.SUCCESS(
             f"Seeded {ProcurementSchedule.objects.get(document_id=pk).document.ref}"
             f" on {project.code}: {len(LINES)} lines "
-            "(late / at-risk / on-track / delivered / client-stale)."))
+            "(late / at-risk / on-track / delivered / client-stale), "
+            "with BOQ quotes on 3 lines (1 awarded)."))
 
     def _item(self, spec):
         if not spec.get("code"):

@@ -20,9 +20,10 @@ from django.db.models import F, Sum
 from django.utils import timezone
 
 from .audit import audit
-from .models import (Document, ImportOrder, ImportOrderLine, ShipmentTracking,
-                     ScheduleLine)
-from .procurement_schedule import CONFIRM_ROLES, PROPOSE_ROLES, schedule_dict
+from .models import (Document, ImportOrder, ImportOrderLine, ScheduleLine,
+                     ScheduleLineQuote, ShipmentTracking)
+from .procurement_schedule import (CONFIRM_ROLES, PROPOSE_ROLES, SIGNOFF_ROLES,
+                                   schedule_dict)
 
 log = logging.getLogger(__name__)
 
@@ -482,6 +483,148 @@ def set_production(line, status, actor):
     audit("document", line.schedule.document_id, "PSC_LINE_PRODUCTION",
           actor=actor, detail={"line": line.id, "status": status})
     return None
+
+
+# ---- BOQ supplier quotes + award decision --------------------------------
+
+# QS/PM capture quotes (LINK_ROLES); Purchasing + PD record the award.
+AWARD_ROLES = tuple(dict.fromkeys((*CONFIRM_ROLES, *SIGNOFF_ROLES)))
+_QUOTE_TEXT = ("supplier_name", "country", "contact", "remarks")
+_TRUE = ("1", "true", "yes", "on")
+
+
+def _qdec(v):
+    from decimal import Decimal, InvalidOperation
+    if v in (None, ""):
+        return None
+    try:
+        return Decimal(str(v))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _qbool(v):
+    return str(v).strip().lower() in _TRUE
+
+
+def _apply_quote(quote, data):
+    for f in _QUOTE_TEXT:
+        if f in data:
+            setattr(quote, f, (data.get(f) or "").strip()[:200])
+    if "currency" in data:
+        quote.currency = ((data.get("currency") or "USD")[:3].upper() or "USD")
+    if "quoted_value" in data:
+        quote.quoted_value = _qdec(data.get("quoted_value"))
+    if "lead_time_days" in data:
+        v = data.get("lead_time_days")
+        quote.lead_time_days = int(v) if str(v).strip().isdigit() else None
+    if "valid_until" in data:
+        quote.valid_until = data.get("valid_until") or None
+    if "supplier_id" in data:
+        quote.supplier_id = data.get("supplier_id") or None
+
+
+def _set_recommended(quote):
+    """Make this the sole recommended quote on its line."""
+    quote.line.quotes.exclude(pk=quote.pk).update(is_recommended=False)
+    ScheduleLineQuote.objects.filter(pk=quote.pk).update(is_recommended=True)
+
+
+def add_quote(line, data, file, actor):
+    if actor.role not in LINK_ROLES:
+        return None, "Not permitted to add quotes."
+    if not (data.get("supplier_name") or "").strip():
+        return None, "A quote needs a supplier name."
+    quote = ScheduleLineQuote(line=line, created_by=actor)
+    _apply_quote(quote, data)
+    if file is not None:
+        quote.quote_file = file
+    quote.save()
+    if _qbool(data.get("is_recommended")):
+        _set_recommended(quote)
+    audit("document", line.schedule.document_id, "PSC_QUOTE_ADDED", actor=actor,
+          detail={"line": line.id, "supplier": quote.supplier_name})
+    return quote, None
+
+
+def update_quote(quote, data, file, actor):
+    if actor.role not in LINK_ROLES:
+        return "Not permitted to edit quotes."
+    _apply_quote(quote, data)
+    if file is not None:
+        quote.quote_file = file
+    quote.save()
+    if "is_recommended" in data:
+        if _qbool(data.get("is_recommended")):
+            _set_recommended(quote)
+        else:
+            ScheduleLineQuote.objects.filter(pk=quote.pk).update(
+                is_recommended=False)
+    audit("document", quote.line.schedule.document_id, "PSC_QUOTE_EDITED",
+          actor=actor, detail={"quote": quote.id})
+    return None
+
+
+def delete_quote(quote, actor):
+    if actor.role not in LINK_ROLES:
+        return "Not permitted to delete quotes."
+    if quote.is_awarded:
+        return "This quote is the awarded supplier — un-award it first."
+    audit("document", quote.line.schedule.document_id, "PSC_QUOTE_DELETED",
+          actor=actor, detail={"quote": quote.id})
+    quote.delete()
+    return None
+
+
+def award_supplier(line, data, actor):
+    """Record the IPR award decision: award a quote, note a new supplier, or
+    clear the decision. Purchasing + PD only."""
+    if actor.role not in AWARD_ROLES:
+        return "Only Purchasing / the Director records the supplier award."
+    action = data.get("action")
+    line.quotes.update(is_awarded=False)
+    fields = ["award_is_new_supplier", "award_note", "awarded_by", "awarded_at"]
+    if action == "clear":
+        line.award_is_new_supplier = False
+        line.award_note = ""
+        line.awarded_by = None
+        line.awarded_at = None
+        line.save(update_fields=fields)
+        return None
+    if action == "new":
+        note = (data.get("note") or "").strip()
+        if not note:
+            return "A reason is required when going with a new supplier."
+        line.award_is_new_supplier = True
+        line.award_note = note[:200]
+    elif action == "quote":
+        q = line.quotes.filter(pk=data.get("quote_id")).first()
+        if q is None:
+            return "Unknown quote."
+        ScheduleLineQuote.objects.filter(pk=q.pk).update(is_awarded=True)
+        line.award_is_new_supplier = False
+        line.award_note = (data.get("note") or "").strip()[:200]
+    else:
+        return "Unknown award action."
+    line.awarded_by = actor
+    line.awarded_at = timezone.now()
+    line.save(update_fields=fields)
+    audit("document", line.schedule.document_id, "PSC_AWARDED", actor=actor,
+          detail={"line": line.id, "action": action})
+    return None
+
+
+def quote_dict(quote):
+    return {
+        "id": quote.id, "supplier_name": quote.supplier_name,
+        "supplier_id": quote.supplier_id, "country": quote.country,
+        "contact": quote.contact, "quoted_value": quote.quoted_value,
+        "currency": quote.currency, "lead_time_days": quote.lead_time_days,
+        "valid_until": quote.valid_until,
+        "file_url": quote.quote_file.url if quote.quote_file else "",
+        "is_recommended": quote.is_recommended, "is_awarded": quote.is_awarded,
+        "remarks": quote.remarks,
+    }
 
 
 def record_client_update(line, note, delivered, actor):

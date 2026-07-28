@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
 const STATUS_TONE = {
@@ -288,6 +288,7 @@ function ScheduleDetail({ id, me, onBack }) {
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [trackId, setTrackId] = useState(null);
+  const [quotesId, setQuotesId] = useState(null);
 
   const load = () => api(`/procurement-schedules/${id}`).then(setC)
     .catch((e) => setError(e.message));
@@ -435,6 +436,13 @@ function ScheduleDetail({ id, me, onBack }) {
                         marginLeft: 8, color: "var(--sky)" }}
                         onClick={() => setTrackId(
                           trackId === ln.id ? null : ln.id)}>Track</button>}
+                      {c.show_values && (c.can_quote || ln.quotes?.length > 0)
+                        && <button style={{ ...linkBtn, marginLeft: 8,
+                          color: "var(--sky)" }} onClick={() => setQuotesId(
+                          quotesId === ln.id ? null : ln.id)}>
+                        Quotes{ln.quotes?.length ? ` · ${ln.quotes.length}` : ""}
+                        {ln.quotes?.some((q) => q.is_awarded)
+                          || ln.award_is_new_supplier ? " ✓" : ""}</button>}
                     </td>
                   </tr>
                 ))}
@@ -464,6 +472,10 @@ function ScheduleDetail({ id, me, onBack }) {
 
       {trackId && <LinkPanel line={c.lines.find((l) => l.id === trackId)}
         onClose={() => setTrackId(null)} onSaved={setC} />}
+
+      {quotesId && <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
+        canAward={c.can_award} onClose={() => setQuotesId(null)}
+        onSaved={setC} />}
     </div>
   );
 }
@@ -611,6 +623,156 @@ function LinkPanel({ line, onClose, onSaved }) {
           </select>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Quotes panel: BOQ supplier quotes on a line (QS/PM capture) + the IPR award
+// decision (Purchasing + PD). Values-gated — only shown when show_values.
+const BLANK_QUOTE = { supplier_name: "", quoted_value: "", currency: "USD",
+  country: "", lead_time_days: "", contact: "", valid_until: "", remarks: "",
+  is_recommended: false };
+
+function QuotesPanel({ line, canAward, onClose, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState(BLANK_QUOTE);
+  const [file, setFile] = useState(null);
+  if (!line) return null;
+  const quotes = line.quotes || [];
+  const set = (k) => (e) => setF((p) => ({ ...p,
+    [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+
+  async function run(fn) {
+    setBusy(true); setErr(null);
+    try { const d = await fn(); if (d) onSaved(d); }
+    catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+  async function addQuote() {
+    if (!f.supplier_name.trim()) { setErr("Supplier name is required."); return; }
+    const fd = new FormData();
+    Object.entries(f).forEach(([k, v]) => fd.append(k, v));
+    if (file) fd.append("quote_file", file);
+    await run(async () => {
+      const d = await apiUpload(
+        `/procurement-schedule-lines/${line.id}/quotes`, fd);
+      setAdding(false); setFile(null); setF(BLANK_QUOTE);
+      return d;
+    });
+  }
+  const del = (qid) => run(() =>
+    api(`/procurement-schedule-quotes/${qid}`, { method: "DELETE" }));
+  const recommend = (qid) => run(() => apiUpload(
+    `/procurement-schedule-quotes/${qid}`,
+    (() => { const fd = new FormData();
+      fd.append("is_recommended", "true"); return fd; })(), "PATCH"));
+  const award = (body) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/award`,
+      { method: "POST", body }));
+  function awardNew() {
+    const note = window.prompt(
+      "Reason for going with a new supplier (not among the quotes):") || "";
+    if (note.trim()) award({ action: "new", note });
+  }
+
+  return (
+    <div style={{ ...card, marginTop: 10, border: "1px solid var(--sky)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center" }}>
+        <div style={{ fontWeight: 600 }}>BOQ quotes — #{line.s_no}{" "}
+          {line.description}</div>
+        <button style={linkBtn} onClick={onClose}>Close</button>
+      </div>
+      {err && <p style={{ color: "var(--red-fg)" }}>{err}</p>}
+
+      {line.award_is_new_supplier && (
+        <div style={{ marginTop: 8 }}>
+          <Chip tone="ok">Awarded: new supplier</Chip>
+          {line.award_note && <span style={{ fontSize: 12,
+            color: "var(--muted)", marginLeft: 8 }}>{line.award_note}</span>}
+          {canAward && <button style={{ ...linkBtn, marginLeft: 8 }}
+            onClick={() => award({ action: "clear" })}>clear</button>}
+        </div>)}
+
+      <div style={{ marginTop: 8, display: "flex", flexDirection: "column",
+        gap: 6 }}>
+        {!quotes.length && <span style={{ fontSize: 12.5,
+          color: "var(--muted)" }}>No quotes captured yet.</span>}
+        {quotes.map((q) => (
+          <div key={q.id} style={{ display: "flex", gap: 10,
+            alignItems: "center", flexWrap: "wrap", padding: "6px 8px",
+            border: "1px solid var(--line)", borderRadius: 8,
+            background: q.is_awarded ? "var(--green-bg)" : "var(--paper)" }}>
+            <div style={{ minWidth: 150, fontWeight: 600 }}>{q.supplier_name}
+              {q.country && <span style={{ fontWeight: 400, fontSize: 11,
+                color: "var(--muted)" }}> · {q.country}</span>}</div>
+            <div style={{ minWidth: 90 }}>{money(q.quoted_value, q.currency)}</div>
+            <div style={{ fontSize: 12, color: "var(--muted)" }}>
+              {q.lead_time_days != null ? `${q.lead_time_days}d` : "—"}
+              {q.valid_until ? ` · valid ${fmt(q.valid_until)}` : ""}</div>
+            {q.is_recommended && <Chip tone="info">recommended</Chip>}
+            {q.is_awarded && <Chip tone="ok">awarded</Chip>}
+            {q.file_url && <a href={q.file_url} target="_blank"
+              rel="noreferrer"
+              style={{ fontSize: 12, color: "var(--navy)" }}>quote ↗</a>}
+            <span style={{ flex: 1 }} />
+            {!q.is_recommended && <button style={linkBtn} disabled={busy}
+              onClick={() => recommend(q.id)}>recommend</button>}
+            {canAward && !q.is_awarded && <button style={{ ...linkBtn,
+              color: "var(--sky)" }} disabled={busy}
+              onClick={() => award({ action: "quote", quote_id: q.id })}>
+              award</button>}
+            {canAward && q.is_awarded && <button style={linkBtn} disabled={busy}
+              onClick={() => award({ action: "clear" })}>clear</button>}
+            {!q.is_awarded && <button style={{ ...linkBtn,
+              color: "var(--red-fg)" }} disabled={busy}
+              onClick={() => del(q.id)}>remove</button>}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 12, marginTop: 10, flexWrap: "wrap" }}>
+        {!adding && <Btn variant="secondary" disabled={busy}
+          onClick={() => setAdding(true)}>+ Add quote</Btn>}
+        {canAward && quotes.length > 0 && !line.award_is_new_supplier &&
+          <Btn variant="ghost" disabled={busy} onClick={awardNew}>
+            Go with a new supplier…</Btn>}
+      </div>
+
+      {adding && (
+        <div style={{ ...grid, marginTop: 10, border: "1px solid var(--line)",
+          borderRadius: 8, padding: 10 }}>
+          <L k="Supplier name *"><input style={inputStyle}
+            value={f.supplier_name} onChange={set("supplier_name")} /></L>
+          <L k="Country"><input style={inputStyle} value={f.country}
+            onChange={set("country")} /></L>
+          <L k="Contact"><input style={inputStyle} value={f.contact}
+            onChange={set("contact")} /></L>
+          <L k="Quoted value"><input type="number" style={inputStyle}
+            value={f.quoted_value} onChange={set("quoted_value")} /></L>
+          <L k="Currency"><input style={inputStyle} value={f.currency}
+            onChange={set("currency")} /></L>
+          <L k="Lead time (days)"><input type="number" style={inputStyle}
+            value={f.lead_time_days} onChange={set("lead_time_days")} /></L>
+          <L k="Quote valid until"><input type="date" style={inputStyle}
+            value={f.valid_until} onChange={set("valid_until")} /></L>
+          <L k="Quote file"><input type="file" style={{ fontSize: 12 }}
+            onChange={(e) => setFile(e.target.files?.[0] || null)} /></L>
+          <L k="Remarks" wide><input style={inputStyle} value={f.remarks}
+            onChange={set("remarks")} /></L>
+          <label style={{ ...fld, alignSelf: "end" }}>
+            <span><input type="checkbox" checked={f.is_recommended}
+              onChange={set("is_recommended")} /> Recommended</span></label>
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: 8 }}>
+            <Btn variant="primary" disabled={busy} onClick={addQuote}>
+              Save quote</Btn>
+            <Btn variant="ghost" disabled={busy}
+              onClick={() => { setAdding(false); setFile(null);
+                setF(BLANK_QUOTE); }}>Cancel</Btn>
+          </div>
+        </div>)}
     </div>
   );
 }

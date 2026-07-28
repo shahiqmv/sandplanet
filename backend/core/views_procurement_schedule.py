@@ -5,13 +5,16 @@ all schedules; the PM and the site's SE/Site-Admin see their site's schedules
 (value columns are hidden below PM by schedule_dict). PM proposes lines,
 Purchasing confirms, the Director signs off.
 """
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import (api_view, parser_classes,
+                                       permission_classes)
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import procurement_pipeline as pp
 from . import procurement_schedule as ps
-from .models import Project, ProcurementSchedule, ScheduleLine
+from .models import (Project, ProcurementSchedule, ScheduleLine,
+                     ScheduleLineQuote)
 from .permissions import scoped_site_ids
 
 
@@ -176,6 +179,75 @@ def schedule_line_production(request, line_id):
     if err:
         return err
     msg = pp.set_production(line, request.data.get("status"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
+def _quote_line(request, line_id):
+    """Fetch a line for quote work — scoped, and gated on value visibility
+    (quotes carry pricing)."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return None, err
+    if not ps.can_see_values(request.user, line.schedule):
+        return None, Response({"detail": "Not permitted to view quotes."},
+                              status=403)
+    return line, None
+
+
+def _get_quote(request, quote_id):
+    quote = (ScheduleLineQuote.objects
+             .select_related("line__schedule__document__site",
+                             "line__schedule__project__site").filter(
+                 pk=quote_id).first())
+    if quote is None or not _can_see(request.user, quote.line.schedule):
+        return None, Response({"detail": "Not found."}, status=404)
+    if not ps.can_see_values(request.user, quote.line.schedule):
+        return None, Response({"detail": "Not permitted."}, status=403)
+    return quote, None
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def schedule_line_quotes(request, line_id):
+    """Attach a BOQ supplier quote to a line (multipart: fields + quote_file)."""
+    line, err = _quote_line(request, line_id)
+    if err:
+        return err
+    _, msg = pp.add_quote(line, request.data, request.FILES.get("quote_file"),
+                          request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user), status=201)
+
+
+@api_view(["PATCH", "DELETE"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def schedule_line_quote(request, quote_id):
+    quote, err = _get_quote(request, quote_id)
+    if err:
+        return err
+    if request.method == "DELETE":
+        msg = pp.delete_quote(quote, request.user)
+    else:
+        msg = pp.update_quote(quote, request.data,
+                              request.FILES.get("quote_file"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(quote.line.schedule, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_line_award(request, line_id):
+    """Record the supplier award decision (Purchasing + PD)."""
+    line, err = _quote_line(request, line_id)
+    if err:
+        return err
+    msg = pp.award_supplier(line, request.data, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(ps.schedule_dict(line.schedule, request.user))

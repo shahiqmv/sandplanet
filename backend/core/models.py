@@ -3392,6 +3392,16 @@ class ScheduleLine(models.Model):
     # Watermark of the worst risk level already alerted on, so the daily
     # late-risk sweep fires each escalation once (phase 3).
     risk_alerted = models.CharField(max_length=12, blank=True, default="")
+
+    # --- supplier award decision (Purchasing + PD at IPR) ---
+    # The chosen quote is the ScheduleLineQuote with is_awarded=True; these
+    # record "went with a new supplier not among the quotes" + who/when/why.
+    award_is_new_supplier = models.BooleanField(default=False)
+    award_note = models.CharField(max_length=200, blank=True)
+    awarded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    awarded_at = models.DateTimeField(null=True, blank=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
@@ -3399,5 +3409,38 @@ class ScheduleLine(models.Model):
 
     class Meta:
         ordering = ["section__sort_order", "section__code", "s_no", "id"]
+
+
+class ScheduleLineQuote(models.Model):
+    """A supplier quote gathered during the BOQ stage, attached to a schedule
+    line. QS/PM capture these (supplier + price + the quote file) while planning;
+    Purchasing + PD weigh them at IPR and award to one (is_awarded) or to a new
+    supplier (line.award_is_new_supplier)."""
+
+    line = models.ForeignKey(ScheduleLine, on_delete=models.CASCADE,
+                             related_name="quotes")
+    supplier_name = models.CharField(max_length=160)
+    # Optional link to the Supplier master — BOQ-stage suppliers often aren't
+    # registered yet, so the text name is the base; link when they exist.
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    country = models.CharField(max_length=60, blank=True)
+    contact = models.CharField(max_length=120, blank=True)
+    quoted_value = models.DecimalField(max_digits=14, decimal_places=2,
+                                       null=True, blank=True)
+    currency = models.CharField(max_length=3, default="USD")
+    lead_time_days = models.PositiveIntegerField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    quote_file = models.FileField(upload_to="schedule-quotes/", null=True,
+                                  blank=True)
+    is_recommended = models.BooleanField(default=False)   # QS's pick
+    is_awarded = models.BooleanField(default=False)       # chosen at IPR
+    remarks = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-is_recommended", "quoted_value", "id"]
 
 
