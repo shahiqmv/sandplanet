@@ -1421,7 +1421,13 @@ class StoreIssueLine(models.Model):
 
 
 def quotation_path(instance, filename):
-    return f"quotations/{instance.document.ref}/{instance.supplier_id}-{filename}"
+    # Key by the quotation's own id, not just the supplier: two quotes from the
+    # same supplier on one PR with the same filename would otherwise map to the
+    # same S3 key and (file_overwrite=True) clobber each other — both then show
+    # the one surviving file. pk is set (the file is uploaded after the
+    # quotation is created).
+    return (f"quotations/{instance.document.ref}/"
+            f"q{instance.pk}-{instance.supplier_id}-{filename}")
 
 
 class Quotation(models.Model):
