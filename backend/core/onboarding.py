@@ -862,7 +862,6 @@ def letter_defaults(case, kind):
         **common,
         "candidate_name": case.full_name or "",
         "mobile": case.mobile or "",
-        "qualification": "",
         "role": case.trade_designation or "",
         "duration": "90 days",
         "accommodation": "",

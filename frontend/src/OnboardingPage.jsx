@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
-import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
+import { Btn, Chip, SelectOrOther, card, inputStyle, td, th } from "./ui.jsx";
 
 const RAISE = ["PM", "HO_HR", "ADMIN"];
 const APPROVE = ["DIRECTOR", "ADMIN"];
@@ -840,6 +840,14 @@ function Countdown({ d, warnAt }) {
     {" · "}{n < 0 ? `overdue ${Math.abs(n)}d` : `in ${n}d`}</span>;
 }
 
+// Preset picks for the letter fields that are usually the same company values
+// (HR can still type a different one via "Other…").
+const LETTER_FIELD_OPTIONS = {
+  accommodation: ["2nd Floor, Ma. Jamburoaluge, Bodufulhah Goalhi"],
+  local_contact: ["Ahmed Shahiq, Mobile: +9607992611",
+                  "Ibrahim Fikury Hussain, Mobile +9607782174"],
+};
+
 function Letters({ c, busy, run }) {
   const [openKind, setOpenKind] = useState(null);
   const [fields, setFields] = useState({});
@@ -886,10 +894,16 @@ function Letters({ c, busy, run }) {
                   <label key={k} style={{ fontSize: 11, color: "var(--muted)",
                     display: "flex", flexDirection: "column", gap: 2 }}>
                     {humanize(k)}
-                    <input style={{ ...inputStyle, width: "100%" }}
-                           value={fields[k] ?? ""}
-                           onChange={(e) => setFields((f) =>
-                             ({ ...f, [k]: e.target.value }))} />
+                    {LETTER_FIELD_OPTIONS[k] ? (
+                      <SelectOrOther value={fields[k] ?? ""}
+                        options={LETTER_FIELD_OPTIONS[k]} placeholder="Select…"
+                        onChange={(v) => setFields((f) => ({ ...f, [k]: v }))} />
+                    ) : (
+                      <input style={{ ...inputStyle, width: "100%" }}
+                             value={fields[k] ?? ""}
+                             onChange={(e) => setFields((f) =>
+                               ({ ...f, [k]: e.target.value }))} />
+                    )}
                   </label>
                 ))}
               </div>
