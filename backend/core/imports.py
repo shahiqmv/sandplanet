@@ -290,6 +290,54 @@ def authorise_ipr(doc, actor):
     generate_po_for_ipr(doc, actor)
 
 
+def withdraw_blocked(doc):
+    """Why an authorised order can't have its authorisation withdrawn yet —
+    anything downstream that a plain reversal would leave inconsistent. Returns
+    a message, or None when it's safe."""
+    order = doc.import_order
+    if order.milestones.filter(status="PAID").exists():
+        return ("A payment has already been made on this order — reverse the "
+                "payment before withdrawing the authorisation.")
+    if order.shipments.exists():
+        return ("This order already has a shipment — cancel the shipment "
+                "before withdrawing the authorisation.")
+    return None
+
+
+def reverse_ipr_authorisation(doc, actor):
+    """Undo an order's authorisation (owner 2026-07-27, to fix an order
+    authorised against the wrong supplier): reverse the COMMITTED ledger
+    postings, delete the unpaid payment schedule, and void the supplier PO +
+    drop its link so re-authorisation regenerates a fresh one. Callers must
+    check withdraw_blocked() first; the IPR goes back to Draft to be edited and
+    re-authorised."""
+    from django.utils import timezone
+    from .models import CostPosting
+    order = doc.import_order
+    # Delete the commitment postings outright rather than write net-zero
+    # mirrors: authorisation was the only thing that posted them, nothing has
+    # been paid or shipped (guarded), and keeping them would PROTECT-lock the
+    # order lines against the edit that follows. The withdrawal itself is
+    # audited (IPR_AUTH_WITHDRAWN + the Draft transition record).
+    CostPosting.objects.filter(document=doc, state="COMMITTED").delete()
+    order.milestones.exclude(status="PAID").delete()
+    link = DocumentLink.objects.filter(
+        from_document=doc, link_type="IPR_PO").select_related(
+        "to_document").first()
+    if link:
+        po = link.to_document
+        if not po.is_void:
+            po.is_void = True
+            po.void_reason = f"IPR {doc.ref} authorisation withdrawn"
+            po.voided_by = actor
+            po.voided_at = timezone.now()
+            po.save(update_fields=["is_void", "void_reason", "voided_by",
+                                   "voided_at"])
+        link.delete()
+    audit("document", doc.id, "IPR_AUTH_WITHDRAWN", actor=actor,
+          detail={"ref": doc.ref})
+
+
 def set_milestones(order, rows):
     """Replace the order's payment schedule. Each row: {label, trigger,
     percent|fixed_amount, due_date}. The scheduled amounts must sum to the

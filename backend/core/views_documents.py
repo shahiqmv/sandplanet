@@ -963,15 +963,24 @@ def _do_authorise(request, doc, comment):
 def _do_withdraw(request, doc, comment):
     """Finance withdrawal of a PR's authorisation (§7.5b) — reverses the
     COMMITTED postings, cancels payables, returns to Draft."""
-    from .procurement import reverse_pr_authorisation
-
-    if doc.doc_type != "PR":
-        return Response({"detail": "Withdraw applies to PR."}, status=400)
+    if doc.doc_type not in ("PR", "IPR"):
+        return Response({"detail": "Withdraw applies to PR / IPR."}, status=400)
     if doc.status != "AUTHORISED":
-        return Response({"detail": "Only an authorised, unpaid PR can have "
-                                   "its authorisation withdrawn."}, status=400)
+        return Response({"detail": "Only an authorised order can have its "
+                                   "authorisation withdrawn."}, status=400)
     if not comment.strip():
         return Response({"detail": "A reason is required."}, status=400)
+    if doc.doc_type == "IPR":
+        from . import imports as ipr_svc
+        blocked = ipr_svc.withdraw_blocked(doc)
+        if blocked:
+            return Response({"detail": blocked}, status=400)
+        err = _apply(request, doc, "DRAFT", "WITHDRAW_AUTHORISATION",
+                     roles={"SIGNATORY", "ADMIN"}, comment=comment)
+        if err is None:
+            ipr_svc.reverse_ipr_authorisation(doc, request.user)
+        return err
+    from .procurement import reverse_pr_authorisation
     err = _apply(request, doc, "DRAFT", "WITHDRAW_AUTHORISATION",
                  roles={"FINANCE"}, comment=comment)
     if err is None:

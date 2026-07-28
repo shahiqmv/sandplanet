@@ -21,6 +21,13 @@ const ACTIONS = [
    ["DIRECTOR", "QS", "HO_PURCHASING", "ADMIN"], "comment"],
   ["cancel", "Cancel", ["DRAFT", "SUBMITTED"], ["HO_PURCHASING", "ADMIN"],
    "comment"],
+  // Fix a wrong order after authorisation: reverses the commitment + voids the
+  // supplier PO, back to Draft to edit + re-authorise (Signatory/Admin).
+  ["withdraw-authorisation", "Withdraw authorisation", ["AUTHORISED"],
+   ["SIGNATORY", "ADMIN"], "comment"],
+  // Admin void of a wrong order before it's authorised.
+  ["void", "Void order", ["DRAFT", "SUBMITTED", "APPROVED"], ["ADMIN"],
+   "reason"],
 ];
 
 export default function ImportOrders({ me, onOpenIpr }) {
@@ -491,9 +498,10 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
         {actions.map(([action, label, , , prompt]) => (
           <button key={action} style={buttonStyle}
             onClick={() => {
-              if (prompt === "comment") {
-                const c = window.prompt("Comment (required):");
-                if (c) act(action, { comment: c });
+              if (prompt) {
+                const c = window.prompt(
+                  `${prompt === "reason" ? "Reason" : "Comment"} (required):`);
+                if (c) act(action, { comment: c, reason: c });
               } else act(action);
             }}>{label}</button>
         ))}

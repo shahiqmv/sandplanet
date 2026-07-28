@@ -412,7 +412,7 @@ class Document(models.Model):
             "DRAFT": {"SUBMITTED", "CANCELLED"},
             "SUBMITTED": {"APPROVED", "DRAFT", "CANCELLED"},
             "APPROVED": {"AUTHORISED", "DRAFT"},
-            "AUTHORISED": {"CLOSED"},
+            "AUTHORISED": {"CLOSED", "DRAFT"},  # DRAFT = authorisation withdrawn
         },
         # Import Receipt Note — count at the HO store, creates stock lots at
         # landed cost (§5.10.8). Draft while counting; Received posts the lots.
