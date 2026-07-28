@@ -639,8 +639,10 @@ function QuotesPanel({ line, canAward, onClose, onSaved }) {
   const [adding, setAdding] = useState(false);
   const [f, setF] = useState(BLANK_QUOTE);
   const [file, setFile] = useState(null);
+  const [raisedRef, setRaisedRef] = useState("");
   if (!line) return null;
   const quotes = line.quotes || [];
+  const awarded = quotes.some((q) => q.is_awarded);
   const set = (k) => (e) => setF((p) => ({ ...p,
     [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
 
@@ -676,6 +678,12 @@ function QuotesPanel({ line, canAward, onClose, onSaved }) {
       "Reason for going with a new supplier (not among the quotes):") || "";
     if (note.trim()) award({ action: "new", note });
   }
+  const raiseIpr = () => run(async () => {
+    const d = await api(`/procurement-schedule-lines/${line.id}/raise-ipr`,
+      { method: "POST" });
+    setRaisedRef(d.raised_ipr || "");
+    return d;
+  });
 
   return (
     <div style={{ ...card, marginTop: 10, border: "1px solid var(--sky)" }}>
@@ -739,7 +747,16 @@ function QuotesPanel({ line, canAward, onClose, onSaved }) {
         {canAward && quotes.length > 0 && !line.award_is_new_supplier &&
           <Btn variant="ghost" disabled={busy} onClick={awardNew}>
             Go with a new supplier…</Btn>}
+        {canAward && awarded && !line.ipr_id &&
+          <Btn variant="primary" disabled={busy} onClick={raiseIpr}>
+            Raise IPR from award</Btn>}
+        {line.ipr_ref && <span style={{ fontSize: 12.5, alignSelf: "center",
+          color: "var(--green-fg)" }}>IPR {line.ipr_ref} linked</span>}
       </div>
+      {raisedRef && !line.ipr_ref && <p style={{ fontSize: 12.5,
+        color: "var(--green-fg)", marginTop: 6 }}>Draft {raisedRef} raised and
+        linked — complete it in International Orders (supplier, rate, cost head).
+        </p>}
 
       {adding && (
         <div style={{ ...grid, marginTop: 10, border: "1px solid var(--line)",

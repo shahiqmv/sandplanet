@@ -627,6 +627,75 @@ def quote_dict(quote):
     }
 
 
+def _resolve_award_supplier(quote):
+    """The awarded quote's supplier as a registered INTERNATIONAL supplier, so
+    the IPR can be raised against it. Reuse the linked/same-named one, else
+    register a new one from the quote."""
+    from .models import Supplier
+    if quote.supplier_id and quote.supplier.category == "INTERNATIONAL":
+        return quote.supplier
+    name = (quote.supplier_name or "").strip()
+    s = Supplier.objects.filter(name__iexact=name,
+                                category="INTERNATIONAL").first()
+    if s is None:
+        s = Supplier.objects.create(
+            name=name, category="INTERNATIONAL", country=quote.country or "",
+            default_currency=(quote.currency or "USD")[:3].upper())
+    if quote.supplier_id != s.id:
+        quote.supplier = s
+        quote.save(update_fields=["supplier"])
+    return s
+
+
+def create_ipr_from_line(line, actor):
+    """Raise a DRAFT IPR from the line's awarded quote: register the supplier if
+    needed, pre-fill one order line from the quote, and link it back to the
+    line. Purchasing completes the rest (rate, cost head, extra lines) in the
+    IPR editor and runs it through the normal award/authorise flow."""
+    from decimal import Decimal
+    from . import fx, imports
+    from .models import CostHead
+    if actor.role not in AWARD_ROLES:
+        return None, "Only Purchasing / the Director raises the IPR."
+    if line.ipr_id:
+        return None, "This line already links to an IPR."
+    quote = line.quotes.filter(is_awarded=True).first()
+    if quote is None:
+        return None, ("Award a quote first — for a brand-new supplier, raise "
+                      "the IPR from International Orders.")
+    cost_head = (CostHead.objects.filter(is_active=True, is_pool=False)
+                 .order_by("sort_order", "name").first())
+    if cost_head is None:
+        return None, "No cost head is configured to book the order against."
+    supplier = _resolve_award_supplier(quote)
+    qty = line.quantity or Decimal("1")
+    total = quote.quoted_value or Decimal("0")
+    unit_price = (total / qty) if qty else total
+    data = {
+        "supplier_id": supplier.id,
+        "order_currency": (quote.currency or "USD"),
+        "exchange_rate": str(fx.usd_rate()),
+        "lines": [{
+            "item_id": line.item_id,
+            "free_text_desc": "" if line.item_id else (line.description or ""),
+            "unit": line.uom or "", "spec": line.specification or "",
+            "order_qty": str(qty), "unit_price": str(unit_price),
+            "cost_head_id": cost_head.id,
+            "allocations": [{"project_id": line.schedule.project_id,
+                             "qty": str(qty)}],
+        }],
+        "pmr_refs": [],
+    }
+    doc, err = imports.create_ipr(data, actor)
+    if err:
+        return None, err
+    line.ipr = doc
+    line.save(update_fields=["ipr", "updated_at"])
+    audit("document", line.schedule.document_id, "PSC_IPR_RAISED", actor=actor,
+          detail={"line": line.id, "ipr": doc.ref, "supplier": supplier.name})
+    return doc, None
+
+
 def record_client_update(line, note, delivered, actor):
     """Log where a CLIENT-supplied line stands (client procures + delivers).
     Stamps the update date, optionally marks/unmarks delivery, and clears the

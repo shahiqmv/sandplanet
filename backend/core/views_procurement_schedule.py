@@ -255,6 +255,21 @@ def schedule_line_award(request, line_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def schedule_line_raise_ipr(request, line_id):
+    """Raise a draft IPR from the line's awarded quote and link it back."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    doc, msg = pp.create_ipr_from_line(line, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    resp = ps.schedule_dict(line.schedule, request.user)
+    resp["raised_ipr"] = doc.ref
+    return Response(resp)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def schedule_line_client_update(request, line_id):
     """Log a client-supplied line's status: {note, delivered?}."""
     line, err = _get_line(request, line_id)
