@@ -173,21 +173,41 @@ def _divider(hero):
             '</div></div>')
 
 
-def _references(completed):
-    cards = ""
-    for e in completed:
-        img = _uri(e.featured_image)
-        wrap = (f'<div class="ref-imgwrap"><img src="{img}">'
-                f'<span class="ref-client">{escape(e.client_display or "")}'
-                f'</span></div>' if img else '<div class="ref-imgwrap"></div>')
-        cards += (f'<div class="refcard">{wrap}'
-                  f'<div class="ref-title">{escape(e.project_name or "")}</div>'
-                  f'<div class="ref-period">{escape(e.start_value or "")}</div>'
-                  f'</div>')
-    return (f'<div class="page">{_bar("References")}<div class="refhead">'
-            '<div class="eyebrow">Completed Projects</div>'
-            '<h2 class="refh2">Recently delivered</h2></div>'
-            f'<div class="refgrid">{cards}</div>{_foot()}</div>')
+def _ref_card(e):
+    img = _uri(e.featured_image)
+    wrap = (f'<div class="ref-imgwrap"><img src="{img}">'
+            f'<span class="ref-client">{escape(e.client_display or "")}'
+            f'</span></div>' if img else '<div class="ref-imgwrap"></div>')
+    return (f'<div class="refcard">{wrap}'
+            f'<div class="ref-title">{escape(e.project_name or "")}</div>'
+            f'<div class="ref-period">{escape(e.start_value or "")}</div></div>')
+
+
+def _ref_divider(hero):
+    img = f'<img class="div-img" src="{hero}">' if hero else ""
+    return (f'<div class="page divider">{img}<div class="div-tint"></div>'
+            f'{_bar("")}<div class="div-center"><div class="div-num">02</div>'
+            '<div class="div-title">PROJECT<br>REFERENCES</div>'
+            '<div class="div-line"></div>'
+            '<div class="div-sub">Delivered across the Maldivian atolls</div>'
+            '</div></div>')
+
+
+_REF_PER_PAGE = 9   # 3 cols × 3 rows — safe on height with title + period
+
+
+def _reference_pages(completed):
+    pages = ""
+    chunks = [completed[i:i + _REF_PER_PAGE]
+              for i in range(0, len(completed), _REF_PER_PAGE)]
+    for ci, chunk in enumerate(chunks):
+        cards = "".join(_ref_card(e) for e in chunk)
+        head = ('<div class="refhead"><div class="eyebrow">Completed Projects'
+                '</div><h2 class="refh2">Selected project references</h2></div>'
+                if ci == 0 else "")
+        pages += (f'<div class="page">{_bar("References")}{head}'
+                  f'<div class="refgrid">{cards}</div>{_foot()}</div>')
+    return pages
 
 
 def _referees():
@@ -226,12 +246,13 @@ def build_html():
     ongoing = list(ProfileEntry.objects.filter(status="ONGOING")
                    .prefetch_related("gallery").order_by("sort_order"))
     completed = list(ProfileEntry.objects.filter(status="COMPLETED")
-                     .prefetch_related("gallery").order_by("-completed_at"))
+                     .order_by("sort_order", "-completed_at"))
     hero = _uri(ongoing[0].featured_image) if ongoing else ""
     parts = [_cover(hero), _story(), _corporate(), _divider(hero)]
     parts += [_project_page(e) for e in ongoing]
     if completed:
-        parts.append(_references(completed))
+        parts.append(_ref_divider(hero))
+        parts.append(_reference_pages(completed))
     parts += [_referees(), _back()]
     return ("<!DOCTYPE html><html><head><meta charset='utf-8'></head><body>"
             + "".join(parts) + "</body></html>")
