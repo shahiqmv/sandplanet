@@ -18,6 +18,9 @@ class User(AbstractUser):
         HO_HR = "HO_HR", "HO HR / Payroll"
         QS = "QS", "Quantity Surveyor"  # tenders, contracts, project financials
         ADMIN = "ADMIN", "Admin"
+        # Office-only marketing role: sees ONLY the Company Profile module,
+        # nothing operational or financial. Deliberately out of HO/site groups.
+        MARKETING = "MARKETING", "Marketing"
 
     # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6; QS sees
     # the whole project portfolio)
@@ -3448,5 +3451,84 @@ class ScheduleLineQuote(models.Model):
 
     class Meta:
         ordering = ["-is_recommended", "quoted_value", "id"]
+
+
+# ===== Company Profile module (marketing; independent of operational data) ===
+
+def profile_featured_path(instance, filename):
+    # Keyed by the entry id (images are uploaded after the entry exists); a
+    # replace reuses the same key, which is the intended overwrite.
+    return f"profile/{instance.pk}/featured-{filename}"
+
+
+def profile_gallery_path(instance, filename):
+    # Include the gallery row's id so two photos on one entry never collide
+    # (S3 file_overwrite=True would otherwise clobber one).
+    return f"profile/{instance.entry_id}/g{instance.pk}-{filename}"
+
+
+class ProfileEntry(models.Model):
+    """A project page in the emailed company profile. Marketing copy, NOT linked
+    to the operational Project/Site module (decades of pre-Planet work; content
+    must not shift when operational records change)."""
+
+    class Status(models.TextChoices):
+        ONGOING = "ONGOING", "Ongoing"
+        COMPLETED = "COMPLETED", "Completed"
+
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.ONGOING)
+    sort_order = models.IntegerField(default=0)
+    project_name = models.TextField()
+    client_display = models.CharField(max_length=80, blank=True)  # amber stamp
+    summary = models.TextField(blank=True)                        # 2-4 sentences
+    start_label = models.CharField(max_length=20, default="Commenced")
+    start_value = models.CharField(max_length=80, blank=True)     # "April 2026"
+    featured_image = models.ImageField(upload_to=profile_featured_path,
+                                       null=True, blank=True)      # square crop
+    completed_at = models.DateField(null=True, blank=True)
+    snapshot_locked = models.BooleanField(default=False)          # frozen once done
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+
+class ProfileGalleryImage(models.Model):
+    """Up to 6 landscape (3:2) photos per profile entry."""
+    entry = models.ForeignKey(ProfileEntry, on_delete=models.CASCADE,
+                              related_name="gallery")
+    image = models.ImageField(upload_to=profile_gallery_path)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+
+class ProfileStaticAsset(models.Model):
+    """A frozen, pre-rendered PDF page (or pages) stitched into the profile
+    without re-rendering — the static front matter and the legacy completed
+    grid, imported once from the current profile PDF."""
+
+    class Kind(models.TextChoices):
+        COVER = "COVER", "Cover"
+        STORY = "STORY", "Story"
+        CORPORATE = "CORPORATE", "Corporate"
+        DIVIDER_ONGOING = "DIVIDER_ONGOING", "Divider — Ongoing"
+        DIVIDER_REFS = "DIVIDER_REFS", "Divider — References"
+        REFEREES = "REFEREES", "Referees"
+        BACK = "BACK", "Back cover"
+        COMPLETED_LEGACY = "COMPLETED_LEGACY", "Completed (legacy grid)"
+
+    kind = models.CharField(max_length=20, choices=Kind.choices)
+    pdf = models.FileField(upload_to="profile/static/")
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
 
 

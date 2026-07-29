@@ -12,6 +12,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_receivables as receivables_api, \
     views_onboarding as onboarding_api, \
     views_procurement_schedule as psched_api, \
+    views_profile as profile_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -369,6 +370,12 @@ urlpatterns = [
     path("onboarding/<int:pk>/documents", onboarding_api.onboarding_document,
          name="onboarding-document"),
     # --- procurement schedule (PSC) ---
+    path("profile/entries", profile_api.profile_entries,
+         name="profile-entries"),
+    path("profile/entries/reorder", profile_api.profile_reorder,
+         name="profile-reorder"),
+    path("profile/entries/<int:pk>", profile_api.profile_entry,
+         name="profile-entry"),
     path("procurement-schedules", psched_api.schedule_list,
          name="psched-list"),
     path("projects/<int:project_id>/procurement-schedule",
