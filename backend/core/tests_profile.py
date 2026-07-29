@@ -1,9 +1,19 @@
-"""Company Profile — Phase 1: ongoing-entry CRUD + reorder + access."""
+"""Company Profile — ongoing-entry CRUD + reorder + access + images."""
+from io import BytesIO
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import ProfileEntry, User
+from .models import ProfileEntry, ProfileGalleryImage, User
 from .tests import make_user
+
+
+def _img(w, h, name="p.jpg"):
+    from PIL import Image
+    buf = BytesIO()
+    Image.new("RGB", (w, h), "#0E3A5C").save(buf, format="JPEG")
+    return SimpleUploadedFile(name, buf.getvalue(), content_type="image/jpeg")
 
 
 class ProfileEntryTests(TestCase):
@@ -54,6 +64,40 @@ class ProfileEntryTests(TestCase):
         self.assertEqual(self.client.post(
             "/api/v1/profile/entries", {"project_name": "x"},
             format="json").status_code, 403)
+
+    def test_featured_is_recropped_to_square(self):
+        self.client.force_authenticate(self.mkt)
+        eid = self.client.post("/api/v1/profile/entries",
+                               {"project_name": "Jani"}, format="json").data["id"]
+        r = self.client.post(f"/api/v1/profile/entries/{eid}/featured",
+                             {"file": _img(2000, 1200)}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["featured_url"])
+        from PIL import Image
+        img = Image.open(ProfileEntry.objects.get(pk=eid).featured_image)
+        self.assertEqual(img.width, img.height)      # forced 1:1
+        self.assertLessEqual(img.width, 1300)
+
+    def test_gallery_add_cap_and_remove(self):
+        self.client.force_authenticate(self.mkt)
+        eid = self.client.post("/api/v1/profile/entries",
+                               {"project_name": "Jani"}, format="json").data["id"]
+        for _ in range(6):
+            r = self.client.post(f"/api/v1/profile/entries/{eid}/gallery",
+                                 {"file": _img(1500, 1000)}, format="multipart")
+            self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["gallery"]), 6)
+        # seventh is refused
+        r7 = self.client.post(f"/api/v1/profile/entries/{eid}/gallery",
+                             {"file": _img(1500, 1000)}, format="multipart")
+        self.assertEqual(r7.status_code, 400)
+        # a stored gallery image is 3:2
+        from PIL import Image
+        g = ProfileGalleryImage.objects.filter(entry_id=eid).first()
+        im = Image.open(g.image)
+        self.assertAlmostEqual(im.width / im.height, 1.5, places=2)
+        self.assertEqual(self.client.delete(
+            f"/api/v1/profile/gallery/{g.id}").status_code, 204)
 
     def test_completed_entry_is_locked(self):
         e = ProfileEntry.objects.create(
