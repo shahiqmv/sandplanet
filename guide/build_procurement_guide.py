@@ -84,21 +84,22 @@ BODY = f"""
 <p>Every project needs long-lead and imported materials planned <strong>well
   before</strong> anyone raises an order. The Procurement Plan is that forward
   view: one row per material, grouped into sections that mirror the client's own
-  sheet. The QS starts it from the commercial (BOQ) side, Purchasing prices it,
-  the Director signs off the baseline, and then it's handed to the site PM. From
-  that point it <strong>watches the execution documents</strong> — the material
-  approval, the import order, the site receipt — and updates each line's progress,
-  ETA and risk automatically. Nobody re-types status.</p>
+  sheet. Planning is a <strong>joint effort of the QS and the project team</strong>
+  — the QS is its custodian and coordinates it (and the alignment with the client),
+  working alongside the PM. Purchasing then confirms the commercial detail, and the
+  <strong>Director (PD) signs off</strong> the baseline. From there it
+  <strong>watches the execution documents</strong> — the material approval, the
+  import order, the site receipt — and updates each line's progress, ETA and risk
+  automatically. Nobody re-types status.</p>
 
 <div class="roles">
-  <div class="role"><b>QS</b><span>Starts the plan, captures BOQ quotes,
-    coordinates with the client, submits for pricing.</span></div>
-  <div class="role"><b>Purchasing</b><span>Confirms the commercial fields
-    (supplier, country, value, lead time) and links the real orders.</span></div>
-  <div class="role"><b>Director (PD)</b><span>Signs off the baseline and the
-    supplier award.</span></div>
-  <div class="role"><b>PM &amp; site</b><span>Run it day-to-day — anyone on the
-    project team can also propose lines.</span></div>
+  <div class="role"><b>QS — custodian</b><span>Coordinates the plan and the client
+    alignment, captures BOQ quotes, submits for pricing.</span></div>
+  <div class="role"><b>Project team (PM)</b><span>Plan jointly with the QS, propose
+    lines, and recommend the suppliers.</span></div>
+  <div class="role"><b>Purchasing</b><span>Confirms the commercial fields and
+    <strong>decides the supplier award</strong>; links the real orders.</span></div>
+  <div class="role"><b>Director (PD)</b><span>Signs off the baseline.</span></div>
 </div>
 
 <h2>Where to find it</h2>
@@ -136,19 +137,21 @@ BODY = f"""
 {fig("05-new-line", "Adding a line — catalogue-linked description, unit and category pick-lists, required date.")}
 
 <h2>BOQ quotes &amp; the supplier award</h2>
-<p>During the BOQ stage the QS already has supplier quotes. Attach them to the
-  line — supplier, price, lead time and the quote file — and flag the recommended
-  one. When the order is raised, Purchasing and the Director <strong>award</strong>
-  one of the quotes (or record “new supplier”), so there's one clean trail from
-  BOQ quote → chosen supplier → ordered value.</p>
+<p>During the BOQ stage the QS and project team already hold supplier quotes.
+  Attach them to the line — supplier, price, lead time and the quote file — and
+  flag the one the <strong>project team recommends</strong>. When the order is
+  raised, <strong>Purchasing decides the award</strong> (the recommended supplier,
+  or a new one), so there's one clean trail from BOQ quote → recommended →
+  awarded supplier → ordered value.</p>
 {fig("03-quotes-panel", "BOQ quotes on a line — recommended and awarded marked, the losing quote kept, the IPR linked.")}
 
 <h2>The workflow</h2>
-<div class="flow">QS/team propose  →  Purchasing confirm  →  Director sign off  →  handed to the PM</div>
-<p>Anyone on the commercial or project team can propose lines; Purchasing and the
-  Director are the gates. Once the baseline is signed, day-to-day status updates
-  need no approval. Adding a line to a signed plan simply <strong>reopens a change
-  batch</strong> — the already-signed lines stay live.</p>
+<div class="flow">QS + project team plan  →  Purchasing confirm  →  Director (PD) sign off  →  run by the PM</div>
+<p>Planning is shared — the QS and the project team build it together, and anyone
+  on that team can propose lines; Purchasing and the Director are the gates. Once
+  the baseline is signed, day-to-day status updates need no approval. Adding a line
+  to a signed plan simply <strong>reopens a change batch</strong> — the
+  already-signed lines stay live.</p>
 
 <h2>Watching execution — the Track panel</h2>
 <p>This is the heart of it: instead of re-keying status, you <strong>link</strong>
