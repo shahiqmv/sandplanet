@@ -9,10 +9,37 @@ import ImageCropper from "./ImageCropper.jsx";
 const NAVY = "#0E3A5C", AMBER = "#E38A2E", SAND = "#F3ECDE";
 const MAX_GALLERY = 6;
 
+function getCookie(name) {
+  const m = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
+  return m ? decodeURIComponent(m[2]) : null;
+}
+
 export default function ProfilePage() {
   const [data, setData] = useState(null);
   const [sel, setSel] = useState(null);     // selected entry id
   const [error, setError] = useState(null);
+  const [gen, setGen] = useState(false);
+
+  async function generate(preview) {
+    setGen(true); setError(null);
+    try {
+      const res = await fetch(
+        `/api/v1/profile/generate${preview ? "?preview=1" : ""}`,
+        { method: "POST", credentials: "same-origin",
+          headers: { "X-CSRFToken": getCookie("csrftoken") } });
+      if (!res.ok) throw new Error("Could not generate the profile PDF.");
+      const url = URL.createObjectURL(await res.blob());
+      if (preview) window.open(url, "_blank");
+      else {
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "Sand_Planet_Company_Profile.pdf";
+        a.click();
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { setError(e.message); }
+    setGen(false);
+  }
 
   const load = () => api("/profile/entries").then((d) => {
     setData(d);
@@ -41,6 +68,13 @@ export default function ProfilePage() {
         <h2 style={{ margin: 0, color: NAVY }}>Company Profile</h2>
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
           Ongoing projects for the emailed profile · {data.ongoing.length} live</span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          <Btn variant="secondary" disabled={gen}
+            onClick={() => generate(true)}>Preview</Btn>
+          <Btn variant="primary" disabled={gen}
+            onClick={() => generate(false)}>
+            {gen ? "Generating…" : "Generate PDF"}</Btn>
+        </div>
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
 
