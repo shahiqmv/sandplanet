@@ -15,6 +15,20 @@ from .audit import audit
 from .models import Employee, WorkPermitRenewal
 
 ALERT_DAYS = 30
+WP_FEE_KEY = "wp_monthly_fee"
+
+
+def monthly_fee():
+    """The company-wide work-permit fee, per permit per month (a fixed amount,
+    set once in Company settings). Renewal fees derive from this × months, so
+    HR never re-keys a total. 0 when it hasn't been set yet."""
+    from decimal import Decimal, InvalidOperation
+    from .models import CompanyParameter
+    try:
+        return Decimal(str(CompanyParameter.objects.get(key=WP_FEE_KEY).value))
+    except (CompanyParameter.DoesNotExist, InvalidOperation, TypeError,
+            ValueError):
+        return Decimal("0")
 
 
 def add_months(d, months):

@@ -153,9 +153,16 @@ def _parse_salary_lines(raw):
 
 
 def _parse_permit_lines(raw):
-    """Validate permit-renewal lines: {employee_id, months, fee}."""
+    """Validate permit-renewal lines: {employee_id, months}. The fee is the
+    company work-permit monthly rate × months — computed here, never taken from
+    the client, so there are no arithmetic errors and no per-line entry."""
     from .models import Employee
+    from .permits import monthly_fee
 
+    rate = monthly_fee()
+    if rate <= 0:
+        return None, ("Set the work-permit monthly fee in Company settings "
+                      "before raising a renewal.")
     out = []
     for ln in raw:
         try:
@@ -168,12 +175,7 @@ def _parse_permit_lines(raw):
             return None, "Renewal months must be a whole number."
         if months < 1:
             return None, "Renewal months must be at least 1."
-        try:
-            fee = Decimal(str(ln.get("fee") or 0))
-        except (TypeError, ValueError):
-            return None, "A renewal fee is invalid."
-        if fee < 0:
-            return None, "Renewal fees cannot be negative."
+        fee = (rate * months).quantize(Decimal("0.01"))
         out.append({"employee": emp, "months": months, "fee": fee})
     if not out:
         return None, "Select at least one worker to renew."

@@ -290,19 +290,26 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
     expiry: c.work_permit_expiry, state: c.permit_state,
     pending: c.permit_pending,
     sel: ["EXPIRING", "EXPIRED"].includes(c.permit_state) && !c.permit_pending,
-    months: "12", fee: "" })));
+    months: "12" })));
   const [payee, setPayee] = useState("Immigration Maldives");
   const [currency, setCurrency] = useState("MVR");
   const [filter, setFilter] = useState("");
-  const [bulk, setBulk] = useState({ months: "12", fee: "" });
+  const [bulk, setBulk] = useState({ months: "12" });
+  const [rate, setRate] = useState(null);          // company fee per month
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [done, setDone] = useState(null);
 
+  useEffect(() => {
+    api("/parameters/wp_monthly_fee")
+      .then((p) => setRate(parseFloat(p.value) || 0)).catch(() => setRate(0));
+  }, []);
+
   const setRow = (id, patch) => setRows((rs) =>
     rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   const chosen = rows.filter((r) => r.sel);
-  const total = chosen.reduce((a, r) => a + (parseFloat(r.fee) || 0), 0);
+  const lineFee = (r) => (rate || 0) * (parseInt(r.months, 10) || 0);
+  const total = chosen.reduce((a, r) => a + lineFee(r), 0);
 
   const q = filter.trim().toLowerCase();
   const visible = q
@@ -314,12 +321,15 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
   const setAll = (sel) => setRows((rs) =>
     rs.map((r) => (visIds.has(r.id) ? { ...r, sel } : r)));
   const applyBulk = () => setRows((rs) => rs.map((r) =>
-    (r.sel ? { ...r, months: bulk.months,
-               fee: bulk.fee === "" ? r.fee : bulk.fee } : r)));
+    (r.sel ? { ...r, months: bulk.months } : r)));
 
   async function submit() {
     setError(null);
     if (!chosen.length) { setError("Select at least one worker."); return; }
+    if (!rate) {
+      setError("Set the work-permit monthly fee in Company settings first.");
+      return;
+    }
     if (chosen.some((r) => !(parseInt(r.months, 10) > 0))) {
       setError("Every selected worker needs a renewal length."); return;
     }
@@ -328,7 +338,7 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
       const res = await api("/permits/batch-renew", { method: "POST", body: {
         payee, currency,
         lines: chosen.map((r) => ({ employee_id: r.id,
-          months: parseInt(r.months, 10), fee: parseFloat(r.fee) || 0 })),
+          months: parseInt(r.months, 10) })),
       } });
       setDone(res);
     } catch (e) { setError(e.message); }
@@ -368,6 +378,12 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
             <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0 8px" }}>
               One PYR is raised for the total fee (Permits &amp; Fees, Head
               Office). Each expiry moves forward only when Finance pays it.
+              {" "}The fee is{" "}
+              {rate ? <b>{currency} {rate.toLocaleString()} / month</b>
+                    : <span style={{ color: "#c0392b" }}>not set —{" "}
+                        add it in Company settings</span>}
+              {rate ? " per permit — pick the months, the total is worked out."
+                    : "."}
             </p>
 
             {/* toolbar: filter + select-all + bulk apply */}
@@ -386,14 +402,10 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                       onChange={(e) => setBulk({ ...bulk,
                                                  months: e.target.value })}
                       style={{ ...inputStyle, width: 80 }}>
-                {[3, 6, 12, 24].map((m) => (
+                {[1, 3, 6, 12, 24].map((m) => (
                   <option key={m} value={m}>{m}m</option>
                 ))}
               </select>
-              <input type="number" min="0" placeholder="fee each"
-                     value={bulk.fee}
-                     onChange={(e) => setBulk({ ...bulk, fee: e.target.value })}
-                     style={{ ...inputStyle, width: 90 }} />
               <button onClick={applyBulk} style={ghostButton}
                       disabled={!chosen.length}>Apply to selected</button>
             </div>
@@ -432,16 +444,13 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                                 onChange={(e) => setRow(r.id,
                                   { months: e.target.value })}
                                 style={{ ...inputStyle, width: 80 }}>
-                          {[3, 6, 12, 24].map((m) => (
+                          {[1, 3, 6, 12, 24].map((m) => (
                             <option key={m} value={m}>{m}</option>
                           ))}
                         </select></td>
-                      <td style={td}>
-                        <input type="number" min="0" value={r.fee}
-                               placeholder="0"
-                               onChange={(e) => setRow(r.id,
-                                 { fee: e.target.value })}
-                               style={{ ...inputStyle, width: 90 }} /></td>
+                      <td style={{ ...td, whiteSpace: "nowrap" }}>
+                        {rate ? lineFee(r).toLocaleString()
+                              : <span style={{ color: "#8a94a0" }}>—</span>}</td>
                     </tr>
                   ))}
                   {visible.length === 0 && (

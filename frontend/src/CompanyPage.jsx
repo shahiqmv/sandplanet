@@ -19,6 +19,11 @@ const IDENTITY = [
 // Bank accounts are managed as a list below (used for receipts + PVs); the
 // primary account is the 'pay to' printed on invoices.
 const FIELDS = IDENTITY;
+// Fixed operational rates set once at company level.
+const SETTINGS = [
+  ["wp_monthly_fee", "Work-permit fee — per permit, per month (MVR)", "e.g. 350"],
+];
+const ALL = [...IDENTITY, ...SETTINGS];
 
 export default function CompanyPage() {
   const [values, setValues] = useState({});
@@ -29,7 +34,7 @@ export default function CompanyPage() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    Promise.all(FIELDS.map(([key]) =>
+    Promise.all(ALL.map(([key]) =>
       api(`/parameters/${key}`).then((p) => [key, p.value ?? ""])
         .catch(() => [key, ""])
     )).then((pairs) => setValues(Object.fromEntries(pairs)));
@@ -41,7 +46,7 @@ export default function CompanyPage() {
     setError(null);
     setNotice(null);
     try {
-      for (const [key] of FIELDS) {
+      for (const [key] of ALL) {
         await api(`/parameters/${key}`, { method: "PUT",
                                           body: { value: values[key] || "" } });
       }
@@ -100,6 +105,26 @@ export default function CompanyPage() {
                  style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
         </label>
       ))}
+
+      <div style={{ borderTop: "1px solid var(--sp-border)", margin: "16px 0",
+                    paddingTop: 12 }}>
+        <div style={{ fontWeight: 600, color: "var(--sp-navy)", fontSize: 13.5 }}>
+          Work permits</div>
+        <p style={{ fontSize: 12, color: "#5a6b78", margin: "2px 0 8px" }}>
+          A fixed rate. Batch renewals compute each worker's fee as this rate ×
+          the months chosen — HR just picks the months.</p>
+        {SETTINGS.map(([key, label, placeholder]) => (
+          <label key={key} style={{ display: "block", fontSize: 12.5,
+                                    marginBottom: 8 }}>
+            {label}
+            <input type="number" min="0" value={values[key] || ""}
+                   placeholder={placeholder}
+                   onChange={(e) => setValues({ ...values,
+                                                [key]: e.target.value })}
+                   style={{ ...inputStyle, width: 200, marginTop: 3 }} />
+          </label>
+        ))}
+      </div>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}

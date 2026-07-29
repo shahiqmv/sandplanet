@@ -123,18 +123,22 @@ class PermitBatchRenewTests(TestCase):
         from decimal import Decimal
 
         from . import permits
-        from .models import Document, WorkPermitRenewal
+        from .models import CompanyParameter, Document, WorkPermitRenewal
+        # fee is the company monthly rate × months (350/mo here) — never sent
+        CompanyParameter.objects.update_or_create(
+            key="wp_monthly_fee", defaults={"value": 350})
         e1 = emp("B1", work_permit_expiry=date(2026, 8, 1))
         e2 = emp("B2", work_permit_expiry=date(2026, 8, 15))
         r = self.client.post("/api/v1/permits/batch-renew", {
             "payee": "Immigration Maldives",
             "lines": [
-                {"employee_id": e1.id, "months": 12, "fee": 350},
-                {"employee_id": e2.id, "months": 6, "fee": 350},
+                {"employee_id": e1.id, "months": 12},
+                {"employee_id": e2.id, "months": 6},
             ]}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data["count"], 2)
-        self.assertEqual(Decimal(r.data["amount"]), Decimal("700"))
+        # 350 × (12 + 6) = 6300
+        self.assertEqual(Decimal(r.data["amount"]), Decimal("6300"))
         doc = Document.objects.get(ref=r.data["ref"])
         self.assertEqual(doc.doc_type, "PYR")
         self.assertEqual(doc.payment_request.payment_type, "PERMIT_RENEWAL")
@@ -158,6 +162,14 @@ class PermitBatchRenewTests(TestCase):
         r = self.client.post("/api/v1/permits/batch-renew", {"lines": []},
                              format="json")
         self.assertEqual(r.status_code, 400)
+
+    def test_batch_renew_needs_company_fee(self):
+        # with no company monthly fee set, the renewal is refused (not a 0 PYR)
+        e = emp("NF", work_permit_expiry=date(2026, 8, 1))
+        r = self.client.post("/api/v1/permits/batch-renew", {
+            "lines": [{"employee_id": e.id, "months": 12}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("monthly fee", r.data["detail"])
 
     def test_batch_renew_hr_only(self):
         se = make_user("se", User.Role.SITE_ENGINEER)
