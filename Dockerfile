@@ -19,7 +19,7 @@ ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 # PDF generation works in the container (PDF_REQUIRED=1 in production).
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libpango-1.0-0 libpangocairo-1.0-0 libgdk-pixbuf-2.0-0 libcairo2 \
-      libffi8 shared-mime-info fonts-dejavu-core \
+      libffi8 shared-mime-info fonts-dejavu-core ghostscript \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
