@@ -5,8 +5,14 @@
   "client": "Aman Maldives",
   "start": "January 2026",
   "months": "4 Months",
-  "hero": "ref_00.jpg",
-  "period": "January 2026 \u00b7 4 Months"
+  "hero": "ref_00_0.jpg",
+  "gallery": [
+   "ref_00_1.jpg",
+   "ref_00_2.jpg",
+   "ref_00_3.jpg",
+   "ref_00_4.jpg"
+  ],
+  "nphotos": 8
  },
  {
   "kind": "ref",
@@ -14,8 +20,14 @@
   "client": "Gulf Craft",
   "start": "June 2025",
   "months": "8 Months",
-  "hero": "ref_01.jpg",
-  "period": "June 2025 \u00b7 8 Months"
+  "hero": "ref_01_0.jpg",
+  "gallery": [
+   "ref_01_1.jpg",
+   "ref_01_2.jpg",
+   "ref_01_3.jpg",
+   "ref_01_4.jpg"
+  ],
+  "nphotos": 7
  },
  {
   "kind": "ref",
@@ -23,8 +35,14 @@
   "client": "Angsana Velavaru",
   "start": "July 2025",
   "months": "7 Months",
-  "hero": "ref_02.jpg",
-  "period": "July 2025 \u00b7 7 Months"
+  "hero": "ref_02_0.jpg",
+  "gallery": [
+   "ref_02_1.jpg",
+   "ref_02_2.jpg",
+   "ref_02_3.jpg",
+   "ref_02_4.jpg"
+  ],
+  "nphotos": 6
  },
  {
   "kind": "ref",
@@ -32,8 +50,14 @@
   "client": "Maaraadha Aage\u2019 Male\u2019, Maldives",
   "start": "1st December 2023",
   "months": "24 Months",
-  "hero": "ref_03.jpg",
-  "period": "1st December 2023 \u00b7 24 Months"
+  "hero": "ref_03_0.jpg",
+  "gallery": [
+   "ref_03_1.jpg",
+   "ref_03_2.jpg",
+   "ref_03_3.jpg",
+   "ref_03_4.jpg"
+  ],
+  "nphotos": 13
  },
  {
   "kind": "ref",
@@ -41,8 +65,14 @@
   "client": "The Ritz-Carlton Maldives",
   "start": "November 2025",
   "months": "1 Month",
-  "hero": "ref_04.jpg",
-  "period": "November 2025 \u00b7 1 Month"
+  "hero": "ref_04_0.jpg",
+  "gallery": [
+   "ref_04_1.jpg",
+   "ref_04_2.jpg",
+   "ref_04_3.jpg",
+   "ref_04_4.jpg"
+  ],
+  "nphotos": 9
  },
  {
   "kind": "ref",
@@ -50,8 +80,14 @@
   "client": "Six Senses Laamu",
   "start": "May 2025",
   "months": "6 Months",
-  "hero": "ref_05.jpg",
-  "period": "May 2025 \u00b7 6 Months"
+  "hero": "ref_05_0.jpg",
+  "gallery": [
+   "ref_05_1.jpg",
+   "ref_05_2.jpg",
+   "ref_05_3.jpg",
+   "ref_05_4.jpg"
+  ],
+  "nphotos": 14
  },
  {
   "kind": "ref",
@@ -59,8 +95,14 @@
   "client": "Waldorf Astoria Maldives Ithaafushi",
   "start": "September 2025",
   "months": "1 Month",
-  "hero": "ref_06.jpg",
-  "period": "September 2025 \u00b7 1 Month"
+  "hero": "ref_06_0.jpg",
+  "gallery": [
+   "ref_06_1.jpg",
+   "ref_06_2.jpg",
+   "ref_06_3.jpg",
+   "ref_06_4.jpg"
+  ],
+  "nphotos": 9
  },
  {
   "kind": "ref",
@@ -68,8 +110,13 @@
   "client": "Gulf Craft",
   "start": "May 2025",
   "months": "1 Month",
-  "hero": "ref_07.jpg",
-  "period": "May 2025 \u00b7 1 Month"
+  "hero": "ref_07_0.jpg",
+  "gallery": [
+   "ref_07_1.jpg",
+   "ref_07_2.jpg",
+   "ref_07_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "ref",
@@ -77,8 +124,14 @@
   "client": "Gulf Craft",
   "start": "May 2025",
   "months": "1 Month",
-  "hero": "ref_08.jpg",
-  "period": "May 2025 \u00b7 1 Month"
+  "hero": "ref_08_0.jpg",
+  "gallery": [
+   "ref_08_1.jpg",
+   "ref_08_2.jpg",
+   "ref_08_3.jpg",
+   "ref_08_4.jpg"
+  ],
+  "nphotos": 7
  },
  {
   "kind": "ref",
@@ -86,8 +139,14 @@
   "client": "Raffles Maldives Meradhoo",
   "start": "June 2024",
   "months": "6 Months",
-  "hero": "ref_09.jpg",
-  "period": "June 2024 \u00b7 6 Months"
+  "hero": "ref_09_0.jpg",
+  "gallery": [
+   "ref_09_1.jpg",
+   "ref_09_2.jpg",
+   "ref_09_3.jpg",
+   "ref_09_4.jpg"
+  ],
+  "nphotos": 15
  },
  {
   "kind": "ref",
@@ -95,17 +154,28 @@
   "client": "Gulf Craft",
   "start": "December 2024",
   "months": "3 Months",
-  "hero": "ref_10.jpg",
-  "period": "December 2024 \u00b7 3 Months"
+  "hero": "ref_10_0.jpg",
+  "gallery": [
+   "ref_10_1.jpg",
+   "ref_10_2.jpg",
+   "ref_10_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "ref",
   "title": "Construction of 4 Storey Staff Accommodation Building including MEP at N. Velidhoo",
-  "client": "Chavel Blanc Randheli",
+  "client": "Cheval Blanc Randheli",
   "start": "August 2024",
   "months": "2 Months",
-  "hero": "ref_11.jpg",
-  "period": "August 2024 \u00b7 2 Months"
+  "hero": "ref_11_0.jpg",
+  "gallery": [
+   "ref_11_1.jpg",
+   "ref_11_2.jpg",
+   "ref_11_3.jpg",
+   "ref_11_4.jpg"
+  ],
+  "nphotos": 8
  },
  {
   "kind": "ref",
@@ -113,17 +183,29 @@
   "client": "Raffles Maldives Meradhoo",
   "start": "May 2024",
   "months": "1 Month",
-  "hero": "ref_12.jpg",
-  "period": "May 2024 \u00b7 1 Month"
+  "hero": "ref_12_0.jpg",
+  "gallery": [
+   "ref_12_1.jpg",
+   "ref_12_2.jpg",
+   "ref_12_3.jpg",
+   "ref_12_4.jpg"
+  ],
+  "nphotos": 8
  },
  {
   "kind": "ref",
   "title": "Construction of Padel Court Including MEP",
   "client": "Hilton Amingiri",
   "start": "September 2024",
-  "months": "1 Months",
-  "hero": "ref_13.jpg",
-  "period": "September 2024 \u00b7 1 Months"
+  "months": "1 Month",
+  "hero": "ref_13_0.jpg",
+  "gallery": [
+   "ref_13_1.jpg",
+   "ref_13_2.jpg",
+   "ref_13_3.jpg",
+   "ref_13_4.jpg"
+  ],
+  "nphotos": 11
  },
  {
   "kind": "ref",
@@ -131,8 +213,14 @@
   "client": "Faricampus",
   "start": "December 2024",
   "months": "3 Months",
-  "hero": "ref_14.jpg",
-  "period": "December 2024 \u00b7 3 Months"
+  "hero": "ref_14_0.jpg",
+  "gallery": [
+   "ref_14_1.jpg",
+   "ref_14_2.jpg",
+   "ref_14_3.jpg",
+   "ref_14_4.jpg"
+  ],
+  "nphotos": 11
  },
  {
   "kind": "ref",
@@ -140,8 +228,14 @@
   "client": "Bvlgari Resort Fuggiri",
   "start": "February 2025",
   "months": "4 Months",
-  "hero": "ref_15.jpg",
-  "period": "February 2025 \u00b7 4 Months"
+  "hero": "ref_15_0.jpg",
+  "gallery": [
+   "ref_15_1.jpg",
+   "ref_15_2.jpg",
+   "ref_15_3.jpg",
+   "ref_15_4.jpg"
+  ],
+  "nphotos": 14
  },
  {
   "kind": "ref",
@@ -149,8 +243,14 @@
   "client": "Raffles Maldives Meradhoo",
   "start": "May 2024",
   "months": "2 Months",
-  "hero": "ref_16.jpg",
-  "period": "May 2024 \u00b7 2 Months"
+  "hero": "ref_16_0.jpg",
+  "gallery": [
+   "ref_16_1.jpg",
+   "ref_16_2.jpg",
+   "ref_16_3.jpg",
+   "ref_16_4.jpg"
+  ],
+  "nphotos": 6
  },
  {
   "kind": "ref",
@@ -158,8 +258,14 @@
   "client": "Cheval Blanc Randheli",
   "start": "June 2024",
   "months": "2 Months",
-  "hero": "ref_17.jpg",
-  "period": "June 2024 \u00b7 2 Months"
+  "hero": "ref_17_0.jpg",
+  "gallery": [
+   "ref_17_1.jpg",
+   "ref_17_2.jpg",
+   "ref_17_3.jpg",
+   "ref_17_4.jpg"
+  ],
+  "nphotos": 9
  },
  {
   "kind": "ref",
@@ -167,8 +273,14 @@
   "client": "Cora Cora Maldives",
   "start": "August 2024",
   "months": "2 Months",
-  "hero": "ref_18.jpg",
-  "period": "August 2024 \u00b7 2 Months"
+  "hero": "ref_18_0.jpg",
+  "gallery": [
+   "ref_18_1.jpg",
+   "ref_18_2.jpg",
+   "ref_18_3.jpg",
+   "ref_18_4.jpg"
+  ],
+  "nphotos": 5
  },
  {
   "kind": "ref",
@@ -176,8 +288,13 @@
   "client": "Cheval Blanc Randheli",
   "start": "April 2023",
   "months": "2 Months",
-  "hero": "ref_19.jpg",
-  "period": "April 2023 \u00b7 2 Months"
+  "hero": "ref_19_0.jpg",
+  "gallery": [
+   "ref_19_1.jpg",
+   "ref_19_2.jpg",
+   "ref_19_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "ref",
@@ -185,8 +302,13 @@
   "client": "Gili Lankanfushi",
   "start": "April 2023",
   "months": "2 Months",
-  "hero": "ref_20.jpg",
-  "period": "April 2023 \u00b7 2 Months"
+  "hero": "ref_20_0.jpg",
+  "gallery": [
+   "ref_20_1.jpg",
+   "ref_20_2.jpg",
+   "ref_20_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "ref",
@@ -194,8 +316,14 @@
   "client": "Six Senses Kanuhura",
   "start": "June 2023",
   "months": "1 Month",
-  "hero": "ref_21.jpg",
-  "period": "June 2023 \u00b7 1 Month"
+  "hero": "ref_21_0.jpg",
+  "gallery": [
+   "ref_21_1.jpg",
+   "ref_21_2.jpg",
+   "ref_21_3.jpg",
+   "ref_21_4.jpg"
+  ],
+  "nphotos": 5
  },
  {
   "kind": "ref",
@@ -203,8 +331,11 @@
   "client": "Jumeirah Maldives",
   "start": "July 2023",
   "months": "2 Months",
-  "hero": "ref_22.jpg",
-  "period": "July 2023 \u00b7 2 Months"
+  "hero": "ref_22_0.jpg",
+  "gallery": [
+   "ref_22_1.jpg"
+  ],
+  "nphotos": 2
  },
  {
   "kind": "ref",
@@ -212,8 +343,14 @@
   "client": "Raffles Maldives Meradhoo",
   "start": "November 2023",
   "months": "2 Months",
-  "hero": "ref_23.jpg",
-  "period": "November 2023 \u00b7 2 Months"
+  "hero": "ref_23_0.jpg",
+  "gallery": [
+   "ref_23_1.jpg",
+   "ref_23_2.jpg",
+   "ref_23_3.jpg",
+   "ref_23_4.jpg"
+  ],
+  "nphotos": 7
  },
  {
   "kind": "ref",
@@ -221,8 +358,14 @@
   "client": "Six Senses Kanuhura",
   "start": "June 2022",
   "months": "12 Months",
-  "hero": "ref_24.jpg",
-  "period": "June 2022 \u00b7 12 Months"
+  "hero": "ref_24_0.jpg",
+  "gallery": [
+   "ref_24_1.jpg",
+   "ref_24_2.jpg",
+   "ref_24_3.jpg",
+   "ref_24_4.jpg"
+  ],
+  "nphotos": 5
  },
  {
   "kind": "ref",
@@ -230,8 +373,14 @@
   "client": "Jumeirah Maldives",
   "start": "July 2022",
   "months": "6 Months",
-  "hero": "ref_25.jpg",
-  "period": "July 2022 \u00b7 6 Months"
+  "hero": "ref_25_0.jpg",
+  "gallery": [
+   "ref_25_1.jpg",
+   "ref_25_2.jpg",
+   "ref_25_3.jpg",
+   "ref_25_4.jpg"
+  ],
+  "nphotos": 7
  },
  {
   "kind": "ref",
@@ -239,8 +388,14 @@
   "client": "Alila Kothaifaru Maldives",
   "start": "January 2021",
   "months": "4 Months",
-  "hero": "ref_26.jpg",
-  "period": "January 2021 \u00b7 4 Months"
+  "hero": "ref_26_0.jpg",
+  "gallery": [
+   "ref_26_1.jpg",
+   "ref_26_2.jpg",
+   "ref_26_3.jpg",
+   "ref_26_4.jpg"
+  ],
+  "nphotos": 7
  },
  {
   "kind": "ref",
@@ -248,8 +403,14 @@
   "client": "",
   "start": "May 2021",
   "months": "3 Months",
-  "hero": "ref_27.jpg",
-  "period": "May 2021 \u00b7 3 Months"
+  "hero": "ref_27_0.jpg",
+  "gallery": [
+   "ref_27_1.jpg",
+   "ref_27_2.jpg",
+   "ref_27_3.jpg",
+   "ref_27_4.jpg"
+  ],
+  "nphotos": 5
  },
  {
   "kind": "ref",
@@ -257,8 +418,14 @@
   "client": "Angsana Velaavaru",
   "start": "June 2019",
   "months": "4 Months",
-  "hero": "ref_28.jpg",
-  "period": "June 2019 \u00b7 4 Months"
+  "hero": "ref_28_0.jpg",
+  "gallery": [
+   "ref_28_1.jpg",
+   "ref_28_2.jpg",
+   "ref_28_3.jpg",
+   "ref_28_4.jpg"
+  ],
+  "nphotos": 10
  },
  {
   "kind": "ref",
@@ -266,8 +433,14 @@
   "client": "Raffles Maldives Meradhoo",
   "start": "March 2018",
   "months": "6 Months",
-  "hero": "ref_29.jpg",
-  "period": "March 2018 \u00b7 6 Months"
+  "hero": "ref_29_0.jpg",
+  "gallery": [
+   "ref_29_1.jpg",
+   "ref_29_2.jpg",
+   "ref_29_3.jpg",
+   "ref_29_4.jpg"
+  ],
+  "nphotos": 6
  },
  {
   "kind": "ref",
@@ -275,8 +448,12 @@
   "client": "Reethi Faru",
   "start": "April 2018",
   "months": "6 Months",
-  "hero": "ref_30.jpg",
-  "period": "April 2018 \u00b7 6 Months"
+  "hero": "ref_30_0.jpg",
+  "gallery": [
+   "ref_30_1.jpg",
+   "ref_30_2.jpg"
+  ],
+  "nphotos": 3
  },
  {
   "kind": "ref",
@@ -284,8 +461,9 @@
   "client": "Fairmont Sirru Fenfushi",
   "start": "February 2017",
   "months": "6 Months",
-  "hero": "ref_31.jpg",
-  "period": "February 2017 \u00b7 6 Months"
+  "hero": "ref_31_0.jpg",
+  "gallery": [],
+  "nphotos": 1
  },
  {
   "kind": "ref",
@@ -293,8 +471,14 @@
   "client": "Soneva Jani",
   "start": "December 2015",
   "months": "6 Months",
-  "hero": "ref_32.jpg",
-  "period": "December 2015 \u00b7 6 Months"
+  "hero": "ref_32_0.jpg",
+  "gallery": [
+   "ref_32_1.jpg",
+   "ref_32_2.jpg",
+   "ref_32_3.jpg",
+   "ref_32_4.jpg"
+  ],
+  "nphotos": 6
  },
  {
   "kind": "ref",
@@ -302,8 +486,14 @@
   "client": "Uthuru Thilafalhu",
   "start": "June 2013",
   "months": "3 Months",
-  "hero": "ref_33.jpg",
-  "period": "June 2013 \u00b7 3 Months"
+  "hero": "ref_33_0.jpg",
+  "gallery": [
+   "ref_33_1.jpg",
+   "ref_33_2.jpg",
+   "ref_33_3.jpg",
+   "ref_33_4.jpg"
+  ],
+  "nphotos": 6
  },
  {
   "kind": "marine",
@@ -311,8 +501,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_93.jpg",
-  "period": ""
+  "hero": "mar_93_0.jpg",
+  "gallery": [
+   "mar_93_1.jpg",
+   "mar_93_2.jpg",
+   "mar_93_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -320,8 +515,9 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_94.jpg",
-  "period": ""
+  "hero": "",
+  "gallery": [],
+  "nphotos": 0
  },
  {
   "kind": "marine",
@@ -329,8 +525,9 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_95.jpg",
-  "period": ""
+  "hero": "mar_95_0.jpg",
+  "gallery": [],
+  "nphotos": 1
  },
  {
   "kind": "marine",
@@ -338,8 +535,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_96.jpg",
-  "period": ""
+  "hero": "mar_96_0.jpg",
+  "gallery": [
+   "mar_96_1.jpg",
+   "mar_96_2.jpg",
+   "mar_96_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -347,8 +549,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_97.jpg",
-  "period": ""
+  "hero": "mar_97_0.jpg",
+  "gallery": [
+   "mar_97_1.jpg",
+   "mar_97_2.jpg",
+   "mar_97_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -356,8 +563,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_98.jpg",
-  "period": ""
+  "hero": "mar_98_0.jpg",
+  "gallery": [
+   "mar_98_1.jpg",
+   "mar_98_2.jpg",
+   "mar_98_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -365,8 +577,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_99.jpg",
-  "period": ""
+  "hero": "mar_99_0.jpg",
+  "gallery": [
+   "mar_99_1.jpg",
+   "mar_99_2.jpg",
+   "mar_99_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -374,8 +591,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_100.jpg",
-  "period": ""
+  "hero": "mar_100_0.jpg",
+  "gallery": [
+   "mar_100_1.jpg",
+   "mar_100_2.jpg",
+   "mar_100_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -383,8 +605,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_101.jpg",
-  "period": ""
+  "hero": "mar_101_0.jpg",
+  "gallery": [
+   "mar_101_1.jpg",
+   "mar_101_2.jpg",
+   "mar_101_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -392,8 +619,13 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_102.jpg",
-  "period": ""
+  "hero": "mar_102_0.jpg",
+  "gallery": [
+   "mar_102_1.jpg",
+   "mar_102_2.jpg",
+   "mar_102_3.jpg"
+  ],
+  "nphotos": 4
  },
  {
   "kind": "marine",
@@ -401,7 +633,12 @@
   "client": "",
   "start": "",
   "months": "",
-  "hero": "mar_103.jpg",
-  "period": ""
+  "hero": "mar_103_0.jpg",
+  "gallery": [
+   "mar_103_1.jpg",
+   "mar_103_2.jpg",
+   "mar_103_3.jpg"
+  ],
+  "nphotos": 4
  }
 ]

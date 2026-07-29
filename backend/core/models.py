@@ -3532,3 +3532,17 @@ class ProfileStaticAsset(models.Model):
         ordering = ["sort_order", "id"]
 
 
+class ProfileReferee(models.Model):
+    """An industry reference on the profile's "Trusted by the industry" page —
+    editable, so management can add or remove referees without a redeploy."""
+
+    name = models.CharField(max_length=120)
+    role = models.CharField(max_length=160, blank=True)
+    org = models.CharField(max_length=160, blank=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+

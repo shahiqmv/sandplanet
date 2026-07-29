@@ -87,6 +87,73 @@ export default function ProfilePage() {
           : <div style={{ ...card, flex: 1 }}>
               Select a project, or add one.</div>}
       </div>
+
+      <RefereesPanel />
+    </div>
+  );
+}
+
+// ---- referees: the "Trusted by the industry" page, editable ---------------
+function RefereesPanel() {
+  const [refs, setRefs] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => api("/profile/referees").then(setRefs)
+    .catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);   // eslint-disable-line
+
+  async function add() {
+    try {
+      await api("/profile/referees", { method: "POST",
+        body: { name: "New referee" } });
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  async function save(r) {
+    try {
+      await api(`/profile/referees/${r.id}`, { method: "PATCH",
+        body: { name: r.name, role: r.role, org: r.org } });
+    } catch (e) { setErr(e.message); }
+  }
+  async function del(id) {
+    if (!window.confirm("Remove this referee?")) return;
+    try { await api(`/profile/referees/${id}`, { method: "DELETE" }); load(); }
+    catch (e) { setErr(e.message); }
+  }
+  if (!refs) return null;
+  const cell = { ...inputStyle, fontSize: 12.5 };
+  const upd = (i, k, v) => setRefs(refs.map((x, j) =>
+    (j === i ? { ...x, [k]: v } : x)));
+
+  return (
+    <div style={{ ...card, marginTop: 16, maxWidth: 900 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+        marginBottom: 10 }}>
+        <b style={{ color: NAVY }}>Referees</b>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          the “Trusted by the industry” page</span>
+        <Btn variant="secondary" style={{ marginLeft: "auto",
+          padding: "4px 10px" }} onClick={add}>+ Add referee</Btn>
+      </div>
+      {err && <p style={{ color: "var(--red-fg)", fontSize: 12 }}>{err}</p>}
+      <div style={{ display: "grid", gap: 6 }}>
+        {refs.map((r, i) => (
+          <div key={r.id} style={{ display: "grid", gap: 6,
+            gridTemplateColumns: "1.2fr 1.4fr 1.4fr auto auto" }}>
+            <input style={cell} value={r.name} placeholder="Name"
+              onChange={(e) => upd(i, "name", e.target.value)} />
+            <input style={cell} value={r.role} placeholder="Role"
+              onChange={(e) => upd(i, "role", e.target.value)} />
+            <input style={cell} value={r.org} placeholder="Organisation"
+              onChange={(e) => upd(i, "org", e.target.value)} />
+            <Btn variant="secondary" style={{ padding: "4px 10px" }}
+              onClick={() => save(r)}>Save</Btn>
+            <Btn variant="danger" style={{ padding: "4px 10px" }}
+              onClick={() => del(r.id)}>✕</Btn>
+          </div>
+        ))}
+        {!refs.length && <p style={{ color: "var(--muted)", fontSize: 12.5 }}>
+          No referees yet — add one.</p>}
+      </div>
     </div>
   );
 }

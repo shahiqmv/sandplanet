@@ -10,7 +10,12 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import profile as pf
-from .models import ProfileEntry, ProfileGalleryImage
+from .models import ProfileEntry, ProfileGalleryImage, ProfileReferee
+
+
+def _referee_dict(r):
+    return {"id": r.id, "name": r.name, "role": r.role, "org": r.org,
+            "sort_order": r.sort_order}
 
 
 def _guard(request):
@@ -18,6 +23,45 @@ def _guard(request):
         return Response({"detail": "Company Profile is management-only."},
                         status=403)
     return None
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def profile_referees(request):
+    """The 'Trusted by the industry' referees — list / add."""
+    err = _guard(request)
+    if err:
+        return err
+    if request.method == "POST":
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"detail": "A referee needs a name."}, status=400)
+        order = (ProfileReferee.objects.count() + 1) * 10
+        r = ProfileReferee.objects.create(
+            name=name[:120], role=(request.data.get("role") or "").strip()[:160],
+            org=(request.data.get("org") or "").strip()[:160], sort_order=order)
+        return Response(_referee_dict(r), status=201)
+    return Response([_referee_dict(r) for r in ProfileReferee.objects.all()])
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def profile_referee(request, pk):
+    err = _guard(request)
+    if err:
+        return err
+    try:
+        r = ProfileReferee.objects.get(pk=pk)
+    except ProfileReferee.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        r.delete()
+        return Response(status=204)
+    for f in ("name", "role", "org"):
+        if f in request.data:
+            setattr(r, f, (request.data.get(f) or "").strip()[:160])
+    r.save()
+    return Response(_referee_dict(r))
 
 
 @api_view(["GET", "POST"])

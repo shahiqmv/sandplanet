@@ -370,6 +370,10 @@ urlpatterns = [
     path("onboarding/<int:pk>/documents", onboarding_api.onboarding_document,
          name="onboarding-document"),
     # --- procurement schedule (PSC) ---
+    path("profile/referees", profile_api.profile_referees,
+         name="profile-referees"),
+    path("profile/referees/<int:pk>", profile_api.profile_referee,
+         name="profile-referee"),
     path("profile/entries", profile_api.profile_entries,
          name="profile-entries"),
     path("profile/entries/reorder", profile_api.profile_reorder,
