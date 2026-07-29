@@ -37,6 +37,7 @@ import StockPage from "./StockPage.jsx";
 import ToolsPage from "./ToolsPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
+import ProfilePage from "./ProfilePage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
 import HRDashboard from "./HRDashboard.jsx";
 import PortfolioPage from "./PortfolioPage.jsx";
@@ -45,6 +46,9 @@ import PortfolioPage from "./PortfolioPage.jsx";
 // role; approver roles land on the Approvals queue.
 const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
                    "FINANCE", "ADMIN"];
+// Company Profile is office-only marketing; MARKETING is a minimal role that
+// sees ONLY this section.
+const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING"];
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
@@ -99,6 +103,8 @@ const NAV_GROUPS = [
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
            ["users", "Users", ["ADMIN"]],
            ["company", "Company", ["ADMIN"]]] },
+  { key: "profileGrp", label: "Profile", roles: PROFILE_ROLES,
+    subs: [["profile", "Company Profile", PROFILE_ROLES]] },
 ];
 
 function visibleGroups(me) {
@@ -114,6 +120,7 @@ function landingPage(me) {
   if (APPROVERS.includes(me.role)) return "approvals";
   if (me.role === "HO_HR") return "hr";
   if (me.role === "QS") return "portfolio";
+  if (me.role === "MARKETING") return "profile";
   return "sites";
 }
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
@@ -388,7 +395,8 @@ export default function App() {
 
   // PMs get the grouped nav too (Approvals + Sites); site users keep the
   // plain site view
-  const showHoNav = me.authenticated && (me.is_ho || me.role === "PM");
+  const showHoNav = me.authenticated && (me.is_ho || me.role === "PM"
+                    || me.role === "MARKETING");
   const groups = me.authenticated ? visibleGroups(me) : [];
   const activeGroup = groups.find((g) =>
     g.subs.some(([key]) => key === hoPage));
@@ -899,6 +907,10 @@ export default function App() {
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "company" && (
             <CompanyPage />
+          )}
+          {!docView && !openSite && PROFILE_ROLES.includes(me.role) &&
+            hoPage === "profile" && (
+            <ProfilePage />
           )}
           {!docView && !openSite &&
             (!showHoNav || hoPage === "sites") && (
