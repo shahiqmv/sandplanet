@@ -120,6 +120,36 @@ def profile_gallery(request, pk):
     return Response(pf.entry_dict(entry))
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def profile_generate(request):
+    """Render the profile PDF. ?preview=1 → watermarked, uncompressed, inline;
+    otherwise the compressed final (also archived, dated, to storage)."""
+    from django.http import HttpResponse
+
+    from . import profile_render as pr
+    err = _guard(request)
+    if err:
+        return err
+    mode = "preview" if request.GET.get("preview") else "final"
+    pdf = pr.generate(mode)
+    if mode == "final":
+        try:
+            from django.core.files.base import ContentFile
+            from django.core.files.storage import default_storage
+            from django.utils import timezone
+            stamp = timezone.now().strftime("%Y%m%d-%H%M")
+            default_storage.save(f"profile/generated/profile-{stamp}.pdf",
+                                 ContentFile(pdf))
+        except Exception:                        # pragma: no cover - defensive
+            pass
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    disp = "inline" if mode == "preview" else "attachment"
+    resp["Content-Disposition"] = (
+        f'{disp}; filename="Sand_Planet_Company_Profile.pdf"')
+    return resp
+
+
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated])
 def profile_gallery_delete(request, gid):

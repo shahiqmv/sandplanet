@@ -382,6 +382,8 @@ urlpatterns = [
          name="profile-gallery"),
     path("profile/gallery/<int:gid>", profile_api.profile_gallery_delete,
          name="profile-gallery-delete"),
+    path("profile/generate", profile_api.profile_generate,
+         name="profile-generate"),
     path("procurement-schedules", psched_api.schedule_list,
          name="psched-list"),
     path("projects/<int:project_id>/procurement-schedule",

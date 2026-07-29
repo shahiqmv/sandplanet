@@ -99,6 +99,27 @@ class ProfileEntryTests(TestCase):
         self.assertEqual(self.client.delete(
             f"/api/v1/profile/gallery/{g.id}").status_code, 204)
 
+    def test_build_html_has_static_pages_and_entries(self):
+        from . import profile_render as pr
+        ProfileEntry.objects.create(project_name="Vakkaru", status="ONGOING",
+                                    sort_order=10)
+        html = pr.build_html()
+        self.assertIn("COMPANY", html)              # cover
+        self.assertIn("Corporate Information", html)  # static front matter
+        self.assertIn("Vakkaru", html)              # the ongoing entry
+        self.assertIn("Cheval Blanc", html)         # a referee
+
+    def test_generate_returns_a_pdf(self):
+        ProfileEntry.objects.create(project_name="Soneva Jani",
+                                    client_display="SONEVA JANI",
+                                    summary="Villa works.", status="ONGOING",
+                                    sort_order=10)
+        self.client.force_authenticate(self.mkt)
+        r = self.client.post("/api/v1/profile/generate")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertEqual(r.content[:4], b"%PDF")
+
     def test_completed_entry_is_locked(self):
         e = ProfileEntry.objects.create(
             project_name="Done", status="COMPLETED", snapshot_locked=True)
