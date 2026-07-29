@@ -3539,6 +3539,7 @@ class ProfileReferee(models.Model):
     name = models.CharField(max_length=120)
     role = models.CharField(max_length=160, blank=True)
     org = models.CharField(max_length=160, blank=True)
+    email = models.CharField(max_length=160, blank=True)
     sort_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
 

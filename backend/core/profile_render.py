@@ -258,13 +258,17 @@ def _reference_pages(completed):
 
 def _referees():
     from .models import ProfileReferee
-    rows = [(r.name, r.role, r.org) for r in ProfileReferee.objects.all()]
+    rows = [(r.name, r.role, r.org, r.email)
+            for r in ProfileReferee.objects.all()]
     if not rows:
-        rows = REFEREES
-    boxes = "".join(f'<div class="rfbox"><div class="rf-name">{escape(n)}</div>'
-                    f'<div class="rf-role">{escape(r)}</div>'
-                    f'<div class="rf-org">{escape(o)}</div></div>'
-                    for n, r, o in rows)
+        rows = [(n, r, o, "") for n, r, o in REFEREES]
+    boxes = "".join(
+        f'<div class="rfbox"><div class="rf-name">{escape(n)}</div>'
+        f'<div class="rf-role">{escape(r)}</div>'
+        f'<div class="rf-org">{escape(o)}</div>'
+        + (f'<div class="rf-email">{escape(e)}</div>' if e else "")
+        + '</div>'
+        for n, r, o, e in rows)
     return (f'<div class="page">{_bar("Referees")}<div class="txtpage">'
             '<div class="eyebrow">References</div>'
             '<h2 class="bigtitle2">Trusted by the industry</h2>'
@@ -457,6 +461,7 @@ body { font-family:"Carlito","DejaVu Sans",sans-serif; color:#22303B; }
 .rf-name{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:13pt;color:#0E3A5C;}
 .rf-role{font-size:9.5pt;color:#3C4954;margin-top:1mm;}
 .rf-org{font-size:9pt;color:#95A2AB;margin-top:0.5mm;}
+.rf-email{font-size:9pt;color:#1685CC;margin-top:1.5mm;}
 /* back cover: light */
 .backcover{background:#F6F4F0;}
 .bc-top{position:absolute;top:40mm;left:0;right:0;display:flex;flex-direction:column;align-items:center;gap:5mm;}

@@ -15,7 +15,7 @@ from .models import ProfileEntry, ProfileGalleryImage, ProfileReferee
 
 def _referee_dict(r):
     return {"id": r.id, "name": r.name, "role": r.role, "org": r.org,
-            "sort_order": r.sort_order}
+            "email": r.email, "sort_order": r.sort_order}
 
 
 def _guard(request):
@@ -39,7 +39,9 @@ def profile_referees(request):
         order = (ProfileReferee.objects.count() + 1) * 10
         r = ProfileReferee.objects.create(
             name=name[:120], role=(request.data.get("role") or "").strip()[:160],
-            org=(request.data.get("org") or "").strip()[:160], sort_order=order)
+            org=(request.data.get("org") or "").strip()[:160],
+            email=(request.data.get("email") or "").strip()[:160],
+            sort_order=order)
         return Response(_referee_dict(r), status=201)
     return Response([_referee_dict(r) for r in ProfileReferee.objects.all()])
 
@@ -57,7 +59,7 @@ def profile_referee(request, pk):
     if request.method == "DELETE":
         r.delete()
         return Response(status=204)
-    for f in ("name", "role", "org"):
+    for f in ("name", "role", "org", "email"):
         if f in request.data:
             setattr(r, f, (request.data.get(f) or "").strip()[:160])
     r.save()

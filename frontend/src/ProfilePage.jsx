@@ -111,7 +111,7 @@ function RefereesPanel() {
   async function save(r) {
     try {
       await api(`/profile/referees/${r.id}`, { method: "PATCH",
-        body: { name: r.name, role: r.role, org: r.org } });
+        body: { name: r.name, role: r.role, org: r.org, email: r.email } });
     } catch (e) { setErr(e.message); }
   }
   async function del(id) {
@@ -138,13 +138,15 @@ function RefereesPanel() {
       <div style={{ display: "grid", gap: 6 }}>
         {refs.map((r, i) => (
           <div key={r.id} style={{ display: "grid", gap: 6,
-            gridTemplateColumns: "1.2fr 1.4fr 1.4fr auto auto" }}>
+            gridTemplateColumns: "1fr 1.2fr 1.2fr 1.2fr auto auto" }}>
             <input style={cell} value={r.name} placeholder="Name"
               onChange={(e) => upd(i, "name", e.target.value)} />
             <input style={cell} value={r.role} placeholder="Role"
               onChange={(e) => upd(i, "role", e.target.value)} />
             <input style={cell} value={r.org} placeholder="Organisation"
               onChange={(e) => upd(i, "org", e.target.value)} />
+            <input style={cell} value={r.email || ""} placeholder="Email"
+              onChange={(e) => upd(i, "email", e.target.value)} />
             <Btn variant="secondary" style={{ padding: "4px 10px" }}
               onClick={() => save(r)}>Save</Btn>
             <Btn variant="danger" style={{ padding: "4px 10px" }}
