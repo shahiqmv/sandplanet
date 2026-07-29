@@ -62,6 +62,17 @@
   .chip.DELIVERED { background: #eef1f4; color: var(--grey); }
   .foot { padding: 12px 22px 18px; color: var(--muted); font-size: 11.5px;
     border-top: 1px solid var(--line); }
+  .intro { padding: 14px 22px 2px; }
+  .intro > p { margin: 0; color: var(--ink); }
+  .guide { border: 1px solid var(--line); border-radius: 8px;
+    background: var(--tint); margin: 10px 0 2px; }
+  .guide summary { cursor: pointer; padding: 9px 14px; font-weight: 700;
+    color: var(--navy); font-size: 13px; }
+  .guide[open] summary { border-bottom: 1px solid var(--line); }
+  .gbody { padding: 6px 16px 12px; }
+  .gbody ul { margin: 8px 0; padding-left: 18px; }
+  .gbody li { margin: 6px 0; color: var(--ink); font-size: 12.5px; }
+  .gbody .chip { margin: 0 1px; }
   @media (max-width: 640px) {
     .wrap { padding: 8px; } h1 { font-size: 18px; }
     .masthead { padding: 16px 14px 12px; }
@@ -85,6 +96,33 @@
       </div>
     </div>
     <div class="accent"></div>
+
+    <div class="intro">
+      <p>A <b>live forward plan</b> of the key and imported materials for your
+        project. It updates on its own as each item progresses — nothing to
+        download or refresh.</p>
+      <details class="guide" open>
+        <summary>ⓘ How to read this plan</summary>
+        <div class="gbody">
+          <ul>
+            <li><b>Progress columns</b> — <i>TDS</i> (material / data-sheet
+              approval), <i>Order</i>, <i>Production</i>, <i>Shipment</i> and
+              <i>Delivery</i> — show how far each item has moved. A dash (—) means
+              that step hasn't started yet.</li>
+            <li><b>Supply</b> — “Sand Planet” means we procure the item; your site
+              code means it is supplied by your side.</li>
+            <li><b>ETA&nbsp;Resort</b> — our current best estimate of arrival at the
+              resort. It is a live projection that shifts as production and shipping
+              firm up — a working estimate, not a fixed commitment.</li>
+            <li><b>Status</b> — our own early-warning flag from the required date
+              against the projected arrival, so anything slipping shows up early:
+              <span class="chip ON_TRACK">On track</span>
+              <span class="chip AT_RISK">At risk</span>
+              <span class="chip LATE">Late</span>.</li>
+          </ul>
+        </div>
+      </details>
+    </div>
 
     <div class="scroll">
       <table>
