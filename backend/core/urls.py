@@ -233,6 +233,10 @@ urlpatterns = [
     path("projects/<int:pid>/boq/template", commercial.boq_template,
          name="boq-template"),
     # Capture a BOQ from a client PDF/Excel → review draft → commit
+    path("projects/<int:pid>/boq/capture-unit", commercial.boq_capture_unit,
+         name="boq-capture-unit"),
+    path("projects/<int:pid>/boq/commit-unit", commercial.boq_commit_unit,
+         name="boq-commit-unit"),
     path("projects/<int:pid>/boq/capture", commercial.boq_import_extract,
          name="boq-capture"),
     path("projects/<int:pid>/boq/capture/draft", commercial.boq_import_latest,

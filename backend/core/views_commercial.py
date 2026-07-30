@@ -53,13 +53,23 @@ def _boq_payload(project):
     boq = getattr(project, "boq", None)
     if boq is None:
         return {"exists": False, "currency": "USD", "is_locked": False,
-                "split_rates": False, "total": 0, "total_supply": 0,
-                "total_install": 0, "items": []}
-    return {"exists": True, "currency": boq.currency,
+                "split_rates": False, "mode": "CONVENTIONAL", "total": 0,
+                "total_supply": 0, "total_install": 0, "contract_value": 0,
+                "items": [], "categories": []}
+    data = {"exists": True, "currency": boq.currency,
             "is_locked": boq.is_locked, "split_rates": boq.split_rates,
-            "total": boq.total, "total_supply": boq.total_supply,
-            "total_install": boq.total_install,
-            "items": BoqItemSerializer(boq.items.all(), many=True).data}
+            "mode": boq.mode, "total": boq.total,
+            "total_supply": boq.total_supply, "total_install": boq.total_install,
+            "contract_value": boq.contract_value,
+            "items": BoqItemSerializer(boq.items.all(), many=True).data,
+            "categories": []}
+    if boq.mode == boq.Mode.UNIT:
+        data["categories"] = [{
+            "id": c.id, "ref": c.ref, "name": c.name, "unit": c.unit,
+            "qty": c.qty, "is_lump": c.is_lump,
+            "per_unit_total": c.per_unit_total, "line_total": c.line_total,
+        } for c in boq.categories.all()]
+    return data
 
 
 @api_view(["GET"])
@@ -210,6 +220,49 @@ def boq_import_extract(request, pid):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(boq_extract.import_payload(imp), status=201)
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def boq_capture_unit(request, pid):
+    """Capture a unit-based BOQ PDF → review categories (no commit). Separate
+    from the conventional import; the conventional path is untouched."""
+    from . import boq_unit_extract as ue
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    upload = request.FILES.get("file")
+    if not upload:
+        return Response({"detail": "Attach the unit BOQ PDF."}, status=400)
+    try:
+        cats, gst, msg = ue.run_capture(upload)
+    except ue.ExtractionError as e:
+        return Response({"detail": str(e)}, status=400)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"categories": cats, "gst_percent": gst,
+                     "count": len(cats)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def boq_commit_unit(request, pid):
+    """Commit reviewed unit categories into the project's BOQ (UNIT mode)."""
+    from . import boq_unit_extract as ue
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    boq, msg = ue.commit(p, request.data.get("categories") or [], request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"ok": True, "mode": boq.mode,
+                     "categories": boq.categories.count(),
+                     "contract_value": str(boq.contract_value)})
 
 
 @api_view(["GET"])
