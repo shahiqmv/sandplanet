@@ -37,6 +37,60 @@ class ProgrammeExtractTests(TestCase):
         self.assertEqual(out[0]["start"], "2026-01-01")
         self.assertEqual(out[2]["start"], "")               # invalid date cleared
 
+    def test_structure_batches_long_programme_per_page(self):
+        # A long programme's task table is dense; the extractor must batch it
+        # across several model calls so no single response is truncated (each
+        # was silently dropping to ~16 rows when 5 pages went in one call).
+        # ~4k chars/page, like a real MS-Project export, so each exceeds half
+        # the per-page batch cap and lands in its own model call.
+        pages = [f"[PAGE {i}]\n" + "task row\n" * 500 for i in range(1, 7)]
+        calls = {"n": 0}
+
+        def fake_call(content, model):
+            calls["n"] += 1                       # one activity per batch/call
+            return {"activities": [{"name": f"Task from call {calls['n']}"}]}
+
+        orig = pe._call_claude
+        pe._call_claude = fake_call
+        try:
+            acts = pe.structure(pages, model="x")
+        finally:
+            pe._call_claude = orig
+        # every page batched separately → 6 calls, and structure aggregates all
+        # of them (the old single-batch path lost everything past the first ~16)
+        self.assertEqual(calls["n"], 6)
+        self.assertEqual(len(acts), 6)
+
+    def test_truncated_response_raises_not_silently_drops(self):
+        class _Msg:
+            stop_reason = "max_tokens"
+            content = []
+
+        import os
+        os.environ["ANTHROPIC_API_KEY"] = "test-key"
+
+        class _FakeClient:
+            class messages:
+                @staticmethod
+                def create(**_):
+                    return _Msg()
+
+        import types
+        fake_anthropic = types.SimpleNamespace(
+            Anthropic=lambda api_key=None: _FakeClient())
+        import sys
+        orig = sys.modules.get("anthropic")
+        sys.modules["anthropic"] = fake_anthropic
+        try:
+            with self.assertRaises(pe.ExtractionError):
+                pe._call_claude("[PAGE 1] rows", "x")
+        finally:
+            if orig is not None:
+                sys.modules["anthropic"] = orig
+            else:
+                sys.modules.pop("anthropic", None)
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+
     def test_capture_endpoint_returns_activities_for_review(self):
         orig = pe.run_capture
         pe.run_capture = lambda upload, model=None: (

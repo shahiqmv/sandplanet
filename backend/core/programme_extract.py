@@ -17,6 +17,15 @@ from .boq_extract import ExtractionError, _batches, pdf_pages
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
+# A programme task table is dense: every row becomes a structured activity, so
+# a page of ~40 rows emits far more output than its input text suggests. The
+# shared BOQ batcher (24k input chars/call) packed 5 MS-Project pages — ~200
+# tasks — into one call, whose tool_use JSON then overran an 8k max_tokens cap
+# and was silently truncated to a handful of rows. Batch ~one page per call so
+# the output always fits, and give the response generous headroom.
+_PAGE_BATCH_CHARS = 6000
+_MAX_TOKENS = 16000
+
 _SYSTEM = (
     "You extract a construction project programme (an MS Project / Primavera "
     "schedule printout) from the given document text into structured "
@@ -92,11 +101,17 @@ def _call_claude(content, model):
     client = anthropic.Anthropic(api_key=key)
     try:
         msg = client.messages.create(
-            model=model, max_tokens=8000, system=_SYSTEM, tools=[_TOOL],
+            model=model, max_tokens=_MAX_TOKENS, system=_SYSTEM, tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_programme"},
             messages=[{"role": "user", "content": content}])
     except Exception as e:                        # pragma: no cover - network
         raise ExtractionError(f"The extraction model failed: {e}")
+    # A truncated response drops activities silently — surface it instead of
+    # returning a partial programme.
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ExtractionError(
+            "That programme page has too many tasks to read in one pass — "
+            "split the PDF into fewer pages and try again.")
     for block in msg.content:
         if getattr(block, "type", None) == "tool_use":
             return block.input
@@ -107,7 +122,7 @@ def structure(pages, model=None):
     """Run the (possibly batched) extraction over the document pages."""
     model = model or _model_name()
     acts = []
-    for batch in _batches(pages):
+    for batch in _batches(pages, max_chars=_PAGE_BATCH_CHARS):
         header = ("Extract the project programme from this document text. "
                   "Page markers are shown as [PAGE n].\n\n")
         body = "\n\n".join(f"[PAGE {n}]\n{text}" for n, text in batch)
