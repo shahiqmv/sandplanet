@@ -75,6 +75,18 @@ export default function BoqPanel({ projectId, project, me }) {
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
+  async function delBoq() {
+    if (!window.confirm(
+      "Delete this draft BOQ and all its lines? This can't be undone — "
+      + "you'll need to re-enter or re-capture it.")) return;
+    setError(null); setBusy(true);
+    try {
+      const data = await api(`/projects/${projectId}/boq/delete`,
+        { method: "DELETE" });
+      setBoq(data); setDraft(null); setUnitDraft(null); setPending(null);
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
 
   if (error && !boq) return <section style={card}>{error}</section>;
   if (!boq) return <section style={card}>Loading…</section>;
@@ -170,6 +182,13 @@ export default function BoqPanel({ projectId, project, me }) {
               <button style={{ ...ghostButton, padding: "4px 12px" }}
                       disabled={busy} onClick={() => lock(false)}>
                 Unlock</button>
+            )}
+            {boq.exists && !boq.is_locked && (
+              <button style={{ ...ghostButton, padding: "4px 12px",
+                        color: "#c0392b", borderColor: "#e2b6b6" }}
+                      disabled={busy} onClick={delBoq}
+                      title="Delete this draft BOQ so it can be re-entered">
+                🗑 Delete BOQ</button>
             )}
           </div>
         )}

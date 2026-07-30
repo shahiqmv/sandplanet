@@ -97,6 +97,33 @@ class BoqTests(TestCase):
         self.assertEqual(r.data["items"], [])
         self.assertFalse(Boq.objects.filter(project=self.project).exists())
 
+    def test_delete_removes_a_draft_boq(self):
+        self.client.force_authenticate(self.qs)
+        self.client.post(self._url("/items"), {"rows": self.ROWS},
+                         format="json")
+        r = self.client.delete(self._url("/delete"))
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(r.data["exists"])
+        self.assertFalse(Boq.objects.filter(project=self.project).exists())
+
+    def test_cannot_delete_a_locked_boq(self):
+        self.client.force_authenticate(self.qs)
+        self.client.post(self._url("/items"), {"rows": self.ROWS},
+                         format="json")
+        self.client.post(self._url("/lock"), {"locked": True}, format="json")
+        r = self.client.delete(self._url("/delete"))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("locked", r.data["detail"].lower())
+        self.assertTrue(Boq.objects.filter(project=self.project).exists())
+
+    def test_site_staff_cannot_delete_boq(self):
+        self.client.force_authenticate(self.qs)
+        self.client.post(self._url("/items"), {"rows": self.ROWS},
+                         format="json")
+        self.client.force_authenticate(self.se)
+        self.assertEqual(self.client.delete(self._url("/delete")).status_code,
+                         403)
+
 
 class VariationTests(TestCase):
     def setUp(self):
@@ -263,6 +290,18 @@ class ProgressClaimTests(TestCase):
         c = ProgressClaim.objects.get(pk=cid)
         self.assertEqual(c.status, "DRAFT")
         self.assertEqual(c.invoice_no, inv)
+
+    def test_boq_delete_blocked_once_a_claim_exists(self):
+        from .models import Boq
+        # raise a claim (locks the BOQ), then a Director unlocks it
+        self._create()
+        self.client.post(f"/api/v1/projects/{self.project.id}/boq/lock",
+                         {"locked": False}, format="json")
+        r = self.client.delete(
+            f"/api/v1/projects/{self.project.id}/boq/delete")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("claim", r.data["detail"].lower())
+        self.assertTrue(Boq.objects.filter(project=self.project).exists())
 
     def test_advance_claim_then_interim_recovers_it(self):
         # Advance = 40% of 3000 = 1200; + 8% GST = 1296. No work lines.

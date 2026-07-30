@@ -111,6 +111,22 @@ def boq_lock(request, pid):
     return Response(_boq_payload(p))
 
 
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def boq_delete(request, pid):
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = commercial.delete_boq(p, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    # Re-fetch: the deleted BOQ is still cached on the reverse relation.
+    p, _ = _get_project(request, pid)
+    return Response(_boq_payload(p))
+
+
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])

@@ -136,6 +136,26 @@ def set_boq_lock(project, locked, actor):
     return boq, None
 
 
+def delete_boq(project, actor):
+    """Delete a draft BOQ so it can be re-entered (e.g. wrong file uploaded, or
+    switching conventional ↔ unit). Blocked once the BOQ is locked or any claim
+    exists — those baseline the contract. Returns (True, None) or (None, err)."""
+    boq = getattr(project, "boq", None)
+    if boq is None:
+        return None, "There's no BOQ to delete."
+    if boq.is_locked:
+        return None, ("The BOQ is locked — unlock it first, and only if no "
+                      "claim has been certified against it.")
+    if project.claims.exists():
+        return None, ("A claim already exists on this project — the BOQ can't "
+                      "be deleted.")
+    mode, total = boq.mode, str(boq.contract_value)
+    boq.delete()          # cascades to items and unit categories
+    audit("project", project.id, "BOQ_DELETED", actor=actor,
+          detail={"mode": mode, "was_total": total})
+    return True, None
+
+
 # ---- Variations (VOs) ----------------------------------------------------
 
 def _variation_items(variation, rows):
