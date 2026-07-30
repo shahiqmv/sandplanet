@@ -11,6 +11,7 @@ from django.db.models import Max, Sum
 from .audit import audit
 
 ZERO = Decimal("0")
+ONE = Decimal("1")
 _CENT = Decimal("0.01")
 _MIL = Decimal("0.001")
 
@@ -267,7 +268,10 @@ def create_claim(project, data, actor):
             return None, ("Set the advance payment % in the project's contract "
                           "terms first.")
     else:
-        if boq is None or not boq.items.exists():
+        is_unit = boq is not None and boq.mode == "UNIT"
+        has_lines = boq is not None and (
+            boq.categories.exists() if is_unit else boq.items.exists())
+        if boq is None or not has_lines:
             return None, "Add a BOQ before raising a claim."
         if not boq.is_locked:
             boq.is_locked = True
@@ -278,6 +282,11 @@ def create_claim(project, data, actor):
     gst = _dec(project.output_gst_pct)
     default_basis = ("MEASURED" if project.contract_type == "REMEASUREMENT"
                      else "PERCENT")
+    # A unit-based BOQ is naturally claimed by units complete (e.g. 4 of 11
+    # villas), so its default basis is measured — priced categories value by
+    # quantity, lump bills always by % (owner 2026-07-30).
+    if not is_advance and boq is not None and boq.mode == "UNIT":
+        default_basis = "MEASURED"
     claim = ProgressClaim.objects.create(
         project=project, seq=seq, ref=(data.get("ref") or f"IPA-{seq:02d}"),
         claim_type=data.get("claim_type") or "INTERIM",
@@ -302,25 +311,34 @@ def create_claim(project, data, actor):
     prev_map = {}
     if previous:
         for pci in previous.items.all():
-            prev_map[(pci.source, pci.boq_item_id,
-                      pci.variation_item_id)] = pci
+            prev_map[(pci.source, pci.boq_item_id, pci.variation_item_id,
+                      pci.boq_category_id)] = pci
     new_items = []
     # An advance claim carries no work lines — its value is the flat advance %.
-    if not is_advance and boq:
+    if not is_advance and boq and boq.mode == "UNIT":
+        # Unit BOQ: one claim line per summary category (priced or lump).
+        for cat in boq.categories.all():
+            pci = prev_map.get(("CAT", None, None, cat.id))
+            new_items.append(ProgressClaimItem(
+                claim=claim, source="CAT", boq_category=cat,
+                cumulative_pct=(pci.cumulative_pct if pci else None),
+                cumulative_qty=(pci.cumulative_qty if pci else None)))
+    if not is_advance and boq and boq.mode != "UNIT":
         for it in boq.items.all():
             if it.is_heading:
                 continue
-            pci = prev_map.get(("BOQ", it.id, None))
+            pci = prev_map.get(("BOQ", it.id, None, None))
             new_items.append(ProgressClaimItem(
                 claim=claim, source="BOQ", boq_item=it,
                 cumulative_pct=(pci.cumulative_pct if pci else None),
                 cumulative_qty=(pci.cumulative_qty if pci else None)))
+    if not is_advance and boq:
         for v in project.variations.filter(
                 status="APPROVED").prefetch_related("items"):
             for it in v.items.all():
                 if it.is_heading:
                     continue
-                pci = prev_map.get(("VO", None, it.id))
+                pci = prev_map.get(("VO", None, it.id, None))
                 new_items.append(ProgressClaimItem(
                     claim=claim, source="VO", variation_item=it,
                     cumulative_pct=(pci.cumulative_pct if pci else None),
@@ -528,8 +546,8 @@ def claim_valuation(claim):
     prev_map = {}
     if prev:
         for pci in prev.items.all():
-            prev_map[(pci.source, pci.boq_item_id,
-                      pci.variation_item_id)] = pci
+            prev_map[(pci.source, pci.boq_item_id, pci.variation_item_id,
+                      pci.boq_category_id)] = pci
 
     # Bill/section rollup: a priced line belongs to the heading (bill) above it
     # unless it carries its own finer Section tag.
@@ -543,9 +561,46 @@ def claim_valuation(claim):
     k1 = k4 = ZERO
     lines = []
     for ci in claim.items.select_related(
-            "boq_item", "variation_item", "variation_item__variation"):
+            "boq_item", "variation_item", "variation_item__variation",
+            "boq_category"):
         line = ci.line
         if line is None:
+            continue
+        if ci.source == "CAT":
+            # Unit-mode category: priced categories value by units complete
+            # (qty × per-unit total); lump bills always by % of their amount.
+            cat = ci.boq_category
+            is_lump = cat.is_lump
+            line_basis = "PERCENT" if is_lump else basis
+            rate = cat.per_unit_total          # 0 for a lump bill
+            contract_amt = cat.line_total
+            cum_val = _cum_value(line_basis, ci.cumulative_pct,
+                                 ci.cumulative_qty, contract_amt, rate, ONE)
+            pci = prev_map.get(("CAT", None, None, cat.id))
+            prev_basis = ("PERCENT" if is_lump
+                          else (prev.basis if prev else line_basis))
+            prev_val = (_cum_value(prev_basis, pci.cumulative_pct,
+                                   pci.cumulative_qty, contract_amt, rate, ONE)
+                        if pci else ZERO)
+            k1 += cum_val
+            lines.append({
+                "id": ci.id, "source": "CAT",
+                "section": "Unit rate categories",
+                "item_code": cat.ref, "description": cat.name,
+                "unit": ("" if is_lump else cat.unit),
+                "contract_qty": (None if is_lump else cat.qty),
+                "rate": (None if is_lump else rate),
+                "contract_amount": contract_amt,
+                "cumulative_pct": ci.cumulative_pct,
+                "cumulative_qty": ci.cumulative_qty,
+                "previous_pct": (pci.cumulative_pct if pci else None),
+                "previous_qty": (pci.cumulative_qty if pci else None),
+                "is_discount": False, "is_lump": is_lump,
+                # A lump bill is claimed by % even on a measured claim.
+                "is_percent_only": is_lump,
+                "previous_value": prev_val, "current_value": cum_val - prev_val,
+                "cumulative_value": cum_val,
+            })
             continue
         is_vo = ci.source == "VO"
         omission = is_vo and line.variation.kind == "OMISSION"
@@ -558,7 +613,8 @@ def claim_valuation(claim):
         line_basis = "PERCENT" if is_discount else basis
         cum_val = _cum_value(line_basis, ci.cumulative_pct, ci.cumulative_qty,
                              contract_amt, rate, sign)
-        pci = prev_map.get((ci.source, ci.boq_item_id, ci.variation_item_id))
+        pci = prev_map.get((ci.source, ci.boq_item_id, ci.variation_item_id,
+                            ci.boq_category_id))
         # Value the previous claim's cumulative with ITS OWN basis: a prior
         # claim may have been recorded on % while this one is measured-qty (or
         # vice-versa). Using the current basis read the wrong stored field and
@@ -588,6 +644,8 @@ def claim_valuation(claim):
             "previous_pct": (pci.cumulative_pct if pci else None),
             "previous_qty": (pci.cumulative_qty if pci else None),
             "is_discount": is_discount,
+            # A discount is a lump credit, always claimed by % — never measured.
+            "is_percent_only": is_discount,
             "previous_value": prev_val, "current_value": cur_val,
             "cumulative_value": cum_val,
         })

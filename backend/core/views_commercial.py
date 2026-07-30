@@ -502,8 +502,9 @@ def _claims_payload(project):
                      if getattr(project, "boq", None) else "USD"),
         "contract": {k: v for k, v in commercial.contract_summary(
             project).items()},
-        "can_raise": bool(getattr(project, "boq", None)
-                          and project.boq.items.exists()),
+        "can_raise": bool(getattr(project, "boq", None) and (
+            project.boq.categories.exists() if project.boq.mode == "UNIT"
+            else project.boq.items.exists())),
         "claims": rows,
         "revenue": commercial.project_revenue_summary(project),
         "receipts": [_receipt_json(r) for r in receipts],

@@ -313,8 +313,10 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
   const w = d.waterfall;
   const editable = canEdit && c.status === "DRAFT";
   const measured = meta.basis === "MEASURED";
-  // A discount line is always valued by % complete, even on a measured claim.
-  const measuredLine = (ln) => measured && !ln.is_discount;
+  // A discount line and a unit-BOQ lump bill are always valued by % complete,
+  // even on a measured claim (the backend flags them is_percent_only).
+  const measuredLine = (ln) =>
+    measured && !(ln.is_percent_only ?? ln.is_discount);
 
   async function save() {
     setError(null); setBusy(true);

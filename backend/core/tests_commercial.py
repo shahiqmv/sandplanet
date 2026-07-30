@@ -830,3 +830,127 @@ class ProgressClaimTests(TestCase):
         self.assertEqual(
             amount_in_words(Decimal("1234.56")),
             "US Dollars One thousand two hundred thirty-four and 56/100 only")
+
+
+class UnitClaimTests(TestCase):
+    """Progress claims against a unit-based BOQ: one line per summary category —
+    priced categories valued by units complete, lump bills by %. The
+    conventional claim path must be entirely unaffected."""
+
+    def setUp(self):
+        from decimal import Decimal
+
+        from . import boq_unit_extract as ue
+        self.site = Site.objects.create(code="SFR", name="Fushi",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("uc_qs", User.Role.QS)
+        self.director = make_user("uc_dir", User.Role.DIRECTOR)
+        # Preliminaries 132,512.18 (lump) + 11 villas × 26,491.41 = 423,917.69
+        self.project = Project.objects.create(
+            site=self.site, code="SFR-01", title="Villa Refurb",
+            contract_value="423917.69", contract_type="LUMP_SUM",
+            retention_pct="0", output_gst_pct="8")
+        self.boq, msg = ue.commit(self.project, ue.normalise([
+            {"name": "Preliminaries", "amount_per_unit": 132512.18,
+             "is_lump": True},
+            {"name": "Category D Villas", "quantity": 11, "unit": "no",
+             "amount_per_unit": 26491.41},
+        ]), self.qs)
+        self.assertIsNone(msg)
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+
+    def _create(self):
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/claims/create", {},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data["claims"][-1]
+
+    def _detail(self, cid):
+        return self.client.get(f"/api/v1/claims/{cid}").data
+
+    def _value(self, cid, villa_units=None, prelim_pct=None):
+        d = self._detail(cid)
+        rows = []
+        for ln in d["lines"]:
+            if ln.get("is_lump") and prelim_pct is not None:
+                rows.append({"id": ln["id"], "cumulative_pct": prelim_pct})
+            elif not ln.get("is_lump") and villa_units is not None:
+                rows.append({"id": ln["id"], "cumulative_qty": villa_units})
+        return self.client.post(f"/api/v1/claims/{cid}/items",
+                                {"rows": rows}, format="json").data
+
+    def _certify(self, cid):
+        self.client.post(f"/api/v1/claims/{cid}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/claims/{cid}/status",
+                         {"status": "CERTIFIED"}, format="json")
+        self.client.force_authenticate(self.qs)
+
+    def test_unit_claim_defaults_to_measured_and_values_by_category(self):
+        from decimal import Decimal
+        c = self._create()
+        self.assertEqual(c["basis"], "MEASURED")   # unit BOQ default
+        self._value(c["id"], villa_units="4", prelim_pct="50")
+        d = self._detail(c["id"])
+        villa = next(ln for ln in d["lines"] if not ln["is_lump"])
+        prelim = next(ln for ln in d["lines"] if ln["is_lump"])
+        # 4 of 11 villas × 26,491.41 = 105,965.64
+        self.assertEqual(Decimal(str(villa["cumulative_value"])),
+                         Decimal("26491.41") * 4)
+        self.assertTrue(villa["source"] == "CAT")
+        self.assertFalse(villa["is_percent_only"])
+        # lump bill claimed by %: 50% of 132,512.18 = 66,256.09
+        self.assertEqual(Decimal(str(prelim["cumulative_value"])),
+                         Decimal("132512.18") / 2)
+        self.assertTrue(prelim["is_percent_only"])
+        # k gross = both categories together
+        self.assertEqual(
+            Decimal(str(d["waterfall"]["k_gross"])),
+            (Decimal("26491.41") * 4 + Decimal("132512.18") / 2)
+            .quantize(Decimal("0.001")))
+
+    def test_unit_claim_chains_previous_units(self):
+        from decimal import Decimal
+        c1 = self._create()
+        self._value(c1["id"], villa_units="4", prelim_pct="50")
+        self._certify(c1["id"])
+        c2 = self._create()
+        d2 = self._detail(c2["id"])
+        villa = next(ln for ln in d2["lines"] if not ln["is_lump"])
+        # the prior 4 units carry forward as this line's previous figure
+        self.assertEqual(Decimal(str(villa["previous_qty"])), Decimal("4"))
+        self.assertEqual(Decimal(str(villa["previous_value"])),
+                         Decimal("26491.41") * 4)
+        # bump to 7 villas: current = 3 × rate, cumulative = 7 × rate
+        self._value(c2["id"], villa_units="7")
+        d2 = self._detail(c2["id"])
+        villa = next(ln for ln in d2["lines"] if not ln["is_lump"])
+        self.assertEqual(Decimal(str(villa["current_value"])),
+                         Decimal("26491.41") * 3)
+        self.assertEqual(Decimal(str(villa["cumulative_value"])),
+                         Decimal("26491.41") * 7)
+
+    def test_conventional_claim_still_percent_by_default(self):
+        # A conventional BOQ project on the same code path is unaffected: its
+        # claim basis still derives from the contract type (here % complete).
+        from decimal import Decimal
+        site2 = Site.objects.create(code="VKR", name="Vakkaru",
+                                    status=Site.Status.ACTIVE)
+        proj = Project.objects.create(site=site2, code="POOLS17",
+                                      title="Pools", contract_value="3000",
+                                      contract_type="LUMP_SUM")
+        self.client.post(
+            f"/api/v1/projects/{proj.id}/boq/items",
+            {"rows": [{"item_code": "A", "description": "Item A", "unit": "no",
+                       "qty": "100", "rate_combined": "10"}]}, format="json")
+        r = self.client.post(f"/api/v1/projects/{proj.id}/claims/create", {},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        c = r.data["claims"][-1]
+        self.assertEqual(c["basis"], "PERCENT")
+        line = self._detail(c["id"])["lines"][0]
+        self.assertEqual(line["source"], "BOQ")
+        self.assertIsNone(line.get("previous_qty"))

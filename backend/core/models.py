@@ -2704,6 +2704,7 @@ class ProgressClaimItem(models.Model):
     class Source(models.TextChoices):
         BOQ = "BOQ", "BOQ"
         VO = "VO", "Variation"
+        CAT = "CAT", "Unit category"   # unit-mode BOQ: claim per summary category
 
     claim = models.ForeignKey(ProgressClaim, on_delete=models.CASCADE,
                               related_name="items")
@@ -2712,6 +2713,11 @@ class ProgressClaimItem(models.Model):
                                  blank=True, related_name="+")
     variation_item = models.ForeignKey(VariationItem, on_delete=models.CASCADE,
                                        null=True, blank=True, related_name="+")
+    # Unit-mode BOQ: a claim line is one summary category (priced per unit ×
+    # quantity, or a lump bill) instead of a flat BOQ item. Null on the
+    # conventional path, which is unchanged.
+    boq_category = models.ForeignKey(BoqCategory, on_delete=models.CASCADE,
+                                     null=True, blank=True, related_name="+")
     cumulative_pct = models.DecimalField(max_digits=6, decimal_places=2,
                                          null=True, blank=True)   # 0..100
     cumulative_qty = models.DecimalField(max_digits=14, decimal_places=3,
@@ -2722,9 +2728,13 @@ class ProgressClaimItem(models.Model):
 
     @property
     def line(self):
-        """The underlying priced item (BOQ or variation)."""
-        return self.boq_item if self.source == self.Source.BOQ \
-            else self.variation_item
+        """The underlying priced item (BOQ item, variation item, or unit
+        category)."""
+        if self.source == self.Source.BOQ:
+            return self.boq_item
+        if self.source == self.Source.CAT:
+            return self.boq_category
+        return self.variation_item
 
 
 class DeductionPreset(models.Model):
