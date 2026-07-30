@@ -3416,6 +3416,11 @@ class ScheduleLine(models.Model):
     s_no = models.PositiveIntegerField(default=0)   # auto per section
 
     # --- planning (PM) ---
+    # Optional bundle/group label (e.g. "Deck & Fence Timber", "Pool plumbing").
+    # Lines that share a bundle AND a supplier collapse into one expandable
+    # summary row in the planner + client plan; blank = a standalone line. Pure
+    # presentation — each line stays its own procurable record for IPR/tracking.
+    bundle = models.CharField(max_length=120, blank=True)
     category = models.CharField(max_length=80, blank=True)
     # Optional link to the Item Master, so descriptions stay disciplined; the
     # text fields carry the (item-derived or free-typed) values for display.

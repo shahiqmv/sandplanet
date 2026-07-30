@@ -214,6 +214,22 @@ def line_committed(line):
     return act["committed"] if act else None
 
 
+def effective_supplier(line):
+    """The supplier a line is grouped under for the bundle rollup: the awarded
+    quote's supplier once decided, else the linked IPR's actual supplier, else
+    the planned supplier. This is what makes a bundle split by supplier the
+    moment purchasing awards / raises different IPRs (owner 2026-07-30). Uses the
+    prefetched quotes, so it costs no extra query on a listed schedule."""
+    q = next((x for x in line.quotes.all() if x.is_awarded), None)
+    if q and (q.supplier_name or "").strip():
+        return q.supplier_name.strip()
+    if line.ipr_id:
+        act = line_ipr_actuals(line)
+        if act and (act.get("supplier") or "").strip():
+            return act["supplier"].strip()
+    return (line.planned_supplier or "").strip()
+
+
 def line_pipeline(line):
     """The six derived stages for a line, in flow order."""
     if line.supply_by == "CLIENT":

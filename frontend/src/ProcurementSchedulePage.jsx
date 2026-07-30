@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
@@ -122,6 +122,104 @@ function PipelineStrip({ stages }) {
         </span>
       ))}
     </div>
+  );
+}
+
+// One line row in the schedule table. `member` = a line shown expanded under a
+// bundle summary (indented, serial hidden).
+function LineRow({ ln, c, member, sel, on }) {
+  return (
+    <tr style={{ borderTop: member ? "1px dashed var(--line)"
+      : "1px solid var(--line)",
+      background: member ? "var(--sky-soft)" : undefined }}>
+      <td style={{ ...cell, paddingLeft: member ? 26 : 10 }}>
+        {member ? "" : ln.s_no}</td>
+      <td style={cell}>{ln.description}
+        {ln.specification && <div style={{ color: "var(--muted)",
+          fontSize: 11 }}>{ln.specification}</div>}
+        {ln.client_stale && <div style={{ color: "var(--amber-fg)",
+          fontSize: 10.5 }}>⚠ client update overdue</div>}</td>
+      <td style={cell}>{ln.make_brand || "—"}</td>
+      <td style={cell}>{ln.quantity != null
+        ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
+        : (ln.uom || "—")}</td>
+      <td style={cell}>{ln.category || ln.trade || "—"}</td>
+      <td style={cell}>{ln.supply_by === "CLIENT"
+        ? <Chip tone="warn">{c.site_code}</Chip> : "Sand Planet"}</td>
+      <td style={cell}>{fmt(ln.required_date)}</td>
+      <td style={cell}>{ln.ipr_supplier || ln.planned_supplier || "—"}</td>
+      <td style={cell}>{ln.ipr_country || ln.source_country || "—"}</td>
+      <td style={cell}>{ln.ipr_ref && ln.risk?.projected
+        ? fmt(ln.risk.projected)
+        : (ln.lead_time_days != null ? `${ln.lead_time_days}d` : "—")}</td>
+      {c.show_values && <td style={cell}><ValueCell ln={ln} /></td>}
+      <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
+      <td style={cell}><RiskCell risk={ln.risk} /></td>
+      <td style={cell}>
+        {ln.stage ? <Chip tone={ln.stage.tone}>{ln.stage.label}</Chip>
+          : <Chip tone={STATE_TONE[ln.state]}>
+              {ln.state.replace(/_/g, " ")}</Chip>}
+        {ln.stage && <div style={{ fontSize: 9.5, color: "var(--muted)",
+          marginTop: 2 }}>{ln.state.replace(/_/g, " ").toLowerCase()}</div>}
+      </td>
+      <td style={{ ...cell, whiteSpace: "nowrap" }}>
+        {(c.can_edit_plan || c.can_confirm) &&
+          <button style={linkBtn} onClick={() => on.edit(ln.id)}>Edit</button>}
+        {c.can_link && <button style={{ ...linkBtn, marginLeft: 8,
+          color: "var(--sky)" }}
+          onClick={() => on.track(sel.track === ln.id ? null : ln.id)}>
+          Track</button>}
+        {c.show_values && (c.can_quote || ln.quotes?.length > 0) &&
+          <button style={{ ...linkBtn, marginLeft: 8, color: "var(--sky)" }}
+            onClick={() => on.quotes(sel.quotes === ln.id ? null : ln.id)}>
+            Quotes{ln.quotes?.length ? ` · ${ln.quotes.length}` : ""}
+            {ln.quotes?.some((q) => q.is_awarded) || ln.award_is_new_supplier
+              ? " ✓" : ""}</button>}
+      </td>
+    </tr>
+  );
+}
+
+// The collapsed summary row for a bundle of same-material, same-supplier lines
+// (e.g. "Deck & Fence Timber" in six sizes). Click to expand the members.
+function BundleRow({ group, c, open, onToggle }) {
+  const s = group.summary;
+  const qty = s.quantity != null
+    ? `${Number(s.quantity)}${s.uom ? " " + s.uom : ""}`
+    : `${s.count} items`;
+  return (
+    <tr style={{ borderTop: "1px solid var(--line)",
+      background: "var(--sky-soft)", cursor: "pointer" }} onClick={onToggle}>
+      <td style={{ ...cell, color: "var(--muted)" }}>{open ? "▾" : "▸"}</td>
+      <td style={cell}>
+        <span style={{ fontWeight: 600 }}>{s.bundle}</span>
+        <span style={{ color: "var(--muted)", fontSize: 11 }}>
+          {" "}· {s.count} items</span>
+        {s.make_brand && s.make_brand !== "Multiple" &&
+          <div style={{ color: "var(--muted)", fontSize: 11 }}>
+            {s.make_brand}</div>}
+      </td>
+      <td style={cell}>{s.make_brand || "—"}</td>
+      <td style={cell}>{qty}</td>
+      <td style={cell}>{s.category || "—"}</td>
+      <td style={cell}>{s.supply_by === "CLIENT"
+        ? <Chip tone="warn">{c.site_code}</Chip> : "Sand Planet"}</td>
+      <td style={cell}>{fmt(s.required_date)}</td>
+      <td style={cell}>{s.supplier || <span style={{
+        color: "var(--muted)" }}>TBD</span>}</td>
+      <td style={cell}>{s.source_country || "—"}</td>
+      <td style={cell}>—</td>
+      {c.show_values && <td style={cell}>{money(s.estimated_value, "USD")}
+        {s.committed_value != null && <div style={{ fontSize: 10.5,
+          color: "var(--muted)" }}>ordered {money(s.committed_value, "USD")}</div>}
+      </td>}
+      <td style={cell}><PipelineStrip stages={s.pipeline} /></td>
+      <td style={cell}><RiskCell risk={s.risk} /></td>
+      <td style={cell}><Chip tone={STATE_TONE[s.state]}>
+        {s.state.replace(/_/g, " ")}</Chip></td>
+      <td style={{ ...cell, color: "var(--sky)", whiteSpace: "nowrap" }}>
+        {open ? "Hide" : "Expand"}</td>
+    </tr>
   );
 }
 
@@ -289,6 +387,7 @@ function ScheduleDetail({ id, me, onBack }) {
   const [editId, setEditId] = useState(null);
   const [trackId, setTrackId] = useState(null);
   const [quotesId, setQuotesId] = useState(null);
+  const [openB, setOpenB] = useState({});   // expanded bundle keys
 
   const load = () => api(`/procurement-schedules/${id}`).then(setC)
     .catch((e) => setError(e.message));
@@ -319,11 +418,6 @@ function ScheduleDetail({ id, me, onBack }) {
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
   if (!c) return <div style={card}>Loading…</div>;
 
-  const bySection = {};
-  for (const ln of c.lines) {
-    const k = ln.section_id || "none";
-    (bySection[k] = bySection[k] || []).push(ln);
-  }
   const secList = c.sections.length ? c.sections
     : [{ id: "none", code: "", title: "Ungrouped" }];
 
@@ -383,8 +477,11 @@ function ScheduleDetail({ id, me, onBack }) {
         onSaved={() => { setAdding(false); load(); }} />}
 
       {secList.map((sec) => {
-        const rows = bySection[sec.id] || [];
-        if (!rows.length && sec.id !== "none") return null;
+        const gkey = String(sec.id === "none" ? 0 : sec.id);
+        const grows = c.groups?.[gkey] || [];
+        if (!grows.length && sec.id !== "none") return null;
+        const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId };
+        const sel = { track: trackId, quotes: quotesId };
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,
             overflowX: "auto" }}>
@@ -401,66 +498,24 @@ function ScheduleDetail({ id, me, onBack }) {
                     whiteSpace: "nowrap" }}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {rows.map((ln) => (
-                  <tr key={ln.id} style={{ borderTop: "1px solid var(--line)" }}>
-                    <td style={cell}>{ln.s_no}</td>
-                    <td style={cell}>{ln.description}
-                      {ln.specification && <div style={{ color: "var(--muted)",
-                        fontSize: 11 }}>{ln.specification}</div>}
-                      {ln.client_stale && <div style={{ color: "var(--amber-fg)",
-                        fontSize: 10.5 }}>⚠ client update overdue</div>}</td>
-                    <td style={cell}>{ln.make_brand || "—"}</td>
-                    <td style={cell}>{ln.quantity != null
-                      ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
-                      : (ln.uom || "—")}</td>
-                    <td style={cell}>{ln.category || ln.trade || "—"}</td>
-                    <td style={cell}>{ln.supply_by === "CLIENT"
-                      ? <Chip tone="warn">{c.site_code}</Chip>
-                      : "Sand Planet"}</td>
-                    <td style={cell}>{fmt(ln.required_date)}</td>
-                    <td style={cell}>{ln.ipr_supplier || ln.planned_supplier
-                      || "—"}</td>
-                    <td style={cell}>{ln.ipr_country || ln.source_country
-                      || "—"}</td>
-                    <td style={cell}>{ln.ipr_ref && ln.risk?.projected
-                      ? fmt(ln.risk.projected)
-                      : (ln.lead_time_days != null
-                        ? `${ln.lead_time_days}d` : "—")}</td>
-                    {c.show_values && <td style={cell}>
-                      <ValueCell ln={ln} /></td>}
-                    <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
-                    <td style={cell}><RiskCell risk={ln.risk} /></td>
-                    <td style={cell}>
-                      {ln.stage
-                        ? <Chip tone={ln.stage.tone}>{ln.stage.label}</Chip>
-                        : <Chip tone={STATE_TONE[ln.state]}>
-                            {ln.state.replace(/_/g, " ")}</Chip>}
-                      {ln.stage && <div style={{ fontSize: 9.5,
-                        color: "var(--muted)", marginTop: 2 }}>
-                        {ln.state.replace(/_/g, " ").toLowerCase()}</div>}
-                    </td>
-                    <td style={{ ...cell, whiteSpace: "nowrap" }}>
-                      {(c.can_edit_plan || c.can_confirm) &&
-                        <button style={linkBtn}
-                          onClick={() => setEditId(ln.id)}>Edit</button>}
-                      {c.can_link && <button style={{ ...linkBtn,
-                        marginLeft: 8, color: "var(--sky)" }}
-                        onClick={() => setTrackId(
-                          trackId === ln.id ? null : ln.id)}>Track</button>}
-                      {c.show_values && (c.can_quote || ln.quotes?.length > 0)
-                        && <button style={{ ...linkBtn, marginLeft: 8,
-                          color: "var(--sky)" }} onClick={() => setQuotesId(
-                          quotesId === ln.id ? null : ln.id)}>
-                        Quotes{ln.quotes?.length ? ` · ${ln.quotes.length}` : ""}
-                        {ln.quotes?.some((q) => q.is_awarded)
-                          || ln.award_is_new_supplier ? " ✓" : ""}</button>}
-                    </td>
-                  </tr>
+                {grows.map((row) => row.kind === "bundle" ? (
+                  <Fragment key={`b${row.key}`}>
+                    <BundleRow group={row} c={c} open={!!openB[row.key]}
+                      onToggle={() => setOpenB((o) =>
+                        ({ ...o, [row.key]: !o[row.key] }))} />
+                    {openB[row.key] && row.members.map((ln) => (
+                      <LineRow key={ln.id} ln={ln} c={c} member sel={sel}
+                        on={on} />
+                    ))}
+                  </Fragment>
+                ) : (
+                  <LineRow key={row.line.id} ln={row.line} c={c} sel={sel}
+                    on={on} />
                 ))}
-                {!rows.length && <tr><td style={{ ...cell,
+                {!grows.length && <tr><td style={{ ...cell,
                   color: "var(--muted)" }} colSpan={c.show_values ? 15 : 14}>
                   No lines.</td></tr>}
-                {c.show_values && rows.length > 0 && (
+                {c.show_values && grows.length > 0 && (
                   <tr style={{ borderTop: "2px solid var(--line)",
                     fontWeight: 600 }}>
                     <td style={{ ...cell, textAlign: "right" }} colSpan={10}>
@@ -910,6 +965,17 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
           </L>
           <L k="Make / brand"><input style={inputStyle} value={f.make_brand}
             onChange={set("make_brand")} /></L>
+          <L k="Bundle / group">
+            <input style={inputStyle} list="psc-bundles" value={f.bundle || ""}
+              onChange={set("bundle")} placeholder="e.g. Deck & Fence Timber" />
+            <datalist id="psc-bundles">
+              {[...new Set((c.lines || []).map((l) => (l.bundle || "").trim())
+                .filter(Boolean))].map((b) =>
+                <option key={b} value={b} />)}
+            </datalist>
+            <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+              Variants sharing a bundle + supplier collapse into one row.</span>
+          </L>
           <L k="Quantity"><input type="number" style={inputStyle}
             value={f.quantity ?? ""} onChange={set("quantity")} /></L>
           <L k="Unit (UOM)">

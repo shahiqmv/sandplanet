@@ -84,10 +84,57 @@ def client_row(line):
     }
 
 
+def _grouping_dict(line):
+    """The minimal line shape the shared bundle grouper needs (client context —
+    no money). `_line` carries the model back for a standalone row."""
+    from .procurement_pipeline import (effective_supplier, line_pipeline,
+                                       line_risk)
+    return {
+        "_line": line, "section_id": line.section_id, "bundle": line.bundle,
+        "bundle_supplier": effective_supplier(line),
+        "pipeline": line_pipeline(line), "risk": line_risk(line),
+        "required_date": line.required_date, "quantity": line.quantity,
+        "uom": line.uom, "make_brand": line.make_brand,
+        "source_country": line.source_country, "category": line.category,
+        "trade": line.trade, "supply_by": line.supply_by,
+    }
+
+
+def _bundle_client_row(summary):
+    """A collapsed bundle as the client sees it — one summary line reusing the
+    same rollup the planner shows, mapped to the client's stage vocabulary."""
+    lvl = summary["risk"]["level"]
+    country = summary.get("source_country") or ""
+    return {
+        "s_no": "", "category": summary.get("category", ""),
+        "description": summary["bundle"],
+        "make_brand": ("" if summary.get("make_brand") == "Multiple"
+                       else summary.get("make_brand", "")),
+        "specification": f"{summary['count']} items",
+        "quantity": summary.get("quantity"), "uom": summary.get("uom", ""),
+        "supply_by": ("Sand Planet" if summary.get("supply_by") == "CONTRACTOR"
+                      else "Client"),
+        "source_country": ("" if country == "Multiple" else country),
+        "required_date": summary.get("required_date"),
+        "tds_req": "",
+        "tds": _stage_word(summary["pipeline"], "tds"),
+        "order": _stage_word(summary["pipeline"], "order"),
+        "production": _stage_word(summary["pipeline"], "production"),
+        "shipment": _stage_word(summary["pipeline"], "shipment"),
+        "delivery": _stage_word(summary["pipeline"], "delivery"),
+        "eta": ("Delivered" if lvl == "DELIVERED"
+                else (summary["risk"].get("projected") or "")),
+        "status": RISK_WORD.get(lvl, ""), "status_level": lvl,
+        "remarks": f"{summary['count']} variants", "is_bundle": True,
+    }
+
+
 def client_plan(sched, updated_by=""):
     """The whole client plan for a project: header identity + sectioned rows.
+    Bundled variants collapse to one summary row (same rule as the planner).
     Rendered identically by the xlsx export and the public HTML page."""
     from .pdf import company_info
+    from .procurement_grouping import group_rows
     doc = sched.document
     project = sched.project
     site = doc.site
@@ -95,7 +142,7 @@ def client_plan(sched, updated_by=""):
     client_name = getattr(site, "client_name", "") or site.name
 
     lines = list(sched.lines.select_related("section", "item")
-                 .exclude(state="CANCELLED"))
+                 .prefetch_related("quotes").exclude(state="CANCELLED"))
     by_section = {}
     for ln in lines:
         by_section.setdefault(ln.section_id, []).append(ln)
@@ -110,8 +157,10 @@ def client_plan(sched, updated_by=""):
                       key=lambda x: (x.s_no or 0, x.id))
         if not rows:
             continue
-        sections.append({"code": code, "title": title,
-                         "rows": [client_row(ln) for ln in rows]})
+        grouped = group_rows([_grouping_dict(ln) for ln in rows], values=False)
+        crows = [client_row(r["line"]["_line"]) if r["kind"] == "line"
+                 else _bundle_client_row(r["summary"]) for r in grouped]
+        sections.append({"code": code, "title": title, "rows": crows})
 
     return {
         "project_title": project.title, "project_code": project.code,

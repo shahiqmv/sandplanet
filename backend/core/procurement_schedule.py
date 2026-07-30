@@ -31,8 +31,8 @@ VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
               "ADMIN")                          # HO roles that see all schedules
 
 # Planning fields the PM owns; commercial fields Purchasing owns.
-_PLAN_FIELDS = ("category", "description", "make_brand", "specification",
-                "uom", "trade", "remarks")
+_PLAN_FIELDS = ("bundle", "category", "description", "make_brand",
+                "specification", "uom", "trade", "remarks")
 _COMM_FIELDS = ("planned_supplier", "source_country")
 
 
@@ -323,6 +323,7 @@ def line_dict(line, values=True):
         "section_id": line.section_id,
         "section_code": line.section.code if line.section_id else "",
         "section_title": line.section.title if line.section_id else "",
+        "bundle": line.bundle,
         "category": line.category, "description": line.description,
         "item_id": line.item_id,
         "item_code": line.item.code if line.item_id else "",
@@ -343,11 +344,14 @@ def line_dict(line, values=True):
         "ipr_ref": line.ipr.ref if line.ipr_id else "",
         "grn_ref": line.grn.ref if line.grn_id else "",
     }
-    from .procurement_pipeline import (client_is_stale, line_pipeline,
-                                       line_risk, line_stage)
+    from .procurement_pipeline import (client_is_stale, effective_supplier,
+                                       line_pipeline, line_risk, line_stage)
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
     d["stage"] = line_stage(line)
+    # The supplier a line groups under (awarded → IPR → planned). Not a money
+    # value — it's the bundle key, so it's exposed to every role.
+    d["bundle_supplier"] = effective_supplier(line)
     d["client_delivered_on"] = line.client_delivered_on
     d["client_stale"] = client_is_stale(line)
     if values:
@@ -409,6 +413,15 @@ def schedule_dict(sched, user):
     totals = ({"currency": "USD", "estimated": est_total,
                "committed": comm_total, "sections": section_est}
               if values else None)
+    # Collapse same-bundle + same-supplier lines into expandable summary rows,
+    # per section, so the planner (and client plan) stay readable. Standalone
+    # lines pass through unchanged.
+    from .procurement_grouping import group_rows
+    by_sec = {}
+    for ld in line_dicts:
+        by_sec.setdefault(ld["section_id"] or 0, []).append(ld)
+    groups = {str(sid): group_rows(lds, values)
+              for sid, lds in by_sec.items()}
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "project_id": sched.project_id, "project_code": sched.project.code,
@@ -433,6 +446,7 @@ def schedule_dict(sched, user):
         "totals": totals,
         "sections": sections,
         "lines": line_dicts,
+        "groups": groups,
         "approvals": [{"action": a.action, "by": a.actor.full_name,
                        "role": a.actor_role, "at": a.acted_at,
                        "comment": a.comment}
