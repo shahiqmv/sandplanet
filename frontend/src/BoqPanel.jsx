@@ -19,8 +19,10 @@ export default function BoqPanel({ projectId, project, me }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);   // BOQ-capture review draft
   const [pending, setPending] = useState(null); // an un-committed capture draft
+  const [unitDraft, setUnitDraft] = useState(null); // reviewed unit categories
   const fileRef = useRef(null);
   const captureRef = useRef(null);
+  const unitRef = useRef(null);
   const canEdit = EDIT_ROLES.includes(me.role);
 
   function load() {
@@ -50,6 +52,17 @@ export default function BoqPanel({ projectId, project, me }) {
     fd.append("file", file);
     try {
       setDraft(await apiUpload(`/projects/${projectId}/boq/capture`, fd));
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  async function captureUnit(file) {
+    if (!file) return;
+    setError(null); setBusy(true);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      setUnitDraft(await apiUpload(
+        `/projects/${projectId}/boq/capture-unit`, fd));
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
@@ -86,6 +99,13 @@ export default function BoqPanel({ projectId, project, me }) {
     }} />;
   }
 
+  if (unitDraft) {
+    return <BoqUnitReview projectId={projectId} draft={unitDraft}
+      currency={boq.currency} onDone={(done) => {
+        setUnitDraft(null); if (done) load();
+      }} />;
+  }
+
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 12,
@@ -115,6 +135,19 @@ export default function BoqPanel({ projectId, project, me }) {
                 <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
                        style={{ display: "none" }}
                        onChange={(e) => captureFile(e.target.files[0])} />
+                {(!boq.exists || boq.mode === "UNIT") && (
+                  <>
+                    <button style={{ ...ghostButton, padding: "4px 12px" }}
+                            disabled={busy}
+                            onClick={() => unitRef.current?.click()}
+                            title={"Capture a unit-based BOQ — works priced per "
+                              + "unit (villa/room) × quantity, plus lump bills"}>
+                      ✦ Unit-based BOQ</button>
+                    <input ref={unitRef} type="file" accept=".pdf"
+                           style={{ display: "none" }}
+                           onChange={(e) => captureUnit(e.target.files[0])} />
+                  </>
+                )}
                 <button style={{ ...ghostButton, padding: "4px 12px" }}
                         disabled={busy}
                         onClick={() => fileRef.current?.click()}>
@@ -162,6 +195,8 @@ export default function BoqPanel({ projectId, project, me }) {
             + "manually — supply (material) and installation (labour) can be "
             + "separate columns or a single combined rate." : ""}
         </p>
+      ) : boq.mode === "UNIT" ? (
+        <BoqUnitSummary boq={boq} />
       ) : (
         <>
           <BoqTable boq={boq} />
@@ -186,6 +221,127 @@ export default function BoqPanel({ projectId, project, me }) {
           )}
         </>
       )}
+    </section>
+  );
+}
+
+const cellIn = { ...inputStyle, padding: "3px 6px", fontSize: 12.5, width: 70 };
+
+// Unit-based BOQ — read-only summary of categories (per-unit × qty, or lump).
+function BoqUnitSummary({ boq }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+                      fontSize: 12.5 }}>
+        <thead><tr>
+          <th style={{ ...th, width: 44 }}>Ref</th>
+          <th style={th}>Description</th>
+          <th style={{ ...th, textAlign: "right", width: 90 }}>Qty</th>
+          <th style={{ ...th, textAlign: "right", width: 120 }}>Per unit</th>
+          <th style={{ ...th, textAlign: "right", width: 130 }}>Amount</th>
+        </tr></thead>
+        <tbody>
+          {boq.categories.map((c) => (
+            <tr key={c.id}>
+              <td style={td}>{c.ref}</td>
+              <td style={td}>{c.name}{c.is_lump && <span style={{
+                color: "var(--muted)", fontSize: 11 }}> · lump sum</span>}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {c.is_lump ? "—" : `${fmt(c.qty)} ${c.unit}`}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {c.is_lump ? "—" : fmt(c.per_unit_total)}</td>
+              <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
+                {fmt(c.line_total)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ textAlign: "right", marginTop: 10, fontSize: 15 }}>
+        Contract value <strong>{boq.currency} {fmt(boq.contract_value)}</strong>
+      </div>
+    </div>
+  );
+}
+
+// Review the AI-captured unit categories (editable) before committing.
+function BoqUnitReview({ projectId, draft, currency, onDone }) {
+  const [cats, setCats] = useState(draft.categories.map((c) => ({ ...c })));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const upd = (i, k, v) => setCats((cs) =>
+    cs.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
+  const lineTotal = (c) => c.is_lump ? Number(c.amount_per_unit || 0)
+    : Number(c.amount_per_unit || 0) * Number(c.quantity || 0);
+  const total = cats.reduce((a, c) => a + lineTotal(c), 0);
+  async function commit() {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/projects/${projectId}/boq/commit-unit`,
+        { method: "POST", body: { categories: cats } });
+      onDone(true);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                    flexWrap: "wrap" }}>
+        <Eyebrow>Review unit-based BOQ</Eyebrow>
+        <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          {cats.length} categories{draft.gst_percent
+            ? ` · GST ${draft.gst_percent}%` : ""} — fix any misread values,
+          then import.</span>
+      </div>
+      {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
+      <div style={{ overflowX: "auto", marginTop: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 12.5 }}>
+          <thead><tr>
+            <th style={{ ...th, width: 44 }}>Ref</th>
+            <th style={th}>Description</th>
+            <th style={{ ...th, width: 70 }}>Qty</th>
+            <th style={{ ...th, width: 56 }}>Unit</th>
+            <th style={{ ...th, textAlign: "right", width: 120 }}>Amount/unit</th>
+            <th style={{ ...th, width: 46 }}>Lump</th>
+            <th style={{ ...th, textAlign: "right", width: 130 }}>Line total</th>
+          </tr></thead>
+          <tbody>
+            {cats.map((c, i) => (
+              <tr key={i}>
+                <td style={td}><input style={cellIn} value={c.ref || ""}
+                  onChange={(e) => upd(i, "ref", e.target.value)} /></td>
+                <td style={td}><input style={{ ...cellIn, width: "100%" }}
+                  value={c.name}
+                  onChange={(e) => upd(i, "name", e.target.value)} /></td>
+                <td style={td}><input style={cellIn} type="number"
+                  disabled={c.is_lump} value={c.is_lump ? 1 : c.quantity}
+                  onChange={(e) => upd(i, "quantity", e.target.value)} /></td>
+                <td style={td}><input style={cellIn} value={c.unit}
+                  onChange={(e) => upd(i, "unit", e.target.value)} /></td>
+                <td style={td}><input style={{ ...cellIn, textAlign: "right" }}
+                  type="number" value={c.amount_per_unit}
+                  onChange={(e) => upd(i, "amount_per_unit",
+                                       e.target.value)} /></td>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <input type="checkbox" checked={!!c.is_lump}
+                    onChange={(e) => upd(i, "is_lump", e.target.checked)} /></td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
+                  {fmt(lineTotal(c))}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ textAlign: "right", marginTop: 10, fontSize: 15 }}>
+        Total <strong>{currency} {fmt(total)}</strong></div>
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <button style={buttonStyle} disabled={busy || !cats.length}
+          onClick={commit}>
+          {busy ? "Importing…" : `Import ${cats.length} categories`}</button>
+        <button style={ghostButton} onClick={() => onDone(false)}>Cancel</button>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
+        Importing replaces the project's current BOQ and sets it to unit-based
+        mode.</p>
     </section>
   );
 }
