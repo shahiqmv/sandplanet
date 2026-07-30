@@ -72,3 +72,40 @@ class BoqUnitTests(TestCase):
         self.assertEqual(boq.mode, Boq.Mode.CONVENTIONAL)   # default
         self.assertEqual(boq.contract_value, boq.total)     # == item total
         self.assertEqual(boq.contract_value, Decimal("1000.000"))
+
+    def test_lump_only_unit_boq_can_be_claimed(self):
+        # A unit BOQ of only lump bills has NO BoqItem rows; claiming must still
+        # seed one line per category and value each by % (owner 2026-07-30).
+        cats = ue.normalise([
+            {"name": "Preliminaries", "amount_per_unit": 100000,
+             "is_lump": True},
+            {"name": "Provisional sum", "amount_per_unit": 50000,
+             "is_lump": True}])
+        ue.commit(self.project, cats, self.qs)
+        self.assertFalse(
+            BoqItem.objects.filter(boq__project=self.project).exists())
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/claims/create", {},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        cid = r.data["claims"][-1]["id"]
+        d = self.client.get(f"/api/v1/claims/{cid}").data
+        self.assertEqual(len(d["lines"]), 2)          # one per lump category
+        self.assertTrue(all(ln["is_percent_only"] for ln in d["lines"]))
+
+    def test_saving_flat_items_reverts_unit_boq_to_conventional(self):
+        from . import commercial
+        ue.commit(self.project, self._cats(), self.qs)
+        boq = Boq.objects.get(project=self.project)
+        self.assertEqual(boq.mode, Boq.Mode.UNIT)
+        self.assertTrue(boq.categories.exists())
+        # Importing / entering flat priced items cleanly converts back and drops
+        # the orphan unit categories (so contract_value stops summing them).
+        commercial.set_boq_items(self.project, [
+            {"item_code": "1", "description": "Concrete", "unit": "m3",
+             "qty": "10", "rate_combined": "100"}], self.qs)
+        boq.refresh_from_db()
+        self.assertEqual(boq.mode, Boq.Mode.CONVENTIONAL)
+        self.assertFalse(boq.categories.exists())
+        self.assertEqual(boq.contract_value, Decimal("1000.000"))

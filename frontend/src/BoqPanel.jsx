@@ -92,6 +92,11 @@ export default function BoqPanel({ projectId, project, me }) {
   if (!boq) return <section style={card}>Loading…</section>;
 
   const editable = canEdit && !boq.is_locked;
+  const isUnit = boq.exists && boq.mode === "UNIT";
+  // Unit BOQs are counted by category; lump-only bills have no BoqItem rows, so
+  // items.length would read 0 and (below) hide the Lock button.
+  const lineCount = isUnit ? (boq.categories?.length || 0)
+    : (boq.exists ? boq.items.length : 0);
   const contractVal = project.contract_value != null
     ? Number(project.contract_value) : null;
   const delta = contractVal != null ? boq.total - contractVal : null;
@@ -122,8 +127,9 @@ export default function BoqPanel({ projectId, project, me }) {
     <section style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 12,
                     flexWrap: "wrap", marginBottom: 6 }}>
-        <Eyebrow meta={boq.exists ? `${boq.items.length} lines` : ""}>
-          Bill of Quantities
+        <Eyebrow meta={boq.exists
+          ? `${lineCount} ${isUnit ? "categories" : "lines"}` : ""}>
+          Bill of Quantities{isUnit ? " · unit-based" : ""}
         </Eyebrow>
         {boq.exists && (
           <Chip tone={boq.is_locked ? "alert" : "info"}>
@@ -133,46 +139,52 @@ export default function BoqPanel({ projectId, project, me }) {
         {canEdit && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8,
                         flexWrap: "wrap" }}>
-            <a href={`/api/v1/projects/${projectId}/boq/template`}
-               style={{ ...ghostButton, textDecoration: "none",
-                        padding: "4px 12px" }}>⬇ Template</a>
+            {!isUnit && (
+              <a href={`/api/v1/projects/${projectId}/boq/template`}
+                 style={{ ...ghostButton, textDecoration: "none",
+                          padding: "4px 12px" }}>⬇ Template</a>
+            )}
             {editable && (
               <>
-                <button style={{ ...buttonStyle, padding: "4px 12px" }}
-                        disabled={busy}
-                        onClick={() => captureRef.current?.click()}
-                        title={"Extract a client BOQ PDF or Excel into a "
-                          + "reviewable draft"}>
-                  {busy ? "Reading…" : "✦ Capture from PDF/Excel"}</button>
-                <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
-                       style={{ display: "none" }}
-                       onChange={(e) => captureFile(e.target.files[0])} />
-                {(!boq.exists || boq.mode === "UNIT") && (
+                {(!boq.exists || isUnit) && (
                   <>
-                    <button style={{ ...ghostButton, padding: "4px 12px" }}
+                    <button style={{ ...buttonStyle, padding: "4px 12px" }}
                             disabled={busy}
                             onClick={() => unitRef.current?.click()}
                             title={"Capture a unit-based BOQ — works priced per "
                               + "unit (villa/room) × quantity, plus lump bills"}>
-                      ✦ Unit-based BOQ</button>
+                      {busy ? "Reading…" : "✦ Unit-based BOQ"}</button>
                     <input ref={unitRef} type="file" accept=".pdf"
                            style={{ display: "none" }}
                            onChange={(e) => captureUnit(e.target.files[0])} />
                   </>
                 )}
-                <button style={{ ...ghostButton, padding: "4px 12px" }}
-                        disabled={busy}
-                        onClick={() => fileRef.current?.click()}>
-                  ⬆ Import template</button>
-                <input ref={fileRef} type="file" accept=".xlsx"
-                       style={{ display: "none" }}
-                       onChange={(e) => importFile(e.target.files[0])} />
-                <button style={{ ...ghostButton, padding: "4px 12px" }}
-                        onClick={() => setEditing(true)}>
-                  ✎ {boq.exists ? "Edit" : "Enter manually"}</button>
+                {!isUnit && (
+                  <>
+                    <button style={{ ...buttonStyle, padding: "4px 12px" }}
+                            disabled={busy}
+                            onClick={() => captureRef.current?.click()}
+                            title={"Extract a client BOQ PDF or Excel into a "
+                              + "reviewable draft"}>
+                      {busy ? "Reading…" : "✦ Capture from PDF/Excel"}</button>
+                    <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
+                           style={{ display: "none" }}
+                           onChange={(e) => captureFile(e.target.files[0])} />
+                    <button style={{ ...ghostButton, padding: "4px 12px" }}
+                            disabled={busy}
+                            onClick={() => fileRef.current?.click()}>
+                      ⬆ Import template</button>
+                    <input ref={fileRef} type="file" accept=".xlsx"
+                           style={{ display: "none" }}
+                           onChange={(e) => importFile(e.target.files[0])} />
+                    <button style={{ ...ghostButton, padding: "4px 12px" }}
+                            onClick={() => setEditing(true)}>
+                      ✎ {boq.exists ? "Edit" : "Enter manually"}</button>
+                  </>
+                )}
               </>
             )}
-            {boq.exists && !boq.is_locked && boq.items.length > 0 && (
+            {boq.exists && !boq.is_locked && lineCount > 0 && (
               <button style={{ ...buttonStyle, padding: "4px 12px" }}
                       disabled={busy} onClick={() => lock(true)}
                       title="Locks the contract baseline so claims can start">

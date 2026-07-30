@@ -109,10 +109,20 @@ def set_boq_items(project, rows, actor):
     items = _row_items(boq, rows)
     split = any(i.rate_install is not None for i in items)
     boq.items.all().delete()
+    # Saving flat priced items is the conventional path: if this project was on
+    # a unit-based BOQ, cleanly convert it back — reset the mode and drop the
+    # now-orphan unit categories so contract_value stops summing them.
+    fields = []
+    if boq.mode != Boq.Mode.CONVENTIONAL:
+        boq.categories.all().delete()
+        boq.mode = Boq.Mode.CONVENTIONAL
+        fields.append("mode")
     BoqItem.objects.bulk_create(items)
     if boq.split_rates != split:
         boq.split_rates = split
-        boq.save(update_fields=["split_rates"])
+        fields.append("split_rates")
+    if fields:
+        boq.save(update_fields=fields)
     audit("project", project.id, "BOQ_SAVED", actor=actor,
           detail={"items": len(items), "total": str(boq.total),
                   "split": split})
