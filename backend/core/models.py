@@ -2313,10 +2313,19 @@ class Boq(models.Model):
     `split_rates` records whether the client wants supply (material) and
     installation (labour) priced separately, or as one combined rate."""
 
+    class Mode(models.TextChoices):
+        CONVENTIONAL = "CONVENTIONAL", "Conventional (flat priced items)"
+        UNIT = "UNIT", "Unit-based (per-unit prototype × quantity)"
+
     project = models.OneToOneField(Project, on_delete=models.CASCADE,
                                    related_name="boq")
     currency = models.CharField(max_length=3, default="USD")  # contracts are USD
     split_rates = models.BooleanField(default=False)  # material + labour columns
+    # Conventional = the existing flat priced-item bill (default, unchanged).
+    # Unit = each category priced once per unit then × its quantity, plus lump
+    # bills — a strictly additive alternative selected per project.
+    mode = models.CharField(max_length=14, choices=Mode.choices,
+                            default=Mode.CONVENTIONAL)
     is_locked = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
@@ -2338,6 +2347,16 @@ class Boq(models.Model):
         from decimal import Decimal
         return sum((i.amount_install for i in self.items.all()), Decimal("0"))
 
+    @property
+    def contract_value(self):
+        """The priced contract total. Conventional → Σ item amounts (as
+        `total`). Unit → Σ each category's line total (per-unit × qty, or the
+        lump). GST is applied on top at display, not stored here."""
+        from decimal import Decimal
+        if self.mode != self.Mode.UNIT:
+            return self.total
+        return sum((c.line_total for c in self.categories.all()), Decimal("0"))
+
 
 class BoqItem(models.Model):
     """One BOQ line. A priced item carries qty × rate; the rate splits into a
@@ -2347,6 +2366,10 @@ class BoqItem(models.Model):
     no money. `section` groups items under a bill/trade for subtotals."""
 
     boq = models.ForeignKey(Boq, on_delete=models.CASCADE, related_name="items")
+    # Unit-mode only: the per-unit category this line prices. Null on a
+    # conventional BOQ (unchanged).
+    category = models.ForeignKey("BoqCategory", on_delete=models.CASCADE,
+                                 null=True, blank=True, related_name="items")
     sort_order = models.IntegerField(default=0)
     section = models.CharField(max_length=120, blank=True)  # bill / trade
     item_code = models.CharField(max_length=30, blank=True)  # e.g. A.1.2
@@ -2399,6 +2422,40 @@ class BoqItem(models.Model):
     def amount(self):
         return self._discount if self.is_discount else self._amount(
             self.rate_total)
+
+
+class BoqCategory(models.Model):
+    """Unit-mode only: a category priced once per unit then multiplied by its
+    quantity (e.g. "Category D Villas", 11 no × the per-villa total), or a
+    lump-sum bill (Preliminaries, Provisional) carried as a single amount."""
+
+    boq = models.ForeignKey(Boq, on_delete=models.CASCADE,
+                            related_name="categories")
+    sort_order = models.IntegerField(default=0)
+    ref = models.CharField(max_length=20, blank=True)      # summary Ref.
+    name = models.CharField(max_length=200)
+    unit = models.CharField(max_length=20, blank=True, default="no")
+    qty = models.DecimalField(max_digits=10, decimal_places=2, default=1)
+    # A lump-sum bill (no per-unit build-up) carries its value here; a priced
+    # category leaves this null and builds up from its per-unit items × qty.
+    is_lump = models.BooleanField(default=False)
+    lump_amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    @property
+    def per_unit_total(self):
+        from decimal import Decimal
+        return sum((i.amount for i in self.items.all()), Decimal("0"))
+
+    @property
+    def line_total(self):
+        from decimal import Decimal
+        if self.is_lump:
+            return self.lump_amount or Decimal("0")
+        return self.per_unit_total * (self.qty or Decimal("0"))
 
 
 class BoqImport(models.Model):
