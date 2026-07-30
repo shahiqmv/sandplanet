@@ -281,7 +281,11 @@ def create_claim(project, data, actor):
     claim = ProgressClaim.objects.create(
         project=project, seq=seq, ref=(data.get("ref") or f"IPA-{seq:02d}"),
         claim_type=data.get("claim_type") or "INTERIM",
-        basis=data.get("basis") or default_basis,
+        # The basis is a contract property: the first claim sets it, every
+        # later claim inherits it (a % / measured-qty mix between claims broke
+        # the previous-value read — owner 2026-07-30).
+        basis=(previous.basis if previous
+               else (data.get("basis") or default_basis)),
         work_done_upto=data.get("work_done_upto") or None, previous=previous,
         advance_pct=_dec(project.advance_payment_pct) or ZERO,
         # The recovery rate carries forward from the previous claim (so an
@@ -402,6 +406,11 @@ def set_claim_meta(claim, data, actor):
     material-on/off-site and retention-release figures the QS enters direct."""
     if claim.status != "DRAFT":
         return None, "Only a draft claim can be edited."
+    # The basis is locked once the first claim exists — later claims inherit it
+    # so a % / measured-qty mismatch can't creep in mid-contract.
+    if "basis" in data and claim.previous_id and data["basis"] != claim.basis:
+        return None, ("The claim basis is set by the first claim and can't be "
+                      "changed on a later one.")
     for f in ("ref", "claim_type", "basis", "note"):
         if f in data:
             setattr(claim, f, data.get(f) or getattr(claim, f))
@@ -550,7 +559,15 @@ def claim_valuation(claim):
         cum_val = _cum_value(line_basis, ci.cumulative_pct, ci.cumulative_qty,
                              contract_amt, rate, sign)
         pci = prev_map.get((ci.source, ci.boq_item_id, ci.variation_item_id))
-        prev_val = (_cum_value(line_basis, pci.cumulative_pct,
+        # Value the previous claim's cumulative with ITS OWN basis: a prior
+        # claim may have been recorded on % while this one is measured-qty (or
+        # vice-versa). Using the current basis read the wrong stored field and
+        # showed Previous as 0 — so "this claim" over-stated and, against the
+        # header's correctly-revalued previous, the net due went negative
+        # (owner 2026-07-30).
+        prev_basis = ("PERCENT" if is_discount
+                      else (prev.basis if prev else line_basis))
+        prev_val = (_cum_value(prev_basis, pci.cumulative_pct,
                                pci.cumulative_qty, contract_amt, rate, sign)
                     if pci else ZERO)
         cur_val = cum_val - prev_val
@@ -566,6 +583,10 @@ def claim_valuation(claim):
             "contract_amount": contract_amt,
             "cumulative_pct": ci.cumulative_pct,
             "cumulative_qty": ci.cumulative_qty,
+            # The previous claim's locked figure for this line, so the QS can
+            # see what carried over vs what they've just changed.
+            "previous_pct": (pci.cumulative_pct if pci else None),
+            "previous_qty": (pci.cumulative_qty if pci else None),
             "is_discount": is_discount,
             "previous_value": prev_val, "current_value": cur_val,
             "cumulative_value": cum_val,

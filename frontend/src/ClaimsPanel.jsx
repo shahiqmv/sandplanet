@@ -377,12 +377,15 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           </select>
         </label>
         <label>Basis{" "}
-          <select value={meta.basis} disabled={!editable}
+          <select value={meta.basis} disabled={!editable || c.basis_locked}
                   onChange={(e) => setM("basis", e.target.value)}
                   style={{ ...inputStyle, width: 140 }}>
             <option value="PERCENT">% complete</option>
             <option value="MEASURED">Measured qty</option>
           </select>
+          {c.basis_locked && (
+            <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>
+              set by claim 1</span>)}
         </label>
         <label>Work done up to{" "}
           <input type="date" value={meta.work_done_upto} disabled={!editable}
@@ -399,6 +402,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           <thead><tr>
             <th style={th}>Code</th><th style={th}>Description</th>
             <th style={{ ...th, textAlign: "right" }}>Contract {ccy}</th>
+            <th style={{ ...th, textAlign: "right" }}>
+              {measured ? "Prev qty" : "Prev %"}</th>
             <th style={{ ...th, textAlign: "right" }}>
               {measured ? "Qty done" : "% done"}</th>
             <th style={{ ...th, textAlign: "right" }}>Previous</th>
@@ -421,6 +426,12 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 <td style={{ ...td, maxWidth: 260 }}>{ln.description}</td>
                 <td style={{ ...td, textAlign: "right" }}>
                   {fmt(ln.contract_amount)}</td>
+                <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>
+                  {measuredLine(ln)
+                    ? (ln.previous_qty != null ? fmt(ln.previous_qty) : "—")
+                    : (ln.previous_pct != null
+                        ? `${pct(ln.previous_pct)}%` : "—")}
+                </td>
                 <td style={{ ...td, textAlign: "right" }}>
                   {editable ? (
                     <input type="number" style={numCell}

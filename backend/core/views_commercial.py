@@ -459,6 +459,7 @@ def _claim_meta(claim):
     return {
         "id": claim.id, "seq": claim.seq, "ref": claim.ref,
         "claim_type": claim.claim_type, "basis": claim.basis,
+        "basis_locked": claim.previous_id is not None,
         "status": claim.status, "work_done_upto": claim.work_done_upto,
         "advance_pct": claim.advance_pct, "recovery_pct": claim.recovery_pct,
         "advance_recovered_override": claim.advance_recovered_override,

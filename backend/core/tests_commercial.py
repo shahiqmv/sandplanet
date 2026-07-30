@@ -286,6 +286,51 @@ class ProgressClaimTests(TestCase):
         # net due = work 1500 − recovery 600 − retention 150 = 750
         self.assertEqual(float(wc["net_due"]), 750.0)
 
+    def test_previous_column_carries_from_prior_claim(self):
+        # The reported bug: a subsequent claim showed the previous claim's
+        # progress as 0. Claim 1 values A at 50% and is certified; claim 2 must
+        # report A's previous figure as that locked 50% / 500, not 0.
+        c1 = self._create()
+        self._value_pct(c1["id"], {"A": "50", "B": "40"})
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        c2 = self._create()
+        line_a = next(ln for ln in self._detail(c2["id"])["lines"]
+                      if ln["item_code"] == "A")
+        self.assertEqual(float(line_a["previous_value"]), 500.0)   # 50% × 1000
+        self.assertEqual(float(line_a["previous_pct"]), 50.0)
+
+    def test_basis_locks_to_the_first_claim(self):
+        # The first claim sets the basis; a later claim inherits it and the
+        # field is flagged locked so the QS can't flip % ↔ measured mid-contract.
+        c1 = self._create()
+        self.assertEqual(c1["basis"], "PERCENT")
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        c2 = self._create()
+        d2 = self._detail(c2["id"])["claim"]
+        self.assertEqual(d2["basis"], "PERCENT")
+        self.assertTrue(d2["basis_locked"])
+        r = self.client.post(f"/api/v1/claims/{c2['id']}/meta",
+                             {"basis": "MEASURED"}, format="json")
+        self.assertEqual(r.status_code, 400, r.data)
+
+    def test_previous_value_survives_a_legacy_basis_mismatch(self):
+        # Safety net for pre-lock data: even if a chained claim carries a
+        # different basis than its predecessor, the previous figure is valued
+        # on the PREVIOUS claim's own basis — so it never collapses to 0.
+        from .models import ProgressClaim
+        c1 = self._create()
+        self._value_pct(c1["id"], {"A": "50", "B": "40"})
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        c2 = self._create()
+        # force the mismatch the API would now refuse
+        ProgressClaim.objects.filter(pk=c2["id"]).update(basis="MEASURED")
+        line_a = next(ln for ln in self._detail(c2["id"])["lines"]
+                      if ln["item_code"] == "A")
+        self.assertEqual(float(line_a["previous_value"]), 500.0)
+
     def test_recovery_can_be_reduced_then_caught_up(self):
         # advance 1200; interim work 50% (k_gross 1500) → formula recovery 600
         self._status(self._create({"claim_type": "ADVANCE"})["id"], "SUBMITTED")
