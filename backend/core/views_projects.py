@@ -4,7 +4,8 @@ import re
 from datetime import date, datetime
 
 from rest_framework import serializers
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from .audit import audit
@@ -248,6 +249,35 @@ def _parse_date(text):
         except ValueError:
             continue
     return None
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+def programme_capture(request, pk):
+    """Claude reads an uploaded MS Project programme PDF and returns structured
+    activities for the PM to review before importing (mirrors BOQ capture — the
+    raw-text paste kept coming out garbled)."""
+    try:
+        project = Project.objects.get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and project.site_id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in PROJECT_CREATE_ROLES:
+        return Response({"detail": "Admin/Director/PM manage the programme."},
+                        status=403)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "Attach the programme PDF."}, status=400)
+    from . import programme_extract
+    try:
+        acts, err = programme_extract.run_capture(upload)
+    except programme_extract.ExtractionError as e:
+        return Response({"detail": str(e)}, status=400)
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response({"activities": acts, "count": len(acts)})
 
 
 def parse_programme_paste(text):

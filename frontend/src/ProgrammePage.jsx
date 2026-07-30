@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import GanttChart from "./GanttChart.jsx";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
@@ -12,6 +12,8 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
   const [detail, setDetail] = useState(project);
   const [paste, setPaste] = useState("");
   const [importing, setImporting] = useState(false);
+  const [captured, setCaptured] = useState(null);   // review list from AI
+  const [captureBusy, setCaptureBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", indent: 1, duration_days: "",
                                        start: "", finish: "",
@@ -43,6 +45,31 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
     } catch (e) {
       setError(e.message);
     }
+  }
+
+  async function capturePdf(file) {
+    if (!file) return;
+    setError(null); setNotice(null); setCaptureBusy(true); setCaptured(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await apiUpload(`/projects/${project.id}/programme/capture`, fd);
+      if (!r.count) { setError("No activities were found in that PDF."); }
+      else { setCaptured(r.activities); setImporting(false); }
+    } catch (e) { setError(e.message); }
+    finally { setCaptureBusy(false); }
+  }
+
+  async function importCaptured() {
+    setError(null);
+    try {
+      const r = await api(`/projects/${project.id}/programme`, {
+        method: "POST", body: { activities: captured, replace: true },
+      });
+      setNotice(`Imported ${r.imported} programme rows.`);
+      setCaptured(null);
+      load();
+    } catch (e) { setError(e.message); }
   }
 
   async function addActivity() {
@@ -145,15 +172,70 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
-      {canManage && !importing && (
-        <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>
+      {canManage && !importing && !captured && (
+        <div style={{ display: "flex", gap: 8, margin: "12px 0",
+                      flexWrap: "wrap", alignItems: "center" }}>
           <button onClick={() => setAdding(!adding)} style={buttonStyle}>
             + Add activity
           </button>
+          <label style={{ ...buttonStyle, cursor: captureBusy ? "wait"
+            : "pointer", opacity: captureBusy ? 0.6 : 1 }}>
+            {captureBusy ? "Reading the programme…" : "📄 Capture from PDF"}
+            <input type="file" accept="application/pdf" hidden
+              disabled={captureBusy}
+              onChange={(e) => capturePdf(e.target.files[0])} />
+          </label>
           <button onClick={() => setImporting(true)} style={ghostButton}>
-            {activities.length ? "Re-import from MS Project"
-                               : "Import from MS Project (paste)"}
+            {activities.length ? "Re-import (paste)"
+                               : "Import (paste)"}
           </button>
+          <span style={{ fontSize: 12, color: "#5a6b78" }}>
+            Export the MS Project programme as a PDF and capture it — no more
+            garbled paste.</span>
+        </div>
+      )}
+
+      {captured && canManage && (
+        <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                      padding: 14, margin: "0 0 12px",
+                      background: "var(--sp-bg, #f7fafc)" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                        flexWrap: "wrap" }}>
+            <b style={{ color: "var(--sp-navy)" }}>
+              Review — {captured.length} activities read from the PDF</b>
+            <span style={{ fontSize: 12, color: "#5a6b78" }}>
+              Check them, then import (this replaces the current programme).</span>
+          </div>
+          <div style={{ maxHeight: 300, overflow: "auto", marginTop: 10,
+                        border: "1px solid var(--sp-border)", borderRadius: 6,
+                        background: "#fff" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse",
+                            fontSize: 12.5 }}>
+              <thead><tr>
+                {["Activity", "Days", "Start", "Finish"].map((h) =>
+                  <th key={h} style={{ ...th, position: "sticky", top: 0,
+                    background: "#fff" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {captured.map((a, i) => (
+                  <tr key={i}>
+                    <td style={{ ...td, paddingLeft: 8 + (a.indent || 0) * 14,
+                      fontWeight: a.indent === 0 ? 700 : 400 }}>
+                      {a.is_milestone ? "◆ " : ""}{a.name}</td>
+                    <td style={td}>{a.duration_days ?? ""}</td>
+                    <td style={td}>{a.start || ""}</td>
+                    <td style={td}>{a.finish || ""}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <button onClick={importCaptured} style={buttonStyle}>
+              Import {captured.length} activities</button>
+            <button onClick={() => setCaptured(null)} style={ghostButton}>
+              Cancel</button>
+          </div>
         </div>
       )}
 

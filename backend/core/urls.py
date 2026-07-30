@@ -216,6 +216,8 @@ urlpatterns = [
     path("projects/<int:pk>", projects.project_detail, name="project-detail"),
     path("projects/<int:pk>/programme", projects.project_programme,
          name="project-programme"),
+    path("projects/<int:pk>/programme/capture", projects.programme_capture,
+         name="programme-capture"),
     path("projects/<int:pk>/documents", projects.project_documents,
          name="project-documents"),
     path("projects/<int:pk>/programme.pdf", projects.programme_pdf,
