@@ -3052,10 +3052,12 @@ class PaymentRequest(models.Model):
                                       default=Method.BANK)
     payee_account = models.TextField(blank=True)
     currency = models.CharField(max_length=3, default="MVR")   # MVR or USD
-    # Who raised it drives the approval chain (§7.1 / owner 2026-07-13):
+    # Who raised it drives the approval chain (§7.1; owner 2026-07-31):
     #   SITE    → PM → Director → voucher   (site teams, MVR only)
-    #   CENTRAL → Director → voucher        (HO Purchasing / HR, MVR or USD)
+    #   CENTRAL → voucher only              (HO Purchasing/HR/QS/Director, MVR/USD)
     #   FINANCE → voucher only              (Accounts-initiated rent/salary etc.)
+    # Head-Office (CENTRAL) requests have no site PM and skip the Director —
+    # they clear straight to a Payment Voucher for the signatory.
     origin = models.CharField(max_length=8, default="SITE")
     amount_requested = models.DecimalField(max_digits=14, decimal_places=2)
     required_by = models.DateField(null=True, blank=True)

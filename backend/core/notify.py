@@ -36,12 +36,13 @@ def targets_for(doc):
     if t in ("MR", "IR", "MAR", "PMR") and s == "SUBMITTED":
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "PYR" and s == "SUBMITTED":
-        # Site requests go to the PM; Head-Office (central) requests have no
-        # site PM and go straight to the Director (owner 2026-07-13).
+        # Only a site request waits at SUBMITTED — on its PM. Head-Office
+        # (CENTRAL) and Finance-raised requests auto-clear past the Director at
+        # submit, so nothing waits here for them; the DIRECTOR_APPROVED branch
+        # below then pings Finance for the voucher (owner 2026-07-31).
         pr = getattr(doc, "payment_request", None)
         if pr and pr.origin != "SITE":
-            return [(u, "needs Director approval")
-                    for u in _role_users("DIRECTOR")]
+            return []
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "PMR" and s == "PM_APPROVED":
         return [(u, "to review") for u in _role_users("HO_PURCHASING")]

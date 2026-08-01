@@ -276,10 +276,13 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin == "FINANCE" or pr.is_capitalized:
-            # Accounts-initiated (rent, salaries, utilities…) and capitalized
-            # import charges skip the Director — no Director step; cleared
-            # straight to a Payment Voucher for signatory approval.
+        if pr.origin in ("FINANCE", "CENTRAL") or pr.is_capitalized:
+            # Head-Office requests (CENTRAL — HO Purchasing/HR, QS, Director…),
+            # accounts-initiated ones (FINANCE — rent, salaries, utilities…) and
+            # capitalized import charges skip the Director: there is no site PM
+            # and no Director step — they clear straight to a Payment Voucher for
+            # signatory approval (owner 2026-07-31). Only site PYRs keep the
+            # PM → Director chain.
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
                         "No Director step — authorised on a Payment Voucher")
         return None
@@ -292,8 +295,10 @@ def pyr_action(request, doc, action_name):
                                     status=403)
                 _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
                 return None
-            # CENTRAL (HO Purchasing / HR): the Director approves directly —
-            # there is no site PM in the chain.
+            # Legacy fallback: a CENTRAL request submitted before HO PYRs began
+            # auto-clearing (owner 2026-07-31) may still sit at SUBMITTED — the
+            # Director can push it through to a voucher. New CENTRAL requests
+            # never reach here (they clear at submit).
             if user.role not in ("DIRECTOR", "ADMIN"):
                 return Response({"detail": "Director approval required."},
                                 status=403)

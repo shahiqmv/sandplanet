@@ -248,14 +248,24 @@ class CentralPaymentTests(PyrBase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("MVR only", r.data["detail"])
 
-    def test_central_skips_pm_director_approves(self):
+    def test_central_clears_to_voucher_on_submit(self):
+        # A Head-Office (central) request skips BOTH the PM and the Director —
+        # on submit it clears straight to a Payment Voucher for Finance, with
+        # no Director step (owner 2026-07-31).
         ref = self.raise_by(self.ho).data["ref"]
-        self.assertEqual(self.act(ref, "submit", self.ho).status_code, 200)
-        # PM cannot approve a central request — the Director approves directly
-        self.assertEqual(self.act(ref, "approve", self.pm).status_code, 403)
-        r = self.act(ref, "approve", self.director)
+        r = self.act(ref, "submit", self.ho)
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
+
+    def test_central_submit_does_not_notify_the_director(self):
+        # The auto-clear must not leave a transient "needs Director approval"
+        # ping in the Director's feed.
+        from .models import Notification
+        ref = self.raise_by(self.ho).data["ref"]
+        self.act(ref, "submit", self.ho)
+        self.assertFalse(Notification.objects.filter(
+            recipient=self.director, doc_ref=ref,
+            title__icontains="Director").exists())
 
     def test_finance_initiated_clears_to_voucher_on_submit(self):
         ref = self.raise_by(self.finance, currency="USD").data["ref"]
