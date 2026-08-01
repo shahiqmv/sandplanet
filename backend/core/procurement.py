@@ -13,6 +13,28 @@ def line_key(data):
     return f"txt:{(data.get('free_text_desc') or '').strip().lower()}"
 
 
+def _line_obj_key(line):
+    if line.item_id:
+        return f"item:{line.item_id}"
+    return f"txt:{(line.free_text_desc or '').strip().lower()}"
+
+
+def _carry_pr_claim(old_line, new_line):
+    """Carry an in-progress PR's SCOPE (ordered_pr) from a replaced MR line to
+    its replacement, so amending/editing the MR doesn't leave the PR's items
+    looking un-ordered (and doesn't re-offer them to another PR). The PR's
+    captured quotes are not moved — they live on the PR and on the stable prior
+    revision (QuotationLine.mr_line is PROTECT, so moving them onto a line the
+    edit will delete would fail). Cancelled/void PRs aren't carried
+    (owner 2026-07-31)."""
+    pr = old_line.ordered_pr
+    if pr and not pr.is_void and pr.status not in ("CANCELLED", "REJECTED"):
+        new_line.ordered_pr_id = pr.id
+        new_line.save(update_fields=["ordered_pr"])
+        return True
+    return False
+
+
 COMPARE_FIELDS = ["qty_required", "qty_stock", "qty_to_order", "priority",
                   "remarks", "qty_loaded", "qty_pending", "vendor",
                   "amount_cash", "amount_credit"]
@@ -20,7 +42,11 @@ COMPARE_FIELDS = ["qty_required", "qty_stock", "qty_to_order", "priority",
 
 def save_lines(revision, lines_data, previous_revision=None):
     """Replace the draft revision's lines. On MR amendments, new or changed
-    lines are auto-flagged (spec §5.5 rule 3)."""
+    lines are auto-flagged (spec §5.5 rule 3). Any in-progress PR claim on a
+    replaced line is carried onto its replacement (matched by item / text) so
+    editing an MR doesn't orphan a PR being raised against it."""
+    superseded = {_line_obj_key(cl): cl
+                  for cl in revision.lines.select_related("ordered_pr").all()}
     revision.lines.all().delete()
     previous = {}
     if previous_revision is not None:
@@ -55,7 +81,7 @@ def save_lines(revision, lines_data, previous_revision=None):
                                 _num(new_val) != _num(old_val)):
                             is_changed = True
                             break
-        created.append(DocumentLine.objects.create(
+        new_line = DocumentLine.objects.create(
             revision=revision,
             line_no=i,
             item=item,
@@ -87,7 +113,11 @@ def save_lines(revision, lines_data, previous_revision=None):
             fulfil_source=data.get("fulfil_source") or "",
             store_issue_line_id=data.get("store_issue_line") or None,
             remarks=data.get("remarks") or "",
-        ))
+        )
+        created.append(new_line)
+        prior = superseded.get(line_key(data))
+        if prior is not None:
+            _carry_pr_claim(prior, new_line)
     return created
 
 

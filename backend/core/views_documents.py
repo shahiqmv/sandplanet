@@ -372,6 +372,13 @@ def document_revise(request, ref):
 
     old_revision = doc.current_revision
     next_label = f"R{int(old_revision.rev_label[1:]) + 1}"
+    old_lines = list(old_revision.lines.select_related("ordered_pr").all())
+    # In-progress PRs being raised against this MR (before we churn its lines)
+    # — we carry their scope + quotes forward and notify Purchasing.
+    from .procurement import _carry_pr_claim
+    live_prs = {ln.ordered_pr.id: ln.ordered_pr for ln in old_lines
+                if ln.ordered_pr and not ln.ordered_pr.is_void
+                and ln.ordered_pr.status not in ("CANCELLED", "REJECTED")}
     with transaction.atomic():
         old_revision.is_current = False
         old_revision.save(update_fields=["is_current"])
@@ -385,14 +392,23 @@ def document_revise(request, ref):
             payload=carried, created_by=request.user,
         )
         # carry lines over unflagged; edits via PATCH mark is_changed (§5.5 r3)
-        save_lines(new_revision, [
+        new_lines = save_lines(new_revision, [
             {"item_id": line.item_id, "free_text_desc": line.free_text_desc,
              "unit": line.unit,
              "qty_required": line.qty_required, "qty_stock": line.qty_stock,
              "qty_to_order": line.qty_to_order, "priority": line.priority,
              "urgent_reason": line.urgent_reason, "remarks": line.remarks}
-            for line in old_revision.lines.all()
+            for line in old_lines
         ])
+        # A fresh revision starts empty, so save_lines' own carry can't fire —
+        # move each in-progress PR claim onto the copied line (1:1 by order),
+        # then drop it from the superseded old-revision line so a bill isn't
+        # counted as claimed twice.
+        from .models import DocumentLine
+        for old_ln, new_ln in zip(old_lines, new_lines):
+            if _carry_pr_claim(old_ln, new_ln):
+                DocumentLine.objects.filter(pk=old_ln.pk).update(
+                    ordered_pr=None)
         old_status = doc.status
         doc.current_revision = new_revision
         doc.status = "DRAFT"
@@ -400,7 +416,24 @@ def document_revise(request, ref):
     audit("document", doc.id, "DOC_REVISED", actor=request.user,
           from_state=old_status, to_state="DRAFT",
           detail={"ref": doc.ref, "rev": next_label})
-    return Response(_serialize(doc, request), status=201)
+    warning = ""
+    if live_prs:
+        from .notify import notify_user
+        for pr in live_prs.values():
+            if pr.created_by_id and pr.created_by_id != request.user.id:
+                notify_user(pr.created_by, f"MR {doc.ref} amended",
+                            body=f"{doc.ref} was amended while you're raising "
+                                 f"{pr.ref} against it — your captured quotes "
+                                 f"were kept; review the updated requirement.",
+                            doc=doc, category="info")
+        refs = ", ".join(sorted(pr.ref for pr in live_prs.values()))
+        warning = (f"Heads-up: {refs} is being raised against this MR by "
+                   f"Purchasing. Their quotes were carried over and Purchasing "
+                   f"has been notified of your change.")
+    data = _serialize(doc, request)
+    if warning:
+        data["pr_warning"] = warning
+    return Response(data, status=201)
 
 
 @api_view(["POST"])

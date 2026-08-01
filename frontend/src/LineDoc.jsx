@@ -1060,6 +1060,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
     try {
       const fresh = await api(`/documents/${doc.ref}/revisions`,
                               { method: "POST" });
+      // Heads-up if Purchasing is mid-PR against this MR (their scope/quotes
+      // were carried and they've been notified of the change).
+      if (fresh.pr_warning) window.alert(fresh.pr_warning);
       onEdit(fresh);
     } catch (e) {
       setError(e.message);
