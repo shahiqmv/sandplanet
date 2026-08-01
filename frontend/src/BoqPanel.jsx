@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -227,7 +227,8 @@ export default function BoqPanel({ projectId, project, me }) {
             + "separate columns or a single combined rate." : ""}
         </p>
       ) : boq.mode === "UNIT" ? (
-        <BoqUnitSummary boq={boq} />
+        <BoqUnitSummary boq={boq} projectId={projectId} editable={editable}
+          onChanged={setBoq} />
       ) : (
         <>
           <BoqTable boq={boq} />
@@ -258,8 +259,10 @@ export default function BoqPanel({ projectId, project, me }) {
 
 const cellIn = { ...inputStyle, padding: "3px 6px", fontSize: 12.5, width: 70 };
 
-// Unit-based BOQ — read-only summary of categories (per-unit × qty, or lump).
-function BoqUnitSummary({ boq }) {
+// Unit-based BOQ — category summary (per-unit × qty, or lump). A priced
+// category expands to the works that build up its per-unit rate.
+function BoqUnitSummary({ boq, projectId, editable, onChanged }) {
+  const [open, setOpen] = useState(null);
   return (
     <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse",
@@ -270,26 +273,137 @@ function BoqUnitSummary({ boq }) {
           <th style={{ ...th, textAlign: "right", width: 90 }}>Qty</th>
           <th style={{ ...th, textAlign: "right", width: 120 }}>Per unit</th>
           <th style={{ ...th, textAlign: "right", width: 130 }}>Amount</th>
+          <th style={{ ...th, width: 90 }}></th>
         </tr></thead>
         <tbody>
           {boq.categories.map((c) => (
-            <tr key={c.id}>
-              <td style={td}>{c.ref}</td>
-              <td style={td}>{c.name}{c.is_lump && <span style={{
-                color: "var(--muted)", fontSize: 11 }}> · lump sum</span>}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {c.is_lump ? "—" : `${fmt(c.qty)} ${c.unit}`}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {c.is_lump ? "—" : fmt(c.per_unit_total)}</td>
-              <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
-                {fmt(c.line_total)}</td>
-            </tr>
+            <Fragment key={c.id}>
+              <tr>
+                <td style={td}>{c.ref}</td>
+                <td style={td}>{c.name}{c.is_lump && <span style={{
+                  color: "var(--muted)", fontSize: 11 }}> · lump sum</span>}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {c.is_lump ? "—" : `${fmt(c.qty)} ${c.unit}`}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {c.is_lump ? "—" : fmt(c.per_unit_total)}</td>
+                <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
+                  {fmt(c.line_total)}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {!c.is_lump && (
+                    <button style={{ ...ghostButton, padding: "2px 8px",
+                      fontSize: 11 }}
+                      onClick={() => setOpen(open === c.id ? null : c.id)}>
+                      {open === c.id ? "▾ Detail" : `▸ Detail`}
+                      {c.items?.length > 1 ? ` (${c.items.length})` : ""}
+                    </button>)}
+                </td>
+              </tr>
+              {open === c.id && !c.is_lump && (
+                <tr><td colSpan={6} style={{ padding: "0 8px 10px",
+                  background: "var(--sky-soft)" }}>
+                  <CategoryDetail cat={c} projectId={projectId}
+                    editable={editable} onChanged={onChanged} />
+                </td></tr>)}
+            </Fragment>
           ))}
         </tbody>
       </table>
       <div style={{ textAlign: "right", marginTop: 10, fontSize: 15 }}>
         Contract value <strong>{boq.currency} {fmt(boq.contract_value)}</strong>
       </div>
+    </div>
+  );
+}
+
+// The works that build up one category's per-unit rate — view or edit.
+function CategoryDetail({ cat, projectId, editable, onChanged }) {
+  const start = () => (cat.items?.length
+    ? cat.items.map((i) => ({ description: i.description, unit: i.unit,
+        quantity: i.qty, rate: i.rate, amount: i.amount }))
+    : [{ description: "", unit: "", quantity: "1", rate: "", amount: "" }]);
+  const [rows, setRows] = useState(start);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const amt = (r) => Number(r.quantity || 0) * Number(r.rate || 0);
+  const total = rows.reduce((s, r) => s + amt(r), 0);
+  const setR = (i, k, v) => setRows((rs) =>
+    rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
+
+  async function save() {
+    setErr(null); setBusy(true);
+    try {
+      const data = await api(
+        `/projects/${projectId}/boq/categories/${cat.id}/items`,
+        { method: "POST", body: { rows: rows.filter((r) =>
+          r.description.trim() && Number(r.rate) > 0) } });
+      onChanged(data);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  }
+
+  return (
+    <div style={{ padding: "8px 4px" }}>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+        Works building the per-{cat.unit || "unit"} rate
+        {!editable && " (read-only — BOQ locked)"}</div>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+        fontSize: 12 }}>
+        <thead><tr style={{ color: "var(--muted)" }}>
+          <th style={{ ...th, textAlign: "left" }}>Work / item</th>
+          <th style={{ ...th, width: 60 }}>Unit</th>
+          <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
+          <th style={{ ...th, textAlign: "right", width: 90 }}>Rate</th>
+          <th style={{ ...th, textAlign: "right", width: 110 }}>Amount</th>
+          <th style={{ ...th, width: 24 }}></th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i}>
+              <td style={{ padding: 2 }}>
+                <input value={r.description} disabled={!editable}
+                  onChange={(e) => setR(i, "description", e.target.value)}
+                  style={{ ...inputStyle, width: "100%" }} /></td>
+              <td style={{ padding: 2 }}>
+                <input value={r.unit} disabled={!editable}
+                  onChange={(e) => setR(i, "unit", e.target.value)}
+                  style={{ ...inputStyle, width: "100%" }} /></td>
+              <td style={{ padding: 2 }}>
+                <input type="number" value={r.quantity} disabled={!editable}
+                  onChange={(e) => setR(i, "quantity", e.target.value)}
+                  style={{ ...inputStyle, width: "100%", textAlign: "right" }} />
+              </td>
+              <td style={{ padding: 2 }}>
+                <input type="number" value={r.rate} disabled={!editable}
+                  onChange={(e) => setR(i, "rate", e.target.value)}
+                  style={{ ...inputStyle, width: "100%", textAlign: "right" }} />
+              </td>
+              <td style={{ ...td, textAlign: "right" }}>{fmt(amt(r))}</td>
+              <td style={{ padding: 2, textAlign: "center" }}>
+                {editable && rows.length > 1 && (
+                  <button onClick={() => setRows((rs) =>
+                    rs.filter((_, j) => j !== i))} style={{ border: "none",
+                    background: "none", cursor: "pointer",
+                    color: "var(--muted)" }}>×</button>)}</td>
+            </tr>
+          ))}
+          <tr style={{ fontWeight: 600 }}>
+            <td style={td} colSpan={4}>Per-unit total</td>
+            <td style={{ ...td, textAlign: "right" }}>{fmt(total)}</td>
+            <td style={td}></td>
+          </tr>
+        </tbody>
+      </table>
+      {err && <div style={{ color: "var(--red-fg)", fontSize: 12 }}>{err}</div>}
+      {editable && (
+        <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
+            onClick={() => setRows((rs) => [...rs, { description: "", unit: "",
+              quantity: "1", rate: "", amount: "" }])}>+ Add work</button>
+          <button style={{ ...buttonStyle, padding: "3px 12px", fontSize: 12 }}
+            disabled={busy} onClick={save}>
+            {busy ? "Saving…" : "Save build-up"}</button>
+        </div>)}
     </div>
   );
 }

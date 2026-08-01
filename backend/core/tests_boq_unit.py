@@ -65,6 +65,50 @@ class BoqUnitTests(TestCase):
         finally:
             ue.run_capture = orig
 
+    def _cat_url(self, cat_id):
+        return (f"/api/v1/projects/{self.project.id}/boq/categories/"
+                f"{cat_id}/items")
+
+    def test_category_detail_derives_per_unit_total(self):
+        boq, _ = ue.commit(self.project, self._cats(), self.qs)
+        priced = boq.categories.get(is_lump=False)   # D Villas, qty 11
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(self._cat_url(priced.id), {"rows": [
+            {"description": "Tiling", "unit": "m2", "quantity": "1",
+             "rate": "10000"},
+            {"description": "Plumbing", "unit": "ls", "quantity": "1",
+             "rate": "16491.41"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        priced.refresh_from_db()
+        self.assertEqual(priced.items.count(), 2)
+        # the build-up now drives the per-unit rate (10000 + 16491.41)
+        self.assertEqual(priced.per_unit_total, Decimal("26491.410"))
+        self.assertEqual(priced.line_total, Decimal("26491.410") * 11)
+        # payload exposes the detail lines
+        pc = next(c for c in r.data["categories"] if c["id"] == priced.id)
+        self.assertEqual(len(pc["items"]), 2)
+
+    def test_lump_category_rejects_detail(self):
+        boq, _ = ue.commit(self.project, self._cats(), self.qs)
+        lump = boq.categories.get(is_lump=True)
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(self._cat_url(lump.id),
+                             {"rows": [{"description": "x", "rate": "1"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_locked_boq_rejects_detail(self):
+        boq, _ = ue.commit(self.project, self._cats(), self.qs)
+        boq.is_locked = True
+        boq.save(update_fields=["is_locked"])
+        priced = boq.categories.get(is_lump=False)
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(self._cat_url(priced.id),
+                             {"rows": [{"description": "x", "rate": "1"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("locked", r.data["detail"].lower())
+
     def test_conventional_boq_unaffected(self):
         boq = Boq.objects.create(project=self.project)
         BoqItem.objects.create(boq=boq, description="Concrete", qty=Decimal(10),

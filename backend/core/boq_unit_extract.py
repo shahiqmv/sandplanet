@@ -11,6 +11,7 @@ _call_claude, isolated for tests to monkeypatch.
 """
 import os
 
+from .audit import audit
 from .boq_extract import ExtractionError, _batches, pdf_pages
 
 DEFAULT_MODEL = "claude-sonnet-5"
@@ -182,3 +183,49 @@ def commit(project, categories, actor):
                 description=f"{cat.name} — per {cat.unit}", qty=Decimal("1"),
                 rate_supply=amt)
     return boq, None
+
+
+def set_category_items(project, cat_id, rows, actor):
+    """Replace a priced category's detail line items — the works that build up
+    its per-unit rate (description · unit · qty · rate → amount). The category's
+    per-unit total then derives from these. Blocked once the BOQ is locked.
+    Returns (category, error)."""
+    from decimal import Decimal, InvalidOperation
+    from .models import BoqCategory, BoqItem
+
+    boq = getattr(project, "boq", None)
+    if boq is None or boq.mode != boq.Mode.UNIT:
+        return None, "This project doesn't have a unit-based BOQ."
+    if boq.is_locked:
+        return None, "The BOQ is locked — a claim has already started."
+    cat = BoqCategory.objects.filter(pk=cat_id, boq=boq).first()
+    if cat is None:
+        return None, "That category isn't on this BOQ."
+    if cat.is_lump:
+        return None, "A lump-sum bill has no per-unit build-up."
+
+    def _dec(v):
+        try:
+            return Decimal(str(v))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    items = []
+    for i, r in enumerate(rows, 1):
+        desc = str(r.get("description") or "").strip()
+        rate = _dec(r.get("rate"))
+        if not desc or rate is None:
+            continue
+        qty = _dec(r.get("quantity") if "quantity" in r else r.get("qty"))
+        items.append(BoqItem(
+            boq=boq, category=cat, sort_order=i,
+            description=desc[:2000], unit=str(r.get("unit") or "")[:20],
+            qty=qty if qty is not None else Decimal("1"), rate_supply=rate))
+    if not items:
+        return None, "Add at least one line with a description and rate."
+    cat.items.all().delete()
+    BoqItem.objects.bulk_create(items)
+    audit("project", project.id, "BOQ_CATEGORY_DETAIL_SET", actor=actor,
+          detail={"category": cat.name, "lines": len(items),
+                  "per_unit": str(cat.per_unit_total)})
+    return cat, None

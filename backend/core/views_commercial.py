@@ -68,6 +68,10 @@ def _boq_payload(project):
             "id": c.id, "ref": c.ref, "name": c.name, "unit": c.unit,
             "qty": c.qty, "is_lump": c.is_lump,
             "per_unit_total": c.per_unit_total, "line_total": c.line_total,
+            # The works that build up the per-unit rate (empty for lump bills).
+            "items": [{"id": i.id, "description": i.description,
+                       "unit": i.unit, "qty": i.qty, "rate": i.rate_total,
+                       "amount": i.amount} for i in c.items.all()],
         } for c in boq.categories.all()]
     return data
 
@@ -279,6 +283,24 @@ def boq_commit_unit(request, pid):
     return Response({"ok": True, "mode": boq.mode,
                      "categories": boq.categories.count(),
                      "contract_value": str(boq.contract_value)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def boq_category_items(request, pid, cat_id):
+    """Set a unit category's detail line items (the works that build its per-unit
+    rate). The per-unit total then derives from them."""
+    from . import boq_unit_extract as ue
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    _, msg = ue.set_category_items(p, cat_id, request.data.get("rows") or [],
+                                   request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_boq_payload(p))
 
 
 @api_view(["GET"])
