@@ -1,0 +1,78 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  .mins { white-space: pre-wrap; font-size: 10pt; line-height: 1.5;
+          color: #22303B; margin: 2mm 0 4mm; }
+  .sec { font-size: 11pt; font-weight: 700; color: #10344F;
+         margin: 5mm 0 2mm; }
+  .att span { display: inline-block; font-size: 9pt; padding: 2px 8px;
+              margin: 0 4px 4px 0; border-radius: 10px;
+              background: #EAF3FB; color: #10344F; }
+  .att span.ext { background: #FBF2E0; }
+  table.act td, table.act th { font-size: 9pt; }
+  .st { font-size: 8pt; font-weight: 700; padding: 1px 7px; border-radius: 8px; }
+  .st.OPEN { background: #EAF3FB; color: #1665A8; }
+  .st.IN_PROGRESS { background: #FBF2E0; color: #8a6d00; }
+  .st.DONE { background: #E3F3E8; color: #1c7a3f; }
+  .st.CANCELLED { background: #eee; color: #6a6a6a; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="MINUTES" %}
+{% include "pdf/_letterhead.html" with title="MEETING MINUTES" %}
+
+<table>
+  <tr><td class="lbl" style="width:18%">Meeting</td>
+      <td style="width:52%"><strong>{{ m.title }}</strong></td>
+      <td class="lbl" style="width:12%">Type</td><td>{{ type_label }}</td></tr>
+  <tr><td class="lbl">Date / time</td>
+      <td>{{ m.scheduled_at|date:"D, d M Y — H:i" }}</td>
+      <td class="lbl">Duration</td><td>{{ m.duration_minutes }} min</td></tr>
+  <tr><td class="lbl">Location</td>
+      <td>{{ loc_label }}{% if m.location_note %} — {{ m.location_note }}{% endif %}</td>
+      <td class="lbl">With</td><td>{{ who|default:"—" }}</td></tr>
+  <tr><td class="lbl">Organiser</td>
+      <td>{% if m.organiser %}{{ m.organiser.full_name }}{% else %}—{% endif %}</td>
+      <td class="lbl">Status</td><td>{{ m.get_status_display }}</td></tr>
+</table>
+
+{% if attendees %}
+<div class="sec">Attendees</div>
+<div class="att">
+  {% for a in attendees %}<span class="{% if a.is_external %}ext{% endif %}">{{ a.name }}{% if a.org %} · {{ a.org }}{% endif %}{% if a.role %} ({{ a.role }}){% endif %}</span>{% endfor %}
+</div>
+{% endif %}
+
+{% if m.agenda %}
+<div class="sec">Agenda</div>
+<div class="mins">{{ m.agenda }}</div>
+{% endif %}
+
+<div class="sec">Minutes</div>
+{% if m.minutes %}<div class="mins">{{ m.minutes }}</div>
+{% else %}<div class="note">No minutes recorded.</div>{% endif %}
+
+{% if actions %}
+<div class="sec">Action items &amp; follow-ups</div>
+<table class="act">
+  <tr><th style="width:6%">#</th><th style="text-align:left">Action</th>
+      <th style="width:22%">Owner</th><th style="width:16%">Due</th>
+      <th style="width:16%">Status</th></tr>
+  {% for a in actions %}
+  <tr><td class="num">{{ forloop.counter }}</td>
+      <td>{{ a.description }}</td>
+      <td>{{ a.owner|default:"—" }}</td>
+      <td>{% if a.due_date %}{{ a.due_date|date:"d M Y" }}{% else %}—{% endif %}</td>
+      <td><span class="st {{ a.status }}">{{ a.status_label }}</span></td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<p class="note" style="margin-top:8mm">
+  Prepared on Planet{% if m.organiser %} by {{ m.organiser.full_name }}{% endif %}.
+  Please raise corrections with the organiser.</p>
+</body>
+</html>

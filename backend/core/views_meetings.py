@@ -119,5 +119,17 @@ def meeting_draft_minutes(request, pk):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def meeting_minutes_pdf(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    from .views_commercial import _render_pdf
+    return _render_pdf("pdf/meeting_minutes.html",
+                       svc.minutes_pdf_context(m),
+                       f"Minutes-{m.scheduled_at:%Y%m%d}")
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def my_action_items(request):
     return Response({"items": svc.my_action_items(request.user)})

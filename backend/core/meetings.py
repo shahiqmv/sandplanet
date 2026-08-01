@@ -292,6 +292,30 @@ def action_item_dict(a):
     }
 
 
+_AI_LABEL = {"OPEN": "Open", "IN_PROGRESS": "In progress", "DONE": "Done",
+             "CANCELLED": "Cancelled"}
+
+
+def minutes_pdf_context(meeting):
+    """Context for the branded meeting-minutes PDF."""
+    from .pdf import company_info, logo_src
+    type_label = dict(Meeting.Type.choices).get(meeting.meeting_type,
+                                                meeting.meeting_type)
+    loc_label = dict(Meeting.Location.choices).get(meeting.location_kind,
+                                                   meeting.location_kind)
+    who = (f"{meeting.project.code} — {meeting.project.title}"
+           if meeting.project_id else meeting.org_name
+           or (meeting.site.name if meeting.site_id else ""))
+    return {
+        "logo_src": logo_src(), "co": company_info(), "m": meeting,
+        "type_label": type_label, "loc_label": loc_label, "who": who,
+        "attendees": [attendee_dict(a) for a in meeting.attendees.all()],
+        "actions": [{**action_item_dict(a),
+                     "status_label": _AI_LABEL.get(a.status, a.status)}
+                    for a in meeting.action_items.all()],
+    }
+
+
 def meeting_dict(meeting, detail=False):
     d = {
         "id": meeting.id, "title": meeting.title,

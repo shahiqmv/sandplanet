@@ -179,3 +179,15 @@ class MeetingTests(TestCase):
         r = self.client.post(f"/api/v1/meetings/{mid}/draft-minutes",
                              {"notes": ""}, format="json")
         self.assertEqual(r.status_code, 400)
+
+    def test_minutes_pdf_renders(self):
+        mid = self._create().data["id"]
+        self.client.patch(f"/api/v1/meetings/{mid}",
+                          {"minutes": "Discussed slab. Decision: proceed."},
+                          format="json")
+        self.client.post(f"/api/v1/meetings/{mid}/actions", {"rows": [
+            {"description": "Send programme", "owner_id": self.pm.id,
+             "due_date": "2026-08-08"}]}, format="json")
+        r = self.client.get(f"/api/v1/meetings/{mid}/minutes.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")

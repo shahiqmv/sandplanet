@@ -408,6 +408,10 @@ function MeetingDetail({ id, me, onBack }) {
           <Chip tone={m.minutes_status === "FINAL" ? "ok" : "info"}>
             {m.minutes_status === "FINAL" ? "final"
               : m.minutes_status === "DRAFT" ? "draft" : "none"}</Chip>
+          <a href={`/api/v1/meetings/${id}/minutes.pdf`} target="_blank"
+            rel="noreferrer" style={{ marginLeft: "auto", fontSize: 12.5,
+              color: "var(--sky)", textDecoration: "none" }}>
+            ⬇ Minutes PDF</a>
         </div>
         {canManage && (
           <div style={{ background: "var(--sky-soft)", borderRadius: 8,
