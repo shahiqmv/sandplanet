@@ -71,10 +71,13 @@ def _boq_payload(project):
             # The captured works' sum — shown against the contract rate so the
             # QS can see where a bill's detail doesn't reconcile.
             "items_total": c.items_total,
-            # The works that build up the per-unit rate (empty for lump bills).
+            # The works that build up the per-unit rate (empty for lump bills);
+            # material and labour rates kept separate, like a conventional BOQ.
             "items": [{"id": i.id, "description": i.description,
-                       "unit": i.unit, "qty": i.qty, "rate": i.rate_total,
-                       "amount": i.amount} for i in c.items.all()],
+                       "unit": i.unit, "qty": i.qty,
+                       "rate_material": i.rate_supply, "rate_labour": i.rate_install,
+                       "rate": i.rate_total, "amount": i.amount}
+                      for i in c.items.all()],
         } for c in boq.categories.all()]
     return data
 

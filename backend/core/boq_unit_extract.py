@@ -6,46 +6,43 @@ plus lump-sum bills (Preliminaries, Provisional). This reads the summary page of
 such a BOQ PDF into review-ready categories — strictly separate from the
 conventional BOQ import (boq_extract), which is untouched.
 
-Reuses boq_extract.pdf_pages/_batches; extraction is the shared, testable
-_call_claude, isolated for tests to monkeypatch.
+Reuses boq_extract.pdf_pages; pages are grouped per-bill so each extraction
+call is focused on one bill (no long-programme truncation). Extraction is the
+shared, testable _call_claude, isolated for tests to monkeypatch.
 """
 import os
 
 from .audit import audit
-from .boq_extract import ExtractionError, _batches, pdf_pages
+from .boq_extract import ExtractionError, pdf_pages
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
 _SYSTEM = (
-    "You extract the FINAL SUMMARY of a unit-based Bill of Quantities — the "
-    "roll-up table where each Bill/category is shown once with a number of "
-    "units and an amount per unit (e.g. columns like 'No. of Villas', 'Amount "
-    "per Villa', 'Total Amount'). Each summary line is either:\n"
-    "- a priced category that recurs: a description, a quantity (number of "
-    "units, e.g. villas), a unit, and an amount PER UNIT; or\n"
-    "- a lump-sum bill (e.g. Preliminaries, Provisional Sum): a single total "
-    "amount, no per-unit build-up.\n"
-    "The document usually also contains the DETAILED priced bills (individual "
-    "work items). IGNORE those — extract ONLY the summary roll-up lines, not the "
-    "detail items, and NOT sub-total / total / GST / grand-total rows.\n"
-    "Return every summary line in order. Set is_lump=true for lump bills and "
-    "put their total in amount_per_unit with quantity=1. Amounts may use "
-    "thousands separators (commas) — return them as plain numbers (26491.41, "
-    "not '26,491.41'). Never invent lines; use only what the summary shows. "
-    "Also return the GST percentage if shown.\n\n"
-    "DETAIL: for EACH bill/category, also capture its detailed work items from "
-    "the priced bill pages — the individual works (code, description, quantity, "
-    "unit, the TOTAL rate per unit, and the line amount). File each work under "
-    "the bill it belongs to; bills are labelled (e.g. 'Bill No. 03 = Villa "
-    "Category D'). A 'Rate only' provisional item has a rate but no amount — "
-    "return its amount as 0. Where material + labour rates are split, use the "
-    "TOTAL. The sum of a priced category's item amounts should roughly equal "
-    "its amount_per_unit."
+    "You extract a unit-based Bill of Quantities. Return the bill(s) shown in "
+    "the pages you're given.\n\n"
+    "SUMMARY page (columns like 'No. of Villas' / 'Amount per Villa' / 'Total "
+    "Amount'): return each Bill/category once — its bill ref (e.g. 'Bill No. "
+    "02'), name, the number of units, the unit, and the Amount per unit. A "
+    "lump-sum bill (Preliminaries, Provisional) has is_lump=true, quantity 1, "
+    "and its total in amount_per_unit. Ignore sub-total / total / GST / "
+    "grand-total rows.\n\n"
+    "DETAILED bill pages (columns 'Rate: Material | Labour | Total' and 'Amount: "
+    "Material | Labour | Total'): return the category (its bill ref + name) with "
+    "EVERY numbered work line under it — do NOT skip any line. For each work "
+    "give its code, full description, quantity, unit, and the MATERIAL rate and "
+    "the LABOUR rate SEPARATELY (return the two split rates, NOT the combined "
+    "total). A 'Rate only' provisional line has rates but no priced amount — set "
+    "rate_only=true.\n\n"
+    "ALWAYS include the bill ref (e.g. 'Bill No. 02') on every category so the "
+    "summary line and its detail can be matched. Numbers may use thousands "
+    "separators (commas) — return plain numbers (26491.41, not '26,491.41'). "
+    "Never invent lines. The summary Amount per unit is authoritative even if "
+    "the detailed works don't add up to it. Return the GST percentage if shown."
 )
 
 _TOOL = {
     "name": "emit_unit_boq",
-    "description": "Return the unit-based BOQ summary categories.",
+    "description": "Return the unit-based BOQ categories with their detail works.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -54,7 +51,8 @@ _TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "ref": {"type": "string"},
+                        "ref": {"type": "string",
+                                "description": "Bill ref, e.g. 'Bill No. 02'."},
                         "name": {"type": "string"},
                         "quantity": {"type": "number"},
                         "unit": {"type": "string"},
@@ -62,7 +60,7 @@ _TOOL = {
                         "is_lump": {"type": "boolean"},
                         "items": {
                             "type": "array",
-                            "description": "The detailed works under this bill.",
+                            "description": "EVERY detailed work under this bill.",
                             "items": {
                                 "type": "object",
                                 "properties": {
@@ -70,14 +68,15 @@ _TOOL = {
                                     "description": {"type": "string"},
                                     "quantity": {"type": "number"},
                                     "unit": {"type": "string"},
-                                    "rate": {"type": "number"},
-                                    "amount": {"type": "number"},
+                                    "rate_material": {"type": "number"},
+                                    "rate_labour": {"type": "number"},
+                                    "rate_only": {"type": "boolean"},
                                 },
                                 "required": ["description"],
                             },
                         },
                     },
-                    "required": ["name", "amount_per_unit"],
+                    "required": ["name"],
                 },
             },
             "gst_percent": {"type": "number"},
@@ -125,29 +124,55 @@ def _call_claude(content, model):
     raise ExtractionError("The model returned no summary.")
 
 
+def _key(c):
+    return (c.get("ref") or c.get("name") or "").strip().lower()
+
+
 def _merge(cats, incoming):
-    """Merge a batch's categories into the running list, keyed by ref (or name);
-    a split document may return a bill's header in one batch and more of its
-    detail items in another, so accumulate items rather than duplicate bills."""
-    index = {(c.get("ref") or c.get("name") or "").strip().lower(): c
-             for c in cats}
+    """Merge a batch's categories into the running list, keyed by bill ref (or
+    name). The summary page carries the authoritative amount_per_unit; each bill
+    batch carries the detail works — combine both onto one category, and never
+    let a later batch overwrite a rate already captured from the summary."""
+    index = {_key(c): c for c in cats}
     for c in incoming:
-        key = (c.get("ref") or c.get("name") or "").strip().lower()
-        if key and key in index:
-            index[key].setdefault("items", []).extend(c.get("items") or [])
+        k = _key(c)
+        if k and k in index:
+            ex = index[k]
+            ex.setdefault("items", []).extend(c.get("items") or [])
+            for f in ("quantity", "unit", "amount_per_unit", "ref", "name"):
+                if ex.get(f) in (None, "") and c.get(f) not in (None, ""):
+                    ex[f] = c[f]
+            if not ex.get("is_lump") and c.get("is_lump"):
+                ex["is_lump"] = True
         else:
             cats.append(c)
-            if key:
-                index[key] = c
+            if k:
+                index[k] = c
     return cats
+
+
+def _bill_batches(pages):
+    """Group pages so each model call sees one bill's header + its detail (the
+    summary page falls in its own leading batch). Small, focused calls so no
+    work line is missed and every item carries its bill's context."""
+    batches, cur = [], []
+    for n, text in enumerate(pages, 1):
+        if text.strip().lower().startswith("bill no") and cur:
+            batches.append(cur)
+            cur = []
+        cur.append((n, text))
+    if cur:
+        batches.append(cur)
+    return batches
 
 
 def structure(pages, model=None):
     model = model or _model_name()
     cats, gst = [], 0
-    for batch in _batches(pages):
-        body = ("Extract the unit-based BOQ — the final summary bills AND the "
-                "detailed works under each. Page markers are [PAGE n].\n\n"
+    for batch in _bill_batches(pages):
+        body = ("Extract this part of a unit-based BOQ — the summary line(s) "
+                "and/or a bill's detailed works. Capture EVERY numbered work "
+                "line. Page markers are [PAGE n].\n\n"
                 + "\n\n".join(f"[PAGE {n}]\n{t}" for n, t in batch))
         out = _call_claude(body, model) or {}
         _merge(cats, out.get("categories") or [])
@@ -171,27 +196,48 @@ def _dec(v):
         return None
 
 
-def _norm_items(raw):
-    """Clean a bill's detail works. Amount = the printed line amount, else
-    qty × rate; a 'Rate only' provisional item carries a rate but 0 amount."""
+def _item_amount(it):
+    """The line amount for a detail work = qty × (material + labour) rate; a
+    'Rate only' provisional line contributes 0 (its rate is kept for a later
+    variation). Returns a Decimal."""
     from decimal import Decimal
+    if it.get("rate_only"):
+        return Decimal("0")
+    rm = _dec(it.get("rate_material"))
+    rl = _dec(it.get("rate_labour"))
+    if rm is None and rl is None:
+        rm = _dec(it.get("rate"))              # legacy single rate → material
+    rm = rm or Decimal("0")
+    rl = rl or Decimal("0")
+    qty = _dec(it.get("quantity"))
+    if qty is None:
+        qty = Decimal("1")
+    return qty * (rm + rl)
+
+
+def _norm_items(raw):
+    """Clean a bill's detail works — material and labour rates kept SEPARATE,
+    like a conventional split-rate BOQ."""
     out = []
     for it in (raw or []):
         desc = str(it.get("description") or "").strip()
         if not desc:
             continue
-        rate = _dec(it.get("rate"))
+        rm = _dec(it.get("rate_material"))
+        rl = _dec(it.get("rate_labour"))
+        # accept a legacy single 'rate' as material if that's all we got
+        if rm is None and rl is None and _dec(it.get("rate")) is not None:
+            rm = _dec(it.get("rate"))
         qty = _dec(it.get("quantity"))
-        amt = _dec(it.get("amount"))
-        if amt is None and qty is not None and rate is not None:
-            amt = qty * rate
         out.append({
             "code": str(it.get("code") or "").strip()[:30],
             "description": desc[:2000],
             "unit": str(it.get("unit") or "").strip()[:20],
             "quantity": (str(qty) if qty is not None else ""),
-            "rate": (str(rate) if rate is not None else ""),
-            "amount": str(amt if amt is not None else Decimal("0")),
+            "rate_material": (str(rm) if rm is not None else ""),
+            "rate_labour": (str(rl) if rl is not None else ""),
+            "rate_only": bool(it.get("rate_only")),
+            "amount": str(_item_amount(it)),
         })
     return out
 
@@ -293,29 +339,30 @@ def commit(project, categories, actor):
 
 
 def _make_items(cat, rows, boq):
-    """Persist a category's detail works as BoqItems (qty × rate = amount).
-    A 'Rate only' provisional line (amount 0) keeps its rate but qty 0, so it
-    stays out of the priced total until a variation calls it up."""
+    """Persist a category's detail works as BoqItems, keeping MATERIAL and
+    LABOUR rates separate (rate_supply / rate_install), like a conventional
+    split-rate BOQ. A 'Rate only' provisional line keeps its rate(s) but qty 0,
+    so it stays out of the priced total until a variation calls it up."""
     from decimal import Decimal
     from .models import BoqItem
     out = []
     for j, it in enumerate(rows, 1):
-        amt = _dec(it.get("amount"))
-        rate = _dec(it.get("rate"))
-        iqty = _dec(it.get("quantity"))
-        if amt is not None and amt == 0:
-            sq, sr = Decimal("0"), (rate or Decimal("0"))        # rate only
-        elif iqty is not None and rate is not None:
-            sq, sr = iqty, rate
-        elif amt is not None:
-            sq, sr = Decimal("1"), amt                           # amount-only
-        else:
+        rm = _dec(it.get("rate_material"))
+        rl = _dec(it.get("rate_labour"))
+        # legacy single 'rate' → material
+        if rm is None and rl is None and _dec(it.get("rate")) is not None:
+            rm = _dec(it.get("rate"))
+        if rm is None and rl is None:
             continue
+        iqty = _dec(it.get("quantity"))
+        sq = Decimal("0") if it.get("rate_only") else (
+            iqty if iqty is not None else Decimal("1"))
         out.append(BoqItem(
             boq=boq, category=cat, sort_order=j,
             item_code=str(it.get("code") or "")[:30],
             description=str(it.get("description") or "")[:2000],
-            unit=str(it.get("unit") or "")[:20], qty=sq, rate_supply=sr))
+            unit=str(it.get("unit") or "")[:20], qty=sq,
+            rate_supply=rm, rate_install=rl))
     BoqItem.objects.bulk_create(out)
 
 
@@ -347,14 +394,18 @@ def set_category_items(project, cat_id, rows, actor):
     items = []
     for i, r in enumerate(rows, 1):
         desc = str(r.get("description") or "").strip()
-        rate = _dec(r.get("rate"))
-        if not desc or rate is None:
+        rm = _dec(r.get("rate_material"))
+        rl = _dec(r.get("rate_labour"))
+        if rm is None and rl is None and _dec(r.get("rate")) is not None:
+            rm = _dec(r.get("rate"))          # legacy single-rate row
+        if not desc or (rm is None and rl is None):
             continue
         qty = _dec(r.get("quantity") if "quantity" in r else r.get("qty"))
         items.append(BoqItem(
             boq=boq, category=cat, sort_order=i,
             description=desc[:2000], unit=str(r.get("unit") or "")[:20],
-            qty=qty if qty is not None else Decimal("1"), rate_supply=rate))
+            qty=qty if qty is not None else Decimal("1"),
+            rate_supply=rm, rate_install=rl))
     if not items:
         return None, "Add at least one line with a description and rate."
     cat.items.all().delete()

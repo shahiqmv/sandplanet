@@ -56,11 +56,12 @@ class BoqUnitTests(TestCase):
             "name": "Villa Category D", "quantity": 11, "unit": "no",
             "amount_per_unit": "26491.41", "is_lump": False, "items": [
                 {"code": "D.1", "description": "Door seals", "quantity": 1,
-                 "unit": "no", "rate": "10000", "amount": "10000"},
+                 "unit": "no", "rate_material": "8000", "rate_labour": "2000"},
                 {"code": "D.2", "description": "Plaster", "quantity": 1,
-                 "unit": "m2", "rate": "16491.41", "amount": "16491.41"},
+                 "unit": "m2", "rate_material": "12000",
+                 "rate_labour": "4491.41"},
                 {"code": "D.3", "description": "Provisional item",
-                 "quantity": 1, "rate": "500", "amount": "0"}]}])
+                 "quantity": 1, "rate_material": "500", "rate_only": True}]}])
 
     def test_normalise_captures_detail_and_derives_rate(self):
         cats = self._with_detail()
@@ -77,11 +78,12 @@ class BoqUnitTests(TestCase):
         cats = ue.normalise([
             {"name": "Preliminaries", "amount_per_unit": "132512.18",
              "is_lump": True, "items": [
-                {"description": "Air freight (rate only)", "amount": "0"}]},
+                {"description": "Air freight (rate only)",
+                 "rate_material": "5000", "rate_only": True}]},
             {"name": "Villa Category C", "quantity": 3, "unit": "no",
              "amount_per_unit": "42816.31", "items": [
-                {"description": "Door glass", "amount": "1197.42"},
-                {"description": "Ceiling fans", "amount": "3484.78"}]}])
+                {"description": "Door glass", "rate_material": "1197.42"},
+                {"description": "Ceiling fans", "rate_material": "3484.78"}]}])
         boq, _ = ue.commit(self.project, cats, self.qs)
         prelim = boq.categories.get(name="Preliminaries")
         self.assertEqual(prelim.line_total, Decimal("132512.18"))     # not 0
@@ -99,10 +101,24 @@ class BoqUnitTests(TestCase):
         self.assertIsNone(msg)
         cat = boq.categories.get(name="Villa Category D")
         self.assertEqual(cat.items.count(), 3)
-        # per-unit total = the works; the provisional (rate-only) adds nothing
+        # per-unit total = the summary rate (authoritative)
         self.assertEqual(cat.per_unit_total, Decimal("26491.410"))
         # line total = per-unit × 11 villas
         self.assertEqual(cat.line_total, Decimal("26491.410") * 11)
+
+    def test_detail_keeps_material_and_labour_separate(self):
+        # The detail works carry MATERIAL and LABOUR rates in separate columns,
+        # like a conventional split-rate BOQ — not one combined total (the
+        # capture bug the owner reported 2026-08-01).
+        boq, _ = ue.commit(self.project, self._with_detail(), self.qs)
+        cat = boq.categories.get(name="Villa Category D")
+        door = cat.items.get(item_code="D.1")
+        self.assertEqual(door.rate_supply, Decimal("8000.000"))   # material
+        self.assertEqual(door.rate_install, Decimal("2000.000"))  # labour
+        # rate-only provisional keeps its rate but qty 0 → out of the total
+        prov = cat.items.get(item_code="D.3")
+        self.assertEqual(prov.qty, Decimal("0.000"))
+        self.assertEqual(prov.rate_supply, Decimal("500.000"))
 
     def test_commit_builds_unit_boq_and_value(self):
         boq, msg = ue.commit(self.project, self._cats(), self.qs)
@@ -124,9 +140,9 @@ class BoqUnitTests(TestCase):
             "name": "Villa Category C", "quantity": 3, "unit": "no",
             "amount_per_unit": "800", "items": [
                 {"code": "C.1", "description": "Door seal", "quantity": 1,
-                 "rate": "500", "amount": "500"},
+                 "rate_material": "500"},
                 {"code": "C.2", "description": "Plaster", "quantity": 1,
-                 "rate": "300", "amount": "300"}]}])
+                 "rate_material": "300"}]}])
         ue.commit(self.project, cats, self.qs)
         self.project.contract_value = "2400"
         self.project.save(update_fields=["contract_value"])
@@ -147,6 +163,39 @@ class BoqUnitTests(TestCase):
         self.assertEqual(ln["C.2"]["cumulative_value"], Decimal("600"))  # 2×300
         self.assertEqual(ln["C.1"]["section"], "Villa Category C")
         self.assertEqual(float(val["waterfall"]["k1_work_done"]), 1100.0)
+
+    def test_bill_batches_split_per_bill(self):
+        # Pages are grouped so each model call is one bill's header + detail
+        # (the summary page leads its own batch) — small, focused calls so no
+        # work line is missed on a long programme.
+        pages = ["Final Summary\nBill No. 01 ...\nBill No. 02 ...",
+                 "Bill No. 01 — Preliminaries\n1. Site setup ...",
+                 "...continued detail for bill 1...",
+                 "Bill No. 02 — Villas\n1. Doors ..."]
+        batches = ue._bill_batches(pages)
+        self.assertEqual(len(batches), 3)            # summary, bill 1, bill 2
+        self.assertEqual(len(batches[1]), 2)         # bill 1 spans two pages
+
+    def test_structure_merges_summary_and_detail_batches(self):
+        # The summary batch gives the authoritative rate; a later bill batch
+        # gives the detail works — they must land on ONE category, keyed by ref.
+        pages = ["Bill No. 02 summary", "Bill No. 02 detail"]
+        replies = iter([
+            {"categories": [{"ref": "Bill No. 02", "name": "Villas",
+                             "quantity": 3, "unit": "no",
+                             "amount_per_unit": 42816.31}]},
+            {"categories": [{"ref": "Bill No. 02", "name": "Villas", "items": [
+                {"description": "Doors", "rate_material": "1000",
+                 "rate_labour": "200"}]}]}])
+        orig = ue._call_claude
+        ue._call_claude = lambda content, model: next(replies)
+        try:
+            cats, gst = ue.structure(pages, model="x")
+        finally:
+            ue._call_claude = orig
+        self.assertEqual(len(cats), 1)               # merged, not duplicated
+        self.assertEqual(cats[0]["amount_per_unit"], 42816.31)  # from summary
+        self.assertEqual(len(cats[0]["items"]), 1)              # from detail
 
     def test_capture_endpoint_returns_categories(self):
         orig = ue.run_capture
@@ -173,18 +222,23 @@ class BoqUnitTests(TestCase):
         self.client.force_authenticate(self.qs)
         r = self.client.post(self._cat_url(priced.id), {"rows": [
             {"description": "Tiling", "unit": "m2", "quantity": "1",
-             "rate": "10000"},
+             "rate_material": "7000", "rate_labour": "3000"},
             {"description": "Plumbing", "unit": "ls", "quantity": "1",
-             "rate": "16491.41"}]}, format="json")
+             "rate_material": "12000", "rate_labour": "4491.41"}]},
+            format="json")
         self.assertEqual(r.status_code, 200, r.data)
         priced.refresh_from_db()
         self.assertEqual(priced.items.count(), 2)
-        # the build-up now drives the per-unit rate (10000 + 16491.41)
-        self.assertEqual(priced.per_unit_total, Decimal("26491.410"))
-        self.assertEqual(priced.line_total, Decimal("26491.410") * 11)
-        # payload exposes the detail lines
+        # material + labour kept separate on the stored lines
+        tile = priced.items.get(description="Tiling")
+        self.assertEqual(tile.rate_supply, Decimal("7000.000"))
+        self.assertEqual(tile.rate_install, Decimal("3000.000"))
+        # payload exposes the split rates
         pc = next(c for c in r.data["categories"] if c["id"] == priced.id)
         self.assertEqual(len(pc["items"]), 2)
+        ti = next(x for x in pc["items"] if x["description"] == "Tiling")
+        self.assertEqual(Decimal(str(ti["rate_material"])), Decimal("7000.000"))
+        self.assertEqual(Decimal(str(ti["rate_labour"])), Decimal("3000.000"))
 
     def test_lump_category_rejects_detail(self):
         boq, _ = ue.commit(self.project, self._cats(), self.qs)

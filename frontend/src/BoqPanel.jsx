@@ -317,15 +317,20 @@ function BoqUnitSummary({ boq, projectId, editable, onChanged }) {
 
 // The works that build up one category's per-unit rate — view or edit.
 function CategoryDetail({ cat, projectId, editable, onChanged }) {
+  const blank = () => ({ description: "", unit: "", quantity: "1",
+    rate_material: "", rate_labour: "" });
   const start = () => (cat.items?.length
     ? cat.items.map((i) => ({ description: i.description, unit: i.unit,
-        quantity: i.qty, rate: i.rate, amount: i.amount }))
-    : [{ description: "", unit: "", quantity: "1", rate: "", amount: "" }]);
+        quantity: i.qty, rate_material: i.rate_material ?? "",
+        rate_labour: i.rate_labour ?? "" }))
+    : [blank()]);
   const [rows, setRows] = useState(start);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
 
-  const amt = (r) => Number(r.quantity || 0) * Number(r.rate || 0);
+  // material + labour, like a conventional split-rate BOQ line
+  const amt = (r) => Number(r.quantity || 0) *
+    (Number(r.rate_material || 0) + Number(r.rate_labour || 0));
   const total = rows.reduce((s, r) => s + amt(r), 0);
   const setR = (i, k, v) => setRows((rs) =>
     rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
@@ -336,7 +341,8 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
       const data = await api(
         `/projects/${projectId}/boq/categories/${cat.id}/items`,
         { method: "POST", body: { rows: rows.filter((r) =>
-          r.description.trim() && Number(r.rate) > 0) } });
+          r.description.trim() &&
+          (Number(r.rate_material) > 0 || Number(r.rate_labour) > 0)) } });
       onChanged(data);
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -351,10 +357,11 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
         fontSize: 12 }}>
         <thead><tr style={{ color: "var(--muted)" }}>
           <th style={{ ...th, textAlign: "left" }}>Work / item</th>
-          <th style={{ ...th, width: 60 }}>Unit</th>
-          <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
-          <th style={{ ...th, textAlign: "right", width: 90 }}>Rate</th>
-          <th style={{ ...th, textAlign: "right", width: 110 }}>Amount</th>
+          <th style={{ ...th, width: 54 }}>Unit</th>
+          <th style={{ ...th, textAlign: "right", width: 60 }}>Qty</th>
+          <th style={{ ...th, textAlign: "right", width: 84 }}>Material</th>
+          <th style={{ ...th, textAlign: "right", width: 84 }}>Labour</th>
+          <th style={{ ...th, textAlign: "right", width: 100 }}>Amount</th>
           <th style={{ ...th, width: 24 }}></th>
         </tr></thead>
         <tbody>
@@ -374,8 +381,13 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
                   style={{ ...inputStyle, width: "100%", textAlign: "right" }} />
               </td>
               <td style={{ padding: 2 }}>
-                <input type="number" value={r.rate} disabled={!editable}
-                  onChange={(e) => setR(i, "rate", e.target.value)}
+                <input type="number" value={r.rate_material} disabled={!editable}
+                  onChange={(e) => setR(i, "rate_material", e.target.value)}
+                  style={{ ...inputStyle, width: "100%", textAlign: "right" }} />
+              </td>
+              <td style={{ padding: 2 }}>
+                <input type="number" value={r.rate_labour} disabled={!editable}
+                  onChange={(e) => setR(i, "rate_labour", e.target.value)}
                   style={{ ...inputStyle, width: "100%", textAlign: "right" }} />
               </td>
               <td style={{ ...td, textAlign: "right" }}>{fmt(amt(r))}</td>
@@ -388,7 +400,7 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
             </tr>
           ))}
           <tr style={{ fontWeight: 600 }}>
-            <td style={td} colSpan={4}>Per-unit total</td>
+            <td style={td} colSpan={5}>Per-unit total</td>
             <td style={{ ...td, textAlign: "right" }}>{fmt(total)}</td>
             <td style={td}></td>
           </tr>
@@ -398,8 +410,7 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
       {editable && (
         <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
           <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
-            onClick={() => setRows((rs) => [...rs, { description: "", unit: "",
-              quantity: "1", rate: "", amount: "" }])}>+ Add work</button>
+            onClick={() => setRows((rs) => [...rs, blank()])}>+ Add work</button>
           <button style={{ ...buttonStyle, padding: "3px 12px", fontSize: 12 }}
             disabled={busy} onClick={save}>
             {busy ? "Saving…" : "Save build-up"}</button>
