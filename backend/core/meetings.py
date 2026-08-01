@@ -121,10 +121,46 @@ def create_meeting(data, actor):
                       organiser=organiser, created_by=actor)
     _apply(meeting, data)
     meeting.save()
-    _set_attendees(meeting, data.get("attendees") or [], actor)
+    # Add attendees without the per-invite ping — a single "meeting scheduled"
+    # notification below covers all participants at once.
+    _set_attendees(meeting, data.get("attendees") or [], actor, notify=False)
+    notify_meeting_created(meeting, actor)
     audit("meeting", meeting.id, "MEETING_CREATED", actor=actor,
           detail={"title": meeting.title, "type": meeting.meeting_type})
     return meeting, None
+
+
+def notify_meeting_created(meeting, actor):
+    """On scheduling, ping every participant — the internal attendees and the
+    organiser — so anyone with the mobile app gets an in-app + web-push alert.
+    Skips whoever created it (they know)."""
+    from .notify import notify_user
+    ids = set(meeting.attendees.filter(user__isnull=False)
+              .values_list("user_id", flat=True))
+    if meeting.organiser_id:
+        ids.add(meeting.organiser_id)
+    ids.discard(actor.id if actor else None)
+    if not ids:
+        return
+    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    type_label = dict(Meeting.Type.choices).get(meeting.meeting_type, "")
+    body = f"{when}{f' · {type_label}' if type_label else ''}. " \
+           f"Organiser: {meeting.organiser.full_name if meeting.organiser_id else '—'}"
+    for u in User.objects.filter(id__in=ids, is_active=True):
+        notify_user(u, f"Meeting scheduled — {meeting.title}", body=body,
+                    category="info")
+
+
+def delete_meeting(meeting, actor):
+    """Permanently remove a meeting (and its attendees/action items, via
+    cascade). Restricted to the organiser, its creator, or a custodian. Use
+    this for a mistaken entry; to keep it on record instead, cancel it."""
+    if not can_manage(actor, meeting):
+        return "Only the organiser or a custodian can delete this meeting."
+    audit("meeting", meeting.id, "MEETING_DELETED", actor=actor,
+          detail={"title": meeting.title})
+    meeting.delete()
+    return None
 
 
 def update_meeting(meeting, data, actor):
@@ -147,9 +183,10 @@ def update_meeting(meeting, data, actor):
     return meeting, None
 
 
-def _set_attendees(meeting, rows, actor=None):
+def _set_attendees(meeting, rows, actor=None, notify=True):
     """Replace the attendee list; newly-added internal people get an invite
-    notification (notify-only — no RSVP, no external email)."""
+    notification (notify-only — no RSVP, no external email). Pass notify=False
+    at creation, where a single 'meeting scheduled' ping covers everyone."""
     already = set(meeting.attendees.filter(user__isnull=False)
                   .values_list("user_id", flat=True))
     meeting.attendees.all().delete()
@@ -166,7 +203,8 @@ def _set_attendees(meeting, rows, actor=None):
             present=bool(r.get("present", True)))
         if uid and uid not in already:
             fresh.append(uid)
-    _invite(meeting, fresh, actor)
+    if notify:
+        _invite(meeting, fresh, actor)
 
 
 def _invite(meeting, user_ids, actor):

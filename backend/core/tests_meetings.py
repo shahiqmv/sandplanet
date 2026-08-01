@@ -96,6 +96,46 @@ class MeetingTests(TestCase):
         self.assertEqual(Notification.objects.filter(recipient=self.pm)
                          .count(), 0)
 
+    def test_scheduling_notifies_participants(self):
+        from .models import Notification
+        # director schedules with the PM as attendee → PM gets a push/in-app ping
+        r = self._create(attendees=[{"user_id": self.pm.id}])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.pm, title__icontains="Meeting scheduled").exists())
+        # the creator isn't pinged about their own meeting
+        self.assertFalse(
+            Notification.objects.filter(recipient=self.director).exists())
+
+    def test_scheduling_notifies_organiser_on_their_behalf(self):
+        from .models import Notification
+        # a custodian schedules on behalf of the QS as organiser → QS is pinged
+        r = self._create(organiser_id=self.qs.id)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.qs, title__icontains="Meeting scheduled").exists())
+
+    # ---- cancel / delete ------------------------------------------------
+    def test_cancel_keeps_record(self):
+        mid = self._create().data["id"]
+        r = self.client.delete(f"/api/v1/meetings/{mid}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "CANCELLED")
+        self.assertTrue(Meeting.objects.filter(pk=mid).exists())
+
+    def test_hard_delete_removes_meeting(self):
+        mid = self._create().data["id"]
+        r = self.client.delete(f"/api/v1/meetings/{mid}?hard=1")
+        self.assertEqual(r.status_code, 204)
+        self.assertFalse(Meeting.objects.filter(pk=mid).exists())
+
+    def test_non_manager_cannot_delete(self):
+        mid = self._create(user=self.qs).data["id"]     # QS organises
+        self.client.force_authenticate(self.pm)          # sees it via site, not manager
+        r = self.client.delete(f"/api/v1/meetings/{mid}?hard=1")
+        self.assertEqual(r.status_code, 403)
+        self.assertTrue(Meeting.objects.filter(pk=mid).exists())
+
     # ---- action items + my queue ----------------------------------------
     def test_action_items_and_my_queue(self):
         mid = self._create().data["id"]

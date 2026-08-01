@@ -58,7 +58,14 @@ def meeting_detail(request, pk):
     if request.method == "DELETE":
         if not svc.can_manage(request.user, m):
             return Response({"detail": "Only the organiser or a custodian "
-                                       "can cancel this."}, status=403)
+                                       "can remove this."}, status=403)
+        # ?hard=1 permanently deletes the record; otherwise cancel (keep on
+        # record). Delete for a mistaken entry; cancel for one that won't happen.
+        if request.query_params.get("hard") == "1":
+            msg = svc.delete_meeting(m, request.user)
+            if msg:
+                return Response({"detail": msg}, status=403)
+            return Response(status=204)
         m.status = "CANCELLED"
         m.save(update_fields=["status", "updated_at"])
         return Response(svc.meeting_dict(m, detail=True))

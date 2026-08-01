@@ -350,6 +350,18 @@ function MeetingDetail({ id, me, onBack }) {
     if (r.action_items?.length)
       setActions((as) => [...as, ...r.action_items]);
   }, "Claude drafted the minutes — review, edit and save.");
+  const cancelMeeting = () => {
+    if (!window.confirm("Cancel this meeting? It stays on record as "
+      + "cancelled.")) return;
+    run(async () => { const d = await api(`/meetings/${id}`,
+      { method: "DELETE" }); setM(d); }, "Meeting cancelled");
+  };
+  const deleteMeeting = () => {
+    if (!window.confirm("Delete this meeting permanently? This removes it and "
+      + "its minutes and follow-ups — it can't be undone.")) return;
+    run(async () => { await api(`/meetings/${id}?hard=1`,
+      { method: "DELETE" }); onBack(); });
+  };
 
   if (!m) return <div style={card}>{error || "Loading…"}</div>;
   const canManage = m.can_manage;
@@ -381,10 +393,19 @@ function MeetingDetail({ id, me, onBack }) {
         </div>
         {msg && <p style={{ color: "var(--green-fg)", fontSize: 13 }}>{msg}</p>}
         {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
-        {canManage && m.status === "SCHEDULED" && (
-          <Btn variant="secondary" disabled={busy} onClick={close}
-            style={{ marginTop: 8 }}>
-            Mark held{m.cadence !== "ONE_OFF" ? " & schedule next" : ""}</Btn>)}
+        {canManage && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8,
+            flexWrap: "wrap" }}>
+            {m.status === "SCHEDULED" && (
+              <Btn variant="secondary" disabled={busy} onClick={close}>
+                Mark held{m.cadence !== "ONE_OFF"
+                  ? " & schedule next" : ""}</Btn>)}
+            {m.status === "SCHEDULED" && (
+              <Btn variant="ghost" disabled={busy} onClick={cancelMeeting}>
+                Cancel meeting</Btn>)}
+            <Btn variant="danger" disabled={busy} onClick={deleteMeeting}
+              style={{ marginLeft: "auto" }}>Delete</Btn>
+          </div>)}
       </div>
 
       <div style={{ ...card, marginTop: 10 }}>
