@@ -380,6 +380,16 @@ function Register({ site, canEnter, onOpenDay }) {
                     <b style={{ color: "var(--sp-navy)" }}>{r.emp_no}</b>{" "}
                     {r.full_name}</td>
                   {data.days.map((d) => {
+                    // Days before the worker's join date are outside their
+                    // engagement — shown hatched, not blank (never counted).
+                    const preJoin = r.start_day && d.day < r.start_day;
+                    if (preJoin) {
+                      return (
+                        <td key={d.day} title="before joining"
+                            style={{ ...dcell, background: "#eef1f4",
+                              color: "#c3ccd3" }}>–</td>
+                      );
+                    }
                     const c = r.days[String(d.day)] || "";
                     const s = CODE_STYLE[c];
                     return (

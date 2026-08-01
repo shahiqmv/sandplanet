@@ -170,6 +170,21 @@ class PayrollRunTests(TestCase):
         self.assertEqual(float(line["days_worked"]), 31.0)  # no absences
         self.assertEqual(float(line["earned_basic"]), 6200.0)
 
+    def test_mid_month_joiner_is_prorated_from_join_date(self):
+        from datetime import date
+        # Kumar joins 20 May 2026 (a 31-day month) → 12 billable days (20–31),
+        # not the full month; the pre-join days are neither worked nor absent.
+        self.emp.join_date = date(2026, 5, 20)
+        self.emp.save(update_fields=["join_date"])
+        r = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "currency": "MVR",
+            "year": 2026, "month": 5, "working_days": 31}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        line = r.data["lines"][0]
+        self.assertEqual(float(line["days_worked"]), 12.0)     # 20..31 inclusive
+        # paid pro-rata on the full-month daily rate: 6200/31 × 12 = 2400
+        self.assertEqual(float(line["earned_basic"]), 2400.0)
+
     def test_edit_and_compute(self):
         run = self.client.post("/api/v1/payroll/runs", {
             "site_id": self.site.id, "year": 2026, "month": 5,

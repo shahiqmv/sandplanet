@@ -414,6 +414,15 @@ def attendance_register(request):
     for emp in roster:
         cells, t = {}, {"present": 0, "absent": 0, "leave": 0, "sick": 0,
                         "half": 0, "ot_hours": Decimal("0"), "fridays": 0}
+        # A worker is only on the roster from their join date: days before it
+        # are outside their engagement and shouldn't be marked (owner
+        # 2026-07-31). start_day = 1 for anyone who joined in a prior month.
+        start_day = 1
+        jd = emp.join_date
+        if jd and jd.year == year and jd.month == month:
+            start_day = jd.day
+        elif jd and (jd.year, jd.month) > (year, month):
+            start_day = ndays + 1          # joined after this month — all N/A
         for d in range(1, ndays + 1):
             a = att.get((emp.id, d))
             c = code(a, d in rest_days)
@@ -438,7 +447,7 @@ def attendance_register(request):
         rows.append({
             "emp_no": emp.emp_no, "full_name": emp.full_name,
             "category": emp.job_category.name if emp.job_category_id else "",
-            "days": cells, **t})
+            "start_day": start_day, "days": cells, **t})
         for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays"):
             sums[k] += t[k]
     return Response({
@@ -485,6 +494,10 @@ def attendance_bulk(request):
             employee = Employee.objects.get(pk=row.get("employee_id"),
                                             is_active=True)
         except Employee.DoesNotExist:
+            continue
+        # A worker's engagement starts on their join date — no attendance
+        # before it (owner 2026-07-31).
+        if employee.join_date and day < employee.join_date:
             continue
         remark = row.get("remark") or "PRESENT"
         if remark == "OFF":

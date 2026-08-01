@@ -4,6 +4,7 @@ Kept separate from the HR views so the monthly run and the payslip share one
 source of truth for pay maths. Money is quantised to 2dp at the edges.
 """
 import calendar
+from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
 from .models import Attendance, Employee, SalaryAdvance
@@ -41,10 +42,15 @@ def month_days(year, month):
 
 
 def _attendance_prefill(employee, site, year, month, working_days):
-    """Days worked (working_days − absences), approved OT hours, and Fridays
+    """Days worked (expected − absences), approved OT hours, and Fridays
     (rest days) worked for a worker in a month, from attendance. A rest day is
     any weekday not in the site's working week; being PRESENT on one is the
-    7th-day work paid as an extra day."""
+    7th-day work paid as an extra day.
+
+    A mid-month joiner is only expected — and paid — from their join date: the
+    calendar days before it are neither worked nor counted absent (owner
+    2026-07-31). The daily rate divisor stays the full month (run.working_days),
+    so the joiner is paid pro-rata, not penalised."""
     from .models import Site
 
     qs = Attendance.objects.filter(employee=employee, day__year=year,
@@ -56,15 +62,27 @@ def _attendance_prefill(employee, site, year, month, working_days):
         sid = employee.current_site_id()
         site_obj = Site.objects.filter(pk=sid).first() if sid else None
     work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
-    absents = ot = fridays = 0
+
+    # The billable window: from the later of the 1st and the join date to
+    # month-end. Expected days shrink for a mid-month joiner.
+    last = date(year, month, month_days(year, month))
+    start = date(year, month, 1)
+    jd = employee.join_date
+    if jd and jd > start:
+        start = jd
+    expected = 0 if start > last else (last - start).days + 1
+
+    absents = fridays = 0
     ot = Decimal("0")
     for a in qs:
+        if a.day < start:
+            continue                 # before the join date — ignore stray rows
         if a.remark in ABSENT_MARKS:
             absents += 1
         ot += a.ot_approved or 0
         if a.remark == "PRESENT" and a.day.isoweekday() not in work_week:
             fridays += 1
-    days = max(working_days - absents, 0)
+    days = max(expected - absents, 0)
     return Decimal(days), ot, fridays
 
 
