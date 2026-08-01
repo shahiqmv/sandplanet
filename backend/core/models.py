@@ -2441,25 +2441,39 @@ class BoqCategory(models.Model):
     is_lump = models.BooleanField(default=False)
     lump_amount = models.DecimalField(max_digits=14, decimal_places=2,
                                       null=True, blank=True)
+    # The AUTHORITATIVE per-unit contract rate from the BOQ summary (e.g.
+    # 42,816.31 per villa). The detail works are only a breakdown and often do
+    # NOT sum to this (a real BOQ carries prelim/overhead in the summary that
+    # isn't itemised), so the contract value must come from here, not Σ items.
+    # Null on an older / manually-built category → falls back to Σ items.
+    unit_amount = models.DecimalField(max_digits=16, decimal_places=3,
+                                      null=True, blank=True)
 
     class Meta:
         ordering = ["sort_order", "id"]
 
     @property
-    def per_unit_total(self):
+    def items_total(self):
+        """Sum of the captured detail works — the breakdown (may not reconcile
+        with the contract rate)."""
         from decimal import Decimal
         return sum((i.amount for i in self.items.all()), Decimal("0"))
 
     @property
+    def per_unit_total(self):
+        """The contract per-unit rate: the summary figure when known, else the
+        breakdown sum (a manually-built category)."""
+        if self.unit_amount is not None:
+            return self.unit_amount
+        return self.items_total
+
+    @property
     def line_total(self):
         from decimal import Decimal
-        # Once the detail works are captured, the total derives from them
-        # (× units) — for lump bills too (their breakdown items). A lump bill
-        # with no captured detail falls back to its single lump_amount.
-        if self.items.exists():
-            return self.per_unit_total * (self.qty or Decimal("1"))
         if self.is_lump:
-            return self.lump_amount or Decimal("0")
+            if self.lump_amount is not None:
+                return self.lump_amount
+            return self.items_total
         return self.per_unit_total * (self.qty or Decimal("0"))
 
 

@@ -208,9 +208,10 @@ def normalise(cats):
         items_sum = sum((_dec(i["amount"]) or Decimal("0") for i in items),
                         Decimal("0"))
         amt = _dec(c.get("amount_per_unit"))
-        # When detail is captured the per-unit rate derives from it; else use
-        # the summary figure.
-        per_unit = items_sum if items else amt
+        # The SUMMARY rate is the contract figure and is authoritative — the
+        # detail works are only a breakdown and often don't sum to it. Fall back
+        # to the breakdown sum only when the summary gave no rate.
+        per_unit = amt if amt is not None else (items_sum if items else None)
         if per_unit is None:
             continue
         is_lump = bool(c.get("is_lump"))
@@ -222,10 +223,11 @@ def normalise(cats):
             "name": name[:200],
             "unit": (str(c.get("unit") or "").strip() or "no")[:20],
             "quantity": str(qty),
-            "amount_per_unit": str(per_unit),
+            "amount_per_unit": str(per_unit),      # contract rate (authoritative)
+            "items_total": str(items_sum),          # breakdown sum (reconcile)
             "is_lump": is_lump,
             "items": items,
-            "line_total": str(per_unit * qty),   # lump qty = 1
+            "line_total": str(per_unit * qty),      # lump qty = 1
         })
     return out
 
@@ -273,13 +275,16 @@ def commit(project, categories, actor):
             boq=boq, sort_order=i * 10, ref=str(c.get("ref") or "")[:20],
             name=str(c.get("name") or "")[:200],
             unit=str(c.get("unit") or "no")[:20], qty=qty, is_lump=is_lump,
-            lump_amount=amt if is_lump else None)
+            lump_amount=amt if is_lump else None,
+            # The summary rate is the contract figure (authoritative); the
+            # detail works below are only a breakdown that may not sum to it.
+            unit_amount=None if is_lump else amt)
         detail = c.get("items") or []
         if detail:
             _make_items(cat, detail, boq)
         elif not is_lump:
-            # No detail captured — keep the single per-unit line (per_unit_total
-            # then equals the summary amount).
+            # No detail captured — one per-unit line so the category is still
+            # claimable; its amount equals the summary rate.
             BoqItem.objects.create(
                 boq=boq, category=cat, sort_order=1,
                 description=f"{cat.name} — per {cat.unit}", qty=Decimal("1"),

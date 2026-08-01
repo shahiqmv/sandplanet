@@ -70,6 +70,30 @@ class BoqUnitTests(TestCase):
         self.assertEqual(Decimal(cats[0]["amount_per_unit"]),
                          Decimal("26491.41"))
 
+    def test_summary_rate_authoritative_over_incomplete_detail(self):
+        # The real BOQ: the detailed works don't sum to the summary rate, and a
+        # lump bill's only detail is a rate-only item — the contract value must
+        # still come from the summary (was the Soneva capture failure).
+        cats = ue.normalise([
+            {"name": "Preliminaries", "amount_per_unit": "132512.18",
+             "is_lump": True, "items": [
+                {"description": "Air freight (rate only)", "amount": "0"}]},
+            {"name": "Villa Category C", "quantity": 3, "unit": "no",
+             "amount_per_unit": "42816.31", "items": [
+                {"description": "Door glass", "amount": "1197.42"},
+                {"description": "Ceiling fans", "amount": "3484.78"}]}])
+        boq, _ = ue.commit(self.project, cats, self.qs)
+        prelim = boq.categories.get(name="Preliminaries")
+        self.assertEqual(prelim.line_total, Decimal("132512.18"))     # not 0
+        villa = boq.categories.get(name="Villa Category C")
+        # contract rate = the summary figure, NOT the (incomplete) works sum
+        self.assertEqual(villa.per_unit_total, Decimal("42816.310"))
+        self.assertEqual(villa.line_total, Decimal("42816.310") * 3)
+        self.assertNotEqual(villa.items_total, villa.per_unit_total)  # gap kept
+        # whole BOQ totals to the summary, not the breakdown
+        self.assertEqual(boq.contract_value,
+                         Decimal("132512.18") + Decimal("42816.310") * 3)
+
     def test_commit_stores_detail_items(self):
         boq, msg = ue.commit(self.project, self._with_detail(), self.qs)
         self.assertIsNone(msg)

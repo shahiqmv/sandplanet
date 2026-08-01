@@ -68,6 +68,9 @@ def _boq_payload(project):
             "id": c.id, "ref": c.ref, "name": c.name, "unit": c.unit,
             "qty": c.qty, "is_lump": c.is_lump,
             "per_unit_total": c.per_unit_total, "line_total": c.line_total,
+            # The captured works' sum — shown against the contract rate so the
+            # QS can see where a bill's detail doesn't reconcile.
+            "items_total": c.items_total,
             # The works that build up the per-unit rate (empty for lump bills).
             "items": [{"id": i.id, "description": i.description,
                        "unit": i.unit, "qty": i.qty, "rate": i.rate_total,
