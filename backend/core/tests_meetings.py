@@ -64,6 +64,38 @@ class MeetingTests(TestCase):
         self.assertNotIn(pid, [m["id"] for m in
                          self.client.get("/api/v1/meetings").data["meetings"]])
 
+    def test_site_engineer_sees_their_site_meeting(self):
+        mid = self._create(meeting_type="SITE", project_id=None,
+                           site_id=self.site.id, title="Toolbox").data["id"]
+        self.client.force_authenticate(self.se)
+        self.assertIn(mid, [m["id"] for m in
+                      self.client.get("/api/v1/meetings").data["meetings"]])
+
+    def test_marketing_sees_prospect_meetings(self):
+        mkt = make_user("mkt1", User.Role.MARKETING)
+        mid = self._create(meeting_type="PROSPECT", project_id=None,
+                           org_name="New Resort").data["id"]
+        self.client.force_authenticate(mkt)
+        self.assertIn(mid, [m["id"] for m in
+                      self.client.get("/api/v1/meetings").data["meetings"]])
+
+    def test_inviting_a_user_notifies_them(self):
+        from .models import Notification
+        mid = self._create().data["id"]          # organiser = director
+        r = self.client.patch(f"/api/v1/meetings/{mid}",
+                              {"attendees": [{"user_id": self.pm.id}]},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.pm, title__icontains="Meeting invite").exists())
+        # re-saving the same attendee doesn't re-notify (no duplicate invite)
+        Notification.objects.all().delete()
+        self.client.patch(f"/api/v1/meetings/{mid}",
+                          {"attendees": [{"user_id": self.pm.id}]},
+                          format="json")
+        self.assertEqual(Notification.objects.filter(recipient=self.pm)
+                         .count(), 0)
+
     # ---- action items + my queue ----------------------------------------
     def test_action_items_and_my_queue(self):
         mid = self._create().data["id"]

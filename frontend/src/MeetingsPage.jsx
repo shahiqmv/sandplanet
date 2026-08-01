@@ -29,6 +29,133 @@ function F({ label, children }) {
       fontSize: 12, color: "var(--muted)" }}>{label}{children}</label>);
 }
 
+// A month grid of meetings; click a meeting to open it.
+function MonthCalendar({ meetings, onOpen }) {
+  const now = new Date();
+  const [cur, setCur] = useState({ y: now.getFullYear(), m: now.getMonth() });
+  const first = new Date(cur.y, cur.m, 1);
+  const startDow = (first.getDay() + 6) % 7;            // Monday-first
+  const days = new Date(cur.y, cur.m + 1, 0).getDate();
+  const byDay = {};
+  meetings.forEach((mm) => {
+    const d = new Date(mm.scheduled_at);
+    if (d.getFullYear() === cur.y && d.getMonth() === cur.m)
+      (byDay[d.getDate()] = byDay[d.getDate()] || []).push(mm);
+  });
+  const cells = [];
+  for (let i = 0; i < startDow; i++) cells.push(null);
+  for (let d = 1; d <= days; d++) cells.push(d);
+  const shift = (n) => setCur((c) => {
+    const d = new Date(c.y, c.m + n, 1);
+    return { y: d.getFullYear(), m: d.getMonth() };
+  });
+  const isToday = (d) => now.getFullYear() === cur.y
+    && now.getMonth() === cur.m && now.getDate() === d;
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10,
+        marginBottom: 8 }}>
+        <button style={ghostBtn} onClick={() => shift(-1)}>‹</button>
+        <b style={{ fontSize: 15, color: "var(--navy)", minWidth: 150,
+          textAlign: "center" }}>
+          {first.toLocaleDateString("en-GB", { month: "long",
+            year: "numeric" })}</b>
+        <button style={ghostBtn} onClick={() => shift(1)}>›</button>
+        <button style={{ ...ghostBtn, marginLeft: 4 }}
+          onClick={() => setCur({ y: now.getFullYear(),
+            m: now.getMonth() })}>Today</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)",
+        gap: 4 }}>
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          <div key={d} style={{ fontSize: 11, color: "var(--muted)",
+            textAlign: "center", padding: 2 }}>{d}</div>))}
+        {cells.map((d, i) => (
+          <div key={i} style={{ minHeight: 76, border: "1px solid var(--line)",
+            borderRadius: 6, padding: 3, background: d ? "#fff" : "transparent",
+            outline: d && isToday(d) ? "2px solid var(--sky)" : "none" }}>
+            {d && <div style={{ fontSize: 11, color: "var(--muted)",
+              textAlign: "right" }}>{d}</div>}
+            {(byDay[d] || []).map((mm) => (
+              <div key={mm.id} onClick={() => onOpen(mm.id)} title={mm.title}
+                style={{ cursor: "pointer", fontSize: 10.5, marginTop: 2,
+                  padding: "1px 4px", borderRadius: 4, whiteSpace: "nowrap",
+                  overflow: "hidden", textOverflow: "ellipsis",
+                  background: mm.status === "CANCELLED" ? "#eee"
+                    : "var(--sky-soft)", color: "var(--navy)" }}>
+                {new Date(mm.scheduled_at).toLocaleTimeString("en-GB",
+                  { hour: "2-digit", minute: "2-digit" })} {mm.title}</div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Add/remove attendees — internal Planet users + external guests.
+function AttendeeEditor({ attendees, setAttendees, users, editable }) {
+  const [pick, setPick] = useState("");
+  const [g, setG] = useState({ name: "", org: "", role: "" });
+  const addUser = () => {
+    const u = users.find((x) => String(x.id) === pick);
+    if (u && !attendees.some((a) => a.user_id === u.id))
+      setAttendees([...attendees,
+        { user_id: u.id, name: u.full_name, is_external: false }]);
+    setPick("");
+  };
+  const addGuest = () => {
+    if (!g.name.trim()) return;
+    setAttendees([...attendees, { ...g, is_external: true }]);
+    setG({ name: "", org: "", role: "" });
+  };
+  return (
+    <div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+        marginBottom: editable ? 8 : 0 }}>
+        {attendees.length === 0 && <span style={{ fontSize: 12,
+          color: "var(--muted)" }}>No attendees yet.</span>}
+        {attendees.map((a, i) => (
+          <span key={i} style={{ fontSize: 12.5, padding: "3px 8px",
+            borderRadius: 999, display: "inline-flex", gap: 6,
+            alignItems: "center", background: a.is_external
+              ? "var(--amber-bg)" : "var(--sky-soft)" }}>
+            {a.name}{a.org ? ` · ${a.org}` : ""}
+            {editable && <button onClick={() =>
+              setAttendees(attendees.filter((_, j) => j !== i))}
+              style={{ border: "none", background: "none", cursor: "pointer",
+                color: "var(--muted)", padding: 0 }}>×</button>}
+          </span>
+        ))}
+      </div>
+      {editable && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+          alignItems: "center" }}>
+          <select value={pick} onChange={(e) => setPick(e.target.value)}
+            style={{ ...sel, maxWidth: 180 }}>
+            <option value="">Add our team…</option>
+            {users.filter((u) => !attendees.some((a) => a.user_id === u.id))
+              .map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </select>
+          <button style={ghostBtn} disabled={!pick} onClick={addUser}>Add</button>
+          <span style={{ color: "var(--muted)", fontSize: 12 }}>·</span>
+          <input value={g.name} onChange={(e) => setG({ ...g, name:
+            e.target.value })} placeholder="Guest name" style={{ ...sel,
+            width: 130 }} />
+          <input value={g.org} onChange={(e) => setG({ ...g, org:
+            e.target.value })} placeholder="Organisation" style={{ ...sel,
+            width: 130 }} />
+          <button style={ghostBtn} disabled={!g.name.trim()}
+            onClick={addGuest}>Add guest</button>
+        </div>)}
+    </div>
+  );
+}
+
+const ghostBtn = { padding: "4px 10px", border: "1px solid var(--line)",
+  borderRadius: 6, background: "#fff", cursor: "pointer", fontSize: 12.5,
+  color: "var(--navy)" };
+
 export default function MeetingsPage({ me }) {
   const [tab, setTab] = useState("meetings");
   return (
@@ -56,6 +183,7 @@ export default function MeetingsPage({ me }) {
 function MeetingList({ me }) {
   const [data, setData] = useState(null);
   const [type, setType] = useState("");
+  const [view, setView] = useState("list");
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
@@ -80,11 +208,21 @@ function MeetingList({ me }) {
           {Object.entries(TYPE_LABEL).map(([k, v]) =>
             <option key={k} value={k}>{v}</option>)}
         </select>
+        <div style={{ display: "flex", gap: 4 }}>
+          {[["list", "List"], ["calendar", "Calendar"]].map(([k, l]) => (
+            <button key={k} onClick={() => setView(k)}
+              style={{ ...ghostBtn, background: view === k
+                ? "var(--navy)" : "#fff",
+                color: view === k ? "#fff" : "var(--navy)" }}>{l}</button>))}
+        </div>
         {data?.can_create && <Btn variant="primary"
           onClick={() => setCreating(true)}
           style={{ marginLeft: "auto" }}>+ New meeting</Btn>}
       </div>
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
+      {view === "calendar" && data && (
+        <MonthCalendar meetings={data.meetings} onOpen={setSelected} />)}
+      {view === "list" && (
       <div style={{ ...card, padding: 0, overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
           fontSize: 13 }}>
@@ -119,7 +257,7 @@ function MeetingList({ me }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>)}
     </div>
   );
 }
@@ -163,6 +301,7 @@ function MeetingDetail({ id, me, onBack }) {
   const [minutes, setMinutes] = useState("");
   const [notes, setNotes] = useState("");
   const [actions, setActions] = useState([]);
+  const [att, setAtt] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -171,6 +310,8 @@ function MeetingDetail({ id, me, onBack }) {
   const load = () => api(`/meetings/${id}`).then((d) => {
     setM(d); setMinutes(d.minutes || ""); setNotes(d.notes || "");
     setActions(d.action_items.map((a) => ({ ...a })));
+    setAtt(d.attendees.map((a) => ({ user_id: a.user_id, name: a.name,
+      org: a.org, role: a.role, is_external: a.is_external })));
   }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
   useEffect(() => { api("/users").then((r) =>
@@ -191,6 +332,11 @@ function MeetingDetail({ id, me, onBack }) {
       body: { rows: actions } });
     setM(d); setActions(d.action_items.map((a) => ({ ...a })));
   }, "Follow-ups saved");
+  const saveAtt = () => run(async () => {
+    const d = await api(`/meetings/${id}`, { method: "PATCH",
+      body: { attendees: att } });
+    setM(d);
+  }, "Attendees updated — new invitees notified");
   const close = () => run(async () => {
     const r = await api(`/meetings/${id}/close`, { method: "POST", body: {} });
     setM(r.meeting);
@@ -241,18 +387,14 @@ function MeetingDetail({ id, me, onBack }) {
             Mark held{m.cadence !== "ONE_OFF" ? " & schedule next" : ""}</Btn>)}
       </div>
 
-      {m.attendees?.length > 0 && (
-        <div style={{ ...card, marginTop: 10 }}>
-          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Attendees</h3>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {m.attendees.map((a) => (
-              <span key={a.id} style={{ fontSize: 12.5, padding: "3px 10px",
-                borderRadius: 999, background: a.is_external
-                  ? "var(--amber-bg)" : "var(--sky-soft)" }}>
-                {a.name}{a.org ? ` · ${a.org}` : ""}</span>
-            ))}
-          </div>
-        </div>)}
+      <div style={{ ...card, marginTop: 10 }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Attendees</h3>
+        <AttendeeEditor attendees={att} setAttendees={setAtt} users={users}
+          editable={canManage} />
+        {canManage && (
+          <Btn variant="secondary" disabled={busy} onClick={saveAtt}
+            style={{ marginTop: 8 }}>Save attendees</Btn>)}
+      </div>
 
       {m.agenda && (
         <div style={{ ...card, marginTop: 10 }}>
@@ -369,12 +511,16 @@ function NewMeeting({ me, onDone, onCancel }) {
     scheduled_at: "", duration_minutes: 60, location_kind: "OFFICE",
     location_note: "", cadence: "ONE_OFF", org_name: "", org_contact: "",
     agenda: "" });
+  const [users, setUsers] = useState([]);
+  const [attendees, setAttendees] = useState([]);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
   useEffect(() => { api("/sites").then((r) =>
     setSites(Array.isArray(r) ? r : (r.results || []))).catch(() => {}); }, []);
+  useEffect(() => { api("/users").then((r) =>
+    setUsers(Array.isArray(r) ? r : (r.results || []))).catch(() => {}); }, []);
   useEffect(() => {
     if (!siteId) { setProjects([]); return; }
     api(`/sites/${siteId}/projects`).then((r) =>
@@ -391,7 +537,7 @@ function NewMeeting({ me, onDone, onCancel }) {
     if (!f.scheduled_at) { setError("Set the date and time."); return; }
     setSaving(true);
     try {
-      const body = { ...f };
+      const body = { ...f, attendees };
       if (!isProject) body.project_id = null;
       if (isProject || isSite) body.site_id = siteId || null;
       const m = await api("/meetings", { method: "POST", body });
@@ -476,6 +622,13 @@ function NewMeeting({ me, onDone, onCancel }) {
           </select></F>
         <F label="Location note"><input value={f.location_note}
           onChange={set("location_note")} style={{ ...sel, width: 180 }} /></F>
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
+          Attendees — our team are notified when you schedule it</div>
+        <AttendeeEditor attendees={attendees} setAttendees={setAttendees}
+          users={users} editable />
       </div>
 
       <div style={{ marginBottom: 12 }}>

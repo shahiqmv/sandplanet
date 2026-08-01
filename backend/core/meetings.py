@@ -33,17 +33,23 @@ def is_custodian(user):
 # ---- visibility ----------------------------------------------------------
 
 def visible_meetings(user):
-    """Custodians see every meeting; everyone else sees the meetings they
-    organise, created or attend, plus site meetings for their allocated
-    sites."""
+    """Who sees what (owner 2026-07-31):
+      * Custodian (PD/Director + Admin): every meeting.
+      * Site Admin / Site Engineer / PM: meetings on their allocated site(s);
+        PM also the meetings of projects they run.
+      * Marketing: all prospective-client (BD) meetings.
+      * Everyone: meetings they organise, created, or are invited to.
+    Prospective-client meetings carry no site, so site roles don't see them —
+    only the custodian, organiser, invitees and Marketing."""
     qs = Meeting.objects.select_related("project", "site", "organiser")
     if is_custodian(user):
         return qs
     site_ids = list(user.allocated_site_ids() or [])
-    return qs.filter(
-        Q(organiser=user) | Q(created_by=user)
-        | Q(attendees__user=user) | Q(site_id__in=site_ids)
-    ).distinct()
+    q = (Q(organiser=user) | Q(created_by=user) | Q(attendees__user=user)
+         | Q(site_id__in=site_ids) | Q(project__pm=user))
+    if user.role == "MARKETING":
+        q |= Q(meeting_type="PROSPECT")
+    return qs.filter(q).distinct()
 
 
 def can_manage(user, meeting):
@@ -115,7 +121,7 @@ def create_meeting(data, actor):
                       organiser=organiser, created_by=actor)
     _apply(meeting, data)
     meeting.save()
-    _set_attendees(meeting, data.get("attendees") or [])
+    _set_attendees(meeting, data.get("attendees") or [], actor)
     audit("meeting", meeting.id, "MEETING_CREATED", actor=actor,
           detail={"title": meeting.title, "type": meeting.meeting_type})
     return meeting, None
@@ -135,14 +141,19 @@ def update_meeting(meeting, data, actor):
             Meeting.Minutes.values:
         meeting.minutes_status = data["minutes_status"]
     if "attendees" in data:
-        _set_attendees(meeting, data["attendees"])
+        _set_attendees(meeting, data["attendees"], actor)
     meeting.save()
     audit("meeting", meeting.id, "MEETING_UPDATED", actor=actor)
     return meeting, None
 
 
-def _set_attendees(meeting, rows):
+def _set_attendees(meeting, rows, actor=None):
+    """Replace the attendee list; newly-added internal people get an invite
+    notification (notify-only — no RSVP, no external email)."""
+    already = set(meeting.attendees.filter(user__isnull=False)
+                  .values_list("user_id", flat=True))
     meeting.attendees.all().delete()
+    fresh = []
     for r in rows:
         uid = r.get("user_id")
         MeetingAttendee.objects.create(
@@ -153,6 +164,23 @@ def _set_attendees(meeting, rows):
             role=(r.get("role") or "").strip(),
             is_external=bool(r.get("is_external") or (not uid)),
             present=bool(r.get("present", True)))
+        if uid and uid not in already:
+            fresh.append(uid)
+    _invite(meeting, fresh, actor)
+
+
+def _invite(meeting, user_ids, actor):
+    """Ping newly-invited internal people (skip the organiser doing the adding)."""
+    if not user_ids:
+        return
+    from .notify import notify_user
+    actor_id = actor.id if actor else None
+    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    for u in User.objects.filter(id__in=user_ids).exclude(id=actor_id):
+        notify_user(u, f"Meeting invite — {meeting.title}",
+                    body=f"{when}. Organiser: "
+                         f"{meeting.organiser.full_name if meeting.organiser_id else '—'}",
+                    category="info")
 
 
 # ---- action items (follow-up) -------------------------------------------
