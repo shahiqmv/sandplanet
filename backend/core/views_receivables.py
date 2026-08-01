@@ -5,7 +5,7 @@ from datetime import date
 
 from rest_framework.decorators import (api_view, parser_classes,
                                        permission_classes)
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -251,7 +251,7 @@ def _manual_gate(request):
 
 
 @api_view(["GET", "POST"])
-@parser_classes([MultiPartParser, FormParser])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])
 def manual_invoices(request):
     if request.method == "POST":
@@ -259,6 +259,14 @@ def manual_invoices(request):
             return bad
         data = request.data.dict() if hasattr(request.data, "dict") \
             else dict(request.data)
+        # Line items ride as a JSON string in a multipart post (alongside the
+        # file); a plain JSON post carries them as a real list already.
+        if isinstance(data.get("lines"), str):
+            import json
+            try:
+                data["lines"] = json.loads(data["lines"])
+            except ValueError:
+                data["lines"] = []
         if request.FILES.get("attachment"):
             data["attachment"] = request.FILES["attachment"]
         mi, msg = mi_svc.create_manual_invoice(data, request.user)

@@ -44,6 +44,7 @@
     border-bottom: 0.6px solid #D8E3EC; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
     white-space: nowrap; width: 42mm; }
+  table.doc tr.sub td { background: #E7F1F9; font-weight: 700; color: #10344F; }
   table.doc tr.net td { background: #DCEBF8; font-weight: 800; color: #10344F;
     border-top: 1.3pt solid #1685CC; border-bottom: none;
     padding-top: 2mm; padding-bottom: 2mm; }
@@ -95,21 +96,24 @@
 
 <hr class="rule">
 
-<p class="narrative">
-  {% if mi.description %}{{ mi.description }}{% else %}Being value of work certified for {{ project.title }}.{% endif %}
-</p>
+<p class="narrative">Being the following charges to {{ project.title }}.</p>
 
 <table class="doc">
   <thead>
-    <tr><th>Description</th><th class="n">Amount {{ currency }}</th></tr>
+    <tr><th>Description</th><th class="n">Qty</th><th class="n">Unit price</th>
+        <th class="n">Amount {{ currency }}</th></tr>
   </thead>
   <tbody>
-    {% if has_breakdown %}
-    <tr><td>{% if mi.description %}{{ mi.description }}{% else %}Value of work{% endif %}</td>
-        <td class="n">{{ net_f }}</td></tr>
-    <tr><td>Output GST</td><td class="n">{{ gst_f }}</td></tr>
-    {% endif %}
-    <tr class="net"><td>Total amount payable</td>
+    {% for ln in lines %}
+    <tr><td>{{ ln.description }}</td>
+        <td class="n">{{ ln.quantity }}</td>
+        <td class="n">{{ ln.unit_price }}</td>
+        <td class="n">{{ ln.amount_f }}</td></tr>
+    {% endfor %}
+    <tr class="sub"><td colspan="3">Net</td><td class="n">{{ net_f }}</td></tr>
+    <tr><td colspan="3">Output GST @ {{ gst_pct }}%</td>
+        <td class="n">{{ gst_f }}</td></tr>
+    <tr class="net"><td colspan="3">Total amount payable</td>
         <td class="n">{{ currency }} {{ amount_f }}</td></tr>
   </tbody>
 </table>

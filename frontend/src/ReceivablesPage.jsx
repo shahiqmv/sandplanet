@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
-import { card, th, td, Btn, Chip } from "./ui.jsx";
+import { card, th, td, Btn, Chip, ghostButton } from "./ui.jsx";
 
 const RECEIPT_ROLES = ["FINANCE", "ADMIN"];
 // Who may record a manual client invoice (mirrors manual_invoices.CREATE_ROLES).
@@ -597,7 +597,9 @@ function NewManualInvoice({ onDone, onCancel }) {
   const [form, setForm] = useState({
     origin: "HISTORICAL", project_id: "", invoice_no: "",
     invoice_date: new Date().toISOString().slice(0, 10), due_date: "",
-    net_amount: "", gst_amount: "", amount: "", description: "", note: "" });
+    gst_pct: "8", description: "", note: "" });
+  const [lines, setLines] = useState([
+    { description: "", quantity: "", unit_price: "", amount: "" }]);
   const [file, setFile] = useState(null);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -615,35 +617,53 @@ function NewManualInvoice({ onDone, onCancel }) {
   }, [siteId]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
-  // Keep the total in step with a net + GST breakdown when both are entered.
-  const setMoney = (k) => (e) => {
-    const v = e.target.value;
-    setForm((f) => {
-      const next = { ...f, [k]: v };
-      if (k === "net_amount" || k === "gst_amount") {
-        const n = parseFloat(k === "net_amount" ? v : next.net_amount);
-        const g = parseFloat(k === "gst_amount" ? v : next.gst_amount);
-        if (!isNaN(n)) next.amount = (n + (isNaN(g) ? 0 : g)).toFixed(2);
-      }
-      return next;
-    });
-  };
-
   const issued = form.origin === "ISSUED";
+
+  // Line edits: qty × unit price auto-fills the line amount.
+  const setLine = (i, k, v) => setLines((ls) => ls.map((ln, j) => {
+    if (j !== i) return ln;
+    const next = { ...ln, [k]: v };
+    if (k === "quantity" || k === "unit_price") {
+      const q = parseFloat(k === "quantity" ? v : next.quantity);
+      const u = parseFloat(k === "unit_price" ? v : next.unit_price);
+      if (!isNaN(q) && !isNaN(u)) next.amount = (q * u).toFixed(2);
+    }
+    return next;
+  }));
+  const addLine = () => setLines((ls) => [...ls,
+    { description: "", quantity: "", unit_price: "", amount: "" }]);
+  const removeLine = (i) => setLines((ls) =>
+    ls.length > 1 ? ls.filter((_, j) => j !== i) : ls);
+
+  // Live totals: net = Σ line amounts, GST = net × rate, total = net + GST.
+  const net = lines.reduce((s, ln) => s + (Number(ln.amount) || 0), 0);
+  const gstPct = Number(form.gst_pct) || 0;
+  const gst = net * gstPct / 100;
+  const total = net + gst;
 
   async function save() {
     setError(null);
     if (!form.project_id) { setError("Choose the project."); return; }
     if (!issued && !form.invoice_no.trim()) {
       setError("Enter the client's invoice number."); return; }
-    if (!(Number(form.amount) > 0)) { setError("Enter the amount."); return; }
+    const clean = lines
+      .filter((ln) => ln.description.trim() && Number(ln.amount) > 0)
+      .map((ln) => ({ description: ln.description.trim(),
+        quantity: ln.quantity || null, unit_price: ln.unit_price || null,
+        amount: ln.amount }));
+    if (!clean.length) {
+      setError("Add at least one line item with a description and amount.");
+      return;
+    }
     setSaving(true);
     try {
       const fd = new FormData();
-      Object.entries(form).forEach(([k, v]) => {
-        if (v !== "" && v != null) fd.append(k, v);
+      ["origin", "project_id", "invoice_date", "due_date", "gst_pct",
+        "description", "note"].forEach((k) => {
+        if (form[k] !== "" && form[k] != null) fd.append(k, form[k]);
       });
-      if (issued) fd.delete("invoice_no");
+      if (!issued) fd.append("invoice_no", form.invoice_no);
+      fd.append("lines", JSON.stringify(clean));
       if (file) fd.append("attachment", file);
       const mi = await apiUpload("/receivables/manual-invoices", fd);
       if (mi.can_pdf) window.open(
@@ -711,26 +731,83 @@ function NewManualInvoice({ onDone, onCancel }) {
             style={sel} /></Field>
       </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-        marginBottom: 6 }}>
-        <Field label="Net (optional)">
-          <input type="number" step="0.01" value={form.net_amount}
-            onChange={setMoney("net_amount")}
-            style={{ ...sel, width: 120, ...mono }} /></Field>
-        <Field label="GST (optional)">
-          <input type="number" step="0.01" value={form.gst_amount}
-            onChange={setMoney("gst_amount")}
-            style={{ ...sel, width: 120, ...mono }} /></Field>
-        <Field label="Total amount (USD)">
-          <input type="number" step="0.01" value={form.amount}
-            onChange={set("amount")}
-            style={{ ...sel, width: 140, ...mono }} /></Field>
+      {/* Line items — bill for several unrelated things on one invoice */}
+      <div style={{ margin: "8px 0 6px", fontSize: 12, color: "var(--muted)" }}>
+        Line items</div>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+        fontSize: 13, marginBottom: 6 }}>
+        <thead><tr>
+          <th style={{ ...th, textAlign: "left" }}>Description</th>
+          <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
+          <th style={{ ...th, textAlign: "right", width: 100 }}>Unit price</th>
+          <th style={{ ...th, textAlign: "right", width: 120 }}>Amount</th>
+          <th style={{ ...th, width: 28 }}></th>
+        </tr></thead>
+        <tbody>
+          {lines.map((ln, i) => (
+            <tr key={i}>
+              <td style={{ padding: 2 }}>
+                <input value={ln.description}
+                  onChange={(e) => setLine(i, "description", e.target.value)}
+                  placeholder="e.g. Excavator rental / Food provision"
+                  style={{ ...sel, width: "100%" }} /></td>
+              <td style={{ padding: 2 }}>
+                <input type="number" step="0.01" value={ln.quantity}
+                  onChange={(e) => setLine(i, "quantity", e.target.value)}
+                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
+              </td>
+              <td style={{ padding: 2 }}>
+                <input type="number" step="0.01" value={ln.unit_price}
+                  onChange={(e) => setLine(i, "unit_price", e.target.value)}
+                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
+              </td>
+              <td style={{ padding: 2 }}>
+                <input type="number" step="0.01" value={ln.amount}
+                  onChange={(e) => setLine(i, "amount", e.target.value)}
+                  style={{ ...sel, width: "100%", textAlign: "right", ...mono }} />
+              </td>
+              <td style={{ padding: 2, textAlign: "center" }}>
+                <button type="button" onClick={() => removeLine(i)}
+                  title="Remove line" style={{ border: "none",
+                    background: "none", cursor: "pointer",
+                    color: "var(--muted)", fontSize: 16 }}>×</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <button type="button" onClick={addLine}
+        style={{ ...ghostButton, padding: "3px 12px", fontSize: 13,
+          marginBottom: 10 }}>+ Add line</button>
+
+      {/* System-computed net / GST / total */}
+      <div style={{ display: "flex", justifyContent: "flex-end",
+        marginBottom: 10 }}>
+        <div style={{ minWidth: 280, fontSize: 13 }}>
+          <div style={{ display: "flex", justifyContent: "space-between",
+            padding: "3px 0" }}>
+            <span style={{ color: "var(--muted)" }}>Net</span>
+            <b style={mono}>{money(net)}</b></div>
+          <div style={{ display: "flex", justifyContent: "space-between",
+            padding: "3px 0", alignItems: "center" }}>
+            <span style={{ color: "var(--muted)" }}>GST @{" "}
+              <input type="number" step="0.01" value={form.gst_pct}
+                onChange={set("gst_pct")}
+                style={{ ...sel, width: 56, padding: "2px 6px",
+                  textAlign: "right", ...mono }} /> %</span>
+            <b style={mono}>{money(gst)}</b></div>
+          <div style={{ display: "flex", justifyContent: "space-between",
+            padding: "6px 0", borderTop: "1px solid var(--line)",
+            fontSize: 15 }}>
+            <span>Total (USD)</span>
+            <b style={{ ...mono, color: "var(--navy)" }}>{money(total)}</b></div>
+        </div>
       </div>
 
       <div style={{ marginBottom: 6 }}>
-        <Field label="Description (shown on the invoice / statement)">
+        <Field label="Invoice summary (optional — a heading for the statement)">
           <input value={form.description} onChange={set("description")}
-            placeholder="e.g. Interim payment 3 — pool works"
+            placeholder="e.g. Miscellaneous charges — July"
             style={{ ...sel, width: "100%" }} /></Field>
       </div>
 

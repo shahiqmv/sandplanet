@@ -24,12 +24,17 @@ class ManualInvoiceTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.qs)
 
-    def _create(self, **over):
+    def _create(self, lines=None, gst_pct="0", **over):
+        # Default: a single 5000 line, GST 0 → total 5000, so the receivables
+        # totals the aging/receipt tests assert stay clean.
+        if lines is None:
+            lines = [{"description": "Value of work", "amount": "5000"}]
         body = {"project_id": self.project.id, "origin": "HISTORICAL",
                 "invoice_no": "CL-2024-07", "invoice_date": "2024-05-01",
-                "amount": "5000"}
+                "gst_pct": gst_pct, "lines": lines}
         body.update(over)
-        return self.client.post("/api/v1/receivables/manual-invoices", body)
+        return self.client.post("/api/v1/receivables/manual-invoices", body,
+                                format="json")
 
     # ---- creation --------------------------------------------------------
     def test_historical_uses_client_number_and_back_dates(self):
@@ -41,23 +46,39 @@ class ManualInvoiceTests(TestCase):
         self.assertEqual(float(r.data["amount"]), 5000.0)
         self.assertFalse(r.data["can_pdf"])
 
-    def test_issued_gets_a_planet_number_and_builds_total_from_net_gst(self):
+    def test_issued_gets_a_planet_number_and_auto_computes_gst_and_total(self):
+        # net 1000, GST @ 8% auto = 80, total = 1080 — all system-computed.
         r = self._create(origin="ISSUED", invoice_no="",
-                         invoice_date="2026-07-01", amount="",
-                         net_amount="1000", gst_amount="80")
+                         invoice_date="2026-07-01", gst_pct="8",
+                         lines=[{"description": "Interim work", "amount": "1000"}])
         self.assertEqual(r.status_code, 201, r.data)
         self.assertTrue(r.data["invoice_no"].startswith("INV-"))
+        self.assertEqual(float(r.data["net_amount"]), 1000.0)
+        self.assertEqual(float(r.data["gst_amount"]), 80.0)
         self.assertEqual(float(r.data["amount"]), 1080.0)   # net + gst
         self.assertTrue(r.data["can_pdf"])
+
+    def test_multi_line_sums_net_then_adds_gst(self):
+        # Unrelated charges on one invoice: equipment rental + food provision.
+        r = self._create(gst_pct="8", lines=[
+            {"description": "Excavator rental", "quantity": "2",
+             "unit_price": "1500", "amount": "3000"},
+            {"description": "Food provision to tiling crew", "amount": "1200"}])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(len(r.data["lines"]), 2)
+        self.assertEqual(float(r.data["net_amount"]), 4200.0)   # 3000 + 1200
+        self.assertEqual(float(r.data["gst_amount"]), 336.0)    # 8% of 4200
+        self.assertEqual(float(r.data["amount"]), 4536.0)
 
     def test_historical_needs_a_client_number(self):
         r = self._create(invoice_no="")
         self.assertEqual(r.status_code, 400)
         self.assertIn("number", r.data["detail"].lower())
 
-    def test_amount_is_required(self):
-        r = self._create(amount="0")
+    def test_needs_at_least_one_line(self):
+        r = self._create(lines=[])
         self.assertEqual(r.status_code, 400)
+        self.assertIn("line", r.data["detail"].lower())
 
     def test_site_staff_cannot_record_invoices(self):
         self.client.force_authenticate(self.se)
@@ -73,11 +94,12 @@ class ManualInvoiceTests(TestCase):
         self.assertEqual(float(ag["totals"]["d90p"]), 5000.0)
         # a Planet-issued invoice takes the next INV- number, not colliding
         r = self._create(origin="ISSUED", invoice_no="",
-                         invoice_date="2026-07-01", amount="2000")
+                         invoice_date="2026-07-01",
+                         lines=[{"description": "Work", "amount": "2000"}])
         self.assertTrue(r.data["invoice_no"].endswith("-0001"))
 
     def test_receipt_settles_a_manual_invoice(self):
-        mid = self._create(amount="5000").data["id"]
+        mid = self._create().data["id"]
         r = self.client.post(f"/api/v1/projects/{self.project.id}/receipts",
                              {"manual_invoice_id": mid, "amount": "2000",
                               "received_on": "2024-06-01"}, format="json")
@@ -115,7 +137,9 @@ class ManualInvoiceTests(TestCase):
     # ---- pdf -------------------------------------------------------------
     def test_issued_has_pdf_historical_does_not(self):
         issued = self._create(origin="ISSUED", invoice_no="",
-                              invoice_date="2026-07-01", amount="1500").data
+                              invoice_date="2026-07-01", gst_pct="8",
+                              lines=[{"description": "Work",
+                                      "amount": "1500"}]).data
         r = self.client.get(
             f"/api/v1/receivables/manual-invoices/{issued['id']}.pdf")
         self.assertEqual(r.status_code, 200)

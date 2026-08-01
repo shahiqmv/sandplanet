@@ -2905,9 +2905,11 @@ class ManualInvoice(models.Model):
     # When it falls due; blank = due on the invoice date.
     due_date = models.DateField(null=True, blank=True)
     currency = models.CharField(max_length=3, default="USD")
-    # amount = the total receivable incl. GST. For an ISSUED invoice the net +
-    # GST build it up and print on the PDF; a HISTORICAL one may carry the total
-    # only.
+    # The money is built up from the line items: net = Σ lines, GST = net ×
+    # gst_pct, amount (total receivable) = net + GST. All three are stored so
+    # receivables reads them directly; the service always recomputes them from
+    # the lines on save. (Legacy rows may carry only `amount`.)
+    gst_pct = models.DecimalField(max_digits=5, decimal_places=2, default=8)
     net_amount = models.DecimalField(max_digits=16, decimal_places=2,
                                      null=True, blank=True)
     gst_amount = models.DecimalField(max_digits=16, decimal_places=2,
@@ -2933,6 +2935,26 @@ class ManualInvoice(models.Model):
     @property
     def effective_due_date(self):
         return self.due_date or self.invoice_date
+
+
+class ManualInvoiceLine(models.Model):
+    """One charge on a manual invoice — a project can be billed for several
+    unrelated things on one invoice (equipment rental, food provision to other
+    contractors, etc.). qty × unit_price builds the line amount; GST is applied
+    once on the invoice net, not per line."""
+
+    invoice = models.ForeignKey(ManualInvoice, on_delete=models.CASCADE,
+                                related_name="lines")
+    sort_order = models.IntegerField(default=0)
+    description = models.CharField(max_length=300)
+    quantity = models.DecimalField(max_digits=14, decimal_places=3,
+                                   null=True, blank=True)
+    unit_price = models.DecimalField(max_digits=16, decimal_places=2,
+                                     null=True, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
 
 
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====
