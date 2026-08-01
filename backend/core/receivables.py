@@ -19,7 +19,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from .commercial import _q2, claim_valuation
-from .models import ClientReceipt, ProgressClaim, Site
+from .models import ClientReceipt, ManualInvoice, ProgressClaim, Site
 
 ZERO = Decimal("0")
 
@@ -53,6 +53,12 @@ def _received_by_claim(claim_ids):
     return {r["claim_id"]: (r["s"] or ZERO) for r in rows}
 
 
+def _received_by_manual(mi_ids):
+    rows = (ClientReceipt.objects.filter(manual_invoice_id__in=mi_ids)
+            .values("manual_invoice_id").annotate(s=Sum("amount")))
+    return {r["manual_invoice_id"]: (r["s"] or ZERO) for r in rows}
+
+
 def _invoice_claims(site_id=None):
     """Certified/paid claims that carry a tax invoice (the receivables), newest
     invoice first is not needed — callers sort as they wish."""
@@ -65,34 +71,56 @@ def _invoice_claims(site_id=None):
     return list(qs)
 
 
+def _manual_invoices(site_id=None):
+    """Non-void manual invoices (historical + Planet-issued) — receivables that
+    didn't come through the claim flow."""
+    qs = (ManualInvoice.objects.filter(is_void=False)
+          .select_related("project", "project__site"))
+    if site_id is not None:
+        qs = qs.filter(project__site_id=site_id)
+    return list(qs)
+
+
 def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
-    """One row per tax invoice with amount / received / outstanding and its
-    aging bucket relative to `as_of` (default today)."""
+    """One row per tax invoice — from certified claims AND manual invoices —
+    with amount / received / outstanding and its aging bucket relative to
+    `as_of` (default today)."""
     as_of = as_of or _today()
     claims = _invoice_claims(site_id)
-    received = _received_by_claim([c.id for c in claims])
+    manual = _manual_invoices(site_id)
+    rc = _received_by_claim([c.id for c in claims])
+    rm = _received_by_manual([m.id for m in manual])
     rows = []
-    for c in claims:
-        amt = invoiced_amount(c)
-        got = _q2(received.get(c.id, ZERO))
+
+    def _add(source, ident, invoice_no, ref, claim_type, project, inv_date,
+             dd, amt, got):
         out = amt - got
         if only_outstanding and out <= 0:
-            continue
-        dd = due_date(c)
+            return
         overdue = (as_of - dd).days
         rows.append({
-            "claim_id": c.id, "invoice_no": c.invoice_no, "ref": c.ref,
-            "claim_type": c.claim_type,
-            "project_id": c.project_id, "project_code": c.project.code,
-            "project_title": c.project.title,
-            "site_id": c.project.site_id,
-            "invoice_date": invoice_date(c), "due_date": dd,
+            "source": source,
+            "claim_id": ident if source == "CLAIM" else None,
+            "manual_invoice_id": ident if source == "MANUAL" else None,
+            "invoice_no": invoice_no, "ref": ref, "claim_type": claim_type,
+            "project_id": project.id, "project_code": project.code,
+            "project_title": project.title, "site_id": project.site_id,
+            "invoice_date": inv_date, "due_date": dd,
             "days_overdue": max(overdue, 0),
             "amount": amt, "received": got, "outstanding": out,
             "bucket": _bucket(overdue),
             "status": "PAID" if out <= 0 else (
                 "OVERDUE" if overdue > 0 else "CURRENT"),
         })
+
+    for c in claims:
+        _add("CLAIM", c.id, c.invoice_no, c.ref, c.claim_type, c.project,
+             invoice_date(c), due_date(c), invoiced_amount(c),
+             _q2(rc.get(c.id, ZERO)))
+    for m in manual:
+        _add("MANUAL", m.id, m.invoice_no, m.invoice_no, m.origin, m.project,
+             m.invoice_date, m.effective_due_date, _q2(m.amount),
+             _q2(rm.get(m.id, ZERO)))
     rows.sort(key=lambda r: (r["due_date"], r["invoice_no"]))
     return rows
 
@@ -192,9 +220,11 @@ def client_statement(site, date_from=None, date_to=None):
     date_to = date_to or _today()
     claims = [c for c in _invoice_claims(site.id)
               if invoice_date(c) <= date_to]
+    manual = [m for m in _manual_invoices(site.id)
+              if m.invoice_date <= date_to]
     receipts = list(ClientReceipt.objects
                     .filter(project__site=site, received_on__lte=date_to)
-                    .select_related("project", "claim"))
+                    .select_related("project", "claim", "manual_invoice"))
 
     txns = []
     for c in claims:
@@ -207,8 +237,21 @@ def client_statement(site, date_from=None, date_to=None):
             "due_date": due_date(c),
             "debit": invoiced_amount(c), "credit": ZERO,
         })
+    for m in manual:
+        kind = ("Historical invoice" if m.origin == "HISTORICAL"
+                else "Tax invoice")
+        txns.append({
+            "date": m.invoice_date, "kind": "INVOICE",
+            "sort": 0, "ref": m.invoice_no,
+            "project_code": m.project.code,
+            "description": f"{kind} — {m.invoice_no}"
+                           + (f" ({m.description})" if m.description else ""),
+            "due_date": m.effective_due_date,
+            "debit": _q2(m.amount), "credit": ZERO,
+        })
     for rc in receipts:
-        ref = rc.reference or (rc.claim.invoice_no if rc.claim else "")
+        ref = rc.reference or (rc.claim.invoice_no if rc.claim else "") \
+            or (rc.manual_invoice.invoice_no if rc.manual_invoice_id else "")
         txns.append({
             "date": rc.received_on, "kind": "RECEIPT",
             "sort": 1, "ref": ref,

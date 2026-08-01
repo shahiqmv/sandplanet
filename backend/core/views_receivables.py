@@ -3,13 +3,16 @@ analysis and client statements of account. Read-only reporting over the
 certified claims (IPCs) and client receipts."""
 from datetime import date
 
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import (api_view, parser_classes,
+                                       permission_classes)
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from . import manual_invoices as mi_svc
 from . import receipts as receipts_svc
 from . import receivables
-from .models import CompanyBankAccount, OfficialReceipt, Site
+from .models import CompanyBankAccount, ManualInvoice, OfficialReceipt, Site
 
 # Who may see the receivables ledger: Finance runs it; the QS owns the
 # billing and the Director oversees cash-in (owner 2026-07-24).
@@ -236,3 +239,69 @@ def receipt_pdf(request, pk):
     from .views_commercial import _render_pdf
     return _render_pdf("pdf/official_receipt.html",
                        receipts_svc.receipt_pdf_context(r), r.receipt_no)
+
+
+# ---- Manual invoices (historical + Planet-issued, off the claim flow) -----
+
+def _manual_gate(request):
+    if request.user.role not in mi_svc.CREATE_ROLES:
+        return Response({"detail": "You can't record client invoices."},
+                        status=403)
+    return None
+
+
+@api_view(["GET", "POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def manual_invoices(request):
+    if request.method == "POST":
+        if (bad := _manual_gate(request)):
+            return bad
+        data = request.data.dict() if hasattr(request.data, "dict") \
+            else dict(request.data)
+        if request.FILES.get("attachment"):
+            data["attachment"] = request.FILES["attachment"]
+        mi, msg = mi_svc.create_manual_invoice(data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(mi_svc.manual_invoice_dict(mi), status=201)
+    if (bad := _gate(request)):
+        return bad
+    site_id = request.query_params.get("site")
+    site_id = int(site_id) if site_id and site_id.isdigit() else None
+    include_void = request.query_params.get("void") == "1"
+    return Response({"invoices": mi_svc.list_invoices(
+        site_id=site_id, include_void=include_void)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def manual_invoice_void(request, pk):
+    if (bad := _manual_gate(request)):
+        return bad
+    try:
+        mi = ManualInvoice.objects.select_related("project").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    msg = mi_svc.void_manual_invoice(mi, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(mi_svc.manual_invoice_dict(mi))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def manual_invoice_pdf(request, pk):
+    if (bad := _gate(request)):
+        return bad
+    try:
+        mi = ManualInvoice.objects.select_related(
+            "project", "project__site").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if mi.origin != "ISSUED":
+        return Response({"detail": "Only a Planet-issued invoice has a "
+                                   "generated PDF."}, status=400)
+    from .views_commercial import _render_pdf
+    return _render_pdf("pdf/manual_invoice.html",
+                       mi_svc.manual_invoice_pdf_context(mi), mi.invoice_no)

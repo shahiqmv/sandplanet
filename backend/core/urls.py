@@ -291,6 +291,13 @@ urlpatterns = [
          name="rcv-statement"),
     path("receivables/statement.pdf", receivables_api.statement_pdf,
          name="rcv-statement-pdf"),
+    # Manual client invoices (historical + Planet-issued, off the claim flow)
+    path("receivables/manual-invoices", receivables_api.manual_invoices,
+         name="rcv-manual-invoices"),
+    path("receivables/manual-invoices/<int:pk>/void",
+         receivables_api.manual_invoice_void, name="rcv-manual-invoice-void"),
+    path("receivables/manual-invoices/<int:pk>.pdf",
+         receivables_api.manual_invoice_pdf, name="rcv-manual-invoice-pdf"),
     # Official receipts + the company bank accounts credited
     path("receivables/bank-accounts", receivables_api.bank_accounts,
          name="rcv-bank-accounts"),

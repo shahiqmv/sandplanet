@@ -2852,6 +2852,12 @@ class ClientReceipt(models.Model):
                                 related_name="receipts")
     claim = models.ForeignKey(ProgressClaim, on_delete=models.SET_NULL,
                               null=True, blank=True, related_name="receipts")
+    # A receipt settles EITHER a progress-claim invoice OR a standalone manual
+    # invoice (historical or Planet-issued). Exactly one of claim/manual_invoice
+    # is set; project is always the account's project.
+    manual_invoice = models.ForeignKey("ManualInvoice",
+                                        on_delete=models.SET_NULL, null=True,
+                                        blank=True, related_name="receipts")
     official_receipt = models.ForeignKey(OfficialReceipt,
                                          on_delete=models.CASCADE, null=True,
                                          blank=True, related_name="receipts")
@@ -2869,6 +2875,64 @@ class ClientReceipt(models.Model):
 
     def __str__(self):
         return f"{self.project.code} receipt {self.amount} {self.currency}"
+
+
+class ManualInvoice(models.Model):
+    """A client tax invoice recorded directly in Planet, NOT derived from a
+    progress claim — so a mid-flight project can be tracked without rebuilding
+    its BOQ and past claims. Two kinds:
+
+      * HISTORICAL — an invoice raised before the project came onto Planet:
+        back-dated to its real date (so aging is exact), the client's own
+        invoice number, record-only (optionally with the actual invoice PDF
+        attached). Nothing is printed.
+      * ISSUED — an invoice raised on Planet for an off-system (old-way) claim:
+        a Planet invoice number and a generated tax-invoice PDF.
+
+    Either way it feeds the same receivables aging / statement / receipts as a
+    claim invoice. The account is the project's site (client); contracts are
+    USD. Void instead of deleting so the number is never silently reused."""
+
+    class Origin(models.TextChoices):
+        HISTORICAL = "HISTORICAL", "Historical (recorded)"
+        ISSUED = "ISSUED", "Issued on Planet"
+
+    project = models.ForeignKey(Project, on_delete=models.PROTECT,
+                                related_name="manual_invoices")
+    origin = models.CharField(max_length=10, choices=Origin.choices)
+    invoice_no = models.CharField(max_length=40)   # client's own, or Planet INV-
+    invoice_date = models.DateField()              # real (back-datable) date
+    # When it falls due; blank = due on the invoice date.
+    due_date = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, default="USD")
+    # amount = the total receivable incl. GST. For an ISSUED invoice the net +
+    # GST build it up and print on the PDF; a HISTORICAL one may carry the total
+    # only.
+    net_amount = models.DecimalField(max_digits=16, decimal_places=2,
+                                     null=True, blank=True)
+    gst_amount = models.DecimalField(max_digits=16, decimal_places=2,
+                                     null=True, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2)
+    description = models.CharField(max_length=300, blank=True)
+    note = models.TextField(blank=True)
+    # The actual client invoice document (HISTORICAL record-keeping).
+    attachment = models.FileField(upload_to="manual-invoices/", null=True,
+                                  blank=True)
+    is_void = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-invoice_date", "-id"]
+
+    def __str__(self):
+        return f"{self.invoice_no} ({self.project.code})"
+
+    @property
+    def effective_due_date(self):
+        return self.due_date or self.invoice_date
 
 
 # ===== Project cost control (§6C) — the Committed/Incurred/Paid ledger =====

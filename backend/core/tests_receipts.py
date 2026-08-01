@@ -2,6 +2,7 @@
 from datetime import date
 
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import receivables
@@ -46,7 +47,7 @@ class OfficialReceiptTests(TestCase):
 
     def _receipt(self, allocations, **extra):
         self.client.force_authenticate(self.fin)
-        body = {"site": self.site.id, "receipt_date": str(date.today()),
+        body = {"site": self.site.id, "receipt_date": str(timezone.localdate()),
                 "method": "TT", "reference": "FT123",
                 "bank_account": self.bank.id, "allocations": allocations,
                 **extra}
@@ -103,7 +104,7 @@ class OfficialReceiptTests(TestCase):
             self.client.force_authenticate(u)
             r = self.client.post("/api/v1/receivables/receipts",
                                  {"site": self.site.id,
-                                  "receipt_date": str(date.today()),
+                                  "receipt_date": str(timezone.localdate()),
                                   "method": "TT", "allocations": alloc},
                                  format="json")
             self.assertEqual(r.status_code, 403)

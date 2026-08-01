@@ -788,7 +788,7 @@ def claim_valuation(claim):
 def record_client_receipt(project, data, actor):
     """Record money received from the client (USD) against a certified claim.
     Fully settling a certified claim marks it Paid. Returns (receipt, error)."""
-    from .models import ClientReceipt, ProgressClaim
+    from .models import ClientReceipt, ManualInvoice, ProgressClaim
     amt = _dec(data.get("amount"))
     if amt is None or amt <= ZERO:
         return None, "Enter the amount received."
@@ -800,8 +800,15 @@ def record_client_receipt(project, data, actor):
             pk=data["claim_id"], project=project).first()
         if claim is None:
             return None, "That claim isn't on this project."
+    manual = None
+    if data.get("manual_invoice_id"):
+        manual = ManualInvoice.objects.filter(
+            pk=data["manual_invoice_id"], project=project,
+            is_void=False).first()
+        if manual is None:
+            return None, "That invoice isn't on this project."
     receipt = ClientReceipt.objects.create(
-        project=project, claim=claim, amount=amt,
+        project=project, claim=claim, manual_invoice=manual, amount=amt,
         received_on=data["received_on"], reference=data.get("reference") or "",
         note=data.get("note") or "", recorded_by=actor)
     if claim and claim.status == "CERTIFIED":
@@ -865,11 +872,14 @@ def project_revenue_summary(project):
 
 def _next_invoice_no():
     """Sequential tax-invoice number carrying the year, reset each year:
-    INV-2026-0001 (owner 2026-07-25)."""
+    INV-2026-0001 (owner 2026-07-25). Shared across claim invoices and
+    Planet-issued manual invoices so numbers never collide."""
     from django.utils import timezone
-    from .models import ProgressClaim
+    from .models import ManualInvoice, ProgressClaim
     prefix = f"INV-{timezone.now().year}-"
-    n = ProgressClaim.objects.filter(invoice_no__startswith=prefix).count() + 1
+    n = (ProgressClaim.objects.filter(invoice_no__startswith=prefix).count()
+         + ManualInvoice.objects.filter(invoice_no__startswith=prefix).count()
+         + 1)
     return f"{prefix}{n:04d}"
 
 

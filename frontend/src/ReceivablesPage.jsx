@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { card, th, td, Btn, Chip } from "./ui.jsx";
 
 const RECEIPT_ROLES = ["FINANCE", "ADMIN"];
+// Who may record a manual client invoice (mirrors manual_invoices.CREATE_ROLES).
+const MANUAL_ROLES = ["QS", "FINANCE", "DIRECTOR", "ADMIN"];
 const METHODS = [["TT", "Telegraphic transfer"], ["CHEQUE", "Cheque"],
   ["CASH", "Cash"], ["CARD", "Card"], ["OTHER", "Other"]];
 
@@ -16,7 +18,7 @@ const fmtDate = (s) => (s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
 const TABS = [["aging", "Aging analysis"], ["statement", "Statement of account"],
-  ["receipts", "Official receipts"]];
+  ["manual", "Manual invoices"], ["receipts", "Official receipts"]];
 
 // Client receivables — invoice due dates, aging buckets, per-client statements
 // and official receipts over the certified claims (IPCs). Finance / QS /
@@ -24,6 +26,7 @@ const TABS = [["aging", "Aging analysis"], ["statement", "Statement of account"]
 export default function ReceivablesPage({ me }) {
   const [tab, setTab] = useState("aging");
   const canReceipt = RECEIPT_ROLES.includes(me.role);
+  const canManual = MANUAL_ROLES.includes(me.role);
   return (
     <div style={{ maxWidth: 1100 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12,
@@ -43,6 +46,7 @@ export default function ReceivablesPage({ me }) {
       </div>
       {tab === "aging" && <Aging />}
       {tab === "statement" && <Statement />}
+      {tab === "manual" && <ManualInvoices canManual={canManual} />}
       {tab === "receipts" && <Receipts canReceipt={canReceipt} />}
     </div>
   );
@@ -488,6 +492,264 @@ function NewReceipt({ onDone, onCancel }) {
         <Btn variant="primary" onClick={save}
              disabled={saving || total <= 0}>
           {saving ? "Generating…" : "Generate receipt"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+const ORIGIN_LABEL = { HISTORICAL: "Historical", ISSUED: "Issued on Planet" };
+
+// Manual client invoices — historical (recorded) + Planet-issued, for a project
+// tracked mid-flight without rebuilding its BOQ / claims.
+function ManualInvoices({ canManual }) {
+  const [list, setList] = useState(null);
+  const [error, setError] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const load = () => api("/receivables/manual-invoices")
+    .then((r) => setList(r.invoices)).catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  async function voidInvoice(mi) {
+    if (!window.confirm(`Void invoice ${mi.invoice_no}? It will drop off the `
+      + "receivables. This can't be undone.")) return;
+    try {
+      await api(`/receivables/manual-invoices/${mi.id}/void`,
+        { method: "POST" });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  if (creating) return <NewManualInvoice
+    onDone={() => { setCreating(false); load(); }}
+    onCancel={() => setCreating(false)} />;
+  if (!list) return <div style={card}>Loading…</div>;
+
+  return (
+    <div>
+      {error && <div style={{ color: "var(--red-fg)", marginBottom: 10,
+        fontSize: 13 }}>{error}</div>}
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: 10 }}>
+        <span style={{ color: "var(--muted)", fontSize: 13 }}>
+          Invoices raised outside the claim flow — they feed the same aging,
+          statement &amp; receipts.</span>
+        {canManual && <Btn variant="primary"
+          onClick={() => setCreating(true)}>+ Record invoice</Btn>}
+      </div>
+      <div style={{ ...card, padding: 0, overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+          fontSize: 13 }}>
+          <thead><tr>
+            <th style={{ ...th, textAlign: "left" }}>Date</th>
+            <th style={{ ...th, textAlign: "left" }}>Invoice</th>
+            <th style={{ ...th, textAlign: "left" }}>Project</th>
+            <th style={{ ...th, textAlign: "left" }}>Type</th>
+            <th style={{ ...th, textAlign: "right" }}>Amount</th>
+            <th style={{ ...th, textAlign: "right" }}>Received</th>
+            <th style={{ ...th, textAlign: "right" }}>Outstanding</th>
+            <th style={th}></th>
+          </tr></thead>
+          <tbody>
+            {!list.length && <tr><td style={td} colSpan={8}>
+              No manual invoices recorded.</td></tr>}
+            {list.map((mi) => (
+              <tr key={mi.id}>
+                <td style={td}>{fmtDate(mi.invoice_date)}</td>
+                <td style={{ ...td, ...mono }}>{mi.invoice_no}
+                  {mi.description && <div style={{ color: "var(--muted)",
+                    fontSize: 11, fontFamily: "inherit" }}>{mi.description}</div>}
+                </td>
+                <td style={td}>{mi.project_code}</td>
+                <td style={td}><Chip tone={mi.origin === "ISSUED"
+                  ? "info" : "ok"}>{ORIGIN_LABEL[mi.origin]}</Chip></td>
+                <td style={{ ...td, textAlign: "right", ...mono }}>
+                  {money(mi.amount)}</td>
+                <td style={{ ...td, textAlign: "right", ...mono }}>
+                  {dash(mi.received)}</td>
+                <td style={{ ...td, textAlign: "right", ...mono }}>
+                  {money(mi.outstanding)}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  {mi.can_pdf && <a href={`/api/v1/receivables/`
+                    + `manual-invoices/${mi.id}.pdf`} target="_blank"
+                    rel="noreferrer" style={{ color: "var(--sky)",
+                      fontSize: 12 }}>PDF</a>}
+                  {mi.has_attachment && <span style={{ color: "var(--muted)",
+                    fontSize: 11, marginLeft: 8 }}>📎</span>}
+                  {canManual && Number(mi.received) === 0 && (
+                    <button onClick={() => voidInvoice(mi)}
+                      style={{ border: "none", background: "none",
+                        cursor: "pointer", color: "var(--red-fg)",
+                        fontSize: 12, marginLeft: 8 }}>Void</button>)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function NewManualInvoice({ onDone, onCancel }) {
+  const [sites, setSites] = useState(null);
+  const [projects, setProjects] = useState([]);
+  const [siteId, setSiteId] = useState("");
+  const [form, setForm] = useState({
+    origin: "HISTORICAL", project_id: "", invoice_no: "",
+    invoice_date: new Date().toISOString().slice(0, 10), due_date: "",
+    net_amount: "", gst_amount: "", amount: "", description: "", note: "" });
+  const [file, setFile] = useState(null);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api("/sites").then((r) => setSites(Array.isArray(r) ? r : (r.results || [])))
+      .catch((e) => setError(e.message));
+  }, []);
+  useEffect(() => {
+    if (!siteId) { setProjects([]); return; }
+    api(`/sites/${siteId}/projects`)
+      .then((r) => setProjects(Array.isArray(r) ? r : (r.results || [])))
+      .catch(() => setProjects([]));
+    setForm((f) => ({ ...f, project_id: "" }));
+  }, [siteId]);
+
+  const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  // Keep the total in step with a net + GST breakdown when both are entered.
+  const setMoney = (k) => (e) => {
+    const v = e.target.value;
+    setForm((f) => {
+      const next = { ...f, [k]: v };
+      if (k === "net_amount" || k === "gst_amount") {
+        const n = parseFloat(k === "net_amount" ? v : next.net_amount);
+        const g = parseFloat(k === "gst_amount" ? v : next.gst_amount);
+        if (!isNaN(n)) next.amount = (n + (isNaN(g) ? 0 : g)).toFixed(2);
+      }
+      return next;
+    });
+  };
+
+  const issued = form.origin === "ISSUED";
+
+  async function save() {
+    setError(null);
+    if (!form.project_id) { setError("Choose the project."); return; }
+    if (!issued && !form.invoice_no.trim()) {
+      setError("Enter the client's invoice number."); return; }
+    if (!(Number(form.amount) > 0)) { setError("Enter the amount."); return; }
+    setSaving(true);
+    try {
+      const fd = new FormData();
+      Object.entries(form).forEach(([k, v]) => {
+        if (v !== "" && v != null) fd.append(k, v);
+      });
+      if (issued) fd.delete("invoice_no");
+      if (file) fd.append("attachment", file);
+      const mi = await apiUpload("/receivables/manual-invoices", fd);
+      if (mi.can_pdf) window.open(
+        `/api/v1/receivables/manual-invoices/${mi.id}.pdf`, "_blank");
+      onDone();
+    } catch (e) { setError(e.message); }
+    setSaving(false);
+  }
+
+  if (!sites) return <div style={card}>Loading…</div>;
+
+  return (
+    <div style={{ ...card, maxWidth: 820 }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center", marginBottom: 12 }}>
+        <h2 style={{ margin: 0, fontSize: 18 }}>Record a client invoice</h2>
+        <button onClick={onCancel} style={{ border: "none", background: "none",
+          cursor: "pointer", color: "var(--muted)", fontSize: 13 }}>Cancel</button>
+      </div>
+      {error && <div style={{ color: "var(--red-fg)", marginBottom: 10,
+        fontSize: 13 }}>{error}</div>}
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+        marginBottom: 6 }}>
+        <Field label="Invoice type">
+          <select value={form.origin} onChange={set("origin")} style={sel}>
+            <option value="HISTORICAL">Historical — record only</option>
+            <option value="ISSUED">Issue on Planet — generate PDF</option>
+          </select></Field>
+        <Field label="Client">
+          <select value={siteId} onChange={(e) => setSiteId(e.target.value)}
+            style={sel}>
+            <option value="">Select client…</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.client_name || s.name} ({s.code})</option>
+            ))}
+          </select></Field>
+        <Field label="Project">
+          <select value={form.project_id} onChange={set("project_id")}
+            style={sel} disabled={!siteId}>
+            <option value="">Select project…</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>{p.code} — {p.title}</option>
+            ))}
+          </select></Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+        marginBottom: 6 }}>
+        {issued ? (
+          <Field label="Invoice number">
+            <input value="Planet assigns INV-…" disabled
+              style={{ ...sel, color: "var(--muted)", width: 170 }} /></Field>
+        ) : (
+          <Field label="Client's invoice number">
+            <input value={form.invoice_no} onChange={set("invoice_no")}
+              placeholder="e.g. INV/2024/07" style={sel} /></Field>
+        )}
+        <Field label="Invoice date">
+          <input type="date" value={form.invoice_date}
+            onChange={set("invoice_date")} style={sel} /></Field>
+        <Field label="Due date (optional)">
+          <input type="date" value={form.due_date} onChange={set("due_date")}
+            style={sel} /></Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+        marginBottom: 6 }}>
+        <Field label="Net (optional)">
+          <input type="number" step="0.01" value={form.net_amount}
+            onChange={setMoney("net_amount")}
+            style={{ ...sel, width: 120, ...mono }} /></Field>
+        <Field label="GST (optional)">
+          <input type="number" step="0.01" value={form.gst_amount}
+            onChange={setMoney("gst_amount")}
+            style={{ ...sel, width: 120, ...mono }} /></Field>
+        <Field label="Total amount (USD)">
+          <input type="number" step="0.01" value={form.amount}
+            onChange={set("amount")}
+            style={{ ...sel, width: 140, ...mono }} /></Field>
+      </div>
+
+      <div style={{ marginBottom: 6 }}>
+        <Field label="Description (shown on the invoice / statement)">
+          <input value={form.description} onChange={set("description")}
+            placeholder="e.g. Interim payment 3 — pool works"
+            style={{ ...sel, width: "100%" }} /></Field>
+      </div>
+
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+        alignItems: "flex-end", marginBottom: 14 }}>
+        <Field label={issued ? "Attach (optional)"
+          : "Attach the actual invoice (optional)"}>
+          <input type="file" accept="application/pdf,image/*"
+            onChange={(e) => setFile(e.target.files[0] || null)}
+            style={{ fontSize: 12 }} /></Field>
+        <Field label="Internal note (optional)">
+          <input value={form.note} onChange={set("note")}
+            style={{ ...sel, width: 260 }} /></Field>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+        <Btn variant="primary" onClick={save} disabled={saving}>
+          {saving ? "Saving…" : (issued ? "Issue invoice" : "Record invoice")}
+        </Btn>
       </div>
     </div>
   );

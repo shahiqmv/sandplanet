@@ -75,7 +75,7 @@ class ReceivablesTests(TestCase):
         # pay it in full → it drops off the outstanding aging
         self.client.post(f"/api/v1/projects/{self.project.id}/receipts",
                          {"claim_id": c.id, "amount": "2160",
-                          "received_on": str(date.today())}, format="json")
+                          "received_on": str(timezone.localdate())}, format="json")
         ag = receivables.aging()
         self.assertEqual(ag["invoice_count"], 0)
         self.assertEqual(float(ag["totals"]["total"]), 0.0)
@@ -85,7 +85,7 @@ class ReceivablesTests(TestCase):
         c = self._make_invoice()
         self.client.post(f"/api/v1/projects/{self.project.id}/receipts",
                          {"claim_id": c.id, "amount": "1000",
-                          "received_on": str(date.today())}, format="json")
+                          "received_on": str(timezone.localdate())}, format="json")
         s = receivables.client_statement(self.site)
         self.assertEqual(float(s["opening"]), 0.0)
         self.assertEqual(float(s["billed"]), 2160.0)
