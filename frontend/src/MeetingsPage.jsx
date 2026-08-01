@@ -21,6 +21,14 @@ const dOnly = (s) => s ? new Date(s).toLocaleDateString("en-GB",
 const sel = { padding: "6px 8px", border: "1px solid var(--line)",
   borderRadius: 6, fontSize: 13, background: "#fff" };
 
+// Module-scope so it's a stable component type — defining it inside a form
+// component remounts inputs on every render and steals focus each keystroke.
+function F({ label, children }) {
+  return (
+    <label style={{ display: "flex", flexDirection: "column", gap: 3,
+      fontSize: 12, color: "var(--muted)" }}>{label}{children}</label>);
+}
+
 export default function MeetingsPage({ me }) {
   const [tab, setTab] = useState("meetings");
   return (
@@ -391,10 +399,6 @@ function NewMeeting({ me, onDone, onCancel }) {
     } catch (e) { setError(e.message); }
     setSaving(false);
   }
-
-  const F = ({ label, children }) => (
-    <label style={{ display: "flex", flexDirection: "column", gap: 3,
-      fontSize: 12, color: "var(--muted)" }}>{label}{children}</label>);
 
   return (
     <div style={{ ...card, maxWidth: 760 }}>
