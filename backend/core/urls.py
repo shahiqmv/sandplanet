@@ -13,6 +13,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_onboarding as onboarding_api, \
     views_procurement_schedule as psched_api, \
     views_profile as profile_api, \
+    views_meetings as meetings_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -291,6 +292,16 @@ urlpatterns = [
          name="rcv-statement"),
     path("receivables/statement.pdf", receivables_api.statement_pdf,
          name="rcv-statement-pdf"),
+    # Meetings — calendar / minutes / follow-up
+    path("meetings", meetings_api.meetings, name="meetings"),
+    path("meetings/my-actions", meetings_api.my_action_items,
+         name="meeting-my-actions"),
+    path("meetings/<int:pk>", meetings_api.meeting_detail,
+         name="meeting-detail"),
+    path("meetings/<int:pk>/actions", meetings_api.meeting_actions,
+         name="meeting-actions"),
+    path("meetings/<int:pk>/close", meetings_api.meeting_close,
+         name="meeting-close"),
     # Manual client invoices (historical + Planet-issued, off the claim flow)
     path("receivables/manual-invoices", receivables_api.manual_invoices,
          name="rcv-manual-invoices"),

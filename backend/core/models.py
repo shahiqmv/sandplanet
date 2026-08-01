@@ -3707,3 +3707,143 @@ class ProfileReferee(models.Model):
         ordering = ["sort_order", "id"]
 
 
+# ===== Meetings (client/site/BD meeting log + minutes + follow-up) =====
+
+
+class Meeting(models.Model):
+    """A meeting record — regular project reviews, prospective-client (BD)
+    meetings, or site meetings — kept centrally for the calendar, minutes and
+    follow-up. Owned by the PD as custodian (delegatable). A recurring meeting
+    forms a series: closing one occurrence can spawn the next and roll its open
+    action items forward (owner 2026-07-31)."""
+
+    class Type(models.TextChoices):
+        PROJECT = "PROJECT", "Project review"
+        PROSPECT = "PROSPECT", "Prospective client (BD)"
+        SITE = "SITE", "Site meeting"
+        OTHER = "OTHER", "Other / internal"
+
+    class Status(models.TextChoices):
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        HELD = "HELD", "Held"
+        CANCELLED = "CANCELLED", "Cancelled"
+        POSTPONED = "POSTPONED", "Postponed"
+
+    class Cadence(models.TextChoices):
+        ONE_OFF = "ONE_OFF", "One-off"
+        WEEKLY = "WEEKLY", "Weekly"
+        FORTNIGHTLY = "FORTNIGHTLY", "Fortnightly"
+        MONTHLY = "MONTHLY", "Monthly"
+
+    class Location(models.TextChoices):
+        OFFICE = "OFFICE", "Head office"
+        SITE = "SITE", "At site"
+        CLIENT = "CLIENT", "Client's office"
+        ONLINE = "ONLINE", "Online"
+        OTHER = "OTHER", "Other"
+
+    class Minutes(models.TextChoices):
+        NONE = "NONE", "No minutes yet"
+        DRAFT = "DRAFT", "Draft"
+        FINAL = "FINAL", "Final"
+
+    title = models.CharField(max_length=200)
+    meeting_type = models.CharField(max_length=10, choices=Type.choices)
+    # A meeting links to a project OR a site; a prospect meeting has neither and
+    # names the organisation/contact free-text (not a client yet).
+    project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True,
+                                blank=True, related_name="meetings")
+    site = models.ForeignKey(Site, on_delete=models.SET_NULL, null=True,
+                             blank=True, related_name="meetings")
+    org_name = models.CharField(max_length=200, blank=True)   # prospect / other
+    org_contact = models.CharField(max_length=160, blank=True)
+
+    scheduled_at = models.DateTimeField()
+    duration_minutes = models.PositiveIntegerField(default=60)
+    location_kind = models.CharField(max_length=8, choices=Location.choices,
+                                     default=Location.OFFICE)
+    location_note = models.CharField(max_length=200, blank=True)
+
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.SCHEDULED)
+    cadence = models.CharField(max_length=12, choices=Cadence.choices,
+                               default=Cadence.ONE_OFF)
+    # The first meeting of a recurring series; occurrences point back to it.
+    series_parent = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                      null=True, blank=True,
+                                      related_name="occurrences")
+
+    agenda = models.TextField(blank=True)
+    minutes = models.TextField(blank=True)
+    minutes_status = models.CharField(max_length=6, choices=Minutes.choices,
+                                      default=Minutes.NONE)
+    notes = models.TextField(blank=True)   # raw notes fed to the minutes drafter
+
+    organiser = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                  blank=True, related_name="meetings_organised")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-scheduled_at", "-id"]
+
+    def __str__(self):
+        return f"{self.title} ({self.scheduled_at:%Y-%m-%d})"
+
+
+class MeetingAttendee(models.Model):
+    """Who was invited/attended — an internal Planet user or an external guest
+    named free-text (client-side, consultant…)."""
+
+    meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE,
+                                related_name="attendees")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True,
+                             blank=True, related_name="+")
+    name = models.CharField(max_length=160, blank=True)     # external guest
+    org = models.CharField(max_length=160, blank=True)
+    role = models.CharField(max_length=120, blank=True)
+    is_external = models.BooleanField(default=False)
+    present = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["is_external", "id"]
+
+
+class MeetingActionItem(models.Model):
+    """A follow-up from a meeting — what, who owns it, by when, and its state.
+    Owner is an internal user (queued to them) or a free-text external name.
+    Open items roll forward into the next occurrence of a series."""
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        DONE = "DONE", "Done"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE,
+                                related_name="action_items")
+    description = models.TextField()
+    owner = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                              blank=True, related_name="meeting_actions")
+    owner_name = models.CharField(max_length=160, blank=True)  # external owner
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.OPEN)
+    # When rolled forward from a prior meeting, the item it came from.
+    carried_from = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="+")
+    completed_at = models.DateTimeField(null=True, blank=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    @property
+    def is_open(self):
+        return self.status in (self.Status.OPEN, self.Status.IN_PROGRESS)
+
+

@@ -27,6 +27,7 @@ import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
 import MyPaymentRequests from "./MyPaymentRequests.jsx";
+import MeetingsPage from "./MeetingsPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
@@ -81,6 +82,10 @@ const NAV_GROUPS = [
   { key: "planning", label: "Planning",
     roles: ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN"],
     subs: [["procurement-schedule", "Procurement Schedule", null]] },
+  { key: "meetingsGrp", label: "Meetings",
+    roles: ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
+            "SIGNATORY"],
+    subs: [["meetings", "Meetings", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS"],
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
@@ -483,6 +488,7 @@ export default function App() {
       ) : (
         <main style={{ maxWidth:
                          ["attendance", "workforce"].includes(docView?.mode)
+                         || (!docView && hoPage === "meetings")
                            ? 1160
                          : (docView?.mode === "project"
                             || (!docView && hoPage === "procurement-schedule"))
@@ -868,6 +874,11 @@ export default function App() {
               .includes(me.role) &&
             hoPage === "procurement-schedule" && (
             <ProcurementSchedulePage me={me} sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
+             "SIGNATORY"].includes(me.role) && hoPage === "meetings" && (
+            <MeetingsPage me={me} />
           )}
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc} />
