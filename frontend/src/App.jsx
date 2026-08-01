@@ -26,6 +26,7 @@ import ProjectPage from "./ProjectPage.jsx";
 import PaymentRequestForm from "./PaymentRequestForm.jsx";
 import PaymentRequestView from "./PaymentRequestView.jsx";
 import PaymentRegisterPage from "./PaymentRegisterPage.jsx";
+import MyPaymentRequests from "./MyPaymentRequests.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
@@ -88,6 +89,12 @@ const NAV_GROUPS = [
            ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
                                            "QS"]]] },
+  // Head-Office raisers have no site register to fall back on, so their own
+  // payment requests would vanish on submit — this is their tracking view.
+  { key: "myreqGrp", label: "My Requests",
+    roles: ["HO_PURCHASING", "HO_HR", "QS", "DIRECTOR", "SIGNATORY",
+            "FINANCE", "ADMIN"],
+    subs: [["my-pyr", "Payment Requests", null]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
@@ -780,6 +787,9 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
             <PaymentVouchersPage me={me} onOpenDoc={openDoc} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "my-pyr" && (
+            <MyPaymentRequests me={me} onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "manage" && (
             <SitesManagePage me={me} onChanged={bump} />

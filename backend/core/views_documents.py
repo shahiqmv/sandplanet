@@ -1358,6 +1358,10 @@ def documents_list(request):
         qs = qs.filter(site_id=request.GET["site"])
     if request.GET.get("doc_type"):
         qs = qs.filter(doc_type=request.GET["doc_type"])
+    if request.GET.get("mine"):
+        # "My requests" — what the signed-in user raised, so a Head-Office
+        # requester can follow their PYR after it leaves their queue.
+        qs = qs.filter(created_by=request.user)
     if request.GET.get("project"):
         qs = qs.filter(project_id=request.GET["project"])
     if request.GET.get("status"):

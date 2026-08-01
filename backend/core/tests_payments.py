@@ -272,6 +272,19 @@ class CentralPaymentTests(PyrBase):
         # Finance builds the voucher, the signatory approves → PYR authorised
         self.assertEqual(self.authorise(ref).status_code, 200)
 
+    def test_requester_can_list_their_own_pyrs_after_submit(self):
+        # The gap this closes: a Head-Office request used to vanish on submit.
+        # mine=1 lets the raiser follow it — and it excludes others' requests.
+        mine = self.raise_by(self.ho).data["ref"]
+        self.act(mine, "submit", self.ho)
+        other = self.raise_pyr().data["ref"]          # raised by the site admin
+        self.client.force_authenticate(self.ho)
+        r = self.client.get("/api/v1/documents/list?doc_type=PYR&mine=1")
+        self.assertEqual(r.status_code, 200)
+        refs = [d["ref"] for d in r.data]
+        self.assertIn(mine, refs)
+        self.assertNotIn(other, refs)
+
     def test_central_submit_does_not_notify_the_director(self):
         # The auto-clear must not leave a transient "needs Director approval"
         # ping in the Director's feed.
