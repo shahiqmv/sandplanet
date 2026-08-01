@@ -124,8 +124,21 @@ def _is_pm_for(user, doc):
     return _is_site_pm(user, doc.site)
 
 
+# The Director (PD) has full site-operations parity: every task a Site Admin or
+# Site Engineer performs, on ANY site (they already have all-site scope as an HO
+# role), for the site-raised document types. They remain a NON-purchasing,
+# non-finance operator, so procurement/finance docs (PR/LM/PO/PV) are untouched
+# — the Director stays read-only there (owner 2026-08-01).
+SITE_DOC_TYPES = {"DPR", "TWS", "IR", "MAR", "MR", "GRN", "PMR", "SCA", "DMA"}
+
+
 def _can(request, doc_type, roles):
-    return request.user.role in roles or request.user.role == "ADMIN"
+    role = request.user.role
+    if role == "ADMIN":
+        return True
+    if role == "DIRECTOR" and doc_type in SITE_DOC_TYPES:
+        return True
+    return role in roles
 
 
 def _previous_revision(doc):

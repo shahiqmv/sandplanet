@@ -16,7 +16,7 @@ from .audit import audit
 from .models import Item, Project, Site
 from .permissions import scoped_site_ids
 
-ISSUE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM")
+ISSUE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR")
 MAJOR_ROLES = ISSUE_ROLES + ("HO_PURCHASING",)
 
 

@@ -18,7 +18,7 @@ from .numbering import next_ref
 
 log = logging.getLogger(__name__)
 
-SITE_MANAGE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN")
+SITE_MANAGE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN")
 OPEN = (WCR.Status.SUBMITTED, WCR.Status.PM_APPROVED, WCR.Status.RETURNED)
 
 

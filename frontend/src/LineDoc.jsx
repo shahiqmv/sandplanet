@@ -39,14 +39,14 @@ const HEADER_FIELDS = {
 const ACTIONS = {
   MR: [
     // Site Engineer has full site-task parity with Site Admin (owner)
-    ["submit", "Submit", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "PM",
+    ["submit", "Submit", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "PM",
                                      "ADMIN"]],
     ["approve", "Approve (PM)", ["SUBMITTED"], ["PM", "ADMIN"]],
     ["return", "Return with comment", ["SUBMITTED"], ["PM", "ADMIN"], "comment"],
-    ["send", "Send to HO", ["PM_APPROVED"], ["SITE_ADMIN", "SITE_ENGINEER",
+    ["send", "Send to HO", ["PM_APPROVED"], ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR",
                                              "PM", "ADMIN"]],
     ["close", "Close", ["PARTIALLY_LOADED", "LOADED"],
-     ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "ADMIN"]],
+     ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "PM", "HO_PURCHASING", "ADMIN"]],
   ],
   PR: [
     ["submit", "Submit", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
@@ -69,12 +69,13 @@ const ACTIONS = {
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   GRN: [
-    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER",
+    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR",
                                            "ADMIN"]],
-    ["verify", "Verify (SE/PM)", ["COUNTED"], ["SITE_ENGINEER", "PM", "ADMIN"]],
+    ["verify", "Verify (SE/PM)", ["COUNTED"],
+     ["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]],
   ],
   PMR: [
-    ["submit", "Submit", ["DRAFT"], ["SITE_ENGINEER", "SITE_ADMIN", "PM",
+    ["submit", "Submit", ["DRAFT"], ["SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR", "PM",
                                      "ADMIN"]],
     ["approve", "Approve (PM)", ["SUBMITTED"], ["PM", "ADMIN"]],
     ["ho-review", "HO reviewed", ["PM_APPROVED"], ["HO_PURCHASING", "ADMIN"]],
@@ -84,7 +85,7 @@ const ACTIONS = {
      ["SUBMITTED", "PM_APPROVED", "HO_REVIEWED", "SIZED_RELEASED"],
      ["PM", "HO_PURCHASING", "DIRECTOR", "QS", "ADMIN"], "comment"],
     ["cancel", "Cancel", ["DRAFT", "SUBMITTED"],
-     ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"], "comment"],
+     ["SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR", "PM", "ADMIN"], "comment"],
   ],
 };
 
@@ -181,8 +182,8 @@ function ItemCell({ items, row, set, me, onItemCreated }) {
   // Site teams may add a missing item on the spot (flagged provisional for
   // HO review); HO Purchasing/Admin add permanent catalogue items (owner).
   const canCreate = ["HO_PURCHASING", "ADMIN", "SITE_ADMIN", "SITE_ENGINEER",
-                     "PM"].includes(me?.role);
-  const siteRole = ["SITE_ADMIN", "SITE_ENGINEER", "PM"].includes(me?.role);
+                     "PM", "DIRECTOR"].includes(me?.role);
+  const siteRole = ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "PM"].includes(me?.role);
   const selected = items.find((it) => it.id === row.item_id);
   const text = row._itemText ?? (selected ? label(selected) : "");
   // Purchasing/Admin typed something with no catalog match → offer to
@@ -1078,7 +1079,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const canEdit = doc.status === "DRAFT" && !doc.is_void;
   const canAmend = doc.doc_type === "MR" && !doc.is_void &&
     !["DRAFT", "SUBMITTED", "PM_APPROVED", "CLOSED"].includes(doc.status) &&
-    ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role);
+    ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "PM", "ADMIN"].includes(me.role);
 
   const isPR = doc.doc_type === "PR";
   const p = doc.payload || {};

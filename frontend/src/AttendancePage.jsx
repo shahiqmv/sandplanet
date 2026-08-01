@@ -15,8 +15,8 @@ export default function AttendancePage({ site, me, onClose }) {
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "ADMIN"]
-    .includes(me.role);
+  const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "DIRECTOR",
+                    "ADMIN"].includes(me.role);
   const isPm = ["PM", "HO_HR", "ADMIN"].includes(me.role);
 
   const load = useCallback(() => {

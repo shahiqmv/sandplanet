@@ -58,6 +58,34 @@ class DocBase(TestCase):
 
 
 @override_settings(MEDIA_ROOT="test-media")
+class DirectorSiteParityTests(DocBase):
+    """The Director (PD) has full site-operations parity — every site task a
+    Site Admin/Engineer does, on ANY site (owner 2026-08-01)."""
+
+    def setUp(self):
+        super().setUp()
+        # a director allocated to NO site — parity must not depend on allocation
+        self.director = make_user("dir_par", User.Role.DIRECTOR)
+        self.client.force_authenticate(self.director)
+
+    def test_director_can_raise_mr_from_site_level(self):
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "doc_date": date.today().isoformat(),
+            "payload": {"lines": [{"description": "Cement", "qty": "10",
+                                   "unit": "bag"}]},
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        s = self.client.post(f"/api/v1/documents/{ref}/actions/submit")
+        self.assertEqual(s.status_code, 200, s.data)
+
+    def test_director_can_raise_dpr(self):
+        r = self.create_dpr()
+        self.assertEqual(r.status_code, 201, r.data)
+
+
+@override_settings(MEDIA_ROOT="test-media")
 class NumberingTests(DocBase):
     def test_sequential_refs(self):
         days = last_working_days(self.site, 3)

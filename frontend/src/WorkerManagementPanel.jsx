@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
-const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
+const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
 const KIND_LABEL = { ADD: "New hires", REMOVE: "Removals", TRANSFER: "Transfers" };
 const STATUS_TONE = {
   SUBMITTED: "warn", PM_APPROVED: "warn", APPROVED: "ok",

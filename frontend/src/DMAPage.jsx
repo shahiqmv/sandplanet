@@ -61,7 +61,7 @@ export default function DMAPage({ site, me, onClose }) {
   useEffect(load, [load]);
 
   const editable = !doc || (doc.status === "DRAFT" &&
-    ["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role));
+    ["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role));
   const canIssue = doc && doc.status === "DRAFT" &&
     ["PM", "ADMIN"].includes(me.role);
 

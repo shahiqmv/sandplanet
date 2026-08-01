@@ -703,7 +703,8 @@ def sin_cancel(request, ref):
     return Response(_sin_payload(doc, request))
 
 
-SIN_RECEIVE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "HO_PURCHASING", "ADMIN")
+SIN_RECEIVE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "HO_PURCHASING", "DIRECTOR",
+                     "ADMIN")
 
 
 @api_view(["POST"])

@@ -3,7 +3,7 @@ import AgreementsPanel from "./AgreementsPanel.jsx";
 import { api } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 
-const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
+const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
 const STATUS_TONE = {
   DRAFT: "info", PM_APPROVED: "warn", APPROVED: "ok", ACTIVE: "ok",
   SUSPENDED: "warn", CLOSED: "alert",

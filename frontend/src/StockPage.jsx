@@ -10,8 +10,8 @@ import { Btn, buttonStyle, card, ghostButton, inputStyle, td, th }
 const qty = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 
-const CAN_ISSUE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
-const CAN_MAJOR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN",
+const CAN_ISSUE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
+const CAN_MAJOR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN",
                    "HO_PURCHASING"];
 
 export default function StockPage({ site, me, onClose }) {

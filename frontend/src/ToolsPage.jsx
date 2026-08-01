@@ -25,7 +25,7 @@ export default function ToolsPage({ site, me, onClose }) {
   const [draft, setDraft] = useState(EMPTY);
   const [edit, setEdit] = useState(null);   // asset being edited
 
-  const canManage = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"]
+  const canManage = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]
     .includes(me.role);
 
   function load() {

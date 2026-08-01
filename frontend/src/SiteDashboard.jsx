@@ -6,8 +6,8 @@ import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
 
 const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
                                 "DIRECTOR", "ADMIN"];
-const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
-const CAN_CREATE_MR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"];
+const CAN_CREATE_DPR = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"];
+const CAN_CREATE_MR = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
 
 export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onNewQa, onAttendance, onDma,
@@ -112,7 +112,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           dueText={dash?.dma_today
             ? "Drafted — PM issues the allocation"
             : "Allocate the crew from yesterday's TWS"}
-          action={["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          action={["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <Btn variant="primary" onClick={onDma}>
               {dash?.dma_today ? "Open allocation" : "Allocate manpower"}
             </Btn>
@@ -127,7 +127,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                     ? "" : "s"} awaiting PM verification` : ""}
         </div>
         <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {["SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <>
               <button onClick={() => onNewQa("IR")} style={buttonStyle}>
                 + IR</button>
@@ -138,25 +138,25 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           {canMr && (
             <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
           )}
-          {["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <button onClick={onNewPmr} style={buttonStyle}
                     title="Project Material Requisition — request imported material">
               🌍 Import request</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <button onClick={onNewPyr} style={buttonStyle}>+ Payment</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "ADMIN"]
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "DIRECTOR", "ADMIN"]
             .includes(me.role) && (
             <button onClick={onPettyCash} style={buttonStyle}>💰 Petty Cash</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <button onClick={onStock} style={buttonStyle}>📦 Stock</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role) && (
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <button onClick={onTools} style={buttonStyle}>🔧 Tools</button>
           )}
-          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "ADMIN"]
+          {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "DIRECTOR", "ADMIN"]
             .includes(me.role) && (
             <button onClick={onAttendance}
                     style={{ ...buttonStyle, background: "#1a7f37" }}>
@@ -544,7 +544,7 @@ that adds your existing quantities to the system"
       )}
 
       {(pyrs.length > 0 ||
-        ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"].includes(me.role)) && (
+        ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role)) && (
         <PyrRegister pyrs={pyrs} onOpenDoc={onOpenDoc}
                      onOpenRegister={onPyrRegister} />
       )}

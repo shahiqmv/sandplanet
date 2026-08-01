@@ -19,7 +19,7 @@ from .models import (CostHead, Document, DocumentRevision, PaymentRequest,
 from .numbering import next_ref
 
 # Site Engineer has full site-task parity with Site Admin (owner, 2026-07-13)
-CUSTODIAN_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"}
+CUSTODIAN_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"}
 LIVE_ENTRY = ("RECORDED", "APPROVED")
 
 

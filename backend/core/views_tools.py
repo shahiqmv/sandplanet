@@ -14,7 +14,7 @@ from .audit import audit
 from .models import Item, Site, ToolAsset
 from .permissions import scoped_site_ids
 
-MANAGE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM")
+MANAGE_ROLES = ("ADMIN", "SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR")
 # Per-unit details are free text; name/category are controlled (from the
 # catalog item), so the DPR summary never fragments on spelling variants.
 DETAIL_FIELDS = ("serial_no", "model", "brand", "notes")

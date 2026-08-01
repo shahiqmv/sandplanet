@@ -463,7 +463,7 @@ def attendance_register(request):
 def attendance_bulk(request):
     """Day-grid upsert by Site Admin / SE; late edits audited (spec §6A.2)."""
     if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM",
-                                 "HO_HR", "ADMIN"):
+                                 "HO_HR", "DIRECTOR", "ADMIN"):
         return Response({"detail": "Site team or HR records attendance."},
                         status=403)
     try:

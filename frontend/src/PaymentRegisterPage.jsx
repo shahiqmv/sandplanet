@@ -25,7 +25,7 @@ export default function PaymentRegisterPage({ site, me, onOpenDoc, onNewPyr,
     tab === "all" ? true
     : tab === "pending" ? PENDING.includes(p.status)
     : p.status === "PAID");
-  const canRaise = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "ADMIN"]
+  const canRaise = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]
     .includes(me.role);
 
   return (

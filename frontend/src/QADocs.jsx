@@ -56,7 +56,7 @@ const RESULT_OPTIONS = {
         ["REJECTED", "Rejected"]],
 };
 
-const SITE_TEAM = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "ADMIN"];
+const SITE_TEAM = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"];
 
 function Field({ def, value, onChange }) {
   const [key, label, kind, options] = def;

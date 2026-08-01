@@ -481,7 +481,7 @@ class CanEditCatalogItem(BasePermission):
     """HO Purchasing/Admin manage the catalogue; site teams may CREATE a
     missing item (flagged provisional) while receiving goods / adding tools."""
     OWNER = ("HO_PURCHASING", "ADMIN")
-    CREATOR = OWNER + ("SITE_ADMIN", "SITE_ENGINEER", "PM")
+    CREATOR = OWNER + ("SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR")
 
     def has_permission(self, request, view):
         if not request.user.is_authenticated:
