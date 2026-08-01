@@ -113,3 +113,37 @@ class MeetingTests(TestCase):
         mid = self._create(cadence="ONE_OFF").data["id"]
         r = self.client.post(f"/api/v1/meetings/{mid}/close", {}, format="json")
         self.assertIsNone(r.data["next"])
+
+    # ---- Phase 2: Claude-drafted minutes --------------------------------
+    def test_draft_minutes_from_notes(self):
+        from . import meeting_minutes
+        mid = self._create().data["id"]
+        orig = meeting_minutes._call_claude
+        meeting_minutes._call_claude = lambda content, model: {
+            "minutes": "Discussion: slab on track.\nDecisions: proceed.",
+            "action_items": [
+                {"description": "Send revised programme", "owner": "Ahmed",
+                 "due_date": "2026-08-08"},
+                {"description": "Confirm tile colour"}]}
+        try:
+            r = self.client.post(
+                f"/api/v1/meetings/{mid}/draft-minutes",
+                {"notes": "slab done; Ahmed to send programme by Fri"},
+                format="json")
+        finally:
+            meeting_minutes._call_claude = orig
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("Decisions", r.data["minutes"])
+        self.assertEqual(len(r.data["action_items"]), 2)
+        self.assertEqual(r.data["action_items"][0]["owner_name"], "Ahmed")
+        self.assertEqual(str(r.data["action_items"][0]["due_date"]),
+                         "2026-08-08")
+        # raw notes are kept on the meeting for re-drafting
+        self.assertIn("slab",
+                      self.client.get(f"/api/v1/meetings/{mid}").data["notes"])
+
+    def test_draft_minutes_needs_notes(self):
+        mid = self._create().data["id"]
+        r = self.client.post(f"/api/v1/meetings/{mid}/draft-minutes",
+                             {"notes": ""}, format="json")
+        self.assertEqual(r.status_code, 400)

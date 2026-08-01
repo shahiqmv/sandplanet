@@ -153,6 +153,7 @@ function MyActions() {
 function MeetingDetail({ id, me, onBack }) {
   const [m, setM] = useState(null);
   const [minutes, setMinutes] = useState("");
+  const [notes, setNotes] = useState("");
   const [actions, setActions] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -160,7 +161,7 @@ function MeetingDetail({ id, me, onBack }) {
   const [msg, setMsg] = useState(null);
 
   const load = () => api(`/meetings/${id}`).then((d) => {
-    setM(d); setMinutes(d.minutes || "");
+    setM(d); setMinutes(d.minutes || ""); setNotes(d.notes || "");
     setActions(d.action_items.map((a) => ({ ...a })));
   }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
@@ -188,6 +189,13 @@ function MeetingDetail({ id, me, onBack }) {
     setMsg(r.next ? `Marked held · next occurrence scheduled for `
       + `${dt(r.next.scheduled_at)}` : "Marked held");
   });
+  const draft = () => run(async () => {
+    const r = await api(`/meetings/${id}/draft-minutes`,
+      { method: "POST", body: { notes } });
+    if (r.minutes) setMinutes(r.minutes);
+    if (r.action_items?.length)
+      setActions((as) => [...as, ...r.action_items]);
+  }, "Claude drafted the minutes — review, edit and save.");
 
   if (!m) return <div style={card}>{error || "Loading…"}</div>;
   const canManage = m.can_manage;
@@ -250,11 +258,24 @@ function MeetingDetail({ id, me, onBack }) {
           <Chip tone={m.minutes_status === "FINAL" ? "ok" : "info"}>
             {m.minutes_status === "FINAL" ? "final"
               : m.minutes_status === "DRAFT" ? "draft" : "none"}</Chip>
-          <span style={{ fontSize: 11, color: "var(--muted)" }}>
-            (Claude drafting comes next phase)</span>
         </div>
+        {canManage && (
+          <div style={{ background: "var(--sky-soft)", borderRadius: 8,
+            padding: 10, marginBottom: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)",
+              marginBottom: 4 }}>Rough notes — jot down what happened, then let
+              Claude write it up and pull out the follow-ups.</div>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+              rows={4} placeholder="e.g. slab on block B done, client wants pool
+                coping in black granite, Ahmed to send revised programme by Fri…"
+              style={{ width: "100%", ...sel, fontFamily: "inherit",
+                resize: "vertical" }} />
+            <Btn variant="primary" disabled={busy || !notes.trim()}
+              onClick={draft} style={{ marginTop: 6 }}>
+              {busy ? "Drafting…" : "✦ Draft with Claude"}</Btn>
+          </div>)}
         <textarea value={minutes} onChange={(e) => setMinutes(e.target.value)}
-          disabled={!canManage} rows={8} placeholder="Record the minutes…"
+          disabled={!canManage} rows={10} placeholder="Record the minutes…"
           style={{ width: "100%", ...sel, fontFamily: "inherit",
             resize: "vertical" }} />
         {canManage && (

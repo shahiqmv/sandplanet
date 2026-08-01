@@ -95,6 +95,28 @@ def meeting_close(request, pk):
                      "next": svc.meeting_dict(nxt) if nxt else None})
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_draft_minutes(request, pk):
+    """Claude drafts minutes + action items from the organiser's rough notes.
+    Returns the draft for review; the organiser edits and saves it themselves."""
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user, m):
+        return Response({"detail": "Only the organiser or a custodian can "
+                                   "draft the minutes."}, status=403)
+    from . import meeting_minutes
+    notes = request.data.get("notes") or ""
+    minutes, actions, msg = meeting_minutes.draft_minutes(m, notes)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    # keep the raw notes on the meeting so the draft can be re-run/tweaked
+    m.notes = notes
+    m.save(update_fields=["notes", "updated_at"])
+    return Response({"minutes": minutes, "action_items": actions})
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def my_action_items(request):
