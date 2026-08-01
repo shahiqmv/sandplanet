@@ -93,6 +93,37 @@ class BoqUnitTests(TestCase):
         self.assertEqual(priced.items.count(), 1)
         self.assertEqual(priced.per_unit_total, Decimal("26491.410"))
 
+    def test_claim_values_each_work_by_units_done(self):
+        from . import commercial
+        # Category C: 3 villas; works Door seal 500/villa + Plaster 300/villa.
+        cats = ue.normalise([{
+            "name": "Villa Category C", "quantity": 3, "unit": "no",
+            "amount_per_unit": "800", "items": [
+                {"code": "C.1", "description": "Door seal", "quantity": 1,
+                 "rate": "500", "amount": "500"},
+                {"code": "C.2", "description": "Plaster", "quantity": 1,
+                 "rate": "300", "amount": "300"}]}])
+        ue.commit(self.project, cats, self.qs)
+        self.project.contract_value = "2400"
+        self.project.save(update_fields=["contract_value"])
+        claim, err = commercial.create_claim(self.project, {}, self.qs)
+        self.assertIsNone(err)
+        # one claim line per work; measured (units-done) basis by default
+        self.assertEqual(claim.items.count(), 2)
+        self.assertEqual(claim.basis, "MEASURED")
+        # door seal done in 1 of 3 villas, plaster in 2 of 3
+        d = claim.items.get(boq_item__item_code="C.1")
+        p = claim.items.get(boq_item__item_code="C.2")
+        d.cumulative_qty = Decimal("1"); d.save()
+        p.cumulative_qty = Decimal("2"); p.save()
+        val = commercial.claim_valuation(claim)
+        ln = {x["item_code"]: x for x in val["lines"]}
+        self.assertEqual(ln["C.1"]["contract_amount"], Decimal("1500"))  # 500×3
+        self.assertEqual(ln["C.1"]["cumulative_value"], Decimal("500"))  # 1×500
+        self.assertEqual(ln["C.2"]["cumulative_value"], Decimal("600"))  # 2×300
+        self.assertEqual(ln["C.1"]["section"], "Villa Category C")
+        self.assertEqual(float(val["waterfall"]["k1_work_done"]), 1100.0)
+
     def test_capture_endpoint_returns_categories(self):
         orig = ue.run_capture
         ue.run_capture = lambda upload, model=None: (self._cats(), 8, None)

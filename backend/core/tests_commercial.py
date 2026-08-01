@@ -934,12 +934,14 @@ class UnitClaimTests(TestCase):
         self.assertEqual(c["basis"], "MEASURED")   # unit BOQ default
         self._value(c["id"], villa_units="4", prelim_pct="50")
         d = self._detail(c["id"])
-        villa = next(ln for ln in d["lines"] if not ln["is_lump"])
-        prelim = next(ln for ln in d["lines"] if ln["is_lump"])
+        # The villa category (single per-unit line, no detail) claims as one
+        # work line by units done; the lump prelim stays a category line by %.
+        villa = next(ln for ln in d["lines"] if ln["source"] == "BOQ")
+        prelim = next(ln for ln in d["lines"] if ln.get("is_lump"))
         # 4 of 11 villas × 26,491.41 = 105,965.64
         self.assertEqual(Decimal(str(villa["cumulative_value"])),
                          Decimal("26491.41") * 4)
-        self.assertTrue(villa["source"] == "CAT")
+        self.assertEqual(villa["source"], "BOQ")
         self.assertFalse(villa["is_percent_only"])
         # lump bill claimed by %: 50% of 132,512.18 = 66,256.09
         self.assertEqual(Decimal(str(prelim["cumulative_value"])),
@@ -958,7 +960,7 @@ class UnitClaimTests(TestCase):
         self._certify(c1["id"])
         c2 = self._create()
         d2 = self._detail(c2["id"])
-        villa = next(ln for ln in d2["lines"] if not ln["is_lump"])
+        villa = next(ln for ln in d2["lines"] if ln["source"] == "BOQ")
         # the prior 4 units carry forward as this line's previous figure
         self.assertEqual(Decimal(str(villa["previous_qty"])), Decimal("4"))
         self.assertEqual(Decimal(str(villa["previous_value"])),
@@ -966,7 +968,7 @@ class UnitClaimTests(TestCase):
         # bump to 7 villas: current = 3 × rate, cumulative = 7 × rate
         self._value(c2["id"], villa_units="7")
         d2 = self._detail(c2["id"])
-        villa = next(ln for ln in d2["lines"] if not ln["is_lump"])
+        villa = next(ln for ln in d2["lines"] if ln["source"] == "BOQ")
         self.assertEqual(Decimal(str(villa["current_value"])),
                          Decimal("26491.41") * 3)
         self.assertEqual(Decimal(str(villa["cumulative_value"])),

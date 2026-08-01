@@ -346,13 +346,24 @@ def create_claim(project, data, actor):
     new_items = []
     # An advance claim carries no work lines — its value is the flat advance %.
     if not is_advance and boq and boq.mode == "UNIT":
-        # Unit BOQ: one claim line per summary category (priced or lump).
+        # Unit BOQ: one claim line per detail WORK under each bill (valued by
+        # units done × its per-unit amount). A lump bill with no captured
+        # detail stays a single category line, claimed by %.
         for cat in boq.categories.all():
-            pci = prev_map.get(("CAT", None, None, cat.id))
-            new_items.append(ProgressClaimItem(
-                claim=claim, source="CAT", boq_category=cat,
-                cumulative_pct=(pci.cumulative_pct if pci else None),
-                cumulative_qty=(pci.cumulative_qty if pci else None)))
+            items = list(cat.items.all())
+            if items:
+                for it in items:
+                    pci = prev_map.get(("BOQ", it.id, None, None))
+                    new_items.append(ProgressClaimItem(
+                        claim=claim, source="BOQ", boq_item=it,
+                        cumulative_pct=(pci.cumulative_pct if pci else None),
+                        cumulative_qty=(pci.cumulative_qty if pci else None)))
+            elif cat.is_lump:
+                pci = prev_map.get(("CAT", None, None, cat.id))
+                new_items.append(ProgressClaimItem(
+                    claim=claim, source="CAT", boq_category=cat,
+                    cumulative_pct=(pci.cumulative_pct if pci else None),
+                    cumulative_qty=(pci.cumulative_qty if pci else None)))
     if not is_advance and boq and boq.mode != "UNIT":
         for it in boq.items.all():
             if it.is_heading:
@@ -635,11 +646,24 @@ def claim_valuation(claim):
         is_vo = ci.source == "VO"
         omission = is_vo and line.variation.kind == "OMISSION"
         sign = Decimal("-1") if omission else Decimal("1")
-        rate = line.rate_total
-        contract_amt = (line.amount or ZERO) * sign
-        # A discount is a lump-sum credit (negative contract amount) — always
-        # valued by % complete, even on a re-measurement claim.
         is_discount = getattr(line, "is_discount", False)
+        # A unit-BOQ detail work is claimed by units done (villas) × its
+        # per-unit amount; its contract runs across the bill's unit quantity,
+        # and the bill is the section.
+        unit_detail = (ci.source == "BOQ"
+                       and getattr(line, "category_id", None))
+        if unit_detail:
+            cat = line.category
+            units = cat.qty or ONE
+            rate = line.amount or ZERO              # this work's amount PER unit
+            contract_amt = rate * units
+            disp_unit, disp_qty = cat.unit, units
+            disp_section = cat.name
+        else:
+            rate = line.rate_total
+            contract_amt = (line.amount or ZERO) * sign
+            disp_unit, disp_qty = line.unit, line.qty
+            disp_section = _effective_section(line, ci.source, boq_head, vo_head)
         line_basis = "PERCENT" if is_discount else basis
         cum_val = _cum_value(line_basis, ci.cumulative_pct, ci.cumulative_qty,
                              contract_amt, rate, sign)
@@ -663,9 +687,9 @@ def claim_valuation(claim):
             k1 += cum_val
         lines.append({
             "id": ci.id, "source": ci.source,
-            "section": _effective_section(line, ci.source, boq_head, vo_head),
+            "section": disp_section,
             "item_code": line.item_code, "description": line.description,
-            "unit": line.unit, "contract_qty": line.qty, "rate": rate,
+            "unit": disp_unit, "contract_qty": disp_qty, "rate": rate,
             "contract_amount": contract_amt,
             "cumulative_pct": ci.cumulative_pct,
             "cumulative_qty": ci.cumulative_qty,
