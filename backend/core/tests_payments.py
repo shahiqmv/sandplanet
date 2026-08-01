@@ -257,6 +257,21 @@ class CentralPaymentTests(PyrBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
 
+    def test_ho_purchasing_pyr_lands_in_finance_voucher_queue(self):
+        # The full "where does it land" proof: an HO Purchasing request, once
+        # submitted, sits in Finance's build-a-voucher queue and can be
+        # vouchered through with no Director step (owner 2026-07-31).
+        from .views_documents import pending_groups
+        from .vouchers import awaiting_voucher
+        ref = self.raise_by(self.ho).data["ref"]
+        self.act(ref, "submit", self.ho)
+        self.assertIn(ref, [d.ref for d in awaiting_voucher()])
+        group = next(g for g in pending_groups(self.finance)
+                     if g["title"] == "Awaiting a payment voucher")
+        self.assertIn(ref, [r["ref"] for r in group["items"]])
+        # Finance builds the voucher, the signatory approves → PYR authorised
+        self.assertEqual(self.authorise(ref).status_code, 200)
+
     def test_central_submit_does_not_notify_the_director(self):
         # The auto-clear must not leave a transient "needs Director approval"
         # ping in the Director's feed.
