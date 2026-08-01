@@ -37,6 +37,20 @@ class BoqUnitTests(TestCase):
         self.assertEqual(Decimal(cats[1]["line_total"]),
                          Decimal("26491.41") * 11)
 
+    def test_normalise_handles_comma_formatted_amounts(self):
+        # The model sometimes echoes amounts with thousands separators; those
+        # must not silently drop the category (was the Soneva capture failure).
+        cats = ue.normalise([
+            {"name": "Preliminaries", "amount_per_unit": "132,512.18",
+             "is_lump": True},
+            {"name": "Category D Villas", "quantity": 11, "unit": "no",
+             "amount_per_unit": "26,491.41"}])
+        self.assertEqual(len(cats), 2)
+        self.assertEqual(Decimal(cats[1]["amount_per_unit"]),
+                         Decimal("26491.41"))
+        self.assertEqual(Decimal(cats[1]["line_total"]),
+                         Decimal("26491.41") * 11)
+
     def test_commit_builds_unit_boq_and_value(self):
         boq, msg = ue.commit(self.project, self._cats(), self.qs)
         self.assertIsNone(msg)

@@ -17,15 +17,22 @@ from .boq_extract import ExtractionError, _batches, pdf_pages
 DEFAULT_MODEL = "claude-sonnet-5"
 
 _SYSTEM = (
-    "You extract the FINAL SUMMARY of a unit-based Bill of Quantities. Each "
-    "summary line is either:\n"
+    "You extract the FINAL SUMMARY of a unit-based Bill of Quantities — the "
+    "roll-up table where each Bill/category is shown once with a number of "
+    "units and an amount per unit (e.g. columns like 'No. of Villas', 'Amount "
+    "per Villa', 'Total Amount'). Each summary line is either:\n"
     "- a priced category that recurs: a description, a quantity (number of "
     "units, e.g. villas), a unit, and an amount PER UNIT; or\n"
     "- a lump-sum bill (e.g. Preliminaries, Provisional Sum): a single total "
     "amount, no per-unit build-up.\n"
+    "The document usually also contains the DETAILED priced bills (individual "
+    "work items). IGNORE those — extract ONLY the summary roll-up lines, not the "
+    "detail items, and NOT sub-total / total / GST / grand-total rows.\n"
     "Return every summary line in order. Set is_lump=true for lump bills and "
-    "put their total in amount_per_unit with quantity=1. Never invent lines; "
-    "use only what the summary shows. Also return the GST percentage if shown."
+    "put their total in amount_per_unit with quantity=1. Amounts may use "
+    "thousands separators (commas) — return them as plain numbers (26491.41, "
+    "not '26,491.41'). Never invent lines; use only what the summary shows. "
+    "Also return the GST percentage if shown."
 )
 
 _TOOL = {
@@ -79,11 +86,15 @@ def _call_claude(content, model):
     client = anthropic.Anthropic(api_key=key)
     try:
         msg = client.messages.create(
-            model=model, max_tokens=4000, system=_SYSTEM, tools=[_TOOL],
+            model=model, max_tokens=8000, system=_SYSTEM, tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_unit_boq"},
             messages=[{"role": "user", "content": content}])
     except Exception as e:                        # pragma: no cover - network
         raise ExtractionError(f"The extraction model failed: {e}")
+    if getattr(msg, "stop_reason", None) == "max_tokens":
+        raise ExtractionError(
+            "The summary was too long to read in one pass. Upload just the "
+            "final-summary page of the BOQ rather than the full priced bills.")
     for block in msg.content:
         if getattr(block, "type", None) == "tool_use":
             return block.input
@@ -105,8 +116,16 @@ def structure(pages, model=None):
 
 def _dec(v):
     from decimal import Decimal, InvalidOperation
+    if v is None:
+        return None
+    # BOQ amounts arrive comma-formatted ("26,491.41") and sometimes with a
+    # currency mark; strip those so a thousands separator doesn't drop the line.
+    s = (str(v).strip().replace(",", "").replace("$", "")
+         .replace("USD", "").replace("usd", "").strip())
+    if not s:
+        return None
     try:
-        return Decimal(str(v))
+        return Decimal(s)
     except (InvalidOperation, TypeError, ValueError):
         return None
 
@@ -169,9 +188,11 @@ def commit(project, categories, actor):
     boq.categories.all().delete()          # replace
     boq.items.all().delete()
     for i, c in enumerate(categories, 1):
-        amt = Decimal(str(c.get("amount_per_unit") or 0))
+        # _dec strips commas/currency so a reviewed value like "26,491.41"
+        # can't 500 the commit.
+        amt = _dec(c.get("amount_per_unit")) or Decimal("0")
         is_lump = bool(c.get("is_lump"))
-        qty = Decimal(str(c.get("quantity") or 1))
+        qty = _dec(c.get("quantity")) or Decimal("1")
         cat = BoqCategory.objects.create(
             boq=boq, sort_order=i * 10, ref=str(c.get("ref") or "")[:20],
             name=str(c.get("name") or "")[:200],
