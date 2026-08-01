@@ -197,6 +197,60 @@ class BoqUnitTests(TestCase):
         self.assertEqual(cats[0]["amount_per_unit"], 42816.31)  # from summary
         self.assertEqual(len(cats[0]["items"]), 1)              # from detail
 
+    def test_billkey_matches_summary_name_to_detail_sheet(self):
+        # 'Villa Category - C' (summary) and 'Villa C' (detail sheet) resolve to
+        # the same bill key so detail attaches to the right summary row.
+        self.assertEqual(ue._billkey("Villa Category - C"),
+                         ue._billkey("Villa C"))
+        self.assertEqual(ue._billkey("Bill 01 Preliminaries"),
+                         ue._billkey("Preliminaries"))
+        self.assertEqual(ue._billkey("Provisional Bill"), "provisional")
+        self.assertNotEqual(ue._billkey("Villa C"), ue._billkey("Villa D"))
+
+    def test_structure_excel_attaches_detail_by_bill(self):
+        # Excel workbook: a Summary sheet + one detail sheet per villa. The
+        # summary gives the authoritative rate; each detail sheet's works must
+        # land on the matching category (by bill key) with material + labour.
+        pages = [
+            "# Sheet: Summary\nFinal Summary\nBill 02\tVilla Category - C\t3\tno"
+            "\t42816.31",
+            "# Sheet: Villa C\nBill 02 Villa Category - C\nA.1\tDeck ...",
+        ]
+        replies = iter([
+            {"categories": [{"ref": "Bill 02", "name": "Villa Category - C",
+                             "quantity": 3, "unit": "no",
+                             "amount_per_unit": 42816.31}]},
+            {"categories": [{"name": "Villa C", "items": [
+                {"code": "A.1", "description": "Deck", "quantity": "16.7",
+                 "unit": "m2", "rate_material": "100", "rate_labour": "112"}]}]},
+        ])
+        orig = ue._call_claude
+        ue._call_claude = lambda content, model: next(replies)
+        try:
+            cats, gst = ue.structure_excel(pages, model="x")
+        finally:
+            ue._call_claude = orig
+        self.assertEqual(len(cats), 1)
+        self.assertEqual(cats[0]["amount_per_unit"], 42816.31)   # from summary
+        self.assertEqual(len(cats[0]["items"]), 1)               # from detail
+        self.assertEqual(cats[0]["items"][0]["rate_material"], "100")
+
+    def test_capture_endpoint_accepts_excel(self):
+        orig = ue.run_capture
+        ue.run_capture = lambda upload, model=None: (self._cats(), 8, None)
+        try:
+            self.client.force_authenticate(self.qs)
+            f = SimpleUploadedFile(
+                "boq.xlsx", b"PK\x03\x04 fake",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            r = self.client.post(
+                f"/api/v1/projects/{self.project.id}/boq/capture-unit",
+                {"file": f}, format="multipart")
+            self.assertEqual(r.status_code, 200, r.data)
+            self.assertEqual(r.data["count"], 2)
+        finally:
+            ue.run_capture = orig
+
     def test_capture_endpoint_returns_categories(self):
         orig = ue.run_capture
         ue.run_capture = lambda upload, model=None: (self._cats(), 8, None)

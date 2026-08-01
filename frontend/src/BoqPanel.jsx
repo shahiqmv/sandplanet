@@ -152,9 +152,11 @@ export default function BoqPanel({ projectId, project, me }) {
                             disabled={busy}
                             onClick={() => unitRef.current?.click()}
                             title={"Capture a unit-based BOQ — works priced per "
-                              + "unit (villa/room) × quantity, plus lump bills"}>
+                              + "unit (villa/room) × quantity, plus lump bills. "
+                              + "Excel gives the cleanest capture (one sheet per "
+                              + "bill); PDF also accepted."}>
                       {busy ? "Reading…" : "✦ Unit-based BOQ"}</button>
-                    <input ref={unitRef} type="file" accept=".pdf"
+                    <input ref={unitRef} type="file" accept=".xlsx,.xlsm,.xls,.pdf"
                            style={{ display: "none" }}
                            onChange={(e) => captureUnit(e.target.files[0])} />
                   </>

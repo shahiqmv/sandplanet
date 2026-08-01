@@ -13,7 +13,7 @@ shared, testable _call_claude, isolated for tests to monkeypatch.
 import os
 
 from .audit import audit
-from .boq_extract import ExtractionError, pdf_pages
+from .boq_extract import ExtractionError, excel_pages, pdf_pages
 
 DEFAULT_MODEL = "claude-sonnet-5"
 
@@ -180,6 +180,90 @@ def structure(pages, model=None):
     return cats, gst
 
 
+# ---- Excel workbook (the clean source: one sheet per bill) ----------------
+
+def _sheet_name(text):
+    """The worksheet title excel_pages prefixes as '# Sheet: <name>'."""
+    first = (text or "").split("\n", 1)[0]
+    return first.replace("# Sheet:", "").strip()
+
+
+def _is_summary_sheet(text):
+    t = (text or "").lower()
+    return any(k in t for k in ("amount per villa", "final summary",
+                                "no. of villas", "no of villas",
+                                "amount per unit"))
+
+
+def _billkey(s):
+    """Canonical bill identity so a summary row ('Villa Category - C',
+    'Bill 02') and its own detail sheet ('Villa C') resolve to the SAME key —
+    matching is by bill, not by a ref string that varies between the two."""
+    import re
+    s = (s or "").strip().lower()
+    if not s:
+        return ""
+    if "prelim" in s:
+        return "prelim"
+    if "provision" in s:
+        return "provisional"
+    m = (re.search(r"category\s*[-:]?\s*([a-z0-9]+)", s)
+         or re.search(r"villa\s+([a-z0-9]+)", s))
+    if m:
+        return "villa-" + m.group(1)
+    return s
+
+
+def structure_excel(pages, model=None):
+    """Structure a unit BOQ from an Excel workbook. Each worksheet is one bill:
+    the Summary sheet gives the authoritative per-unit contract rates, and each
+    villa/prelim/provisional sheet gives that bill's detail works (with material
+    and labour already in separate columns). One focused model call per sheet —
+    nothing is truncated — then detail is matched onto the summary by bill key."""
+    model = model or _model_name()
+    summary_cats, gst = [], 0
+    detail_by_key = {}
+    for text in pages:
+        sname = _sheet_name(text)
+        tagged = f"[SHEET: {sname}]\n{text}"
+        if _is_summary_sheet(text):
+            body = ("This is the FINAL SUMMARY of a unit-based BOQ. Return each "
+                    "Bill/category once with its ref, name, number of units, "
+                    "unit, and Amount per unit. A bill's units, unit and "
+                    "amount-per-unit may span two rows — combine them. Mark "
+                    "Preliminaries/Provisional bills is_lump=true. Do NOT return "
+                    "detail work items here.\n\n" + tagged)
+            out = _call_claude(body, model) or {}
+            summary_cats.extend(out.get("categories") or [])
+            gst = gst or out.get("gst_percent") or 0
+        else:
+            body = ("This worksheet is ONE bill's detailed works. Return EVERY "
+                    "numbered work line as items — do NOT skip any — each with "
+                    "its code, full description, quantity, unit, and the "
+                    "MATERIAL rate and LABOUR rate SEPARATELY. Return one "
+                    "category holding these items.\n\n" + tagged)
+            out = _call_claude(body, model) or {}
+            items = []
+            for c in (out.get("categories") or []):
+                items.extend(c.get("items") or [])
+            if items:
+                detail_by_key.setdefault(_billkey(sname), []).extend(items)
+
+    if not summary_cats:
+        # No summary sheet — fall back to each sheet as its own category.
+        cats = []
+        for text in pages:
+            out = _call_claude("Extract this bill's works.\n\n" + text, model) or {}
+            _merge(cats, out.get("categories") or [])
+        return cats, gst
+
+    for c in summary_cats:
+        key = _billkey(c.get("name") or c.get("ref") or "")
+        if key in detail_by_key:
+            c.setdefault("items", []).extend(detail_by_key.pop(key))
+    return summary_cats, gst
+
+
 def _dec(v):
     from decimal import Decimal, InvalidOperation
     if v is None:
@@ -279,16 +363,21 @@ def normalise(cats):
 
 
 def run_capture(upload, model=None):
-    """Read + extract an uploaded unit-BOQ PDF into review-ready categories.
-    Returns (categories, gst_percent, error)."""
+    """Read + extract an uploaded unit-BOQ into review-ready categories from a
+    PDF or (preferred) an Excel workbook. Excel is the clean source — one sheet
+    per bill, material/labour already split, nothing dropped — whereas a PDF's
+    detail tables often can't be parsed reliably. Returns (cats, gst, error)."""
     name = (getattr(upload, "name", "") or "").lower()
-    if not name.endswith(".pdf"):
-        return None, 0, "Upload the unit BOQ as a PDF."
-    cats, gst = structure(pdf_pages(upload), model)
+    if name.endswith((".xlsx", ".xlsm", ".xls")):
+        cats, gst = structure_excel(excel_pages(upload), model)
+    elif name.endswith(".pdf"):
+        cats, gst = structure(pdf_pages(upload), model)
+    else:
+        return None, 0, "Upload the unit BOQ as an Excel workbook or a PDF."
     cats = normalise(cats)
     if not cats:
-        return None, 0, ("No summary categories were found — check it's the "
-                         "final-summary page of a unit-based BOQ.")
+        return None, 0, ("No summary categories were found — check it's a "
+                         "unit-based BOQ with a final-summary of bills.")
     try:
         gst = float(gst or 0)
     except (TypeError, ValueError):

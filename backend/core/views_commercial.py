@@ -252,8 +252,8 @@ def boq_import_extract(request, pid):
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])
 def boq_capture_unit(request, pid):
-    """Capture a unit-based BOQ PDF → review categories (no commit). Separate
-    from the conventional import; the conventional path is untouched."""
+    """Capture a unit-based BOQ (Excel or PDF) → review categories (no commit).
+    Separate from the conventional import; the conventional path is untouched."""
     from . import boq_unit_extract as ue
     p, err = _get_project(request, pid)
     if err:
@@ -262,7 +262,8 @@ def boq_capture_unit(request, pid):
         return bad
     upload = request.FILES.get("file")
     if not upload:
-        return Response({"detail": "Attach the unit BOQ PDF."}, status=400)
+        return Response({"detail": "Attach the unit BOQ (Excel or PDF)."},
+                        status=400)
     try:
         cats, gst, msg = ue.run_capture(upload)
     except ue.ExtractionError as e:
