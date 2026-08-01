@@ -116,6 +116,26 @@ class PrMrPickerTests(PrCostingBase):
 
 
 class PrAuthorisationTests(PrCostingBase):
+    def test_draft_voucher_traps_pr_but_dashboard_surfaces_it(self):
+        # An approved PR reaches Finance's awaiting-voucher queue; the moment a
+        # voucher is started for it, it leaves that queue — so the dashboard
+        # must show the in-flight voucher holding it, or the PR "disappears".
+        pr = self.make_pr()
+        self.client.force_authenticate(self.finance)
+        self.assertIn(pr.ref, [x["ref"] for x in
+                      self.client.get("/api/v1/finance/awaiting-voucher").data])
+        self.client.post("/api/v1/payment-vouchers",
+                         {"source_refs": [pr.ref]}, format="json")
+        # gone from the awaiting queue …
+        self.assertNotIn(pr.ref, [x["ref"] for x in
+                         self.client.get("/api/v1/finance/awaiting-voucher").data])
+        # … but visible as an in-flight draft voucher that holds it
+        dash = self.client.get("/api/v1/finance/dashboard").data
+        inflight = dash["vouchers"]["in_flight"]
+        self.assertEqual(len(inflight), 1)
+        self.assertEqual(inflight[0]["status"], "DRAFT")
+        self.assertIn(pr.ref, inflight[0]["holds"])
+
     def test_commit_posts_at_authorisation_not_approval(self):
         pr = self.make_pr()
         # Director-approved: nothing committed yet

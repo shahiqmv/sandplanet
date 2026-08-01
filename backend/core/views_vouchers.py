@@ -267,6 +267,31 @@ def finance_dashboard(request):
             to_pay.append({"ref": pv.ref, "total": info["total"],
                            "paid": info["paid_count"],
                            "lines": info["approved_count"]})
+    # In-flight vouchers (draft = still being built, submitted = with the
+    # signatory). Any requisition sitting on one drops off "awaiting a voucher",
+    # so surfacing these keeps a PR/PYR from silently disappearing into an
+    # unfinished voucher (owner 2026-07-31).
+    in_flight = []
+    for pv in pvs.filter(status__in=("DRAFT", "SUBMITTED")).order_by(
+            "doc_date", "ref"):
+        plines = list(pv.voucher_lines.select_related(
+            "source_document", "source_payable__document",
+            "source_milestone__order__document").all())
+        holds = []
+        for ln in plines:
+            if ln.source_document_id:
+                holds.append(ln.source_document.ref)
+            elif ln.source_payable_id:
+                holds.append(ln.source_payable.document.ref)
+            elif ln.source_milestone_id:
+                holds.append(ln.source_milestone.order.document.ref)
+        in_flight.append({
+            "ref": pv.ref, "status": pv.status,
+            "prepared_by": pv.created_by.full_name if pv.created_by_id else "",
+            "doc_date": pv.doc_date,
+            "total": sum((ln.amount for ln in plines), Decimal("0")),
+            "currency": plines[0].currency if plines else "MVR",
+            "holds": holds})
     pyr_pay = Document.objects.filter(doc_type="PYR", status="AUTHORISED")
     pyr_total = sum((_mvr(d.payment_request.amount_requested,
                           d.payment_request.currency) for d in pyr_pay
@@ -286,7 +311,7 @@ def finance_dashboard(request):
         "awaiting_voucher": {"count": aw_count, "total": aw_total},
         "vouchers": {"draft": pvs.filter(status="DRAFT").count(),
                      "submitted": pvs.filter(status="SUBMITTED").count(),
-                     "to_pay": to_pay},
+                     "in_flight": in_flight, "to_pay": to_pay},
         "pyr_to_pay": {"count": pyr_pay.count(), "total": pyr_total},
         "payables": {"count": payables.count(), "total": pay_total},
         "petty_cash": floats,

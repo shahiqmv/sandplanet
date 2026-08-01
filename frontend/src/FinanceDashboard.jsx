@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { RefStamp, card } from "./ui.jsx";
+import { Chip, RefStamp, card } from "./ui.jsx";
 
 // Finance operational dashboard (M6f): money in motion — what needs a
 // voucher, vouchers in flight, what is waiting to be paid, outstanding
@@ -100,6 +100,34 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
               <span style={{ marginLeft: "auto",
                              fontFamily: "var(--font-mono)", fontSize: 14 }}>
                 MVR {money(v.total)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {d.vouchers.in_flight?.length > 0 && (
+        <div style={card}>
+          <h3 style={{ margin: "0 0 4px", fontSize: 14,
+                       color: "var(--navy)" }}>Vouchers in preparation</h3>
+          <p style={{ margin: "0 0 8px", fontSize: 12, color: "var(--muted)" }}>
+            A requisition on one of these has dropped off "awaiting a voucher".
+            Open it to submit, or cancel the voucher to release the request
+            back to the queue.</p>
+          {d.vouchers.in_flight.map((v) => (
+            <div key={v.ref} style={{ display: "flex", gap: 10,
+              alignItems: "center", padding: "5px 0",
+              borderTop: "1px solid var(--line)" }}>
+              <a href="#" onClick={(e) => { e.preventDefault(); onVouchers(); }}
+                 style={{ textDecoration: "none" }}>
+                <RefStamp small>{v.ref}</RefStamp></a>
+              <Chip tone={v.status === "SUBMITTED" ? "info" : "warn"}>
+                {v.status === "SUBMITTED" ? "with signatory" : "draft"}</Chip>
+              <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+                holds {v.holds.join(", ") || "—"}
+                {v.prepared_by ? ` · ${v.prepared_by}` : ""}</span>
+              <span style={{ marginLeft: "auto",
+                fontFamily: "var(--font-mono)", fontSize: 14 }}>
+                {v.currency} {money(v.total)}</span>
             </div>
           ))}
         </div>
