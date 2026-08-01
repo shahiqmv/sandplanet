@@ -32,7 +32,15 @@ _SYSTEM = (
     "put their total in amount_per_unit with quantity=1. Amounts may use "
     "thousands separators (commas) — return them as plain numbers (26491.41, "
     "not '26,491.41'). Never invent lines; use only what the summary shows. "
-    "Also return the GST percentage if shown."
+    "Also return the GST percentage if shown.\n\n"
+    "DETAIL: for EACH bill/category, also capture its detailed work items from "
+    "the priced bill pages — the individual works (code, description, quantity, "
+    "unit, the TOTAL rate per unit, and the line amount). File each work under "
+    "the bill it belongs to; bills are labelled (e.g. 'Bill No. 03 = Villa "
+    "Category D'). A 'Rate only' provisional item has a rate but no amount — "
+    "return its amount as 0. Where material + labour rates are split, use the "
+    "TOTAL. The sum of a priced category's item amounts should roughly equal "
+    "its amount_per_unit."
 )
 
 _TOOL = {
@@ -52,6 +60,22 @@ _TOOL = {
                         "unit": {"type": "string"},
                         "amount_per_unit": {"type": "number"},
                         "is_lump": {"type": "boolean"},
+                        "items": {
+                            "type": "array",
+                            "description": "The detailed works under this bill.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "code": {"type": "string"},
+                                    "description": {"type": "string"},
+                                    "quantity": {"type": "number"},
+                                    "unit": {"type": "string"},
+                                    "rate": {"type": "number"},
+                                    "amount": {"type": "number"},
+                                },
+                                "required": ["description"],
+                            },
+                        },
                     },
                     "required": ["name", "amount_per_unit"],
                 },
@@ -86,7 +110,7 @@ def _call_claude(content, model):
     client = anthropic.Anthropic(api_key=key)
     try:
         msg = client.messages.create(
-            model=model, max_tokens=8000, system=_SYSTEM, tools=[_TOOL],
+            model=model, max_tokens=16000, system=_SYSTEM, tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_unit_boq"},
             messages=[{"role": "user", "content": content}])
     except Exception as e:                        # pragma: no cover - network
@@ -101,15 +125,32 @@ def _call_claude(content, model):
     raise ExtractionError("The model returned no summary.")
 
 
+def _merge(cats, incoming):
+    """Merge a batch's categories into the running list, keyed by ref (or name);
+    a split document may return a bill's header in one batch and more of its
+    detail items in another, so accumulate items rather than duplicate bills."""
+    index = {(c.get("ref") or c.get("name") or "").strip().lower(): c
+             for c in cats}
+    for c in incoming:
+        key = (c.get("ref") or c.get("name") or "").strip().lower()
+        if key and key in index:
+            index[key].setdefault("items", []).extend(c.get("items") or [])
+        else:
+            cats.append(c)
+            if key:
+                index[key] = c
+    return cats
+
+
 def structure(pages, model=None):
     model = model or _model_name()
     cats, gst = [], 0
     for batch in _batches(pages):
-        body = ("Extract the unit-based BOQ final summary from this document. "
-                "Page markers are [PAGE n].\n\n"
+        body = ("Extract the unit-based BOQ — the final summary bills AND the "
+                "detailed works under each. Page markers are [PAGE n].\n\n"
                 + "\n\n".join(f"[PAGE {n}]\n{t}" for n, t in batch))
         out = _call_claude(body, model) or {}
-        cats.extend(out.get("categories") or [])
+        _merge(cats, out.get("categories") or [])
         gst = gst or out.get("gst_percent") or 0
     return cats, gst
 
@@ -130,13 +171,47 @@ def _dec(v):
         return None
 
 
+def _norm_items(raw):
+    """Clean a bill's detail works. Amount = the printed line amount, else
+    qty × rate; a 'Rate only' provisional item carries a rate but 0 amount."""
+    from decimal import Decimal
+    out = []
+    for it in (raw or []):
+        desc = str(it.get("description") or "").strip()
+        if not desc:
+            continue
+        rate = _dec(it.get("rate"))
+        qty = _dec(it.get("quantity"))
+        amt = _dec(it.get("amount"))
+        if amt is None and qty is not None and rate is not None:
+            amt = qty * rate
+        out.append({
+            "code": str(it.get("code") or "").strip()[:30],
+            "description": desc[:2000],
+            "unit": str(it.get("unit") or "").strip()[:20],
+            "quantity": (str(qty) if qty is not None else ""),
+            "rate": (str(rate) if rate is not None else ""),
+            "amount": str(amt if amt is not None else Decimal("0")),
+        })
+    return out
+
+
 def normalise(cats):
-    """Coerce model rows to review-ready categories."""
+    """Coerce model rows to review-ready categories with their detail works."""
+    from decimal import Decimal
     out = []
     for c in cats:
         name = str(c.get("name") or "").strip()
+        if not name:
+            continue
+        items = _norm_items(c.get("items"))
+        items_sum = sum((_dec(i["amount"]) or Decimal("0") for i in items),
+                        Decimal("0"))
         amt = _dec(c.get("amount_per_unit"))
-        if not name or amt is None:
+        # When detail is captured the per-unit rate derives from it; else use
+        # the summary figure.
+        per_unit = items_sum if items else amt
+        if per_unit is None:
             continue
         is_lump = bool(c.get("is_lump"))
         qty = _dec(c.get("quantity")) if not is_lump else _dec(1)
@@ -147,9 +222,10 @@ def normalise(cats):
             "name": name[:200],
             "unit": (str(c.get("unit") or "").strip() or "no")[:20],
             "quantity": str(qty),
-            "amount_per_unit": str(amt),
+            "amount_per_unit": str(per_unit),
             "is_lump": is_lump,
-            "line_total": str((amt if is_lump else amt * qty)),
+            "items": items,
+            "line_total": str(per_unit * qty),   # lump qty = 1
         })
     return out
 
@@ -198,12 +274,44 @@ def commit(project, categories, actor):
             name=str(c.get("name") or "")[:200],
             unit=str(c.get("unit") or "no")[:20], qty=qty, is_lump=is_lump,
             lump_amount=amt if is_lump else None)
-        if not is_lump:
+        detail = c.get("items") or []
+        if detail:
+            _make_items(cat, detail, boq)
+        elif not is_lump:
+            # No detail captured — keep the single per-unit line (per_unit_total
+            # then equals the summary amount).
             BoqItem.objects.create(
                 boq=boq, category=cat, sort_order=1,
                 description=f"{cat.name} — per {cat.unit}", qty=Decimal("1"),
                 rate_supply=amt)
     return boq, None
+
+
+def _make_items(cat, rows, boq):
+    """Persist a category's detail works as BoqItems (qty × rate = amount).
+    A 'Rate only' provisional line (amount 0) keeps its rate but qty 0, so it
+    stays out of the priced total until a variation calls it up."""
+    from decimal import Decimal
+    from .models import BoqItem
+    out = []
+    for j, it in enumerate(rows, 1):
+        amt = _dec(it.get("amount"))
+        rate = _dec(it.get("rate"))
+        iqty = _dec(it.get("quantity"))
+        if amt is not None and amt == 0:
+            sq, sr = Decimal("0"), (rate or Decimal("0"))        # rate only
+        elif iqty is not None and rate is not None:
+            sq, sr = iqty, rate
+        elif amt is not None:
+            sq, sr = Decimal("1"), amt                           # amount-only
+        else:
+            continue
+        out.append(BoqItem(
+            boq=boq, category=cat, sort_order=j,
+            item_code=str(it.get("code") or "")[:30],
+            description=str(it.get("description") or "")[:2000],
+            unit=str(it.get("unit") or "")[:20], qty=sq, rate_supply=sr))
+    BoqItem.objects.bulk_create(out)
 
 
 def set_category_items(project, cat_id, rows, actor):

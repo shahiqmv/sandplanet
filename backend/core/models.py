@@ -2453,6 +2453,11 @@ class BoqCategory(models.Model):
     @property
     def line_total(self):
         from decimal import Decimal
+        # Once the detail works are captured, the total derives from them
+        # (× units) — for lump bills too (their breakdown items). A lump bill
+        # with no captured detail falls back to its single lump_amount.
+        if self.items.exists():
+            return self.per_unit_total * (self.qty or Decimal("1"))
         if self.is_lump:
             return self.lump_amount or Decimal("0")
         return self.per_unit_total * (self.qty or Decimal("0"))

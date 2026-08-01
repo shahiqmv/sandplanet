@@ -446,6 +446,7 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
             <th style={{ ...th, width: 70 }}>Qty</th>
             <th style={{ ...th, width: 56 }}>Unit</th>
             <th style={{ ...th, textAlign: "right", width: 120 }}>Amount/unit</th>
+            <th style={{ ...th, width: 52 }}>Works</th>
             <th style={{ ...th, width: 46 }}>Lump</th>
             <th style={{ ...th, textAlign: "right", width: 130 }}>Line total</th>
           </tr></thead>
@@ -466,6 +467,10 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
                   type="number" value={c.amount_per_unit}
                   onChange={(e) => upd(i, "amount_per_unit",
                                        e.target.value)} /></td>
+                <td style={{ ...td, textAlign: "center",
+                  color: c.items?.length ? "var(--navy)" : "var(--muted)" }}
+                  title="Detail works captured — review/fix after import">
+                  {c.items?.length || "—"}</td>
                 <td style={{ ...td, textAlign: "center" }}>
                   <input type="checkbox" checked={!!c.is_lump}
                     onChange={(e) => upd(i, "is_lump", e.target.checked)} /></td>

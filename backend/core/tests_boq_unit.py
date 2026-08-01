@@ -51,6 +51,35 @@ class BoqUnitTests(TestCase):
         self.assertEqual(Decimal(cats[1]["line_total"]),
                          Decimal("26491.41") * 11)
 
+    def _with_detail(self):
+        return ue.normalise([{
+            "name": "Villa Category D", "quantity": 11, "unit": "no",
+            "amount_per_unit": "26491.41", "is_lump": False, "items": [
+                {"code": "D.1", "description": "Door seals", "quantity": 1,
+                 "unit": "no", "rate": "10000", "amount": "10000"},
+                {"code": "D.2", "description": "Plaster", "quantity": 1,
+                 "unit": "m2", "rate": "16491.41", "amount": "16491.41"},
+                {"code": "D.3", "description": "Provisional item",
+                 "quantity": 1, "rate": "500", "amount": "0"}]}])
+
+    def test_normalise_captures_detail_and_derives_rate(self):
+        cats = self._with_detail()
+        self.assertEqual(len(cats), 1)
+        self.assertEqual(len(cats[0]["items"]), 3)
+        # per-unit rate derives from the priced items (rate-only counts 0)
+        self.assertEqual(Decimal(cats[0]["amount_per_unit"]),
+                         Decimal("26491.41"))
+
+    def test_commit_stores_detail_items(self):
+        boq, msg = ue.commit(self.project, self._with_detail(), self.qs)
+        self.assertIsNone(msg)
+        cat = boq.categories.get(name="Villa Category D")
+        self.assertEqual(cat.items.count(), 3)
+        # per-unit total = the works; the provisional (rate-only) adds nothing
+        self.assertEqual(cat.per_unit_total, Decimal("26491.410"))
+        # line total = per-unit × 11 villas
+        self.assertEqual(cat.line_total, Decimal("26491.410") * 11)
+
     def test_commit_builds_unit_boq_and_value(self):
         boq, msg = ue.commit(self.project, self._cats(), self.qs)
         self.assertIsNone(msg)
