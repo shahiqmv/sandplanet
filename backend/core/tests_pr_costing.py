@@ -95,10 +95,7 @@ class PrMrPickerTests(PrCostingBase):
         return [m["ref"] for m in self.client.get(
             "/api/v1/documents/list?doc_type=MR&for_pr=1").data]
 
-    def test_mr_amendment_carries_pr_scope_and_warns(self):
-        from .models import Document, Notification
-        from .procurement import pr_scope_line_ids, remaining_mr_lines
-        # MR with 2 orderable lines → HO
+    def _mr_sent(self):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
             "doc_type": "MR", "site_id": self.site.id, "payload": {},
@@ -110,39 +107,27 @@ class PrMrPickerTests(PrCostingBase):
         self.act(mr["ref"], "submit", self.sa)
         self.act(mr["ref"], "approve", self.pm)
         self.act(mr["ref"], "send", self.sa)
-        # Purchasing raises a PR against the whole MR (scopes both lines)
+        return mr
+
+    def test_mr_locked_while_pr_in_progress(self):
+        mr = self._mr_sent()
+        # Purchasing raises a PR against the MR (claims its lines)
         self.client.force_authenticate(self.purchasing)
         pr = self.client.post("/api/v1/documents", {
             "doc_type": "PR", "site_id": self.site.id,
             "mr_refs": [mr["ref"]], "lines": []}, format="json").data
-        pr_doc = Document.objects.get(ref=pr["ref"])
-        self.assertEqual(len(pr_scope_line_ids(pr_doc)), 2)
-        # Site amends: revise (warns) + add a 3rd line
+        # Site can't amend while the PR is live
         self.client.force_authenticate(self.sa)
-        rev = self.client.post(f"/api/v1/documents/{mr['ref']}/revisions",
-                               {}, format="json")
-        self.assertEqual(rev.status_code, 201, rev.data)
-        self.assertIn("pr_warning", rev.data)
-        patch = self.client.patch(f"/api/v1/documents/{mr['ref']}", {"lines": [
-            {"free_text_desc": "Cement", "unit": "bag", "qty_required": 100,
-             "qty_to_order": 100},
-            {"free_text_desc": "Sand", "unit": "m3", "qty_required": 10,
-             "qty_to_order": 10},
-            {"free_text_desc": "Steel", "unit": "kg", "qty_required": 500,
-             "qty_to_order": 500}]}, format="json")
-        self.assertEqual(patch.status_code, 200, patch.data)
-        mr_doc = Document.objects.get(ref=mr["ref"])
-        # the PR's scope followed to the CURRENT revision (still the 2 originals)
-        scope = pr_scope_line_ids(pr_doc)
-        current = set(mr_doc.current_revision.lines.values_list("id", flat=True))
-        self.assertEqual(len(scope), 2)
-        self.assertTrue(scope <= current)
-        # the new item is unclaimed → available for ordering
-        self.assertEqual([ln.free_text_desc
-                          for ln in remaining_mr_lines(mr_doc)], ["Steel"])
-        # purchasing was notified their requirement changed
-        self.assertTrue(Notification.objects.filter(
-            recipient=self.purchasing, title__icontains="amended").exists())
+        r = self.client.post(f"/api/v1/documents/{mr['ref']}/revisions",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 409, r.data)
+        self.assertIn(pr["ref"], r.data["detail"])
+        # void the PR → the lock lifts
+        self.act(pr["ref"], "void", self.purchasing, reason="not needed")
+        self.client.force_authenticate(self.sa)
+        r2 = self.client.post(f"/api/v1/documents/{mr['ref']}/revisions",
+                             {}, format="json")
+        self.assertEqual(r2.status_code, 201, r2.data)
 
     def test_unsent_mr_not_offered(self):
         draft_mr = self.make_mr(sent=False)  # still DRAFT
