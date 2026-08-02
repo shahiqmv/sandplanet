@@ -323,6 +323,217 @@ function AgreementView({ docRef, me, onBack }) {
           ))}
         </div>
       )}
+
+      {s === "APPROVED" && (
+        <Valuations scaRef={doc.ref} me={me} currency={a.currency} />)}
     </div>
   );
 }
+
+const SITE_TEAM_V = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
+// The action offered at each SVC status, and who may take it.
+const SVC_ACTIONS = {
+  DRAFT: [["submit", "Submit for verification", SITE_TEAM_V]],
+  SUBMITTED: [["verify", "Verify quantities (PM)", ["PM", "ADMIN"]],
+              ["return", "Return", ["PM", "ADMIN"]]],
+  PM_VERIFIED: [["approve", "Approve (Director)", ["DIRECTOR", "ADMIN"]],
+                ["return", "Return", ["DIRECTOR", "ADMIN"]]],
+  DIRECTOR_APPROVED: [["authorise", "Authorise (Signatory)",
+                       ["SIGNATORY", "ADMIN"]],
+                      ["return", "Return", ["SIGNATORY", "ADMIN"]]],
+};
+
+function Valuations({ scaRef, me, currency }) {
+  const [list, setList] = useState(null);
+  const [openRef, setOpenRef] = useState(null);
+  const [error, setError] = useState(null);
+  const canRaise = SITE_TEAM_V.includes(me.role);
+  const load = () => api(`/subcontract-agreements/${scaRef}/valuations`)
+    .then(setList).catch((e) => setError(e.message));
+  useEffect(load, [scaRef]);
+
+  async function create() {
+    setError(null);
+    try {
+      const v = await api(`/subcontract-agreements/${scaRef}/valuations`,
+                          { method: "POST" });
+      setOpenRef(v.ref); load();
+    } catch (e) { setError(e.message); }
+  }
+  if (openRef) return <ValuationView vref={openRef} me={me}
+    onBack={() => { setOpenRef(null); load(); }} />;
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid var(--line)",
+                  paddingTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <h4 style={{ margin: 0, color: "var(--navy)" }}>Valuations</h4>
+        {canRaise && <Btn variant="navy" onClick={create}
+          style={{ marginLeft: "auto" }}>+ New valuation</Btn>}
+      </div>
+      {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      {list && !list.length && (
+        <div style={{ fontSize: 12.5, color: "var(--muted)", marginTop: 6 }}>
+          No valuations yet.</div>)}
+      {(list || []).map((v) => (
+        <div key={v.id} onClick={() => setOpenRef(v.ref)}
+          style={{ display: "flex", gap: 10, padding: "6px 0", cursor: "pointer",
+            borderBottom: "1px solid var(--line)", fontSize: 13 }}>
+          <span style={{ fontFamily: "var(--font-mono)" }}>{v.ref}</span>
+          <Chip tone={SCA_TONE[v.status] || "info"}>
+            {v.status.replace(/_/g, " ")}</Chip>
+          <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)" }}>
+            {currency} {money(v.now_due)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ValuationView({ vref, me, onBack }) {
+  const [d, setD] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [hdr, setHdr] = useState({ deductions: "", adjustment: "",
+    work_done_upto: "", note: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  const load = () => api(`/subcontract-valuations/${vref}`).then((v) => {
+    setD(v);
+    setRows(v.valuation.lines.map((l) => ({ id: l.id,
+      cumulative_qty: l.cumulative_qty })));
+    setHdr({ deductions: v.valuation.deductions || "",
+      adjustment: v.valuation.adjustment || "",
+      work_done_upto: v.work_done_upto || "", note: v.note || "" });
+  }).catch((e) => setError(e.message));
+  useEffect(load, [vref]);
+
+  async function run(fn) {
+    setBusy(true); setError(null);
+    try { await fn(); } catch (e) { setError(e.message); } finally {
+      setBusy(false); }
+  }
+  const save = () => run(async () => {
+    const v = await api(`/subcontract-valuations/${vref}`,
+      { method: "PATCH", body: { rows, ...hdr } });
+    setD(v);
+  });
+  const act = (action) => {
+    let note = "";
+    if (action === "return") {
+      note = window.prompt("Reason for returning to the site:") || "";
+      if (!note.trim()) return;
+    }
+    run(async () => {
+      if (d.status === "DRAFT") await api(`/subcontract-valuations/${vref}`,
+        { method: "PATCH", body: { rows, ...hdr } });   // save before submit
+      const v = await api(`/subcontract-valuations/${vref}/action`,
+        { method: "POST", body: { action, note } });
+      setD(v);
+    });
+  };
+
+  if (!d) return <div style={{ marginTop: 12 }}>
+    <Btn variant="ghost" onClick={onBack}>← Valuations</Btn>
+    {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}</div>;
+  const v = d.valuation;
+  const editable = d.status === "DRAFT" && SITE_TEAM_V.includes(me.role);
+  const setQ = (i, val) => setRows((rs) =>
+    rs.map((r, j) => j === i ? { ...r, cumulative_qty: val } : r));
+  const actions = (SVC_ACTIONS[d.status] || [])
+    .filter(([, , roles]) => roles.includes(me.role));
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <Btn variant="ghost" onClick={onBack}>← Valuations</Btn>
+        <b style={{ fontFamily: "var(--font-mono)" }}>{d.ref}</b>
+        <Chip tone={SCA_TONE[d.status] || "info"}>
+          {d.status.replace(/_/g, " ")}</Chip>
+        {v.over_warning && <Chip tone="alert">over-contract qty</Chip>}
+      </div>
+      {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      <div style={{ overflowX: "auto", marginTop: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+          fontSize: 12.5 }}>
+          <thead><tr>
+            {["Item", "Unit", "Contract qty", "Prev", "Cumulative", "This",
+              "This value"].map((h, i) => (
+              <th key={h} style={{ ...th, textAlign: i > 1 ? "right" : "left" }}>
+                {h}</th>))}
+          </tr></thead>
+          <tbody>
+            {v.lines.map((l, i) => (
+              <tr key={l.id} style={l.over ? { background: "#FDECEA" } : {}}>
+                <td style={td}>{l.item_code ? `${l.item_code} · ` : ""}
+                  {l.description}</td>
+                <td style={td}>{l.unit}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.contract_qty)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.previous_qty)}</td>
+                <td style={{ ...td, textAlign: "right" }}>
+                  {editable ? <input type="number" value={rows[i]?.cumulative_qty}
+                    onChange={(e) => setQ(i, e.target.value)}
+                    style={{ ...inputStyle, width: 80, textAlign: "right" }} />
+                    : num(l.cumulative_qty)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.this_qty)}</td>
+                <td style={{ ...td, textAlign: "right",
+                  fontFamily: "var(--font-mono)" }}>{money(l.this_value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {editable && (
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+          marginTop: 8 }}>
+          <label style={{ fontSize: 12 }}>Deductions (cum.)<br />
+            <input type="number" value={hdr.deductions} onChange={(e) =>
+              setHdr({ ...hdr, deductions: e.target.value })}
+              style={{ ...inputStyle, width: 110 }} /></label>
+          <label style={{ fontSize: 12 }}>Adjustment (+/-)<br />
+            <input type="number" value={hdr.adjustment} onChange={(e) =>
+              setHdr({ ...hdr, adjustment: e.target.value })}
+              style={{ ...inputStyle, width: 110 }} /></label>
+          <label style={{ fontSize: 12 }}>Work done up to<br />
+            <input type="date" value={hdr.work_done_upto} onChange={(e) =>
+              setHdr({ ...hdr, work_done_upto: e.target.value })}
+              style={{ ...inputStyle, width: 150 }} /></label>
+        </div>)}
+
+      <table style={{ marginTop: 10, fontSize: 13, borderCollapse: "collapse" }}>
+        <tbody>
+          {[["Gross certified to date", v.gross_cumulative],
+            [`Less advance recovered`, neg(v.advance_recovered)],
+            [`Less retention held (${v.retention_pct || 0}%)`,
+             neg(v.retention_held)],
+            ["Less deductions", neg(v.deductions)],
+            ["Adjustment", v.adjustment],
+            ["Net certified to date", v.net_cumulative],
+            ["Less previously certified", neg(v.previous_net)]].map(
+            ([k, val], i) => (
+            <tr key={i}><td style={{ padding: "2px 16px 2px 0",
+              color: "var(--muted)" }}>{k}</td>
+              <td style={{ padding: "2px 0", textAlign: "right",
+                fontFamily: "var(--font-mono)" }}>{money(val)}</td></tr>))}
+          <tr><td style={{ padding: "4px 16px 4px 0", fontWeight: 700 }}>
+            Amount now payable</td>
+            <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700,
+              fontFamily: "var(--font-mono)" }}>
+              {v.currency} {money(v.now_due)}</td></tr>
+        </tbody>
+      </table>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+        {editable && <Btn variant="secondary" disabled={busy}
+          onClick={save}>Save</Btn>}
+        {actions.map(([action, label]) => (
+          <Btn key={action} variant={action === "return" ? "ghost" : "navy"}
+            disabled={busy} onClick={() => act(action)}>{label}</Btn>))}
+      </div>
+    </div>
+  );
+}
+
+const num = (v) => v == null || v === "" ? "" : Number(v).toLocaleString(
+  "en-US", { maximumFractionDigits: 3 });
+const neg = (v) => { const n = Number(v || 0); return n ? -n : 0; };
