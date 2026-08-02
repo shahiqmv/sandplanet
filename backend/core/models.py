@@ -3808,6 +3808,9 @@ class Meeting(models.Model):
     location_kind = models.CharField(max_length=8, choices=Location.choices,
                                      default=Location.OFFICE)
     location_note = models.CharField(max_length=200, blank=True)
+    # Join link for an online meeting (Zoom/Meet/Teams…); shown as a clickable
+    # "Join" on the meeting and can carry into calendar/notifications.
+    meeting_link = models.URLField(max_length=500, blank=True)
 
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.SCHEDULED)

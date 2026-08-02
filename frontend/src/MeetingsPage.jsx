@@ -310,9 +310,11 @@ function MeetingDetail({ id, me, onBack }) {
   const [msg, setMsg] = useState(null);
   const [resched, setResched] = useState(false);
   const [newDt, setNewDt] = useState("");
+  const [linkVal, setLinkVal] = useState("");
 
   const load = () => api(`/meetings/${id}`).then((d) => {
     setM(d); setMinutes(d.minutes || ""); setNotes(d.notes || "");
+    setLinkVal(d.meeting_link || "");
     setActions(d.action_items.map((a) => ({ ...a })));
     setAtt(d.attendees.map((a) => ({ user_id: a.user_id, name: a.name,
       org: a.org, role: a.role, is_external: a.is_external })));
@@ -374,6 +376,11 @@ function MeetingDetail({ id, me, onBack }) {
       setM(d); setResched(false); setNewDt("");
     }, "Rescheduled — participants notified");
   };
+  const saveLink = () => run(async () => {
+    const d = await api(`/meetings/${id}`, { method: "PATCH",
+      body: { meeting_link: linkVal.trim() } });
+    setM(d);
+  }, "Meeting link saved");
   const uploadAudio = (file) => {
     if (!file) return;
     run(async () => {
@@ -416,6 +423,21 @@ function MeetingDetail({ id, me, onBack }) {
             {m.org_contact ? ` (${m.org_contact})` : ""}</span>
           <span>Organiser: {m.organiser}</span>
         </div>
+        {m.meeting_link && (
+          <div style={{ marginTop: 6 }}>
+            <a href={m.meeting_link} target="_blank" rel="noreferrer"
+              style={{ fontSize: 13, color: "var(--sky)", fontWeight: 600,
+                textDecoration: "none" }}>🔗 Join online meeting</a>
+          </div>)}
+        {canManage && (
+          <div style={{ display: "flex", gap: 8, marginTop: 6,
+            alignItems: "center", flexWrap: "wrap" }}>
+            <input type="url" value={linkVal} placeholder="Online meeting link (https://…)"
+              onChange={(e) => setLinkVal(e.target.value)}
+              style={{ ...sel, width: 300 }} />
+            <Btn variant="ghost" disabled={busy || linkVal === (m.meeting_link || "")}
+              onClick={saveLink}>Save link</Btn>
+          </div>)}
         {msg && <p style={{ color: "var(--green-fg)", fontSize: 13 }}>{msg}</p>}
         {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
         {canManage && (
@@ -611,8 +633,8 @@ function NewMeeting({ me, onDone, onCancel }) {
   const [f, setF] = useState({
     meeting_type: "PROJECT", title: "", project_id: "",
     scheduled_at: "", duration_minutes: 60, location_kind: "OFFICE",
-    location_note: "", cadence: "ONE_OFF", org_name: "", org_contact: "",
-    agenda: "" });
+    location_note: "", meeting_link: "", cadence: "ONE_OFF", org_name: "",
+    org_contact: "", agenda: "" });
   const [users, setUsers] = useState([]);
   const [attendees, setAttendees] = useState([]);
   const [error, setError] = useState(null);
@@ -724,6 +746,10 @@ function NewMeeting({ me, onDone, onCancel }) {
           </select></F>
         <F label="Location note"><input value={f.location_note}
           onChange={set("location_note")} style={{ ...sel, width: 180 }} /></F>
+        {f.location_kind === "ONLINE" && (
+          <F label="Meeting link"><input value={f.meeting_link} type="url"
+            placeholder="https://…" onChange={set("meeting_link")}
+            style={{ ...sel, width: 260 }} /></F>)}
       </div>
 
       <div style={{ marginBottom: 12 }}>

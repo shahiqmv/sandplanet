@@ -137,6 +137,17 @@ class MeetingTests(TestCase):
         self.assertEqual(r.status_code, 403)
         self.assertTrue(Meeting.objects.filter(pk=mid).exists())
 
+    def test_meeting_link_set_on_create_and_edit(self):
+        r = self._create(location_kind="ONLINE",
+                         meeting_link="https://meet.example.com/abc")
+        self.assertEqual(r.status_code, 201, r.data)
+        mid = r.data["id"]
+        self.assertEqual(r.data["meeting_link"], "https://meet.example.com/abc")
+        r2 = self.client.patch(f"/api/v1/meetings/{mid}",
+                               {"meeting_link": "https://zoom.example.com/xyz"},
+                               format="json")
+        self.assertEqual(r2.data["meeting_link"], "https://zoom.example.com/xyz")
+
     # ---- reschedule + audio ---------------------------------------------
     def test_reschedule_moves_time_and_notifies(self):
         from .models import Notification

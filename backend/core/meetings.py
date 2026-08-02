@@ -74,7 +74,7 @@ def _next_dt(dt, cadence):
 
 def _apply(meeting, data):
     for f in ("title", "agenda", "notes", "org_name", "org_contact",
-              "location_note"):
+              "location_note", "meeting_link"):
         if f in data:
             setattr(meeting, f, (data.get(f) or "").strip())
     if "meeting_type" in data and data["meeting_type"] in Meeting.Type.values:
@@ -460,6 +460,7 @@ def meeting_dict(meeting, detail=False):
         "duration_minutes": meeting.duration_minutes,
         "location_kind": meeting.location_kind,
         "location_note": meeting.location_note,
+        "meeting_link": meeting.meeting_link,
         "status": meeting.status, "cadence": meeting.cadence,
         "series_parent_id": meeting.series_parent_id,
         "minutes_status": meeting.minutes_status,
