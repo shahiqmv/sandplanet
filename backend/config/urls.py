@@ -37,6 +37,14 @@ if (settings.BASE_DIR.parent / "frontend" / "dist" / "m.html").exists():
                 name="mobile-shell"),
     ]
 
+# Client Portal shell (frontend/dist/portal.html) — the isolated external
+# realm at /portal/. A separate Vite entry; the app talks only to /api/client.
+if (settings.BASE_DIR.parent / "frontend" / "dist" / "portal.html").exists():
+    urlpatterns.append(
+        re_path(r"^portal(/.*)?$",
+                TemplateView.as_view(template_name="portal.html"),
+                name="client-portal-shell"))
+
 # Serve the built SPA (frontend/dist) same-origin — used by the team-review
 # tunnel and by production; harmless in dev (dist may not exist).
 if (settings.BASE_DIR.parent / "frontend" / "dist" / "index.html").exists():

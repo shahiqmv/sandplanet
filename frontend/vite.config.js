@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => ({
       input: {
         main: resolve(__dirname, "index.html"),
         mobile: resolve(__dirname, "m.html"),
+        portal: resolve(__dirname, "portal.html"),
       },
     },
   },

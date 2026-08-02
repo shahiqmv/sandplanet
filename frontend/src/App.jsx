@@ -11,6 +11,7 @@ import SuppliersPage from "./SuppliersPage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
+import ClientUsersPage from "./ClientUsersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import HeadOfficePage from "./HeadOfficePage.jsx";
 import OnboardingPage from "./OnboardingPage.jsx";
@@ -118,6 +119,7 @@ const NAV_GROUPS = [
   { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
            ["users", "Users", ["ADMIN"]],
+           ["client-portal", "Client Portal", ["ADMIN"]],
            ["company", "Company", ["ADMIN"]]] },
   { key: "profileGrp", label: "Profile", roles: PROFILE_ROLES,
     subs: [["profile", "Company Profile", PROFILE_ROLES]] },
@@ -938,6 +940,10 @@ export default function App() {
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "company" && (
             <CompanyPage />
+          )}
+          {!docView && !openSite && me.role === "ADMIN" &&
+            hoPage === "client-portal" && (
+            <ClientUsersPage sites={sites} />
           )}
           {!docView && !openSite && PROFILE_ROLES.includes(me.role) &&
             hoPage === "profile" && (
