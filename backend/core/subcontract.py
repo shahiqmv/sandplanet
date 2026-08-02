@@ -14,8 +14,8 @@ from .numbering import next_ref
 log = logging.getLogger(__name__)
 
 SITE_MANAGE_ROLES = ("SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN")
-_FIELDS = ("name", "registration_no", "contact_person", "phone",
-           "bank_details", "notes")
+_FIELDS = ("name", "registration_no", "address", "contact_person", "phone",
+           "signatory_name", "signatory_title", "bank_details", "notes")
 
 
 def create_subcontractor(site, data, actor):
@@ -206,22 +206,18 @@ def create_sca(sub, data, actor):
         doc.save(update_fields=["current_revision"])
         agreement = SubcontractAgreement.objects.create(
             document=doc, subcontractor=sub, project=project,
-            title=data["title"].strip(),
-            currency=(data.get("currency") or "MVR")[:3].upper(),
-            start_date=data.get("start_date") or None,
-            end_date=data.get("end_date") or None,
-            notes=data.get("notes", ""))
+            title=data["title"].strip())
+        _apply_sca_terms(agreement, data)
+        agreement.save()
         _set_scope(agreement, data.get("rows") or [])
     audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": doc.ref, "sub": sub.name})
     return doc, None
 
 
-def update_sca(doc, data, actor):
-    """Edit a draft SCA in place — header + scope."""
-    if doc.status != "DRAFT":
-        return None, "Only a draft agreement can be edited."
-    agreement = doc.subcontract_agreement
+def _apply_sca_terms(agreement, data):
+    """Set the SCA header + commercial terms from the form (draft-edit safe)."""
+    from decimal import Decimal
     if "title" in data and (data.get("title") or "").strip():
         agreement.title = data["title"].strip()
     if "currency" in data:
@@ -230,8 +226,76 @@ def update_sca(doc, data, actor):
     for f in ("start_date", "end_date"):
         if f in data:
             setattr(agreement, f, data.get(f) or None)
-    if "notes" in data:
-        agreement.notes = data.get("notes") or ""
+    for f in ("scope_of_work", "contractor_signatory_name",
+              "contractor_signatory_title", "notes"):
+        if f in data:
+            setattr(agreement, f, data.get(f) or "")
+    for f in ("advance_percent", "retention_percent"):   # non-null, default 0
+        if f in data:
+            setattr(agreement, f, _dec(data.get(f)) or Decimal("0"))
+    for f in ("ld_amount", "ld_cap_percent"):            # optional
+        if f in data:
+            setattr(agreement, f, _dec(data.get(f)))
+    if "payment_days" in data:
+        v = data.get("payment_days")
+        try:
+            agreement.payment_days = int(v) if v not in (None, "") else None
+        except (TypeError, ValueError):
+            pass
+
+
+def _pct(v):
+    """Trim a percentage for display: 10.00 -> '10', 7.50 -> '7.5'."""
+    return "" if v is None else ("%g" % float(v))
+
+
+def sca_pdf_context(doc):
+    """Merge-field context for the Subcontract Agreement PDF (owner template)."""
+    from decimal import Decimal
+
+    from .commercial import amount_in_words
+    from .pdf import _font_dir, company_info, mark_src
+    a = doc.subcontract_agreement
+    sub = a.subcontractor
+    value = a.value or Decimal("0")
+    retention = a.retention_percent or Decimal("0")
+
+    def fdate(d):
+        return d.strftime("%d %b %Y") if d else ""
+
+    project = a.project or doc.project
+    return {
+        "mark_src": mark_src(), "font_dir": _font_dir(),
+        "co": company_info(), "ref": doc.ref, "issue_date": fdate(doc.doc_date),
+        "a": a, "sub": sub, "items": list(a.items.all()),
+        "currency": a.currency, "price_fmt": f"{value:,.2f}",
+        "value_words": amount_in_words(value, a.currency),
+        "scope_of_work": a.scope_of_work,
+        "project_title": project.title if project else "",
+        "site_name": doc.site.name if doc.site_id else "",
+        "agreement_date": fdate(doc.doc_date),
+        "start_date": fdate(a.start_date) or "____________",
+        "completion_date": fdate(a.end_date) or "____________",
+        "advance_percent": _pct(a.advance_percent),
+        "has_advance": bool(a.advance_percent and a.advance_percent > 0),
+        "retention_percent": _pct(retention),
+        "show_retention": bool(retention and retention > 0),
+        "payment_days": a.payment_days or "",
+        "ld_amount": f"{a.ld_amount:,.2f}" if a.ld_amount is not None else "",
+        "ld_cap_percent": _pct(a.ld_cap_percent),
+        "contractor_signatory_name": (a.contractor_signatory_name
+                                      or "Muditha Samanthilaka"),
+        "contractor_signatory_title": (a.contractor_signatory_title
+                                       or "Director, Projects"),
+    }
+
+
+def update_sca(doc, data, actor):
+    """Edit a draft SCA in place — header, terms + scope."""
+    if doc.status != "DRAFT":
+        return None, "Only a draft agreement can be edited."
+    agreement = doc.subcontract_agreement
+    _apply_sca_terms(agreement, data)
     agreement.save()
     if "rows" in data:
         _set_scope(agreement, data.get("rows") or [])

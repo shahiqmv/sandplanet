@@ -145,6 +145,13 @@ class DocumentSerializer(serializers.ModelSerializer):
             "subcontractor_id": a.subcontractor_id,
             "title": a.title, "currency": a.currency,
             "start_date": a.start_date, "end_date": a.end_date,
+            "scope_of_work": a.scope_of_work,
+            "advance_percent": a.advance_percent,
+            "retention_percent": a.retention_percent,
+            "payment_days": a.payment_days,
+            "ld_amount": a.ld_amount, "ld_cap_percent": a.ld_cap_percent,
+            "contractor_signatory_name": a.contractor_signatory_name,
+            "contractor_signatory_title": a.contractor_signatory_title,
             "notes": a.notes, "value": a.value,
             "items": [
                 {"id": i.id, "sort_order": i.sort_order, "section": i.section,

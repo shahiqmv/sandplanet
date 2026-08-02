@@ -42,7 +42,10 @@ def _sub_json(sub, workers=False):
     data = {
         "id": sub.id, "name": sub.name, "site_id": sub.site_id,
         "site_code": sub.site.code, "registration_no": sub.registration_no,
+        "address": sub.address,
         "contact_person": sub.contact_person, "phone": sub.phone,
+        "signatory_name": sub.signatory_name,
+        "signatory_title": sub.signatory_title,
         "bank_details": sub.bank_details, "notes": sub.notes,
         "status": sub.status, "status_label": sub.get_status_display(),
         "can_raise_sca": sub.can_raise_sca,
@@ -215,3 +218,25 @@ def subcontract_agreement_edit(request, ref):
         return Response({"detail": err}, status=400)
     from .serializers_documents import DocumentSerializer
     return Response(DocumentSerializer(doc, context={"request": request}).data)
+
+
+@api_view(["GET"])
+def subcontract_agreement_pdf(request, ref):
+    """Render the formal Subcontract Agreement PDF. Carries rates, so it's for
+    PM and above (no Site Admin / Engineer export), same as the rate view."""
+    try:
+        doc = Document.objects.select_related(
+            "site", "project",
+            "subcontract_agreement__subcontractor").get(ref=ref, doc_type="SCA")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    scoped = scoped_site_ids(request.user)
+    if scoped is not None and doc.site_id not in scoped:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_all(request.user):
+        return Response({"detail": "The agreement PDF is for PM and above."},
+                        status=403)
+    from .views_commercial import _render_pdf
+    return _render_pdf("pdf/subcontract_agreement.html",
+                       subcontract.sca_pdf_context(doc),
+                       f"{doc.ref}-Subcontract-Agreement")

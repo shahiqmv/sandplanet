@@ -101,8 +101,9 @@ export default function SubcontractorsPanel({ me, site }) {
 }
 
 function CreateForm({ site, onCancel, onDone }) {
-  const [f, setF] = useState({ name: "", registration_no: "",
-    contact_person: "", phone: "", bank_details: "", notes: "" });
+  const [f, setF] = useState({ name: "", registration_no: "", address: "",
+    contact_person: "", phone: "", signatory_name: "", signatory_title: "",
+    bank_details: "", notes: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -126,10 +127,17 @@ function CreateForm({ site, onCancel, onDone }) {
                value={f.name} onChange={set("name")} autoFocus />
         <input style={inputStyle} placeholder="Registration no."
                value={f.registration_no} onChange={set("registration_no")} />
+        <input style={{ ...inputStyle, gridColumn: "1 / -1" }}
+               placeholder="Registered address (for the agreement)"
+               value={f.address} onChange={set("address")} />
         <input style={inputStyle} placeholder="Contact person"
                value={f.contact_person} onChange={set("contact_person")} />
         <input style={inputStyle} placeholder="Phone"
                value={f.phone} onChange={set("phone")} />
+        <input style={inputStyle} placeholder="Signatory name (signs agreements)"
+               value={f.signatory_name} onChange={set("signatory_name")} />
+        <input style={inputStyle} placeholder="Signatory title"
+               value={f.signatory_title} onChange={set("signatory_title")} />
         <input style={{ ...inputStyle, gridColumn: "1 / -1" }}
                placeholder="Bank details (for payment)"
                value={f.bank_details} onChange={set("bank_details")} />

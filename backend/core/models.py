@@ -1615,8 +1615,12 @@ class Subcontractor(models.Model):
                              related_name="subcontractors")
     name = models.CharField(max_length=160)             # company / gang name
     registration_no = models.CharField(max_length=60, blank=True)
+    address = models.TextField(blank=True)               # for the SCA parties block
     contact_person = models.CharField(max_length=120, blank=True)
     phone = models.CharField(max_length=40, blank=True)
+    # The person who signs agreements for the subcontractor (+ their title).
+    signatory_name = models.CharField(max_length=120, blank=True)
+    signatory_title = models.CharField(max_length=120, blank=True)
     bank_details = models.TextField(blank=True)          # PYR/PV payee
     status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
@@ -1651,8 +1655,24 @@ class SubcontractAgreement(models.Model):
                                 blank=True, related_name="+")
     title = models.CharField(max_length=200)
     currency = models.CharField(max_length=3, default="MVR")
-    start_date = models.DateField(null=True, blank=True)
-    end_date = models.DateField(null=True, blank=True)
+    start_date = models.DateField(null=True, blank=True)     # commencement
+    end_date = models.DateField(null=True, blank=True)       # completion
+    # Free-text scope narrative for Annexure A (priced lines below = Annexure B).
+    scope_of_work = models.TextField(blank=True)
+    # Commercial terms for the agreement document + SVC valuations.
+    advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                          default=0)   # of price, on signing
+    # Optional retention (owner 2026-08-02): 0 = no retention, clause omitted.
+    retention_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                            default=0)
+    payment_days = models.PositiveIntegerField(null=True, blank=True)  # to pay
+    ld_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                                    blank=True)   # liquidated damages per day
+    ld_cap_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                         null=True, blank=True)  # LD cap
+    # Who signs for the Contractor on THIS agreement (may vary by agreement).
+    contractor_signatory_name = models.CharField(max_length=120, blank=True)
+    contractor_signatory_title = models.CharField(max_length=120, blank=True)
     notes = models.TextField(blank=True)
 
     def __str__(self):

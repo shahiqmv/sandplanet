@@ -122,13 +122,27 @@ function ScopeEditor({ rows, setRows }) {
   );
 }
 
+const TERMS0 = {
+  currency: "MVR", start_date: "", end_date: "", advance_percent: "",
+  retention_percent: "", payment_days: "", ld_amount: "", ld_cap_percent: "",
+  contractor_signatory_name: "", contractor_signatory_title: "",
+  scope_of_work: "",
+};
+
 function CreateForm({ sub, onCancel, onDone }) {
   const [title, setTitle] = useState("");
+  const [t, setT] = useState({ ...TERMS0 });
   const [rows, setRows] = useState([{ ...BLANK_ROW }]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const total = rows.reduce(
     (a, r) => a + (Number(r.qty) || 0) * (Number(r.rate) || 0), 0);
+  const set = (k) => (e) => setT((s) => ({ ...s, [k]: e.target.value }));
+  const F = ({ k, label, w = 120, type = "text", ph = "" }) => (
+    <label style={{ fontSize: 12, color: "var(--muted)" }}>{label}<br />
+      <input type={type} value={t[k]} onChange={set(k)} placeholder={ph}
+        style={{ ...inputStyle, width: w }} /></label>
+  );
 
   async function submit(e) {
     e.preventDefault();
@@ -136,7 +150,7 @@ function CreateForm({ sub, onCancel, onDone }) {
     try {
       const clean = rows.filter((r) => r.description.trim());
       await api(`/subcontractors/${sub.id}/agreements`,
-                { method: "POST", body: { title, rows: clean } });
+                { method: "POST", body: { title, rows: clean, ...t } });
       onDone();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
@@ -147,6 +161,31 @@ function CreateForm({ sub, onCancel, onDone }) {
       <input style={{ ...inputStyle, width: "100%" }} autoFocus
              placeholder="Agreement title * (e.g. Blockwork package)"
              value={title} onChange={(e) => setTitle(e.target.value)} />
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+                    marginTop: 8 }}>
+        <F k="currency" label="Currency" w={64} />
+        <F k="start_date" label="Commencement" type="date" w={140} />
+        <F k="end_date" label="Completion" type="date" w={140} />
+        <F k="advance_percent" label="Advance %" type="number" w={80} />
+        <F k="retention_percent" label="Retention % (0 = none)" type="number"
+           w={130} />
+        <F k="payment_days" label="Payment days" type="number" w={100} />
+        <F k="ld_amount" label="LD / day" type="number" w={100} />
+        <F k="ld_cap_percent" label="LD cap %" type="number" w={80} />
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+        <F k="contractor_signatory_name" label="Contractor signatory" w={180}
+           ph="defaults to Director, Projects" />
+        <F k="contractor_signatory_title" label="Signatory title" w={160} />
+      </div>
+      <label style={{ fontSize: 12, color: "var(--muted)", display: "block",
+                      marginTop: 8 }}>Scope of work (Annexure A)<br />
+        <textarea value={t.scope_of_work} onChange={set("scope_of_work")}
+          rows={3} placeholder="Narrative description of the works…"
+          style={{ ...inputStyle, width: "100%", fontFamily: "inherit",
+                   resize: "vertical" }} /></label>
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 0 2px" }}>
+        Priced scope (Annexure B)</div>
       <ScopeEditor rows={rows} setRows={setRows} />
       <div style={{ display: "flex", justifyContent: "space-between",
                     marginTop: 8 }}>
@@ -198,6 +237,15 @@ function AgreementView({ docRef, me, onBack }) {
   const isPM = ["PM", "ADMIN"].includes(me.role);
   const isDir = ["DIRECTOR", "ADMIN"].includes(me.role);
   const isSite = SITE_MANAGE.includes(me.role);
+  // The agreement PDF carries rates → PM and above (matches the backend gate).
+  const canPdf = ["PM", "DIRECTOR", "SIGNATORY", "FINANCE", "QS", "ADMIN"]
+    .includes(me.role);
+  const terms = [
+    a.advance_percent > 0 && `${a.advance_percent}% advance`,
+    a.retention_percent > 0 && `${a.retention_percent}% retention`,
+    a.payment_days && `pay in ${a.payment_days} days`,
+    a.start_date && a.end_date && `${a.start_date} → ${a.end_date}`,
+  ].filter(Boolean).join(" · ");
 
   const actions = [];
   if (s === "DRAFT" && isSite)
@@ -218,9 +266,14 @@ function AgreementView({ docRef, me, onBack }) {
                     marginTop: 6 }}>
         <h4 style={{ margin: 0, color: "var(--navy)" }}>{doc.ref}</h4>
         <Chip tone={SCA_TONE[s] || "info"}>{s.replace(/_/g, " ")}</Chip>
+        {canPdf && <a href={`/api/v1/subcontract-agreements/${doc.ref}/pdf`}
+          target="_blank" rel="noreferrer" style={{ marginLeft: "auto",
+            fontSize: 12.5, color: "var(--sky)", textDecoration: "none" }}>
+          ⬇ Agreement PDF</a>}
       </div>
       <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
-        {a.title}{a.project_code ? ` · ${a.project_code}` : ""}</div>
+        {a.title}{a.project_code ? ` · ${a.project_code}` : ""}
+        {terms ? ` · ${terms}` : ""}</div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       {actions.length > 0 && (
         <div style={{ display: "flex", gap: 8, margin: "12px 0" }}>

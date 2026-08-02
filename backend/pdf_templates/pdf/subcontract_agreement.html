@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+<style>
+  .parties p { margin: 0 0 5pt 0; }
+  .recitals { margin-top: 4pt; }
+  .clause { margin-top: 8pt; }
+  .cl-no { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+           font-weight: 700; font-size: 10.5pt; letter-spacing: 1pt;
+           color: #16527E; }
+  .cl-title { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+              font-weight: 700; font-size: 10.5pt; letter-spacing: 1.2pt;
+              text-transform: uppercase; color: #16527E; margin-left: 4pt; }
+  ol.cl { margin: 3pt 0 2pt 18pt; padding: 0; }
+  ol.cl > li { margin-bottom: 2.5pt; padding-left: 3pt; }
+  .price-note { font-weight: 600; color: #16527E; }
+  table.price { width: 100%; border-collapse: collapse; margin-top: 5pt;
+                border: 1pt solid #C9D9E5; }
+  table.price th { background: #16527E; color: #fff; font-size: 8pt;
+                   text-transform: uppercase; letter-spacing: .5pt;
+                   padding: 3pt 6pt; text-align: left; }
+  table.price th.n, table.price td.n { text-align: right; }
+  table.price td { padding: 2.5pt 6pt; border-bottom: 1pt solid #EAF1F6;
+                   font-size: 8.5pt; vertical-align: top; }
+  table.price tr.head td { background: #F6F2E9; font-weight: 600;
+                           color: #16527E; }
+  table.price tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
+                          background: #DCEBF8; }
+  .annex-h { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+             font-weight: 700; font-size: 12pt; letter-spacing: 2pt;
+             text-transform: uppercase; color: #16527E; text-align: center;
+             margin-top: 10pt; page-break-before: always; }
+  .annex-rule { width: 120pt; height: 1.5pt; background: #29ABE2;
+                margin: 3pt auto 6pt auto; }
+  .scope-text { white-space: pre-wrap; margin-top: 4pt; }
+  .wit td { padding-top: 20pt; font-size: 8.5pt; color: #5B6672; }
+</style>
+</head>
+<body>
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="lettertitle">Subcontract Agreement</div>
+<div class="lettertitle-rule"></div>
+
+<div class="parties" style="margin-top:8pt;">
+  <p>THIS SUBCONTRACT AGREEMENT (the &ldquo;Subcontract&rdquo;) is made on
+     <b>{{ agreement_date }}</b> (the &ldquo;Effective Date&rdquo;)</p>
+  <p><b>BY AND BETWEEN:</b></p>
+  <p><b>{{ co.legal_name|default:"Sand Planet (Pvt) Ltd" }}</b>, a company
+     registered in the Republic of Maldives (Commercial Registration No.
+     {{ co.reg_no|default:"C-0059/2015" }}), of
+     {{ co.address|default:"Ma. Maaraadha Aage', Dhanburuh Magu, 20162, Mal&eacute;" }}
+     (the &ldquo;Contractor&rdquo;);</p>
+  <p><b>AND</b></p>
+  <p><b>{{ sub.name }}</b>, a company registered in the Republic of Maldives
+     {% if sub.registration_no %}(Commercial Registration No. {{ sub.registration_no }}){% endif %}{% if sub.address %}, of {{ sub.address }}{% endif %}
+     (the &ldquo;Subcontractor&rdquo;).</p>
+  <p>(The Contractor and the Subcontractor are referred to individually as a
+     &ldquo;Party&rdquo; and collectively as the &ldquo;Parties&rdquo;.)</p>
+</div>
+
+<div class="clause recitals">
+  <span class="cl-title" style="margin-left:0;">Recitals</span>
+  <ol class="cl" style="list-style-type: upper-alpha;">
+    <li>The Contractor has been engaged for
+        <b>{{ project_title }}</b> at <b>{{ site_name }}</b> (the &ldquo;Project&rdquo;).</li>
+    <li>The Contractor wishes to subcontract part of the Project works, and the
+        Subcontractor has agreed to carry out and complete those works (the
+        &ldquo;Works&rdquo;) on the terms set out in this Subcontract.</li>
+  </ol>
+  <p style="margin-top:3pt;"><b>NOW IT IS AGREED as follows:</b></p>
+</div>
+
+<div class="clause"><span class="cl-no">1.</span><span class="cl-title">Scope of Work</span>
+  <ol class="cl">
+    <li>The Subcontractor shall carry out and complete the works described in
+        Annexure A (the &ldquo;Works&rdquo;) at {{ site_name }}, in accordance
+        with this Subcontract, the Contractor&rsquo;s instructions, and the
+        project drawings and specifications.</li>
+    <li>All Works shall be performed with the highest skill and care and to the
+        standard required by the Contractor and the Client/Employer.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">2.</span><span class="cl-title">Subcontract Price &amp; Payment</span>
+  <ol class="cl">
+    <li><b>Subcontract Price.</b> The Contractor shall pay the Subcontractor a
+        fixed all-inclusive price for the complete and satisfactory execution of
+        the Works: <span class="price-note">{{ currency }} {{ price_fmt }}
+        ({{ value_words }})</span>. This price is all-inclusive and covers all
+        labour, materials, equipment, transport, wages, statutory contributions,
+        and any other costs required to complete the Works, unless expressly
+        stated otherwise in this Subcontract.</li>
+    <li><b>Advance Payment.</b> An advance of {{ advance_percent }}% of the
+        Subcontract Price shall be paid on signing, to be recovered pro-rata
+        against progress payments.{% if not has_advance %} (No advance applies.){% endif %}</li>
+    <li><b>Progress Payments.</b> The Subcontractor may submit a payment request
+        at the end of each month for Works completed to date, supported by a
+        Subcontract Valuation Certificate agreed with the Contractor&rsquo;s
+        Project Manager.</li>
+    {% if show_retention %}
+    <li><b>Retention.</b> The Contractor shall retain {{ retention_percent }}%
+        from each progress payment. Half of the retention is released on
+        completion and handover; the balance on expiry of the defects liability
+        period.</li>
+    {% endif %}
+    <li><b>Release of Payment.</b> Each approved payment (less advance recovery{% if show_retention %}, retention{% endif %},
+        and any deductions under this Subcontract) shall be paid within
+        {{ payment_days|default:"the agreed number of" }} working days of the
+        Contractor certifying the payment.</li>
+    <li><b>Final Payment.</b> The final payment shall be made after completion of
+        all Works to the Contractor&rsquo;s satisfaction, correction of defects,
+        and handover.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">3.</span><span class="cl-title">Payment of Workers&rsquo; Wages</span>
+  <ol class="cl">
+    <li>The Subcontractor is solely responsible for paying the wages of its
+        workers in full and on time.</li>
+    <li>If a worker of the Subcontractor raises a complaint with the Contractor
+        that their wages have not been paid, and the Subcontractor fails to
+        settle the amount promptly, the Contractor may pay the worker directly
+        and deduct the full amount so paid from any progress payment or other
+        money due to the Subcontractor. The Subcontractor shall not dispute such
+        deduction.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">4.</span><span class="cl-title">Commencement &amp; Completion</span>
+  <ol class="cl">
+    <li>Commencement Date: {{ start_date }}.</li>
+    <li>Completion Date: {{ completion_date }}.</li>
+    <li><b>Delays.</b> If the Subcontractor fails to complete on time, the
+        Contractor may deduct liquidated damages of
+        {% if ld_amount %}{{ currency }} {{ ld_amount }}{% else %}the agreed amount{% endif %}
+        for each day of delay{% if ld_cap_percent %}, up to a maximum of
+        {{ ld_cap_percent }}% of the Subcontract Price{% endif %}.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">5.</span><span class="cl-title">Variations to the Works</span>
+  <ol class="cl">
+    <li>The Contractor may order additions, deletions or modifications to the
+        Works by written instruction. The Subcontractor shall comply, and the
+        price and time shall be adjusted by agreement based on the Subcontract
+        rates.</li>
+    <li>The Subcontractor shall not vary the Works without the Contractor&rsquo;s
+        prior written approval.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">6.</span><span class="cl-title">General Obligations of the Subcontractor</span>
+  <ol class="cl">
+    <li>The Subcontractor shall cooperate and coordinate with the Contractor and
+        any other contractors on site.</li>
+    <li>The Subcontractor is responsible for the safety of its workforce and
+        shall comply with all health, safety and site regulations.</li>
+    <li>The Subcontractor shall not communicate directly with the Client/Employer
+        on any matter relating to the Works.</li>
+    <li>The Subcontractor shall not assign or sublet any part of the Works
+        without the Contractor&rsquo;s prior written consent.</li>
+    <li>The Subcontractor is responsible for the conduct of its workers and shall
+        remove any worker the Contractor reasonably deems unsuitable.</li>
+    <li>The Subcontractor shall ensure all its workers hold valid work permits
+        and are legally entitled to work in the Maldives.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">7.</span><span class="cl-title">Governing Law &amp; Dispute Resolution</span>
+  <ol class="cl">
+    <li>This Subcontract is governed by the laws of the Republic of Maldives.</li>
+    <li>Any dispute shall first be settled amicably by negotiation; failing
+        which, it shall be resolved in accordance with Maldivian law.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">8.</span><span class="cl-title">Termination</span>
+  <ol class="cl">
+    <li>The Contractor may terminate this Subcontract immediately if the
+        Subcontractor: (a) fails to proceed with the Works with due diligence;
+        (b) breaches any material term of this Subcontract; (c) fails to pay its
+        workers&rsquo; wages after a complaint under Clause 3; or (d) becomes
+        bankrupt or insolvent.</li>
+    <li>On termination, the Contractor may take possession of the site and all
+        materials to complete the Works, and recover any additional cost of
+        completion from the Subcontractor.</li>
+  </ol>
+</div>
+
+<div class="clause"><span class="cl-no">9.</span><span class="cl-title">Notices</span>
+  <ol class="cl">
+    <li>All formal notices shall be in writing and delivered by hand, registered
+        post or courier to the Contractor at
+        {{ co.address|default:"Ma. Maaraadha Aage', Dhanburuh Magu, 20162, Mal&eacute;" }};
+        and to the Subcontractor at {{ sub.address|default:"its registered address" }}
+        {% if sub.contact_person %}&mdash; {{ sub.contact_person }}{% endif %}{% if sub.phone %}, {{ sub.phone }}{% endif %}.</li>
+  </ol>
+</div>
+
+<div class="body-text">
+  <p><b>IN WITNESS WHEREOF</b>, the Parties have executed this Subcontract on the
+     date first written above, each party confirming its authority to enter into
+     this Subcontract.</p>
+</div>
+
+<table class="sigrow">
+  <tr>
+    <td>
+      <div class="sigfor">The Contractor</div>
+      <div class="sigline">
+        <span class="signame">{{ contractor_signatory_name }}</span><br>
+        <span class="sigrole">{{ contractor_signatory_title }},
+          {{ co.legal_name|default:"Sand Planet (Pvt) Ltd" }} &nbsp;·&nbsp;
+          Date: ____________</span>
+      </div>
+    </td>
+    <td>
+      <div class="sigfor">The Subcontractor</div>
+      <div class="sigline">
+        <span class="signame">{{ sub.signatory_name|default:sub.contact_person }}</span><br>
+        <span class="sigrole">{{ sub.signatory_title }}{% if sub.signatory_title %} &nbsp;·&nbsp; {% endif %}{{ sub.name }} &nbsp;·&nbsp; Date: ____________</span>
+      </div>
+    </td>
+  </tr>
+</table>
+
+<table class="sigrow wit">
+  <tr>
+    <td><b>Witness &mdash; for the Contractor</b><br>Name: ___________________________
+        &nbsp; Designation: ______________</td>
+    <td><b>Witness &mdash; for the Subcontractor</b><br>Name: ___________________________
+        &nbsp; Designation: ______________</td>
+  </tr>
+</table>
+
+<div class="annex-h">Annexure A &nbsp;&middot;&nbsp; Scope of Work</div>
+<div class="annex-rule"></div>
+<p>The Works to be carried out by the Subcontractor at {{ site_name }} comprise:</p>
+<div class="scope-text">{% if scope_of_work %}{{ scope_of_work }}{% else %}Refer to the priced scope in Annexure B.{% endif %}</div>
+<p style="margin-top:5pt; color:#5B6672; font-size:8pt;">This Annexure is read
+   together with the project drawings and specifications provided by the
+   Contractor.</p>
+
+<div class="annex-h">Annexure B &nbsp;&middot;&nbsp; Price Schedule</div>
+<div class="annex-rule"></div>
+<p>The Subcontract Price is a fixed lump sum of {{ currency }} {{ price_fmt }}
+   ({{ value_words }}), broken down as follows:</p>
+<table class="price">
+  <thead><tr>
+    <th style="width:34pt;">#</th><th>Description</th><th style="width:44pt;">Unit</th>
+    <th class="n" style="width:52pt;">Qty</th><th class="n" style="width:64pt;">Rate</th>
+    <th class="n" style="width:74pt;">Amount</th>
+  </tr></thead>
+  <tbody>
+    {% for it in items %}
+    {% if it.is_heading %}
+      <tr class="head"><td></td><td colspan="5">{{ it.section|default:it.description }}</td></tr>
+    {% else %}
+      <tr>
+        <td>{{ it.item_code }}</td><td>{{ it.description }}</td><td>{{ it.unit }}</td>
+        <td class="n">{{ it.qty|default:"" }}</td>
+        <td class="n">{{ it.rate|default:"" }}</td>
+        <td class="n">{{ it.amount|floatformat:2 }}</td>
+      </tr>
+    {% endif %}
+    {% endfor %}
+    <tr class="tot"><td colspan="5">Total Subcontract Price ({{ currency }})</td>
+        <td class="n">{{ price_fmt }}</td></tr>
+  </tbody>
+</table>
+<p style="margin-top:5pt; color:#5B6672; font-size:8pt;">Where no breakdown is
+   provided, the Subcontract Price shall be treated as a single lump sum for the
+   whole of the Works.</p>
+
+</body>
+</html>

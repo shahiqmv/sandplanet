@@ -355,3 +355,81 @@ class SubcontractAttendanceTests(TestCase):
         self.assertEqual(s.sub_extra_hours, Decimal("2.5"))
         self.assertEqual(s.ot_requested, Decimal("0"))
         self.assertIsNone(s.ot_approved)
+
+
+class SubcontractAgreementTermsTests(TestCase):
+    """SCA commercial terms + the Subcontract Agreement PDF (owner template)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("sa", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("pm", User.Role.PM, site=self.site)
+        self.client = APIClient()
+
+    def _approved_sub(self):
+        return Subcontractor.objects.create(
+            site=self.site, name="Alif Gang", address="Hulhumale",
+            signatory_name="Ali Rasheed", signatory_title="Managing Director",
+            status=Subcontractor.Status.APPROVED)
+
+    def _make_sca(self, **terms):
+        sub = self._approved_sub()
+        self.client.force_authenticate(self.sa)
+        body = {"title": "Blockwork package",
+                "rows": [{"description": "Blockwork", "unit": "m2",
+                          "qty": "100", "rate": "150"}]}
+        body.update(terms)
+        r = self.client.post(f"/api/v1/subcontractors/{sub.id}/agreements",
+                             body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r
+
+    def test_terms_persist_and_serialize(self):
+        r = self._make_sca(
+            currency="MVR", advance_percent="10", retention_percent="5",
+            payment_days="14", ld_amount="500", ld_cap_percent="10",
+            scope_of_work="Blockwork to all villas.",
+            contractor_signatory_name="S. Perera",
+            contractor_signatory_title="Project Director")
+        a = Document.objects.get(ref=r.data["ref"]).subcontract_agreement
+        self.assertEqual(a.advance_percent, Decimal("10"))
+        self.assertEqual(a.retention_percent, Decimal("5"))
+        self.assertEqual(a.payment_days, 14)
+        self.assertEqual(a.value, Decimal("15000"))
+        self.assertEqual(a.scope_of_work, "Blockwork to all villas.")
+        # the document payload (detail) carries the terms
+        self.client.force_authenticate(self.pm)
+        pl = self.client.get(
+            f"/api/v1/documents/{r.data['ref']}").data["subcontract_agreement"]
+        self.assertEqual(Decimal(str(pl["advance_percent"])), Decimal("10"))
+        self.assertEqual(pl["contractor_signatory_name"], "S. Perera")
+
+    def test_pdf_context_render_retention_conditional(self):
+        from django.template.loader import render_to_string
+
+        from . import subcontract
+        # with retention → clause present
+        r = self._make_sca(retention_percent="5", advance_percent="10",
+                           scope_of_work="Blockwork narrative.")
+        doc = Document.objects.get(ref=r.data["ref"])
+        ctx = subcontract.sca_pdf_context(doc)
+        self.assertTrue(ctx["show_retention"])
+        html = render_to_string("pdf/subcontract_agreement.html", ctx)
+        self.assertIn("Blockwork narrative.", html)
+        self.assertIn("Retention.", html)
+        # without retention → clause omitted
+        r2 = self._make_sca(retention_percent="0")
+        ctx2 = subcontract.sca_pdf_context(Document.objects.get(ref=r2.data["ref"]))
+        self.assertFalse(ctx2["show_retention"])
+        html2 = render_to_string("pdf/subcontract_agreement.html", ctx2)
+        self.assertNotIn("Retention.", html2)
+
+    def test_pdf_endpoint_gated_to_pm_plus(self):
+        ref = self._make_sca().data["ref"]
+        self.client.force_authenticate(self.sa)        # rate-bearing → blocked
+        self.assertEqual(self.client.get(
+            f"/api/v1/subcontract-agreements/{ref}/pdf").status_code, 403)
+        self.client.force_authenticate(self.pm)         # PM may download
+        self.assertEqual(self.client.get(
+            f"/api/v1/subcontract-agreements/{ref}/pdf").status_code, 200)

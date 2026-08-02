@@ -353,6 +353,8 @@ urlpatterns = [
          subcontract_api.subcontractor_agreements, name="sca-list"),
     path("subcontract-agreements/<str:ref>",
          subcontract_api.subcontract_agreement_edit, name="sca-edit"),
+    path("subcontract-agreements/<str:ref>/pdf",
+         subcontract_api.subcontract_agreement_pdf, name="sca-pdf"),
     # Site worker management (direct/salaried workforce) — approval batches
     path("worker-batches", worker_api.worker_batches, name="worker-batches"),
     path("worker-batches/<int:pk>/action", worker_api.batch_action,
