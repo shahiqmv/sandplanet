@@ -151,6 +151,21 @@ class ProcurementScheduleTests(TestCase):
             f"/api/v1/procurement-schedules/{pk}/action",
             {"action": "sign_off"}, format="json").status_code, 400)
 
+    def test_director_can_confirm_and_push_through(self):
+        # Option B (owner 2026-08-01): the Director can confirm a submitted
+        # schedule directly — no waiting on Purchasing — then sign it off.
+        pk = self._open()
+        self._add_line(pk)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                             {"action": "confirm"}, format="json")
+        self.assertEqual(r.data["status"], "CONFIRMED", r.data)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                             {"action": "sign_off"}, format="json")
+        self.assertEqual(r.data["status"], "SIGNED_OFF", r.data)
+        self.assertTrue(r.data["baseline_signed_at"])
+
     def test_values_hidden_from_site_engineer(self):
         pk = self._open()
         self._add_line(pk)

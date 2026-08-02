@@ -25,7 +25,10 @@ log = logging.getLogger(__name__)
 # commercial team can add lines; Purchasing and the PD are the real gates.
 PROPOSE_ROLES = ("QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR",
                  "ADMIN")                        # who proposes / edits planning
-CONFIRM_ROLES = ("HO_PURCHASING", "ADMIN")     # who confirms commercial fields
+# The Director may confirm a submitted schedule directly (not only Purchasing),
+# so a schedule never stalls waiting on Purchasing — the PD can push it through
+# to sign-off himself (owner 2026-08-01, "option B").
+CONFIRM_ROLES = ("HO_PURCHASING", "DIRECTOR", "ADMIN")  # confirms commercial fields
 SIGNOFF_ROLES = ("DIRECTOR", "ADMIN")          # the PD sign-off gate
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
               "ADMIN")                          # HO roles that see all schedules
