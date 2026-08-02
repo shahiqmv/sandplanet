@@ -63,24 +63,24 @@ const NAV_GROUPS = [
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
-    roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS"],
+    roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS", "PA"],
     // QS shares the Director's overseas-procurement authority, so it only sees
     // the import chain (Requests / Orders / Tracker / Store), not domestic
-    // purchasing pages (owner 2026-07-14).
+    // purchasing pages (owner 2026-07-14). PA views everything (read-only).
     subs: [["dashboard", "Purchasing Dashboard",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"]],
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
            ["items", "Items",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"]],
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
            ["item-categories", "Item Categories",
-            ["HO_PURCHASING", "ADMIN"]],
+            ["HO_PURCHASING", "ADMIN", "PA"]],
            ["pmr-register", "Import Requests", null],
            ["imports", "International Orders", null],
            ["import-tracker", "Import Tracker", null],
            ["store", "HO Store", null],
            ["suppliers", "Suppliers",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN"]]] },
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]]] },
   { key: "planning", label: "Planning",
-    roles: ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN"],
+    roles: ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"],
     subs: [["procurement-schedule", "Procurement Schedule", null]] },
   { key: "meetingsGrp", label: "Meetings",
     roles: ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
@@ -522,13 +522,13 @@ export default function App() {
                            onOpen={openApprovalItem} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "FINANCE", "ADMIN", "QS", "SIGNATORY"]
+            ["DIRECTOR", "FINANCE", "ADMIN", "QS", "SIGNATORY", "PA"]
               .includes(me.role) &&
             hoPage === "cost" && (
             <CostControlPage onOpenDoc={openDoc} me={me} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "ADMIN", "QS", "SIGNATORY"].includes(me.role) &&
+            ["DIRECTOR", "ADMIN", "QS", "SIGNATORY", "PA"].includes(me.role) &&
             hoPage === "portfolio" && (
             <PortfolioPage refresh={refresh}
                            onOpenProject={(id) => setDocView({
@@ -806,7 +806,7 @@ export default function App() {
             <ItemsPage me={me} />
           )}
           {!docView && !openSite &&
-            ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
+            ["HO_PURCHASING", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "item-categories" && (
             <ItemCategoriesPage me={me} />
           )}
@@ -829,7 +829,7 @@ export default function App() {
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite &&
-            ["FINANCE", "DIRECTOR", "ADMIN", "QS"].includes(me.role) &&
+            ["FINANCE", "DIRECTOR", "ADMIN", "QS", "PA"].includes(me.role) &&
             hoPage === "receivables" && (
             <ReceivablesPage me={me} />
           )}
@@ -867,19 +867,19 @@ export default function App() {
             <StaffCostPage />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "DIRECTOR", "ADMIN", "PM"].includes(me.role) &&
+            ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA"].includes(me.role) &&
             hoPage === "onboarding" && (
             <OnboardingPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN"]
+            ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"]
               .includes(me.role) &&
             hoPage === "procurement-schedule" && (
             <ProcurementSchedulePage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
-             "SIGNATORY"].includes(me.role) && hoPage === "meetings" && (
+             "SIGNATORY", "PA"].includes(me.role) && hoPage === "meetings" && (
             <MeetingsPage me={me} />
           )}
           {docView?.mode === "attendance" && openSite && (

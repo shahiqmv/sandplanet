@@ -21,7 +21,7 @@ from .models import (CostHead, Document, ImportAllocation, ImportOrder,
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN",
-              "QS")  # QS shares the Director's overseas-procurement authority
+              "QS", "PA")  # QS: overseas-procurement authority; PA: read-only
 CREATE_ROLES = ("HO_PURCHASING", "ADMIN")
 PAY_ROLES = ("FINANCE", "ADMIN")
 
@@ -857,7 +857,7 @@ def ipr_payments_due(request):
 
 
 PMR_REGISTER_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",
-                      "QS", "ADMIN")
+                      "QS", "ADMIN", "PA")
 # Ordered PMR pipeline for age/next-step display
 PMR_STAGE_ORDER = ["DRAFT", "SUBMITTED", "PM_APPROVED", "HO_REVIEWED",
                    "SIZED_RELEASED", "SOURCING", "ORDERED", "RECEIVED",

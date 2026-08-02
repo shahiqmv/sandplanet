@@ -411,7 +411,7 @@ def dashboard_portfolio(request):
     """Senior-management portfolio (spec §7.4): every project with value,
     % duration elapsed vs programme progress, open-items count, and an
     on-track / watch / attention classification."""
-    if request.user.role not in ("DIRECTOR", "ADMIN", "QS", "SIGNATORY"):
+    if request.user.role not in ("DIRECTOR", "ADMIN", "QS", "SIGNATORY", "PA"):
         return Response({"detail": "Director / Admin / QS / Signatory only."},
                         status=403)
     from datetime import date

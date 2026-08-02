@@ -31,7 +31,7 @@ PROPOSE_ROLES = ("QS", "PM", "SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR",
 CONFIRM_ROLES = ("HO_PURCHASING", "ADMIN")     # who confirms commercial fields
 SIGNOFF_ROLES = ("DIRECTOR", "ADMIN")          # the PD sign-off gate
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
-              "ADMIN")                          # HO roles that see all schedules
+              "ADMIN", "PA")                    # HO roles that see all schedules
 
 # Planning fields the PM owns; commercial fields Purchasing owns.
 _PLAN_FIELDS = ("bundle", "category", "description", "make_brand",

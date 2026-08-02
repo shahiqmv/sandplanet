@@ -182,7 +182,7 @@ def site_cost_postings(request, site_id):
 def cost_portfolio(request):
     """Cost roll-up across all sites (§6C.4): contract vs consumed, with a
     flag where cost consumption outpaces time elapsed."""
-    if request.user.role not in SENIOR_COST_ROLES:
+    if request.user.role not in SENIOR_COST_ROLES + ("PA",):
         return Response({"detail": "Senior management / Finance / QS only."},
                         status=403)
     rows = []

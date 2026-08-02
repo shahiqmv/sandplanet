@@ -50,6 +50,19 @@ class PARoleTests(TestCase):
         self.assertNotIn("PA", RECEIPT_ROLES)   # can't issue/void receipts
         self.assertIn("PA", COST_ROLES)         # sees project cost/portfolio
 
+    def test_pa_can_load_her_read_pages(self):
+        # The pages her nav now offers must not 403 on the backend (the bug she
+        # hit: nav showed but the page body/endpoint rejected PA).
+        for url in ("/api/v1/meetings",
+                    "/api/v1/procurement-schedules",
+                    "/api/v1/dashboards/portfolio",
+                    "/api/v1/cost/portfolio",
+                    "/api/v1/receivables/aging",
+                    "/api/v1/ipr",
+                    "/api/v1/pmr/register"):
+            r = self.client.get(url)
+            self.assertEqual(r.status_code, 200, f"{url} -> {r.status_code}")
+
     def test_pa_cannot_raise_site_documents(self):
         r = self.client.post("/api/v1/documents", {
             "doc_type": "MR", "site_id": self.site.id, "doc_date": "2026-08-02",
