@@ -35,7 +35,23 @@
   .annex-rule { width: 120pt; height: 1.5pt; background: #29ABE2;
                 margin: 3pt auto 6pt auto; }
   .scope-text { white-space: pre-wrap; margin-top: 4pt; }
-  .wit td { padding-top: 20pt; font-size: 8.5pt; color: #5B6672; }
+  /* Execution: two equal columns, top-aligned, signature line at a fixed
+     offset so both sides line up cleanly. */
+  table.exec { width: 100%; border-collapse: collapse; margin-top: 10pt; }
+  table.exec td { width: 50%; vertical-align: top; padding: 0 14pt; }
+  table.exec td.left { border-right: 1pt solid #EAF1F6; padding-left: 0; }
+  table.exec td.right { padding-right: 0; }
+  .exec-for { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+              font-weight: 700; font-size: 10pt; letter-spacing: 1.2pt;
+              text-transform: uppercase; color: #16527E; }
+  .exec-sub { font-size: 8.5pt; color: #5B6672; margin-top: 1pt; }
+  .exec-sigline { border-top: 1pt solid #1A2530; margin-top: 46pt;
+                  padding-top: 4pt; }
+  .exec-name { font-weight: 700; color: #1A2530; font-size: 9.5pt; }
+  .exec-role { color: #5B6672; font-size: 8pt; margin-top: 1pt; }
+  .wit td { padding-top: 26pt; font-size: 8.5pt; color: #5B6672; }
+  .wit .wl { display: inline-block; border-bottom: 1pt solid #9AA4AD;
+             width: 150pt; }
 </style>
 </head>
 <body>
@@ -48,14 +64,12 @@
   <p>THIS SUBCONTRACT AGREEMENT (the &ldquo;Subcontract&rdquo;) is made on
      <b>{{ agreement_date }}</b> (the &ldquo;Effective Date&rdquo;)</p>
   <p><b>BY AND BETWEEN:</b></p>
-  <p><b>{{ co.legal_name|default:"Sand Planet (Pvt) Ltd" }}</b>, a company
-     registered in the Republic of Maldives (Commercial Registration No.
-     {{ co.reg_no|default:"C-0059/2015" }}), of
-     {{ co.address|default:"Ma. Maaraadha Aage', Dhanburuh Magu, 20162, Mal&eacute;" }}
-     (the &ldquo;Contractor&rdquo;);</p>
+  <p><b>{{ co.legal_name }}</b>, a company registered in the Republic of
+     Maldives{% if co.reg_no %} (Commercial Registration No. {{ co.reg_no }}){% endif %}{% if co.address %},
+     of <b>{{ co.address }}</b>{% endif %} (the &ldquo;Contractor&rdquo;);</p>
   <p><b>AND</b></p>
   <p><b>{{ sub.name }}</b>, a company registered in the Republic of Maldives
-     {% if sub.registration_no %}(Commercial Registration No. {{ sub.registration_no }}){% endif %}{% if sub.address %}, of {{ sub.address }}{% endif %}
+     {% if sub.registration_no %}(Commercial Registration No. {{ sub.registration_no }}){% endif %}{% if sub.address %}, of <b>{{ sub.address }}</b>{% endif %}
      (the &ldquo;Subcontractor&rdquo;).</p>
   <p>(The Contractor and the Subcontractor are referred to individually as a
      &ldquo;Party&rdquo; and collectively as the &ldquo;Parties&rdquo;.)</p>
@@ -193,10 +207,11 @@
 <div class="clause"><span class="cl-no">9.</span><span class="cl-title">Notices</span>
   <ol class="cl">
     <li>All formal notices shall be in writing and delivered by hand, registered
-        post or courier to the Contractor at
-        {{ co.address|default:"Ma. Maaraadha Aage', Dhanburuh Magu, 20162, Mal&eacute;" }};
-        and to the Subcontractor at {{ sub.address|default:"its registered address" }}
-        {% if sub.contact_person %}&mdash; {{ sub.contact_person }}{% endif %}{% if sub.phone %}, {{ sub.phone }}{% endif %}.</li>
+        post or courier to the Contractor,
+        <b>{{ co.legal_name }}</b>, at <b>{{ co.address }}</b>; and to the
+        Subcontractor, <b>{{ sub.name }}</b>, at
+        <b>{{ sub.address|default:"its registered address" }}</b>{% if sub.contact_person %}
+        &mdash; {{ sub.contact_person }}{% endif %}{% if sub.phone %}, {{ sub.phone }}{% endif %}.</li>
   </ol>
 </div>
 
@@ -206,33 +221,36 @@
      this Subcontract.</p>
 </div>
 
-<table class="sigrow">
+<table class="exec">
   <tr>
-    <td>
-      <div class="sigfor">The Contractor</div>
-      <div class="sigline">
-        <span class="signame">{{ contractor_signatory_name }}</span><br>
-        <span class="sigrole">{{ contractor_signatory_title }},
-          {{ co.legal_name|default:"Sand Planet (Pvt) Ltd" }} &nbsp;·&nbsp;
-          Date: ____________</span>
+    <td class="left">
+      <div class="exec-for">The Contractor</div>
+      <div class="exec-sub">{{ co.legal_name }}</div>
+      <div class="exec-sigline">
+        <span class="exec-name">{{ contractor_signatory_name }}</span>
+        <div class="exec-role">{{ contractor_signatory_title }} &nbsp;·&nbsp;
+          Date: ____________</div>
       </div>
     </td>
-    <td>
-      <div class="sigfor">The Subcontractor</div>
-      <div class="sigline">
-        <span class="signame">{{ sub.signatory_name|default:sub.contact_person }}</span><br>
-        <span class="sigrole">{{ sub.signatory_title }}{% if sub.signatory_title %} &nbsp;·&nbsp; {% endif %}{{ sub.name }} &nbsp;·&nbsp; Date: ____________</span>
+    <td class="right">
+      <div class="exec-for">The Subcontractor</div>
+      <div class="exec-sub">{{ sub.name }}</div>
+      <div class="exec-sigline">
+        <span class="exec-name">{{ sub.signatory_name|default:sub.contact_person }}</span>
+        <div class="exec-role">{% if sub.signatory_title %}{{ sub.signatory_title }} &nbsp;·&nbsp; {% endif %}Date: ____________</div>
       </div>
     </td>
   </tr>
 </table>
 
-<table class="sigrow wit">
+<table class="exec wit">
   <tr>
-    <td><b>Witness &mdash; for the Contractor</b><br>Name: ___________________________
-        &nbsp; Designation: ______________</td>
-    <td><b>Witness &mdash; for the Subcontractor</b><br>Name: ___________________________
-        &nbsp; Designation: ______________</td>
+    <td class="left"><div class="exec-for">Witness &mdash; Contractor</div>
+        <div style="margin-top:22pt;">Name: <span class="wl"></span></div>
+        <div style="margin-top:10pt;">Designation: <span class="wl"></span></div></td>
+    <td class="right"><div class="exec-for">Witness &mdash; Subcontractor</div>
+        <div style="margin-top:22pt;">Name: <span class="wl"></span></div>
+        <div style="margin-top:10pt;">Designation: <span class="wl"></span></div></td>
   </tr>
 </table>
 
