@@ -271,6 +271,9 @@ def sca_pdf_context(doc):
         "currency": a.currency, "price_fmt": f"{value:,.2f}",
         "value_words": amount_in_words(value, a.currency),
         "scope_of_work": a.scope_of_work,
+        "scope_lines": [ln.strip().lstrip("-•*–—").strip()
+                        for ln in (a.scope_of_work or "").splitlines()
+                        if ln.strip()],
         "project_title": project.title if project else "",
         "site_name": doc.site.name if doc.site_id else "",
         "agreement_date": fdate(doc.doc_date),

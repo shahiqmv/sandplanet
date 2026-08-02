@@ -34,7 +34,10 @@
              margin-top: 10pt; page-break-before: always; }
   .annex-rule { width: 120pt; height: 1.5pt; background: #29ABE2;
                 margin: 3pt auto 6pt auto; }
-  .scope-text { white-space: pre-wrap; margin-top: 4pt; }
+  .scope-para { text-align: justify; margin-top: 4pt; }
+  ul.scope-list { margin: 5pt 0 0 16pt; padding: 0; }
+  ul.scope-list > li { margin-bottom: 3pt; padding-left: 3pt;
+                       text-align: justify; }
   /* Execution: two equal columns, top-aligned, signature line at a fixed
      offset so both sides line up cleanly. */
   table.exec { width: 100%; border-collapse: collapse; margin-top: 10pt; }
@@ -257,7 +260,15 @@
 <div class="annex-h">Annexure A &nbsp;&middot;&nbsp; Scope of Work</div>
 <div class="annex-rule"></div>
 <p>The Works to be carried out by the Subcontractor at {{ site_name }} comprise:</p>
-<div class="scope-text">{% if scope_of_work %}{{ scope_of_work }}{% else %}Refer to the priced scope in Annexure B.{% endif %}</div>
+{% if scope_lines|length > 1 %}
+  <ul class="scope-list">
+    {% for line in scope_lines %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+{% elif scope_lines %}
+  <p class="scope-para">{{ scope_lines.0 }}</p>
+{% else %}
+  <p class="scope-para">Refer to the priced scope in Annexure B.</p>
+{% endif %}
 <p style="margin-top:5pt; color:#5B6672; font-size:8pt;">This Annexure is read
    together with the project drawings and specifications provided by the
    Contractor.</p>
