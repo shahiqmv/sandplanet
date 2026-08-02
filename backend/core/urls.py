@@ -308,6 +308,12 @@ urlpatterns = [
          name="meeting-draft-minutes"),
     path("meetings/<int:pk>/minutes.pdf", meetings_api.meeting_minutes_pdf,
          name="meeting-minutes-pdf"),
+    path("meetings/<int:pk>/reschedule", meetings_api.meeting_reschedule,
+         name="meeting-reschedule"),
+    path("meetings/<int:pk>/audio", meetings_api.meeting_audio,
+         name="meeting-audio"),
+    path("meetings/<int:pk>/audio/<int:audio_id>",
+         meetings_api.meeting_audio_item, name="meeting-audio-item"),
     # Manual client invoices (historical + Planet-issued, off the claim flow)
     path("receivables/manual-invoices", receivables_api.manual_invoices,
          name="rcv-manual-invoices"),

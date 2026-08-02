@@ -1,5 +1,6 @@
 """Meetings — record, visibility, action-item follow-up, recurring series."""
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -135,6 +136,44 @@ class MeetingTests(TestCase):
         r = self.client.delete(f"/api/v1/meetings/{mid}?hard=1")
         self.assertEqual(r.status_code, 403)
         self.assertTrue(Meeting.objects.filter(pk=mid).exists())
+
+    # ---- reschedule + audio ---------------------------------------------
+    def test_reschedule_moves_time_and_notifies(self):
+        from .models import Notification
+        mid = self._create(attendees=[{"user_id": self.pm.id}]).data["id"]
+        Notification.objects.all().delete()          # clear the scheduling ping
+        r = self.client.post(f"/api/v1/meetings/{mid}/reschedule",
+                             {"scheduled_at": "2026-08-20T14:00:00Z"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(str(r.data["scheduled_at"]).startswith("2026-08-20"))
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.pm, title__icontains="rescheduled").exists())
+
+    def test_non_manager_cannot_reschedule(self):
+        mid = self._create(user=self.qs).data["id"]  # QS organises
+        self.client.force_authenticate(self.pm)       # sees via site, not manager
+        r = self.client.post(f"/api/v1/meetings/{mid}/reschedule",
+                             {"scheduled_at": "2026-08-20T14:00:00Z"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)          # blocked at the service
+        self.assertIn("custodian", r.data["detail"])
+
+    @override_settings(MEDIA_ROOT="test-media")
+    def test_audio_upload_download_delete(self):
+        mid = self._create().data["id"]
+        f = SimpleUploadedFile("rec.m4a", b"ID3fakeaudiobytes", "audio/mp4")
+        r = self.client.post(f"/api/v1/meetings/{mid}/audio",
+                             {"file": f, "note": "session 1"}, format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(len(r.data["recordings"]), 1)
+        rec = r.data["recordings"][0]
+        self.assertEqual(rec["note"], "session 1")
+        d = self.client.get(f"/api/v1/meetings/{mid}/audio/{rec['id']}")
+        self.assertEqual(d.status_code, 200)
+        d.close()          # release the streamed file handle (Windows lock)
+        x = self.client.delete(f"/api/v1/meetings/{mid}/audio/{rec['id']}")
+        self.assertEqual(x.status_code, 204)
 
     # ---- action items + my queue ----------------------------------------
     def test_action_items_and_my_queue(self):

@@ -152,6 +152,89 @@ def notify_meeting_created(meeting, actor):
                     category="info")
 
 
+def reschedule_meeting(meeting, data, actor):
+    """Move a meeting to a new date/time (and optional duration) and ping the
+    participants. A postponed meeting becomes scheduled again."""
+    if not can_manage(actor, meeting):
+        return None, "Only the organiser or a custodian can reschedule this."
+    if meeting.status in ("HELD", "CANCELLED"):
+        return None, "A held or cancelled meeting can't be rescheduled."
+    val = data.get("scheduled_at")
+    if not val:
+        return None, "Set the new date and time."
+    if isinstance(val, str):
+        from django.utils.dateparse import parse_datetime
+        val = parse_datetime(val)
+    if not val:
+        return None, "Couldn't read the new date and time."
+    if timezone.is_naive(val):
+        val = timezone.make_aware(val)
+    old = meeting.scheduled_at
+    meeting.scheduled_at = val
+    if data.get("duration_minutes"):
+        try:
+            meeting.duration_minutes = int(data["duration_minutes"])
+        except (TypeError, ValueError):
+            pass
+    meeting.status = "SCHEDULED"
+    meeting.save(update_fields=["scheduled_at", "duration_minutes", "status",
+                                "updated_at"])
+    _notify_rescheduled(meeting, actor)
+    audit("meeting", meeting.id, "MEETING_RESCHEDULED", actor=actor,
+          detail={"from": old.isoformat() if old else "",
+                  "to": val.isoformat()})
+    return meeting, None
+
+
+def _notify_rescheduled(meeting, actor):
+    from .notify import notify_user
+    ids = set(meeting.attendees.filter(user__isnull=False)
+              .values_list("user_id", flat=True))
+    if meeting.organiser_id:
+        ids.add(meeting.organiser_id)
+    ids.discard(actor.id if actor else None)
+    if not ids:
+        return
+    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    for u in User.objects.filter(id__in=ids, is_active=True):
+        notify_user(u, f"Meeting rescheduled — {meeting.title}",
+                    body=f"New time: {when}.", category="info")
+
+
+def add_audio(meeting, upload, note, actor):
+    """Attach an audio recording to a meeting."""
+    if not can_manage(actor, meeting):
+        return None, "Only the organiser or a custodian can add a recording."
+    if not upload:
+        return None, "Attach an audio file."
+    from .models import MeetingAudio
+    audio = MeetingAudio.objects.create(
+        meeting=meeting,
+        file_name=(getattr(upload, "name", "") or "recording")[:255],
+        content_type=(getattr(upload, "content_type", "") or "")[:100],
+        size_bytes=getattr(upload, "size", 0) or 0,
+        note=(note or "").strip()[:200], uploaded_by=actor)
+    audio.file = upload           # pk now set → unique upload path
+    audio.save(update_fields=["file"])
+    audit("meeting", meeting.id, "MEETING_AUDIO_ADDED", actor=actor,
+          detail={"file": audio.file_name})
+    return audio, None
+
+
+def delete_audio(meeting, audio_id, actor):
+    if not can_manage(actor, meeting):
+        return "Only the organiser or a custodian can remove a recording."
+    from .models import MeetingAudio
+    a = MeetingAudio.objects.filter(pk=audio_id, meeting=meeting).first()
+    if a is None:
+        return "That recording isn't on this meeting."
+    if a.file:
+        a.file.delete(save=False)
+    a.delete()
+    audit("meeting", meeting.id, "MEETING_AUDIO_REMOVED", actor=actor)
+    return None
+
+
 def delete_meeting(meeting, actor):
     """Permanently remove a meeting (and its attendees/action items, via
     cascade). Restricted to the organiser, its creator, or a custodian. Use
@@ -318,6 +401,15 @@ def attendee_dict(a):
             "present": a.present}
 
 
+def audio_dict(a):
+    return {
+        "id": a.id, "file_name": a.file_name, "note": a.note,
+        "size_bytes": a.size_bytes, "content_type": a.content_type,
+        "uploaded_by": a.uploaded_by.full_name if a.uploaded_by_id else "",
+        "uploaded_at": a.uploaded_at,
+    }
+
+
 def action_item_dict(a):
     return {
         "id": a.id, "meeting_id": a.meeting_id,
@@ -382,5 +474,6 @@ def meeting_dict(meeting, detail=False):
             "attendees": [attendee_dict(a) for a in meeting.attendees.all()],
             "action_items": [action_item_dict(a)
                              for a in meeting.action_items.all()],
+            "recordings": [audio_dict(a) for a in meeting.recordings.all()],
         })
     return d

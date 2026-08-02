@@ -136,6 +136,57 @@ def meeting_minutes_pdf(request, pk):
                        f"Minutes-{m.scheduled_at:%Y%m%d}")
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_reschedule(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    updated, msg = svc.reschedule_meeting(m, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(svc.meeting_dict(updated, detail=True))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_audio(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    _, msg = svc.add_audio(m, request.FILES.get("file"),
+                           request.data.get("note"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(svc.meeting_dict(m, detail=True), status=201)
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsAuthenticated])
+def meeting_audio_item(request, pk, audio_id):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    if request.method == "DELETE":
+        msg = svc.delete_audio(m, audio_id, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(status=204)
+    # GET → stream the recording to anyone who can see the meeting.
+    from django.http import FileResponse
+
+    from .models import MeetingAudio
+    a = MeetingAudio.objects.filter(pk=audio_id, meeting=m).first()
+    if a is None or not a.file:
+        return Response({"detail": "Not found."}, status=404)
+    resp = FileResponse(
+        a.file.open("rb"),
+        content_type=a.content_type or "application/octet-stream")
+    resp["Content-Disposition"] = \
+        f'inline; filename="{a.file_name or "recording"}"'
+    return resp
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def my_action_items(request):

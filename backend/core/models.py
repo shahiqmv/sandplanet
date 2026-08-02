@@ -3892,3 +3892,29 @@ class MeetingActionItem(models.Model):
         return self.status in (self.Status.OPEN, self.Status.IN_PROGRESS)
 
 
+def meeting_audio_path(instance, filename):
+    # Keyed by the recording's own pk so two files with the same name on one
+    # meeting don't collide on S3 (file_overwrite=True). pk is set before the
+    # file is attached (the record is created first, then the file saved).
+    return f"meeting-audio/{instance.meeting_id}/a{instance.pk}-{filename}"
+
+
+class MeetingAudio(models.Model):
+    """An audio recording uploaded against a meeting — the source a set of
+    minutes can be written from. Several may be attached (e.g. per session)."""
+
+    meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE,
+                                related_name="recordings")
+    file = models.FileField(upload_to=meeting_audio_path)
+    file_name = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=100, blank=True)
+    size_bytes = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=200, blank=True)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["uploaded_at", "id"]
+
+

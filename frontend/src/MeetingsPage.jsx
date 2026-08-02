@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { card, th, td, Btn, Chip, ghostButton } from "./ui.jsx";
 
 const TYPE_LABEL = { PROJECT: "Project review", PROSPECT: "Prospective client",
@@ -20,6 +20,8 @@ const dOnly = (s) => s ? new Date(s).toLocaleDateString("en-GB",
 
 const sel = { padding: "6px 8px", border: "1px solid var(--line)",
   borderRadius: 6, fontSize: 13, background: "#fff" };
+const fmtSize = (b) => !b ? "" : b < 1048576
+  ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
 
 // Module-scope so it's a stable component type — defining it inside a form
 // component remounts inputs on every render and steals focus each keystroke.
@@ -306,6 +308,8 @@ function MeetingDetail({ id, me, onBack }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [msg, setMsg] = useState(null);
+  const [resched, setResched] = useState(false);
+  const [newDt, setNewDt] = useState("");
 
   const load = () => api(`/meetings/${id}`).then((d) => {
     setM(d); setMinutes(d.minutes || ""); setNotes(d.notes || "");
@@ -362,6 +366,27 @@ function MeetingDetail({ id, me, onBack }) {
     run(async () => { await api(`/meetings/${id}?hard=1`,
       { method: "DELETE" }); onBack(); });
   };
+  const doReschedule = () => {
+    if (!newDt) return;
+    run(async () => {
+      const d = await api(`/meetings/${id}/reschedule`, { method: "POST",
+        body: { scheduled_at: new Date(newDt).toISOString() } });
+      setM(d); setResched(false); setNewDt("");
+    }, "Rescheduled — participants notified");
+  };
+  const uploadAudio = (file) => {
+    if (!file) return;
+    run(async () => {
+      const fd = new FormData(); fd.append("file", file);
+      const d = await apiUpload(`/meetings/${id}/audio`, fd);
+      setM(d);
+    }, "Recording uploaded");
+  };
+  const removeAudio = (aid) => {
+    if (!window.confirm("Remove this recording?")) return;
+    run(async () => { await api(`/meetings/${id}/audio/${aid}`,
+      { method: "DELETE" }); load(); });
+  };
 
   if (!m) return <div style={card}>{error || "Loading…"}</div>;
   const canManage = m.can_manage;
@@ -400,11 +425,24 @@ function MeetingDetail({ id, me, onBack }) {
               <Btn variant="secondary" disabled={busy} onClick={close}>
                 Mark held{m.cadence !== "ONE_OFF"
                   ? " & schedule next" : ""}</Btn>)}
+            {["SCHEDULED", "POSTPONED"].includes(m.status) && (
+              <Btn variant="secondary" disabled={busy}
+                onClick={() => setResched((v) => !v)}>Reschedule</Btn>)}
             {m.status === "SCHEDULED" && (
               <Btn variant="ghost" disabled={busy} onClick={cancelMeeting}>
                 Cancel meeting</Btn>)}
             <Btn variant="danger" disabled={busy} onClick={deleteMeeting}
               style={{ marginLeft: "auto" }}>Delete</Btn>
+          </div>)}
+        {canManage && resched && (
+          <div style={{ display: "flex", gap: 8, marginTop: 8,
+            alignItems: "center", flexWrap: "wrap" }}>
+            <input type="datetime-local" value={newDt}
+              onChange={(e) => setNewDt(e.target.value)} style={sel} />
+            <Btn variant="primary" disabled={busy || !newDt}
+              onClick={doReschedule}>Confirm new time</Btn>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              Participants are notified of the change.</span>
           </div>)}
       </div>
 
@@ -422,6 +460,45 @@ function MeetingDetail({ id, me, onBack }) {
           <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Agenda</h3>
           <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{m.agenda}</div>
         </div>)}
+
+      <div style={{ ...card, marginTop: 10 }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Audio recordings</h3>
+        {!(m.recordings || []).length && (
+          <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            No recordings yet.</div>)}
+        {(m.recordings || []).map((a) => (
+          <div key={a.id} style={{ display: "flex", alignItems: "center",
+            gap: 10, padding: "6px 0", borderBottom: "1px solid var(--line)",
+            flexWrap: "wrap" }}>
+            <audio controls preload="none"
+              src={`/api/v1/meetings/${id}/audio/${a.id}`}
+              style={{ height: 32, maxWidth: 260 }} />
+            <div style={{ fontSize: 12.5 }}>
+              <div>{a.file_name}{a.note ? ` — ${a.note}` : ""}</div>
+              <div style={{ color: "var(--muted)", fontSize: 11 }}>
+                {fmtSize(a.size_bytes)} · {a.uploaded_by} · {dt(a.uploaded_at)}
+              </div>
+            </div>
+            <a href={`/api/v1/meetings/${id}/audio/${a.id}`} download
+              style={{ fontSize: 12, color: "var(--sky)",
+                textDecoration: "none" }}>⬇</a>
+            {canManage && (
+              <button onClick={() => removeAudio(a.id)} style={{ border: "none",
+                background: "none", cursor: "pointer", color: "var(--red-fg)",
+                fontSize: 12 }}>Remove</button>)}
+          </div>
+        ))}
+        {canManage && (
+          <label style={{ display: "inline-block", marginTop: 8,
+            ...ghostButton, cursor: busy ? "default" : "pointer",
+            fontSize: 12.5 }}>
+            {busy ? "Uploading…" : "＋ Upload audio"}
+            <input type="file" accept="audio/*" style={{ display: "none" }}
+              disabled={busy}
+              onChange={(e) => { uploadAudio(e.target.files[0]);
+                e.target.value = ""; }} />
+          </label>)}
+      </div>
 
       <div style={{ ...card, marginTop: 10 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
