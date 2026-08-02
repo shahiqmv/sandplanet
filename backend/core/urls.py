@@ -361,6 +361,12 @@ urlpatterns = [
          subcontract_api.subcontract_agreement_edit, name="sca-edit"),
     path("subcontract-agreements/<str:ref>/pdf",
          subcontract_api.subcontract_agreement_pdf, name="sca-pdf"),
+    path("subcontract-agreements/<str:ref>/valuations",
+         subcontract_api.agreement_valuations, name="svc-list-create"),
+    path("subcontract-valuations/<str:ref>",
+         subcontract_api.valuation_detail, name="svc-detail"),
+    path("subcontract-valuations/<str:ref>/action",
+         subcontract_api.valuation_action, name="svc-action"),
     # Site worker management (direct/salaried workforce) — approval batches
     path("worker-batches", worker_api.worker_batches, name="worker-batches"),
     path("worker-batches/<int:pk>/action", worker_api.batch_action,

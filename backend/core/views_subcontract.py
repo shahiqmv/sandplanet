@@ -240,3 +240,73 @@ def subcontract_agreement_pdf(request, ref):
     return _render_pdf("pdf/subcontract_agreement.html",
                        subcontract.sca_pdf_context(doc),
                        f"{doc.ref}-Subcontract-Agreement")
+
+
+# ---- SVC: subcontract valuations -----------------------------------------
+
+def _get_svc(request, ref):
+    try:
+        doc = Document.objects.select_related(
+            "site", "subcontract_valuation__agreement__document",
+            "subcontract_valuation__agreement__subcontractor").get(
+                ref=ref, doc_type="SVC")
+    except Document.DoesNotExist:
+        return None, Response({"detail": "Not found."}, status=404)
+    scoped = scoped_site_ids(request.user)
+    if scoped is not None and doc.site_id not in scoped:
+        return None, Response({"detail": "Not found."}, status=404)
+    return doc, None
+
+
+@api_view(["GET", "POST"])
+def agreement_valuations(request, ref):
+    """List (GET) or open (POST) valuations against an approved agreement."""
+    from .models import SubcontractValuation
+    try:
+        sca = Document.objects.select_related(
+            "subcontract_agreement__subcontractor").get(ref=ref, doc_type="SCA")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    scoped = scoped_site_ids(request.user)
+    if scoped is not None and sca.site_id not in scoped:
+        return Response({"detail": "Not found."}, status=404)
+    agreement = sca.subcontract_agreement
+    if request.method == "POST":
+        doc, err = subcontract.create_svc(agreement, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(subcontract.svc_payload(doc.subcontract_valuation),
+                        status=201)
+    vals = (SubcontractValuation.objects.filter(agreement=agreement)
+            .select_related("document").order_by("seq"))
+    return Response([
+        {"id": v.id, "ref": v.document.ref, "seq": v.seq,
+         "status": v.document.status,
+         "now_due": str(subcontract.svc_valuation(v)["now_due"])}
+        for v in vals])
+
+
+@api_view(["GET", "PATCH"])
+def valuation_detail(request, ref):
+    doc, err = _get_svc(request, ref)
+    if err:
+        return err
+    v = doc.subcontract_valuation
+    if request.method == "PATCH":
+        _, msg = subcontract.value_svc(v, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    return Response(subcontract.svc_payload(v))
+
+
+@api_view(["POST"])
+def valuation_action(request, ref):
+    doc, err = _get_svc(request, ref)
+    if err:
+        return err
+    msg = subcontract.svc_action(
+        doc.subcontract_valuation, request.data.get("action", ""),
+        request.user, request.data.get("note", ""))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(subcontract.svc_payload(doc.subcontract_valuation))

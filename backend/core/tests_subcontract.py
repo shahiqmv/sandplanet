@@ -522,3 +522,29 @@ class SubcontractValuationTests(TestCase):
         d2, err = subcontract.create_svc(doc.subcontract_agreement, self.sa)
         self.assertIsNone(d2)
         self.assertIn("approved", err.lower())
+
+    def test_workflow_and_cost_commit(self):
+        from . import subcontract
+        from .models import CostPosting
+        pm = make_user("pm_svc", User.Role.PM, site=self.site)
+        director = make_user("dir_svc", User.Role.DIRECTOR)
+        signatory = make_user("sig_svc", User.Role.SIGNATORY)
+        a = self._approved_sca()
+        v = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v, "1", "40")
+        self._set(v, "2", "100")           # gross = 40×150 + 100×50 = 11,000
+        self.assertIsNone(subcontract.svc_action(v, "submit", self.sa))
+        # wrong stage / wrong role are blocked
+        self.assertIsNotNone(subcontract.svc_action(v, "authorise", signatory))
+        self.assertIsNone(subcontract.svc_action(v, "verify", pm))
+        self.assertIsNotNone(subcontract.svc_action(v, "approve", self.sa))
+        self.assertIsNone(subcontract.svc_action(v, "approve", director))
+        self.assertIsNone(subcontract.svc_action(v, "authorise", signatory))
+        v.document.refresh_from_db()
+        self.assertEqual(v.document.status, "AUTHORISED")
+        # this-period gross committed under the Subcontract head
+        posts = CostPosting.objects.filter(
+            document=v.document, state="COMMITTED", source="SUBCONTRACT")
+        self.assertEqual(posts.count(), 1)
+        self.assertEqual(posts.first().amount, Decimal("11000.00"))
+        self.assertEqual(posts.first().cost_head.name, "Subcontract")

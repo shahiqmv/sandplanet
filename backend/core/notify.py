@@ -55,6 +55,14 @@ def targets_for(doc):
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "SCA" and s == "PM_APPROVED":
         return [(u, "to activate") for u in _role_users("DIRECTOR")]
+    # Subcontract valuation: SE submits → PM verifies → Director approves →
+    # Signatory authorises (commits cost) → Finance settles on a voucher.
+    if t == "SVC" and s == "SUBMITTED":
+        return [(u, "to verify") for u in _pm_for(doc)]
+    if t == "SVC" and s == "PM_VERIFIED":
+        return [(u, "to approve") for u in _role_users("DIRECTOR")]
+    if t == "SVC" and s == "DIRECTOR_APPROVED":
+        return [(u, "to authorise") for u in _role_users("SIGNATORY")]
     if t == "DPR" and s == "ISSUED":
         return [(u, "to verify") for u in _pm_for(doc)]
     if t == "GRN" and s == "COUNTED":

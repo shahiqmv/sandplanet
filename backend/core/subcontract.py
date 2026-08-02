@@ -6,6 +6,7 @@ import logging
 from datetime import date
 
 from django.db import transaction
+from django.utils import timezone
 
 from .audit import audit
 from .models import Employee, EmployeeSiteAllocation, Subcontractor
@@ -412,6 +413,107 @@ def value_svc(v, data, actor):
     v.save()
     audit("document", v.document_id, "SVC_VALUED", actor=actor)
     return v, None
+
+
+def _svc_set_status(doc, new, actor, comment=""):
+    doc.status = new
+    doc.save(update_fields=["status", "updated_at"])
+    audit("document", doc.id, f"SVC_{new}", actor=actor, to_state=new,
+          detail={"note": comment} if comment else None)
+    try:
+        from .notify import notify_document
+        notify_document(doc, actor)
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("notify_document(SVC) failed")
+
+
+def _svc_commit_cost(v, actor):
+    """At authorisation, post this valuation's certified work as COMMITTED cost
+    under the 'Subcontract' head — the value of work done this period (gross,
+    before advance recovery/retention, which are cash-flow, not cost)."""
+    from . import costing
+    from .models import CostHead
+    head, _ = CostHead.objects.get_or_create(
+        name="Subcontract", defaults={"sort_order": 60})
+    this_gross = svc_valuation(v)["this_gross"]
+    if this_gross:
+        costing.post(site=v.document.site, cost_head=head, state="COMMITTED",
+                     source="SUBCONTRACT",
+                     amount=this_gross.quantize(Decimal("0.01")),
+                     document=v.document, actor=actor,
+                     currency=v.agreement.currency)
+
+
+# The chain: SE submits → PM verifies qty → Director approves → Signatory
+# authorises (commits cost). Any approver at the current step returns to draft.
+_SVC_STEPS = {
+    "submit": (("DRAFT", "SUBMITTED"), SITE_MANAGE_ROLES,
+               "Only the site team can submit a valuation."),
+    "verify": (("SUBMITTED", "PM_VERIFIED"), ("PM", "ADMIN"),
+               "The PM verifies the quantities."),
+    "approve": (("PM_VERIFIED", "DIRECTOR_APPROVED"), ("DIRECTOR", "ADMIN"),
+                "The Director approves the valuation."),
+    "authorise": (("DIRECTOR_APPROVED", "AUTHORISED"), ("SIGNATORY", "ADMIN"),
+                  "A signatory authorises the valuation."),
+}
+
+
+def svc_action(v, action, actor, note=""):
+    """Advance an SVC through its approval chain (or return it to draft)."""
+    from .models import Document
+    doc = v.document
+    if action == "return":
+        if not (note or "").strip():
+            return "Give a reason for returning it."
+        if doc.status not in ("SUBMITTED", "PM_VERIFIED", "DIRECTOR_APPROVED"):
+            return f"Can't return a {doc.status.lower()} valuation."
+        _svc_set_status(doc, "DRAFT", actor, comment=note)
+        return None
+    step = _SVC_STEPS.get(action)
+    if not step:
+        return "Unknown action."
+    (frm, to), roles, denied = step
+    if actor.role not in roles:
+        return denied
+    if doc.status != frm or to not in Document.TRANSITIONS["SVC"].get(frm, set()):
+        return f"Cannot {action} a {doc.status.lower()} valuation."
+    if action == "submit" and not v.items.exists():
+        return "There's nothing to value on this certificate."
+    if action == "authorise":
+        _svc_commit_cost(v, actor)
+        v.authorised_at = timezone.now()
+        v.save(update_fields=["authorised_at"])
+    _svc_set_status(doc, to, actor)
+    return None
+
+
+def svc_payload(v, request=None):
+    """Header + full valuation breakdown for the API."""
+    a = v.agreement
+    d = {
+        "id": v.id, "ref": v.document.ref, "status": v.document.status,
+        "seq": v.seq, "agreement_ref": a.document.ref,
+        "agreement_title": a.title,
+        "subcontractor": a.subcontractor.name,
+        "work_done_upto": v.work_done_upto, "note": v.note,
+        "created_by": v.created_by.full_name if v.created_by_id else "",
+        "created_at": v.created_at,
+        "valuation": _jsonify(svc_valuation(v)),
+    }
+    return d
+
+
+def _jsonify(val):
+    """Decimals → strings so the breakdown serialises cleanly."""
+    def conv(x):
+        if isinstance(x, Decimal):
+            return str(x)
+        if isinstance(x, list):
+            return [conv(i) for i in x]
+        if isinstance(x, dict):
+            return {k: conv(i) for k, i in x.items()}
+        return x
+    return conv(val)
 
 
 def sca_pdf_context(doc):
