@@ -25,17 +25,6 @@ export async function downloadFile(path, filename) {
   URL.revokeObjectURL(url);
 }
 
-// Fetch a report as an HTML string (the doc viewer renders it in an iframe).
-export async function fetchHtml(path) {
-  const res = await fetch(BASE + path,
-    { headers: { Authorization: `Bearer ${getToken()}` } });
-  if (!res.ok) {
-    if (res.status === 401) setToken("");
-    throw new ApiError("Couldn't open this report.", res.status);
-  }
-  return res.text();
-}
-
 export async function api(path, { method = "GET", body } = {}) {
   const headers = {};
   const token = getToken();

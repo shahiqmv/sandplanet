@@ -140,6 +140,32 @@ class ClientPortalAuthTests(TestCase):
         self.assertEqual(
             self.client.get(f"/api/client/documents/{dpr.ref}").status_code, 404)
 
+    def test_report_json_client_safe(self):
+        import json
+        from datetime import date
+        from .models import Document, DocumentRevision
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        dpr = Document.objects.create(
+            doc_type="DPR", ref="DPR-VKR-900", site=self.site,
+            doc_date=date.today(), status="ISSUED", created_by=self.admin)
+        rev = DocumentRevision.objects.create(
+            document=dpr, rev_label="R0", created_by=self.admin,
+            payload={"working_hours": "07:00-18:00",
+                     "work_done": [{"activity": "Wall", "project": "",
+                                    "progress_todate": "25"}]})
+        dpr.current_revision = rev
+        dpr.save(update_fields=["current_revision"])
+        r = self.client.get(f"/api/client/documents/{dpr.ref}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["type"], "DPR")
+        self.assertEqual(r.data["work_groups"][0]["rows"][0]["todate"], "25")
+        blob = json.dumps(r.data, default=str).lower()
+        for bad in ("basic_pay", "passport", "engagement", "subcontract",
+                    "cost", "rate", "contract_value"):
+            self.assertNotIn(bad, blob)
+
     def test_project_procurement_gated(self):
         from .models import Project
         temp, _ = self._make_client_user(sites=[self.site])

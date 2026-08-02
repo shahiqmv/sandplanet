@@ -101,8 +101,6 @@ def client_site(request, pk):
     if pk not in client_site_ids(request.user):
         return Response({"detail": "Not found."}, status=404)
     site = Site.objects.get(pk=pk)
-    from .views_hr import site_manpower_data
-    mp = site_manpower_data(site)
     today = date.today()
     tomorrow = today + timedelta(days=1)
 
@@ -121,23 +119,20 @@ def client_site(request, pk):
         status="DEPARTED").order_by("-doc_date")[:20]
     projects = site.projects.exclude(
         status__in=("POTENTIAL", "CLOSED")).order_by("code")
+    from . import client_report as cr
     return Response({
         "site": {"id": site.id, "code": site.code, "name": site.name,
-                 "status": site.status},
+                 "status": site.status,
+                 "progress": cr.project_progress(site)},
         "projects": [{"id": p.id, "code": p.code, "title": p.title,
-                      "scope": p.scope} for p in projects],
-        # Current strength on site — by trade + grand total (counts only).
-        "manpower": {
-            "as_of": today, "attendance_entered": mp["attendance_entered"],
-            "grand_total": mp["present"] if mp["attendance_entered"]
-            else mp["roster_total"],
-            "by_trade": [{"trade": c["name"],
-                          "count": c["present"] if mp["attendance_entered"]
-                          else c["roster"]}
-                         for c in mp["categories"]
-                         if (c["present"] if mp["attendance_entered"]
-                             else c["roster"]) > 0],
-        },
+                      "scope": p.scope,
+                      "progress": cr.project_progress(site, p.code),
+                      "start_date": p.start_date,
+                      "target_date": p.planned_completion}
+                     for p in projects],
+        # Current strength on site — by trade + grand total, from the latest
+        # daily report (includes subcontract labour).
+        "manpower": cr.site_workforce(site),
         "dma": {"today": dma_on(today), "tomorrow": dma_on(tomorrow)},
         "recent_dprs": [
             {"ref": d.ref, "date": d.doc_date, "verified": d.status == "VERIFIED"}
@@ -206,10 +201,9 @@ def client_project_procurement_xlsx(request, pk):
 
 
 # ---- report viewer: DPR / DMA / LM rendered inside the portal --------------
-# Site-level reports the client is allowed to open. DPR/DMA/LM carry no
-# commercial or engagement data; everything else (PO/PR/MR/GRN/QA) stays
-# internal.
-CLIENT_VIEWABLE = {"DPR", "DMA", "LM"}
+# Site-level reports the client is allowed to open. These carry no commercial
+# or engagement data; everything else (PO/PR/MR/GRN/IR/MAR) stays internal.
+CLIENT_VIEWABLE = {"DPR", "DMA", "TWS", "LM"}
 
 
 def _client_document(request, ref):
@@ -228,18 +222,18 @@ def _client_document(request, ref):
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
 def client_document(request, ref):
-    """A client-viewable report rendered as HTML for inline display in the
-    portal (same template as the PDF). Returns raw HTML, not JSON."""
-    from django.http import HttpResponse
+    """A client-viewable report as structured, allowlisted JSON — the portal
+    renders it web-native (responsive), not the print PDF in a frame. The
+    print PDF stays available at the .pdf sibling endpoint."""
     doc = _client_document(request, ref)
     if not doc:
         return Response({"detail": "Not found."}, status=404)
-    from . import pdf
-    html = pdf.document_html(doc, doc.current_revision)
-    if html is None:
-        return Response({"detail": "This report has no printable view."},
+    from . import client_report as cr
+    data = cr.report_json(doc, doc.current_revision)
+    if data is None:
+        return Response({"detail": "This report has no viewer yet."},
                         status=404)
-    return HttpResponse(html, content_type="text/html; charset=utf-8")
+    return Response(data)
 
 
 @api_view(["GET"])
