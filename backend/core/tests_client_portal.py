@@ -99,3 +99,23 @@ class ClientPortalAuthTests(TestCase):
         self.client.force_authenticate(None)
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(self.client.get("/api/client/me").status_code, 401)
+
+    def test_site_dashboard_scoped_and_allowlisted(self):
+        import json
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        r = self.client.get(f"/api/client/sites/{self.site.id}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("workforce", r.data)
+        self.assertIn("recent_progress", r.data)
+        self.assertTrue(r.data["cameras"]["coming_soon"])
+        # no commercial / internal fields leak through
+        blob = json.dumps(r.data, default=str).lower()
+        for bad in ("rate", "cost", "contract_value", "engagement",
+                    "subcontract", "basic_pay", "client_name"):
+            self.assertNotIn(bad, blob)
+        # a site they aren't assigned to → 404, never 403
+        self.assertEqual(
+            self.client.get(f"/api/client/sites/{self.other.id}").status_code,
+            404)

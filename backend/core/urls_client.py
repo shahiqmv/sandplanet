@@ -11,4 +11,5 @@ urlpatterns = [
          name="client-change-password"),
     path("me", views_client.client_me, name="client-me"),
     path("sites", views_client.client_sites, name="client-portal-sites"),
+    path("sites/<int:pk>", views_client.client_site, name="client-portal-site"),
 ]

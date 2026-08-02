@@ -5,6 +5,8 @@ ClientUser. Content is served through explicit allowlist dicts — adding a fiel
 is a deliberate code change, never inherited — and scoped to the client's own
 sites (a site outside their set is a 404, never a 403).
 """
+from datetime import date
+
 from django.utils import timezone
 from rest_framework.decorators import (api_view, authentication_classes,
                                         permission_classes)
@@ -13,7 +15,7 @@ from rest_framework.response import Response
 
 from .client_portal import (ClientTokenAuthentication, IsClient,
                             client_site_ids, new_token)
-from .models import ClientSession, ClientUser
+from .models import ClientSession, ClientUser, Document, Site
 
 
 def _client_dict(c):
@@ -86,3 +88,38 @@ def client_sites(request):
          "status": s.status,
          "has_cameras": False}          # cameras: Phase-later, always false now
         for s in request.user.sites.all().order_by("code")])
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site(request, pk):
+    """A client's own site: recent daily progress (DPR) + works submissions
+    (TWS) and the workforce total — allowlisted, no commercial or internal
+    data. A site outside their set is a 404, never a 403."""
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    from .views_hr import site_manpower_data
+    mp = site_manpower_data(site)
+    dprs = Document.objects.filter(
+        site=site, doc_type="DPR", is_void=False,
+        status__in=("ISSUED", "VERIFIED")).order_by("-doc_date")[:14]
+    tws = Document.objects.filter(
+        site=site, doc_type="TWS", is_void=False,
+        status__in=("ISSUED", "ACKNOWLEDGED")).order_by("-doc_date")[:14]
+    return Response({
+        "site": {"id": site.id, "code": site.code, "name": site.name,
+                 "status": site.status},
+        "workforce": {"date": date.today(),
+                      "on_site": mp["present"], "stationed": mp["roster_total"],
+                      "attendance_entered": mp["attendance_entered"]},
+        "recent_progress": [
+            {"date": d.doc_date, "ref": d.ref, "verified": d.status == "VERIFIED"}
+            for d in dprs],
+        "recent_works": [
+            {"date": d.doc_date, "ref": d.ref, "status": d.status}
+            for d in tws],
+        # The video section is planned — the portal shows a "coming soon" card.
+        "cameras": {"available": False, "coming_soon": True},
+    })
