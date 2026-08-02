@@ -6,6 +6,13 @@ const STATUS_TONE = {
   DRAFT: "info", SUBMITTED: "warn", CONFIRMED: "warn", SIGNED_OFF: "ok",
   CANCELLED: "alert",
 };
+// Whose turn it is at each stage — spelled out so a submitted schedule never
+// looks stuck (two-step control: Purchasing confirms, then the Director signs).
+const WHOSE_TURN = {
+  DRAFT: "Being planned by the PM",
+  SUBMITTED: "Awaiting Purchasing confirmation",
+  CONFIRMED: "Awaiting Director sign-off",
+};
 const STATE_TONE = {
   PROPOSED: "info", CONFIRMED: "warn", SIGNED_OFF: "ok", CANCELLED: "alert",
 };
@@ -272,7 +279,10 @@ export default function ProcurementSchedulePage({ me, sites }) {
                   <td style={{ padding: "8px 12px" }}>{s.site_code}</td>
                   <td style={{ padding: "8px 12px" }}>
                     <Chip tone={STATUS_TONE[s.status]}>
-                      {s.status.replace(/_/g, " ")}</Chip></td>
+                      {s.status.replace(/_/g, " ")}</Chip>
+                    {WHOSE_TURN[s.status] && <div style={{ fontSize: 11,
+                      color: "var(--muted)", marginTop: 2 }}>
+                      {WHOSE_TURN[s.status]}</div>}</td>
                   <td style={{ padding: "8px 12px", color: "var(--muted)" }}>
                     {Object.entries(s.line_counts || {})
                       .map(([k, v]) => `${v} ${k.toLowerCase()}`).join(" · ")
@@ -430,6 +440,9 @@ function ScheduleDetail({ id, me, onBack }) {
           flexWrap: "wrap" }}>
           <h2 style={{ margin: 0, fontFamily: "var(--font-mono)" }}>{c.ref}</h2>
           <Chip tone={STATUS_TONE[c.status]}>{c.status.replace(/_/g, " ")}</Chip>
+          {WHOSE_TURN[c.status] && <span style={{ fontSize: 12.5,
+            color: "var(--muted)", fontStyle: "italic" }}>
+            · {WHOSE_TURN[c.status]}</span>}
           <span style={{ color: "var(--muted)" }}>{c.project_code} —{" "}
             {c.project_title} · {c.site_code}</span>
           {c.baseline_signed_at && <span style={{ fontSize: 12,
@@ -455,7 +468,9 @@ function ScheduleDetail({ id, me, onBack }) {
               onClick={submit}>Submit to Purchasing</Btn>}
           {c.can_confirm && <>
             <Btn variant="primary" disabled={busy}
-              onClick={() => act("confirm")}>Confirm → Director</Btn>
+              onClick={() => act("confirm")}
+              title="Purchasing confirms the commercial fields, then it goes to the Director to sign off">
+              Confirm commercials &amp; send to Director</Btn>
             <Btn variant="ghost" disabled={busy}
               onClick={() => act("return")}>Return to PM</Btn></>}
           {c.can_sign_off && <>
