@@ -12,4 +12,6 @@ urlpatterns = [
     path("me", views_client.client_me, name="client-me"),
     path("sites", views_client.client_sites, name="client-portal-sites"),
     path("sites/<int:pk>", views_client.client_site, name="client-portal-site"),
+    path("sites/<int:pk>/procurement", views_client.client_site_procurement,
+         name="client-portal-procurement"),
 ]

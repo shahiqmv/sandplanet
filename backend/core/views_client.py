@@ -90,13 +90,41 @@ def client_sites(request):
         for s in request.user.sites.all().order_by("code")])
 
 
+def _site_schedule(site):
+    from .models import ProcurementSchedule
+    return (ProcurementSchedule.objects
+            .filter(document__site=site, document__is_void=False)
+            .select_related("document", "project")
+            .order_by("-document__doc_date").first())
+
+
+def _inbound_and_summary(site):
+    """Upcoming deliveries + a procurement summary, from the project's schedule
+    — reusing the vetted client-facing `client_plan` allowlist. Rows with an
+    ETA that aren't delivered yet are 'coming to site'."""
+    sched = _site_schedule(site)
+    if not sched:
+        return [], {"available": False}
+    from . import procurement_client as pc
+    rows = [r for sec in pc.client_plan(sched)["sections"] for r in sec["rows"]]
+    inbound = sorted(
+        [{"description": r.get("description"), "quantity": r.get("quantity"),
+          "uom": r.get("uom"), "eta": r.get("eta"),
+          "stage": r.get("shipment"), "status": r.get("status")}
+         for r in rows if r.get("eta")
+         and (r.get("delivery") or "").lower() not in
+         ("delivered", "received", "done", "complete", "—", "")],
+        key=lambda x: str(x["eta"]))
+    return inbound[:12], {"available": True, "items": len(rows),
+                          "upcoming": len(inbound)}
+
+
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
 def client_site(request, pk):
-    """A client's own site: recent daily progress (DPR) + works submissions
-    (TWS) and the workforce total — allowlisted, no commercial or internal
-    data. A site outside their set is a 404, never a 403."""
+    """A client's own site dashboard — allowlisted, read-only, no commercial or
+    internal data. A site outside their set is a 404, never a 403."""
     if pk not in client_site_ids(request.user):
         return Response({"detail": "Not found."}, status=404)
     site = Site.objects.get(pk=pk)
@@ -108,18 +136,52 @@ def client_site(request, pk):
     tws = Document.objects.filter(
         site=site, doc_type="TWS", is_void=False,
         status__in=("ISSUED", "ACKNOWLEDGED")).order_by("-doc_date")[:14]
+    inbound, proc = _inbound_and_summary(site)
+    head = mp["present"] if mp["attendance_entered"] else mp["roster_total"]
     return Response({
         "site": {"id": site.id, "code": site.code, "name": site.name,
                  "status": site.status},
-        "workforce": {"date": date.today(),
-                      "on_site": mp["present"], "stationed": mp["roster_total"],
-                      "attendance_entered": mp["attendance_entered"]},
+        "summary": {
+            "date": date.today(),
+            "workforce": head,
+            "workforce_label": ("on site today" if mp["attendance_entered"]
+                                else "assigned to site"),
+            "latest_report": dprs[0].doc_date if dprs else None,
+            "next_delivery": inbound[0]["eta"] if inbound else None,
+        },
+        # Trade breakdown for today (counts only — no names, no engagement type).
+        "manpower": {
+            "total": head, "attendance_entered": mp["attendance_entered"],
+            "by_trade": [{"trade": c["name"],
+                          "count": c["present"] if mp["attendance_entered"]
+                          else c["roster"]}
+                         for c in mp["categories"]
+                         if (c["present"] if mp["attendance_entered"]
+                             else c["roster"]) > 0],
+        },
+        "inbound": inbound,
+        "procurement": proc,
         "recent_progress": [
             {"date": d.doc_date, "ref": d.ref, "verified": d.status == "VERIFIED"}
             for d in dprs],
         "recent_works": [
             {"date": d.doc_date, "ref": d.ref, "status": d.status}
             for d in tws],
-        # The video section is planned — the portal shows a "coming soon" card.
         "cameras": {"available": False, "coming_soon": True},
     })
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site_procurement(request, pk):
+    """The full client procurement plan for the client's own site — the same
+    allowlist the public share link uses, served inside the portal."""
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    sched = _site_schedule(site)
+    if not sched:
+        return Response({"available": False})
+    from . import procurement_client as pc
+    return Response({"available": True, **pc.client_plan(sched)})

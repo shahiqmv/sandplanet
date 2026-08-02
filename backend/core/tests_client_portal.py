@@ -107,8 +107,9 @@ class ClientPortalAuthTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         r = self.client.get(f"/api/client/sites/{self.site.id}")
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertIn("workforce", r.data)
-        self.assertIn("recent_progress", r.data)
+        for key in ("summary", "manpower", "inbound", "procurement",
+                    "recent_progress"):
+            self.assertIn(key, r.data)
         self.assertTrue(r.data["cameras"]["coming_soon"])
         # no commercial / internal fields leak through
         blob = json.dumps(r.data, default=str).lower()

@@ -108,6 +108,43 @@ function SiteList({ sites, onOpen }) {
   );
 }
 
+function ProcurementPlan({ id }) {
+  const [open, setOpen] = useState(false);
+  const [plan, setPlan] = useState(null);
+  const load = () => { setOpen(true);
+    if (!plan) api(`/sites/${id}/procurement`).then(setPlan).catch(() => {}); };
+  return (
+    <>
+      <button className="btn" onClick={open ? () => setOpen(false) : load}>
+        {open ? "Hide procurement plan" : "View procurement plan"}</button>
+      {open && plan && plan.available && (
+        <div style={{ marginTop: 12 }}>
+          {plan.sections.map((sec, i) => (
+            <div key={i} style={{ marginTop: 10 }}>
+              {sec.title && <div style={{ fontWeight: 600, color: "var(--navy)",
+                margin: "6px 0" }}>{sec.code ? `${sec.code} · ` : ""}
+                {sec.title}</div>}
+              <div style={{ overflowX: "auto" }}>
+                <table className="list"><thead><tr>
+                  <th>Item</th><th>Qty</th><th>Required</th>
+                  <th>ETA</th><th>Status</th></tr></thead><tbody>
+                  {sec.rows.map((r, j) => (
+                    <tr key={j}><td>{r.description}</td>
+                      <td>{r.quantity} {r.uom}</td>
+                      <td>{fmt(r.required_date)}</td>
+                      <td>{fmt(r.eta)}</td>
+                      <td>{r.status || "—"}</td></tr>))}
+                </tbody></table>
+              </div>
+            </div>))}
+        </div>)}
+      {open && plan && !plan.available && (
+        <p className="muted" style={{ marginTop: 8 }}>
+          No procurement plan published yet.</p>)}
+    </>
+  );
+}
+
 function SiteView({ id, single, onBack }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
@@ -115,24 +152,68 @@ function SiteView({ id, single, onBack }) {
     .catch((e) => setErr(e.message)); }, [id]);
   if (err) return <div className="wrap"><div className="card err">{err}</div></div>;
   if (!d) return <div className="wrap"><div className="card muted">Loading…</div></div>;
-  const wf = d.workforce;
+  const s = d.summary;
   return (
     <div className="wrap">
       {!single && <p><a href="#" onClick={(e) => { e.preventDefault(); onBack(); }}>
         ‹ All projects</a></p>}
+
+      {/* Day summary */}
       <div className="card">
-        <div className="eyebrow">{d.site.code}</div>
+        <div className="eyebrow">{d.site.code} · {fmt(s.date)}</div>
         <h1>{d.site.name}</h1>
-        <div className="metric" style={{ marginTop: 10 }}>
-          <div><div className="n">{wf.attendance_entered
-            ? wf.on_site : wf.stationed}</div>
-            <div className="l">{wf.attendance_entered
-              ? "on site today" : "assigned to site"}</div></div>
-          <div><div className="n">{d.recent_progress.length}</div>
-            <div className="l">recent daily reports</div></div>
+        <div className="metric" style={{ marginTop: 12 }}>
+          <div><div className="n">{s.workforce}</div>
+            <div className="l">{s.workforce_label}</div></div>
+          <div><div className="n">{s.latest_report ? fmt(s.latest_report)
+            : "—"}</div><div className="l">latest daily report</div></div>
+          <div><div className="n">{s.next_delivery ? fmt(s.next_delivery)
+            : "—"}</div><div className="l">next delivery due</div></div>
         </div>
       </div>
 
+      {/* Manpower — total + today's allocation by trade */}
+      <div className="card">
+        <h2>Manpower {d.manpower.attendance_entered ? "on site today"
+          : "assigned"}</h2>
+        {!d.manpower.by_trade.length && <p className="muted">
+          No manpower recorded yet.</p>}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+          marginTop: 6 }}>
+          {d.manpower.by_trade.map((t) => (
+            <span key={t.trade} style={{ border: "1px solid var(--line)",
+              borderRadius: 8, padding: "6px 12px", background: "#fff" }}>
+              <b style={{ color: "var(--navy)" }}>{t.count}</b>{" "}
+              <span className="muted">{t.trade}</span></span>))}
+        </div>
+      </div>
+
+      {/* Inbound deliveries */}
+      {d.inbound.length > 0 && (
+        <div className="card">
+          <h2>Materials & deliveries</h2>
+          <table className="list"><thead><tr>
+            <th>Item</th><th>Qty</th><th>Due</th><th>Status</th>
+          </tr></thead><tbody>
+            {d.inbound.map((r, i) => (
+              <tr key={i}><td>{r.description}</td>
+                <td>{r.quantity} {r.uom}</td>
+                <td>{fmt(r.eta)}</td>
+                <td>{r.status || r.stage || "—"}</td></tr>))}
+          </tbody></table>
+        </div>)}
+
+      {/* Procurement plan */}
+      {d.procurement.available && (
+        <div className="card">
+          <h2>Procurement plan</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            {d.procurement.items} items planned · {d.procurement.upcoming}{" "}
+            upcoming.</p>
+          <ProcurementPlan id={id} />
+        </div>)}
+
+      {/* Daily progress */}
       <div className="card">
         <h2>Daily progress</h2>
         {!d.recent_progress.length && <p className="muted">
@@ -141,8 +222,7 @@ function SiteView({ id, single, onBack }) {
           <table className="list"><thead><tr>
             <th>Date</th><th>Report</th><th>Status</th></tr></thead><tbody>
             {d.recent_progress.map((r) => (
-              <tr key={r.ref}><td>{fmt(r.date)}</td>
-                <td>{r.ref}</td>
+              <tr key={r.ref}><td>{fmt(r.date)}</td><td>{r.ref}</td>
                 <td><span className={`pill ${r.verified ? "ok" : "wait"}`}>
                   {r.verified ? "Verified" : "Reported"}</span></td></tr>))}
           </tbody></table>)}
@@ -158,6 +238,7 @@ function SiteView({ id, single, onBack }) {
           </tbody></table>
         </div>)}
 
+      {/* Cameras */}
       <div className="card">
         <h2>Site cameras</h2>
         <div className="soon">
