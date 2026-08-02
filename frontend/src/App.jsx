@@ -50,16 +50,16 @@ const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
                    "FINANCE", "ADMIN"];
 // Company Profile is office-only marketing; MARKETING is a minimal role that
 // sees ONLY this section.
-const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING"];
+const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING", "PA"];
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
-  { key: "approvals", label: "My Tasks", roles: [...APPROVERS, "QS"],
+  { key: "approvals", label: "My Tasks", roles: [...APPROVERS, "QS", "PA"],
     subs: [["approvals", "My Tasks", APPROVERS],
            ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS",
-                                       "SIGNATORY"]],
+                                       "SIGNATORY", "PA"]],
            ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS",
-                                     "SIGNATORY"]]] },
+                                     "SIGNATORY", "PA"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
   { key: "procurement", label: "Procurement",
@@ -84,16 +84,16 @@ const NAV_GROUPS = [
     subs: [["procurement-schedule", "Procurement Schedule", null]] },
   { key: "meetingsGrp", label: "Meetings",
     roles: ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
-            "SIGNATORY"],
+            "SIGNATORY", "PA"],
     subs: [["meetings", "Meetings", null]] },
   { key: "finance", label: "Finance",
-    roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS"],
+    roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS", "PA"],
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
            ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
-                                           "QS"]]] },
+                                           "QS", "PA"]]] },
   // Head-Office raisers have no site register to fall back on, so their own
   // payment requests would vanish on submit — this is their tracking view.
   { key: "myreqGrp", label: "My Requests",
@@ -101,9 +101,10 @@ const NAV_GROUPS = [
             "FINANCE", "ADMIN"],
     subs: [["my-pyr", "Payment Requests", null]] },
   { key: "people", label: "People",
-    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM"],
+    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
-           ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM"]],
+           ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM",
+                                         "PA"]],
            ["employees", "Employees", null],
            ["worker-categories", "Worker Categories", ["ADMIN"]],
            ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN"]],
@@ -133,6 +134,7 @@ function landingPage(me) {
   if (me.role === "HO_HR") return "hr";
   if (me.role === "QS") return "portfolio";
   if (me.role === "MARKETING") return "profile";
+  if (me.role === "PA") return "meetings";   // her main workspace
   return "sites";
 }
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";

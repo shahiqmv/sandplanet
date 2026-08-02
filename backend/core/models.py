@@ -21,11 +21,17 @@ class User(AbstractUser):
         # Office-only marketing role: sees ONLY the Company Profile module,
         # nothing operational or financial. Deliberately out of HO/site groups.
         MARKETING = "MARKETING", "Marketing"
+        # Personal Assistant to the Director of Projects (owner 2026-08-01):
+        # runs the meeting module (custodian), does onboarding data entry and
+        # keeps the company profile current, and has READ visibility across
+        # projects/commercials for coordination. A support role — NOT a
+        # purchasing, finance, site-ops or user-admin operator.
+        PA = "PA", "Personal Assistant — Director's Office"
 
     # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6; QS sees
-    # the whole project portfolio)
+    # the whole project portfolio; PA reads across projects to support the PD)
     HO_ROLES = {"HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",
-                "HO_HR", "QS", "ADMIN"}
+                "HO_HR", "QS", "ADMIN", "PA"}
     SINGLE_SITE_ROLES = {"SITE_ENGINEER", "SITE_ADMIN"}
 
     role = models.CharField(max_length=20, choices=Role.choices)

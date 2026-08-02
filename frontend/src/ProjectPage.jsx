@@ -42,6 +42,9 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
 
   const canEdit = ["PM", "ADMIN", "DIRECTOR", "QS"].includes(me.role);
   const canDelete = ["ADMIN", "DIRECTOR"].includes(me.role);
+  // The Director's PA sees the Commercial tab read-only (the panels inside
+  // stay non-editable for her role); editors are canEdit as before.
+  const canSeeCommercial = canEdit || me.role === "PA";
 
   async function deleteProject() {
     if (!window.confirm(
@@ -109,7 +112,7 @@ manpower histogram, on the letterhead — send to the client"
         </div>
         <div style={{ display: "flex", gap: 6, marginTop: 14,
                       flexWrap: "wrap" }}>
-          {TABS.filter(([key]) => key !== "commercial" || canEdit)
+          {TABS.filter(([key]) => key !== "commercial" || canSeeCommercial)
             .map(([key, label, enabled]) => (
             <button key={key} disabled={!enabled}
                     onClick={() => enabled && setTab(key)}

@@ -19,7 +19,8 @@ from .numbering import next_ref
 
 log = logging.getLogger(__name__)
 
-RAISE_ROLES = ("PM", "HO_HR", "ADMIN")          # who logs a case
+# PA does onboarding data entry for the Director; the Director still approves.
+RAISE_ROLES = ("PM", "HO_HR", "ADMIN", "PA")    # who logs a case
 APPROVE_ROLES = ("DIRECTOR", "ADMIN")            # the PD gate
 OPEN = ("DRAFT", "SUBMITTED", "RETURNED")        # editable / pre-approval
 TERMINAL = ("COMPLETED", "REJECTED", "CANCELLED")  # closed

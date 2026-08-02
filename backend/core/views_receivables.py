@@ -16,7 +16,9 @@ from .models import CompanyBankAccount, ManualInvoice, OfficialReceipt, Site
 
 # Who may see the receivables ledger: Finance runs it; the QS owns the
 # billing and the Director oversees cash-in (owner 2026-07-24).
-RECEIVABLE_ROLES = ("FINANCE", "DIRECTOR", "ADMIN", "QS")
+# PA (Director's assistant) reads receivables to support the PD; issuing/voiding
+# receipts + recording invoices stay with Finance/QS (RECEIPT_ROLES / manual).
+RECEIVABLE_ROLES = ("FINANCE", "DIRECTOR", "ADMIN", "QS", "PA")
 # Who may issue/void an official receipt + manage bank accounts: Finance.
 RECEIPT_ROLES = ("FINANCE", "ADMIN")
 

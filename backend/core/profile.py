@@ -11,7 +11,7 @@ from django.core.files.base import ContentFile
 from .audit import audit
 from .models import ProfileEntry, ProfileGalleryImage
 
-PROFILE_ROLES = ("ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING")
+PROFILE_ROLES = ("ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING", "PA")
 MAX_GALLERY = 6
 # (aspect_w, aspect_h, max_long_edge_px) — the layout depends on these exactly.
 FEATURED = (1, 1, 1300)

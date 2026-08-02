@@ -17,11 +17,12 @@ from .models import (Meeting, MeetingActionItem, MeetingAttendee, Project,
 
 # The meeting custodian(s) — the PD owns the module; Admin too. Extend this
 # with the PD's assistant (an EA role or a per-user flag) once she is onboarded.
-CUSTODIAN_ROLES = ("DIRECTOR", "ADMIN")
+# PA = the Director's Personal Assistant, the delegated meeting custodian.
+CUSTODIAN_ROLES = ("DIRECTOR", "ADMIN", "PA")
 # Who may schedule a meeting at all (custodians + the domain roles: PM/QS for
 # project reviews, Marketing for BD, site team for site meetings).
 CREATE_ROLES = ("DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "SITE_ADMIN",
-                "SITE_ENGINEER", "HO_PURCHASING")
+                "SITE_ENGINEER", "HO_PURCHASING", "PA")
 
 _CADENCE_DAYS = {"WEEKLY": 7, "FORTNIGHTLY": 14}
 
