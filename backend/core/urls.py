@@ -36,6 +36,7 @@ urlpatterns = [
     path("auth/change-password", views.auth_change_password,
          name="auth-change-password"),
     path("auth/me", views.auth_me, name="auth-me"),
+    path("directory", views.user_directory, name="user-directory"),
     path("notifications", notify_api.notifications_list, name="notifications"),
     path("notifications/read", notify_api.notifications_read,
          name="notifications-read"),

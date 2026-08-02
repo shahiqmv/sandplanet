@@ -320,7 +320,7 @@ function MeetingDetail({ id, me, onBack }) {
       org: a.org, role: a.role, is_external: a.is_external })));
   }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
-  useEffect(() => { api("/users").then((r) =>
+  useEffect(() => { api("/directory").then((r) =>
     setUsers(Array.isArray(r) ? r : (r.results || []))).catch(() => {}); }, []);
 
   async function run(fn, ok) {
@@ -643,7 +643,7 @@ function NewMeeting({ me, onDone, onCancel }) {
 
   useEffect(() => { api("/sites").then((r) =>
     setSites(Array.isArray(r) ? r : (r.results || []))).catch(() => {}); }, []);
-  useEffect(() => { api("/users").then((r) =>
+  useEffect(() => { api("/directory").then((r) =>
     setUsers(Array.isArray(r) ? r : (r.results || []))).catch(() => {}); }, []);
   useEffect(() => {
     if (!siteId) { setProjects([]); return; }

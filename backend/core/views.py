@@ -202,6 +202,19 @@ class SiteViewSet(viewsets.ModelViewSet):
 # ===== Users (admin-managed accounts, no self-registration) =====
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def user_directory(request):
+    """Lightweight internal directory (id / name / role) for people-pickers —
+    meeting attendees, action-item owners, etc. Read-only, no management or
+    sensitive fields, so it's open to any authenticated user (managing users
+    stays admin-only on the UserViewSet)."""
+    users = User.objects.filter(is_active=True).order_by("full_name",
+                                                         "username")
+    return Response([{"id": u.id, "full_name": u.full_name or u.username,
+                      "role": u.role, "username": u.username} for u in users])
+
+
 class UserViewSet(viewsets.ModelViewSet):
     serializer_class = UserSerializer
     permission_classes = [IsAdmin]

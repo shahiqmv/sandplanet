@@ -69,3 +69,19 @@ class PARoleTests(TestCase):
             "payload": {"lines": [{"description": "Cement", "qty": "1",
                                    "unit": "bag"}]}}, format="json")
         self.assertEqual(r.status_code, 403, getattr(r, "data", None))
+
+
+class DirectoryAccessTests(TestCase):
+    def test_non_admin_can_read_people_directory(self):
+        # The attendee/owner pickers need the directory; managing users stays
+        # admin-only. A PA (non-admin) must get the list, not an empty 403.
+        pa = make_user("pa_dir", User.Role.PA)
+        make_user("pm_dir", User.Role.PM)
+        c = APIClient()
+        c.force_authenticate(pa)
+        r = c.get("/api/v1/directory")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertGreaterEqual(len(r.data), 2)
+        self.assertIn("full_name", r.data[0])
+        # user management still admin-only
+        self.assertEqual(c.get("/api/v1/users").status_code, 403)
