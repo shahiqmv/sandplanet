@@ -6,7 +6,7 @@ import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
 
 const EMPTY = { full_name: "", nationality: "", job_category: "",
                 basic_pay: "", currency: "MVR", passport_no: "",
-                employment_type: "PERMANENT", join_date: "" };
+                employment_type: "PERMANENT", join_date: "", site_id: "" };
 
 const EMPLOYMENT = [["PERMANENT", "Permanent"], ["CONTRACT", "Contract"]];
 
@@ -177,6 +177,18 @@ export default function EmployeesPage({ me, sites }) {
                 <option key={v} value={v}>{l}</option>
               ))}
             </select>
+            <select value={draft.site_id || ""}
+                    onChange={(e) => setDraft({ ...draft,
+                                                site_id: e.target.value })}
+                    style={{ ...inputStyle, width: 150 }}
+                    title={"Post to a site or Head Office — optional, can "
+                           + "transfer later"}>
+              <option value="">Post to… (optional)</option>
+              {sites.filter((s) => s.is_head_office).map((s) => (
+                <option key={s.id} value={s.id}>🏢 Head Office</option>))}
+              {sites.filter((s) => !s.is_head_office).map((s) => (
+                <option key={s.id} value={s.id}>{s.code}</option>))}
+            </select>
             <button onClick={add} disabled={!draft.full_name}
                     style={buttonStyle}>Add employee</button>
           </div>
@@ -242,6 +254,11 @@ export default function EmployeesPage({ me, sites }) {
                             onClick={(e) => e.stopPropagation()}
                             onChange={(e) => allocate(emp, e.target.value)}>
                       <option value="">Transfer to…</option>
+                      {sites.filter((s) => s.is_head_office &&
+                                           s.code !== emp.site_code)
+                        .map((s) => (
+                          <option key={s.id} value={s.id}>🏢 Head Office</option>
+                        ))}
                       {sites.filter((s) => !s.is_head_office &&
                                            s.code !== emp.site_code)
                         .map((s) => (

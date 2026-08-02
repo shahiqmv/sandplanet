@@ -63,6 +63,26 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const tws = dash?.tws_by_date?.[twsDefaultDate()];
   const twsRef = tws?.ref;
 
+  // Head Office is not a project — no DPR/MR/procurement/etc. Just the office
+  // staff's attendance + roster (owner 2026-08-02). HR uses the dedicated
+  // "Head Office" page under People; this is the fallback if MLE is opened
+  // from the Sites list.
+  if (site.is_head_office) {
+    return (
+      <section style={card}>
+        <Eyebrow>Head Office · {site.code}</Eyebrow>
+        <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 6 }}>
+          Head Office is an office-staff record, not a project — only
+          attendance is kept here.</p>
+        <div style={{ display: "flex", gap: 8, marginTop: 10,
+                      flexWrap: "wrap" }}>
+          <Btn variant="primary" onClick={onAttendance}>🕐 Attendance</Btn>
+          <Btn variant="secondary" onClick={onWorkforce}>👥 Staff</Btn>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <>
       <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `

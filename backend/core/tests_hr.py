@@ -283,3 +283,30 @@ class PayrollExportTests(HrBase):
         self.assertEqual(r.status_code, 200)
         self.assertIn("spreadsheetml", r["Content-Type"])
         self.assertIn("attachment", r["Content-Disposition"])
+
+
+class HeadOfficeEmployeeTests(HrBase):
+    def test_create_employee_posted_to_head_office(self):
+        from .vouchers import ho_site
+        ho = ho_site()
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "Office Staff", "nationality": "Maldivian",
+            "job_category": self.mason_cat.id, "site_id": ho.id,
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        emp = Employee.objects.get(pk=r.data["id"])
+        alloc = emp.site_allocations.get(to_date__isnull=True)
+        self.assertEqual(alloc.site_id, ho.id)
+        # HR can record attendance for the Head Office site
+        r = self.client.get(
+            f"/api/v1/attendance?site={ho.id}&date={date.today().isoformat()}")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_create_without_site_leaves_unallocated(self):
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "Nobody", "nationality": "Maldivian",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        emp = Employee.objects.get(pk=r.data["id"])
+        self.assertFalse(emp.site_allocations.filter(to_date__isnull=True)
+                         .exists())

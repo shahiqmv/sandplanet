@@ -144,8 +144,16 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         with transaction.atomic():
             n = int(next_ref("EMP", None).split("-")[1])
             employee = serializer.save(emp_no=f"EMP-{n:04d}")
+            # Optional initial posting — a project site or Head Office (MLE).
+            sid = self.request.data.get("site_id")
+            site = Site.objects.filter(pk=sid).first() if sid else None
+            if site:
+                EmployeeSiteAllocation.objects.create(
+                    employee=employee, site=site, from_date=date.today())
         audit("employee", employee.id, "EMPLOYEE_CREATED",
-              actor=self.request.user, detail={"emp_no": employee.emp_no})
+              actor=self.request.user,
+              detail={"emp_no": employee.emp_no,
+                      "site": site.code if site else None})
 
     def perform_update(self, serializer):
         employee = serializer.save()
