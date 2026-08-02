@@ -14,6 +14,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_procurement_schedule as psched_api, \
     views_profile as profile_api, \
     views_meetings as meetings_api, \
+    views_client_admin as client_admin, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -37,6 +38,12 @@ urlpatterns = [
          name="auth-change-password"),
     path("auth/me", views.auth_me, name="auth-me"),
     path("directory", views.user_directory, name="user-directory"),
+    # Client Portal accounts — HO admin manages who logs into the portal.
+    path("client-users", client_admin.client_users, name="client-users"),
+    path("client-users/<int:pk>", client_admin.client_user_detail,
+         name="client-user-detail"),
+    path("client-users/<int:pk>/password", client_admin.client_user_password,
+         name="client-user-password"),
     path("notifications", notify_api.notifications_list, name="notifications"),
     path("notifications/read", notify_api.notifications_read,
          name="notifications-read"),

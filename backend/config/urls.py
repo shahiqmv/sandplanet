@@ -10,6 +10,7 @@ urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/", include("core.urls")),
     path("api/mobile/v1/", include("core.urls_mobile")),
+    path("api/client/", include("core.urls_client")),
     # Public, secret-verified provider webhook (outside the session-auth API).
     path("api/webhooks/tracking/shipsgo/", views_tracking.shipsgo_webhook,
          name="shipsgo-webhook"),

@@ -608,6 +608,67 @@ class MobileDevice(models.Model):
                 timezone.now() - timedelta(days=self.IDLE_DAYS))
 
 
+class ClientUser(models.Model):
+    """An external client's login to the read-only Client Portal — a SEPARATE
+    principal from the staff `User`, structurally isolated: a client token
+    never satisfies a staff endpoint and a staff session never satisfies a
+    client endpoint (different auth classes + URL space). Created by HO admin
+    only, scoped to the site(s) assigned; no staff role, no write access, no
+    self-registration (owner 2026-08-02, client-portal Phase 3)."""
+
+    org_name = models.CharField(max_length=200)
+    full_name = models.CharField(max_length=160)
+    email = models.EmailField(unique=True)
+    password = models.CharField(max_length=128, blank=True)   # Django-hashed
+    sites = models.ManyToManyField(Site, related_name="client_users", blank=True)
+    is_active = models.BooleanField(default=True)
+    must_change_password = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_login = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["org_name", "full_name"]
+
+    def set_password(self, raw):
+        from django.contrib.auth.hashers import make_password
+        self.password = make_password(raw)
+
+    def check_password(self, raw):
+        from django.contrib.auth.hashers import check_password
+        return bool(raw) and bool(self.password) and \
+            check_password(raw, self.password)
+
+    # request.user compatibility for DRF permissions on client endpoints.
+    @property
+    def is_authenticated(self):
+        return True
+
+    def __str__(self):
+        return f"{self.full_name} ({self.org_name})"
+
+
+class ClientSession(models.Model):
+    """A Client Portal token — sliding 30-day idle expiry, like a mobile
+    device. Revocable by HO admin. Isolated from staff sessions."""
+
+    IDLE_DAYS = 30
+
+    client = models.ForeignKey(ClientUser, on_delete=models.CASCADE,
+                               related_name="sessions")
+    token = models.CharField(max_length=64, unique=True, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_seen = models.DateTimeField(auto_now_add=True)
+    revoked = models.BooleanField(default=False)
+
+    @property
+    def is_active(self):
+        from datetime import timedelta
+
+        from django.utils import timezone
+        return (not self.revoked and self.last_seen >=
+                timezone.now() - timedelta(days=self.IDLE_DAYS))
+
+
 class PushSubscription(models.Model):
     """A Web Push (VAPID) endpoint for a user's browser/PWA. One per browser;
     purged on a 404/410 from the push service (R6 mobile, owner 2026-07-14)."""
