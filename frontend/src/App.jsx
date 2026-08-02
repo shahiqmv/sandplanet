@@ -85,8 +85,8 @@ const NAV_GROUPS = [
     roles: ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"],
     subs: [["procurement-schedule", "Procurement Schedule", null]] },
   { key: "meetingsGrp", label: "Meetings",
-    roles: ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
-            "SIGNATORY", "PA"],
+    roles: ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",
+            "MARKETING", "HO_PURCHASING", "SIGNATORY", "PA"],
     subs: [["meetings", "Meetings", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS", "PA"],
@@ -412,10 +412,12 @@ export default function App() {
 
   if (me === null) return null;
 
-  // PMs get the grouped nav too (Approvals + Sites); site users keep the
-  // plain site view
+  // PMs get the grouped nav too (Approvals + Sites); site users (Site Admin /
+  // Engineer) get a minimal Sites + Meetings nav so they can reach their
+  // site's meeting minutes (owner 2026-08-02) — backend already scopes them.
   const showHoNav = me.authenticated && (me.is_ho || me.role === "PM"
-                    || me.role === "MARKETING");
+                    || me.role === "MARKETING" || me.role === "SITE_ADMIN"
+                    || me.role === "SITE_ENGINEER");
   const groups = me.authenticated ? visibleGroups(me) : [];
   const activeGroup = groups.find((g) =>
     g.subs.some(([key]) => key === hoPage));
@@ -888,8 +890,9 @@ export default function App() {
             <ProcurementSchedulePage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "ADMIN", "PM", "QS", "MARKETING", "HO_PURCHASING",
-             "SIGNATORY", "PA"].includes(me.role) && hoPage === "meetings" && (
+            ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",
+             "MARKETING", "HO_PURCHASING", "SIGNATORY", "PA"].includes(me.role)
+            && hoPage === "meetings" && (
             <MeetingsPage me={me} />
           )}
           {docView?.mode === "attendance" && openSite && (
