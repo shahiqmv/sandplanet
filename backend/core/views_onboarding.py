@@ -14,7 +14,7 @@ from . import onboarding as ob
 from .models import Attachment, Document, OnboardingCase, Site
 from .permissions import scoped_site_ids
 
-VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN")      # see all cases
+VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN", "PA")   # see all cases
 DOC_KINDS = {k for k, _, _ in ob.CHECKLIST_DOCS}
 
 

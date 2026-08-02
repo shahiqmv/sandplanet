@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, SelectOrOther, card, inputStyle, td, th } from "./ui.jsx";
 
-const RAISE = ["PM", "HO_HR", "ADMIN"];
+const RAISE = ["PM", "HO_HR", "ADMIN", "DIRECTOR", "PA"];
 const APPROVE = ["DIRECTOR", "ADMIN"];
 const STATUS_TONE = {
   DRAFT: "info", SUBMITTED: "warn", RETURNED: "alert", APPROVED: "ok",

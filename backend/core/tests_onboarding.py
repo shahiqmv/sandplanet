@@ -380,7 +380,7 @@ class OnboardingSpineTests(TestCase):
                                  {"file": f}, format="multipart")
             self.assertEqual(r.status_code, 200, r.data)
             self.assertEqual(r.data["fields"]["full_name"], "Nuwan")
-            self.client.force_authenticate(self.director)  # not a raiser
+            self.client.force_authenticate(self.se)      # not a raiser
             f2 = SimpleUploadedFile("p.jpg", b"x", content_type="image/jpeg")
             r2 = self.client.post("/api/v1/onboarding/passport-scan",
                                   {"file": f2}, format="multipart")
