@@ -185,3 +185,27 @@ def client_site_procurement(request, pk):
         return Response({"available": False})
     from . import procurement_client as pc
     return Response({"available": True, **pc.client_plan(sched)})
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site_procurement_xlsx(request, pk):
+    """The procurement plan as a spreadsheet — same client allowlist as the
+    public share link, but served through the authenticated portal."""
+    from django.http import HttpResponse
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    sched = _site_schedule(site)
+    if not sched:
+        return Response({"detail": "No plan."}, status=404)
+    from . import procurement_export
+    wb = procurement_export.build_client_xlsx(sched)
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="{sched.project.code}-Procurement-Plan.xlsx"')
+    wb.save(resp)
+    return resp

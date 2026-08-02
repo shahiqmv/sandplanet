@@ -12,6 +12,19 @@ export class ApiError extends Error {
   constructor(message, status) { super(message); this.status = status; }
 }
 
+// Download a file from the token-authed API (a plain <a> can't send the Bearer
+// header, so fetch as a blob and trigger the download client-side).
+export async function downloadFile(path, filename) {
+  const res = await fetch(BASE + path,
+    { headers: { Authorization: `Bearer ${getToken()}` } });
+  if (!res.ok) throw new ApiError("Download failed.", res.status);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
 export async function api(path, { method = "GET", body } = {}) {
   const headers = {};
   const token = getToken();

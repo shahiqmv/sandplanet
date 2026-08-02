@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, getToken, setToken } from "./api.js";
+import { api, downloadFile, getToken, setToken } from "./api.js";
 
 const fmt = (s) => s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -116,7 +116,12 @@ function ProcurementPlan({ id }) {
   return (
     <>
       <button className="btn" onClick={open ? () => setOpen(false) : load}>
-        {open ? "Hide procurement plan" : "View procurement plan"}</button>
+        {open ? "Hide procurement plan" : "View procurement plan"}</button>{" "}
+      <button className="btn" style={{ background: "#fff", color: "var(--navy)",
+        border: "1px solid #C9D9E5" }}
+        onClick={() => downloadFile(`/sites/${id}/procurement.xlsx`,
+          "Procurement-Plan.xlsx").catch(() => {})}>
+        ⬇ Excel</button>
       {open && plan && plan.available && (
         <div style={{ marginTop: 12 }}>
           {plan.sections.map((sec, i) => (
