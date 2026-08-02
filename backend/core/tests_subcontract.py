@@ -433,3 +433,92 @@ class SubcontractAgreementTermsTests(TestCase):
         self.client.force_authenticate(self.pm)         # PM may download
         self.assertEqual(self.client.get(
             f"/api/v1/subcontract-agreements/{ref}/pdf").status_code, 200)
+
+
+class SubcontractValuationTests(TestCase):
+    """SVC valuation engine — math, chaining, guards (Phase 4)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("sa", User.Role.SITE_ADMIN, site=self.site)
+
+    def _approved_sca(self, advance="10", retention="5"):
+        from . import subcontract
+        sub = Subcontractor.objects.create(
+            site=self.site, name="Alif Gang",
+            status=Subcontractor.Status.APPROVED)
+        doc, err = subcontract.create_sca(sub, {
+            "title": "Blockwork", "advance_percent": advance,
+            "retention_percent": retention, "rows": [
+                {"item_code": "1", "description": "Blockwork", "unit": "m2",
+                 "qty": "100", "rate": "150"},
+                {"item_code": "2", "description": "Plaster", "unit": "m2",
+                 "qty": "200", "rate": "50"}]}, self.sa)
+        assert err is None, err
+        doc.status = "APPROVED"
+        doc.save(update_fields=["status"])
+        return doc.subcontract_agreement
+
+    def _set(self, v, code, qty):
+        from . import subcontract
+        it = v.items.get(scope_item__item_code=code)
+        return subcontract.value_svc(
+            v, {"rows": [{"id": it.id, "cumulative_qty": qty}]}, self.sa)
+
+    def test_valuation_math(self):
+        from . import subcontract
+        a = self._approved_sca()
+        doc, err = subcontract.create_svc(a, self.sa)
+        self.assertIsNone(err, err)
+        v = doc.subcontract_valuation
+        rows = [{"id": it.id,
+                 "cumulative_qty": "40" if it.scope_item.item_code == "1"
+                 else "100"} for it in v.items.all()]
+        subcontract.value_svc(v, {"rows": rows}, self.sa)
+        val = subcontract.svc_valuation(v)
+        # gross = 40×150 + 100×50 = 11,000
+        self.assertEqual(val["gross_cumulative"], Decimal("11000"))
+        # advance 10% of gross = 1,100 (cap = 10% of contract 25,000 = 2,500)
+        self.assertEqual(val["advance_recovered"], Decimal("1100"))
+        self.assertEqual(val["retention_held"], Decimal("550"))   # 5% of gross
+        self.assertEqual(val["net_cumulative"], Decimal("9350"))
+        self.assertEqual(val["now_due"], Decimal("9350"))         # first SVC
+
+    def test_second_valuation_chains_and_floors(self):
+        from . import subcontract
+        a = self._approved_sca()
+        v1 = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v1, "1", "40")
+        v1.document.status = "AUTHORISED"
+        v1.document.save(update_fields=["status"])
+        doc2, err = subcontract.create_svc(a, self.sa)
+        self.assertIsNone(err, err)
+        v2 = doc2.subcontract_valuation
+        it1 = v2.items.get(scope_item__item_code="1")
+        self.assertEqual(it1.cumulative_qty, Decimal("40"))       # carried
+        # this-period only pays the delta
+        self._set(v2, "1", "70")
+        val = subcontract.svc_valuation(v2)
+        self.assertEqual(val["this_gross"], Decimal("30") * Decimal("150"))
+        # can't fall below the previously certified
+        _, e = self._set(v2, "1", "20")
+        self.assertIsNotNone(e)
+
+    def test_one_in_flight_per_sca(self):
+        from . import subcontract
+        a = self._approved_sca()
+        subcontract.create_svc(a, self.sa)
+        d2, err = subcontract.create_svc(a, self.sa)
+        self.assertIsNone(d2)
+        self.assertIn("in progress", err)
+
+    def test_svc_requires_approved_agreement(self):
+        from . import subcontract
+        sub = Subcontractor.objects.create(
+            site=self.site, name="G", status=Subcontractor.Status.APPROVED)
+        doc, _ = subcontract.create_sca(sub, {"title": "X", "rows": [
+            {"description": "a", "qty": "1", "rate": "1"}]}, self.sa)
+        d2, err = subcontract.create_svc(doc.subcontract_agreement, self.sa)
+        self.assertIsNone(d2)
+        self.assertIn("approved", err.lower())

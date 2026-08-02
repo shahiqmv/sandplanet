@@ -278,6 +278,7 @@ class Document(models.Model):
         IRN = "IRN"  # import receipt note — count at the HO store (§5.10.8)
         SIN = "SIN"  # store issue note — issue stock to a site (§6D.3, P1B-f)
         SCA = "SCA"  # subcontract agreement (subcontractor module)
+        SVC = "SVC"  # subcontract valuation certificate (subcontractor module)
         OBR = "OBR"  # onboarding request — expat recruitment/mobilisation
         PSC = "PSC"  # procurement schedule — per-project planning layer
 
@@ -374,6 +375,16 @@ class Document(models.Model):
             "SUBMITTED": {"PM_APPROVED", "DRAFT", "REJECTED"},
             "PM_APPROVED": {"APPROVED", "DRAFT", "REJECTED"},
             "APPROVED": {"CLOSED"},
+        },
+        # Subcontract Valuation Certificate: the site submits work-to-date, the
+        # PM verifies the quantities, the Director approves, a Signatory
+        # authorises (commits the cost); Finance then settles it on a voucher.
+        "SVC": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"PM_VERIFIED", "DRAFT", "REJECTED"},
+            "PM_VERIFIED": {"DIRECTOR_APPROVED", "DRAFT", "REJECTED"},
+            "DIRECTOR_APPROVED": {"AUTHORISED", "DRAFT"},
+            "AUTHORISED": {"PAID"},
         },
         # Morning allocation off the previous day's TWSs; internal only (R5)
         "DMA": {"DRAFT": {"ISSUED"}},
@@ -1712,6 +1723,59 @@ class SubcontractScopeItem(models.Model):
         return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
 
 
+class SubcontractValuation(models.Model):
+    """SVC — an interim valuation of a subcontractor's work under an APPROVED
+    agreement. Mirrors a client progress claim but pays the subcontractor:
+    value work to date per scope line, recover the advance pro-rata, apply
+    optional retention and any deductions, and pay the balance. Valuations
+    chain by seq — each carries the cumulative forward and pays this cumulative
+    less the previous. A Document subtype (doc_type SVC) so it rides the
+    approval chain, mobile queue and cost hook. No GST (money OUT to a sub)."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="subcontract_valuation")
+    agreement = models.ForeignKey(SubcontractAgreement, on_delete=models.PROTECT,
+                                  related_name="valuations")
+    seq = models.IntegerField(default=1)
+    previous = models.ForeignKey("self", on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    work_done_upto = models.DateField(null=True, blank=True)
+    # Terms snapshotted from the SCA at creation so a certified SVC never shifts.
+    advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                          default=0)
+    retention_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                            default=0)
+    # Cumulative deductions to date and a one-off +/- adjustment this period.
+    deductions = models.DecimalField(max_digits=16, decimal_places=3, default=0)
+    adjustment = models.DecimalField(max_digits=16, decimal_places=3, default=0)
+    note = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    authorised_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"SVC {self.document.ref}"
+
+
+class SubcontractValuationItem(models.Model):
+    """One valued scope line of an SVC — the cumulative quantity of that scope
+    item completed to date. This-period = cumulative − the previous SVC's, and
+    the rate is read live from the scope item (locked once the SCA is approved).
+    """
+
+    valuation = models.ForeignKey(SubcontractValuation,
+                                  on_delete=models.CASCADE, related_name="items")
+    scope_item = models.ForeignKey(SubcontractScopeItem,
+                                   on_delete=models.PROTECT, related_name="+")
+    cumulative_qty = models.DecimalField(max_digits=14, decimal_places=3,
+                                         default=0)
+
+    class Meta:
+        ordering = ["scope_item__sort_order", "id"]
+
+
 class EmployeeSiteAllocation(models.Model):
     """Transfer history — payroll must know where each person worked and
     when (spec §6A.1)."""
@@ -3043,6 +3107,7 @@ class CostPosting(models.Model):
         STORE_ISSUE = "STORE_ISSUE"  # Phase 1B
         FX = "FX"             # Phase 1B
         STOCK_ADJ = "STOCK_ADJ"      # Phase 1B
+        SUBCONTRACT = "SUBCONTRACT"  # subcontractor valuations (SVC)
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="cost_postings")

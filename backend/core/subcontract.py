@@ -249,6 +249,171 @@ def _pct(v):
     return "" if v is None else ("%g" % float(v))
 
 
+# ---- SVC: subcontract valuations (Phase 4) -------------------------------
+
+from decimal import Decimal   # noqa: E402
+
+# The doc statuses at which an SVC is still open (blocks a second in-flight one).
+_SVC_OPEN = ("DRAFT", "SUBMITTED", "PM_VERIFIED", "DIRECTOR_APPROVED")
+_SVC_CERTIFIED = ("AUTHORISED", "PAID")
+
+
+def _svc_gross_cumulative(v):
+    """Σ (cumulative qty × scope rate) across a valuation's lines."""
+    if v is None:
+        return Decimal("0")
+    total = Decimal("0")
+    for it in v.items.select_related("scope_item"):
+        total += (it.cumulative_qty or Decimal("0")) * \
+                 (it.scope_item.rate or Decimal("0"))
+    return total
+
+
+def _svc_net_cumulative(v):
+    """Net certified-to-date = gross − advance recovery − retention − deductions
+    + adjustment. Advance recovers pro-rata (recovery % = advance %), capped at
+    the advance paid; retention is optional (0 = none)."""
+    if v is None:
+        return Decimal("0")
+    gross = _svc_gross_cumulative(v)
+    adv_pct = v.advance_percent or Decimal("0")
+    ret_pct = v.retention_percent or Decimal("0")
+    adv_total = adv_pct / 100 * (v.agreement.value or Decimal("0"))
+    recovery = min(adv_pct / 100 * gross, adv_total)
+    retention = ret_pct / 100 * gross
+    return (gross - recovery - retention
+            - (v.deductions or Decimal("0")) + (v.adjustment or Decimal("0")))
+
+
+def svc_valuation(v):
+    """Full valuation breakdown for display + the amount now payable."""
+    a = v.agreement
+    prev = v.previous
+    prev_items = ({i.scope_item_id: (i.cumulative_qty or Decimal("0"))
+                   for i in prev.items.all()} if prev else {})
+    lines, gross_cum = [], Decimal("0")
+    for it in v.items.select_related("scope_item"):
+        si = it.scope_item
+        rate = si.rate or Decimal("0")
+        contract_qty = si.qty or Decimal("0")
+        cum_qty = it.cumulative_qty or Decimal("0")
+        prev_qty = prev_items.get(si.id, Decimal("0"))
+        cum_val = cum_qty * rate
+        gross_cum += cum_val
+        lines.append({
+            "id": it.id, "scope_item_id": si.id, "item_code": si.item_code,
+            "description": si.description, "unit": si.unit, "rate": rate,
+            "contract_qty": contract_qty, "previous_qty": prev_qty,
+            "cumulative_qty": cum_qty, "this_qty": cum_qty - prev_qty,
+            "this_value": (cum_qty - prev_qty) * rate, "cumulative_value": cum_val,
+            "over": bool(contract_qty and cum_qty > contract_qty),
+        })
+    prev_gross = _svc_gross_cumulative(prev) if prev else Decimal("0")
+    adv_pct = v.advance_percent or Decimal("0")
+    ret_pct = v.retention_percent or Decimal("0")
+    adv_total = adv_pct / 100 * (a.value or Decimal("0"))
+    recovery = min(adv_pct / 100 * gross_cum, adv_total)
+    retention = ret_pct / 100 * gross_cum
+    net_cum = (gross_cum - recovery - retention
+               - (v.deductions or Decimal("0")) + (v.adjustment or Decimal("0")))
+    prev_net = _svc_net_cumulative(prev) if prev else Decimal("0")
+    return {
+        "currency": a.currency, "contract_value": a.value,
+        "lines": lines,
+        "gross_cumulative": gross_cum, "previous_gross": prev_gross,
+        "this_gross": gross_cum - prev_gross,
+        "advance_total": adv_total, "advance_recovered": recovery,
+        "retention_pct": ret_pct, "retention_held": retention,
+        "deductions": v.deductions or Decimal("0"),
+        "adjustment": v.adjustment or Decimal("0"),
+        "net_cumulative": net_cum, "previous_net": prev_net,
+        "now_due": net_cum - prev_net,
+        "over_warning": any(ln["over"] for ln in lines),
+    }
+
+
+def create_svc(agreement, actor):
+    """Open a new valuation against an APPROVED agreement — one line per priced
+    scope item, seeded at the previously-certified cumulative, terms snapshotted
+    from the SCA. Only one valuation may be in flight per agreement."""
+    from datetime import date
+
+    from .models import (Document, DocumentRevision, SubcontractValuation,
+                         SubcontractValuationItem)
+    from .numbering import next_ref
+    doc0 = agreement.document
+    if doc0.status != "APPROVED":
+        return None, "Value work only against an approved agreement."
+    if actor.role not in SITE_MANAGE_ROLES:
+        return None, "Only the site team can raise a valuation."
+    if SubcontractValuation.objects.filter(
+            agreement=agreement,
+            document__status__in=_SVC_OPEN, document__is_void=False).exists():
+        return None, "A valuation is already in progress for this agreement."
+    prev = (SubcontractValuation.objects.filter(
+        agreement=agreement, document__status__in=_SVC_CERTIFIED,
+        document__is_void=False).order_by("-seq").first())
+    prev_items = ({i.scope_item_id: i.cumulative_qty for i in prev.items.all()}
+                  if prev else {})
+    site = doc0.site
+    with transaction.atomic():
+        doc = Document.objects.create(
+            doc_type="SVC", ref=next_ref("SVC", site), site=site,
+            project=agreement.project or doc0.project,
+            doc_date=date.today(), status="DRAFT", created_by=actor)
+        DocumentRevision.objects.create(document=doc, rev_label="R0",
+                                        payload={}, created_by=actor)
+        doc.current_revision = doc.revisions.first()
+        doc.save(update_fields=["current_revision"])
+        v = SubcontractValuation.objects.create(
+            document=doc, agreement=agreement, seq=(prev.seq + 1) if prev else 1,
+            previous=prev, advance_percent=agreement.advance_percent or 0,
+            retention_percent=agreement.retention_percent or 0, created_by=actor)
+        for si in agreement.items.filter(is_heading=False):
+            SubcontractValuationItem.objects.create(
+                valuation=v, scope_item=si,
+                cumulative_qty=prev_items.get(si.id, Decimal("0")))
+    audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
+          detail={"ref": doc.ref, "sca": agreement.document.ref})
+    return doc, None
+
+
+def value_svc(v, data, actor):
+    """Enter cumulative quantities per line + header figures on a draft SVC.
+    A line's cumulative can't fall below the previously-certified quantity."""
+    if v.document.status != "DRAFT":
+        return None, "Only a draft valuation can be edited."
+    if actor.role not in SITE_MANAGE_ROLES:
+        return None, "Only the site team can value this."
+    prev_items = ({i.scope_item_id: (i.cumulative_qty or Decimal("0"))
+                   for i in v.previous.items.all()} if v.previous_id else {})
+    by_id = {it.id: it for it in v.items.select_related("scope_item")}
+    for row in (data.get("rows") or []):
+        it = by_id.get(row.get("id"))
+        if it is None:
+            continue
+        q = _dec(row.get("cumulative_qty"))
+        if q is None:
+            continue
+        floor = prev_items.get(it.scope_item_id, Decimal("0"))
+        if q < floor:
+            return None, (f"Line {it.scope_item.item_code or it.scope_item_id}: "
+                          f"cumulative quantity can't fall below the previously "
+                          f"certified ({floor}).")
+        it.cumulative_qty = q
+        it.save(update_fields=["cumulative_qty"])
+    for f in ("deductions", "adjustment"):
+        if f in data:
+            setattr(v, f, _dec(data.get(f)) or Decimal("0"))
+    if "work_done_upto" in data:
+        v.work_done_upto = data.get("work_done_upto") or None
+    if "note" in data:
+        v.note = data.get("note") or ""
+    v.save()
+    audit("document", v.document_id, "SVC_VALUED", actor=actor)
+    return v, None
+
+
 def sca_pdf_context(doc):
     """Merge-field context for the Subcontract Agreement PDF (owner template)."""
     from decimal import Decimal
