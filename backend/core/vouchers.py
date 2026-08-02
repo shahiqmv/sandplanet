@@ -92,9 +92,13 @@ def awaiting_payables():
 
 def settle_payable(payable, actor, ref):
     """Finance pays a voucher-approved credit payable: posts the PAID leg for
-    the PR vendor line and marks the payable SETTLED (owner 2026-07-15)."""
+    the source and marks the payable SETTLED (owner 2026-07-15)."""
     if payable.status != "OUTSTANDING":
         return "This payable is already settled or cancelled."
+    if payable.document.doc_type == "SVC":
+        from . import subcontract
+        subcontract.settle_svc_payable(payable, actor, ref or "")
+        return None
     from .procurement import post_pr_vendor_paid
     post_pr_vendor_paid(payable.document, payable.document_line, actor,
                         ref or "")

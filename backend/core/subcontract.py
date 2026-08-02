@@ -3,7 +3,7 @@ Phase 2). Site-managed: the SA/SE create and staff subcontractors; PM→Director
 activate; HR/HO have no management role. A subcontract worker is an Employee
 (engagement_type SUBCONTRACT), kept out of payroll structurally (Phase 1)."""
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -427,21 +427,57 @@ def _svc_set_status(doc, new, actor, comment=""):
         log.exception("notify_document(SVC) failed")
 
 
-def _svc_commit_cost(v, actor):
-    """At authorisation, post this valuation's certified work as COMMITTED cost
-    under the 'Subcontract' head — the value of work done this period (gross,
-    before advance recovery/retention, which are cash-flow, not cost)."""
-    from . import costing
+def _subcontract_head():
     from .models import CostHead
     head, _ = CostHead.objects.get_or_create(
         name="Subcontract", defaults={"sort_order": 60})
-    this_gross = svc_valuation(v)["this_gross"]
+    return head
+
+
+def _svc_authorise(v, actor):
+    """At signatory authorisation: post this period's certified work as
+    COMMITTED + INCURRED cost under the 'Subcontract' head (the value of work
+    done — before advance recovery/retention, which are cash-flow, not cost),
+    and raise a Payable for the net amount now due so Finance can settle it on
+    a payment voucher (owner D-1)."""
+    from . import costing
+    from .models import Payable
+    head = _subcontract_head()
+    doc, a = v.document, v.agreement
+    val = svc_valuation(v)
+    this_gross = val["this_gross"]
     if this_gross:
-        costing.post(site=v.document.site, cost_head=head, state="COMMITTED",
-                     source="SUBCONTRACT",
-                     amount=this_gross.quantize(Decimal("0.01")),
-                     document=v.document, actor=actor,
-                     currency=v.agreement.currency)
+        for state in ("COMMITTED", "INCURRED"):
+            costing.post(site=doc.site, cost_head=head, state=state,
+                         source="SUBCONTRACT",
+                         amount=this_gross.quantize(Decimal("0.01")),
+                         document=doc, actor=actor, currency=a.currency)
+    now_due = val["now_due"]
+    if now_due > 0:
+        days = a.payment_days if a.payment_days is not None else 30
+        Payable.objects.create(
+            document=doc, site=doc.site, vendor=a.subcontractor.name,
+            terms=(f"{days} days" if a.payment_days is not None else ""),
+            amount=now_due.quantize(Decimal("0.01")),
+            due_date=date.today() + timedelta(days=days))
+
+
+def settle_svc_payable(payable, actor, ref):
+    """Finance pays a voucher-approved SVC payable: post the PAID cost leg,
+    mark the payable settled and the valuation PAID."""
+    from . import costing
+    doc = payable.document
+    costing.post(site=doc.site, cost_head=_subcontract_head(), state="PAID",
+                 source="SUBCONTRACT", amount=payable.amount, document=doc,
+                 actor=actor)
+    payable.status = "SETTLED"
+    payable.settled_on = date.today()
+    payable.settled_ref = ref or ""
+    payable.save(update_fields=["status", "settled_on", "settled_ref"])
+    if doc.status == "AUTHORISED":
+        doc.status = "PAID"
+        doc.save(update_fields=["status", "updated_at"])
+        audit("document", doc.id, "SVC_PAID", actor=actor, to_state="PAID")
 
 
 # The chain: SE submits → PM verifies qty → Director approves → Signatory
@@ -480,7 +516,7 @@ def svc_action(v, action, actor, note=""):
     if action == "submit" and not v.items.exists():
         return "There's nothing to value on this certificate."
     if action == "authorise":
-        _svc_commit_cost(v, actor)
+        _svc_authorise(v, actor)
         v.authorised_at = timezone.now()
         v.save(update_fields=["authorised_at"])
     _svc_set_status(doc, to, actor)

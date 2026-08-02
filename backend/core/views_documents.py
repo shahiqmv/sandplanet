@@ -684,6 +684,9 @@ def pending_groups(user):
               "project_code": d.project.code if d.project else None,
               "doc_date": d.doc_date, "status": d.status,
               "hint": "PM approval"} for d in scas])
+        add("To verify — submitted subcontract valuations",
+            rows(scoped(base.filter(doc_type="SVC", status="SUBMITTED")),
+                 "PM verifies the certified quantities"))
     if user.role in ("DIRECTOR", "ADMIN"):
         add("To award — submitted PRs",
             rows(scoped(base.filter(doc_type="PR", status="SUBMITTED")),
@@ -703,6 +706,9 @@ def pending_groups(user):
         add("To activate — PM-approved subcontract agreements",
             rows(base.filter(doc_type="SCA", status="PM_APPROVED"),
                  "Director activation of the agreement"))
+        add("To approve — verified subcontract valuations",
+            rows(base.filter(doc_type="SVC", status="PM_VERIFIED"),
+                 "Director approval of the valuation"))
         add("To approve — onboarding requests (expat mobilisation)",
             rows(scoped(base.filter(doc_type="OBR", status="SUBMITTED")),
                  "Director approval to mobilise"))
@@ -728,6 +734,9 @@ def pending_groups(user):
         add("To authorise — approved import orders (IPR)",
             rows(base.filter(doc_type="IPR", status="APPROVED"),
                  "Authorise the order — posts the MVR commitment"))
+        add("To authorise — approved subcontract valuations",
+            rows(base.filter(doc_type="SVC", status="DIRECTOR_APPROVED"),
+                 "Authorise — commits the cost, raises the payable"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To confirm — procurement schedules",
             rows(scoped(base.filter(doc_type="PSC", status="SUBMITTED")),

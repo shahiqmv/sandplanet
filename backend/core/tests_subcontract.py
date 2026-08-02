@@ -548,3 +548,62 @@ class SubcontractValuationTests(TestCase):
         self.assertEqual(posts.count(), 1)
         self.assertEqual(posts.first().amount, Decimal("11000.00"))
         self.assertEqual(posts.first().cost_head.name, "Subcontract")
+
+    def test_authorise_creates_payable_then_settle_pays(self):
+        from . import subcontract, vouchers
+        from .models import CostPosting, Payable
+        pm = make_user("pm_p", User.Role.PM, site=self.site)
+        director = make_user("dir_p", User.Role.DIRECTOR)
+        signatory = make_user("sig_p", User.Role.SIGNATORY)
+        finance = make_user("fin_p", User.Role.FINANCE)
+        a = self._approved_sca()
+        v = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v, "1", "40")
+        self._set(v, "2", "100")     # gross 11,000 → now_due 9,350
+        for step, who in (("submit", self.sa), ("verify", pm),
+                          ("approve", director), ("authorise", signatory)):
+            self.assertIsNone(subcontract.svc_action(v, step, who), step)
+        p = Payable.objects.get(document=v.document)
+        self.assertEqual(p.amount, Decimal("9350.00"))
+        self.assertEqual(p.status, "OUTSTANDING")
+        self.assertEqual(p.vendor, "Alif Gang")
+        self.assertIn(p.id, [x.id for x in vouchers.awaiting_payables()])
+        # INCURRED cost = work value (gross); PAID = cash (net)
+        self.assertEqual(
+            CostPosting.objects.filter(document=v.document, state="INCURRED",
+                                       source="SUBCONTRACT").first().amount,
+            Decimal("11000.00"))
+        # Finance settles it → SVC paid + PAID leg
+        self.assertIsNone(vouchers.settle_payable(p, finance, "PV-1"))
+        p.refresh_from_db()
+        v.document.refresh_from_db()
+        self.assertEqual(p.status, "SETTLED")
+        self.assertEqual(v.document.status, "PAID")
+        paid = CostPosting.objects.filter(document=v.document, state="PAID",
+                                          source="SUBCONTRACT")
+        self.assertEqual(paid.count(), 1)
+        self.assertEqual(paid.first().amount, Decimal("9350.00"))
+
+    def test_svc_in_approval_queues(self):
+        from . import subcontract
+        from .views_documents import pending_groups
+        from .views_mobile import APPROVABLE
+        pm = make_user("pm_q", User.Role.PM, site=self.site)
+        director = make_user("dir_q", User.Role.DIRECTOR)
+        signatory = make_user("sig_q", User.Role.SIGNATORY)
+        a = self._approved_sca()
+        v = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v, "1", "40")
+        ref = v.document.ref
+
+        def refs(u):
+            return [it["ref"] for g in pending_groups(u) for it in g["items"]]
+
+        subcontract.svc_action(v, "submit", self.sa)
+        self.assertIn(ref, refs(pm))                       # PM verifies
+        self.assertIn(("SVC", "SUBMITTED"), APPROVABLE)
+        subcontract.svc_action(v, "verify", pm)
+        self.assertIn(ref, refs(director))                  # Director approves
+        subcontract.svc_action(v, "approve", director)
+        self.assertIn(ref, refs(signatory))                 # Signatory authorises
+        self.assertIn(("SVC", "DIRECTOR_APPROVED"), APPROVABLE)

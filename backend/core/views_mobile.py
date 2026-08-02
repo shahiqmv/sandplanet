@@ -83,6 +83,8 @@ APPROVABLE = {
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
     ("OBR", "SUBMITTED"),   # Director approves expat mobilisation on mobile
     ("PSC", "CONFIRMED"),   # Director signs off a procurement schedule on mobile
+    # Subcontract valuation: PM verifies, Director approves, Signatory authorises
+    ("SVC", "SUBMITTED"), ("SVC", "PM_VERIFIED"), ("SVC", "DIRECTOR_APPROVED"),
 }
 
 
@@ -104,6 +106,10 @@ def _card_amount(ref, doc_type):
     if doc_type == "IPR" and hasattr(d, "import_order"):
         from .imports import ipr_order_total
         return float(ipr_order_total(d.import_order))
+    if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
+        from . import subcontract
+        return float(subcontract.svc_valuation(d.subcontract_valuation)
+                     ["now_due"])
     return None
 
 
@@ -513,6 +519,17 @@ def _act(request, ref, kind):
             doc.procurement_schedule,
             "sign_off" if kind == "approve" else "return",
             request.user, comment)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    elif doc.doc_type == "SVC":
+        # One "approve" tap advances the valuation by its stage: PM verify →
+        # Director approve → Signatory authorise.
+        from . import subcontract
+        svc_act = "return" if kind == "return" else {
+            "SUBMITTED": "verify", "PM_VERIFIED": "approve",
+            "DIRECTOR_APPROVED": "authorise"}[doc.status]
+        msg = subcontract.svc_action(doc.subcontract_valuation, svc_act,
+                                     request.user, comment)
         if msg:
             return Response({"detail": msg}, status=400)
     else:
