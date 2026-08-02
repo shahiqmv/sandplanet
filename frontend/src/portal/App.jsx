@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, downloadFile, getToken, setToken } from "./api.js";
+import { api, downloadFile, fetchHtml, getToken, setToken } from "./api.js";
 
 const fmt = (s) => s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -92,8 +92,8 @@ function SiteList({ sites, onOpen }) {
   return (
     <div className="wrap">
       <div className="card">
-        <div className="eyebrow">Your projects</div>
-        <h1>Projects</h1>
+        <div className="eyebrow">Your sites</div>
+        <h1>Sites</h1>
         {sites.map((s) => (
           <div key={s.id} className="sitecard" onClick={() => onOpen(s.id)}>
             <span className="code">{s.code}</span>
@@ -102,25 +102,27 @@ function SiteList({ sites, onOpen }) {
             <span className="muted">›</span>
           </div>
         ))}
-        {!sites.length && <p className="muted">No projects assigned yet.</p>}
+        {!sites.length && <p className="muted">No sites assigned yet.</p>}
       </div>
     </div>
   );
 }
 
-function ProcurementPlan({ id }) {
+function ProcurementPlan({ projectId, code }) {
   const [open, setOpen] = useState(false);
   const [plan, setPlan] = useState(null);
   const load = () => { setOpen(true);
-    if (!plan) api(`/sites/${id}/procurement`).then(setPlan).catch(() => {}); };
+    if (!plan) api(`/projects/${projectId}/procurement`).then(setPlan)
+      .catch(() => {}); };
+  const file = `${code || "Procurement"}-Plan.xlsx`;
   return (
     <>
       <button className="btn" onClick={open ? () => setOpen(false) : load}>
         {open ? "Hide procurement plan" : "View procurement plan"}</button>{" "}
       <button className="btn" style={{ background: "#fff", color: "var(--navy)",
         border: "1px solid #C9D9E5" }}
-        onClick={() => downloadFile(`/sites/${id}/procurement.xlsx`,
-          "Procurement-Plan.xlsx").catch(() => {})}>
+        onClick={() => downloadFile(`/projects/${projectId}/procurement.xlsx`,
+          file).catch(() => {})}>
         ⬇ Excel</button>
       {open && plan && plan.available && (
         <div style={{ marginTop: 12 }}>
@@ -150,100 +152,58 @@ function ProcurementPlan({ id }) {
   );
 }
 
-function SiteView({ id, single, onBack }) {
-  const [d, setD] = useState(null);
+// A report (DPR / DMA / LM) opened inline — server-rendered HTML in an iframe,
+// with a client-side "Download PDF" button.
+function DocViewer({ docRef, label, onClose }) {
+  const [html, setHtml] = useState(null);
   const [err, setErr] = useState(null);
-  useEffect(() => { api(`/sites/${id}`).then(setD)
-    .catch((e) => setErr(e.message)); }, [id]);
-  if (err) return <div className="wrap"><div className="card err">{err}</div></div>;
-  if (!d) return <div className="wrap"><div className="card muted">Loading…</div></div>;
-  const s = d.summary;
+  useEffect(() => { setHtml(null); setErr(null);
+    fetchHtml(`/documents/${docRef}`).then(setHtml)
+      .catch((e) => setErr(e.message)); }, [docRef]);
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "#eef2f6",
+      zIndex: 50, display: "flex", flexDirection: "column" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12,
+        padding: "10px 16px", background: "var(--navy)", color: "#fff" }}>
+        <button className="btn" onClick={onClose}
+          style={{ background: "rgba(255,255,255,.14)" }}>‹ Back</button>
+        <b>{label || docRef}</b>
+        <span style={{ flex: 1 }} />
+        <button className="btn"
+          onClick={() => downloadFile(`/documents/${docRef}.pdf`,
+            `${docRef}.pdf`).catch(() => {})}>⬇ Download PDF</button>
+      </div>
+      <div style={{ flex: 1, overflow: "auto", padding: 16 }}>
+        {err && <div className="card err">{err}</div>}
+        {!html && !err && <div className="card muted">Opening report…</div>}
+        {html && <iframe title={docRef} srcDoc={html}
+          style={{ width: "100%", height: "100%", minHeight: "70vh",
+            border: "1px solid var(--line)", borderRadius: 10,
+            background: "#fff" }} />}
+      </div>
+    </div>
+  );
+}
+
+function DocRow({ label, sub, onView }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 12,
+      padding: "10px 0", borderBottom: "1px solid var(--line)" }}>
+      <div>
+        <div style={{ fontWeight: 600, color: "var(--navy)" }}>{label}</div>
+        {sub && <div className="muted" style={{ fontSize: 13 }}>{sub}</div>}
+      </div>
+      <span style={{ flex: 1 }} />
+      <button className="btn" onClick={onView}>View</button>
+    </div>
+  );
+}
+
+function CamerasPage({ onBack }) {
   return (
     <div className="wrap">
-      {!single && <p><a href="#" onClick={(e) => { e.preventDefault(); onBack(); }}>
-        ‹ All projects</a></p>}
-
-      {/* Day summary */}
-      <div className="card">
-        <div className="eyebrow">{d.site.code} · {fmt(s.date)}</div>
-        <h1>{d.site.name}</h1>
-        <div className="metric" style={{ marginTop: 12 }}>
-          <div><div className="n">{s.workforce}</div>
-            <div className="l">{s.workforce_label}</div></div>
-          <div><div className="n">{s.latest_report ? fmt(s.latest_report)
-            : "—"}</div><div className="l">latest daily report</div></div>
-          <div><div className="n">{s.next_delivery ? fmt(s.next_delivery)
-            : "—"}</div><div className="l">next delivery due</div></div>
-        </div>
-      </div>
-
-      {/* Manpower — total + today's allocation by trade */}
-      <div className="card">
-        <h2>Manpower {d.manpower.attendance_entered ? "on site today"
-          : "assigned"}</h2>
-        {!d.manpower.by_trade.length && <p className="muted">
-          No manpower recorded yet.</p>}
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-          marginTop: 6 }}>
-          {d.manpower.by_trade.map((t) => (
-            <span key={t.trade} style={{ border: "1px solid var(--line)",
-              borderRadius: 8, padding: "6px 12px", background: "#fff" }}>
-              <b style={{ color: "var(--navy)" }}>{t.count}</b>{" "}
-              <span className="muted">{t.trade}</span></span>))}
-        </div>
-      </div>
-
-      {/* Inbound deliveries */}
-      {d.inbound.length > 0 && (
-        <div className="card">
-          <h2>Materials & deliveries</h2>
-          <table className="list"><thead><tr>
-            <th>Item</th><th>Qty</th><th>Due</th><th>Status</th>
-          </tr></thead><tbody>
-            {d.inbound.map((r, i) => (
-              <tr key={i}><td>{r.description}</td>
-                <td>{r.quantity} {r.uom}</td>
-                <td>{fmt(r.eta)}</td>
-                <td>{r.status || r.stage || "—"}</td></tr>))}
-          </tbody></table>
-        </div>)}
-
-      {/* Procurement plan */}
-      {d.procurement.available && (
-        <div className="card">
-          <h2>Procurement plan</h2>
-          <p className="muted" style={{ marginTop: 0 }}>
-            {d.procurement.items} items planned · {d.procurement.upcoming}{" "}
-            upcoming.</p>
-          <ProcurementPlan id={id} />
-        </div>)}
-
-      {/* Daily progress */}
-      <div className="card">
-        <h2>Daily progress</h2>
-        {!d.recent_progress.length && <p className="muted">
-          No daily reports yet.</p>}
-        {d.recent_progress.length > 0 && (
-          <table className="list"><thead><tr>
-            <th>Date</th><th>Report</th><th>Status</th></tr></thead><tbody>
-            {d.recent_progress.map((r) => (
-              <tr key={r.ref}><td>{fmt(r.date)}</td><td>{r.ref}</td>
-                <td><span className={`pill ${r.verified ? "ok" : "wait"}`}>
-                  {r.verified ? "Verified" : "Reported"}</span></td></tr>))}
-          </tbody></table>)}
-      </div>
-
-      {d.recent_works.length > 0 && (
-        <div className="card">
-          <h2>Works submissions</h2>
-          <table className="list"><thead><tr>
-            <th>Date</th><th>Reference</th></tr></thead><tbody>
-            {d.recent_works.map((r) => (
-              <tr key={r.ref}><td>{fmt(r.date)}</td><td>{r.ref}</td></tr>))}
-          </tbody></table>
-        </div>)}
-
-      {/* Cameras */}
+      <p><a href="#" onClick={(e) => { e.preventDefault(); onBack(); }}>
+        ‹ Back to site</a></p>
       <div className="card">
         <h2>Site cameras</h2>
         <div className="soon">
@@ -251,6 +211,135 @@ function SiteView({ id, single, onBack }) {
           <h3>Coming soon</h3>
           <p>Live site views and daily time-lapse are on the way — you'll see
              them here once your site's camera is installed.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SiteView({ id, single, onBack }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [proj, setProj] = useState(0);       // active project tab index
+  const [viewDoc, setViewDoc] = useState(null);   // {ref,label} | null
+  const [showCameras, setShowCameras] = useState(false);
+  useEffect(() => { api(`/sites/${id}`).then(setD)
+    .catch((e) => setErr(e.message)); }, [id]);
+  if (err) return <div className="wrap"><div className="card err">{err}</div></div>;
+  if (!d) return <div className="wrap"><div className="card muted">Loading…</div></div>;
+  if (viewDoc) return <DocViewer docRef={viewDoc.ref} label={viewDoc.label}
+    onClose={() => setViewDoc(null)} />;
+  if (showCameras) return <CamerasPage onBack={() => setShowCameras(false)} />;
+
+  const mp = d.manpower;
+  const projects = d.projects || [];
+  const active = projects[proj] || null;
+  const open = (ref, label) => setViewDoc({ ref, label });
+
+  return (
+    <div className="wrap">
+      {!single && <p><a href="#" onClick={(e) => { e.preventDefault(); onBack(); }}>
+        ‹ All sites</a></p>}
+
+      {/* Header */}
+      <div className="card">
+        <div className="eyebrow">{d.site.code}</div>
+        <h1>{d.site.name}</h1>
+      </div>
+
+      {/* Project switcher — brief + procurement per project */}
+      {projects.length > 0 && (
+        <div className="card">
+          <h2>Project{projects.length > 1 ? "s" : ""}</h2>
+          {projects.length > 1 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+              margin: "8px 0 14px" }}>
+              {projects.map((p, i) => (
+                <button key={p.id}
+                  className={`btn ${i === proj ? "" : "ghost"}`}
+                  style={i === proj ? {} : { background: "#fff",
+                    color: "var(--navy)", border: "1px solid #C9D9E5" }}
+                  onClick={() => setProj(i)}>{p.code}</button>))}
+            </div>)}
+          {active && (
+            <>
+              <div style={{ fontWeight: 700, color: "var(--navy)",
+                fontSize: 17 }}>{active.title}</div>
+              {active.scope
+                ? <p style={{ marginTop: 6, whiteSpace: "pre-wrap" }}>
+                    {active.scope}</p>
+                : <p className="muted" style={{ marginTop: 6 }}>
+                    No project brief published yet.</p>}
+              <div style={{ marginTop: 12 }}>
+                <ProcurementPlan projectId={active.id} code={active.code} />
+              </div>
+            </>)}
+        </div>)}
+
+      {/* Manpower — current strength by trade + grand total */}
+      <div className="card">
+        <h2>Manpower {mp.attendance_entered ? "on site today" : "assigned"}</h2>
+        <div className="metric" style={{ marginTop: 6 }}>
+          <div><div className="n">{mp.grand_total}</div>
+            <div className="l">total workforce</div></div>
+        </div>
+        {mp.by_trade.length > 0 && (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+            marginTop: 12 }}>
+            {mp.by_trade.map((t) => (
+              <span key={t.trade} style={{ border: "1px solid var(--line)",
+                borderRadius: 8, padding: "6px 12px", background: "#fff" }}>
+                <b style={{ color: "var(--navy)" }}>{t.count}</b>{" "}
+                <span className="muted">{t.trade}</span></span>))}
+          </div>)}
+        {!mp.by_trade.length && <p className="muted">
+          No manpower recorded yet.</p>}
+      </div>
+
+      {/* Work allocation — today & tomorrow (DMA) */}
+      <div className="card">
+        <h2>Work &amp; manpower allocation</h2>
+        {!d.dma.today && !d.dma.tomorrow && <p className="muted">
+          No allocation issued yet.</p>}
+        {d.dma.today && <DocRow label="Today's allocation"
+          sub={fmt(d.dma.today.date)}
+          onView={() => open(d.dma.today.ref, "Today's allocation")} />}
+        {d.dma.tomorrow && <DocRow label="Tomorrow's allocation"
+          sub={fmt(d.dma.tomorrow.date)}
+          onView={() => open(d.dma.tomorrow.ref, "Tomorrow's allocation")} />}
+      </div>
+
+      {/* Daily progress reports — last 7 days */}
+      <div className="card">
+        <h2>Daily progress reports</h2>
+        <p className="muted" style={{ marginTop: 0 }}>Last 7 days.</p>
+        {!d.recent_dprs.length && <p className="muted">
+          No daily reports in the last week.</p>}
+        {d.recent_dprs.map((r) => (
+          <DocRow key={r.ref} label={`Daily report · ${fmt(r.date)}`}
+            sub={r.verified ? "Verified" : "Reported"}
+            onView={() => open(r.ref, `Daily report · ${fmt(r.date)}`)} />))}
+      </div>
+
+      {/* Materials on the way — LMs in transit to site */}
+      {d.materials_on_the_way.length > 0 && (
+        <div className="card">
+          <h2>Materials on the way</h2>
+          <p className="muted" style={{ marginTop: 0 }}>
+            Loads currently in transit to site.</p>
+          {d.materials_on_the_way.map((r) => (
+            <DocRow key={r.ref} label={`Loading manifest · ${fmt(r.date)}`}
+              onView={() => open(r.ref, `Loading manifest · ${fmt(r.date)}`)} />))}
+        </div>)}
+
+      {/* Cameras — own page */}
+      <div className="card">
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div><h2 style={{ margin: 0 }}>Site cameras</h2>
+            <span className="muted">Live views &amp; time-lapse.</span></div>
+          <span style={{ flex: 1 }} />
+          <button className="btn" onClick={() => setShowCameras(true)}>
+            Open →</button>
         </div>
       </div>
 

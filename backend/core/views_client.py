@@ -90,68 +90,47 @@ def client_sites(request):
         for s in request.user.sites.all().order_by("code")])
 
 
-def _site_schedule(site):
-    from .models import ProcurementSchedule
-    return (ProcurementSchedule.objects
-            .filter(document__site=site, document__is_void=False)
-            .select_related("document", "project")
-            .order_by("-document__doc_date").first())
-
-
-def _inbound_and_summary(site):
-    """Upcoming deliveries + a procurement summary, from the project's schedule
-    — reusing the vetted client-facing `client_plan` allowlist. Rows with an
-    ETA that aren't delivered yet are 'coming to site'."""
-    sched = _site_schedule(site)
-    if not sched:
-        return [], {"available": False}
-    from . import procurement_client as pc
-    rows = [r for sec in pc.client_plan(sched)["sections"] for r in sec["rows"]]
-    inbound = sorted(
-        [{"description": r.get("description"), "quantity": r.get("quantity"),
-          "uom": r.get("uom"), "eta": r.get("eta"),
-          "stage": r.get("shipment"), "status": r.get("status")}
-         for r in rows if r.get("eta")
-         and (r.get("delivery") or "").lower() not in
-         ("delivered", "received", "done", "complete", "—", "")],
-        key=lambda x: str(x["eta"]))
-    return inbound[:12], {"available": True, "items": len(rows),
-                          "upcoming": len(inbound)}
-
-
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
 def client_site(request, pk):
-    """A client's own site dashboard — allowlisted, read-only, no commercial or
-    internal data. A site outside their set is a 404, never a 403."""
+    """A client's own site dashboard — allowlisted, read-only. Site-wide
+    sections (manpower, DMA, DPR, deliveries) plus the site's projects for the
+    per-project switcher (brief + procurement). Unassigned site → 404."""
+    from datetime import timedelta
     if pk not in client_site_ids(request.user):
         return Response({"detail": "Not found."}, status=404)
     site = Site.objects.get(pk=pk)
     from .views_hr import site_manpower_data
     mp = site_manpower_data(site)
+    today = date.today()
+    tomorrow = today + timedelta(days=1)
+
+    def dma_on(day):
+        d = Document.objects.filter(doc_type="DMA", site=site, doc_date=day,
+                                    is_void=False,
+                                    status="ISSUED").order_by("-id").first()
+        return {"ref": d.ref, "date": d.doc_date} if d else None
+
     dprs = Document.objects.filter(
         site=site, doc_type="DPR", is_void=False,
-        status__in=("ISSUED", "VERIFIED")).order_by("-doc_date")[:14]
-    tws = Document.objects.filter(
-        site=site, doc_type="TWS", is_void=False,
-        status__in=("ISSUED", "ACKNOWLEDGED")).order_by("-doc_date")[:14]
-    inbound, proc = _inbound_and_summary(site)
-    head = mp["present"] if mp["attendance_entered"] else mp["roster_total"]
+        status__in=("ISSUED", "VERIFIED"),
+        doc_date__gte=today - timedelta(days=6)).order_by("-doc_date")[:7]
+    lms = Document.objects.filter(
+        site=site, doc_type="LM", is_void=False,
+        status="DEPARTED").order_by("-doc_date")[:20]
+    projects = site.projects.exclude(
+        status__in=("POTENTIAL", "CLOSED")).order_by("code")
     return Response({
         "site": {"id": site.id, "code": site.code, "name": site.name,
                  "status": site.status},
-        "summary": {
-            "date": date.today(),
-            "workforce": head,
-            "workforce_label": ("on site today" if mp["attendance_entered"]
-                                else "assigned to site"),
-            "latest_report": dprs[0].doc_date if dprs else None,
-            "next_delivery": inbound[0]["eta"] if inbound else None,
-        },
-        # Trade breakdown for today (counts only — no names, no engagement type).
+        "projects": [{"id": p.id, "code": p.code, "title": p.title,
+                      "scope": p.scope} for p in projects],
+        # Current strength on site — by trade + grand total (counts only).
         "manpower": {
-            "total": head, "attendance_entered": mp["attendance_entered"],
+            "as_of": today, "attendance_entered": mp["attendance_entered"],
+            "grand_total": mp["present"] if mp["attendance_entered"]
+            else mp["roster_total"],
             "by_trade": [{"trade": c["name"],
                           "count": c["present"] if mp["attendance_entered"]
                           else c["roster"]}
@@ -159,28 +138,44 @@ def client_site(request, pk):
                          if (c["present"] if mp["attendance_entered"]
                              else c["roster"]) > 0],
         },
-        "inbound": inbound,
-        "procurement": proc,
-        "recent_progress": [
-            {"date": d.doc_date, "ref": d.ref, "verified": d.status == "VERIFIED"}
+        "dma": {"today": dma_on(today), "tomorrow": dma_on(tomorrow)},
+        "recent_dprs": [
+            {"ref": d.ref, "date": d.doc_date, "verified": d.status == "VERIFIED"}
             for d in dprs],
-        "recent_works": [
-            {"date": d.doc_date, "ref": d.ref, "status": d.status}
-            for d in tws],
-        "cameras": {"available": False, "coming_soon": True},
+        "materials_on_the_way": [
+            {"ref": d.ref, "date": d.doc_date} for d in lms],
     })
+
+
+def _project_schedule(project):
+    from .models import ProcurementSchedule
+    return (ProcurementSchedule.objects
+            .filter(project=project, document__is_void=False)
+            .select_related("document", "project")
+            .order_by("-document__doc_date").first())
+
+
+def _client_project(request, pk):
+    """The Project `pk` if it sits on one of the client's own sites, else
+    None — the per-project authorisation gate (a project on another site is a
+    404, never a 403)."""
+    from .models import Project
+    project = Project.objects.filter(pk=pk).select_related("site").first()
+    if not project or project.site_id not in client_site_ids(request.user):
+        return None
+    return project
 
 
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
-def client_site_procurement(request, pk):
-    """The full client procurement plan for the client's own site — the same
-    allowlist the public share link uses, served inside the portal."""
-    if pk not in client_site_ids(request.user):
+def client_project_procurement(request, pk):
+    """The client procurement plan for one of the client's own projects — the
+    same vetted allowlist the public share link uses, served in the portal."""
+    project = _client_project(request, pk)
+    if not project:
         return Response({"detail": "Not found."}, status=404)
-    site = Site.objects.get(pk=pk)
-    sched = _site_schedule(site)
+    sched = _project_schedule(project)
     if not sched:
         return Response({"available": False})
     from . import procurement_client as pc
@@ -190,14 +185,13 @@ def client_site_procurement(request, pk):
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
-def client_site_procurement_xlsx(request, pk):
-    """The procurement plan as a spreadsheet — same client allowlist as the
-    public share link, but served through the authenticated portal."""
+def client_project_procurement_xlsx(request, pk):
+    """The project procurement plan as a spreadsheet — same client allowlist."""
     from django.http import HttpResponse
-    if pk not in client_site_ids(request.user):
+    project = _client_project(request, pk)
+    if not project:
         return Response({"detail": "Not found."}, status=404)
-    site = Site.objects.get(pk=pk)
-    sched = _site_schedule(site)
+    sched = _project_schedule(project)
     if not sched:
         return Response({"detail": "No plan."}, status=404)
     from . import procurement_export
@@ -206,6 +200,61 @@ def client_site_procurement_xlsx(request, pk):
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")
     resp["Content-Disposition"] = (
-        f'attachment; filename="{sched.project.code}-Procurement-Plan.xlsx"')
+        f'attachment; filename="{project.code}-Procurement-Plan.xlsx"')
     wb.save(resp)
+    return resp
+
+
+# ---- report viewer: DPR / DMA / LM rendered inside the portal --------------
+# Site-level reports the client is allowed to open. DPR/DMA/LM carry no
+# commercial or engagement data; everything else (PO/PR/MR/GRN/QA) stays
+# internal.
+CLIENT_VIEWABLE = {"DPR", "DMA", "LM"}
+
+
+def _client_document(request, ref):
+    """The Document `ref` if it is a client-viewable report on one of the
+    client's own sites and issued (not a draft), else None."""
+    doc = (Document.objects.filter(ref=ref, is_void=False)
+           .select_related("site", "current_revision").first())
+    if (not doc or doc.doc_type not in CLIENT_VIEWABLE
+            or doc.site_id not in client_site_ids(request.user)
+            or doc.status == "DRAFT" or not doc.current_revision):
+        return None
+    return doc
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_document(request, ref):
+    """A client-viewable report rendered as HTML for inline display in the
+    portal (same template as the PDF). Returns raw HTML, not JSON."""
+    from django.http import HttpResponse
+    doc = _client_document(request, ref)
+    if not doc:
+        return Response({"detail": "Not found."}, status=404)
+    from . import pdf
+    html = pdf.document_html(doc, doc.current_revision)
+    if html is None:
+        return Response({"detail": "This report has no printable view."},
+                        status=404)
+    return HttpResponse(html, content_type="text/html; charset=utf-8")
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_document_pdf(request, ref):
+    """The same report rendered to PDF for the portal 'Download PDF' button."""
+    from django.http import HttpResponse
+    doc = _client_document(request, ref)
+    if not doc:
+        return Response({"detail": "Not found."}, status=404)
+    from . import pdf
+    pdf_bytes = pdf.document_pdf_bytes(doc, doc.current_revision)
+    if pdf_bytes is None:
+        return Response({"detail": "PDF is unavailable right now."}, status=503)
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'attachment; filename="{doc.ref}.pdf"'
     return resp

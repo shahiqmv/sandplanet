@@ -268,25 +268,64 @@ def _dpr_context(document, revision, filters=None):
     }
 
 
-def generate_pdf(document, revision, milestone):
-    """Render and archive the PDF for a workflow milestone. Returns the
-    Attachment or None when the engine is unavailable locally."""
+def _render_target(document, revision, filters=None):
+    """(template, context) for a document's PDF/HTML render, or None if the
+    type has no printable form. The single source of truth shared by the PDF
+    archiver and the client-portal HTML/PDF viewers."""
     if document.doc_type == "DPR":
-        template, context = "dpr.html", _dpr_context(document, revision)
-    elif document.doc_type == "PO":
+        return "dpr.html", _dpr_context(document, revision, filters)
+    if document.doc_type == "PO":
         # External stationery: no site names or internal refs (owner, R2)
-        template, context = "po.html", _po_context(document, revision)
-    elif document.doc_type in LINE_FORMS:
-        template, context = "lines_form.html", _lines_context(document, revision)
-    elif document.doc_type in ("IR", "MAR", "TWS", "DMA"):
+        return "po.html", _po_context(document, revision)
+    if document.doc_type in LINE_FORMS:
+        return "lines_form.html", _lines_context(document, revision)
+    if document.doc_type in ("IR", "MAR", "TWS", "DMA"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
                    "TWS": pdf_qa.tws_context,
                    "DMA": pdf_qa.dma_context}[document.doc_type]
-        template, context = "qa_form.html", builder(document, revision)
-    else:
+        return "qa_form.html", builder(document, revision)
+    return None
+
+
+def document_html(document, revision, filters=None):
+    """The rendered report as an HTML string (same template as the PDF), or
+    None. Used by the client portal to show a report inline in the browser —
+    image src's resolve to Spaces URLs in production."""
+    target = _render_target(document, revision, filters)
+    if not target:
         return None
+    return render_to_string(f"pdf/{target[0]}", target[1])
+
+
+def document_pdf_bytes(document, revision, filters=None):
+    """The report rendered to PDF bytes on demand (no attachment stored), or
+    None when the engine is unavailable. Used by the client 'Download PDF'
+    button so the client always gets the live report."""
+    html = document_html(document, revision, filters)
+    if html is None:
+        return None
+    try:
+        from weasyprint import HTML
+
+        return HTML(string=html,
+                    base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:
+        if settings.PDF_REQUIRED:
+            raise
+        logger.warning("PDF engine unavailable; skipped PDF for %s",
+                       document.ref)
+        return None
+
+
+def generate_pdf(document, revision, milestone):
+    """Render and archive the PDF for a workflow milestone. Returns the
+    Attachment or None when the engine is unavailable locally."""
+    target = _render_target(document, revision)
+    if not target:
+        return None
+    template, context = target
     html = render_to_string(f"pdf/{template}", context)
     try:
         from weasyprint import HTML

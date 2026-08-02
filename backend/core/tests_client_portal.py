@@ -107,10 +107,10 @@ class ClientPortalAuthTests(TestCase):
         self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
         r = self.client.get(f"/api/client/sites/{self.site.id}")
         self.assertEqual(r.status_code, 200, r.data)
-        for key in ("summary", "manpower", "inbound", "procurement",
-                    "recent_progress"):
+        for key in ("site", "projects", "manpower", "dma", "recent_dprs",
+                    "materials_on_the_way"):
             self.assertIn(key, r.data)
-        self.assertTrue(r.data["cameras"]["coming_soon"])
+        self.assertIn("grand_total", r.data["manpower"])
         # no commercial / internal fields leak through
         blob = json.dumps(r.data, default=str).lower()
         for bad in ("rate", "cost", "contract_value", "engagement",
@@ -119,4 +119,42 @@ class ClientPortalAuthTests(TestCase):
         # a site they aren't assigned to → 404, never 403
         self.assertEqual(
             self.client.get(f"/api/client/sites/{self.other.id}").status_code,
+            404)
+
+    def test_document_viewer_gated(self):
+        from datetime import date
+        from .models import Document
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        # an internal (non-viewable) doc type on their own site → 404
+        po = Document.objects.create(
+            doc_type="PO", ref="PO-VKR-001", site=self.site,
+            doc_date=date.today(), status="ISSUED", created_by=self.admin)
+        self.assertEqual(
+            self.client.get(f"/api/client/documents/{po.ref}").status_code, 404)
+        # a viewable type but on a site they aren't assigned to → 404
+        dpr = Document.objects.create(
+            doc_type="DPR", ref="DPR-HDH-001", site=self.other,
+            doc_date=date.today(), status="ISSUED", created_by=self.admin)
+        self.assertEqual(
+            self.client.get(f"/api/client/documents/{dpr.ref}").status_code, 404)
+
+    def test_project_procurement_gated(self):
+        from .models import Project
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        mine = Project.objects.create(site=self.site, code="VKR-A",
+                                      title="Pools")
+        theirs = Project.objects.create(site=self.other, code="HDH-A",
+                                        title="Villas")
+        # own project, no schedule yet → available:false (200)
+        r = self.client.get(f"/api/client/projects/{mine.id}/procurement")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data["available"])
+        # a project on another site → 404
+        self.assertEqual(
+            self.client.get(
+                f"/api/client/projects/{theirs.id}/procurement").status_code,
             404)
