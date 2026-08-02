@@ -177,13 +177,57 @@ def reschedule_meeting(meeting, data, actor):
         except (TypeError, ValueError):
             pass
     meeting.status = "SCHEDULED"
+    meeting.reminded_at = None              # remind again for the new time
     meeting.save(update_fields=["scheduled_at", "duration_minutes", "status",
-                                "updated_at"])
+                                "reminded_at", "updated_at"])
     _notify_rescheduled(meeting, actor)
     audit("meeting", meeting.id, "MEETING_RESCHEDULED", actor=actor,
           detail={"from": old.isoformat() if old else "",
                   "to": val.isoformat()})
     return meeting, None
+
+
+def send_due_reminders(now=None):
+    """Sweep for scheduled meetings coming up within the reminder window that
+    haven't been reminded yet, and ping their participants. Run periodically by
+    the `meeting_reminders` management command (cron). Idempotent — each meeting
+    reminds once (reminded_at), reset on reschedule. Returns the count sent."""
+    from datetime import timedelta
+
+    from .models import CompanyParameter
+    now = now or timezone.now()
+    try:
+        hours = int(CompanyParameter.objects.get(
+            key="meeting_reminder_hours").value)
+    except (CompanyParameter.DoesNotExist, ValueError, TypeError):
+        hours = 2                           # default lead time (owner-tunable)
+    window = now + timedelta(hours=hours)
+    due = Meeting.objects.filter(
+        status="SCHEDULED", reminded_at__isnull=True,
+        scheduled_at__gt=now, scheduled_at__lte=window)
+    sent = 0
+    for m in due:
+        _remind(m)
+        m.reminded_at = now
+        m.save(update_fields=["reminded_at"])
+        sent += 1
+    return sent
+
+
+def _remind(meeting):
+    from .notify import notify_user
+    ids = set(meeting.attendees.filter(user__isnull=False)
+              .values_list("user_id", flat=True))
+    if meeting.organiser_id:
+        ids.add(meeting.organiser_id)
+    if not ids:
+        return
+    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    extra = meeting.meeting_link or meeting.location_note
+    body = f"Coming up: {when}." + (f" {extra}" if extra else "")
+    for u in User.objects.filter(id__in=ids, is_active=True):
+        notify_user(u, f"Reminder — {meeting.title}", body=body,
+                    category="info")
 
 
 def _notify_rescheduled(meeting, actor):

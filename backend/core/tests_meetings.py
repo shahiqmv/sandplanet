@@ -4,6 +4,7 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
+from . import meetings as svc
 from .models import Meeting, MeetingActionItem, Project, Site, User
 from .tests import make_user
 
@@ -169,6 +170,27 @@ class MeetingTests(TestCase):
                              format="json")
         self.assertEqual(r.status_code, 400)          # blocked at the service
         self.assertIn("custodian", r.data["detail"])
+
+    def test_reminder_sweep_fires_once_and_resets_on_reschedule(self):
+        from datetime import timedelta
+
+        from .models import Notification
+        mid = self._create(attendees=[{"user_id": self.pm.id}]).data["id"]
+        m = Meeting.objects.get(pk=mid)
+        m.scheduled_at = timezone.now() + timedelta(hours=1)   # within 2h window
+        m.reminded_at = None
+        m.save()
+        Notification.objects.all().delete()
+        self.assertEqual(svc.send_due_reminders(), 1)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.pm, title__icontains="Reminder").exists())
+        # a second sweep doesn't re-send
+        self.assertEqual(svc.send_due_reminders(), 0)
+        # rescheduling clears the flag → reminds again for the new time
+        self.client.post(f"/api/v1/meetings/{mid}/reschedule",
+                         {"scheduled_at": (timezone.now()
+                          + timedelta(hours=1)).isoformat()}, format="json")
+        self.assertEqual(svc.send_due_reminders(), 1)
 
     @override_settings(MEDIA_ROOT="test-media")
     def test_audio_upload_download_delete(self):

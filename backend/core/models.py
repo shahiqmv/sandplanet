@@ -3894,6 +3894,9 @@ class Meeting(models.Model):
 
     organiser = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
                                   blank=True, related_name="meetings_organised")
+    # Stamped when the upcoming-meeting reminder has been sent, so it fires
+    # once; cleared on reschedule so the moved meeting reminds again.
+    reminded_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
