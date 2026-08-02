@@ -336,6 +336,20 @@ def schedule_submit(request, pk):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+def schedule_reopen(request, pk):
+    """Reopen a signed-off schedule so the team can edit lines (change batch)."""
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    msg = ps.reopen(sched, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    sched.refresh_from_db()
+    return Response(ps.schedule_dict(sched, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
 def schedule_action(request, pk):
     sched, err = _get_sched(request, pk)
     if err:

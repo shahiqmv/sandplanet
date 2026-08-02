@@ -419,6 +419,14 @@ function ScheduleDetail({ id, me, onBack }) {
   });
   const submit = () => run(() =>
     api(`/procurement-schedules/${id}/submit`, { method: "POST" }));
+  const reopen = () => {
+    if (!window.confirm(
+      "Reopen this signed-off schedule for changes? It returns to draft so " +
+      "the team can edit lines, then goes back through confirm + sign-off.")) {
+      return;
+    }
+    run(() => api(`/procurement-schedules/${id}/reopen`, { method: "POST" }));
+  };
   const share = () => run(() =>
     api(`/procurement-schedules/${id}/share`, { method: "POST" }));
   const revokeShare = () => run(() =>
@@ -478,6 +486,10 @@ function ScheduleDetail({ id, me, onBack }) {
               onClick={() => act("sign_off")}>Sign off baseline</Btn>
             <Btn variant="ghost" disabled={busy}
               onClick={() => act("return")}>Return to PM</Btn></>}
+          {c.can_reopen &&
+            <Btn variant="secondary" disabled={busy} onClick={reopen}
+              title="Reopen the signed-off schedule so the team can edit lines">
+              Reopen for changes</Btn>}
           <a href={`/api/v1/procurement-schedules/${c.id}/export`}
             style={{ ...linkBtn, marginLeft: "auto", textDecoration: "none" }}
             title="Download the client procurement plan (Excel)">

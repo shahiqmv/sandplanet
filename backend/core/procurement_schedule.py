@@ -263,6 +263,22 @@ def submit(sched, actor):
     return None
 
 
+def reopen(sched, actor):
+    """A proposer reopens a signed-off schedule to change lines — the same
+    change-batch add_line opens implicitly, but as an explicit action so the
+    team can edit an existing signed-off schedule. Goes back to DRAFT; the
+    signed lines stay operational until it's re-submitted and re-signed."""
+    doc = sched.document
+    if actor.role not in PROPOSE_ROLES:
+        return "Only the project team can reopen the schedule for changes."
+    if doc.status != "SIGNED_OFF":
+        return "Only a signed-off schedule can be reopened for changes."
+    _set_status(doc, "DRAFT", "REOPEN", actor,
+                comment="Reopened for changes", notify=False)
+    audit("document", doc.id, "PSC_REOPENED", actor=actor)
+    return None
+
+
 def decide(sched, action, actor, note=""):
     """Workflow action dispatch — shared by desktop and mobile."""
     doc = sched.document
@@ -433,8 +449,9 @@ def schedule_dict(sched, user):
         "baseline_signed_at": sched.baseline_signed_at,
         "baseline_signed_by": (sched.baseline_signed_by.full_name
                                if sched.baseline_signed_by_id else ""),
-        "can_edit_plan": (user.role in PROPOSE_ROLES
-                          and doc.status in ("DRAFT", "SIGNED_OFF")),
+        "can_edit_plan": user.role in PROPOSE_ROLES and doc.status == "DRAFT",
+        "can_reopen": (user.role in PROPOSE_ROLES
+                       and doc.status == "SIGNED_OFF"),
         "can_submit": (user.role in PROPOSE_ROLES and doc.status == "DRAFT"
                        and any(ln.state == "PROPOSED" for ln in lines)),
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",

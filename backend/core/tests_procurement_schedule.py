@@ -114,6 +114,57 @@ class ProcurementScheduleTests(TestCase):
         self.assertEqual(r.data["lines"][0]["state"], "SIGNED_OFF")
         self.assertTrue(r.data["baseline_signed_at"])
 
+    def test_signed_off_shows_no_false_edit_then_reopen_edits(self):
+        # Build a signed-off schedule.
+        pk = self._open()
+        line_id = self._add_line(pk).data["lines"][0]["id"]
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.purch)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "confirm"}, format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "sign_off"}, format="json")
+        # PM sees no misleading Edit affordance, but a reopen path.
+        self.client.force_authenticate(self.pm)
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        self.assertFalse(d["can_edit_plan"])
+        self.assertTrue(d["can_reopen"])
+        # Editing a line while signed off is rejected (baseline is locked).
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{line_id}",
+            {"remarks": "typo fix"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # Reopen → DRAFT → the PM can edit again.
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/reopen")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "DRAFT")
+        self.assertTrue(r.data["can_edit_plan"])
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{line_id}",
+            {"remarks": "typo fix"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_reopen_only_from_signed_off_and_by_team(self):
+        pk = self._open()                              # DRAFT
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(
+            self.client.post(
+                f"/api/v1/procurement-schedules/{pk}/reopen").status_code, 400)
+        # Purchasing isn't a proposer → can't reopen even a signed-off one
+        self._add_line(pk)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.purch)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "confirm"}, format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "sign_off"}, format="json")
+        self.client.force_authenticate(self.purch)
+        self.assertEqual(
+            self.client.post(
+                f"/api/v1/procurement-schedules/{pk}/reopen").status_code, 400)
+
     def test_purchasing_returns_to_pm(self):
         pk = self._open()
         self._add_line(pk)

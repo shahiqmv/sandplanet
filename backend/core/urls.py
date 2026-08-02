@@ -454,6 +454,8 @@ urlpatterns = [
          name="psched-submit"),
     path("procurement-schedules/<int:pk>/action", psched_api.schedule_action,
          name="psched-action"),
+    path("procurement-schedules/<int:pk>/reopen", psched_api.schedule_reopen,
+         name="psched-reopen"),
     path("procurement-schedules/<int:pk>/export", psched_api.schedule_export,
          name="psched-export"),
     path("procurement-schedules/<int:pk>/share", psched_api.schedule_share,
