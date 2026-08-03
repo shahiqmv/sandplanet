@@ -1,7 +1,26 @@
-# Caddy reverse proxy — automatic HTTPS (Let's Encrypt) for the domain in
-# $DOMAIN. Terminates TLS and forwards to the app; Caddy sets
-# X-Forwarded-Proto, which Django trusts via SECURE_PROXY_SSL_HEADER.
+# Caddy reverse proxy — automatic HTTPS (Let's Encrypt). Terminates TLS and
+# forwards to the app, setting X-Forwarded-Proto (Django trusts it via
+# SECURE_PROXY_SSL_HEADER). Two front doors, one app:
+#   $DOMAIN         → staff app + mobile PWA (/m/) + API
+#   $PORTAL_DOMAIN  → client portal (the /portal/ SPA on the same app), so
+#                     clients get a clean https://client.sandplanet.mv/ URL.
+
 {$DOMAIN} {
 	encode gzip
 	reverse_proxy web:8000
+}
+
+{$PORTAL_DOMAIN} {
+	encode gzip
+	# Assets, media and the client API are shared with the app and pass straight
+	# through; every other (page) request renders the portal shell, so the URL
+	# in the client's browser stays https://<portal>/ instead of /portal/.
+	@passthrough path /assets/* /static/* /media/* /api/* /portal/* /favicon.ico /robots.txt /manifest.webmanifest
+	handle @passthrough {
+		reverse_proxy web:8000
+	}
+	handle {
+		rewrite * /portal/
+		reverse_proxy web:8000
+	}
 }

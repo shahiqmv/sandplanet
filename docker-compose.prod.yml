@@ -43,6 +43,10 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
+      # The client portal's own domain. Defaults to an internal name (harmless
+      # self-signed cert, never used) so the staff site still starts if it's
+      # unset; set PORTAL_DOMAIN in .env to serve the portal publicly.
+      PORTAL_DOMAIN: ${PORTAL_DOMAIN:-client.localhost}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

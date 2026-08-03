@@ -8,8 +8,15 @@ the built SPA, so there is one web service, not two.
 
 1. **Droplet** — Ubuntu 22.04+, 2 GB RAM min (PDF rendering + Postgres).
    Install Docker Engine + the compose plugin.
-2. **DNS** — point an A record for your domain (e.g. `app.sandplanet.mv`) at
-   the droplet's IP. Caddy needs this resolving before it can get a cert.
+2. **DNS** — point an A record at the droplet's IP for each hostname you serve;
+   Caddy needs them resolving before it can fetch a cert:
+   - `app.sandplanet.mv`    → staff app (`DOMAIN`)
+   - `client.sandplanet.mv` → client portal (`PORTAL_DOMAIN`, optional)
+
+   Both hostnames hit the same app: staff at `https://app.sandplanet.mv`, the
+   portal at `https://client.sandplanet.mv` (equivalently
+   `https://app.sandplanet.mv/portal/`). List both in `DJANGO_ALLOWED_HOSTS`
+   and `CSRF_TRUSTED_ORIGINS`.
 3. **Spaces** — create a Spaces bucket (e.g. `sandplanet`) and a Spaces
    access key/secret. Note the regional endpoint
    (e.g. `https://sgp1.digitaloceanspaces.com`).
