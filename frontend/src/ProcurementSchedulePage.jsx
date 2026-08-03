@@ -436,8 +436,14 @@ function ScheduleDetail({ id, me, onBack }) {
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
   if (!c) return <div style={card}>Loading…</div>;
 
-  const secList = c.sections.length ? c.sections
-    : [{ id: "none", code: "", title: "Ungrouped" }];
+  // Always show the ungrouped bucket when it has lines — even alongside real
+  // sections — so lines added before a section was created never vanish.
+  const hasUngrouped = (c.groups?.["0"] || []).length > 0;
+  const secList = [
+    ...c.sections,
+    ...(hasUngrouped || !c.sections.length
+      ? [{ id: "none", code: "", title: "Ungrouped" }] : []),
+  ];
 
   return (
     <div>
@@ -512,8 +518,11 @@ function ScheduleDetail({ id, me, onBack }) {
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,
             overflowX: "auto" }}>
-            {sec.code && <div style={{ padding: "8px 12px", fontWeight: 600,
-              background: "var(--sky-soft)" }}>{sec.code} — {sec.title}</div>}
+            {(sec.code || sec.id === "none") && (
+              <div style={{ padding: "8px 12px", fontWeight: 600,
+                background: "var(--sky-soft)" }}>
+                {sec.code ? `${sec.code} — ${sec.title}` : sec.title}
+              </div>)}
             <table style={{ width: "100%", borderCollapse: "collapse",
               fontSize: 12.5 }}>
               <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
