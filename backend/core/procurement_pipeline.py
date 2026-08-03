@@ -200,7 +200,19 @@ def line_ipr_actuals(line):
         val = order.lines.filter(item_id=line.item_id).aggregate(
             v=Sum(F("order_qty") * F("unit_price")))["v"]
     if val is None:
-        val = order.lines.aggregate(v=Sum(F("order_qty") * F("unit_price")))["v"]
+        total = order.lines.aggregate(
+            v=Sum(F("order_qty") * F("unit_price")))["v"]
+        if total is not None:
+            # One IPR can cover several schedule lines (a bundle ordered
+            # together). Without a per-item match, split the order total across
+            # the lines that share this IPR so a bundle doesn't multiply-count
+            # the same order (owner 2026-08-03).
+            from .models import ScheduleLine
+            n = (ScheduleLine.objects.filter(ipr_id=line.ipr_id)
+                 .exclude(state="CANCELLED").count()) or 1
+            val = total / n
+        else:
+            val = total
     return {
         "supplier": order.supplier.name if order.supplier_id else "",
         "country": order.supplier.country if order.supplier_id else "",

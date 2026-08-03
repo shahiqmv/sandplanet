@@ -98,6 +98,43 @@ class ProcurementValuesTests(TestCase):
                          Decimal("1000"))
         self.assertEqual(ln["ipr_supplier"], "AquaPure")
 
+    def test_shared_ipr_total_split_across_lines(self):
+        # Two free-text lines (no item match) linked to ONE IPR order → the
+        # order total is split across them, so a bundle doesn't 2x-count it.
+        self.client.force_authenticate(self.pm)
+        pk = self.client.post(
+            f"/api/v1/projects/{self.project.id}/procurement-schedule").data["id"]
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/lines",
+                         {"description": "Timber A", "section_code": "A"},
+                         format="json")
+        rows = self.client.post(
+            f"/api/v1/procurement-schedules/{pk}/lines",
+            {"description": "Timber B", "section_code": "A"},
+            format="json").data["lines"]
+        ids = [r["id"] for r in rows]
+        ipr = Document.objects.create(
+            doc_type="IPR", ref="IPR-HO-002", site=self.site,
+            doc_date=date(2026, 8, 1), status="AUTHORISED", created_by=self.pm)
+        supplier = Supplier.objects.create(
+            name="Timberco", category=Supplier.Category.values[0],
+            country="Malaysia")
+        ch = CostHead.objects.create(name="Imports2")
+        order = ImportOrder.objects.create(
+            document=ipr, supplier=supplier, order_currency="USD",
+            exchange_rate=Decimal("15.42"))
+        ImportOrderLine.objects.create(
+            order=order, line_no=1, item=self.item, order_qty=Decimal("10"),
+            unit_price=Decimal("100"), cost_head=ch)          # order total 1000
+        for lid in ids:
+            ln = ScheduleLine.objects.get(pk=lid)
+            ln.ipr = ipr; ln.item = None; ln.save(update_fields=["ipr", "item"])
+        self.pk = pk
+        d = self._detail(self.director)
+        vals = sorted(Decimal(str(l["committed"]["value"])) for l in d["lines"])
+        self.assertEqual(vals, [Decimal("500"), Decimal("500")])
+        self.assertEqual(Decimal(str(d["totals"]["committed"])),
+                         Decimal("1000"))                       # not 2000
+
     def test_totals_sum_estimates(self):
         self._line()
         d = self._detail(self.director)
