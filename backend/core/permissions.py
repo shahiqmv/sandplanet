@@ -29,6 +29,17 @@ class IsAdminOrReadOnly(BasePermission):
         return request.user.role == User.Role.ADMIN
 
 
+class IsHrAdminOrReadOnly(BasePermission):
+    """Company masters the Director's office (PA) maintains as part of full HR
+    access, alongside Admin (owner 2026-08-03). Read for any authed user."""
+    def has_permission(self, request, view):
+        if not request.user.is_authenticated:
+            return False
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return True
+        return request.user.role in (User.Role.ADMIN, User.Role.PA)
+
+
 def scoped_site_ids(user):
     """Site ids the user may read. None = all sites (HO roles, spec §3)."""
     if user.is_ho:

@@ -21,6 +21,7 @@ from .models import (
 from .permissions import (
     IsAdmin,
     IsAdminOrReadOnly,
+    IsHrAdminOrReadOnly,
     IsSiteManagerOrReadOnly,
     scoped_site_ids,
 )
@@ -329,7 +330,7 @@ class UserViewSet(viewsets.ModelViewSet):
 
 class ManpowerCategoryViewSet(viewsets.ModelViewSet):
     serializer_class = ManpowerCategorySerializer
-    permission_classes = [IsAdminOrReadOnly]
+    permission_classes = [IsHrAdminOrReadOnly]
     queryset = ManpowerCategory.objects.all()
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 

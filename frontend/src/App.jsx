@@ -104,17 +104,17 @@ const NAV_GROUPS = [
     subs: [["my-pyr", "Payment Requests", null]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA"],
-    subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN"]],
+    subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
            ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM",
                                          "PA"]],
            ["employees", "Employees", null],
            ["ho-staff", "Head Office", ["HO_HR", "FINANCE", "DIRECTOR",
                                         "ADMIN", "PA"]],
-           ["worker-categories", "Worker Categories", ["ADMIN"]],
-           ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN"]],
-           ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN"]],
+           ["worker-categories", "Worker Categories", ["ADMIN", "PA"]],
+           ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN", "PA"]],
+           ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
            ["staff-cost", "Staff Cost",
-            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"]],
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
   { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
@@ -542,7 +542,7 @@ export default function App() {
                              mode: "project", projectId: id })} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "hr" && (
             <HRDashboard refresh={refresh} />
           )}
@@ -855,12 +855,13 @@ export default function App() {
             hoPage === "ho-staff" && (
             <HeadOfficePage me={me} sites={sites} />
           )}
-          {!docView && !openSite && me.role === "ADMIN" &&
+          {!docView && !openSite &&
+            ["ADMIN", "PA"].includes(me.role) &&
             hoPage === "worker-categories" && (
             <WorkerCategoriesPage me={me} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "ADMIN"].includes(me.role) &&
+            ["HO_HR", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "overtime-rates" && (
             <OvertimeRatesPage me={me} />
           )}
@@ -869,12 +870,12 @@ export default function App() {
             <UsersPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "ADMIN"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "payroll" && (
             <PayrollRunPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "staff-cost" && (
             <StaffCostPage />
           )}

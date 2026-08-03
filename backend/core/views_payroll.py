@@ -9,7 +9,7 @@ from . import payroll
 from .audit import audit
 from .models import PayrollLine, PayrollRun, Site
 
-ROLES = ("HO_HR", "FINANCE", "ADMIN")
+ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # PA = full HR (owner 2026-08-03)
 
 # HR-editable inputs on a draft line
 LINE_FIELDS = ("days_worked", "fridays_worked", "ot_hours", "allowance",
