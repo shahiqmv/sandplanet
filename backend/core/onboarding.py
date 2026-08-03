@@ -232,7 +232,7 @@ def decide_case(case, action, actor, note=""):
 
 # ---- track stage machines (Phase 2) --------------------------------------
 
-PROCESS_ROLES = ("HO_HR", "ADMIN")
+PROCESS_ROLES = ("HO_HR", "ADMIN", "PA")   # PA = full HR (owner 2026-08-03)
 
 # Track A (WP): endorsement is inserted only for Sri Lankan nationals.
 _WP_HEAD = ["WP_APPOINTMENT", "WP_APPLICATION", "WP_APPROVED", "WP_DEPOSIT"]

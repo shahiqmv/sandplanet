@@ -494,7 +494,7 @@ const PORTAL_OPTS = [["SUBMITTED", "Submitted"],
   ["REJECTED", "Rejected"]];
 
 function Processing({ c, me, onReload }) {
-  const canProcess = ["HO_HR", "ADMIN"].includes(me.role);
+  const canProcess = ["HO_HR", "ADMIN", "PA"].includes(me.role);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [arrived, setArrived] = useState("");
