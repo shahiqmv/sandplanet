@@ -269,7 +269,7 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
         </div>}
         {vis.show_cameras && <div className="qcard" onClick={goCameras}>
           <div className="qic">📹</div>
-          <div><h3>Site cameras</h3><p>Live views &amp; daily time-lapse</p></div>
+          <div><h3>Live Feeds</h3><p>Live views &amp; daily time-lapse</p></div>
           <div className="arw">→</div>
         </div>}
       </div>
@@ -640,7 +640,7 @@ function CamerasPage({ onBack }) {
     <>
       <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>‹ Back to overview</button>
       <div className="card">
-        <div className="sec-title"><h2>Site cameras</h2></div>
+        <div className="sec-title"><h2>Live Feeds</h2></div>
         <div className="soon">
           <div className="icon">📹</div>
           <h3>Coming soon</h3>
@@ -682,7 +682,7 @@ function SitePortal({ id, single, onBackToSites }) {
         {vis.show_procurement && <button className={`seg ${seg === "proc" ? "on" : ""}`}
           onClick={() => setView({ name: "proc" })}>Procurement</button>}
         {vis.show_cameras && <button className={`seg ${seg === "cameras" ? "on" : ""}`}
-          onClick={() => setView({ name: "cameras" })}>Cameras</button>}
+          onClick={() => setView({ name: "cameras" })}>Live Feeds</button>}
       </div></div>
 
       <div className={`wrap ${wide ? "wide" : ""}`}>

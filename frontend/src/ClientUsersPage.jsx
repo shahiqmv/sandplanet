@@ -11,7 +11,7 @@ const SECTIONS = [
   ["show_programme", "Programme"],
   ["show_procurement", "Procurement"],
   ["show_gallery", "Gallery"],
-  ["show_cameras", "Cameras"],
+  ["show_cameras", "Live Feeds"],
 ];
 
 export default function ClientUsersPage({ sites }) {
