@@ -910,7 +910,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   const [doc, setDoc] = useState(initial);
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
-  const [quoteFiles, setQuoteFiles] = useState({});
+  const [quotes, setQuotes] = useState([]);   // this PR's captured quotations
   const [preview, setPreview] = useState(null);   // item photo lightbox
   const [editLm, setEditLm] = useState(null);      // manifest fix (LM)
   const [storeAvail, setStoreAvail] = useState(null);   // MR-from-store (HO)
@@ -1005,9 +1005,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       api("/parameters/gst_rate").then((p) => setGstRate(+p.value))
         .catch(() => {});
       api(`/pr/${initial.ref}/quotations`).then((qs) =>
-        setQuoteFiles(Object.fromEntries(
-          qs.filter((q) => q.file_url)
-            .map((q) => [q.supplier_name, q.file_url])))).catch(() => {});
+        setQuotes(qs.filter((q) => q.file_url))).catch(() => {});
     }
   }, [initial.doc_type, initial.ref]);
 
@@ -1089,6 +1087,23 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
   for (const a of doc.attachments || []) {
     if (a.kind === "PAYMENT_SLIP") slipByVendor[a.caption] = a.url;
   }
+
+  // Each vendor row → its own uploaded quotation. Matching by supplier name
+  // alone breaks when the same supplier quotes twice on one PR (both rows then
+  // show one file); disambiguate by the quotation reference, then by position
+  // (the k-th same-supplier row → the k-th same-supplier quote).
+  const norm = (s) => (s || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const quoteUrlForLine = (line) => {
+    const mine = quotes.filter((q) => q.supplier_name === line.vendor);
+    if (!mine.length) return null;
+    if (mine.length === 1) return mine[0].file_url;
+    const ref = norm(line.quotation_ref);
+    const byRef = ref && mine.find((q) => norm(q.quote_ref) === ref);
+    if (byRef) return byRef.file_url;
+    const sameVendor = (doc.lines || []).filter((l) => l.vendor === line.vendor);
+    const idx = sameVendor.findIndex((l) => l.id === line.id);
+    return (idx >= 0 && mine[idx]) ? mine[idx].file_url : null;
+  };
 
   return (
     <section style={card}>
@@ -1348,14 +1363,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                   <td style={td}>{line.vendor}</td>
                   <td style={td}>
                     {line.quotation_ref}
-                    {quoteFiles[line.vendor] && (
+                    {(() => { const u = quoteUrlForLine(line); return u && (
                       <>
                         {line.quotation_ref ? " " : ""}
-                        <a href={quoteFiles[line.vendor]} target="_blank"
-                           rel="noreferrer"
+                        <a href={u} target="_blank" rel="noreferrer"
                            title="Open the uploaded quotation">📎 quote</a>
                       </>
-                    )}
+                    ); })()}
                   </td>
                   <td style={td}>{line.payment_terms}
                     {line.credit_days != null
