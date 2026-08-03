@@ -126,9 +126,10 @@ def client_site(request, pk):
                  "progress": cr.project_progress(site)},
         "projects": [{"id": p.id, "code": p.code, "title": p.title,
                       "scope": p.scope,
-                      "progress": cr.project_progress(site, p.code),
+                      "progress": cr.client_project_progress(p),
                       "start_date": p.start_date,
-                      "target_date": p.planned_completion}
+                      "target_date": p.planned_completion,
+                      "has_programme": p.activities.exists()}
                      for p in projects],
         # Current strength on site — by trade + grand total, from the latest
         # daily report (includes subcontract labour).
@@ -159,6 +160,19 @@ def _client_project(request, pk):
     if not project or project.site_id not in client_site_ids(request.user):
         return None
     return project
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_project_programme(request, pk):
+    """The client-safe construction programme (Gantt data) for one of the
+    client's own projects."""
+    project = _client_project(request, pk)
+    if not project:
+        return Response({"detail": "Not found."}, status=404)
+    from . import client_report as cr
+    return Response(cr.project_programme(project))
 
 
 @api_view(["GET"])

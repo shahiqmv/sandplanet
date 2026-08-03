@@ -21,6 +21,9 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
   const [editRow, setEditRow] = useState(null); // { id, ...fields }
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
+  const [pubEdit, setPubEdit] = useState(false);   // client-progress override
+  const [pubPct, setPubPct] = useState("");
+  const [pubNote, setPubNote] = useState("");
 
   const canManage = CAN_MANAGE.includes(me.role);
 
@@ -115,6 +118,20 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
     }
   }
 
+  async function saveClientProgress(clear) {
+    setError(null);
+    try {
+      await api(`/projects/${project.id}/client-progress`, {
+        method: "POST",
+        body: clear
+          ? { override: "", note: "" }
+          : { override: pubPct === "" ? "" : +pubPct, note: pubNote },
+      });
+      setPubEdit(false);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function removeRow(a) {
     if (!window.confirm(`Delete "${a.name}" from the programme?`)) return;
     setError(null);
@@ -155,6 +172,55 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
           </>
         )}
       </p>
+
+      {canManage && (
+        <div style={{ ...card, background: "var(--sky-soft)",
+                      margin: "12px 0", padding: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between",
+                        alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+            <strong style={{ color: "var(--sp-navy)" }}>
+              Client-published progress</strong>
+            {!pubEdit && (
+              <button style={ghostButton} onClick={() => {
+                setPubPct(detail.progress_override ?? "");
+                setPubNote(detail.progress_note || ""); setPubEdit(true);
+              }}>Edit</button>)}
+          </div>
+          {!pubEdit ? (
+            <div style={{ fontSize: 13, color: "#5a6b78", marginTop: 4 }}>
+              {detail.progress_override != null
+                ? <>Clients see <strong>{detail.progress_override}%</strong>{" "}
+                    (published) · programme computes {detail.overall_progress}%.</>
+                : <>Clients see the programme figure{" "}
+                    <strong>{detail.overall_progress}%</strong> (auto).</>}
+              {detail.progress_note && <div style={{ marginTop: 4,
+                fontStyle: "italic" }}>“{detail.progress_note}”</div>}
+            </div>
+          ) : (
+            <div style={{ marginTop: 8 }}>
+              <label style={{ fontSize: 13 }}>Published %:{" "}
+                <input type="number" min="0" max="100" value={pubPct}
+                  onChange={(e) => setPubPct(e.target.value)}
+                  placeholder={`${detail.overall_progress} (auto)`}
+                  style={{ ...inputStyle, width: 100 }} /></label>
+              <span style={{ fontSize: 12, color: "#5a6b78", marginLeft: 8 }}>
+                blank = use the programme figure</span>
+              <textarea value={pubNote}
+                onChange={(e) => setPubNote(e.target.value)} rows={2}
+                placeholder="Short status note for the client (optional)"
+                style={{ ...inputStyle, width: "100%", marginTop: 8 }} />
+              <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                <button style={buttonStyle}
+                  onClick={() => saveClientProgress(false)}>Publish</button>
+                <button style={ghostButton}
+                  onClick={() => saveClientProgress(true)}>Reset to auto</button>
+                <button style={ghostButton}
+                  onClick={() => setPubEdit(false)}>Cancel</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {showGantt && activities.some((a) => a.start) && (
         <div style={{ margin: "12px 0" }}>

@@ -39,6 +39,24 @@ def _can_view_value(user, project):
     return False
 
 
+def programme_overall_progress(project):
+    """Duration-weighted mean %-complete over the programme's LEAF tasks
+    (summary rows + milestones carry no weight). Returns None when the project
+    has no weighted programme yet (so callers can distinguish 'no programme'
+    from a genuine 0%)."""
+    activities = list(project.activities.all())
+    rows = []
+    for i, activity in enumerate(activities):
+        is_leaf = (i + 1 >= len(activities)
+                   or activities[i + 1].indent <= activity.indent)
+        if is_leaf and not activity.is_milestone:
+            rows.append((activity.duration_days or 1, activity.progress))
+    total = sum(w for w, _ in rows)
+    if not total:
+        return None
+    return round(sum(w * float(p) for w, p in rows) / total, 1)
+
+
 class ProjectSerializer(serializers.ModelSerializer):
     site_code = serializers.CharField(source="site.code", read_only=True)
     pm_name = serializers.CharField(source="pm.full_name", read_only=True,
@@ -58,6 +76,7 @@ class ProjectSerializer(serializers.ModelSerializer):
                   "manpower_summary", "manpower_plan", "start_date",
                   "planned_completion", "actual_completion", "status",
                   "activity_count", "overall_progress", "latest_manpower",
+                  "progress_override", "progress_note", "progress_updated_at",
                   # contract terms (QS)
                   "contract_type", "payment_terms", "client_credit_days",
                   "advance_payment_pct",
@@ -86,17 +105,7 @@ class ProjectSerializer(serializers.ModelSerializer):
     def get_overall_progress(self, obj):
         """Duration-weighted mean over LEAF tasks only — summary rows and
         milestones carry no weight of their own."""
-        activities = list(obj.activities.all())
-        rows = []
-        for i, activity in enumerate(activities):
-            is_leaf = (i + 1 >= len(activities) or
-                       activities[i + 1].indent <= activity.indent)
-            if is_leaf and not activity.is_milestone:
-                rows.append((activity.duration_days or 1, activity.progress))
-        total = sum(w for w, _ in rows)
-        if not total:
-            return 0
-        return round(sum(w * float(p) for w, p in rows) / total, 1)
+        return programme_overall_progress(obj) or 0
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
@@ -404,6 +413,44 @@ def activity_detail(request, pk):
     audit("programme_activity", activity.id, "ACTIVITY_UPDATED",
           actor=request.user, detail={"fields": sorted(request.data.keys())})
     return Response(serializer.data)
+
+
+@api_view(["POST"])
+def project_client_progress(request, pk):
+    """PM / Director / Admin publish what the client sees for a project's
+    progress: an optional headline % that supersedes the programme roll-up,
+    plus a short status note. Send override="" to clear and revert to the
+    computed programme %."""
+    from django.utils import timezone
+    try:
+        project = Project.objects.select_related("site").get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in PROJECT_CREATE_ROLES:
+        return Response({"detail": "Admin / Director / PM only."}, status=403)
+    if "override" in request.data:
+        val = request.data.get("override")
+        if val in (None, ""):
+            project.progress_override = None
+        else:
+            try:
+                project.progress_override = max(0.0, min(100.0, float(val)))
+            except (TypeError, ValueError):
+                return Response({"detail": "Progress must be a number 0–100."},
+                                status=400)
+    if "note" in request.data:
+        project.progress_note = (request.data.get("note") or "").strip()
+    project.progress_updated_at = timezone.now()
+    project.progress_updated_by = request.user
+    project.save(update_fields=["progress_override", "progress_note",
+                                "progress_updated_at", "progress_updated_by"])
+    audit("project", project.id, "PROJECT_PROGRESS_PUBLISHED",
+          actor=request.user,
+          detail={"override": str(project.progress_override),
+                  "note": project.progress_note[:80]})
+    from . import client_report as cr
+    return Response({**cr.client_project_progress(project),
+                     "programme": programme_overall_progress(project)})
 
 
 @api_view(["GET"])

@@ -166,6 +166,49 @@ class ClientPortalAuthTests(TestCase):
                     "cost", "rate", "contract_value"):
             self.assertNotIn(bad, blob)
 
+    def test_client_progress_programme_and_override(self):
+        from datetime import date
+        from .models import Project, ProgrammeActivity
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        proj = Project.objects.create(
+            site=self.site, code="VKR-P", title="Pools",
+            start_date=date(2026, 1, 1), planned_completion=date(2026, 12, 1))
+        # summary + two leaf tasks → duration-weighted 50%
+        ProgrammeActivity.objects.create(project=proj, sort_order=1, indent=0,
+                                         name="Works", duration_days=1)
+        ProgrammeActivity.objects.create(project=proj, sort_order=2, indent=1,
+                                         name="A", duration_days=10, progress=100)
+        ProgrammeActivity.objects.create(project=proj, sort_order=3, indent=1,
+                                         name="B", duration_days=10, progress=0)
+        # client sees the programme-weighted % by default
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        r = self.client.get(f"/api/client/sites/{self.site.id}")
+        p = next(x for x in r.data["projects"] if x["code"] == "VKR-P")
+        self.assertEqual(p["progress"]["percent"], 50)
+        self.assertEqual(p["progress"]["source"], "programme")
+        # client programme endpoint returns the Gantt rows
+        r = self.client.get(f"/api/client/projects/{proj.id}/programme")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(len(r.data["activities"]), 3)
+        self.assertEqual(r.data["overall"], 50)
+        # a PM/admin publishes an override + note
+        self.client.credentials()
+        self.client.force_authenticate(self.admin)
+        r = self.client.post(f"/api/v1/projects/{proj.id}/client-progress",
+                             {"override": 72, "note": "Tiling underway."},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        # client now sees the published figure + note
+        self.client.force_authenticate(None)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        p = next(x for x in self.client.get(
+            f"/api/client/sites/{self.site.id}").data["projects"]
+            if x["code"] == "VKR-P")
+        self.assertEqual(p["progress"]["percent"], 72)
+        self.assertEqual(p["progress"]["source"], "published")
+        self.assertEqual(p["progress"]["note"], "Tiling underway.")
+
     def test_project_procurement_gated(self):
         from .models import Project
         temp, _ = self._make_client_user(sites=[self.site])

@@ -231,6 +231,8 @@ urlpatterns = [
          name="project-documents"),
     path("projects/<int:pk>/programme.pdf", projects.programme_pdf,
          name="programme-pdf"),
+    path("projects/<int:pk>/client-progress", projects.project_client_progress,
+         name="project-client-progress"),
     path("programme-activities/<int:pk>", projects.activity_detail,
          name="activity-detail"),
     # Project commercial (QS) — BOQ

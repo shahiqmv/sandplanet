@@ -2413,6 +2413,17 @@ class Project(models.Model):
     start_date = models.DateField(null=True, blank=True)
     planned_completion = models.DateField(null=True, blank=True)
     actual_completion = models.DateField(null=True, blank=True)
+    # Client-facing progress (owner 2026-08-03): the portal shows the
+    # programme's duration-weighted % by default; the PM can publish a specific
+    # figure (progress_override) and/or a short status note that the client
+    # sees. Clearing the override reverts to the computed programme %.
+    progress_override = models.DecimalField(max_digits=5, decimal_places=2,
+                                            null=True, blank=True)
+    progress_note = models.TextField(blank=True)
+    progress_updated_at = models.DateTimeField(null=True, blank=True)
+    progress_updated_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="+")
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.ACTIVE)
     created_at = models.DateTimeField(auto_now_add=True)

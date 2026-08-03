@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, downloadFile, getToken, setToken } from "./api.js";
+import ClientGantt from "./ClientGantt.jsx";
 
 const fmt = (s) => s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -125,12 +126,16 @@ function DocRow({ icon, label, sub, status, onView }) {
 }
 
 /* --------------------------------------------------------------- overview */
-function Overview({ d, proj, setProj, openDoc, goProc, goCameras }) {
+function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras }) {
   const projects = d.projects || [];
   const active = projects[proj] || null;
   const mp = d.manpower;
   const maxCt = Math.max(1, ...mp.by_trade.map((t) => t.count));
-  const progress = active ? active.progress : d.site.progress;
+  const prog = active ? (active.progress || {})
+    : { percent: d.site.progress, source: "programme" };
+  const percent = prog.percent;
+  const note = prog.note || "";
+  const published = prog.source === "published";
   const target = active ? active.target_date : null;
   const start = active ? active.start_date : null;
   const dTo = daysTo(target);
@@ -157,18 +162,23 @@ function Overview({ d, proj, setProj, openDoc, goProc, goCameras }) {
           </div>
           <div className="pct-wrap">
             <div className="pct serif tnum">
-              {progress == null ? "—" : progress}<small>%</small></div>
+              {percent == null ? "—" : percent}<small>%</small></div>
             <div className="pct-l">Overall progress</div>
           </div>
         </div>
 
-        <div className="bar"><i style={{ width: `${progress || 0}%` }} /></div>
+        <div className="bar"><i style={{ width: `${percent || 0}%` }} /></div>
         <div className="ticks">
           <span>{start ? `Started ${fmt(start)}` : "In progress"}</span>
-          <span>{progress == null ? "Progress from daily reports"
-            : "To-date, from daily reports"}</span>
+          <span>{percent == null ? "Not yet reported"
+            : published ? "As reported by the project team"
+            : "To date, from the construction programme"}</span>
           <span>{target ? `Target ${fmt(target)}` : ""}</span>
         </div>
+        {note && <div className="brief-s" style={{ marginTop: 16,
+          paddingTop: 14, borderTop: "1px solid var(--line-2)" }}>
+          <span className="eyebrow">Latest update</span>
+          <div style={{ marginTop: 4 }}>{note}</div></div>}
 
         <div className="meta-strip">
           <div className="mstat"><div className="k">On site today</div>
@@ -239,6 +249,11 @@ function Overview({ d, proj, setProj, openDoc, goProc, goCameras }) {
 
       {/* quick links */}
       <div className="quick">
+        <div className="qcard" onClick={goProgramme}>
+          <div className="qic">📅</div>
+          <div><h3>Construction programme</h3><p>Timeline &amp; % complete per activity</p></div>
+          <div className="arw">→</div>
+        </div>
         <div className="qcard" onClick={goProc}>
           <div className="qic">◧</div>
           <div><h3>Procurement plan</h3><p>Material pipeline, ETAs &amp; delivery status</p></div>
@@ -539,6 +554,41 @@ function ProcurementPage({ project, onBack }) {
   );
 }
 
+function ProgrammeView({ project, onBack }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { setD(null); setErr(null);
+    api(`/projects/${project.id}/programme`).then(setD)
+      .catch((e) => setErr(e.message)); }, [project.id]);
+  return (
+    <>
+      <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>‹ Back to overview</button>
+      <div className="card">
+        <div className="rpt-head" style={{ border: 0, padding: 0 }}>
+          <div className="t">
+            <div className="rpt-kind">Construction programme</div>
+            <h1>{project.title}</h1>
+            <div className="proj-sub" style={{ marginTop: 6 }}>{project.code}
+              {d && d.overall != null && ` · ${Math.round(d.overall)}% complete`}</div>
+          </div>
+        </div>
+        {err && <p className="err">{err}</p>}
+        {!d && !err && <p className="loading">Loading programme…</p>}
+        {d && !d.activities.length && <p className="muted" style={{ marginTop: 12 }}>
+          No programme published for this project yet.</p>}
+        {d && d.activities.length > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <ClientGantt activities={d.activities} />
+            <div className="split-note" style={{ marginTop: 10 }}>
+              Bars show planned dates; the fill is % complete. ◆ = milestone.
+            </div>
+          </div>)}
+      </div>
+      <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
+    </>
+  );
+}
+
 function CamerasPage({ onBack }) {
   return (
     <>
@@ -577,6 +627,8 @@ function SitePortal({ id, single, onBackToSites }) {
         {!single && <button className="seg" onClick={onBackToSites}>‹ Sites</button>}
         <button className={`seg ${seg === "overview" ? "on" : ""}`}
           onClick={() => setView({ name: "overview" })}>Overview</button>
+        <button className={`seg ${seg === "programme" ? "on" : ""}`}
+          onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>
         <button className={`seg ${seg === "proc" ? "on" : ""}`}
           onClick={() => setView({ name: "proc" })} disabled={!activeProject}>Procurement</button>
         <button className={`seg ${seg === "cameras" ? "on" : ""}`}
@@ -587,9 +639,13 @@ function SitePortal({ id, single, onBackToSites }) {
         {seg === "overview" && <Overview d={d} proj={proj} setProj={setProj}
           openDoc={(ref) => setView({ name: "report", ref })}
           goProc={() => setView({ name: "proc" })}
+          goProgramme={() => setView({ name: "programme" })}
           goCameras={() => setView({ name: "cameras" })} />}
         {seg === "report" && <ReportView docRef={view.ref}
           onBack={() => setView({ name: "overview" })} />}
+        {seg === "programme" && (activeProject
+          ? <ProgrammeView project={activeProject} onBack={() => setView({ name: "overview" })} />
+          : <div className="card"><p className="muted">No project to show a programme for yet.</p></div>)}
         {seg === "proc" && (activeProject
           ? <ProcurementPage project={activeProject} onBack={() => setView({ name: "overview" })} />
           : <div className="card"><p className="muted">No project to show a plan for yet.</p></div>)}

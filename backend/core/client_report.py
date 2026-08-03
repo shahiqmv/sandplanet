@@ -17,6 +17,47 @@ def _pct(v):
         return None
 
 
+def client_project_progress(project):
+    """What the client sees for a project's overall progress: the PM's
+    published override if set, else the programme's duration-weighted %, else
+    None. Carries the PM's status note (shown whenever set)."""
+    from .views_projects import programme_overall_progress
+    if project.progress_override is not None:
+        pct, source = float(project.progress_override), "published"
+    else:
+        pct = programme_overall_progress(project)
+        source = "programme" if pct is not None else None
+    return {
+        "percent": None if pct is None else round(pct),
+        "note": project.progress_note or "",
+        "source": source,
+        "updated_at": (project.progress_updated_at.isoformat()
+                       if project.progress_updated_at else None),
+    }
+
+
+def project_programme(project):
+    """Client-safe programme for a project: the Gantt rows (name, dates,
+    milestone flag, dependencies, % complete) + the weighted overall %.
+    Programme carries no commercial data, so every field is client-safe."""
+    from .views_projects import programme_overall_progress
+    acts = [{
+        "id": a.id, "sort_order": a.sort_order, "indent": a.indent,
+        "name": a.name,
+        "start": a.start.isoformat() if a.start else None,
+        "finish": a.finish.isoformat() if a.finish else None,
+        "duration_days": a.duration_days,
+        "is_milestone": a.is_milestone,
+        "predecessors": a.predecessors or "",
+        "progress": float(a.progress),
+    } for a in project.activities.all()]
+    return {"activities": acts, "overall": programme_overall_progress(project),
+            "start_date": (project.start_date.isoformat()
+                           if project.start_date else None),
+            "target_date": (project.planned_completion.isoformat()
+                            if project.planned_completion else None)}
+
+
 def project_progress(site, code=None):
     """Interim overall progress for a project (or the whole site when code is
     None): the average of the to-date % across the most recent DPR that carries
