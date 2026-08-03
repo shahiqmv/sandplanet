@@ -15,6 +15,7 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_profile as profile_api, \
     views_meetings as meetings_api, \
     views_client_admin as client_admin, \
+    views_bonds as bonds_api, \
     views_worker_mgmt as worker_api
 
 router = DefaultRouter(trailing_slash=False)  # API surface per design §3
@@ -288,6 +289,16 @@ urlpatterns = [
          name="claim-status"),
     path("claims/<int:pk>/delete", commercial.claim_delete,
          name="claim-delete"),
+    # Bonds & insurance (APB / Performance / CAR / TPL)
+    path("projects/<int:pid>/bonds", bonds_api.project_bonds,
+         name="project-bonds"),
+    path("project-bonds/<int:pk>", bonds_api.bond_detail, name="bond-detail"),
+    path("project-bonds/<int:pk>/raise-pyr", bonds_api.bond_raise_pyr,
+         name="bond-raise-pyr"),
+    path("project-bonds/<int:pk>/issue", bonds_api.bond_issue,
+         name="bond-issue"),
+    path("project-bonds/<int:pk>/cancel", bonds_api.bond_cancel,
+         name="bond-cancel"),
     path("projects/<int:pid>/receipts", commercial.receipt_create,
          name="receipt-create"),
     path("receipts/<int:pk>/delete", commercial.receipt_delete,

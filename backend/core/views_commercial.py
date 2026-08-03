@@ -677,7 +677,16 @@ def claim_status(request, pk):
                                          request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_claim_detail(c))
+    detail = _claim_detail(c)
+    # Warn (never block) if a REQUIRED bond/insurance cover isn't issued yet —
+    # the client won't process the claim without it (owner 2026-08-03).
+    from . import bonds
+    gaps = bonds.required_gaps(c.project) if c.status != "DRAFT" else []
+    detail["bond_warning"] = (
+        "Required cover not yet issued — " + ", ".join(gaps)
+        + ". The client may not process this claim until these are in place."
+    ) if gaps else None
+    return Response(detail)
 
 
 @api_view(["DELETE"])

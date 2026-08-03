@@ -2467,6 +2467,77 @@ class ProgrammeActivity(models.Model):
         verbose_name_plural = "programme activities"
 
 
+def bond_quote_path(instance, filename):
+    # pk-keyed so two covers with the same filename can't clobber each other
+    # on S3 (file_overwrite=True). pk is set — files upload after create.
+    return f"bonds/{instance.project_id}/quote-{instance.pk}-{filename}"
+
+
+def bond_policy_path(instance, filename):
+    return f"bonds/{instance.project_id}/policy-{instance.pk}-{filename}"
+
+
+class ProjectBond(models.Model):
+    """A bond / insurance cover on a project (owner 2026-08-03) — Advance
+    Payment Bond, Performance Bond, CAR, Third-Party Liability, or Other.
+    Which covers a client requires varies, so each carries a `required` flag.
+    Lifecycle: the QS records the insurer's quote → raises a PYR for the
+    premium → once paid, uploads the issued policy + expiry (tracked for
+    renewal). Claims warn (never block) while a REQUIRED cover isn't ISSUED."""
+
+    class Kind(models.TextChoices):
+        ADVANCE_PAYMENT_BOND = "APB", "Advance Payment Bond"
+        PERFORMANCE_BOND = "PB", "Performance Bond"
+        CAR = "CAR", "Contractor's All-Risk Insurance"
+        THIRD_PARTY = "TPL", "Third-Party Liability Insurance"
+        OTHER = "OTHER", "Other cover"
+
+    class Status(models.TextChoices):
+        REQUIRED = "REQUIRED", "Required"
+        QUOTED = "QUOTED", "Quoted"
+        PAYMENT_RAISED = "PAYMENT_RAISED", "Payment raised"
+        PAID = "PAID", "Premium paid"
+        ISSUED = "ISSUED", "Policy issued"
+        EXPIRED = "EXPIRED", "Expired"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="bonds")
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    required = models.BooleanField(default=True)
+    insurer = models.TextField(blank=True)               # insurance company
+    insured_value = models.DecimalField(                 # bond / sum-insured
+        max_digits=14, decimal_places=2, null=True, blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    # quote
+    quote_ref = models.TextField(blank=True)
+    quote_date = models.DateField(null=True, blank=True)
+    premium = models.DecimalField(max_digits=12, decimal_places=2,
+                                  null=True, blank=True)
+    quote_file = models.FileField(upload_to=bond_quote_path,
+                                  null=True, blank=True)
+    # payment (the raised PYR for the premium)
+    pyr = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="+")
+    # policy
+    policy_ref = models.TextField(blank=True)
+    policy_file = models.FileField(upload_to=bond_policy_path,
+                                   null=True, blank=True)
+    issue_date = models.DateField(null=True, blank=True)
+    expiry_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=16, choices=Status.choices,
+                              default=Status.REQUIRED)
+    expiry_alert = models.CharField(max_length=8, blank=True)  # T30/T7/OVERDUE
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["kind", "id"]
+
+
 class Boq(models.Model):
     """A project's Bill of Quantities — the priced contract schedule the QS
     progresses interim claims against. One per project; locked once claiming

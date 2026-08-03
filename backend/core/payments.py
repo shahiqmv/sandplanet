@@ -412,6 +412,10 @@ def pyr_action(request, doc, action_name):
             from . import onboarding
 
             onboarding.on_fee_paid(doc, user)
+        # A bond/insurance premium paid → the cover can now be issued
+        from . import bonds
+
+        bonds.on_pyr_paid(doc, user)
         _set_status(doc, "PAID", "PAY", user, comment)
         return None
 
