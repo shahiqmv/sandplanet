@@ -14,8 +14,8 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import audit
-from .models import (Approval, Document, DocumentRevision, ProcurementSchedule,
-                     ScheduleLine, ScheduleSection)
+from .models import (Approval, Document, DocumentRevision, Item,
+                     ProcurementSchedule, ScheduleLine, ScheduleSection)
 from .numbering import next_ref
 
 log = logging.getLogger(__name__)
@@ -216,7 +216,13 @@ def _apply_plan(line, data):
 
 def _apply_required(line, data):
     if "item_id" in data:
-        line.item_id = data.get("item_id") or None
+        iid = data.get("item_id") or None
+        # A stale/deleted catalog link would raise a FK IntegrityError (500) on
+        # save. Drop it and keep the line as free-text rather than crash the
+        # whole save (owner 2026-08-03 — "difficulty saving at times").
+        if iid and not Item.objects.filter(pk=iid).exists():
+            iid = None
+        line.item_id = iid
     if "quantity" in data:
         line.quantity = _dec(data.get("quantity"))
     if "required_date" in data:

@@ -72,6 +72,15 @@ class ProcurementScheduleTests(TestCase):
                              format="json")
         self.assertEqual(r.status_code, 400)
 
+    def test_stale_item_id_does_not_500(self):
+        # a "linked to catalog" id for an item that no longer exists must save
+        # as free-text, not crash the whole save (owner: "difficulty saving")
+        pk = self._open()
+        r = self._add_line(pk, item_id=99999999, quantity="5", uom="Kg")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertIsNone(r.data["lines"][0]["item_id"])
+        self.assertEqual(r.data["lines"][0]["uom"], "Kg")
+
     def test_line_links_to_item_master(self):
         from .models import Item
         item = Item.objects.create(code="ITM-90001", description="SS316 rail",
