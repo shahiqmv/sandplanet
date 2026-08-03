@@ -37,10 +37,10 @@ class PARoleTests(TestCase):
             "scheduled_at": "2026-08-10T09:00:00Z"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
 
-    def test_pa_does_onboarding_entry_but_not_approval(self):
+    def test_pa_does_onboarding_entry_and_processing_but_not_approval(self):
         self.assertIn("PA", osvc.RAISE_ROLES)       # enters candidate/joining data
-        self.assertNotIn("PA", osvc.APPROVE_ROLES)  # Director still approves
-        self.assertNotIn("PA", osvc.PROCESS_ROLES)  # HR still processes visas
+        self.assertIn("PA", osvc.PROCESS_ROLES)     # processes onboarding (owner 2026-08-03)
+        self.assertNotIn("PA", osvc.APPROVE_ROLES)  # but Director still approves
 
     def test_pa_maintains_company_profile(self):
         self.assertIn("PA", psvc.PROFILE_ROLES)

@@ -877,7 +877,6 @@ class UnitClaimTests(TestCase):
     conventional claim path must be entirely unaffected."""
 
     def setUp(self):
-        from decimal import Decimal
 
         from . import boq_unit_extract as ue
         self.site = Site.objects.create(code="SFR", name="Fushi",
@@ -977,7 +976,6 @@ class UnitClaimTests(TestCase):
     def test_conventional_claim_still_percent_by_default(self):
         # A conventional BOQ project on the same code path is unaffected: its
         # claim basis still derives from the contract type (here % complete).
-        from decimal import Decimal
         site2 = Site.objects.create(code="VKR", name="Vakkaru",
                                     status=Site.Status.ACTIVE)
         proj = Project.objects.create(site=site2, code="POOLS17",

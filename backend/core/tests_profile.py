@@ -104,7 +104,7 @@ class ProfileEntryTests(TestCase):
         ProfileEntry.objects.create(project_name="Vakkaru", status="ONGOING",
                                     sort_order=10)
         html = pr.build_html()
-        self.assertIn("COMPANY", html)              # cover
+        self.assertIn("Company<br>Profile", html)   # cover title
         self.assertIn("Corporate Information", html)  # static front matter
         self.assertIn("Vakkaru", html)              # the ongoing entry
         self.assertIn("Cheval Blanc", html)         # a referee

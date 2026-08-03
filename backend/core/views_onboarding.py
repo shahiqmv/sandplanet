@@ -11,7 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import onboarding as ob
-from .models import Attachment, Document, OnboardingCase, Site
+from .models import Attachment, OnboardingCase, Site
 from .permissions import scoped_site_ids
 
 VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN", "PA")   # see all cases

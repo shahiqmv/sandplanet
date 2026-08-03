@@ -1,5 +1,4 @@
 """Official receipts — part payment, multi-invoice settlement, void."""
-from datetime import date
 
 from django.test import TestCase
 from django.utils import timezone

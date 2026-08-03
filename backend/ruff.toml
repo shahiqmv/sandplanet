@@ -1,0 +1,11 @@
+# Lint config for the Django backend.
+#
+# We run ruff's default rule set (pyflakes F + a subset of pycodestyle E),
+# which catches real problems — unused imports, duplicate dict keys,
+# undefined names — but we switch off two purely-stylistic checks that
+# clash with conventions used deliberately throughout this codebase:
+[lint]
+ignore = [
+    "E702",  # `a = 1; b = 2` compact one-liners — used on purpose for terse helpers
+    "E741",  # single-letter loop names like `l` in comprehensions
+]

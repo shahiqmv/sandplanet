@@ -9,7 +9,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from .models import (Employee, EmployeeSiteAllocation, ManpowerCategory,
-                     PayrollLine, PayrollRun, SalaryRevision, Site,
+                     PayrollLine, PayrollRun, Site,
                      SitePmHistory, User)
 from .tests import make_user
 

@@ -2,7 +2,7 @@
 idempotent snapshot application. No live HTTP — payloads mirror the ShipsGo v2
 schema (see api-1.json)."""
 import json
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
@@ -14,7 +14,6 @@ from .models import (Document, ImportOrder, ImportShipment, ShipmentTracking,
                      Site, Supplier, TrackingEvent, User)
 from .tests import make_user
 from . import tracking
-from .tracking import NormEvent, Snapshot
 from .tracking_shipsgo import ShipsGoProvider
 
 

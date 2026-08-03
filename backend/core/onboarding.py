@@ -1219,8 +1219,6 @@ def case_dict(case):
         "emergency_contact": case.emergency_contact,
         "mobilisation_date": case.mobilisation_date,
         "bv_justification": case.bv_justification,
-        "stage": case.stage, "bv_expiry": case.bv_expiry,
-        "medical_due": case.medical_due,
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
         "employee_id": case.employee_id,
         "employee_no": case.employee.emp_no if case.employee_id else None,

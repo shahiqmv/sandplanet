@@ -184,7 +184,6 @@ class OnboardingSpineTests(TestCase):
         r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
                              {"amount": "1500", "payee": "Vendor"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        from .models import OnboardingCase
         fee = OnboardingCase.objects.get(pk=pk).fees.get(stage=stage)
         fee.document.status = "PAID"
         fee.document.save(update_fields=["status"])
@@ -260,7 +259,6 @@ class OnboardingSpineTests(TestCase):
         self.assertFalse(r.data["fee"]["paid"])
         self.assertEqual(self._adv(pk).status_code, 400)   # not paid yet
         # the refundable deposit PYR is capitalized (posts nothing)
-        from .models import OnboardingCase
         fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
         self.assertTrue(fee.document.payment_request.is_capitalized)
         # pay it → the gate opens
@@ -270,7 +268,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_fee_paid_notifies_hr(self):
         from . import onboarding as ob
-        from .models import Notification, OnboardingCase
+        from .models import Notification
         pk = self._approved()
         self._to_deposit(pk)
         self.client.force_authenticate(self.hr)
@@ -419,7 +417,6 @@ class OnboardingSpineTests(TestCase):
 
     def test_fee_invoice_attaches_to_pyr(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from .models import OnboardingCase
         pk = self._approved()
         self._adv(pk); self._adv(pk)
         self._sdata(pk, portal_status="APPROVED")
@@ -470,7 +467,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_fee_slot_surfaces_finance_payment_slip(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
-        from .models import Attachment, OnboardingCase
+        from .models import Attachment
         pk = self._approved()
         self._adv(pk); self._adv(pk)
         self._sdata(pk, portal_status="APPROVED")
@@ -497,7 +494,6 @@ class OnboardingSpineTests(TestCase):
 
     def test_bv_certificate_slot_on_bv_track(self):
         from . import onboarding as ob
-        from .models import OnboardingCase
         pk = self._approved(route="BV", bv_justification="urgent",
                             nationality="Indian")
         self._adv(pk)                                  # begin → BV_SPONSOR
@@ -509,7 +505,7 @@ class OnboardingSpineTests(TestCase):
         self.assertNotIn("ENTRY_PASS", slots)         # WP conversion not reached
 
     def test_arrival_hands_over_to_employee_db(self):
-        from .models import Employee, Notification, OnboardingCase
+        from .models import Employee, Notification
         pk = self._approved()
         self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
@@ -546,7 +542,6 @@ class OnboardingSpineTests(TestCase):
             recipient=self.hr, title__icontains="on site").exists())
 
     def test_editing_arrival_date_moves_salary_start(self):
-        from .models import OnboardingCase
         pk = self._approved()
         self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
@@ -575,7 +570,6 @@ class OnboardingSpineTests(TestCase):
 
     def test_no_medical_on_business_visa(self):
         from . import onboarding as ob
-        from .models import OnboardingCase
         # recruitment BV — medical belongs to the WP conversion, not the BV
         pk = self._approved(route="BV", bv_justification="urgent",
                             nationality="Indian")
@@ -587,7 +581,6 @@ class OnboardingSpineTests(TestCase):
 
     def test_subcontract_bv_has_no_conversion_or_medical(self):
         from . import onboarding as ob
-        from .models import OnboardingCase
         sub = self._subcontractor()
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
@@ -599,7 +592,6 @@ class OnboardingSpineTests(TestCase):
         self.assertNotIn("WP_MEDICAL", seq)
 
     def test_subcontract_worker_joins_as_subcontract_not_payroll(self):
-        from .models import Employee, OnboardingCase
         sub = self._subcontractor()
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
@@ -630,7 +622,6 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(self._adv(pk).status_code, 400)
 
     def test_subcontract_close_on_departure(self):
-        from .models import OnboardingCase
         sub = self._subcontractor()
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
@@ -652,7 +643,6 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(str(alloc.to_date), "2026-09-15")
 
     def test_extend_visa_pushes_expiry_and_raises_fee(self):
-        from .models import OnboardingCase
         sub = self._subcontractor()
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
@@ -730,7 +720,7 @@ class OnboardingSpineTests(TestCase):
     def test_medical_clock_alerts_then_escalates_and_is_idempotent(self):
         from datetime import date, timedelta
         from . import onboarding as ob
-        from .models import Notification, OnboardingCase
+        from .models import Notification
         pk = self._approved()
         self._adv(pk)                                  # begin → IN_PROGRESS
         case = OnboardingCase.objects.get(pk=pk)
@@ -763,7 +753,6 @@ class OnboardingSpineTests(TestCase):
     def test_medical_clock_stops_once_result_recorded(self):
         from datetime import date, timedelta
         from . import onboarding as ob
-        from .models import OnboardingCase
         pk = self._approved()
         self._adv(pk)
         case = OnboardingCase.objects.get(pk=pk)
@@ -778,7 +767,7 @@ class OnboardingSpineTests(TestCase):
     def test_bv_expiry_clock_escalates_to_director(self):
         from datetime import date, timedelta
         from . import onboarding as ob
-        from .models import Notification, OnboardingCase
+        from .models import Notification
         pk = self._approved(route="BV", bv_justification="urgent",
                             nationality="Indian")
         self._adv(pk)                                  # begin → BV_SPONSOR
@@ -804,7 +793,7 @@ class OnboardingSpineTests(TestCase):
         from datetime import timedelta
         from django.utils import timezone
         from . import onboarding as ob
-        from .models import Notification, OnboardingCase
+        from .models import Notification
         pk = self._approved()
         self._adv(pk)                                  # pre-arrival, IN_PROGRESS
         OnboardingCase.objects.filter(pk=pk).update(

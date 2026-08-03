@@ -135,7 +135,6 @@ def import_boq_rows(project, rows, actor):
 
 
 def set_boq_lock(project, locked, actor):
-    from .models import Boq
     boq = getattr(project, "boq", None)
     if boq is None:
         return None, "There's no BOQ to lock yet."
@@ -242,7 +241,6 @@ VARIATION_FLOW = {
 
 
 def set_variation_status(variation, to_status, actor):
-    from .models import Variation
     allowed = VARIATION_FLOW.get(variation.status, set())
     if to_status not in allowed:
         return None, f"Cannot move a {variation.status} variation to {to_status}."

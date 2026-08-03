@@ -119,7 +119,7 @@ class ProcurementPipelineTests(TestCase):
         d = self.client.get(f"/api/v1/procurement-schedules/{self.pk}").data
         self.assertEqual(d["lines"][0]["stage"]["label"], "In production")
         # a completed site receipt wins over everything
-        grn = self._doc("GRN", "COMPLETE", "GRN-SJR-050")
+        self._doc("GRN", "COMPLETE", "GRN-SJR-050")
         self._link("grn", "GRN-SJR-050")
         d = self.client.get(f"/api/v1/procurement-schedules/{self.pk}").data
         self.assertEqual(d["lines"][0]["stage"]["label"], "Delivered")

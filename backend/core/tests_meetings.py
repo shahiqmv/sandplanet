@@ -5,7 +5,7 @@ from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import meetings as svc
-from .models import Meeting, MeetingActionItem, Project, Site, User
+from .models import Meeting, Project, Site, User
 from .tests import make_user
 
 

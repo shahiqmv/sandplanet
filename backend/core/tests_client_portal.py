@@ -4,7 +4,7 @@ session can't reach client APIs."""
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import ClientUser, Site, User
+from .models import Site, User
 from .tests import make_user
 
 

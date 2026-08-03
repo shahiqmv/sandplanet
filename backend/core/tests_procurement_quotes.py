@@ -5,7 +5,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import (Item, Project, ScheduleLine, ScheduleLineQuote, Site,
+from .models import (Project, ScheduleLine, ScheduleLineQuote, Site,
                      SitePmHistory, User)
 from .tests import make_user
 

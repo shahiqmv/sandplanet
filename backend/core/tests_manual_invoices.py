@@ -1,6 +1,5 @@
 """Manual client invoices — historical + Planet-issued, folded into the same
 receivables aging / statement / receipts as claim invoices."""
-from datetime import date, timedelta
 
 from django.test import TestCase
 from rest_framework.test import APIClient

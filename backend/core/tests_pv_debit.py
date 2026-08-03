@@ -2,7 +2,7 @@
 from django.test import TestCase
 
 from . import vouchers
-from .models import CompanyBankAccount, Document, User
+from .models import CompanyBankAccount, User
 from .tests import make_user
 
 

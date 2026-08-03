@@ -16,8 +16,7 @@ from . import imports as ipr_svc
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
                      ImportReceiptLine, ImportShipment, ImportShipmentLine,
-                     Project, ShipmentDocument, ShipmentPayment, Site, StockLot,
-                     Supplier)
+                     Project, ShipmentDocument, ShipmentPayment, Site, Supplier)
 from .serializers_documents import DocumentSerializer
 
 VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "ADMIN",

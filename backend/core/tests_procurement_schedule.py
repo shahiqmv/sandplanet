@@ -1,11 +1,10 @@
 """Procurement Schedule — spine + propose/confirm/sign-off workflow (Phase 1)."""
-from datetime import date, timedelta
+from datetime import date
 
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import (Document, Project, ProcurementSchedule, ScheduleLine,
-                     Site, SitePmHistory, User)
+from .models import (Document, Project, Site, SitePmHistory, User)
 from .tests import make_user
 
 

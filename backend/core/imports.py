@@ -891,7 +891,6 @@ def create_receipt(shipment, data, actor):
 
 
 def save_receipt_counts(receipt, rows, actor):
-    from .models import ImportReceiptLine
     by_id = {r.get("id"): r for r in rows}
     for line in receipt.lines.all():
         r = by_id.get(line.id)

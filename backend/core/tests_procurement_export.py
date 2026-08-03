@@ -11,7 +11,7 @@ from django.test import TestCase
 from openpyxl import load_workbook
 from rest_framework.test import APIClient
 
-from .models import (Document, Project, ScheduleLine, Site, SitePmHistory,
+from .models import (Project, ScheduleLine, Site, SitePmHistory,
                      User)
 from .tests import make_user
 

@@ -1,5 +1,5 @@
 """Receivables — invoice due dates, aging analysis, client statement."""
-from datetime import date, timedelta
+from datetime import timedelta
 
 from django.test import TestCase
 from django.utils import timezone
