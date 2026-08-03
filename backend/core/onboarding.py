@@ -799,13 +799,19 @@ _QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"
 
 def letter_available(case, kind):
     """A letter can be generated once the case is in processing and has reached
-    the stage the letter belongs to (so it stays available for regeneration)."""
+    the stage the letter belongs to (so it stays available for regeneration).
+    Exception: on a recruitment BV case the Letter of Appointment can be issued
+    in ADVANCE — as an employment confirmation before its normal post-arrival
+    stage (owner 2026-08-03)."""
     meta = LETTER_META.get(kind)
     if not meta or case.document.status != "IN_PROGRESS":
         return False
     seq = sequence(case)
     if meta["stage"] not in seq or case.stage not in seq:
         return False
+    if (kind == "LOA" and case.route == "BV"
+            and case.bv_purpose == "RECRUITMENT"):
+        return True
     return seq.index(case.stage) >= seq.index(meta["stage"])
 
 

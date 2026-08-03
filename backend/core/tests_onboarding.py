@@ -311,13 +311,30 @@ class OnboardingSpineTests(TestCase):
         detail = self.client.get(f"/api/v1/onboarding/{pk}").data
         opts = {o["kind"]: o for o in detail["letter_options"]}
         self.assertTrue(opts["SPL"]["available"])
-        self.assertFalse(opts["LOA"]["available"])   # conversion not reached
-        # asking for an LOA now is refused
-        self.assertEqual(self._gen_letter(pk, "LOA").status_code, 400)
+        # LOA is now issuable in advance on a recruitment BV case (below).
+        self.assertTrue(opts["LOA"]["available"])
         r = self._gen_letter(pk, "SPL", project_site="Ha. Dhidhdhoo Harbour",
                              addressee_line_1="The Controller of Immigration")
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data["letters"][0]["ref"], "SPL-001")
+
+    def test_loa_in_advance_for_recruitment_bv(self):
+        # A recruitment BV case can issue the appointment letter in advance —
+        # before the post-arrival conversion stage (owner 2026-08-03).
+        pk = self._approved(route="BV", bv_justification="urgent mobilisation")
+        self._adv(pk)                          # → BV_SPONSOR (pre-arrival)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertTrue(opts["LOA"]["available"])
+        self.assertEqual(self._gen_letter(pk, "LOA").status_code, 201)
+
+    def test_loa_not_available_for_subcontract_bv(self):
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT")
+        self._adv(pk)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertFalse(opts["LOA"]["available"])   # no appointment on subcon
 
     def test_regenerating_a_letter_bumps_version(self):
         pk = self._approved()
