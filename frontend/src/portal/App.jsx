@@ -603,9 +603,16 @@ function ProgrammeView({ project, onBack }) {
 function GalleryView({ site, onBack }) {
   const [d, setD] = useState(null);
   const [err, setErr] = useState(null);
+  const [lb, setLb] = useState(null);      // enlarged photo, or null
   useEffect(() => { setD(null); setErr(null);
     api(`/sites/${site.id}/gallery`).then(setD)
       .catch((e) => setErr(e.message)); }, [site.id]);
+  useEffect(() => {
+    if (!lb) return;
+    const onKey = (e) => { if (e.key === "Escape") setLb(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [lb]);
   return (
     <>
       <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>‹ Back to overview</button>
@@ -621,16 +628,26 @@ function GalleryView({ site, onBack }) {
             <div className="grp-h">{fmt(g.date)}</div>
             <div className="photos">
               {g.photos.map((p, i) => (
-                <div key={i} className="ph">
+                <button key={i} className="ph" onClick={() => setLb(p)}
+                  title="Click to enlarge">
                   <img src={p.url} alt={p.caption || "site photo"} loading="lazy" />
                   {p.caption && <div className="cap">{p.caption}</div>}
-                </div>))}
+                </button>))}
             </div>
           </div>))}
         {d && d.capped && <p className="muted" style={{ marginTop: 14 }}>
           Showing the {d.total} most recent photos.</p>}
       </div>
       <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
+      {lb && (
+        <div className="lightbox" onClick={() => setLb(null)}>
+          <button className="lb-close" aria-label="Close"
+            onClick={() => setLb(null)}>×</button>
+          <figure className="lb-fig" onClick={(e) => e.stopPropagation()}>
+            <img src={lb.url} alt={lb.caption || "site photo"} />
+            {lb.caption && <figcaption>{lb.caption}</figcaption>}
+          </figure>
+        </div>)}
     </>
   );
 }

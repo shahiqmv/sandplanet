@@ -239,9 +239,26 @@ table.data td{ padding:9px 10px; border-bottom:1px solid var(--line-2); vertical
 table.data td.num, table.data th.num{ text-align:right; font-variant-numeric:tabular-nums; }
 .scroll-x{ overflow-x:auto; }
 .photos{ display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; margin-top:12px; }
-.ph{ border-radius:12px; overflow:hidden; border:1px solid var(--line); background:var(--line-2); }
+.ph{ border-radius:12px; overflow:hidden; border:1px solid var(--line); background:var(--line-2);
+  padding:0; margin:0; width:100%; text-align:left; font:inherit; cursor:pointer; display:block;
+  transition:box-shadow .12s ease, transform .12s ease; }
+.ph:hover{ box-shadow:0 4px 14px rgba(0,0,0,.14); transform:translateY(-2px); }
+.ph:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
 .ph img{ display:block; width:100%; height:130px; object-fit:cover; }
 .ph .cap{ font-size:11.5px; color:var(--ink-2); padding:6px 8px; }
+
+/* gallery lightbox */
+.lightbox{ position:fixed; inset:0; z-index:50; background:rgba(8,20,28,.82);
+  display:flex; align-items:center; justify-content:center; padding:28px; cursor:zoom-out; }
+.lb-fig{ margin:0; max-width:min(1100px,94vw); max-height:92vh; display:flex;
+  flex-direction:column; cursor:default; }
+.lb-fig img{ display:block; max-width:100%; max-height:84vh; object-fit:contain;
+  border-radius:10px; background:#000; }
+.lb-fig figcaption{ color:#eef3f6; font-size:13.5px; padding:10px 4px 0; text-align:center; }
+.lb-close{ position:fixed; top:16px; right:20px; width:40px; height:40px; border:none;
+  border-radius:50%; background:rgba(255,255,255,.14); color:#fff; font-size:24px;
+  line-height:1; cursor:pointer; }
+.lb-close:hover{ background:rgba(255,255,255,.26); }
 
 /* procurement page */
 .tiles{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
