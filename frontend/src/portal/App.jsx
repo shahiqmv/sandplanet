@@ -571,6 +571,9 @@ function ProgrammeView({ project, onBack }) {
             <div className="proj-sub" style={{ marginTop: 6 }}>{project.code}
               {d && d.overall != null && ` · ${Math.round(d.overall)}% complete`}</div>
           </div>
+          {d && d.activities.length > 0 && <button className="btn pri"
+            onClick={() => downloadFile(`/projects/${project.id}/programme.pdf`,
+              `${project.code}-Programme.pdf`).catch(() => {})}>⬇ Download PDF</button>}
         </div>
         {err && <p className="err">{err}</p>}
         {!d && !err && <p className="loading">Loading programme…</p>}
@@ -620,10 +623,11 @@ function SitePortal({ id, single, onBackToSites }) {
   const projects = d.projects || [];
   const activeProject = projects[proj] || null;
   const seg = view.name;
+  const wide = seg === "proc" || seg === "programme";
 
   return (
     <>
-      <div className="segbar"><div className="segs">
+      <div className={`segbar ${wide ? "wide" : ""}`}><div className="segs">
         {!single && <button className="seg" onClick={onBackToSites}>‹ Sites</button>}
         <button className={`seg ${seg === "overview" ? "on" : ""}`}
           onClick={() => setView({ name: "overview" })}>Overview</button>
@@ -635,7 +639,7 @@ function SitePortal({ id, single, onBackToSites }) {
           onClick={() => setView({ name: "cameras" })}>Cameras</button>
       </div></div>
 
-      <div className="wrap">
+      <div className={`wrap ${wide ? "wide" : ""}`}>
         {seg === "overview" && <Overview d={d} proj={proj} setProj={setProj}
           openDoc={(ref) => setView({ name: "report", ref })}
           goProc={() => setView({ name: "proc" })}

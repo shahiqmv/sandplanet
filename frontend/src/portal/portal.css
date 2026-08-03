@@ -51,6 +51,10 @@ a{ color:var(--accent-deep); text-decoration:none; }
 .serif{ font-family:var(--serif); }
 .muted{ color:var(--ink-2); }
 .wrap{ max-width:1040px; margin:0 auto; padding:0 24px 64px; }
+/* full-width views (procurement plan, programme Gantt) — room for wide tables
+   and the timeline, matching the standalone client-link page. */
+.wrap.wide{ max-width:min(1560px, 96vw); }
+.segbar.wide{ max-width:min(1560px, 96vw); }
 .center{ min-height:78vh; display:flex; align-items:center; justify-content:center; }
 
 /* top bar */

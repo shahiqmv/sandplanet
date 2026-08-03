@@ -215,6 +215,26 @@ def client_project_programme(request, pk):
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
+def client_project_programme_pdf(request, pk):
+    """The construction programme as a PDF (Gantt + activity table + planned
+    manpower) — the same award-package document, downloadable in the portal."""
+    from django.http import HttpResponse
+    project = _client_project(request, pk)
+    if not project:
+        return Response({"detail": "Not found."}, status=404)
+    from .views_projects import programme_pdf_bytes
+    pdf_bytes = programme_pdf_bytes(project)
+    if pdf_bytes is None:
+        return Response({"detail": "PDF is unavailable right now."}, status=503)
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="Programme-{project.code}.pdf"')
+    return resp
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
 def client_project_procurement(request, pk):
     """The client procurement plan for one of the client's own projects — the
     same vetted allowlist the public share link uses, served in the portal."""

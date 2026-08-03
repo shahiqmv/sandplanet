@@ -521,20 +521,10 @@ def _month_span(start, finish):
     return months
 
 
-@api_view(["GET"])
-def programme_pdf(request, pk):
-    """The award package (owner): the construction programme as a
-    letterhead PDF — Gantt + activity table + planned-manpower histogram
-    — downloaded and sent to the client upon award."""
-    try:
-        project = Project.objects.select_related("site").get(pk=pk)
-    except Project.DoesNotExist:
-        return Response({"detail": "Not found."}, status=404)
-    site_ids = scoped_site_ids(request.user)
-    if site_ids is not None and project.site_id not in site_ids:
-        return Response({"detail": "Not found."}, status=404)
-
-    from django.http import HttpResponse
+def programme_pdf_bytes(project):
+    """The construction-programme PDF (Gantt + activity table + planned-
+    manpower histogram) as bytes, or None if the PDF engine is unavailable.
+    Shared by the staff download and the client portal — no commercial data."""
     from django.template.loader import render_to_string
 
     from .pdf import company_info, logo_src
@@ -586,9 +576,27 @@ def programme_pdf(request, pk):
 
         from django.conf import settings
 
-        pdf_bytes = HTML(string=html,
-                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        return HTML(string=html,
+                    base_url=str(settings.MEDIA_ROOT)).write_pdf()
     except Exception:
+        return None
+
+
+@api_view(["GET"])
+def programme_pdf(request, pk):
+    """The award package (owner): the construction programme as a
+    letterhead PDF — Gantt + activity table + planned-manpower histogram
+    — downloaded and sent to the client upon award."""
+    from django.http import HttpResponse
+    try:
+        project = Project.objects.select_related("site").get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and project.site_id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+    pdf_bytes = programme_pdf_bytes(project)
+    if pdf_bytes is None:
         return Response({"detail": "PDF engine unavailable on this "
                                    "server."}, status=503)
     response = HttpResponse(pdf_bytes, content_type="application/pdf")

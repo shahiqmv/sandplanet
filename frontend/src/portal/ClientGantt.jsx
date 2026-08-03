@@ -26,9 +26,18 @@ export default function ClientGantt({ activities }) {
     if (!tasks.length) return;
     const gantt = new Gantt(ref.current, tasks, {
       view_mode: "Week",
-      readonly: true,
+      readonly: true,            // clients can't drag / resize / edit
       readonly_progress: true,
       popup_on: "hover",
+      column_width: 62,          // wider weeks so labels are legible
+      bar_height: 26,
+      padding: 20,
+    });
+    // Frappe scrolls to "today" by default, which hides earlier activities on
+    // a programme that started in the past — start at the beginning instead.
+    requestAnimationFrame(() => {
+      const c = ref.current && ref.current.querySelector(".gantt-container");
+      if (c) c.scrollLeft = 0;
     });
     return () => { gantt?.destroy?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -42,11 +51,15 @@ export default function ClientGantt({ activities }) {
         .gantt .bar-progress { fill: var(--accent); }
         .gantt .sp-sum .bar { fill: var(--ink); }
         .gantt .sp-ms .bar { fill: var(--warn); }
-        .gantt .bar-label, .gantt .bar-label.big { fill: var(--ink); }
+        .gantt .bar-label { fill: #fff; font-size: 12px; }
+        .gantt .bar-label.big { fill: var(--ink); font-size: 12px; }
         .gantt-container { border: 1px solid var(--line); border-radius: 10px;
           background: var(--card); }
         .gantt .grid-header { fill: var(--line-2); }
         .gantt .tick { stroke: var(--line); }
+        /* read-only: no move cursor, no drag handles */
+        .gantt .bar-wrapper, .gantt .bar { cursor: default; }
+        .gantt .handle { display: none; }
       `}</style>
       <div ref={ref} style={{ overflowX: "auto" }} />
     </div>
