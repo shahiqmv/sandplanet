@@ -165,6 +165,43 @@ def _client_project(request, pk):
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
+def client_site_procurement(request, pk):
+    """The whole site's procurement plan for the portal — every project's plan
+    merged into one, so the client sees it site-wide without toggling projects
+    (owner 2026-08-03). Per-project scheduling stays intact in the staff app."""
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    from . import procurement_client as pc
+    return Response(pc.client_site_plan(site))
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site_procurement_xlsx(request, pk):
+    """The site-wide procurement plan as a spreadsheet."""
+    from django.http import HttpResponse
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    from . import procurement_client as pc, procurement_export
+    plan = pc.client_site_plan(site)
+    if not plan.get("available"):
+        return Response({"detail": "No plan."}, status=404)
+    wb = procurement_export.build_client_xlsx_from_plan(plan)
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument."
+        "spreadsheetml.sheet")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="{site.code}-Procurement-Plan.xlsx"')
+    wb.save(resp)
+    return resp
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
 def client_project_programme(request, pk):
     """The client-safe construction programme (Gantt data) for one of the
     client's own projects."""

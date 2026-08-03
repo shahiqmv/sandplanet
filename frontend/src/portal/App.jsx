@@ -471,13 +471,13 @@ const statusClass = (s) => {
   return "mut";
 };
 
-function ProcurementPage({ project, onBack }) {
+function ProcurementPage({ site, onBack }) {
   const [plan, setPlan] = useState(null);
   const [err, setErr] = useState(null);
   const [filter, setFilter] = useState("all");
   useEffect(() => { setPlan(null);
-    api(`/projects/${project.id}/procurement`).then(setPlan).catch((e) => setErr(e.message)); },
-    [project.id]);
+    api(`/sites/${site.id}/procurement`).then(setPlan).catch((e) => setErr(e.message)); },
+    [site.id]);
 
   const rows = useMemo(() => plan && plan.available
     ? plan.sections.flatMap((s) => s.rows.map((r) => ({ ...r, _sec: s }))) : [], [plan]);
@@ -494,12 +494,12 @@ function ProcurementPage({ project, onBack }) {
         <div className="rpt-head" style={{ border: 0, padding: 0 }}>
           <div className="t">
             <div className="rpt-kind">Procurement plan</div>
-            <h1>{project.title}</h1>
-            <div className="proj-sub" style={{ marginTop: 6 }}>{project.code} · material pipeline for your project</div>
+            <h1>{site.name}</h1>
+            <div className="proj-sub" style={{ marginTop: 6 }}>{site.code} · material pipeline across your site</div>
           </div>
           <button className="btn pri"
-            onClick={() => downloadFile(`/projects/${project.id}/procurement.xlsx`,
-              `${project.code}-Procurement-Plan.xlsx`).catch(() => {})}>⬇ Excel</button>
+            onClick={() => downloadFile(`/sites/${site.id}/procurement.xlsx`,
+              `${site.code}-Procurement-Plan.xlsx`).catch(() => {})}>⬇ Excel</button>
         </div>
         {plan && plan.available && (
           <div className="tiles" style={{ marginTop: 22 }}>
@@ -630,7 +630,7 @@ function SitePortal({ id, single, onBackToSites }) {
         <button className={`seg ${seg === "programme" ? "on" : ""}`}
           onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>
         <button className={`seg ${seg === "proc" ? "on" : ""}`}
-          onClick={() => setView({ name: "proc" })} disabled={!activeProject}>Procurement</button>
+          onClick={() => setView({ name: "proc" })}>Procurement</button>
         <button className={`seg ${seg === "cameras" ? "on" : ""}`}
           onClick={() => setView({ name: "cameras" })}>Cameras</button>
       </div></div>
@@ -646,9 +646,8 @@ function SitePortal({ id, single, onBackToSites }) {
         {seg === "programme" && (activeProject
           ? <ProgrammeView project={activeProject} onBack={() => setView({ name: "overview" })} />
           : <div className="card"><p className="muted">No project to show a programme for yet.</p></div>)}
-        {seg === "proc" && (activeProject
-          ? <ProcurementPage project={activeProject} onBack={() => setView({ name: "overview" })} />
-          : <div className="card"><p className="muted">No project to show a plan for yet.</p></div>)}
+        {seg === "proc" && <ProcurementPage site={d.site}
+          onBack={() => setView({ name: "overview" })} />}
         {seg === "cameras" && <CamerasPage onBack={() => setView({ name: "overview" })} />}
       </div>
     </>

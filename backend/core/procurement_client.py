@@ -171,6 +171,47 @@ def client_plan(sched, updated_by=""):
     }
 
 
+def client_site_plan(site, updated_by=""):
+    """Every non-closed project's plan on a site, merged into ONE client plan
+    (same shape as client_plan) — so the portal can show procurement site-wide
+    without the client toggling between projects. Section titles are tagged
+    with the project code when the site has more than one project, so it's
+    still clear which award each item belongs to."""
+    from .models import ProcurementSchedule
+    from .pdf import company_info
+    co = company_info()
+    client_name = getattr(site, "client_name", "") or site.name
+    base = {"project_title": site.name, "project_code": site.code,
+            "contractor": co["legal_name"], "client": client_name,
+            "updated_by": updated_by, "last_update": None, "sections": []}
+
+    scheds = []
+    for p in site.projects.exclude(
+            status__in=("POTENTIAL", "CLOSED")).order_by("code"):
+        s = (ProcurementSchedule.objects
+             .filter(project=p, document__is_void=False)
+             .select_related("document", "project")
+             .order_by("-document__doc_date").first())
+        if s:
+            scheds.append((p, s))
+    if not scheds:
+        return {**base, "available": False}
+
+    multi = len(scheds) > 1
+    sections, last = [], None
+    for p, s in scheds:
+        plan = client_plan(s, updated_by=updated_by)
+        if last is None or (plan["last_update"] and plan["last_update"] > last):
+            last = plan["last_update"]
+        for sec in plan["sections"]:
+            title = sec["title"] or "Items"
+            sections.append({"code": sec["code"], "project": p.code,
+                             "title": f"{p.code} · {title}" if multi else title,
+                             "rows": sec["rows"]})
+    return {**base, "available": True, "last_update": last,
+            "sections": sections}
+
+
 # ---- share token (the live client link) ----------------------------------
 
 # Roles allowed to mint / revoke the client link — the schedule's custodians.

@@ -140,6 +140,20 @@ class ClientPortalAuthTests(TestCase):
         self.assertEqual(
             self.client.get(f"/api/client/documents/{dpr.ref}").status_code, 404)
 
+    def test_site_wide_procurement_gated(self):
+        temp, _ = self._make_client_user(sites=[self.site])
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        # own site, no schedules yet → available:false (200), not an error
+        r = self.client.get(f"/api/client/sites/{self.site.id}/procurement")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data["available"])
+        # a site they aren't assigned to → 404
+        self.assertEqual(
+            self.client.get(
+                f"/api/client/sites/{self.other.id}/procurement").status_code,
+            404)
+
     def test_report_json_client_safe(self):
         import json
         from datetime import date

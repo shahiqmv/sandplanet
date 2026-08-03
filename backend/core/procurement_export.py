@@ -70,7 +70,13 @@ def build_client_xlsx(sched, user=None):
     """An openpyxl Workbook of the client procurement plan for one project.
     `user` is the exporter (for the 'updated by' initials); the public,
     token-gated download passes none."""
-    plan = client_plan(sched, updated_by=initials(user) if user else "")
+    return build_client_xlsx_from_plan(
+        client_plan(sched, updated_by=initials(user) if user else ""))
+
+
+def build_client_xlsx_from_plan(plan):
+    """Build the workbook from an already-assembled client plan dict — shared
+    by the per-project export and the site-wide portal export."""
     wb = Workbook()
     ws = wb.active
     ws.title = "Procurement Plan"
