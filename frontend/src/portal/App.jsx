@@ -126,7 +126,8 @@ function DocRow({ icon, label, sub, status, onView }) {
 }
 
 /* --------------------------------------------------------------- overview */
-function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras }) {
+function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
+  goGallery, goCameras }) {
   const projects = d.projects || [];
   const active = projects[proj] || null;
   const mp = d.manpower;
@@ -199,7 +200,7 @@ function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras })
           <div className="brief-s">{active.scope}</div>
         </div>)}
 
-      <div className="two">
+      <div className={vis.show_reports ? "two" : ""}>
         {/* site workforce */}
         <div className="card">
           <div className="sec-title"><h2>Site workforce</h2>
@@ -219,6 +220,7 @@ function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras })
         </div>
 
         {/* allocation + materials */}
+        {vis.show_reports && (
         <div className="card">
           <div className="sec-title"><h2>Work allocation</h2></div>
           {!d.dma.today && !d.dma.tomorrow && <p className="muted">No allocation issued yet.</p>}
@@ -233,10 +235,11 @@ function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras })
               <DocRow key={m.ref} icon="⛴" label={`Loading manifest · ${fmt(m.date)}`}
                 sub="In transit to site" onView={() => openDoc(m.ref)} />))}
           </>}
-        </div>
+        </div>)}
       </div>
 
       {/* daily reports */}
+      {vis.show_reports && (
       <div className="card">
         <div className="sec-title"><h2>Daily progress reports</h2>
           <span className="hint">last 7 days</span></div>
@@ -245,25 +248,30 @@ function Overview({ d, proj, setProj, openDoc, goProc, goProgramme, goCameras })
           <DocRow key={r.ref} icon="▤" label={`Daily report · ${fmt(r.date)}`}
             status={r.verified ? { cls: "ok", text: "Verified" } : { cls: "mut", text: "Reported" }}
             onView={() => openDoc(r.ref)} />))}
-      </div>
+      </div>)}
 
       {/* quick links */}
       <div className="quick">
-        <div className="qcard" onClick={goProgramme}>
+        {vis.show_programme && <div className="qcard" onClick={goProgramme}>
           <div className="qic">📅</div>
           <div><h3>Construction programme</h3><p>Timeline &amp; % complete per activity</p></div>
           <div className="arw">→</div>
-        </div>
-        <div className="qcard" onClick={goProc}>
+        </div>}
+        {vis.show_gallery && <div className="qcard" onClick={goGallery}>
+          <div className="qic">🖼️</div>
+          <div><h3>Progress gallery</h3><p>Recent site photos, day by day</p></div>
+          <div className="arw">→</div>
+        </div>}
+        {vis.show_procurement && <div className="qcard" onClick={goProc}>
           <div className="qic">◧</div>
           <div><h3>Procurement plan</h3><p>Material pipeline, ETAs &amp; delivery status</p></div>
           <div className="arw">→</div>
-        </div>
-        <div className="qcard" onClick={goCameras}>
+        </div>}
+        {vis.show_cameras && <div className="qcard" onClick={goCameras}>
           <div className="qic">📹</div>
           <div><h3>Site cameras</h3><p>Live views &amp; daily time-lapse</p></div>
           <div className="arw">→</div>
-        </div>
+        </div>}
       </div>
       <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
     </>
@@ -592,6 +600,41 @@ function ProgrammeView({ project, onBack }) {
   );
 }
 
+function GalleryView({ site, onBack }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => { setD(null); setErr(null);
+    api(`/sites/${site.id}/gallery`).then(setD)
+      .catch((e) => setErr(e.message)); }, [site.id]);
+  return (
+    <>
+      <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>‹ Back to overview</button>
+      <div className="card">
+        <div className="sec-title"><h2>Progress gallery</h2>
+          <span className="hint">site photos, last 7 days</span></div>
+        {err && <p className="err">{err}</p>}
+        {!d && !err && <p className="loading">Loading photos…</p>}
+        {d && !d.days.length && <p className="muted">
+          No progress photos in the last week.</p>}
+        {d && d.days.map((g) => (
+          <div key={g.date} style={{ marginTop: 18 }}>
+            <div className="grp-h">{fmt(g.date)}</div>
+            <div className="photos">
+              {g.photos.map((p, i) => (
+                <div key={i} className="ph">
+                  <img src={p.url} alt={p.caption || "site photo"} loading="lazy" />
+                  {p.caption && <div className="cap">{p.caption}</div>}
+                </div>))}
+            </div>
+          </div>))}
+        {d && d.capped && <p className="muted" style={{ marginTop: 14 }}>
+          Showing the {d.total} most recent photos.</p>}
+      </div>
+      <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
+    </>
+  );
+}
+
 function CamerasPage({ onBack }) {
   return (
     <>
@@ -623,7 +666,8 @@ function SitePortal({ id, single, onBackToSites }) {
   const projects = d.projects || [];
   const activeProject = projects[proj] || null;
   const seg = view.name;
-  const wide = seg === "proc" || seg === "programme";
+  const wide = seg === "proc" || seg === "programme" || seg === "gallery";
+  const vis = d.visibility || {};
 
   return (
     <>
@@ -631,25 +675,30 @@ function SitePortal({ id, single, onBackToSites }) {
         {!single && <button className="seg" onClick={onBackToSites}>‹ Sites</button>}
         <button className={`seg ${seg === "overview" ? "on" : ""}`}
           onClick={() => setView({ name: "overview" })}>Overview</button>
-        <button className={`seg ${seg === "programme" ? "on" : ""}`}
-          onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>
-        <button className={`seg ${seg === "proc" ? "on" : ""}`}
-          onClick={() => setView({ name: "proc" })}>Procurement</button>
-        <button className={`seg ${seg === "cameras" ? "on" : ""}`}
-          onClick={() => setView({ name: "cameras" })}>Cameras</button>
+        {vis.show_programme && <button className={`seg ${seg === "programme" ? "on" : ""}`}
+          onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>}
+        {vis.show_gallery && <button className={`seg ${seg === "gallery" ? "on" : ""}`}
+          onClick={() => setView({ name: "gallery" })}>Gallery</button>}
+        {vis.show_procurement && <button className={`seg ${seg === "proc" ? "on" : ""}`}
+          onClick={() => setView({ name: "proc" })}>Procurement</button>}
+        {vis.show_cameras && <button className={`seg ${seg === "cameras" ? "on" : ""}`}
+          onClick={() => setView({ name: "cameras" })}>Cameras</button>}
       </div></div>
 
       <div className={`wrap ${wide ? "wide" : ""}`}>
-        {seg === "overview" && <Overview d={d} proj={proj} setProj={setProj}
+        {seg === "overview" && <Overview d={d} vis={vis} proj={proj} setProj={setProj}
           openDoc={(ref) => setView({ name: "report", ref })}
           goProc={() => setView({ name: "proc" })}
           goProgramme={() => setView({ name: "programme" })}
+          goGallery={() => setView({ name: "gallery" })}
           goCameras={() => setView({ name: "cameras" })} />}
         {seg === "report" && <ReportView docRef={view.ref}
           onBack={() => setView({ name: "overview" })} />}
         {seg === "programme" && (activeProject
           ? <ProgrammeView project={activeProject} onBack={() => setView({ name: "overview" })} />
           : <div className="card"><p className="muted">No project to show a programme for yet.</p></div>)}
+        {seg === "gallery" && <GalleryView site={d.site}
+          onBack={() => setView({ name: "overview" })} />}
         {seg === "proc" && <ProcurementPage site={d.site}
           onBack={() => setView({ name: "overview" })} />}
         {seg === "cameras" && <CamerasPage onBack={() => setView({ name: "overview" })} />}

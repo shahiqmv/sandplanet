@@ -180,6 +180,92 @@ class ClientPortalAuthTests(TestCase):
                     "cost", "rate", "contract_value"):
             self.assertNotIn(bad, blob)
 
+    def test_admin_can_gate_sections(self):
+        """Admin toggling a client's show_* flag hides that section both in the
+        payload and at the endpoint (404, never 403)."""
+        temp, created = self._make_client_user(sites=[self.site])
+        cid = created["id"]
+        # default: all sections visible in the admin list
+        self.client.force_authenticate(self.admin)
+        row = next(u for u in self.client.get("/api/v1/client-users").data
+                   if u["id"] == cid)
+        self.assertTrue(row["show_procurement"])
+        # admin turns procurement off
+        p = self.client.patch(f"/api/v1/client-users/{cid}",
+                              {"show_procurement": False}, format="json")
+        self.assertEqual(p.status_code, 200, p.data)
+        self.assertFalse(p.data["show_procurement"])
+        self.client.force_authenticate(None)
+        # the client now can't reach procurement, and the site payload says so
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(self.client.get(
+            f"/api/client/sites/{self.site.id}/procurement").status_code, 404)
+        self.assertEqual(self.client.get(
+            f"/api/client/sites/{self.site.id}/procurement.xlsx").status_code,
+            404)
+        vis = self.client.get(
+            f"/api/client/sites/{self.site.id}").data["visibility"]
+        self.assertFalse(vis["show_procurement"])
+        self.assertTrue(vis["show_programme"])
+
+    def test_reports_gate_empties_dashboard_and_blocks_doc(self):
+        from datetime import date
+        from .models import Document
+        temp, created = self._make_client_user(sites=[self.site])
+        self.client.force_authenticate(self.admin)
+        self.client.patch(f"/api/v1/client-users/{created['id']}",
+                          {"show_reports": False}, format="json")
+        self.client.force_authenticate(None)
+        dpr = Document.objects.create(
+            doc_type="DPR", ref="DPR-VKR-777", site=self.site,
+            doc_date=date.today(), status="ISSUED", created_by=self.admin)
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        d = self.client.get(f"/api/client/sites/{self.site.id}").data
+        self.assertEqual(d["recent_dprs"], [])
+        self.assertEqual(d["dma"], {"today": None, "tomorrow": None})
+        self.assertEqual(
+            self.client.get(f"/api/client/documents/{dpr.ref}").status_code, 404)
+
+    def test_gallery_groups_photos_by_date(self):
+        from datetime import date, timedelta
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from .models import Attachment, Document
+        temp, _ = self._make_client_user(sites=[self.site])
+        png = (b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+        for i, dd in enumerate((date.today(), date.today() - timedelta(days=1))):
+            doc = Document.objects.create(
+                doc_type="DPR", ref=f"DPR-VKR-G{i}", site=self.site,
+                doc_date=dd, status="ISSUED", created_by=self.admin)
+            Attachment.objects.create(
+                document=doc, kind="PHOTO", caption=f"day {i}",
+                file=SimpleUploadedFile(f"p{i}.png", png,
+                                        content_type="image/png"))
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        r = self.client.get(f"/api/client/sites/{self.site.id}/gallery")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["total"], 2)
+        self.assertEqual(len(r.data["days"]), 2)
+        # newest date first, caption carried
+        self.assertEqual(r.data["days"][0]["date"], date.today().isoformat())
+        self.assertEqual(r.data["days"][0]["photos"][0]["caption"], "day 0")
+        # a site they aren't assigned to → 404
+        self.assertEqual(self.client.get(
+            f"/api/client/sites/{self.other.id}/gallery").status_code, 404)
+
+    def test_gallery_gate_blocks_endpoint(self):
+        temp, created = self._make_client_user(sites=[self.site])
+        self.client.force_authenticate(self.admin)
+        self.client.patch(f"/api/v1/client-users/{created['id']}",
+                          {"show_gallery": False}, format="json")
+        self.client.force_authenticate(None)
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        self.assertEqual(self.client.get(
+            f"/api/client/sites/{self.site.id}/gallery").status_code, 404)
+
     def test_client_progress_programme_and_override(self):
         from datetime import date
         from .models import Project, ProgrammeActivity

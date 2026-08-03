@@ -623,6 +623,14 @@ class ClientUser(models.Model):
     sites = models.ManyToManyField(Site, related_name="client_users", blank=True)
     is_active = models.BooleanField(default=True)
     must_change_password = models.BooleanField(default=True)
+    # What this client sees in the portal — HO admin gates each section (e.g.
+    # hide the procurement plan while it's being updated). Default on, so
+    # existing clients are unaffected (owner 2026-08-03).
+    show_reports = models.BooleanField(default=True)      # daily reports/DMA/LM
+    show_programme = models.BooleanField(default=True)
+    show_procurement = models.BooleanField(default=True)
+    show_gallery = models.BooleanField(default=True)
+    show_cameras = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     last_login = models.DateTimeField(null=True, blank=True)
 

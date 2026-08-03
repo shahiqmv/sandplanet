@@ -18,12 +18,17 @@ from .client_portal import (ClientTokenAuthentication, IsClient,
 from .models import ClientSession, ClientUser, Document, Site
 
 
+VIS_FLAGS = ("show_reports", "show_programme", "show_procurement",
+             "show_gallery", "show_cameras")
+
+
 def _client_dict(c):
     return {
         "full_name": c.full_name, "org_name": c.org_name, "email": c.email,
         "must_change_password": c.must_change_password,
         "sites": [{"id": s.id, "code": s.code, "name": s.name}
                   for s in c.sites.all().order_by("code")],
+        "visibility": {f: getattr(c, f) for f in VIS_FLAGS},
     }
 
 
@@ -103,6 +108,7 @@ def client_site(request, pk):
     site = Site.objects.get(pk=pk)
     today = date.today()
     tomorrow = today + timedelta(days=1)
+    reports = request.user.show_reports
 
     def dma_on(day):
         d = Document.objects.filter(doc_type="DMA", site=site, doc_date=day,
@@ -134,13 +140,30 @@ def client_site(request, pk):
         # Current strength on site — by trade + grand total, from the latest
         # daily report (includes subcontract labour).
         "manpower": cr.site_workforce(site),
-        "dma": {"today": dma_on(today), "tomorrow": dma_on(tomorrow)},
+        # Daily reports / allocations / deliveries are gated by show_reports.
+        "dma": ({"today": dma_on(today), "tomorrow": dma_on(tomorrow)}
+                if reports else {"today": None, "tomorrow": None}),
         "recent_dprs": [
             {"ref": d.ref, "date": d.doc_date, "verified": d.status == "VERIFIED"}
-            for d in dprs],
+            for d in dprs] if reports else [],
         "materials_on_the_way": [
-            {"ref": d.ref, "date": d.doc_date} for d in lms],
+            {"ref": d.ref, "date": d.doc_date} for d in lms] if reports else [],
+        "visibility": {f: getattr(request.user, f) for f in VIS_FLAGS},
     })
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site_gallery(request, pk):
+    """Progress photos from the site's recent daily reports, date-grouped."""
+    if (b := _blocked(request, "show_gallery")):
+        return b
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    site = Site.objects.get(pk=pk)
+    from . import client_report as cr
+    return Response(cr.site_gallery(site))
 
 
 def _project_schedule(project):
@@ -162,6 +185,14 @@ def _client_project(request, pk):
     return project
 
 
+def _blocked(request, flag):
+    """A 404 Response when the client's account has this portal section hidden
+    (HO admin gate), else None so the caller proceeds."""
+    if not getattr(request.user, flag, True):
+        return Response({"detail": "Not found."}, status=404)
+    return None
+
+
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
@@ -169,6 +200,8 @@ def client_site_procurement(request, pk):
     """The whole site's procurement plan for the portal — every project's plan
     merged into one, so the client sees it site-wide without toggling projects
     (owner 2026-08-03). Per-project scheduling stays intact in the staff app."""
+    if (b := _blocked(request, "show_procurement")):
+        return b
     if pk not in client_site_ids(request.user):
         return Response({"detail": "Not found."}, status=404)
     site = Site.objects.get(pk=pk)
@@ -182,6 +215,8 @@ def client_site_procurement(request, pk):
 def client_site_procurement_xlsx(request, pk):
     """The site-wide procurement plan as a spreadsheet."""
     from django.http import HttpResponse
+    if (b := _blocked(request, "show_procurement")):
+        return b
     if pk not in client_site_ids(request.user):
         return Response({"detail": "Not found."}, status=404)
     site = Site.objects.get(pk=pk)
@@ -205,6 +240,8 @@ def client_site_procurement_xlsx(request, pk):
 def client_project_programme(request, pk):
     """The client-safe construction programme (Gantt data) for one of the
     client's own projects."""
+    if (b := _blocked(request, "show_programme")):
+        return b
     project = _client_project(request, pk)
     if not project:
         return Response({"detail": "Not found."}, status=404)
@@ -219,6 +256,8 @@ def client_project_programme_pdf(request, pk):
     """The construction programme as a PDF (Gantt + activity table + planned
     manpower) — the same award-package document, downloadable in the portal."""
     from django.http import HttpResponse
+    if (b := _blocked(request, "show_programme")):
+        return b
     project = _client_project(request, pk)
     if not project:
         return Response({"detail": "Not found."}, status=404)
@@ -238,6 +277,8 @@ def client_project_programme_pdf(request, pk):
 def client_project_procurement(request, pk):
     """The client procurement plan for one of the client's own projects — the
     same vetted allowlist the public share link uses, served in the portal."""
+    if (b := _blocked(request, "show_procurement")):
+        return b
     project = _client_project(request, pk)
     if not project:
         return Response({"detail": "Not found."}, status=404)
@@ -254,6 +295,8 @@ def client_project_procurement(request, pk):
 def client_project_procurement_xlsx(request, pk):
     """The project procurement plan as a spreadsheet — same client allowlist."""
     from django.http import HttpResponse
+    if (b := _blocked(request, "show_procurement")):
+        return b
     project = _client_project(request, pk)
     if not project:
         return Response({"detail": "Not found."}, status=404)
@@ -296,6 +339,8 @@ def client_document(request, ref):
     """A client-viewable report as structured, allowlisted JSON — the portal
     renders it web-native (responsive), not the print PDF in a frame. The
     print PDF stays available at the .pdf sibling endpoint."""
+    if (b := _blocked(request, "show_reports")):
+        return b
     doc = _client_document(request, ref)
     if not doc:
         return Response({"detail": "Not found."}, status=404)
@@ -313,6 +358,8 @@ def client_document(request, ref):
 def client_document_pdf(request, ref):
     """The same report rendered to PDF for the portal 'Download PDF' button."""
     from django.http import HttpResponse
+    if (b := _blocked(request, "show_reports")):
+        return b
     doc = _client_document(request, ref)
     if not doc:
         return Response({"detail": "Not found."}, status=404)

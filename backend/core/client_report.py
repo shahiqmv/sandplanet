@@ -36,6 +36,38 @@ def client_project_progress(project):
     }
 
 
+def site_gallery(site, days=7, cap=90):
+    """Progress photos from the site's recent daily reports, grouped by date
+    (newest first) with captions. Capped so the page stays snappy — the client
+    Gallery. Photos are DPR PHOTO attachments; no commercial data."""
+    from datetime import date, timedelta
+    from .models import Document
+    since = date.today() - timedelta(days=days - 1)
+    dprs = (Document.objects.filter(
+        site=site, doc_type="DPR", is_void=False,
+        status__in=("ISSUED", "VERIFIED"), doc_date__gte=since)
+        .order_by("-doc_date"))
+    by_date, order, total = {}, [], 0
+    for d in dprs:
+        if total >= cap:
+            break
+        for p in d.attachments.filter(kind="PHOTO").order_by("id"):
+            if total >= cap:
+                break
+            try:
+                url = p.file.url
+            except Exception:
+                continue
+            key = d.doc_date.isoformat()
+            if key not in by_date:
+                by_date[key] = []
+                order.append(key)
+            by_date[key].append({"url": url, "caption": p.caption or ""})
+            total += 1
+    return {"days": [{"date": k, "photos": by_date[k]} for k in order],
+            "total": total, "capped": total >= cap}
+
+
 def project_programme(project):
     """Client-safe programme for a project: the Gantt rows (name, dates,
     milestone flag, dependencies, % complete) + the weighted overall %.

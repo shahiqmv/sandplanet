@@ -5,6 +5,15 @@ import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 // HO-admin management of Client Portal logins (the client realm itself is a
 // separate app at /portal/). Create an account, assign the client's site(s),
 // hand over the one-time temp password.
+// Portal sections the admin can show/hide per client.
+const SECTIONS = [
+  ["show_reports", "Daily reports"],
+  ["show_programme", "Programme"],
+  ["show_procurement", "Procurement"],
+  ["show_gallery", "Gallery"],
+  ["show_cameras", "Cameras"],
+];
+
 export default function ClientUsersPage({ sites }) {
   const [list, setList] = useState([]);
   const [draft, setDraft] = useState({ org_name: "", full_name: "",
@@ -35,6 +44,11 @@ export default function ClientUsersPage({ sites }) {
     if (!window.confirm(`Deactivate ${u.email}? They can no longer sign in.`))
       return;
     await api(`/client-users/${u.id}`, { method: "DELETE" }); load();
+  }
+  async function toggleFlag(u, flag) {
+    await api(`/client-users/${u.id}`, { method: "PATCH",
+      body: { [flag]: !u[flag] } }).catch(() => {});
+    load();
   }
   const toggleSite = (id) => setDraft((d) => ({ ...d,
     site_ids: d.site_ids.includes(id)
@@ -96,18 +110,38 @@ export default function ClientUsersPage({ sites }) {
 
       <section style={card}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <p style={{ color: "#5a6b78", fontSize: 12, marginTop: 0 }}>
+          Tap a section to show/hide it for that client (e.g. hide the
+          procurement plan while it's being updated). Overview &amp; workforce
+          are always visible.</p>
           <thead><tr>
             <th style={th}>Organisation</th><th style={th}>Contact</th>
-            <th style={th}>Email</th><th style={th}>Sites</th>
+            <th style={th}>Sites</th><th style={th}>Visible sections</th>
             <th style={th}>Status</th><th style={th}></th>
           </tr></thead>
           <tbody>
             {list.map((u) => (
               <tr key={u.id} style={{ opacity: u.is_active ? 1 : 0.5 }}>
-                <td style={td}>{u.org_name}</td>
+                <td style={td}>{u.org_name}
+                  <div style={{ fontSize: 11, color: "#5a6b78" }}>{u.email}</div>
+                </td>
                 <td style={td}>{u.full_name}</td>
-                <td style={td}>{u.email}</td>
                 <td style={td}>{u.sites.map((s) => s.code).join(", ") || "—"}</td>
+                <td style={td}>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {SECTIONS.map(([flag, label]) => (
+                      <button key={flag} onClick={() => toggleFlag(u, flag)}
+                        title={u[flag] ? "Visible — tap to hide"
+                          : "Hidden — tap to show"}
+                        style={{ border: "1px solid var(--line)",
+                          borderRadius: 999, padding: "2px 9px", fontSize: 11,
+                          cursor: "pointer",
+                          background: u[flag] ? "var(--green-bg, #eefaf1)" : "#f3f4f6",
+                          color: u[flag] ? "var(--green-fg, #1f8a54)" : "#98a2ad",
+                          textDecoration: u[flag] ? "none" : "line-through" }}>
+                        {label}</button>))}
+                  </div>
+                </td>
                 <td style={td}>{u.is_active
                   ? (u.last_login ? "Active" : "Invited") : "Off"}</td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>

@@ -11,6 +11,11 @@ from .models import ClientUser, Site
 from .permissions import IsAdmin
 
 
+# Portal sections the admin can show/hide per client.
+VIS_FLAGS = ("show_reports", "show_programme", "show_procurement",
+             "show_gallery", "show_cameras")
+
+
 def _dict(c):
     return {
         "id": c.id, "org_name": c.org_name, "full_name": c.full_name,
@@ -19,7 +24,14 @@ def _dict(c):
         "last_login": c.last_login,
         "sites": [{"id": s.id, "code": s.code, "name": s.name}
                   for s in c.sites.all().order_by("code")],
+        **{f: getattr(c, f) for f in VIS_FLAGS},
     }
+
+
+def _apply_visibility(client, data):
+    for f in VIS_FLAGS:
+        if f in data:
+            setattr(client, f, bool(data[f]))
 
 
 def _set_sites(client, site_ids):
@@ -44,6 +56,7 @@ def client_users(request):
             org_name=(request.data.get("org_name") or "").strip(),
             full_name=(request.data.get("full_name") or "").strip(),
             email=email, must_change_password=True)
+        _apply_visibility(client, request.data)
         client.set_password(temp)
         client.save()
         _set_sites(client, request.data.get("site_ids"))
@@ -75,6 +88,7 @@ def client_user_detail(request, pk):
         client.is_active = bool(request.data["is_active"])
         if not client.is_active:
             client.sessions.update(revoked=True)
+    _apply_visibility(client, request.data)
     client.save()
     _set_sites(client, request.data.get("site_ids"))
     audit("client_user", client.id, "CLIENT_USER_UPDATED", actor=request.user)
