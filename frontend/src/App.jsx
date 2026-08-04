@@ -496,7 +496,7 @@ export default function App() {
           api("/auth/me").then(setMe)} />
       ) : (
         <main style={{ maxWidth:
-                         ["attendance", "workforce"].includes(docView?.mode)
+                         ["attendance", "workforce", "dma"].includes(docView?.mode)
                          || (!docView && hoPage === "meetings")
                            ? 1160
                          : (docView?.mode === "project"
