@@ -45,6 +45,27 @@ MODEL_OUT = {
 
 
 class BoqExtractPureTests(TestCase):
+    def test_excel_pages_skips_hidden_columns_and_rows(self):
+        # Client tender workbooks hide the rival-vendor columns and working
+        # rows; those must not leak into what the model sees.
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "BOQ"
+        ws.append(["Code", "Description", "Qty", "OurRate", "RivalRate"])
+        ws.append(["1.1", "Excavate", 120, 8.5, 7.25])
+        ws.append(["1.2", "Blinding", 35, 95, 90])
+        ws.column_dimensions["E"].hidden = True     # a competitor's price column
+        ws.row_dimensions[3].hidden = True          # a hidden working row
+        buf = io.BytesIO()
+        wb.save(buf)
+        blob = "\n".join(boq_extract.excel_pages(io.BytesIO(buf.getvalue())))
+        self.assertIn("Excavate", blob)             # visible BOQ kept
+        self.assertIn("OurRate", blob)
+        self.assertNotIn("RivalRate", blob)         # hidden column dropped
+        self.assertNotIn("7.25", blob)              # its data dropped
+        self.assertNotIn("Blinding", blob)          # hidden row dropped
+
     def test_normalise_cleans_numbers_and_drops_empty(self):
         rows = boq_extract.normalise_rows([
             {"description": "Excavate", "unit": "m3", "qty": "1,200",

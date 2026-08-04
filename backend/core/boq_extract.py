@@ -25,23 +25,29 @@ class ExtractionError(Exception):
 # ---- text extraction -----------------------------------------------------
 
 def pdf_pages(fileobj):
-    """Per-page text of a (digital) PDF. Tables are flattened to tab-separated
-    lines so column structure survives into the model prompt."""
+    """Per-page text of a (digital) PDF, using layout-preserving extraction so a
+    BOQ's columns stay aligned on each row.
+
+    We deliberately do NOT use pdfplumber's table detector here: on borderless /
+    tender-style BOQ grids (no internal row rules) it collapses each column into
+    a single cell — every item code in one blob, every description in another —
+    which destroys the row-to-row alignment the model needs to pair a
+    description with its qty/rate/amount (and it even splits numbers). Laid-out
+    text keeps each row on one line with columns positioned by whitespace, which
+    the model reads reliably across both ruled and borderless formats."""
     import pdfplumber
     pages = []
     try:
         with pdfplumber.open(fileobj) as pdf:
             for page in pdf.pages:
-                parts = []
-                for table in page.extract_tables() or []:
-                    for row in table:
-                        cells = [(c or "").replace("\n", " ").strip()
-                                 for c in row]
-                        if any(cells):
-                            parts.append("\t".join(cells))
-                text = page.extract_text() or ""
-                # Prefer table rows; fall back to raw text when no tables found.
-                pages.append("\n".join(parts) if parts else text)
+                text = page.extract_text(layout=True) or ""
+                if not text.strip():             # some pages lay out to nothing
+                    text = page.extract_text() or ""
+                # Drop blank lines and trailing padding, but KEEP leading spaces
+                # — that indentation is the column alignment.
+                text = "\n".join(ln.rstrip() for ln in text.splitlines()
+                                 if ln.strip())
+                pages.append(text)
     except Exception as e:                       # pragma: no cover - lib/env
         raise ExtractionError(f"Could not read that PDF: {e}")
     if not any(p.strip() for p in pages):
@@ -52,19 +58,37 @@ def pdf_pages(fileobj):
 
 
 def excel_pages(fileobj):
-    """One 'page' of tab-separated text per worksheet (all sheets)."""
+    """One 'page' of tab-separated text per worksheet (all sheets).
+
+    Hidden columns and rows are skipped: in client tender/comparison workbooks
+    those hold the other vendors' prices and working rows, not the BOQ we're
+    capturing — feeding them to the model mixes up which rate/amount is ours.
+    Fully-empty columns are dropped too so the real BOQ columns stay adjacent
+    (spreadsheets often have spacer columns between fields)."""
     from openpyxl import load_workbook
-    try:
-        wb = load_workbook(fileobj, read_only=True, data_only=True)
+    from openpyxl.utils import get_column_letter
+    try:                                    # not read_only: need hidden flags
+        wb = load_workbook(fileobj, data_only=True)
     except Exception as e:
         raise ExtractionError(f"Could not read that Excel file: {e}")
     pages = []
     for ws in wb.worksheets:
-        lines = [f"# Sheet: {ws.title}"]
-        for raw in ws.iter_rows(values_only=True):
-            if raw is None or all(c in (None, "") for c in raw):
+        hidden_cols = {c for c, dim in ws.column_dimensions.items() if dim.hidden}
+        vis = [i for i in range(1, (ws.max_column or 0) + 1)
+               if get_column_letter(i) not in hidden_cols]
+        rows = []
+        for r, raw in enumerate(ws.iter_rows(values_only=True), start=1):
+            if ws.row_dimensions[r].hidden:
                 continue
-            lines.append("\t".join("" if c is None else str(c) for c in raw))
+            cells = ["" if raw[i - 1] is None else str(raw[i - 1]) for i in vis]
+            if any(c.strip() for c in cells):
+                rows.append(cells)
+        if not rows:
+            continue
+        keep = [j for j in range(len(vis))
+                if any(row[j].strip() for row in rows)]   # drop empty columns
+        lines = [f"# Sheet: {ws.title}"]
+        lines += ["\t".join(row[j] for j in keep) for row in rows]
         if len(lines) > 1:
             pages.append("\n".join(lines))
     if not pages:
