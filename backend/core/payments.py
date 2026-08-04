@@ -278,13 +278,15 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin in ("FINANCE", "CENTRAL") or pr.is_capitalized:
+        if (pr.origin in ("FINANCE", "CENTRAL") or pr.is_capitalized) \
+                and pr.origin not in ("COMMERCIAL", "ONBOARDING"):
             # Head-Office requests (CENTRAL — HO Purchasing/HR, QS, Director…),
             # accounts-initiated ones (FINANCE — rent, salaries, utilities…) and
             # capitalized import charges skip the Director: there is no site PM
             # and no Director step — they clear straight to a Payment Voucher for
             # signatory approval (owner 2026-07-31). Only site PYRs keep the
-            # PM → Director chain.
+            # PM → Director chain. COMMERCIAL and ONBOARDING always keep the
+            # Director step (even the refundable, capitalized WP deposit).
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
                         "No Director step — authorised on a Payment Voucher")
         return None

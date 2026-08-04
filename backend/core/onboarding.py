@@ -335,7 +335,7 @@ def _can_leave(case, stage):
         if case.medical_result != "PASS":
             return "Record the medical result (PASS) before advancing."
     if stage in PAYMENT_STAGES and stage not in (case.waived_stages or []):
-        fee = fee_for(case, stage)
+        fee = active_fee_for(case, stage)
         if fee is None:
             return "Raise the fee PYR for this stage first."
         if fee.document.status != "PAID":
@@ -386,7 +386,7 @@ def advance_stage(case, data, actor):
     # fee) — record it so the stage can advance without a PYR.
     if data.get("waive_fee") and case.stage in PAYMENT_STAGES \
             and case.stage not in (case.waived_stages or []):
-        if fee_for(case, case.stage):
+        if active_fee_for(case, case.stage):
             return "A fee has already been raised for this stage — pay or void it."
         case.waived_stages = list(case.waived_stages or []) + [case.stage]
         case.save(update_fields=["waived_stages", "updated_at"])
@@ -515,8 +515,35 @@ FEE_META = {
 }
 
 
+# A fee PYR in one of these states is dead — it no longer counts as "the fee for
+# this stage", so HR can raise a fresh one after a wrong PYR was cancelled,
+# returned-then-cancelled, or voided (owner 2026-08-04).
+_DEAD_PYR = ("CANCELLED", "REJECTED", "VOID")
+
+
+def _stage_fees(case, stage):
+    return (case.fees.filter(stage=stage).select_related("document")
+            .order_by("-id"))
+
+
+def active_fee_for(case, stage):
+    """The live fee PYR for a stage, if any — ignoring cancelled/rejected/voided
+    attempts so a fresh PYR can be raised (or the stage waived) after a wrong one
+    is scrapped. Drives the raise/pay/advance gates."""
+    for fee in _stage_fees(case, stage):
+        if fee.document.status not in _DEAD_PYR:
+            return fee
+    return None
+
+
 def fee_for(case, stage):
-    return case.fees.filter(stage=stage).select_related("document").first()
+    """The fee PYR to display for a stage: the live one if there is one, else the
+    most recent attempt (e.g. a cancelled one) so its status stays visible."""
+    fees = list(_stage_fees(case, stage))
+    for fee in fees:
+        if fee.document.status not in _DEAD_PYR:
+            return fee
+    return fees[0] if fees else None
 
 
 def _att_ref(att):
@@ -672,6 +699,11 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
         if err:
             transaction.set_rollback(True)
             return None, err
+        # Onboarding fees route Director → Finance, skipping the site PM — a
+        # recruitment cost, not a site spend (owner 2026-08-04). Same chain as a
+        # COMMERCIAL PYR; forced here regardless of who raises it.
+        pr.origin = "ONBOARDING"
+        pr.save(update_fields=["origin"])
         if refundable:                          # deposit posts nothing
             pr.is_capitalized = True
             pr.save(update_fields=["is_capitalized"])
@@ -684,8 +716,12 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
                 caption=f"{invoice_label} — {label}", uploaded_by=actor)
             pr.has_supporting_doc = True
             pr.save(update_fields=["has_supporting_doc"])
-        OnboardingFee.objects.create(case=case, document=pyr, stage=stage,
-                                     refundable=refundable)
+        # One fee tracker per (case, stage). If a prior attempt was cancelled/
+        # voided the raise gate has already cleared it, so repoint the tracker at
+        # the fresh PYR (the old Document stays for the audit trail).
+        OnboardingFee.objects.update_or_create(
+            case=case, stage=stage,
+            defaults={"document": pyr, "refundable": refundable})
         _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
                     f"{label} — onboarding {doc.ref}")
     return pyr, None
@@ -703,7 +739,7 @@ def raise_fee(case, data, actor, invoice=None):
     stage = case.stage
     if stage not in PAYMENT_STAGES:
         return None, "This stage has no fee."
-    if fee_for(case, stage) is not None:
+    if active_fee_for(case, stage) is not None:
         return None, "A fee PYR has already been raised for this stage."
     amount = _dec(data.get("amount"))
     if amount is None or amount <= Decimal("0"):
@@ -1223,7 +1259,7 @@ def stage_view(case):
         needs = "arrival_bv"
     fee = None
     if case.stage in PAYMENT_STAGES:
-        f = fee_for(case, case.stage)
+        f = active_fee_for(case, case.stage)
         label, refundable = FEE_META.get(case.stage, ("", False))
         fee = {"label": label, "refundable": refundable, "raised": bool(f),
                "invoice_label": INVOICE_LABEL.get(case.stage, "Invoice"),

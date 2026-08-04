@@ -285,6 +285,46 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("already been raised", r.data["detail"])
 
+    def test_onboarding_fee_skips_pm_routes_to_director(self):
+        pk = self._approved()
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "Immigration"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        pr = (OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
+              .document.payment_request)
+        # recruitment cost — Director → Finance, no site PM in the chain
+        self.assertEqual(pr.origin, "ONBOARDING")
+        self.assertEqual(pr.document.status, "SUBMITTED")   # waits on Director
+
+    def test_cancelled_fee_can_be_re_raised(self):
+        from .onboarding import active_fee_for
+        pk = self._approved()
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                         {"amount": "1500", "payee": "X"}, format="json")
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
+        # a second attempt is refused while the first is still live
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "X"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # the wrong PYR gets cancelled — HR must be able to raise a fresh one
+        fee.document.status = "CANCELLED"
+        fee.document.save(update_fields=["status"])
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertIsNone(active_fee_for(case, "WP_DEPOSIT"))
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "X"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        # tracker repointed to the fresh, live PYR (the cancelled Document stays)
+        self.assertEqual(case.fees.filter(stage="WP_DEPOSIT").count(), 1)
+        live = active_fee_for(OnboardingCase.objects.get(pk=pk), "WP_DEPOSIT")
+        self.assertEqual(live.document.status, "SUBMITTED")
+        self.assertNotEqual(live.document_id, fee.document_id)
+
     def test_fee_paid_notifies_hr(self):
         from . import onboarding as ob
         from .models import Notification
