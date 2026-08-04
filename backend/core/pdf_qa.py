@@ -164,7 +164,11 @@ def dma_context(document, revision):
     payload = revision.payload or {}
     approvals = list(document.approvals.select_related("actor"))
     tasks = payload.get("tasks", [])
-    totals, total = {}, 0
+    # Worker-assignments per category across tasks. A crew reused on several
+    # tasks is counted once per task, so this is an ALLOCATION count — NOT the
+    # headcount on site. The real manpower on site comes from that day's
+    # attendance (owner 2026-08-04).
+    alloc = {}
     for t in tasks:
         try:
             count = int(t.get("workers") or 0)
@@ -172,8 +176,21 @@ def dma_context(document, revision):
             count = 0
         if count:
             key = (t.get("category") or "Unassigned").strip() or "Unassigned"
-            totals[key] = totals.get(key, 0) + count
-            total += count
+            alloc[key] = alloc.get(key, 0) + count
+    from .views_hr import site_manpower_data
+    mp = site_manpower_data(document.site, document.doc_date)
+    present = {c["name"]: c["present"] for c in mp["categories"] if c["present"]}
+    att_in = bool(mp["attendance_entered"] and mp["present"])
+    names = sorted(set(alloc) | set(present))
+    if att_in:
+        alloc_title = (f"2. Allocation by Category  ·  {mp['present']} on site "
+                       "(from attendance)")
+        alloc_headers = ["Category", "Assigned", "On site"]
+        alloc_rows = [[n, alloc.get(n, "—"), present.get(n, "—")] for n in names]
+    else:
+        alloc_title = "2. Allocation by Category (worker-assignments)"
+        alloc_headers = ["Category", "Assigned"]
+        alloc_rows = [[n, alloc.get(n, "—")] for n in names]
     sections = [
         {"kind": "table", "title": "1. Task Allocation",
          "headers": ["No.", "Task", "Project", "Location/Area", "Category",
@@ -182,9 +199,8 @@ def dma_context(document, revision):
                    t.get("location", ""), t.get("category", ""),
                    t.get("workers", ""), t.get("remarks", "")]
                   for i, t in enumerate(tasks)]},
-        {"kind": "table", "title": f"2. Manpower at Work — total {total}",
-         "headers": ["Category", "Workers"],
-         "rows": sorted(totals.items())},
+        {"kind": "table", "title": alloc_title,
+         "headers": alloc_headers, "rows": alloc_rows},
     ]
     if payload.get("notes"):
         sections.append({"kind": "text", "title": "3. Notes / Instructions",
