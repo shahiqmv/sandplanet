@@ -207,16 +207,32 @@ def _call_claude(content, model):
 
 def structure(pages, model=None):
     """Run the (possibly batched) model extraction over the document pages.
-    Returns {rate_mode, rows, printed_totals}."""
+    Returns {rate_mode, rows, printed_totals}.
+
+    Each batch is one independent model call, so a big BOQ's batches run
+    CONCURRENTLY — wall time is the slowest single call, not the sum. A large
+    bill that took 3 sequential calls (and blew the request timeout) now
+    finishes in roughly one call's time. Order is preserved so rows stay in
+    document order."""
+    from concurrent.futures import ThreadPoolExecutor
     model = model or _model_name()
-    all_rows, totals, modes = [], [], []
-    for batch in _batches(pages):
+    batches = _batches(pages)
+
+    def run(batch):
         header = ("Extract the BOQ from this document text. Page markers are "
                   "shown as [PAGE n].\n\n")
         body = "\n\n".join(f"[PAGE {n}]\n{text}" for n, text in batch)
-        out = _call_claude(header + body, model) or {}
-        for r in out.get("rows", []):
-            all_rows.append(r)
+        return _call_claude(header + body, model) or {}
+
+    if len(batches) <= 1:
+        outs = [run(b) for b in batches]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(batches), 5)) as ex:
+            outs = list(ex.map(run, batches))       # ex.map preserves order
+
+    all_rows, totals, modes = [], [], []
+    for out in outs:
+        all_rows.extend(out.get("rows", []))
         totals.extend(out.get("printed_totals") or [])
         if out.get("rate_mode"):
             modes.append(out["rate_mode"])

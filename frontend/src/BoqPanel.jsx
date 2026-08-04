@@ -208,6 +208,9 @@ export default function BoqPanel({ projectId, project, me }) {
         )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {busy && <p style={{ color: "#5a6b78", fontSize: 12.5 }}>
+        Reading the bill… a large BOQ can take a minute or two — please keep
+        this tab open.</p>}
 
       {pending && editable && !draft && (
         <div style={{ display: "flex", alignItems: "center", gap: 10,
