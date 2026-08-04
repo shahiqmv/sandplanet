@@ -266,6 +266,25 @@ class OnboardingSpineTests(TestCase):
         fee.document.save(update_fields=["status"])
         self.assertEqual(self._adv(pk).data["stage"], "WP_TICKET")
 
+    def test_fee_not_applicable_waives_and_advances(self):
+        pk = self._approved()
+        self._to_deposit(pk)                     # at WP_DEPOSIT (a fee stage)
+        self.assertEqual(self._adv(pk).status_code, 400)   # blocked, no fee
+        r = self._adv(pk, waive_fee=True)        # HR: fee not applicable
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["stage"], "WP_TICKET")     # advanced past it
+        self.assertIn("WP_DEPOSIT", r.data["waived_stages"])
+
+    def test_cannot_waive_an_already_raised_fee(self):
+        pk = self._approved()
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                         {"amount": "1500", "payee": "X"}, format="json")
+        r = self._adv(pk, waive_fee=True)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already been raised", r.data["detail"])
+
     def test_fee_paid_notifies_hr(self):
         from . import onboarding as ob
         from .models import Notification

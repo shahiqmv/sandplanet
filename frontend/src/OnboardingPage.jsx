@@ -88,11 +88,11 @@ export default function OnboardingPage({ me, sites }) {
                   <td style={td}>{c.site_code}</td>
                   <td style={td}>
                     {["APPROVED", "IN_PROGRESS"].includes(c.status)
-                     && c.stage_label ? (
+                     && (c.pending_label || c.stage_label) ? (
                       <>
                         <div style={{ fontWeight: 600,
                                       color: "var(--sp-navy)" }}>
-                          {c.stage_label}</div>
+                          {(c.pending_label || c.stage_label)} pending</div>
                         <div style={{ display: "flex", gap: 10,
                                       flexWrap: "wrap", fontSize: 11,
                                       color: "var(--muted)", marginTop: 1 }}>
@@ -569,7 +569,9 @@ function Processing({ c, me, onReload }) {
         {c.status === "COMPLETED"
           ? <Chip tone="ok">Completed</Chip>
           : <span style={{ color: "var(--muted)", fontSize: 13 }}>
-              {c.stage_label}</span>}
+              {c.pending_label
+                ? <><b>{c.pending_label}</b> pending</>
+                : c.stage_label}</span>}
       </div>
       {err}
       {c.employee_no && (
@@ -592,9 +594,13 @@ function Processing({ c, me, onReload }) {
             <span style={{ fontWeight: s.state === "current" ? 700 : 400,
               color: s.state === "future" ? "var(--muted)" : "var(--ink)" }}>
               {s.label}</span>
-            {s.payment && <span style={{ fontSize: 10, color: "var(--muted)",
-              border: "1px solid var(--line)", borderRadius: 4,
-              padding: "0 4px" }}>fee</span>}
+            {s.payment && (s.waived
+              ? <span style={{ fontSize: 10, color: "var(--green-fg)",
+                  border: "1px solid var(--green-fg)", borderRadius: 4,
+                  padding: "0 4px" }}>no fee</span>
+              : <span style={{ fontSize: 10, color: "var(--muted)",
+                  border: "1px solid var(--line)", borderRadius: 4,
+                  padding: "0 4px" }}>fee</span>)}
           </div>
         ))}
       </div>
@@ -678,6 +684,16 @@ function Processing({ c, me, onReload }) {
                   </label>
                   <Btn variant="secondary" disabled={busy || !amount || !payee}
                        onClick={raiseFee}>Raise fee PYR</Btn>
+                  <button type="button" disabled={busy}
+                    onClick={() => advance({ waive_fee: true,
+                      ...(c.next_needs ? { arrived_date: arrived,
+                                           bv_expiry: bvExp } : {}) })}
+                    title="No fee for this case (e.g. Indian nationals pay no
+visa fee) — advance without a payment"
+                    style={{ border: "none", background: "none", cursor: "pointer",
+                      color: "var(--muted)", fontSize: 12,
+                      textDecoration: "underline" }}>
+                    Fee not applicable →</button>
                 </div>
               ) : c.fee.paid ? (
                 <div style={{ fontSize: 12.5, color: "var(--green-fg)" }}>

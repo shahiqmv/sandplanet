@@ -263,6 +263,19 @@ STAGE_LABEL = {
     "BV_TICKET": "Ticketed",
     "BV_ARRIVED": "Arrived (BV clock starts)",
 }
+
+# What is actually PENDING while a case sits at a stage — the stage labels above
+# are past-tense milestones ("Visa fee paid") which read as done even when the
+# case is still working on them, so the status summary uses these instead.
+PENDING_LABEL = {
+    "WP_APPOINTMENT": "Appointment letter", "WP_APPLICATION": "WP application",
+    "WP_APPROVED": "WP portal approval", "WP_DEPOSIT": "WP deposit",
+    "WP_ENDORSEMENT": "Embassy endorsement", "WP_TICKET": "Ticketing",
+    "WP_ARRIVED": "Arrival", "WP_MEDICAL": "Medical", "WP_ISSUED": "Work permit",
+    "BV_SPONSOR": "Sponsor letter", "BV_INSURANCE": "Insurance",
+    "BV_APPLICATION": "BV application", "BV_APPROVED": "BV portal approval",
+    "BV_VISA_FEE": "Visa fee", "BV_TICKET": "Ticketing", "BV_ARRIVED": "Arrival",
+}
 APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
 ARRIVAL_STAGES = {"WP_ARRIVED", "BV_ARRIVED"}
 MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
@@ -300,7 +313,7 @@ def _can_leave(case, stage):
             return "Medical failed — the case is with the Director to decide."
         if case.medical_result != "PASS":
             return "Record the medical result (PASS) before advancing."
-    if stage in PAYMENT_STAGES:
+    if stage in PAYMENT_STAGES and stage not in (case.waived_stages or []):
         fee = fee_for(case, stage)
         if fee is None:
             return "Raise the fee PYR for this stage first."
@@ -348,6 +361,16 @@ def advance_stage(case, data, actor):
         return "This case is not in processing."
     if case.stage not in seq:
         return "The case stage is out of sync."
+    # HR marked this fee "not applicable" (e.g. Indian nationals pay no visa
+    # fee) — record it so the stage can advance without a PYR.
+    if data.get("waive_fee") and case.stage in PAYMENT_STAGES \
+            and case.stage not in (case.waived_stages or []):
+        if fee_for(case, case.stage):
+            return "A fee has already been raised for this stage — pay or void it."
+        case.waived_stages = list(case.waived_stages or []) + [case.stage]
+        case.save(update_fields=["waived_stages", "updated_at"])
+        audit("document", doc.id, "OBR_FEE_WAIVED", actor=actor,
+              detail={"ref": doc.ref, "stage": case.stage})
     err = _can_leave(case, case.stage)
     if err:
         return err
@@ -1149,9 +1172,11 @@ def stage_view(case):
     """The ordered stage stepper for the case + what the next advance needs."""
     seq = sequence(case)
     idx = seq.index(case.stage) if case.stage in seq else -1
+    waived = set(case.waived_stages or [])
     stages = [{"key": s, "label": STAGE_LABEL.get(s, s),
                "state": "done" if i < idx else "current" if i == idx
-               else "future", "payment": s in PAYMENT_STAGES}
+               else "future", "payment": s in PAYMENT_STAGES,
+               "waived": s in waived}
               for i, s in enumerate(seq)]
     nxt = seq[idx + 1] if 0 <= idx < len(seq) - 1 else None
     needs = None
@@ -1185,6 +1210,8 @@ def case_dict(case):
         "site_code": doc.site.code, "site_id": doc.site_id,
         "doc_date": doc.doc_date,
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
+        "pending_label": PENDING_LABEL.get(case.stage, ""),
+        "waived_stages": list(case.waived_stages or []),
         "portal_status": case.portal_status,
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
