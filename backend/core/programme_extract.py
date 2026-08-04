@@ -143,7 +143,9 @@ def structure(pages, model=None):
 
     acts = []
     for out in outs:
-        acts.extend(out.get("activities") or [])
+        items = out.get("activities") if isinstance(out, dict) else None
+        if isinstance(items, list):        # only a list; never spread a string
+            acts.extend(items)
     return acts
 
 
@@ -173,6 +175,10 @@ def normalise(acts):
     """Coerce model rows to the programme-import shape."""
     out = []
     for a in acts:
+        if isinstance(a, str):            # model returned a bare task name
+            a = {"name": a}
+        elif not isinstance(a, dict):     # anything else is unusable — skip it
+            continue
         name = str(a.get("name") or "").strip()
         if not name:
             continue

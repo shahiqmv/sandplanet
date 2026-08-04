@@ -37,6 +37,12 @@ class ProgrammeExtractTests(TestCase):
         self.assertEqual(out[0]["start"], "2026-01-01")
         self.assertEqual(out[2]["start"], "")               # invalid date cleared
 
+    def test_normalise_survives_non_dict_rows(self):
+        # the model sometimes returns a bare task name or junk instead of an
+        # object — salvage the string, drop the junk, never crash.
+        out = pe.normalise(["Setting out", {"name": "Concrete"}, 42, None])
+        self.assertEqual([a["name"] for a in out], ["Setting out", "Concrete"])
+
     def test_structure_batches_long_programme_per_page(self):
         # A long programme's task table is dense; the extractor must batch it
         # across several model calls so no single response is truncated (each
