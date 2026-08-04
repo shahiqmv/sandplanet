@@ -182,6 +182,10 @@ function LineRow({ ln, c, member, sel, on }) {
             Quotes{ln.quotes?.length ? ` · ${ln.quotes.length}` : ""}
             {ln.quotes?.some((q) => q.is_awarded) || ln.award_is_new_supplier
               ? " ✓" : ""}</button>}
+        {c.can_split && ln.supply_by === "CONTRACTOR" && ln.quantity != null &&
+          <button style={{ ...linkBtn, marginLeft: 8, color: "var(--sky)" }}
+            title="Split this order across more than one IPR"
+            onClick={() => on.split(ln.id)}>Split</button>}
       </td>
     </tr>
   );
@@ -397,6 +401,7 @@ function ScheduleDetail({ id, me, onBack }) {
   const [editId, setEditId] = useState(null);
   const [trackId, setTrackId] = useState(null);
   const [quotesId, setQuotesId] = useState(null);
+  const [splitId, setSplitId] = useState(null);
   const [openB, setOpenB] = useState({});   // expanded bundle keys
 
   const load = () => api(`/procurement-schedules/${id}`).then(setC)
@@ -513,7 +518,8 @@ function ScheduleDetail({ id, me, onBack }) {
         const gkey = String(sec.id === "none" ? 0 : sec.id);
         const grows = c.groups?.[gkey] || [];
         if (!grows.length && sec.id !== "none") return null;
-        const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId };
+        const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId,
+          split: setSplitId };
         const sel = { track: trackId, quotes: quotesId };
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,
@@ -578,6 +584,86 @@ function ScheduleDetail({ id, me, onBack }) {
       {quotesId && <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
         canAward={c.can_award} onClose={() => setQuotesId(null)}
         onSaved={setC} />}
+
+      {splitId && <SplitPanel line={c.lines.find((l) => l.id === splitId)}
+        onClose={() => setSplitId(null)} onSaved={setC} />}
+    </div>
+  );
+}
+
+// Split a line's order across several IPRs: divide its quantity into sibling
+// sub-lines (sharing a bundle so they roll up into one expandable row). Each
+// sub-line then links its own IPR / shipment / GRN.
+function SplitPanel({ line, onClose, onSaved }) {
+  const total = Number(line.quantity);
+  const [parts, setParts] = useState(() => {
+    const half = Math.round((total / 2) * 100) / 100;
+    return [String(half), String(Math.round((total - half) * 100) / 100)];
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const sum = parts.reduce((a, p) => a + (parseFloat(p) || 0), 0);
+  const ok = parts.length >= 2 && parts.every((p) => parseFloat(p) > 0)
+    && Math.abs(sum - total) < 0.005;
+
+  const setPart = (i, v) =>
+    setParts(parts.map((p, j) => (j === i ? v : p)));
+  const addPart = () => setParts([...parts, ""]);
+  const rmPart = (i) => setParts(parts.filter((_, j) => j !== i));
+
+  const submit = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const d = await api(
+        `/procurement-schedule-lines/${line.id}/split`,
+        { method: "POST", body: { quantities: parts } });
+      onSaved(d); onClose();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div style={{ ...card, marginTop: 10, border: "1px solid var(--sky)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+        alignItems: "center" }}>
+        <div style={{ fontWeight: 600 }}>Split order — #{line.s_no}{" "}
+          <span style={{ color: "var(--muted)", fontWeight: 400 }}>
+            {line.description}</span></div>
+        <button style={linkBtn} onClick={onClose}>Close</button>
+      </div>
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+        Divide the {total}{line.uom ? " " + line.uom : ""} into separate
+        sub-lines — one per IPR. They collapse into one expandable row and each
+        tracks its own order / shipment / delivery.</div>
+      <div style={{ marginTop: 12 }}>
+        {parts.map((p, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, alignItems: "center",
+            marginBottom: 6 }}>
+            <span style={{ width: 62, color: "var(--muted)", fontSize: 12 }}>
+              {i === 0 ? "This line" : `Split ${i}`}</span>
+            <input style={{ ...inputStyle, width: 120 }} inputMode="decimal"
+              value={p} onChange={(e) => setPart(i, e.target.value)} />
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>
+              {line.uom}</span>
+            {parts.length > 2 && (
+              <button style={{ border: "none", background: "none",
+                cursor: "pointer", color: "var(--red-fg)", fontSize: 16 }}
+                onClick={() => rmPart(i)} title="Remove">×</button>)}
+          </div>
+        ))}
+        <button style={{ ...linkBtn, color: "var(--navy)" }}
+          onClick={addPart}>+ Add a split</button>
+      </div>
+      <div style={{ marginTop: 8, fontSize: 12,
+        color: ok ? "var(--muted)" : "var(--red-fg)" }}>
+        Total {sum || 0} of {total}{line.uom ? " " + line.uom : ""}
+        {ok ? " ✓" : " — must add up to the line quantity"}</div>
+      {err && <div style={{ color: "var(--red-fg)", fontSize: 12,
+        marginTop: 6 }}>{err}</div>}
+      <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+        <Btn variant="primary" disabled={!ok || busy} onClick={submit}>
+          {busy ? "Splitting…" : "Split line"}</Btn>
+        <Btn onClick={onClose}>Cancel</Btn>
+      </div>
     </div>
   );
 }

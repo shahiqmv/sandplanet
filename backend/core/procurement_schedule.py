@@ -214,6 +214,79 @@ def cancel_line(line, note, actor):
     return None
 
 
+SPLIT_ROLES = (*PROPOSE_ROLES, *CONFIRM_ROLES)   # operational, like doc-linking
+
+# Fields a split sibling inherits from its parent line — the material identity +
+# planning + commercial values, and the shared MAR/TDS. It does NOT inherit the
+# order links (ipr/shipment/grn), production stage, quotes or award — each split
+# gets its own IPR and tracks independently.
+_SPLIT_COPY = ("category", "item_id", "description", "make_brand",
+               "specification", "uom", "trade", "supply_by", "required_date",
+               "tds_required", "remarks", "planned_supplier", "source_country",
+               "currency", "lead_time_days", "mar_id")
+
+
+def _split_label(line):
+    """A bundle label so the split siblings collapse into one expandable row.
+    Reuse the line's existing bundle, else derive one from its identity."""
+    if (line.bundle or "").strip():
+        return line.bundle.strip()
+    base = (line.description or line.make_brand
+            or (line.item.name if line.item_id else "") or "Split order")
+    return " ".join(base.split())[:120]      # single-line, within max_length
+
+
+def split_line(line, quantities, actor):
+    """Split one line's order across several IPRs by dividing it into sibling
+    sub-lines that share a bundle (so they roll up into one expandable row).
+    Each sub-line links its own IPR / shipment / GRN. Operational — it does NOT
+    re-open the sign-off; siblings inherit the parent's state (owner 2026-08-04).
+    `quantities` is the full set of resulting quantities; the first stays on this
+    line, the rest become new siblings. Returns (created_lines, error)."""
+    if actor.role not in SPLIT_ROLES:
+        return None, "Not permitted to split a schedule line."
+    if line.state == "CANCELLED":
+        return None, "A cancelled line can't be split."
+    if line.supply_by != "CONTRACTOR":
+        return None, ("Only a contractor-supplied line (which is ordered via "
+                      "an IPR) can be split.")
+    total = line.quantity
+    if total is None or total <= 0:
+        return None, "Set a quantity on the line before splitting it."
+    parts = [_dec(q) for q in (quantities or [])]
+    if len(parts) < 2 or any(p is None or p <= 0 for p in parts):
+        return None, "Give at least two positive quantities to split into."
+    if sum(parts, Decimal("0")) != total:
+        return None, (f"The split quantities must add up to {total:g} "
+                      f"{line.uom or ''}".strip() + ".")
+    label = _split_label(line)
+    est = line.estimated_value
+    with transaction.atomic():
+        # New siblings first, so the parent keeps the rounding remainder of value.
+        siblings, given = [], Decimal("0")
+        for q in parts[1:]:
+            sib = ScheduleLine(schedule=line.schedule, section=line.section,
+                               state=line.state, created_by=actor, quantity=q)
+            for f in _SPLIT_COPY:
+                setattr(sib, f, getattr(line, f))
+            sib.bundle = label
+            if est is not None:
+                sib.estimated_value = (est * q / total).quantize(Decimal("0.01"))
+                given += sib.estimated_value
+            sib.save()
+            siblings.append(sib)
+        line.bundle = label
+        line.quantity = parts[0]
+        if est is not None:
+            line.estimated_value = est - given          # remainder to the parent
+        line.save()
+        _renumber(line.section)
+    audit("document", line.schedule.document_id, "PSC_LINE_SPLIT", actor=actor,
+          detail={"line": line.id, "into": [s.id for s in siblings],
+                  "quantities": [str(p) for p in parts]})
+    return [line, *siblings], None
+
+
 def _apply_plan(line, data):
     for f in _PLAN_FIELDS:
         if f in data:
@@ -469,6 +542,7 @@ def schedule_dict(sched, user):
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
         "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),
+        "can_split": user.role in SPLIT_ROLES,
         "can_quote": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES) and values,
         "can_award": user.role in (*CONFIRM_ROLES, *SIGNOFF_ROLES) and values,
         "share": _share_block(sched, user),

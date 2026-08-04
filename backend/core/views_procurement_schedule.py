@@ -184,6 +184,22 @@ def schedule_line_production(request, line_id):
     return Response(ps.schedule_dict(line.schedule, request.user))
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_line_split(request, line_id):
+    """Split a line's order across several IPRs: POST {quantities: [..]} — the
+    first stays on this line, the rest become sibling sub-lines under one bundle.
+    """
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    _, msg = ps.split_line(line, request.data.get("quantities") or [],
+                           request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user), status=201)
+
+
 def _quote_line(request, line_id):
     """Fetch a line for quote work — scoped, and gated on value visibility
     (quotes carry pricing)."""
