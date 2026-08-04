@@ -694,9 +694,9 @@ def pending_groups(user):
         add("To approve — PM-approved payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
-        # Head-Office (central) requests skip the PM — the Director approves
-        # them straight from submitted (owner 2026-07-13)
-        add("To approve — Head-Office payment requests",
+        # Head-Office (central) and commercial (Insurance & Bonds) requests skip
+        # the PM — the Director approves them straight from submitted.
+        add("To approve — Head-Office & commercial payment requests",
             rows(base.filter(doc_type="PYR", status="SUBMITTED")
                  .exclude(payment_request__origin="SITE"),
                  "Director approval (no site PM in the chain)"))

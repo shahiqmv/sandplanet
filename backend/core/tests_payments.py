@@ -257,6 +257,24 @@ class CentralPaymentTests(PyrBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
 
+    def test_commercial_costhead_routes_to_director_not_pm(self):
+        # A PYR on a commercial cost head (Insurance & Bonds) skips the site PM
+        # and waits for the Director, even when a site user raises it, then goes
+        # to Finance (owner 2026-08-04).
+        ch = CostHead.objects.create(name="Insurance & Bonds z", commercial=True)
+        ref = self.raise_pyr(cost_head_id=ch.id).data["ref"]
+        pr = Document.objects.get(ref=ref).payment_request
+        self.assertEqual(pr.origin, "COMMERCIAL")          # not SITE
+        # submit → waits at SUBMITTED (no auto-clear, no PM step)
+        self.assertEqual(self.act(ref, "submit", self.sa).data["status"],
+                         "SUBMITTED")
+        # the site PM cannot approve a commercial PYR
+        self.assertEqual(self.act(ref, "approve", self.pm).status_code, 403)
+        # the Director approves → DIRECTOR_APPROVED (then Finance's voucher)
+        r = self.act(ref, "approve", self.director)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
+
     def test_ho_purchasing_pyr_lands_in_finance_voucher_queue(self):
         # The full "where does it land" proof: an HO Purchasing request, once
         # submitted, sits in Finance's build-a-voucher queue and can be

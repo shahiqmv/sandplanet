@@ -98,7 +98,9 @@ def create_payment_request(doc, data, user):
         return None, "Currency must be MVR or USD."
     if currency != "MVR" and user.role not in USD_RAISERS:
         return None, "Site payment requests are in MVR only."
-    origin = origin_for(user.role)
+    # A commercial cost head (Insurance & Bonds…) routes to the Director for
+    # approval then Finance, skipping the site PM — whoever raises it.
+    origin = "COMMERCIAL" if cost_head.commercial else origin_for(user.role)
     pr = PaymentRequest.objects.create(
         document=doc,
         payment_type="ADVANCE" if salary_lines
@@ -295,10 +297,11 @@ def pyr_action(request, doc, action_name):
                                     status=403)
                 _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
                 return None
-            # Legacy fallback: a CENTRAL request submitted before HO PYRs began
-            # auto-clearing (owner 2026-07-31) may still sit at SUBMITTED — the
-            # Director can push it through to a voucher. New CENTRAL requests
-            # never reach here (they clear at submit).
+            # Director approval at SUBMITTED. This is the live path for a
+            # COMMERCIAL request (Insurance & Bonds — no site PM, Director
+            # approves then Finance, owner 2026-08-04), and the legacy fallback
+            # for a pre-2026-07-31 CENTRAL request still sitting here (new
+            # CENTRAL requests clear straight to a voucher at submit).
             if user.role not in ("DIRECTOR", "ADMIN"):
                 return Response({"detail": "Director approval required."},
                                 status=403)

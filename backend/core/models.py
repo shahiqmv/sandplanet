@@ -3235,6 +3235,10 @@ class CostHead(models.Model):
     sort_order = models.IntegerField(default=100)
     is_pool = models.BooleanField(default=False)  # HO pool, never a project
     is_active = models.BooleanField(default=True)
+    # A project-commercial cost head (Insurance & Bonds, …): its payment
+    # requests skip the site PM and go straight to the Director for approval,
+    # then Finance — never the site payment chain (owner 2026-08-04).
+    commercial = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "name"]
@@ -3340,13 +3344,14 @@ class PaymentRequest(models.Model):
                                       default=Method.BANK)
     payee_account = models.TextField(blank=True)
     currency = models.CharField(max_length=3, default="MVR")   # MVR or USD
-    # Who raised it drives the approval chain (§7.1; owner 2026-07-31):
-    #   SITE    → PM → Director → voucher   (site teams, MVR only)
-    #   CENTRAL → voucher only              (HO Purchasing/HR/QS/Director, MVR/USD)
-    #   FINANCE → voucher only              (Accounts-initiated rent/salary etc.)
-    # Head-Office (CENTRAL) requests have no site PM and skip the Director —
-    # they clear straight to a Payment Voucher for the signatory.
-    origin = models.CharField(max_length=8, default="SITE")
+    # The approval chain (§7.1). Usually set from who raised it (owner
+    # 2026-07-31), except COMMERCIAL which is set from the cost head:
+    #   SITE       → PM → Director → voucher   (site teams, MVR only)
+    #   CENTRAL    → voucher only              (HO Purchasing/HR/QS/Director)
+    #   FINANCE    → voucher only              (Accounts-initiated rent/salary)
+    #   COMMERCIAL → Director → voucher        (Insurance & Bonds cost head; NO
+    #                site PM, whoever raises it — owner 2026-08-04)
+    origin = models.CharField(max_length=12, default="SITE")
     amount_requested = models.DecimalField(max_digits=14, decimal_places=2)
     required_by = models.DateField(null=True, blank=True)
     purpose = models.TextField()
