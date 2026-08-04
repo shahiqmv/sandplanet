@@ -42,6 +42,9 @@
     <tr><td class="k">Job title / occupation</td><td class="v">{{ job_title }}</td></tr>
     <tr><td class="k">Quota work type</td><td class="v">{{ quota_work_type }}</td></tr>
     <tr><td class="k">Basic salary</td><td class="v">{{ basic_salary }} per month</td></tr>
+    {% for a in allowances %}
+    <tr><td class="k">{{ a.label }} allowance</td><td class="v">{{ a.amount }} per month</td></tr>
+    {% endfor %}
     <tr><td class="k">Salary payment</td><td class="v">On or before the 10th day of the following month</td></tr>
     <tr><td class="k">Work site</td><td class="v">{{ work_site }}</td></tr>
     <tr><td class="k">Commencement of employment</td><td class="v">On the date of arrival in the Maldives</td></tr>

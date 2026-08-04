@@ -122,8 +122,8 @@ export default function OnboardingPage({ me, sites }) {
 const BLANK = {
   full_name: "", nationality: "", date_of_birth: "", gender: "",
   passport_no: "", passport_expiry: "", category: "", trade_designation: "",
-  proposed_salary: "", currency: "MVR", route: "WP", bv_justification: "",
-  bv_purpose: "", subcontractor_id: "",
+  proposed_salary: "", currency: "MVR", allowances: [], route: "WP",
+  bv_justification: "", bv_purpose: "", subcontractor_id: "",
   quota_pool: "SANDPLANET",
   permanent_address: "", mobile: "", emergency_contact: "",
   mobilisation_date: "",
@@ -138,6 +138,52 @@ function Field({ label, k, type = "text", req, value, onChange }) {
       <input style={inputStyle} type={type} value={value[k]}
              onChange={(e) => onChange({ ...value, [k]: e.target.value })} />
     </label>
+  );
+}
+
+const ALLOWANCE_TYPES = ["Food", "Accommodation", "Transport"];
+
+function AllowancesEditor({ list, currency, onChange }) {
+  const rows = list || [];
+  const upd = (i, patch) =>
+    onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ fontSize: 11, color: "var(--muted)", marginBottom: 4 }}>
+        Allowances (optional) — monthly, shown on the appointment letter</div>
+      {rows.map((r, i) => {
+        const other = !ALLOWANCE_TYPES.includes(r.type);
+        return (
+          <div key={i} style={{ display: "flex", gap: 6, marginBottom: 6,
+            alignItems: "center", flexWrap: "wrap" }}>
+            <select style={{ ...inputStyle, width: 150 }}
+              value={other ? "Other" : r.type}
+              onChange={(e) => upd(i, { type:
+                e.target.value === "Other" ? "" : e.target.value })}>
+              {ALLOWANCE_TYPES.map((t) => <option key={t}>{t}</option>)}
+              <option value="Other">Other…</option>
+            </select>
+            {other && (
+              <input style={{ ...inputStyle, width: 150 }}
+                placeholder="Allowance name" value={r.type}
+                onChange={(e) => upd(i, { type: e.target.value })} />
+            )}
+            <input style={{ ...inputStyle, width: 130 }} inputMode="decimal"
+              placeholder={`Amount (${currency || "MVR"})`} value={r.amount}
+              onChange={(e) => upd(i, { amount: e.target.value })} />
+            <button type="button" title="Remove"
+              onClick={() => onChange(rows.filter((_, j) => j !== i))}
+              style={{ border: "none", background: "none", cursor: "pointer",
+                color: "var(--red-fg)", fontSize: 16 }}>×</button>
+          </div>
+        );
+      })}
+      <button type="button"
+        onClick={() => onChange([...rows, { type: "Food", amount: "" }])}
+        style={{ border: "1px dashed var(--line)", background: "none",
+          borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer",
+          color: "var(--navy)" }}>+ Add allowance</button>
+    </div>
   );
 }
 
@@ -193,6 +239,10 @@ function CaseForm({ value, onChange, subs = [] }) {
         {F({ label: "Expected mobilisation", k: "mobilisation_date",
              type: "date" })}
       </div>
+      {!isSub && (
+        <AllowancesEditor list={value.allowances} currency={value.currency}
+          onChange={(a) => onChange({ ...value, allowances: a })} />
+      )}
       {value.route === "BV" && (
         <div style={{ display: "grid", gap: 8,
           gridTemplateColumns: "1fr 1fr", marginTop: 8 }}>
@@ -424,6 +474,10 @@ function CaseDetail({ id, me, onBack }) {
             <Row k="Trade / category" v={`${c.trade_designation} · ${c.category}`} />
             <Row k="Quota pool" v={c.quota_pool_label || "Sand Planet"} />
             <Row k="Proposed salary" v={`${c.currency} ${money(c.proposed_salary)}`} />
+            {(c.allowances || []).length > 0 && (
+              <Row k="Allowances" v={c.allowances.map((a) =>
+                `${a.type} ${c.currency} ${money(a.amount)}`).join(" · ")} />
+            )}
             <Row k="DOB / gender" v={`${fmtDate(c.date_of_birth)} · ${c.gender || "—"}`} />
             <Row k="Mobilisation" v={fmtDate(c.mobilisation_date)} />
             <Row k="Mobile" v={c.mobile || "—"} />
@@ -927,7 +981,8 @@ function Letters({ c, busy, run }) {
                 {o.title}</div>
               <div style={{ display: "grid",
                 gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                {Object.keys(o.fields || {}).map((k) => (
+                {Object.keys(o.fields || {}).filter((k) => k !== "allowances")
+                  .map((k) => (
                   <label key={k} style={{ fontSize: 11, color: "var(--muted)",
                     display: "flex", flexDirection: "column", gap: 2 }}>
                     {humanize(k)}

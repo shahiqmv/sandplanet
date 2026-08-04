@@ -381,6 +381,27 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
 
+    def test_allowances_captured_and_on_appointment_letter(self):
+        from core.models import OnboardingCase
+        from core.onboarding import _clean_allowances, letter_defaults
+        # the cleaner keeps valid rows and drops blank / non-positive ones
+        self.assertEqual(
+            _clean_allowances([{"type": "Food", "amount": "500"},
+                               {"type": "", "amount": "9"},      # no type
+                               {"type": "T", "amount": "0"}]),   # non-positive
+            [{"type": "Food", "amount": "500"}])
+        pk = self._create().data["id"]
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(f"/api/v1/onboarding/{pk}", {"allowances": [
+            {"type": "Food", "amount": "500"},
+            {"type": "Transport", "amount": "300"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["allowances"]), 2)
+        # they format onto the appointment letter
+        case = OnboardingCase.objects.get(document_id=pk)
+        self.assertEqual(letter_defaults(case, "LOA")["allowances"][0],
+                         {"label": "Food", "amount": "MVR 500.00"})
+
     def test_passport_scan_extracts_and_normalises(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from . import passport_extract as px

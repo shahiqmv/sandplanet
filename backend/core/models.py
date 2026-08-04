@@ -2012,6 +2012,8 @@ class OnboardingCase(models.Model):
     trade_designation = models.TextField(blank=True)   # job title / occupation
     job_category = models.ForeignKey(ManpowerCategory, on_delete=models.PROTECT,
                                      null=True, blank=True, related_name="+")
+    # Monthly allowances [{type, amount}] in `currency`, shown on the LOA.
+    allowances = models.JSONField(default=list, blank=True)
     proposed_salary = models.DecimalField(max_digits=12, decimal_places=2,
                                           null=True, blank=True)
     currency = models.CharField(max_length=3, default="MVR")

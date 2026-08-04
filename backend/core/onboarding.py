@@ -45,6 +45,25 @@ def _dec(v):
         return None
 
 
+# Monthly allowances offered in the case form's dropdown (HR can also type a
+# custom name via "Other"). Amounts are in the case currency and land on the LOA.
+ALLOWANCE_TYPES = ["Food", "Accommodation", "Transport"]
+
+
+def _clean_allowances(raw):
+    """Sanitise allowance lines to [{type, amount}] — a non-empty type and a
+    positive amount; blank/invalid rows are dropped."""
+    out = []
+    for a in raw or []:
+        if not isinstance(a, dict):
+            continue
+        typ = str(a.get("type") or "").strip()[:40]
+        amt = _dec(a.get("amount"))
+        if typ and amt is not None and amt > 0:
+            out.append({"type": typ, "amount": str(amt)})
+    return out
+
+
 # ---- transitions (mirrors payments.py) -----------------------------------
 
 def _transition(doc, new_status):
@@ -107,6 +126,8 @@ def _apply_fields(case, data):
         case.job_category_id = data.get("job_category_id") or None
     if "proposed_salary" in data:
         case.proposed_salary = _dec(data.get("proposed_salary"))
+    if "allowances" in data:
+        case.allowances = _clean_allowances(data.get("allowances"))
 
 
 def _validate(case):
@@ -849,6 +870,19 @@ def _salary_str(case):
     return f"{cur} {case.proposed_salary:,.2f}"
 
 
+def _allowances_for_letter(case):
+    """The case's allowances formatted for the appointment letter — empty when
+    none, so the letter shows the rows only if applicable."""
+    cur = case.currency or "MVR"
+    out = []
+    for a in case.allowances or []:
+        amt = _dec(a.get("amount"))
+        if amt is not None:
+            out.append({"label": a.get("type", ""),
+                        "amount": f"{cur} {amt:,.2f}"})
+    return out
+
+
 def _default_signatory():
     """The company signatory who signs correspondence — a SIGNATORY if set,
     else the Director. HR can override both name and title at generation."""
@@ -884,6 +918,7 @@ def letter_defaults(case, kind):
             "job_title": case.trade_designation or "",
             "quota_work_type": _QUOTA_LABEL.get(case.category, ""),
             "basic_salary": _salary_str(case),
+            "allowances": _allowances_for_letter(case),
             "work_site": "",
             "job_description": case.trade_designation or "",
             "contract_duration": "2 years",
@@ -917,8 +952,10 @@ def generate_letter(case, kind, overrides, actor):
         return None, (f"The {LETTER_META[kind]['title']} isn't available at "
                       "this stage.")
     defaults = letter_defaults(case, kind)
+    # `allowances` is a structured list derived from the case, never an editable
+    # text field — keep HR's text overrides from clobbering it.
     clean = {k: str(v) for k, v in (overrides or {}).items()
-             if k in defaults and v is not None}
+             if k in defaults and k != "allowances" and v is not None}
     fields = {**defaults, **clean}
     issue_date = timezone.localdate().strftime("%d %b %Y")
     with transaction.atomic():
@@ -1242,6 +1279,7 @@ def case_dict(case):
         "trade_designation": case.trade_designation,
         "job_category_id": case.job_category_id,
         "proposed_salary": case.proposed_salary, "currency": case.currency,
+        "allowances": list(case.allowances or []),
         "permanent_address": case.permanent_address, "mobile": case.mobile,
         "emergency_contact": case.emergency_contact,
         "mobilisation_date": case.mobilisation_date,
