@@ -15,7 +15,11 @@ import os
 from decimal import Decimal, InvalidOperation
 
 DEFAULT_MODEL = "claude-sonnet-5"
-_MAX_BATCH_CHARS = 24000        # keep each model call to a sane page batch
+# Smaller, focused batches — a model asked to extract ~250 lines from one huge
+# prompt gets "lazy" and returns a fraction. One-ish sheet per call (batches run
+# concurrently, so more of them is cheap) keeps extraction complete.
+_MAX_BATCH_CHARS = 11000
+_MAX_OUTPUT_TOKENS = 16000      # ~150 BOQ rows per call without truncation
 
 
 class ExtractionError(Exception):
@@ -116,7 +120,13 @@ def _batches(pages, max_chars=_MAX_BATCH_CHARS):
 _SYSTEM = (
     "You extract a construction Bill of Quantities (BOQ) from the given "
     "document text into structured rows. Rules:\n"
+    "- COMPLETENESS IS CRITICAL: return EVERY line as its own row, in document "
+    "order — never skip, merge, abbreviate, or summarise. A tender BOQ repeats "
+    "many near-identical lines (the same work for different areas / villas / "
+    "blocks); return each one. Returning only some of the lines is a failure.\n"
     "- Return one row per BOQ line, in document order.\n"
+    "- If a line's rate is a note rather than a figure ('Included', 'Rate "
+    "only', 'PS', 'Provisional'), keep that text as its rate.\n"
     "- A bill/section/trade title or a preamble note with no quantity or rate "
     "is a heading (is_heading=true); set its description and leave money "
     "fields empty.\n"
@@ -194,7 +204,8 @@ def _call_claude(content, model):
     try:
         client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
-            model=model, max_tokens=8000, system=_SYSTEM, tools=[_TOOL],
+            model=model, max_tokens=_MAX_OUTPUT_TOKENS, system=_SYSTEM,
+            tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_boq"},
             messages=[{"role": "user", "content": content}])
     except Exception as e:                       # pragma: no cover - network
