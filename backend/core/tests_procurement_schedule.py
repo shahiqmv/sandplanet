@@ -95,6 +95,22 @@ class ProcurementScheduleTests(TestCase):
         self.assertEqual(ln["uom"], "m")
         self.assertEqual(ln["category"], "Steel & Metalwork")
 
+    def test_editing_section_title_renames_the_section(self):
+        from .models import ScheduleSection
+        pk = self._open()
+        ln = self._add_line(pk).data["lines"][0]
+        # The Edit form spreads the whole line into its PATCH, so section_id is
+        # sent; a changed section_title must still rename the section.
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{ln['id']}",
+            {"section_id": ln["section_id"], "section_code": "A",
+             "section_title": "Villa Upgrades - REVISED",
+             "description": "SS316 handrail"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(ScheduleSection.objects.get(pk=ln["section_id"]).title,
+                         "Villa Upgrades - REVISED")
+
     def test_propose_confirm_signoff(self):
         pk = self._open()
         r = self._add_line(pk)

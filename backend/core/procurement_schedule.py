@@ -103,20 +103,26 @@ def get_or_create_schedule(project, actor):
 
 def _get_section(sched, data):
     """Resolve or create the line's section from {section_id} or {section_code,
-    section_title}."""
-    sid = data.get("section_id")
-    if sid:
-        return sched.sections.filter(pk=sid).first()
-    code = (data.get("section_code") or "").strip()
-    if not code:
-        return None
+    section_title}. A supplied section_title always renames the resolved section
+    — so editing the title on a line's Edit form updates its section header
+    (the edit form sends section_id, which used to skip the rename)."""
     title = (data.get("section_title") or "").strip()
-    sec = sched.sections.filter(code__iexact=code).first()
-    if sec:
-        if title and sec.title != title:
+
+    def _rename(sec):
+        if sec and title and sec.title != title:
             sec.title = title
             sec.save(update_fields=["title"])
         return sec
+
+    sid = data.get("section_id")
+    if sid:
+        return _rename(sched.sections.filter(pk=sid).first())
+    code = (data.get("section_code") or "").strip()
+    if not code:
+        return None
+    sec = sched.sections.filter(code__iexact=code).first()
+    if sec:
+        return _rename(sec)
     order = (sched.sections.count() + 1) * 10
     return ScheduleSection.objects.create(schedule=sched, code=code.upper(),
                                           title=title or code.upper(),
