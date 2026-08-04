@@ -1169,7 +1169,7 @@ def _do_count(request, doc, comment):
     if doc.doc_type != "GRN":
         return Response({"detail": "Count applies to GRN."}, status=400)
     return _apply(request, doc, "COUNTED", "COUNT",
-                  roles={"SITE_ADMIN", "SITE_ENGINEER"}, comment=comment)
+                  roles={"SITE_ADMIN", "SITE_ENGINEER", "PM"}, comment=comment)
 
 
 def _do_verify(request, doc, comment):

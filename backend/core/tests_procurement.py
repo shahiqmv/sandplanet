@@ -546,6 +546,19 @@ class ChainTests(ProcBase):
                               {"payload": {}}, format="json")
         self.assertEqual(r.status_code, 400)
 
+    def test_pm_can_confirm_count(self):
+        # PMs / site in-charge can confirm the GRN count too (owner 2026-08-04)
+        lm = self.make_lm(self.mr_to_sent())
+        self.act(lm["ref"], "depart")
+        self.as_user(self.sa)
+        grn = self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"],
+        }, format="json").data
+        self.as_user(self.pm)
+        r = self.act(grn["ref"], "count")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "COUNTED")
+
     def test_grn_full_receipt_completes(self):
         mr_ref = self.mr_to_sent()
         lm = self.make_lm(mr_ref, lines=[

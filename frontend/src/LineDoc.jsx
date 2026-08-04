@@ -69,8 +69,8 @@ const ACTIONS = {
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   GRN: [
-    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR",
-                                           "ADMIN"]],
+    ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "PM",
+                                           "DIRECTOR", "ADMIN"]],
     ["verify", "Verify (SE/PM)", ["COUNTED"],
      ["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]],
   ],
