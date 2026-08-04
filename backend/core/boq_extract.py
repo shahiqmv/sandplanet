@@ -191,8 +191,8 @@ def _call_claude(content, model):
         import anthropic
     except ImportError:                          # pragma: no cover - env dep
         raise ExtractionError("The anthropic SDK isn't installed on the server.")
-    client = anthropic.Anthropic(api_key=key)
     try:
+        client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
             model=model, max_tokens=8000, system=_SYSTEM, tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_boq"},

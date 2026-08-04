@@ -243,6 +243,10 @@ def boq_import_extract(request, pid):
         imp, msg = boq_extract.run_import(p, upload, request.user)
     except boq_extract.ExtractionError as e:
         return Response({"detail": str(e)}, status=400)
+    except Exception as e:               # surface the reason, never a bare 500
+        import logging
+        logging.getLogger("boq").exception("BOQ capture failed")
+        return Response({"detail": f"Capture failed: {e}"}, status=400)
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(boq_extract.import_payload(imp), status=201)
@@ -268,6 +272,10 @@ def boq_capture_unit(request, pid):
         cats, gst, msg = ue.run_capture(upload)
     except ue.ExtractionError as e:
         return Response({"detail": str(e)}, status=400)
+    except Exception as e:               # surface the reason, never a bare 500
+        import logging
+        logging.getLogger("boq").exception("BOQ unit capture failed")
+        return Response({"detail": f"Capture failed: {e}"}, status=400)
     if msg:
         return Response({"detail": msg}, status=400)
     return Response({"categories": cats, "gst_percent": gst,
