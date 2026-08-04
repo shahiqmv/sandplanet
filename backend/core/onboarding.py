@@ -50,17 +50,21 @@ def _dec(v):
 ALLOWANCE_TYPES = ["Food", "Accommodation", "Transport"]
 
 
-def _clean_allowances(raw):
-    """Sanitise allowance lines to [{type, amount}] — a non-empty type and a
-    positive amount; blank/invalid rows are dropped."""
+def _clean_allowances(raw, default_currency="MVR"):
+    """Sanitise allowance lines to [{type, amount, currency}] — a non-empty type,
+    a positive amount and an MVR/USD currency (each line chooses its own,
+    defaulting to the case currency); blank/invalid rows are dropped."""
     out = []
     for a in raw or []:
         if not isinstance(a, dict):
             continue
         typ = str(a.get("type") or "").strip()[:40]
         amt = _dec(a.get("amount"))
+        cur = str(a.get("currency") or default_currency)[:3].upper()
+        if cur not in ("MVR", "USD"):
+            cur = default_currency
         if typ and amt is not None and amt > 0:
-            out.append({"type": typ, "amount": str(amt)})
+            out.append({"type": typ, "amount": str(amt), "currency": cur})
     return out
 
 
@@ -127,7 +131,8 @@ def _apply_fields(case, data):
     if "proposed_salary" in data:
         case.proposed_salary = _dec(data.get("proposed_salary"))
     if "allowances" in data:
-        case.allowances = _clean_allowances(data.get("allowances"))
+        case.allowances = _clean_allowances(data.get("allowances"),
+                                            case.currency or "MVR")
 
 
 def _validate(case):
@@ -909,10 +914,10 @@ def _salary_str(case):
 def _allowances_for_letter(case):
     """The case's allowances formatted for the appointment letter — empty when
     none, so the letter shows the rows only if applicable."""
-    cur = case.currency or "MVR"
     out = []
     for a in case.allowances or []:
         amt = _dec(a.get("amount"))
+        cur = a.get("currency") or case.currency or "MVR"   # legacy rows: case
         if amt is not None:
             out.append({"label": a.get("type", ""),
                         "amount": f"{cur} {amt:,.2f}"})

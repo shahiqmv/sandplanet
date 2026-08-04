@@ -168,9 +168,15 @@ function AllowancesEditor({ list, currency, onChange }) {
                 placeholder="Allowance name" value={r.type}
                 onChange={(e) => upd(i, { type: e.target.value })} />
             )}
-            <input style={{ ...inputStyle, width: 130 }} inputMode="decimal"
-              placeholder={`Amount (${currency || "MVR"})`} value={r.amount}
+            <input style={{ ...inputStyle, width: 120 }} inputMode="decimal"
+              placeholder="Amount" value={r.amount}
               onChange={(e) => upd(i, { amount: e.target.value })} />
+            <select style={{ ...inputStyle, width: 80 }}
+              value={r.currency || currency || "MVR"}
+              onChange={(e) => upd(i, { currency: e.target.value })}>
+              <option value="MVR">MVR</option>
+              <option value="USD">USD</option>
+            </select>
             <button type="button" title="Remove"
               onClick={() => onChange(rows.filter((_, j) => j !== i))}
               style={{ border: "none", background: "none", cursor: "pointer",
@@ -179,7 +185,8 @@ function AllowancesEditor({ list, currency, onChange }) {
         );
       })}
       <button type="button"
-        onClick={() => onChange([...rows, { type: "Food", amount: "" }])}
+        onClick={() => onChange([...rows,
+          { type: "Food", amount: "", currency: currency || "MVR" }])}
         style={{ border: "1px dashed var(--line)", background: "none",
           borderRadius: 6, padding: "3px 10px", fontSize: 12, cursor: "pointer",
           color: "var(--navy)" }}>+ Add allowance</button>
@@ -476,7 +483,8 @@ function CaseDetail({ id, me, onBack }) {
             <Row k="Proposed salary" v={`${c.currency} ${money(c.proposed_salary)}`} />
             {(c.allowances || []).length > 0 && (
               <Row k="Allowances" v={c.allowances.map((a) =>
-                `${a.type} ${c.currency} ${money(a.amount)}`).join(" · ")} />
+                `${a.type} ${a.currency || c.currency} ${money(a.amount)}`)
+                .join(" · ")} />
             )}
             <Row k="DOB / gender" v={`${fmtDate(c.date_of_birth)} · ${c.gender || "—"}`} />
             <Row k="Mobilisation" v={fmtDate(c.mobilisation_date)} />

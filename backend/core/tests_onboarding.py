@@ -424,23 +424,31 @@ class OnboardingSpineTests(TestCase):
     def test_allowances_captured_and_on_appointment_letter(self):
         from core.models import OnboardingCase
         from core.onboarding import _clean_allowances, letter_defaults
-        # the cleaner keeps valid rows and drops blank / non-positive ones
+        # the cleaner keeps valid rows and drops blank / non-positive ones, and
+        # each line carries its own MVR/USD currency (default from the case)
         self.assertEqual(
-            _clean_allowances([{"type": "Food", "amount": "500"},
+            _clean_allowances([{"type": "Food", "amount": "500", "currency": "USD"},
                                {"type": "", "amount": "9"},      # no type
-                               {"type": "T", "amount": "0"}]),   # non-positive
-            [{"type": "Food", "amount": "500"}])
+                               {"type": "T", "amount": "0"}],    # non-positive
+                              default_currency="MVR"),
+            [{"type": "Food", "amount": "500", "currency": "USD"}])
+        # a missing/invalid currency falls back to the case default
+        self.assertEqual(
+            _clean_allowances([{"type": "Food", "amount": "500", "currency": "x"}],
+                              default_currency="USD"),
+            [{"type": "Food", "amount": "500", "currency": "USD"}])
         pk = self._create().data["id"]
         self.client.force_authenticate(self.pm)
         r = self.client.patch(f"/api/v1/onboarding/{pk}", {"allowances": [
-            {"type": "Food", "amount": "500"},
+            {"type": "Food", "amount": "500", "currency": "USD"},
             {"type": "Transport", "amount": "300"}]}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(len(r.data["allowances"]), 2)
-        # they format onto the appointment letter
+        # they format onto the appointment letter in each line's own currency
         case = OnboardingCase.objects.get(document_id=pk)
-        self.assertEqual(letter_defaults(case, "LOA")["allowances"][0],
-                         {"label": "Food", "amount": "MVR 500.00"})
+        allw = letter_defaults(case, "LOA")["allowances"]
+        self.assertEqual(allw[0], {"label": "Food", "amount": "USD 500.00"})
+        self.assertEqual(allw[1], {"label": "Transport", "amount": "MVR 300.00"})
 
     def test_passport_scan_extracts_and_normalises(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
