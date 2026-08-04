@@ -203,3 +203,70 @@ class TWSFlowTests(QABase):
         r = self.make_tws()
         self.assertEqual(r.status_code, 400)
         self.assertIn("already exists", r.data["detail"])
+
+
+class MAREnclosureMergeTests(QABase):
+    def _mar(self):
+        from .models import Document
+        return Document.objects.create(
+            doc_type="MAR", ref="MAR-SJR-ENC", site=self.site,
+            doc_date=date.today(), status="DRAFT", created_by=self.se)
+
+    def _attach(self, doc, caption, name, data, ct):
+        from django.core.files.base import ContentFile
+        from .models import Attachment
+        a = Attachment(document=doc, kind="ENCLOSURE", caption=caption,
+                       file_name=name, content_type=ct)
+        a.file.save(name, ContentFile(data), save=True)
+        return a
+
+    def test_enclosures_merge_after_the_form_with_dividers(self):
+        import io
+        try:
+            import fitz
+            from PIL import Image
+        except Exception:
+            self.skipTest("PyMuPDF/Pillow unavailable")
+        from core import pdf
+        doc = self._mar()
+        p = fitz.open()
+        p.new_page()
+        p.new_page()                                      # a 2-page PDF TDS
+        self._attach(doc, "Technical Data Sheet", "tds.pdf", p.tobytes(),
+                     "application/pdf")
+        p.close()
+        im = Image.new("RGB", (400, 300), (210, 225, 240))
+        b = io.BytesIO()
+        im.save(b, "PNG")                                 # an image catalogue
+        self._attach(doc, "Catalogue", "cat.png", b.getvalue(), "image/png")
+        form = fitz.open()
+        form.new_page()                                   # a 1-page "MAR form"
+        merged = pdf.compile_enclosures(doc, form.tobytes())
+        form.close()
+        mp = fitz.open(stream=merged, filetype="pdf")
+        # 1 form + (divider + 2-page pdf) + (divider + 1 image) = 6
+        self.assertEqual(mp.page_count, 6)
+        mp.close()
+
+    def test_corrupt_enclosure_is_skipped_not_crashed(self):
+        try:
+            import fitz
+        except Exception:
+            self.skipTest("PyMuPDF unavailable")
+        from core import pdf
+        doc = self._mar()
+        self._attach(doc, "Test Report", "bad.pdf",
+                     b"not a real pdf at all", "application/pdf")
+        form = fitz.open()
+        form.new_page()
+        merged = pdf.compile_enclosures(doc, form.tobytes())
+        form.close()
+        self.assertIsNotNone(merged)
+        mp = fitz.open(stream=merged, filetype="pdf")
+        self.assertGreaterEqual(mp.page_count, 2)   # form + divider, no crash
+        mp.close()
+
+    def test_no_enclosures_returns_input_unchanged(self):
+        from core import pdf
+        doc = self._mar()
+        self.assertEqual(pdf.compile_enclosures(doc, b"%PDF-x"), b"%PDF-x")

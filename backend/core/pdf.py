@@ -299,6 +299,76 @@ def document_html(document, revision, filters=None):
     return render_to_string(f"pdf/{target[0]}", target[1])
 
 
+def _enclosure_divider(label, filename):
+    """A one-page PDF separator ('ENCLOSURE — Technical Data Sheet')."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page()               # A4
+    w = page.rect.width
+    NAVY, GREY, MUTE = (0.05, 0.23, 0.36), (0.4, 0.5, 0.6), (0.5, 0.5, 0.5)
+    page.insert_textbox(fitz.Rect(50, 300, w - 50, 330), "ENCLOSURE",
+                        fontsize=11, align=1, color=GREY)
+    page.insert_textbox(fitz.Rect(50, 335, w - 50, 400), label or "Enclosure",
+                        fontsize=22, align=1, color=NAVY, fontname="helv")
+    if filename:
+        page.insert_textbox(fitz.Rect(50, 405, w - 50, 430), filename,
+                            fontsize=9, align=1, color=MUTE)
+    out = doc.tobytes()
+    doc.close()
+    return out
+
+
+def compile_enclosures(document, pdf_bytes):
+    """Append a MAR's uploaded enclosure files after the form pages — each
+    behind a labelled divider — then compress the result. PDFs merge directly,
+    images become a page (Pillow); an unreadable file is replaced by a short
+    note rather than failing the whole PDF. Returns the input unchanged when
+    there are no enclosures or PyMuPDF is unavailable."""
+    if document.doc_type != "MAR" or not pdf_bytes:
+        return pdf_bytes
+    encs = list(document.attachments.filter(kind="ENCLOSURE").order_by("id"))
+    if not encs:
+        return pdf_bytes
+    try:
+        import io
+
+        import fitz
+        out = fitz.open(stream=pdf_bytes, filetype="pdf")     # the MAR form
+        for att in encs:
+            label = (att.caption or "Enclosure").strip()
+            name = att.file_name or ""
+            div = fitz.open(stream=_enclosure_divider(label, name),
+                            filetype="pdf")
+            out.insert_pdf(div)
+            div.close()
+            try:
+                with att.file.open("rb") as fh:
+                    data = fh.read()
+                if "pdf" in (att.content_type or "").lower() \
+                        or name.lower().endswith(".pdf"):
+                    src = fitz.open(stream=data, filetype="pdf")
+                else:                                          # image → a page
+                    from PIL import Image
+                    im = Image.open(io.BytesIO(data)).convert("RGB")
+                    buf = io.BytesIO()
+                    im.save(buf, format="PDF")
+                    src = fitz.open(stream=buf.getvalue(), filetype="pdf")
+                out.insert_pdf(src)
+                src.close()
+            except Exception:
+                note = fitz.open(stream=_enclosure_divider(
+                    "Could not read this file", name), filetype="pdf")
+                out.insert_pdf(note)
+                note.close()
+        merged = out.tobytes(garbage=4, deflate=True, deflate_images=True,
+                             deflate_fonts=True, clean=True)   # compress
+        out.close()
+        return merged
+    except Exception:
+        logger.warning("Enclosure compile failed for %s", document.ref)
+        return pdf_bytes
+
+
 def document_pdf_bytes(document, revision, filters=None):
     """The report rendered to PDF bytes on demand (no attachment stored), or
     None when the engine is unavailable. Used by the client 'Download PDF'
@@ -309,8 +379,9 @@ def document_pdf_bytes(document, revision, filters=None):
     try:
         from weasyprint import HTML
 
-        return HTML(string=html,
-                    base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        pdf_bytes = HTML(string=html,
+                         base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        return compile_enclosures(document, pdf_bytes)
     except Exception:
         if settings.PDF_REQUIRED:
             raise
@@ -331,6 +402,7 @@ def generate_pdf(document, revision, milestone):
         from weasyprint import HTML
 
         pdf_bytes = HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        pdf_bytes = compile_enclosures(document, pdf_bytes)
     except Exception:
         if settings.PDF_REQUIRED:
             raise

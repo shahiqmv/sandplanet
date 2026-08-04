@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
@@ -138,6 +138,40 @@ export function QAForm({ docType, site, project, projects = [], existing,
                                         count: String(count) })));
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [encAtts, setEncAtts] = useState(
+    (existing?.attachments || []).filter((a) => a.kind === "ENCLOSURE"));
+
+  async function refreshEnc() {
+    if (!existing) return;
+    const d = await api(`/documents/${existing.ref}`);
+    setEncAtts((d.attachments || []).filter((a) => a.kind === "ENCLOSURE"));
+  }
+  async function uploadEnclosure(label, key, fileList) {
+    const files = [...(fileList || [])];
+    if (!files.length) return;
+    setBusy(true); setError(null);
+    try {
+      for (const file of files) {
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("kind", "ENCLOSURE");
+        fd.append("caption", label);
+        await apiUpload(`/documents/${existing.ref}/attachments`, fd);
+      }
+      setP("enclosures", { ...(payload.enclosures || {}), [key]: true });
+      await refreshEnc();
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
+  async function deleteEnclosure(id) {
+    setBusy(true); setError(null);
+    try {
+      await api(`/documents/${existing.ref}/attachments/${id}`,
+                { method: "DELETE" });
+      await refreshEnc();
+    } catch (e) { setError(e.message); }
+    setBusy(false);
+  }
 
   useEffect(() => {
     if (docType === "TWS") {
@@ -216,17 +250,52 @@ export function QAForm({ docType, site, project, projects = [], existing,
       {docType === "MAR" && (
         <>
           <SectionTitle>Enclosures</SectionTitle>
-          <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-            {ENCLOSURES.map(([key, label]) => (
-              <label key={key} style={{ fontSize: 13 }}>
-                <input type="checkbox"
-                       checked={!!(payload.enclosures || {})[key]}
-                       onChange={(e) => setP("enclosures", {
-                         ...(payload.enclosures || {}),
-                         [key]: e.target.checked,
-                       })} /> {label}
-              </label>
-            ))}
+          {!existing && (
+            <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 8px" }}>
+              Tick what you're enclosing. Save the draft, then attach the actual
+              files (PDF or image) here — they're compiled into the MAR PDF.</p>
+          )}
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {ENCLOSURES.map(([key, label]) => {
+              const files = encAtts.filter((a) => a.caption === label);
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center",
+                  gap: 10, flexWrap: "wrap" }}>
+                  <label style={{ fontSize: 13, minWidth: 155 }}>
+                    <input type="checkbox"
+                           checked={!!(payload.enclosures || {})[key]
+                                    || files.length > 0}
+                           onChange={(e) => setP("enclosures", {
+                             ...(payload.enclosures || {}),
+                             [key]: e.target.checked })} /> {label}
+                  </label>
+                  {existing && (
+                    <label style={{ ...ghostButton, padding: "2px 10px",
+                      fontSize: 12, cursor: busy ? "wait" : "pointer" }}>
+                      + Attach
+                      <input type="file" hidden multiple
+                        accept="application/pdf,image/*" disabled={busy}
+                        onChange={(e) => {
+                          uploadEnclosure(label, key, e.target.files);
+                          e.target.value = "";
+                        }} />
+                    </label>
+                  )}
+                  {files.map((a) => (
+                    <span key={a.id} style={{ fontSize: 12,
+                      background: "#eef4f8", borderRadius: 6,
+                      padding: "2px 8px" }}>
+                      📎 {a.file_name}
+                      <button onClick={() => deleteEnclosure(a.id)}
+                        disabled={busy}
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "#c0392b",
+                          marginLeft: 4 }}>×</button>
+                    </span>
+                  ))}
+                </div>
+              );
+            })}
           </div>
         </>
       )}
