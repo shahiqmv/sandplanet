@@ -439,6 +439,7 @@ function ContractTermsCard({ project }) {
 function EditProjectModal({ project, onClose, onSaved }) {
   const [form, setForm] = useState({
     code: project.code || "", title: project.title || "",
+    scope: project.scope || "",
     start_date: project.start_date || "",
     planned_completion: project.planned_completion || "",
     actual_completion: project.actual_completion || "",
@@ -476,6 +477,7 @@ function EditProjectModal({ project, onClose, onSaved }) {
     try {
       const body = {
         code: form.code.trim(), title: form.title.trim(),
+        scope: form.scope,
         start_date: form.start_date || null,
         planned_completion: form.planned_completion || null,
         actual_completion: form.actual_completion || null,
@@ -535,6 +537,10 @@ function EditProjectModal({ project, onClose, onSaved }) {
           <label style={full}>Title
             <input value={form.title} onChange={set("title")}
                    style={inputStyle} /></label>
+          <label style={full}>Scope
+            <textarea value={form.scope} rows={3} onChange={set("scope")}
+                      placeholder="General scope / summary of the works"
+                      style={ta} /></label>
           <label style={full}>Assigned QS (owns the financials/tender)
             <select value={form.qs} onChange={set("qs")} style={inputStyle}>
               <option value="">— none —</option>
