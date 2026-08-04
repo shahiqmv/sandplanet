@@ -86,8 +86,29 @@ export default function OnboardingPage({ me, sites }) {
                   <td style={td}>{ROUTE_LABEL[c.route] || c.route}</td>
                   <td style={td}>{c.trade_designation || "—"}</td>
                   <td style={td}>{c.site_code}</td>
-                  <td style={td}><Chip tone={STATUS_TONE[c.status]}>
-                    {c.status.replace(/_/g, " ")}</Chip></td>
+                  <td style={td}>
+                    {["APPROVED", "IN_PROGRESS"].includes(c.status)
+                     && c.stage_label ? (
+                      <>
+                        <div style={{ fontWeight: 600,
+                                      color: "var(--sp-navy)" }}>
+                          {c.stage_label}</div>
+                        <div style={{ display: "flex", gap: 10,
+                                      flexWrap: "wrap", fontSize: 11,
+                                      color: "var(--muted)", marginTop: 1 }}>
+                          {c.medical_due && !c.medical_result && (
+                            <span>Medical<Countdown d={c.medical_due}
+                                                    warnAt={7} /></span>)}
+                          {c.bv_expiry && c.stage !== "WP_ISSUED" && (
+                            <span>BV exp<Countdown d={c.bv_expiry}
+                                                   warnAt={14} /></span>)}
+                        </div>
+                      </>
+                    ) : (
+                      <Chip tone={STATUS_TONE[c.status]}>
+                        {c.status.replace(/_/g, " ")}</Chip>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
