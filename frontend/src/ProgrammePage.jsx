@@ -50,6 +50,20 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
     }
   }
 
+  async function deleteProgramme() {
+    if (!window.confirm(
+      `Delete the ENTIRE programme for ${project.code}? All `
+      + `${activities.length} activities will be removed — including any with `
+      + `DPR progress. This cannot be undone.`)) return;
+    setError(null); setNotice(null);
+    try {
+      const r = await api(`/projects/${project.id}/programme`,
+                          { method: "DELETE" });
+      setNotice(`Deleted ${r.deleted} programme rows.`);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function capturePdf(file) {
     if (!file) return;
     setError(null); setNotice(null); setCaptureBusy(true); setCaptured(null);
@@ -255,6 +269,13 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
             {activities.length ? "Re-import (paste)"
                                : "Import (paste)"}
           </button>
+          {me.role === "ADMIN" && activities.length > 0 && (
+            <button onClick={deleteProgramme}
+              style={{ ...ghostButton, color: "var(--red-fg)",
+                       borderColor: "var(--red-fg)" }}>
+              🗑 Delete programme
+            </button>
+          )}
           <span style={{ fontSize: 12, color: "#5a6b78" }}>
             Export the MS Project programme as a PDF and capture it — no more
             garbled paste.</span>

@@ -326,6 +326,23 @@ class ProjectWorkspaceTests(ProjectBase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["predecessors"], str(a.id))
 
+    def test_only_admin_deletes_whole_programme(self):
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/projects/{self.pools.id}/programme", {
+            "activities": [{"name": "Excavation", "duration_days": 3},
+                           {"name": "Blinding", "duration_days": 1}],
+        }, format="json")
+        self.assertEqual(self.pools.activities.count(), 2)
+        # a PM (who can manage rows) cannot wipe the whole programme
+        r = self.client.delete(f"/api/v1/projects/{self.pools.id}/programme")
+        self.assertEqual(r.status_code, 403)
+        # an admin can
+        self.client.force_authenticate(make_user("adm3", User.Role.ADMIN))
+        r = self.client.delete(f"/api/v1/projects/{self.pools.id}/programme")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["deleted"], 2)
+        self.assertEqual(self.pools.activities.count(), 0)
+
 
 class ProgrammeExportTests(ProjectBase):
     def test_manpower_plan_roundtrip(self):

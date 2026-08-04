@@ -328,7 +328,7 @@ def parse_programme_paste(text):
     return rows
 
 
-@api_view(["GET", "POST"])
+@api_view(["GET", "POST", "DELETE"])
 def project_programme(request, pk):
     try:
         project = Project.objects.select_related("site").get(pk=pk)
@@ -337,6 +337,19 @@ def project_programme(request, pk):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None and project.site_id not in site_ids:
         return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        # Wipe the whole programme so it can be re-imported. Deliberately
+        # admin-only + overrides the per-activity "has DPR progress" guard —
+        # it's a destructive reset, confirmed on the client.
+        if request.user.role != "ADMIN":
+            return Response({"detail": "Only an admin can delete the whole "
+                                       "programme."}, status=403)
+        n = project.activities.count()
+        project.activities.all().delete()
+        audit("project", project.id, "PROGRAMME_DELETED", actor=request.user,
+              detail={"count": n})
+        return Response({"deleted": n})
 
     if request.method == "POST":
         if request.user.role not in PROJECT_CREATE_ROLES:
