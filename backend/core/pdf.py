@@ -318,9 +318,50 @@ def _enclosure_divider(label, filename):
     return out
 
 
+# Downsampling budget for merged enclosures — the big lever on file size.
+# Oversized embedded images (scanned datasheets, product photos) are shrunk to
+# this longest edge (~150 DPI on A4) and re-saved as JPEG; text and vector
+# diagrams are untouched, so they stay sharp.
+_IMG_MAX_SIDE = 1600
+_IMG_JPEG_QUALITY = 65
+
+
+def _shrink_images(doc):
+    """Downsample + recompress oversized embedded images in-place. Best-effort:
+    any image that can't be processed is left as-is."""
+    import io
+
+    from PIL import Image
+    done = set()
+    for page in doc:
+        for img in page.get_images(full=True):
+            xref = img[0]
+            if xref in done:
+                continue
+            done.add(xref)
+            try:
+                info = doc.extract_image(xref)
+                ext = (info.get("ext") or "").lower()
+                im = Image.open(io.BytesIO(info["image"]))
+                if im.mode not in ("RGB", "L"):
+                    im = im.convert("RGB")
+                big = max(im.size) > _IMG_MAX_SIDE
+                if not big and ext in ("jpg", "jpeg"):
+                    continue                        # already small + compressed
+                if big:
+                    im.thumbnail((_IMG_MAX_SIDE, _IMG_MAX_SIDE))
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=_IMG_JPEG_QUALITY,
+                        optimize=True)
+                page.replace_image(xref, stream=buf.getvalue())
+            except Exception:
+                continue
+
+
 def compile_enclosures(document, pdf_bytes):
     """Append a MAR's uploaded enclosure files after the form pages — each
-    behind a labelled divider — then compress the result. PDFs merge directly,
+    behind a labelled divider — then compress the result (oversized images are
+    downsampled + re-JPEGed, the big file-size lever). PDFs merge directly,
     images become a page (Pillow); an unreadable file is replaced by a short
     note rather than failing the whole PDF. Returns the input unchanged when
     there are no enclosures or PyMuPDF is unavailable."""
@@ -360,6 +401,7 @@ def compile_enclosures(document, pdf_bytes):
                     "Could not read this file", name), filetype="pdf")
                 out.insert_pdf(note)
                 note.close()
+        _shrink_images(out)                                    # downsample images
         merged = out.tobytes(garbage=4, deflate=True, deflate_images=True,
                              deflate_fonts=True, clean=True)   # compress
         out.close()

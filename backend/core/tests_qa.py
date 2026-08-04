@@ -270,3 +270,28 @@ class MAREnclosureMergeTests(QABase):
         from core import pdf
         doc = self._mar()
         self.assertEqual(pdf.compile_enclosures(doc, b"%PDF-x"), b"%PDF-x")
+
+    def test_oversized_image_enclosure_is_downsampled(self):
+        import io
+        try:
+            import fitz
+            from PIL import Image
+        except Exception:
+            self.skipTest("PyMuPDF/Pillow unavailable")
+        from core import pdf
+        doc = self._mar()
+        im = Image.new("RGB", (3000, 2000), (180, 200, 220))
+        b = io.BytesIO()
+        im.save(b, "PNG")
+        self._attach(doc, "Catalogue", "big.png", b.getvalue(), "image/png")
+        form = fitz.open()
+        form.new_page()
+        merged = pdf.compile_enclosures(doc, form.tobytes())
+        form.close()
+        mp = fitz.open(stream=merged, filetype="pdf")
+        sides = [max(mp.extract_image(img[0])["width"],
+                     mp.extract_image(img[0])["height"])
+                 for page in mp for img in page.get_images(full=True)]
+        mp.close()
+        self.assertTrue(sides)                       # the image is embedded
+        self.assertLessEqual(max(sides), pdf._IMG_MAX_SIDE)   # capped
