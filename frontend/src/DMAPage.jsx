@@ -68,6 +68,16 @@ export default function DMAPage({ site, me, onClose }) {
   function setTask(i, field, value) {
     setTasks(tasks.map((t, j) => (j === i ? { ...t, [field]: value } : t)));
   }
+  // Same task, another manpower category: insert a fresh line right below,
+  // pre-filled with this task/project/location so nothing is retyped. A crew
+  // can also be reused across tasks, so allocation is never capped by headcount.
+  function addCategoryLine(i) {
+    const s = tasks[i];
+    setTasks([...tasks.slice(0, i + 1),
+              { ...EMPTY_TASK, task: s.task, project: s.project,
+                location: s.location },
+              ...tasks.slice(i + 1)]);
+  }
 
   async function loadFromTws() {
     setError(null);
@@ -143,16 +153,12 @@ export default function DMAPage({ site, me, onClose }) {
     totals[key] = (totals[key] || 0) + n;
     grandTotal += n;
   }
-  // Attendance is the availability source (owner): present per category
+  // Attendance is shown for reference (present per category), but it does NOT
+  // cap allocation — the same crew can cover several tasks in a day, so the
+  // sheet total legitimately exceeds headcount. No "unallocated"/over warnings.
   const attendanceIn = !!mp?.attendance_entered;
   const presentByCat = {};
   for (const c of mp?.categories || []) presentByCat[c.name] = c.present;
-  const overAllocated = attendanceIn
-    ? Object.entries(totals).filter(([cat, n]) =>
-        cat !== "Unassigned" && n > (presentByCat[cat] || 0))
-    : [];
-  const unallocated = attendanceIn
-    ? Math.max((mp?.present || 0) - grandTotal, 0) : null;
   const pdf = doc?.attachments?.filter((a) => a.kind === "GENERATED_PDF")
     .slice(-1)[0];
 
@@ -205,22 +211,10 @@ export default function DMAPage({ site, me, onClose }) {
           {attendanceIn ? (
             <>
               <b style={{ color: "#1a7f37" }}>{mp.present} present</b> today
-              (attendance) · {grandTotal} allocated in this sheet
-              {unallocated > 0 && (
-                <> · <b style={{ color: "#b35900" }}>
-                  {unallocated} not yet allocated</b></>
-              )}
+              (attendance) · {grandTotal} allocated across tasks
             </>
           ) : "Attendance has not been entered for today yet — present "
             + "counts will appear here once it is."}
-        </p>
-      )}
-      {overAllocated.length > 0 && (
-        <p style={{ fontSize: 12.5, color: "#c0392b", margin: "0 0 10px" }}>
-          ⚠ Allocating more than attendance shows present:{" "}
-          {overAllocated.map(([cat, n]) =>
-            `${cat} (${n} allocated, ${presentByCat[cat] || 0} present)`)
-            .join(" · ")}
         </p>
       )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
@@ -303,7 +297,13 @@ export default function DMAPage({ site, me, onClose }) {
                                                       e.target.value)}
                              style={{ ...inputStyle, width: 140 }} />
                     </td>
-                    <td style={td}>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      <button onClick={() => addCategoryLine(i)}
+                              title="Add another manpower category for this task"
+                              style={{ ...ghostButton, padding: "2px 8px",
+                                       marginRight: 4 }}>
+                        ＋ cat
+                      </button>
                       <button onClick={() => setTasks(
                                 tasks.filter((_, j) => j !== i))}
                               title="Remove row"
@@ -351,14 +351,10 @@ export default function DMAPage({ site, me, onClose }) {
             <tbody>
               {Object.entries(totals).sort().map(([cat, n]) => {
                 const present = presentByCat[cat];
-                const over = attendanceIn && cat !== "Unassigned" &&
-                  n > (present || 0);
                 return (
                   <tr key={cat}>
                     <td style={td}>{cat}</td>
-                    <td style={{ ...td, textAlign: "right",
-                                 color: over ? "#c0392b" : undefined,
-                                 fontWeight: over ? 700 : 400 }}>{n}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{n}</td>
                     {attendanceIn && (
                       <td style={{ ...td, textAlign: "right",
                                    color: "#5a6b78" }}>
