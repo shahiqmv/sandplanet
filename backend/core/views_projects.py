@@ -284,6 +284,10 @@ def programme_capture(request, pk):
         acts, err = programme_extract.run_capture(upload)
     except programme_extract.ExtractionError as e:
         return Response({"detail": str(e)}, status=400)
+    except Exception as e:               # surface the reason, never a bare 500
+        import logging
+        logging.getLogger("programme").exception("Programme capture failed")
+        return Response({"detail": f"Capture failed: {e}"}, status=400)
     if err:
         return Response({"detail": err}, status=400)
     return Response({"activities": acts, "count": len(acts)})

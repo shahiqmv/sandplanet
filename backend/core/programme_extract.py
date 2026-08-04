@@ -98,8 +98,8 @@ def _call_claude(content, model):
         import anthropic
     except ImportError:                          # pragma: no cover - env dep
         raise ExtractionError("The anthropic SDK isn't installed on the server.")
-    client = anthropic.Anthropic(api_key=key)
     try:
+        client = anthropic.Anthropic(api_key=key)
         msg = client.messages.create(
             model=model, max_tokens=_MAX_TOKENS, system=_SYSTEM, tools=[_TOOL],
             tool_choice={"type": "tool", "name": "emit_programme"},
@@ -119,14 +119,30 @@ def _call_claude(content, model):
 
 
 def structure(pages, model=None):
-    """Run the (possibly batched) extraction over the document pages."""
+    """Run the (possibly batched) extraction over the document pages.
+
+    One page batch = one model call. A multi-page programme is many batches,
+    so they run CONCURRENTLY — wall time is the slowest single page, not the
+    sum, which keeps a 6-page programme inside the request timeout instead of
+    stacking six sequential calls past it. Order is preserved."""
+    from concurrent.futures import ThreadPoolExecutor
     model = model or _model_name()
-    acts = []
-    for batch in _batches(pages, max_chars=_PAGE_BATCH_CHARS):
+    batches = _batches(pages, max_chars=_PAGE_BATCH_CHARS)
+
+    def run(batch):
         header = ("Extract the project programme from this document text. "
                   "Page markers are shown as [PAGE n].\n\n")
         body = "\n\n".join(f"[PAGE {n}]\n{text}" for n, text in batch)
-        out = _call_claude(header + body, model) or {}
+        return _call_claude(header + body, model) or {}
+
+    if len(batches) <= 1:
+        outs = [run(b) for b in batches]
+    else:
+        with ThreadPoolExecutor(max_workers=min(len(batches), 5)) as ex:
+            outs = list(ex.map(run, batches))       # ex.map preserves order
+
+    acts = []
+    for out in outs:
         acts.extend(out.get("activities") or [])
     return acts
 
