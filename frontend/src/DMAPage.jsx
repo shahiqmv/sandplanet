@@ -143,16 +143,11 @@ export default function DMAPage({ site, me, onClose }) {
     }
   }
 
-  // Category totals — mirrors the PDF's "Manpower at Work" table
-  const totals = {};
+  // Total worker-assignments across tasks. A crew reused on several tasks is
+  // counted once per task, so this is an ALLOCATION count, not the headcount on
+  // site — the real "manpower at work" comes from attendance (below).
   let grandTotal = 0;
-  for (const t of tasks) {
-    const n = parseInt(t.workers, 10) || 0;
-    if (!n) continue;
-    const key = (t.category || "Unassigned").trim() || "Unassigned";
-    totals[key] = (totals[key] || 0) + n;
-    grandTotal += n;
-  }
+  for (const t of tasks) grandTotal += parseInt(t.workers, 10) || 0;
   // Attendance is shown for reference (present per category), but it does NOT
   // cap allocation — the same crew can cover several tasks in a day, so the
   // sheet total legitimately exceeds headcount. No "unallocated"/over warnings.
@@ -334,42 +329,32 @@ export default function DMAPage({ site, me, onClose }) {
         </button>
       )}
 
-      {grandTotal > 0 && (
+      {attendanceIn && mp.present > 0 && (
         <div style={{ marginTop: 16, maxWidth: 420 }}>
-          <h3 style={{ margin: "0 0 6px", fontSize: 14,
+          <h3 style={{ margin: "0 0 2px", fontSize: 14,
                        color: "var(--sp-navy)" }}>
             Manpower at work
           </h3>
+          <p style={{ margin: "0 0 6px", fontSize: 11.5, color: "#5a6b78" }}>
+            From today's attendance — the crew actually on site. Task
+            allocation above may put the same crew on more than one job.
+          </p>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
               <th style={th}>Category</th>
-              <th style={{ ...th, textAlign: "right" }}>Allocated</th>
-              {attendanceIn && (
-                <th style={{ ...th, textAlign: "right" }}>Present</th>
-              )}
+              <th style={{ ...th, textAlign: "right" }}>On site</th>
             </tr></thead>
             <tbody>
-              {Object.entries(totals).sort().map(([cat, n]) => {
-                const present = presentByCat[cat];
-                return (
-                  <tr key={cat}>
-                    <td style={td}>{cat}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{n}</td>
-                    {attendanceIn && (
-                      <td style={{ ...td, textAlign: "right",
-                                   color: "#5a6b78" }}>
-                        {present ?? "—"}</td>
-                    )}
+              {[...(mp.categories || [])].filter((c) => c.present > 0)
+                .sort((a, b) => b.present - a.present).map((c) => (
+                  <tr key={c.name}>
+                    <td style={td}>{c.name}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{c.present}</td>
                   </tr>
-                );
-              })}
+                ))}
               <tr style={{ fontWeight: 700 }}>
                 <td style={td}>Total</td>
-                <td style={{ ...td, textAlign: "right" }}>{grandTotal}</td>
-                {attendanceIn && (
-                  <td style={{ ...td, textAlign: "right" }}>
-                    {mp.present}</td>
-                )}
+                <td style={{ ...td, textAlign: "right" }}>{mp.present}</td>
               </tr>
             </tbody>
           </table>
