@@ -97,12 +97,24 @@ class ProgrammeExtractTests(TestCase):
                 sys.modules.pop("anthropic", None)
             os.environ.pop("ANTHROPIC_API_KEY", None)
 
-    def test_capture_endpoint_returns_activities_for_review(self):
+    def test_mdy_iso_parses_us_dates(self):
+        self.assertEqual(pe._mdy_iso("7/26/26"), "2026-07-26")
+        self.assertEqual(pe._mdy_iso("12/1/2026"), "2026-12-01")
+        self.assertEqual(pe._mdy_iso("not-a-date"), "")
+
+    def test_level_bands_cluster_indent_positions(self):
+        # distinct name-column x-positions collapse into ordered outline levels
+        bands = pe._level_bands([57.0, 63.7, 57.1, 70.4, 63.6, 83.8])
+        self.assertEqual(len(bands), 4)                 # 57, 63.7, 70.4, 83.8
+        self.assertEqual(bands[0], 57.0)
+
+    def test_capture_endpoint_returns_activities_and_warning(self):
         orig = pe.run_capture
         pe.run_capture = lambda upload, model=None: (
             [{"name": "Piling", "indent": 1, "duration_days": 12,
               "start": "2026-02-01", "finish": "2026-02-12",
-              "is_milestone": False}], None)
+              "is_milestone": False, "seq": 2}],
+            {"count": 1, "first": 1, "last": 3, "missing": [1, 3]}, None)
         try:
             self.client.force_authenticate(self.pm)
             f = SimpleUploadedFile("prog.pdf", b"%PDF-1.4 x", "application/pdf")
@@ -112,8 +124,28 @@ class ProgrammeExtractTests(TestCase):
             self.assertEqual(r.status_code, 200, r.data)
             self.assertEqual(r.data["count"], 1)
             self.assertEqual(r.data["activities"][0]["name"], "Piling")
+            self.assertIn("couldn't be read", r.data["warning"])   # ID-gap notice
+            self.assertEqual(r.data["captured_range"], "1–3")
         finally:
             pe.run_capture = orig
+
+    def test_run_capture_falls_back_to_model(self):
+        # a non-tabular PDF: the deterministic parser returns nothing, so the
+        # model path runs and its rows are returned.
+        orig_parse, orig_pages = pe.parse_pdf_programme, pe.pdf_pages
+        orig_struct = pe.structure
+        pe.parse_pdf_programme = lambda upload: (None, None)
+        pe.pdf_pages = lambda upload: [(1, "text")]
+        pe.structure = lambda pages, model=None: [{"name": "Task A", "level": 0}]
+        try:
+            f = SimpleUploadedFile("prog.pdf", b"%PDF x", "application/pdf")
+            acts, meta, err = pe.run_capture(f)
+            self.assertIsNone(err)
+            self.assertIsNone(meta)
+            self.assertEqual(acts[0]["name"], "Task A")
+        finally:
+            pe.parse_pdf_programme, pe.pdf_pages = orig_parse, orig_pages
+            pe.structure = orig_struct
 
     def test_capture_needs_a_file(self):
         self.client.force_authenticate(self.pm)

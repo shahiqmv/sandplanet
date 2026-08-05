@@ -196,15 +196,184 @@ def normalise(acts):
     return out
 
 
+# ---- deterministic table parse (primary path) ---------------------------
+# An MS Project / Primavera PDF export is a clean table: a sequential ID column,
+# an indented Task Name, Duration, Start, Finish, then the Gantt bars. Reading it
+# straight from the word geometry captures EVERY row (the ID column proves none
+# are dropped) and takes the outline level from the name indentation — so it is
+# exact and repeatable, unlike the model, which was silently dropping rows and a
+# whole page at a time and mis-guessing levels (owner/team 2026-08-04). The model
+# stays as a fallback for a non-tabular or scanned PDF.
+
+_MDY = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2,4})$")
+_DUR = re.compile(r"^\d+(?:\.\d+)?$")
+_MIN_TABLE_ROWS = 8          # below this it isn't a recognisable task table
+
+
+def _page_rows(page, tol=3):
+    """Cluster a page's words into visual rows (by y), each sorted left→right."""
+    words = page.extract_words(use_text_flow=False, keep_blank_chars=False)
+    rows = []
+    for w in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
+        for r in rows:
+            if abs(r["top"] - w["top"]) <= tol:
+                r["ws"].append(w)
+                break
+        else:
+            rows.append({"top": w["top"], "ws": [w]})
+    for r in rows:
+        r["ws"].sort(key=lambda w: w["x0"])
+    return sorted(rows, key=lambda r: r["top"])
+
+
+def _mdy_iso(tok):
+    m = _MDY.match(tok)
+    if not m:
+        return ""
+    mo, da, yr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    if yr < 100:
+        yr += 2000
+    try:
+        from datetime import date
+        return date(yr, mo, da).isoformat()
+    except ValueError:
+        return ""
+
+
+def _level_bands(x0s, tol=3.0):
+    """Distinct name-column x-positions → outline level 0,1,2,… The indent step
+    and left margin vary by export, so derive the bands from the data."""
+    bands = []
+    for x in sorted(x0s):
+        if not bands or x - bands[-1] > tol:
+            bands.append(x)
+    return bands
+
+
+def parse_pdf_programme(upload):
+    """Deterministic capture from the table geometry. Returns (activities, meta)
+    or (None, None) when the PDF isn't a recognisable MS Project task table (the
+    caller then falls back to the model)."""
+    import pdfplumber
+    try:
+        upload.seek(0)
+    except Exception:                             # pragma: no cover
+        pass
+    all_rows = []                                 # (page_index, clustered_rows)
+    with pdfplumber.open(upload) as pdf:
+        for pi, page in enumerate(pdf.pages):
+            all_rows.append((pi, _page_rows(page)))
+
+    # The ID column = the leftmost cluster of rows whose first word is an integer
+    # (this excludes the Gantt timescale numbers, which sit far to the right).
+    lead_int_x = [r["ws"][0]["x0"] for _, rows in all_rows for r in rows
+                  if r["ws"] and r["ws"][0]["text"].isdigit()]
+    if not lead_int_x:
+        return None, None
+    id_x = min(lead_int_x)
+    name_zone = id_x + 15                         # left edge of the name column
+
+    raw = []
+    for pi, rows in all_rows:
+        for r in rows:
+            ws = r["ws"]
+            if not ws:
+                continue
+            first = ws[0]
+            is_data = first["text"].isdigit() and first["x0"] <= name_zone
+            if not is_data:
+                # A wrapped task name continues on the next line: indented into
+                # the name column, no ID/dates, and directly under its own row.
+                # The vertical-proximity check keeps the page-bottom Gantt legend
+                # ("Task / Split / Milestone / Summary / Manual Task …") from
+                # being glued onto the last activity.
+                if (raw and first["x0"] > name_zone
+                        and raw[-1]["page"] == pi + 1
+                        and 0 < r["top"] - raw[-1]["_top"] < 20
+                        and not any(_MDY.match(w["text"]) for w in ws)):
+                    raw[-1]["name"] += " " + " ".join(w["text"] for w in ws)
+                    raw[-1]["_top"] = r["top"]
+                continue
+            seq = int(first["text"])
+            rest = ws[1:]
+            name, dur, i = [], None, 0
+            while i < len(rest):
+                t = rest[i]["text"]
+                nxt = rest[i + 1]["text"].lower() if i + 1 < len(rest) else ""
+                if _DUR.match(t) and nxt.startswith("day"):
+                    dur = int(float(t))
+                    i += 2
+                    break
+                name.append(t)
+                i += 1
+            if not name:
+                continue
+            dates = []
+            for w in rest[i:]:
+                iso = _mdy_iso(w["text"])
+                if iso:
+                    dates.append(iso)
+                    if len(dates) >= 2:
+                        break
+            raw.append({
+                "seq": seq, "name": " ".join(name),
+                "name_x0": rest[0]["x0"], "duration_days": dur, "page": pi + 1,
+                "_top": r["top"],
+                "start": dates[0] if dates else "",
+                "finish": dates[1] if len(dates) > 1 else "",
+            })
+
+    if len(raw) < _MIN_TABLE_ROWS:
+        return None, None
+
+    bands = _level_bands([r["name_x0"] for r in raw])
+
+    def level_of(x0):
+        lvl = 0
+        for i, b in enumerate(bands):
+            if x0 >= b - 1.5:
+                lvl = i
+        return lvl
+
+    acts = []
+    for r in raw:
+        dur = r["duration_days"]
+        acts.append({
+            "name": r["name"].strip(),
+            "indent": max(0, min(level_of(r["name_x0"]), 8)),
+            "duration_days": dur,
+            "start": r["start"], "finish": r["finish"],
+            "is_milestone": dur == 0,
+            "predecessors": "", "progress": 0,
+            "seq": r["seq"],
+        })
+    seqs = [r["seq"] for r in raw]
+    meta = {"count": len(acts), "first": min(seqs), "last": max(seqs),
+            "missing": sorted(set(range(min(seqs), max(seqs) + 1)) - set(seqs))}
+    return acts, meta
+
+
 def run_capture(upload, model=None):
     """Read + extract an uploaded programme PDF into review-ready activities.
-    Returns (activities, error)."""
+    Returns (activities, meta, error). Tries the deterministic table parser
+    first (exact + repeatable); falls back to the model for a non-tabular PDF."""
     name = (getattr(upload, "name", "") or "").lower()
     if not name.endswith(".pdf"):
-        return None, "Upload the programme as a PDF (an MS Project export)."
+        return None, None, "Upload the programme as a PDF (an MS Project export)."
+    try:
+        acts, meta = parse_pdf_programme(upload)
+    except Exception:                             # pragma: no cover - defensive
+        acts, meta = None, None
+    if acts:
+        return acts, meta, None
+    # Fallback: a non-MS-Project layout or a scanned PDF — let the model read it.
+    try:
+        upload.seek(0)
+    except Exception:                             # pragma: no cover
+        pass
     pages = pdf_pages(upload)
     acts = normalise(structure(pages, model))
     if not acts:
-        return None, ("No programme activities were found in that PDF — check "
-                      "it's the schedule/task list and try again.")
-    return acts, None
+        return None, None, ("No programme activities were found in that PDF — "
+                            "check it's the schedule/task list and try again.")
+    return acts, None, None

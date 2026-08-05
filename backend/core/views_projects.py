@@ -281,7 +281,7 @@ def programme_capture(request, pk):
         return Response({"detail": "Attach the programme PDF."}, status=400)
     from . import programme_extract
     try:
-        acts, err = programme_extract.run_capture(upload)
+        acts, meta, err = programme_extract.run_capture(upload)
     except programme_extract.ExtractionError as e:
         return Response({"detail": str(e)}, status=400)
     except Exception as e:               # surface the reason, never a bare 500
@@ -290,7 +290,18 @@ def programme_capture(request, pk):
         return Response({"detail": f"Capture failed: {e}"}, status=400)
     if err:
         return Response({"detail": err}, status=400)
-    return Response({"activities": acts, "count": len(acts)})
+    resp = {"activities": acts, "count": len(acts)}
+    if meta:                             # deterministic read — report completeness
+        resp["captured_range"] = f"{meta['first']}–{meta['last']}"
+        gaps = meta.get("missing") or []
+        if gaps:
+            shown = ", ".join(str(g) for g in gaps[:8])
+            resp["warning"] = (
+                f"{len(gaps)} row(s) (ID {shown}"
+                f"{'…' if len(gaps) > 8 else ''}) between {meta['first']} and "
+                f"{meta['last']} couldn't be read — add them manually before "
+                "importing.")
+    return Response(resp)
 
 
 def parse_programme_paste(text):

@@ -12,7 +12,8 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
   const [detail, setDetail] = useState(project);
   const [paste, setPaste] = useState("");
   const [importing, setImporting] = useState(false);
-  const [captured, setCaptured] = useState(null);   // review list from AI
+  const [captured, setCaptured] = useState(null);   // review list from capture
+  const [captureInfo, setCaptureInfo] = useState(null); // {warning, range}
   const [captureBusy, setCaptureBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", indent: 1, duration_days: "",
@@ -72,10 +73,18 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
       fd.append("file", file);
       const r = await apiUpload(`/projects/${project.id}/programme/capture`, fd);
       if (!r.count) { setError("No activities were found in that PDF."); }
-      else { setCaptured(r.activities); setImporting(false); }
+      else {
+        setCaptured(r.activities); setImporting(false);
+        setCaptureInfo({ warning: r.warning || null, range: r.captured_range });
+      }
     } catch (e) { setError(e.message); }
     finally { setCaptureBusy(false); }
   }
+
+  const updateCaptured = (i, patch) =>
+    setCaptured((cs) => cs.map((a, j) => (j === i ? { ...a, ...patch } : a)));
+  const removeCaptured = (i) =>
+    setCaptured((cs) => cs.filter((_, j) => j !== i));
 
   async function importCaptured() {
     setError(null);
@@ -289,29 +298,66 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
           <div style={{ display: "flex", alignItems: "baseline", gap: 10,
                         flexWrap: "wrap" }}>
             <b style={{ color: "var(--sp-navy)" }}>
-              Review — {captured.length} activities read from the PDF</b>
+              Review — {captured.length} activities read from the PDF
+              {captureInfo?.range ? ` (IDs ${captureInfo.range})` : ""}</b>
             <span style={{ fontSize: 12, color: "#5a6b78" }}>
-              Check them, then import (this replaces the current programme).</span>
+              Fix any level, then import (this replaces the current programme).</span>
           </div>
-          <div style={{ maxHeight: 300, overflow: "auto", marginTop: 10,
+          {captureInfo?.warning && (
+            <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6,
+              background: "#fff4e5", border: "1px solid #f0c98a",
+              color: "#8a5a12", fontSize: 12.5 }}>⚠ {captureInfo.warning}</div>
+          )}
+          <div style={{ maxHeight: 340, overflow: "auto", marginTop: 10,
                         border: "1px solid var(--sp-border)", borderRadius: 6,
                         background: "#fff" }}>
             <table style={{ width: "100%", borderCollapse: "collapse",
                             fontSize: 12.5 }}>
               <thead><tr>
-                {["Activity", "Days", "Start", "Finish"].map((h) =>
+                {["Level", "Activity", "Days", "Start", "Finish", ""].map((h) =>
                   <th key={h} style={{ ...th, position: "sticky", top: 0,
                     background: "#fff" }}>{h}</th>)}
               </tr></thead>
               <tbody>
                 {captured.map((a, i) => (
                   <tr key={i}>
-                    <td style={{ ...td, paddingLeft: 8 + (a.indent || 0) * 14,
-                      fontWeight: a.indent === 0 ? 700 : 400 }}>
-                      {a.is_milestone ? "◆ " : ""}{a.name}</td>
+                    <td style={{ ...td, whiteSpace: "nowrap" }}>
+                      <select value={a.indent ?? 0}
+                        onChange={(e) => updateCaptured(i,
+                          { indent: +e.target.value })}
+                        style={{ ...inputStyle, padding: "2px 4px",
+                          fontSize: 12 }}>
+                        <option value={0}>Heading</option>
+                        <option value={1}>Level 1</option>
+                        <option value={2}>Level 2</option>
+                        <option value={3}>Level 3</option>
+                        <option value={4}>Level 4</option>
+                        <option value={5}>Level 5</option>
+                      </select>
+                    </td>
+                    <td style={{ ...td, paddingLeft: 8 + (a.indent || 0) * 12 }}>
+                      <input value={a.name}
+                        onChange={(e) => updateCaptured(i,
+                          { name: e.target.value })}
+                        style={{ ...inputStyle, width: "100%",
+                          padding: "2px 6px",
+                          fontWeight: a.indent === 0 ? 700 : 400,
+                          border: "1px solid transparent", background: "none" }}
+                        onFocus={(e) => e.target.style.border =
+                          "1px solid var(--sp-border)"}
+                        onBlur={(e) => e.target.style.border =
+                          "1px solid transparent"} />
+                    </td>
                     <td style={td}>{a.duration_days ?? ""}</td>
                     <td style={td}>{a.start || ""}</td>
                     <td style={td}>{a.finish || ""}</td>
+                    <td style={td}>
+                      <button title="Remove this row"
+                        onClick={() => removeCaptured(i)}
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "var(--red-fg)",
+                          fontSize: 15 }}>×</button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -320,8 +366,8 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
           <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
             <button onClick={importCaptured} style={buttonStyle}>
               Import {captured.length} activities</button>
-            <button onClick={() => setCaptured(null)} style={ghostButton}>
-              Cancel</button>
+            <button onClick={() => { setCaptured(null); setCaptureInfo(null); }}
+              style={ghostButton}>Cancel</button>
           </div>
         </div>
       )}
