@@ -282,6 +282,8 @@ class Document(models.Model):
         TWS = "TWS"
         IR = "IR"
         MAR = "MAR"
+        SD = "SD"    # shop drawing submittal (same workflow as MAR)
+        MS = "MS"    # method statement submittal (same workflow as MAR)
         MR = "MR"
         GRN = "GRN"
         PR = "PR"
@@ -344,6 +346,21 @@ class Document(models.Model):
             "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
                        "REVISE_RESUBMIT", "REJECTED"},
             # REVISE_RESUBMIT → new revision, same number, restart at DRAFT
+        },
+        # Shop Drawing + Method Statement submittals — identical workflow to MAR.
+        "SD": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        "MS": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
         },
         "MR": {
             "DRAFT": {"SUBMITTED"},

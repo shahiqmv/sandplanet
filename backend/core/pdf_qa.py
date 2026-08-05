@@ -157,6 +157,94 @@ def mar_context(document, revision):
     }
 
 
+def sd_context(document, revision):
+    """Shop Drawing submittal — same transmittal form as the MAR, with drawing
+    fields and the drawing files as enclosures."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    enclosures = payload.get("enclosures") or {}
+    sections = [
+        {"kind": "kv", "title": "1. Drawing Details", "rows": [
+            ["Drawing Title", payload.get("drawing_title", ""),
+             "Drawing No.", payload.get("drawing_no", "")],
+            ["Drawing Revision", payload.get("drawing_rev", ""),
+             "Discipline / Trade", payload.get("discipline", "")],
+            ["Specification Ref", payload.get("spec_ref", ""),
+             "BOQ Ref", payload.get("boq_ref", "")],
+        ]},
+        {"kind": "enclosures", "title": "2. Attachments / Drawings",
+         "items": [(name, bool(enclosures.get(key))) for name, key in [
+             ("Shop Drawing", "shop_drawing"),
+             ("Detail / Section", "detail_section"),
+             ("Reference", "reference")]]},
+        {"kind": "kv", "title": "3. Contractor Confirmation", "rows": [
+            ["Confirms to Design / Spec", _yesno(payload.get("confirms_design")),
+             "Remarks", payload.get("remarks", "")],
+        ]},
+    ]
+    sections += _result_section(payload, "4. Client / Consultant Review")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "SHOP DRAWING SUBMITTAL",
+        "form_subline": f"Form No: FRM-PRJ-04  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention To", payload.get("attention_to", ""),
+             "Revision", revision.rev_label],
+        ],
+        "sections": sections,
+        "sig_blocks": [
+            {"title": "Submitted By — Site Engineer / QS",
+             "stamp": _stamp_for(approvals, "SUBMIT")},
+            {"title": "Approved By — Project Manager",
+             "stamp": _stamp_for(approvals, "APPROVE")},
+            {"title": "Reviewed By — Client / Consultant",
+             "text": _client_by(payload)},
+        ],
+    }
+
+
+def ms_context(document, revision):
+    """Method Statement submittal — same transmittal form as the MAR; the
+    prepared method-statement PDF rides along as the enclosure."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    enclosures = payload.get("enclosures") or {}
+    sections = [
+        {"kind": "kv", "title": "1. Statement Details", "rows": [
+            ["Statement Title", payload.get("statement_title", ""),
+             "Reference", payload.get("reference", "")],
+            ["Activity / Scope", payload.get("activity_scope", ""),
+             "Remarks", payload.get("remarks", "")],
+        ]},
+        {"kind": "enclosures", "title": "2. Attachments",
+         "items": [(name, bool(enclosures.get(key))) for name, key in [
+             ("Method Statement", "method_statement"),
+             ("Risk Assessment", "risk_assessment"),
+             ("ITP", "itp")]]},
+    ]
+    sections += _result_section(payload, "3. Client / Consultant Review")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "METHOD STATEMENT SUBMITTAL",
+        "form_subline": f"Form No: FRM-PRJ-05  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention To", payload.get("attention_to", ""),
+             "Revision", revision.rev_label],
+        ],
+        "sections": sections,
+        "sig_blocks": [
+            {"title": "Submitted By — Site Engineer / QS",
+             "stamp": _stamp_for(approvals, "SUBMIT")},
+            {"title": "Approved By — Project Manager",
+             "stamp": _stamp_for(approvals, "APPROVE")},
+            {"title": "Reviewed By — Client / Consultant",
+             "text": _client_by(payload)},
+        ],
+    }
+
+
 def dma_context(document, revision):
     """Daily Manpower Allocation (R5) — internal notice-board sheet: the
     PM's morning task assignments off the previous day's TWSs, with the

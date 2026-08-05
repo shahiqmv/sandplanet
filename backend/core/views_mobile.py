@@ -77,6 +77,7 @@ def m_me(request):
 # Finance payment tasks, Phase-1B PMR/IPR) stays desktop-only (R6 §2/§4).
 APPROVABLE = {
     ("MR", "SUBMITTED"), ("IR", "SUBMITTED"), ("MAR", "SUBMITTED"),
+    ("SD", "SUBMITTED"), ("MS", "SUBMITTED"),
     ("PR", "SUBMITTED"), ("PYR", "SUBMITTED"), ("PYR", "PM_APPROVED"),
     ("PV", "SUBMITTED"),
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
@@ -561,7 +562,7 @@ def m_return(request, ref):
 
 # ---- Originator: my requests / timeline / alerts ------------------------
 
-TRACKABLE = ("MR", "IR", "MAR", "PMR", "PR", "PYR")
+TRACKABLE = ("MR", "IR", "MAR", "SD", "MS", "PMR", "PR", "PYR")
 
 # A live status is a "current" step; these read as finished/terminal.
 _TERMINAL = {"CLOSED", "COMPLETE", "PAID", "RECEIVED", "REJECTED", "CANCELLED",

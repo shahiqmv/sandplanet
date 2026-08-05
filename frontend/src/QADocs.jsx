@@ -6,6 +6,8 @@ import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
 export const QA_LABELS = {
   IR: "Inspection Request",
   MAR: "Material Approval Request",
+  SD: "Shop Drawing Submittal",
+  MS: "Method Statement",
   TWS: "Tomorrow Work Schedule",
 };
 
@@ -40,11 +42,45 @@ const MAR_FIELDS = [
   ["remarks", "Remarks", "textarea"],
 ];
 
-const ENCLOSURES = [
-  ["sample", "Sample"], ["catalogue", "Catalogue"],
-  ["technical_data", "Technical Data"], ["test_report", "Test Report"],
-  ["compliance_sheet", "Compliance Sheet"], ["company_profile", "Company Profile"],
+// Shop Drawing — drawing-focused transmittal (owner 2026-08-05).
+const SD_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["drawing_title", "Drawing Title", "text"],
+  ["drawing_no", "Drawing No.", "text"],
+  ["drawing_rev", "Drawing Revision", "text"],
+  ["discipline", "Discipline / Trade", "select",
+   ["Civil", "Structural", "Architectural", "MEP", "Finishes", "Marine",
+    "Other"]],
+  ["spec_ref", "Specification Ref", "text"],
+  ["boq_ref", "BOQ Ref", "text"],
+  ["confirms_design", "Confirms to Design / Spec", "checkbox"],
+  ["remarks", "Remarks", "textarea"],
 ];
+
+// Method Statement — minimal fields; the prepared PDF rides as the enclosure.
+const MS_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["statement_title", "Statement Title", "text"],
+  ["activity_scope", "Activity / Scope", "textarea"],
+  ["reference", "Reference", "text"],
+  ["remarks", "Remarks", "textarea"],
+];
+
+const FIELDS_BY_TYPE = { MAR: MAR_FIELDS, SD: SD_FIELDS, MS: MS_FIELDS };
+
+// Per-type attachment slots (files uploaded here are compiled into the PDF).
+const ENCLOSURES_BY_TYPE = {
+  MAR: [["sample", "Sample"], ["catalogue", "Catalogue"],
+        ["technical_data", "Technical Data"], ["test_report", "Test Report"],
+        ["compliance_sheet", "Compliance Sheet"],
+        ["company_profile", "Company Profile"]],
+  SD: [["shop_drawing", "Shop Drawing"], ["detail_section", "Detail / Section"],
+       ["reference", "Reference"]],
+  MS: [["method_statement", "Method Statement"],
+       ["risk_assessment", "Risk Assessment"], ["itp", "ITP"]],
+};
+
+const SUBMITTAL_TYPES = ["MAR", "SD", "MS"];   // MAR-family submittals
 
 const RESULT_OPTIONS = {
   IR: [["APPROVED", "Approved"],
@@ -55,6 +91,8 @@ const RESULT_OPTIONS = {
         ["REVISE_RESUBMIT", "Revise & resubmit"],
         ["REJECTED", "Rejected"]],
 };
+RESULT_OPTIONS.SD = RESULT_OPTIONS.MAR;
+RESULT_OPTIONS.MS = RESULT_OPTIONS.MAR;
 
 const SITE_TEAM = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"];
 
@@ -182,7 +220,7 @@ export function QAForm({ docType, site, project, projects = [], existing,
   }, [docType]);
 
   const fields = docType === "IR" ? IR_FIELDS
-               : docType === "MAR" ? MAR_FIELDS : [];
+               : (FIELDS_BY_TYPE[docType] || []);
   const setP = (k, v) => setPayload((p) => ({ ...p, [k]: v }));
 
   async function save() {
@@ -247,16 +285,18 @@ export function QAForm({ docType, site, project, projects = [], existing,
         ))}
       </div>
 
-      {docType === "MAR" && (
+      {SUBMITTAL_TYPES.includes(docType) && (
         <>
-          <SectionTitle>Enclosures</SectionTitle>
+          <SectionTitle>{docType === "SD" ? "Drawings"
+            : docType === "MS" ? "Attachments" : "Enclosures"}</SectionTitle>
           {!existing && (
             <p style={{ fontSize: 12, color: "#5a6b78", margin: "0 0 8px" }}>
-              Tick what you're enclosing. Save the draft, then attach the actual
-              files (PDF or image) here — they're compiled into the MAR PDF.</p>
+              Tick what you're attaching. Save the draft, then attach the actual
+              files (PDF or image) here — they're compiled into the submittal
+              PDF.</p>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            {ENCLOSURES.map(([key, label]) => {
+            {(ENCLOSURES_BY_TYPE[docType] || []).map(([key, label]) => {
               const files = encAtts.filter((a) => a.caption === label);
               return (
                 <div key={key} style={{ display: "flex", alignItems: "center",
@@ -472,7 +512,7 @@ export function QADocView({ doc: initial, me, onClose, onChanged, onEdit,
   const isSiteTeam = SITE_TEAM.includes(role);
   const canPmGate = role === "PM" || role === "ADMIN";
   const pdfs = (doc.attachments || []).filter((a) => a.kind === "GENERATED_PDF");
-  const isQA = doc.doc_type === "IR" || doc.doc_type === "MAR";
+  const isQA = doc.doc_type === "IR" || SUBMITTAL_TYPES.includes(doc.doc_type);
 
   const buttons = [];
   if (!doc.is_void) {
@@ -513,8 +553,8 @@ export function QADocView({ doc: initial, me, onClose, onChanged, onEdit,
     if (doc.doc_type === "IR" && doc.status === "REJECTED" && isSiteTeam) {
       buttons.push(["Resubmit as new IR", () => onResubmit(doc)]);
     }
-    if (doc.doc_type === "MAR" && doc.status === "REVISE_RESUBMIT" &&
-        isSiteTeam) {
+    if (SUBMITTAL_TYPES.includes(doc.doc_type)
+        && doc.status === "REVISE_RESUBMIT" && isSiteTeam) {
       buttons.push(["Revise & resubmit (new revision)", async () => {
         try {
           const fresh = await api(`/documents/${doc.ref}/revisions`,
@@ -611,7 +651,8 @@ export function QADocView({ doc: initial, me, onClose, onChanged, onEdit,
 
       {p.enclosures && (
         <p style={{ fontSize: 13 }}>
-          Enclosures: {ENCLOSURES.filter(([k]) => p.enclosures[k])
+          Enclosures: {(ENCLOSURES_BY_TYPE[doc.doc_type] || [])
+            .filter(([k]) => p.enclosures[k])
             .map(([, l]) => l).join(", ") || "none"}
         </p>
       )}

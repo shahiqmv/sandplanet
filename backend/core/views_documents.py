@@ -48,6 +48,8 @@ CREATE_ROLES = {  # spec §3 "can create"
     "TWS": {"SITE_ENGINEER", "PM"},
     "IR": {"SITE_ENGINEER", "PM"},       # SE submits with QA/QC
     "MAR": {"SITE_ENGINEER", "PM"},      # SE submits with QS
+    "SD": {"SITE_ENGINEER", "PM"},       # shop drawing submittal
+    "MS": {"SITE_ENGINEER", "PM"},       # method statement submittal
     # Site Engineer has full site-task parity with Site Admin (owner,
     # 2026-07-13): both raise MRs, receive goods, etc.
     "MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
@@ -67,6 +69,8 @@ SITE_TEAM = {"SITE_ENGINEER", "SITE_ADMIN", "PM"}  # record client results (dec.
 RESULTS = {  # client results per type (spec §5.3/§5.4)
     "IR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REJECTED"},
     "MAR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
+    "SD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
+    "MS": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN", "PMR"}
 MIN_DPR_PHOTOS = 0  # owner (Phase C): no photo floor — attach any number
@@ -128,7 +132,8 @@ def _is_pm_for(user, doc):
 # role), for the site-raised document types. They remain a NON-purchasing,
 # non-finance operator, so procurement/finance docs (PR/LM/PO/PV) are untouched
 # — the Director stays read-only there (owner 2026-08-01).
-SITE_DOC_TYPES = {"DPR", "TWS", "IR", "MAR", "MR", "GRN", "PMR", "SCA", "DMA"}
+SITE_DOC_TYPES = {"DPR", "TWS", "IR", "MAR", "SD", "MS", "MR", "GRN", "PMR",
+                  "SCA", "DMA"}
 
 
 def _can(request, doc_type, roles):
@@ -173,7 +178,7 @@ def document_create(request):
     # IR/MAR belong to a project (R4). DPR/TWS are SITE-WIDE — one daily
     # report to the one client per site, each work/planned row tagged with
     # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
-    PROJECT_TYPES = ("IR", "MAR", "PMR")  # PMR imports are raised per project
+    PROJECT_TYPES = ("IR", "MAR", "SD", "MS", "PMR")  # per project
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")
@@ -390,7 +395,7 @@ def document_revise(request, ref):
     doc, err = _get_scoped_document(request, ref)
     if err:
         return err
-    if doc.doc_type not in ("MR", "MAR"):
+    if doc.doc_type not in ("MR", "MAR", "SD", "MS"):
         return Response({"detail": "Only MR/MAR use revisions; IR gets a new "
                                    "number quoting the previous IR."}, status=400)
     if doc.is_void:
@@ -614,7 +619,7 @@ def _do_issue(request, doc, comment):
         return _apply(request, doc, "ISSUED", "ISSUE", pm_gate=True,
                       lock_revision=True, pdf_milestone="issue",
                       comment=comment)
-    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "PO"):
+    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS", "PO"):
         # DPR/TWS/PO issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         err = _apply(request, doc, "ISSUED", "ISSUE",
                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
@@ -651,7 +656,8 @@ def pending_groups(user):
     base = Document.objects.filter(is_void=False).order_by("doc_date", "id")
     if user.role in ("PM", "ADMIN"):
         mine = [d for d in scoped(base.filter(
-                    doc_type__in=("MR", "IR", "MAR"), status="SUBMITTED"))
+                    doc_type__in=("MR", "IR", "MAR", "SD", "MS"),
+                    status="SUBMITTED"))
                 .select_related("site", "project")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To approve — submitted MR / IR / MAR",
@@ -917,6 +923,8 @@ def _do_submit(request, doc, comment):
              "PR": {"HO_PURCHASING"},
              "IR": {"SITE_ENGINEER", "PM"},
              "MAR": {"SITE_ENGINEER", "PM"},
+             "SD": {"SITE_ENGINEER", "PM"},
+             "MS": {"SITE_ENGINEER", "PM"},
              "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
              "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
              "IPR": {"HO_PURCHASING"}}.get(doc.doc_type)
@@ -958,7 +966,7 @@ def _do_submit(request, doc, comment):
 
 
 def _do_approve(request, doc, comment):
-    if doc.doc_type in ("MR", "IR", "MAR", "PMR"):  # PM gate (spec §5.3–§5.5)
+    if doc.doc_type in ("MR", "IR", "MAR", "SD", "MS", "PMR"):  # PM gate
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "SCA":  # subcontractor module: PM then Director
@@ -1043,7 +1051,7 @@ def _do_return(request, doc, comment):
     """Return with comment → back to Draft (spec §7.2 / §7.5a)."""
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
-    if doc.doc_type in ("MR", "IR", "MAR"):
+    if doc.doc_type in ("MR", "IR", "MAR", "SD", "MS"):
         return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PMR":
@@ -1113,8 +1121,8 @@ def _do_record_result(request, doc, comment):
         "position": request.data.get("position", ""),
         "inspection_date": request.data.get("inspection_date", ""),
     }
-    if doc.doc_type == "MAR" and result in ("APPROVED",
-                                            "APPROVED_WITH_COMMENTS"):
+    if doc.doc_type in ("MAR", "SD", "MS") and result in (
+            "APPROVED", "APPROVED_WITH_COMMENTS"):
         block["approval_date"] = date.today().isoformat()  # spec §5.4
     _set_workflow_payload(doc.current_revision, "client_result", block)
     Approval.objects.filter(document=doc, revision=doc.current_revision,

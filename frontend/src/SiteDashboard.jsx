@@ -39,8 +39,10 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
     Promise.all([
       api(`/documents/list?site=${site.id}&doc_type=IR${projectParam}`),
       api(`/documents/list?site=${site.id}&doc_type=MAR${projectParam}`),
-    ]).then(([irs, mars]) => setQaDocs(
-      [...irs, ...mars].sort((a, b) => b.created_at.localeCompare(a.created_at))
+      api(`/documents/list?site=${site.id}&doc_type=SD${projectParam}`),
+      api(`/documents/list?site=${site.id}&doc_type=MS${projectParam}`),
+    ]).then((lists) => setQaDocs(
+      lists.flat().sort((a, b) => b.created_at.localeCompare(a.created_at))
     ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
@@ -153,6 +155,10 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                 + IR</button>
               <button onClick={() => onNewQa("MAR")} style={buttonStyle}>
                 + MAR</button>
+              <button onClick={() => onNewQa("SD")} style={buttonStyle}>
+                + SD</button>
+              <button onClick={() => onNewQa("MS")} style={buttonStyle}>
+                + MS</button>
             </>
           )}
           {canMr && (

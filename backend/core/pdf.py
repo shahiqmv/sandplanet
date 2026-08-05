@@ -279,10 +279,11 @@ def _render_target(document, revision, filters=None):
         return "po.html", _po_context(document, revision)
     if document.doc_type in LINE_FORMS:
         return "lines_form.html", _lines_context(document, revision)
-    if document.doc_type in ("IR", "MAR", "TWS", "DMA"):
+    if document.doc_type in ("IR", "MAR", "SD", "MS", "TWS", "DMA"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
+                   "SD": pdf_qa.sd_context, "MS": pdf_qa.ms_context,
                    "TWS": pdf_qa.tws_context,
                    "DMA": pdf_qa.dma_context}[document.doc_type]
         return "qa_form.html", builder(document, revision)
@@ -359,13 +360,14 @@ def _shrink_images(doc):
 
 
 def compile_enclosures(document, pdf_bytes):
-    """Append a MAR's uploaded enclosure files after the form pages — each
+    """Append a submittal's uploaded enclosure files after the form pages — each
     behind a labelled divider — then compress the result (oversized images are
     downsampled + re-JPEGed, the big file-size lever). PDFs merge directly,
     images become a page (Pillow); an unreadable file is replaced by a short
-    note rather than failing the whole PDF. Returns the input unchanged when
-    there are no enclosures or PyMuPDF is unavailable."""
-    if document.doc_type != "MAR" or not pdf_bytes:
+    note rather than failing the whole PDF. Applies to the MAR / Shop Drawing /
+    Method Statement submittals. Returns the input unchanged when there are no
+    enclosures or PyMuPDF is unavailable."""
+    if document.doc_type not in ("MAR", "SD", "MS") or not pdf_bytes:
         return pdf_bytes
     encs = list(document.attachments.filter(kind="ENCLOSURE").order_by("id"))
     if not encs:

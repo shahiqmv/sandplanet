@@ -295,3 +295,53 @@ class MAREnclosureMergeTests(QABase):
         mp.close()
         self.assertTrue(sides)                       # the image is embedded
         self.assertLessEqual(max(sides), pdf._IMG_MAX_SIDE)   # capped
+
+
+class SubmittalFamilyTests(QABase):
+    """Shop Drawing (SD) + Method Statement (MS) — same workflow as the MAR."""
+
+    def _make(self, doc_type, payload):
+        self.client.force_authenticate(self.se)
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": doc_type, "site_id": self.site.id, "payload": payload,
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def _lifecycle(self, doc_type, payload):
+        ref = self._make(doc_type, payload)["ref"]
+        self.assertTrue(ref.startswith(f"{doc_type}-SJR-"))   # per-site number
+        self.act(ref, "submit")
+        self.assertEqual(self.act(ref, "approve", user=self.pm).data["status"],
+                         "PM_APPROVED")
+        self.assertEqual(self.act(ref, "issue", user=self.se).data["status"],
+                         "ISSUED")
+        # client asks for a revision → new revision, same number, back to Draft
+        r = self.act(ref, "record-result",
+                     {"result": "REVISE_RESUBMIT", "reviewed_by": "K. Silva"},
+                     user=self.se)
+        self.assertEqual(r.data["status"], "REVISE_RESUBMIT")
+        r = self.client.post(f"/api/v1/documents/{ref}/revisions")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["ref"], ref)
+        self.assertEqual(r.data["rev_label"], "R1")
+        self.assertEqual(r.data["status"], "DRAFT")
+
+    def test_shop_drawing_lifecycle(self):
+        self._lifecycle("SD", {"drawing_title": "Villa roof truss layout",
+                               "drawing_no": "ST-201", "discipline": "Structural",
+                               "enclosures": {"shop_drawing": True}})
+
+    def test_method_statement_lifecycle(self):
+        self._lifecycle("MS", {"statement_title": "Concrete pour — raft",
+                               "activity_scope": "Raft foundation pour",
+                               "enclosures": {"method_statement": True}})
+
+    def test_sd_ms_pdfs_render(self):
+        from . import pdf
+        from .models import Document
+        for dt, pl in (("SD", {"drawing_title": "X", "drawing_no": "D1"}),
+                       ("MS", {"statement_title": "Y"})):
+            doc = Document.objects.get(ref=self._make(dt, pl)["ref"])
+            out = pdf.document_pdf_bytes(doc, doc.current_revision)
+            self.assertTrue(out and out[:4] == b"%PDF")

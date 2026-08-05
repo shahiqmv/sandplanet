@@ -379,7 +379,8 @@ export default function App() {
         return;
       }
       const mode = doc.doc_type === "DPR" ? "dpr-view"
-                 : ["IR", "MAR", "TWS"].includes(doc.doc_type) ? "qa-view"
+                 : ["IR", "MAR", "SD", "MS", "TWS"].includes(doc.doc_type)
+                   ? "qa-view"
                  : doc.doc_type === "PYR" ? "pyr-view"
                  : "line-view";
       setDocView({ mode, doc });
@@ -676,7 +677,7 @@ export default function App() {
                 )}
                 {projects.length > 0 && !project && (
                   <span style={{ fontSize: 12, color: "#b35900" }}>
-                    Select a project to create IR / MAR.
+                    Select a project to create IR / MAR / SD / MS.
                   </span>
                 )}
               </div>
