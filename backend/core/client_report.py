@@ -7,6 +7,61 @@ engagement data. The print PDF stays available for download via pdf.py.
 """
 from .models import Document, ManpowerCategory
 
+# Submittals shown to the client once ISSUED to them (view-only, owner
+# 2026-08-05). The 4 result states keep an issued submittal visible with its
+# outcome; a REVISE_RESUBMIT drops off once the site opens the next revision
+# (its status returns to DRAFT).
+SUBMITTAL_TYPES = ("MAR", "SD", "MS")
+SUBMITTAL_STATES = ("ISSUED", "APPROVED", "APPROVED_WITH_COMMENTS",
+                     "REVISE_RESUBMIT", "REJECTED")
+_SUBMITTAL_LABEL = {"MAR": "Material Approval", "SD": "Shop Drawing",
+                    "MS": "Method Statement"}
+_SUBMITTAL_STATUS = {
+    "ISSUED": ("Issued — under review", "info"),
+    "APPROVED": ("Approved", "ok"),
+    "APPROVED_WITH_COMMENTS": ("Approved with comments", "ok"),
+    "REVISE_RESUBMIT": ("Revise & resubmit", "warn"),
+    "REJECTED": ("Rejected", "bad"),
+}
+
+
+def _submittal_title(doc_type, payload):
+    if doc_type == "SD":
+        title, no = payload.get("drawing_title", ""), payload.get("drawing_no", "")
+        return f"{title} ({no})" if no else title
+    if doc_type == "MS":
+        return payload.get("statement_title", "")
+    return payload.get("material_description", "")
+
+
+def site_submittals(site):
+    """Issued MAR / Shop Drawing / Method Statement submittals for the client to
+    view — allowlisted (ref, type, title, status, dates, project). PDF is served
+    separately by id. No internal / commercial fields."""
+    docs = (Document.objects.filter(
+        doc_type__in=SUBMITTAL_TYPES, site=site, is_void=False,
+        status__in=SUBMITTAL_STATES)
+        .select_related("project", "current_revision")
+        .order_by("-doc_date", "-id"))
+    out = []
+    for d in docs:
+        payload = (d.current_revision.payload if d.current_revision_id
+                   else {}) or {}
+        result = payload.get("client_result") or {}
+        label, tone = _SUBMITTAL_STATUS.get(d.status, (d.status, "info"))
+        out.append({
+            "id": d.id, "ref": d.ref, "type": d.doc_type,
+            "type_label": _SUBMITTAL_LABEL.get(d.doc_type, d.doc_type),
+            "title": _submittal_title(d.doc_type, payload),
+            "revision": (d.current_revision.rev_label
+                         if d.current_revision_id else ""),
+            "status_label": label, "status_tone": tone,
+            "date": d.doc_date.isoformat() if d.doc_date else "",
+            "reviewed_on": result.get("approval_date", ""),
+            "project": d.project.title if d.project_id else "",
+        })
+    return out
+
 
 def _pct(v):
     """A percentage cell → float, or None when blank/non-numeric."""

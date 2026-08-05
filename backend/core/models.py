@@ -665,6 +665,7 @@ class ClientUser(models.Model):
     show_procurement = models.BooleanField(default=True)
     show_gallery = models.BooleanField(default=True)
     show_cameras = models.BooleanField(default=True)
+    show_submittals = models.BooleanField(default=True)  # issued MAR/SD/MS
     created_at = models.DateTimeField(auto_now_add=True)
     last_login = models.DateTimeField(null=True, blank=True)
 

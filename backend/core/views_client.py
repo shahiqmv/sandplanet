@@ -19,7 +19,7 @@ from .models import ClientSession, ClientUser, Document, Site
 
 
 VIS_FLAGS = ("show_reports", "show_programme", "show_procurement",
-             "show_gallery", "show_cameras")
+             "show_gallery", "show_cameras", "show_submittals")
 
 
 def _client_dict(c):
@@ -148,6 +148,9 @@ def client_site(request, pk):
             for d in dprs] if reports else [],
         "materials_on_the_way": [
             {"ref": d.ref, "date": d.doc_date} for d in lms] if reports else [],
+        # Issued submittals (MAR / Shop Drawing / Method Statement), view-only.
+        "submittals": (cr.site_submittals(site)
+                       if request.user.show_submittals else []),
         "visibility": {f: getattr(request.user, f) for f in VIS_FLAGS},
     })
 
@@ -164,6 +167,31 @@ def client_site_gallery(request, pk):
     site = Site.objects.get(pk=pk)
     from . import client_report as cr
     return Response(cr.site_gallery(site))
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_submittal_pdf(request, pk):
+    """View an issued submittal's PDF — MAR / Shop Drawing / Method Statement.
+    Scoped to the client's own sites and to the issued states only."""
+    from django.http import HttpResponse
+    if (b := _blocked(request, "show_submittals")):
+        return b
+    from . import client_report as cr
+    doc = (Document.objects.filter(
+        pk=pk, doc_type__in=cr.SUBMITTAL_TYPES, is_void=False,
+        status__in=cr.SUBMITTAL_STATES)
+        .select_related("current_revision").first())
+    if not doc or doc.site_id not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    from . import pdf
+    pdf_bytes = pdf.document_pdf_bytes(doc, doc.current_revision)
+    if not pdf_bytes:
+        return Response({"detail": "PDF is unavailable right now."}, status=503)
+    resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{doc.ref}.pdf"'
+    return resp
 
 
 def _project_schedule(project):

@@ -327,3 +327,69 @@ class ClientPortalAuthTests(TestCase):
             self.client.get(
                 f"/api/client/projects/{theirs.id}/procurement").status_code,
             404)
+
+
+class ClientSubmittalTests(ClientPortalAuthTests):
+    """Issued MAR / Shop Drawing / Method Statement submittals are viewable in
+    the portal, gated by show_submittals (owner 2026-08-05)."""
+
+    def _submittal(self, doc_type, ref, payload, status="ISSUED"):
+        from datetime import date
+
+        from .models import Document, DocumentRevision
+        d = Document.objects.create(doc_type=doc_type, ref=ref, site=self.site,
+                                    status=status, doc_date=date.today(),
+                                    created_by=self.pm)
+        r = DocumentRevision.objects.create(document=d, rev_label="R0",
+                                            payload=payload, created_by=self.pm)
+        d.current_revision = r
+        d.save(update_fields=["current_revision"])
+        return d
+
+    def _auth_client(self):
+        temp, info = self._make_client_user()
+        token = self._login("aisha@bluelagoon.mv", temp).data["token"]
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {token}")
+        return info
+
+    def test_client_sees_issued_submittals_and_pdf(self):
+        self._submittal("MAR", "MAR-VKR-001", {"material_description": "Tile"})
+        self._submittal("SD", "SD-VKR-001",
+                        {"drawing_title": "Truss", "drawing_no": "ST-1"})
+        self._submittal("MS", "MS-VKR-009", {"statement_title": "Pour"},
+                        status="DRAFT")               # draft → hidden
+        self._auth_client()
+        site = self.client.get(f"/api/client/sites/{self.site.id}").data
+        refs = [s["ref"] for s in site["submittals"]]
+        self.assertIn("MAR-VKR-001", refs)
+        self.assertIn("SD-VKR-001", refs)
+        self.assertNotIn("MS-VKR-009", refs)          # draft not issued
+        mar = next(s for s in site["submittals"] if s["ref"] == "MAR-VKR-001")
+        self.assertEqual(mar["type_label"], "Material Approval")
+        pdf = self.client.get(f"/api/client/submittals/{mar['id']}/pdf")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+
+    def test_show_submittals_flag_hides_them(self):
+        from .models import ClientUser
+        d = self._submittal("MAR", "MAR-VKR-050", {"material_description": "X"})
+        self._auth_client()
+        ClientUser.objects.filter(email="aisha@bluelagoon.mv").update(
+            show_submittals=False)
+        site = self.client.get(f"/api/client/sites/{self.site.id}").data
+        self.assertEqual(site["submittals"], [])
+        self.assertEqual(self.client.get(
+            f"/api/client/submittals/{d.id}/pdf").status_code, 404)
+
+    def test_cannot_view_another_sites_submittal(self):
+        from datetime import date
+
+        from .models import Document, DocumentRevision
+        d = Document.objects.create(doc_type="MAR", ref="MAR-HDH-001",
+                                    site=self.other, status="ISSUED",
+                                    doc_date=date.today(), created_by=self.pm)
+        DocumentRevision.objects.create(document=d, rev_label="R0", payload={},
+                                        created_by=self.pm)
+        self._auth_client()   # assigned to VKR only
+        self.assertEqual(self.client.get(
+            f"/api/client/submittals/{d.id}/pdf").status_code, 404)

@@ -14,6 +14,8 @@ urlpatterns = [
     path("sites/<int:pk>", views_client.client_site, name="client-portal-site"),
     path("sites/<int:pk>/gallery", views_client.client_site_gallery,
          name="client-portal-gallery"),
+    path("submittals/<int:pk>/pdf", views_client.client_submittal_pdf,
+         name="client-portal-submittal-pdf"),
     path("sites/<int:pk>/procurement", views_client.client_site_procurement,
          name="client-portal-site-procurement"),
     path("sites/<int:pk>/procurement.xlsx",

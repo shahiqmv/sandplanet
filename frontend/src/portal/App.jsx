@@ -250,6 +250,23 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
             onView={() => openDoc(r.ref)} />))}
       </div>)}
 
+      {vis.show_submittals && d.submittals && d.submittals.length > 0 && (
+      <div className="card">
+        <div className="sec-title"><h2>Submittals</h2>
+          <span className="hint">material approvals · shop drawings ·
+            method statements</span></div>
+        {d.submittals.map((s) => (
+          <DocRow key={s.id} icon="📄"
+            label={`${s.type_label} · ${s.ref}${s.revision
+              && s.revision !== "R0" ? " " + s.revision : ""}${s.title
+              ? " — " + s.title : ""}`}
+            sub={s.project || undefined}
+            status={{ cls: { ok: "ok", warn: "warn", bad: "warn",
+              info: "mut" }[s.status_tone] || "mut", text: s.status_label }}
+            onView={() => downloadFile(`/submittals/${s.id}/pdf`,
+              `${s.ref}.pdf`).catch(() => {})} />))}
+      </div>)}
+
       {/* quick links */}
       <div className="quick">
         {vis.show_programme && <div className="qcard" onClick={goProgramme}>

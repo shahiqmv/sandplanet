@@ -13,7 +13,7 @@ from .permissions import IsAdmin
 
 # Portal sections the admin can show/hide per client.
 VIS_FLAGS = ("show_reports", "show_programme", "show_procurement",
-             "show_gallery", "show_cameras")
+             "show_gallery", "show_cameras", "show_submittals")
 
 
 def _dict(c):
