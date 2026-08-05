@@ -41,13 +41,11 @@ def targets_for(doc):
         # submit, so nothing waits here for them; the DIRECTOR_APPROVED branch
         # below then pings Finance for the voucher (owner 2026-07-31).
         pr = getattr(doc, "payment_request", None)
-        if pr and pr.origin == "COMMERCIAL":
-            # Commercial (Insurance & Bonds) waits on the Director, not a site PM.
-            return [(u, "needs your approval") for u in _role_users("DIRECTOR")]
         if pr and pr.origin != "SITE":
-            # Head-Office / Finance / ONBOARDING clear straight to Finance's
-            # voucher — nothing waits at SUBMITTED (the DIRECTOR_APPROVED branch
-            # below pings Finance).
+            # Only a site PYR waits on a PM at SUBMITTED. Everything else
+            # (CENTRAL / FINANCE / ONBOARDING / COMMERCIAL) clears straight to
+            # Finance's voucher — nothing waits here (the DIRECTOR_APPROVED
+            # branch below pings Finance).
             return []
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "PMR" and s == "PM_APPROVED":

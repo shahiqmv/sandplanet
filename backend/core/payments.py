@@ -278,15 +278,13 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if (pr.origin in ("FINANCE", "CENTRAL", "ONBOARDING")
-                or pr.is_capitalized) and pr.origin != "COMMERCIAL":
-            # Head-Office requests (CENTRAL — HO Purchasing/HR, QS, Director…),
-            # accounts-initiated ones (FINANCE — rent, salaries, utilities…),
-            # onboarding recruitment fees (ONBOARDING — no PM/Director, owner
-            # 2026-08-05) and capitalized import charges skip every approval and
-            # clear straight to a Payment Voucher for signatory approval. Only
-            # site PYRs keep the PM → Director chain; COMMERCIAL (Insurance &
-            # Bonds) still takes the Director step.
+        if pr.origin != "SITE" or pr.is_capitalized:
+            # Everything except a plain site PYR skips approval and clears
+            # straight to a Payment Voucher for signatory approval: CENTRAL (HO
+            # Purchasing/HR, QS, Director…), FINANCE (rent, salaries…),
+            # ONBOARDING recruitment fees, COMMERCIAL insurance/bond premiums
+            # (owner 2026-08-05 — no PM/Director), and capitalized import
+            # charges. Only a site PYR keeps the PM → Director chain.
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
                         "No approval step — authorised on a Payment Voucher")
         return None
@@ -299,11 +297,10 @@ def pyr_action(request, doc, action_name):
                                     status=403)
                 _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
                 return None
-            # Director approval at SUBMITTED. This is the live path for a
-            # COMMERCIAL request (Insurance & Bonds — no site PM, Director
-            # approves then Finance, owner 2026-08-04), and the legacy fallback
-            # for a pre-2026-07-31 CENTRAL request still sitting here (new
-            # CENTRAL requests clear straight to a voucher at submit).
+            # Director approval at SUBMITTED — now only a legacy fallback for an
+            # old non-site request still sitting here. New CENTRAL / FINANCE /
+            # ONBOARDING / COMMERCIAL requests all clear straight to a voucher at
+            # submit (no Director step, owner 2026-08-05).
             if user.role not in ("DIRECTOR", "ADMIN"):
                 return Response({"detail": "Director approval required."},
                                 status=403)

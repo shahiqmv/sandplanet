@@ -31,6 +31,9 @@ class BondTests(TestCase):
         self.assertEqual(bond.status, ProjectBond.Status.PAYMENT_RAISED)
         self.assertIsNotNone(bond.pyr_id)
         self.assertEqual(bond.pyr.doc_type, "PYR")
+        # commercial premium — no PM/Director; auto-cleared straight to Finance
+        self.assertEqual(bond.pyr.payment_request.origin, "COMMERCIAL")
+        self.assertEqual(bond.pyr.status, "DIRECTOR_APPROVED")
         # can't raise twice
         self.assertIsNotNone(bonds.raise_bond_pyr(bond, self.qs))
         # paying the PYR flips the cover to PAID

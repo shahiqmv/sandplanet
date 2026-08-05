@@ -694,14 +694,10 @@ def pending_groups(user):
         add("To approve — PM-approved payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
-        # Commercial (Insurance & Bonds) requests skip the PM — the Director
-        # approves them straight from submitted. (Head-Office/Finance and
-        # onboarding fees clear past the Director to Finance, so they don't wait
-        # here.)
-        add("To approve — commercial payment requests",
-            rows(base.filter(doc_type="PYR", status="SUBMITTED")
-                 .exclude(payment_request__origin="SITE"),
-                 "Director approval (no site PM in the chain)"))
+        # (Non-site PYRs — CENTRAL/FINANCE/ONBOARDING/COMMERCIAL — no longer wait
+        # on the Director; they clear straight to Finance's voucher, owner
+        # 2026-08-05. The Director's only PYR step is the PM-approved site chain
+        # above.)
         add("To size & release — reviewed import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
                  "Size the order (MOQ) and release to sourcing"))

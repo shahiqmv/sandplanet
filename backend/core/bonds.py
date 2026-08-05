@@ -165,6 +165,13 @@ def raise_bond_pyr(bond, actor):
                 att.file.save(name, ContentFile(content), save=True)
             except Exception:
                 pass
+        # No approval layer — not the site PM and not the Director. A commercial
+        # premium clears straight to Finance's payment voucher (owner 2026-08-05),
+        # so it never sits as a draft in the site register waiting to be chased.
+        from .payments import _set_status
+        _set_status(doc, "SUBMITTED", "SUBMIT", actor, purpose)
+        _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", actor,
+                    "Commercial premium — no approval step; cleared to Finance")
         bond.pyr = doc
         bond.status = ProjectBond.Status.PAYMENT_RAISED
         bond.save(update_fields=["pyr", "status", "updated_at"])
