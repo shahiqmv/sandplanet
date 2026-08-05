@@ -31,27 +31,24 @@ export default function PayrollRunPage({ me, sites }) {
   useEffect(() => { if (!openRun) loadRuns(); },
     [year, month, openRun]); // eslint-disable-line
 
-  async function generate() {
+  async function runOne(body, label) {
     setBusy(true); setError(null); setNotice(null);
     try {
-      const r = await api("/payroll/generate",
-                          { method: "POST", body: { year, month } });
-      const made = r.created.length;
-      const skips = r.skipped.filter((s) => s.reason !== "already generated");
-      setNotice(`${made} run${made === 1 ? "" : "s"} generated.`
-        + (skips.length ? ` Not ready: ${skips.map((s) =>
-            `${s.site} (${s.reason})`).join(", ")}.` : ""));
+      await api("/payroll/runs", { method: "POST", body: { year, month,
+        ...body } });
+      setNotice(`${label} payroll run generated.`);
       loadRuns();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
+  const generateSite = (s) =>
+    runOne({ currency: "MVR", site_id: s.site_id }, s.site_code);
+  const generateUsd = () => runOne({ currency: "USD" }, "USD / Head Office");
 
   if (openRun) {
     return <RunDetail runId={openRun.id} onBack={() => setOpenRun(null)}
                       me={me} />;
   }
-
-  const pending = (ready?.sites || []).filter((s) => !s.locked);
 
   return (
     <section style={card}>
@@ -73,27 +70,73 @@ export default function PayrollRunPage({ me, sites }) {
             ))}
           </select>
         </label>
-        {canGenerate && (
-          <Btn onClick={generate} disabled={busy} style={{ marginLeft: "auto" }}>
-            {busy ? "Generating…" : "Generate payroll"}</Btn>
-        )}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
 
-      {ready && pending.length > 0 && (
-        <p style={{ fontSize: 12.5, color: "#b35900", margin: "10px 0 0" }}>
-          ⚠ Attendance not locked yet for: {pending.map((s) =>
-            s.site_code + (s.is_head_office ? " (HO)" : "")).join(", ")}.
-          {" "}Lock the month on Attendance so their days/OT are final before
-          you generate.
-        </p>
-      )}
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
-        Generating creates one all-sites MVR run and one all-sites USD run for
-        the month — each report lists workers site-wise with a per-site summary.
-        Runs already made are left as-is.
+        Run each site on its own once its attendance is locked for the month —
+        no need to wait for the others. The USD / Head Office run is one combined
+        run and needs every USD-staffed site locked first.
       </p>
+
+      {canGenerate && ready && (
+        <div style={{ marginBottom: 18 }}>
+          <h3 style={{ margin: "0 0 6px", fontSize: 13.5,
+                       color: "var(--sp-navy)" }}>Generate a run</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Site</th>
+              <th style={{ ...th, textAlign: "right" }}>MVR staff</th>
+              <th style={th}>Attendance</th>
+              <th style={th} />
+            </tr></thead>
+            <tbody>
+              {ready.sites.map((s) => (
+                <tr key={s.site_id}>
+                  <td style={{ ...td, fontWeight: 600 }}>
+                    {s.site_code}{s.is_head_office ? " (HO)" : ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{s.mvr_staff}</td>
+                  <td style={td}>{s.locked
+                    ? <span style={{ color: "#1a7f37" }}>🔒 Locked</span>
+                    : <span style={{ color: "#b35900" }}>Not locked</span>}</td>
+                  <td style={td}>
+                    {s.has_run
+                      ? <span style={{ color: "var(--muted)" }}>Run made ✓</span>
+                      : s.locked
+                        ? <Btn onClick={() => generateSite(s)} disabled={busy}
+                               style={{ padding: "3px 12px", fontSize: 12 }}>
+                            Generate run</Btn>
+                        : <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                            Lock attendance first</span>}
+                  </td>
+                </tr>
+              ))}
+              {ready.usd_staff > 0 && (
+                <tr>
+                  <td style={{ ...td, fontWeight: 600 }}>USD / Head Office
+                    <span style={{ fontWeight: 400, color: "var(--muted)" }}>
+                      {" "}· combined</span></td>
+                  <td style={{ ...td, textAlign: "right" }}>{ready.usd_staff}</td>
+                  <td style={td} />
+                  <td style={td}>
+                    {ready.usd_has_run
+                      ? <span style={{ color: "var(--muted)" }}>Run made ✓</span>
+                      : <Btn onClick={generateUsd} disabled={busy}
+                             style={{ padding: "3px 12px", fontSize: 12 }}>
+                          Generate USD run</Btn>}
+                  </td>
+                </tr>
+              )}
+              {ready.sites.length === 0 && ready.usd_staff === 0 && (
+                <tr><td colSpan={4} style={{ ...td, color: "var(--muted)" }}>
+                  No payroll-eligible staff for this period.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>

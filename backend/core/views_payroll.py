@@ -75,6 +75,17 @@ def payroll_runs(request):
             except Site.DoesNotExist:
                 return Response({"detail": "A site is required for an MVR run."},
                                 status=400)
+            # Run a site on its own — but only once its attendance is locked, so
+            # days/OT are final (owner 2026-08-05).
+            if not payroll.attendance_locked(site, year, month):
+                return Response({"detail": f"Lock {site.code}'s attendance for "
+                                 "this month before running its payroll."},
+                                status=400)
+        else:  # combined USD run — every USD-staffed site must be locked
+            pending = payroll.unlocked_sites(year, month, currency="USD")
+            if pending:
+                return Response({"detail": "Lock attendance first for: "
+                                 + ", ".join(pending) + "."}, status=400)
         if PayrollRun.objects.filter(site=site, currency=currency, year=year,
                                      month=month).exists():
             return Response({"detail": "A run for this period already exists."},
@@ -140,6 +151,7 @@ def payroll_readiness(request):
         if not mvr:
             continue
         rows.append({
+            "site_id": site.id,
             "site_code": site.code, "is_head_office": site.is_head_office,
             "mvr_staff": mvr,
             "locked": TimesheetMonth.objects.filter(

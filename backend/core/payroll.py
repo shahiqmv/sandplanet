@@ -118,17 +118,28 @@ def generate_run(*, site, currency, year, month, working_days, actor):
     return run
 
 
-def unlocked_sites(year, month):
-    """Active, staffed sites whose attendance is NOT locked for the month —
-    payroll can only be generated once every one of these is locked."""
+def attendance_locked(site, year, month):
+    """True if the site's attendance is locked for the month — the gate for
+    running that site's payroll on its own (owner 2026-08-05)."""
+    from .models import TimesheetMonth
+    return TimesheetMonth.objects.filter(
+        site=site, year=year, month=month, status="LOCKED").exists()
+
+
+def unlocked_sites(year, month, currency=None):
+    """Active, staffed sites whose attendance is NOT locked for the month.
+    A site-wise MVR run is gated only on its own site; the combined USD run is
+    gated on every USD-staffed site (pass currency="USD")."""
     from .models import EmployeeSiteAllocation, Site, TimesheetMonth
 
     # Only direct workers gate payroll — a site staffed solely by subcontract
     # workers has no payroll and must not block the run.
-    staffed = set(EmployeeSiteAllocation.objects.filter(
+    staffed_q = EmployeeSiteAllocation.objects.filter(
         to_date__isnull=True, employee__is_active=True,
-        employee__engagement_type="DIRECT").values_list(
-        "site_id", flat=True))
+        employee__engagement_type="DIRECT")
+    if currency:
+        staffed_q = staffed_q.filter(employee__currency=currency)
+    staffed = set(staffed_q.values_list("site_id", flat=True))
     out = []
     for site in Site.objects.filter(status=Site.Status.ACTIVE,
                                     id__in=staffed).order_by("code"):

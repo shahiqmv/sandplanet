@@ -141,11 +141,14 @@ class PayrollRunTests(TestCase):
     def setUp(self):
         from datetime import date
 
-        from .models import CostPosting, EmployeeSiteAllocation
+        from .models import CostPosting, EmployeeSiteAllocation, TimesheetMonth
         self.CostPosting = CostPosting
         self.hr = make_user("hr1", User.Role.HO_HR)
         self.site = Site.objects.create(code="VKR", name="Vakkaru",
                                         status=Site.Status.ACTIVE)
+        # A site's payroll can only run once its attendance is locked.
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=5,
+                                      status="LOCKED")
         self.mason = ManpowerCategory.objects.create(
             list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
         OvertimeRate.objects.create(category=self.mason, currency="MVR",
@@ -169,6 +172,22 @@ class PayrollRunTests(TestCase):
         self.assertEqual(float(line["ot_rate"]), 25.0)
         self.assertEqual(float(line["days_worked"]), 31.0)  # no absences
         self.assertEqual(float(line["earned_basic"]), 6200.0)
+
+    def test_site_run_blocked_until_attendance_locked(self):
+        # A month whose attendance isn't locked can't be run for the site.
+        r = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "currency": "MVR",
+            "year": 2026, "month": 6, "working_days": 30}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("attendance", r.data["detail"].lower())
+        # Lock it, and the run goes through.
+        from .models import TimesheetMonth
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=6,
+                                      status="LOCKED")
+        r = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "currency": "MVR",
+            "year": 2026, "month": 6, "working_days": 30}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
 
     def test_mid_month_joiner_is_prorated_from_join_date(self):
         from datetime import date
@@ -377,11 +396,13 @@ class SubcontractorPayrollExclusionTests(TestCase):
 
     def setUp(self):
         from .models import (EmployeeSiteAllocation, PayrollLine, PayrollRun,
-                             Subcontractor)
+                             Subcontractor, TimesheetMonth)
         self.PayrollLine, self.PayrollRun = PayrollLine, PayrollRun
         self.hr = make_user("hr1", User.Role.HO_HR)
         self.site = Site.objects.create(code="VKR", name="Vakkaru",
                                         status=Site.Status.ACTIVE)
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=5,
+                                      status="LOCKED")
         self.mason = ManpowerCategory.objects.create(
             list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
         self.sub = Subcontractor.objects.create(
