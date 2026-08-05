@@ -374,6 +374,86 @@ def grn_lines_from_lm(lm):
     return rows
 
 
+def manifest_keys(lm):
+    """The items on a manifest — item ids + free-text descriptions (lowered) —
+    so a GRN can be checked to receive ONLY what was manifested."""
+    ids, texts = set(), set()
+    for ln in lm.current_revision.lines.all():
+        if ln.item_id:
+            ids.add(ln.item_id)
+        elif ln.free_text_desc:
+            texts.add(ln.free_text_desc.strip().lower())
+    return ids, texts
+
+
+def grn_offmanifest_line(lines_data, lm):
+    """The description of the first GRN line whose item isn't on the manifest, or
+    None. A GRN raised against a manifest can only receive manifested items —
+    extras must be added to the manifest by Purchasing first (owner 2026-08-05)."""
+    ids, texts = manifest_keys(lm)
+    for ln in lines_data:
+        iid = ln.get("item_id")
+        txt = (ln.get("free_text_desc") or "").strip()
+        if iid:
+            if iid in ids:
+                continue
+            item = Item.objects.filter(pk=iid).first()
+            return (item.description if item else None) or txt or "an item"
+        if txt:
+            if txt.lower() in texts:
+                continue
+            return txt
+    return None
+
+
+def reopen_grn(grn, actor):
+    """Admin re-opens a wrongly-verified GRN back to Draft so the received
+    quantities can be corrected and re-verified. Reverses the stock this GRN
+    added and resets the manifest to in-transit. Refuses when the goods can't be
+    cleanly unwound — already issued from stock, received as a tool/asset, or a
+    store transfer — since those must be voided and re-raised (owner 2026-08-05)."""
+    from django.db import transaction
+
+    from . import stock, tools
+    from .models import StockMovement
+    if grn.doc_type != "GRN":
+        return "Only a GRN can be re-opened."
+    if grn.status not in ("SHORTAGE_REPORTED", "COMPLETE"):
+        return "Only a verified GRN can be re-opened."
+    lines = list(grn.current_revision.lines.select_related("item").all())
+    for line in lines:
+        qty = line.qty_received or Decimal("0")
+        if qty <= 0:
+            continue
+        name = (line.item.description if line.item_id
+                else line.free_text_desc) or "an item"
+        if line.store_issue_line_id:
+            return (f"'{name}' was received as a store transfer (SIN) — re-open "
+                    "isn't supported. Void this GRN and raise a corrected one.")
+        if line.item_id and tools.is_tool_item(line.item):
+            return (f"'{name}' was received as a tool/asset — re-open isn't "
+                    "supported. Void this GRN and raise a corrected one.")
+        if line.item_id and stock.balance(grn.site, line.item) < qty:
+            return (f"Some of '{name}' has already been issued from stock — "
+                    "re-open isn't safe. Adjust the stock instead, or void and "
+                    "re-raise this GRN.")
+    with transaction.atomic():
+        StockMovement.objects.filter(
+            document=grn, kind=StockMovement.Kind.RECEIPT).delete()
+        for lm in linked_docs(grn, "LM_GRN", "from"):
+            lm.status = "DEPARTED"                # back to in-transit
+            lm.save(update_fields=["status", "updated_at"])
+        rev = grn.current_revision
+        if rev.issued_at is not None:            # unlock the locked revision
+            rev.issued_at = None
+            rev.save(update_fields=["issued_at"])
+        grn.status = "DRAFT"                      # editable again for correction
+        grn.save(update_fields=["status", "updated_at"])
+    audit("document", grn.id, "GRN_REOPENED", actor=actor,
+          detail={"ref": grn.ref})
+    return None
+
+
 def next_item_code():
     from .numbering import next_ref  # avoid circular import at module load
 

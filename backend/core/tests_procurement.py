@@ -548,12 +548,18 @@ class ChainTests(ProcBase):
 
     def test_pm_can_confirm_count(self):
         # PMs / site in-charge can confirm the GRN count too (owner 2026-08-04)
-        lm = self.make_lm(self.mr_to_sent())
+        lm = self.make_lm(self.mr_to_sent(), lines=[
+            {"item_id": self.cement.id, "qty_loaded": 100, "qty_pending": 0}])
         self.act(lm["ref"], "depart")
         self.as_user(self.sa)
         grn = self.client.post("/api/v1/documents", {
             "doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"],
         }, format="json").data
+        # blank received is now refused — receive, then count
+        self.assertEqual(self.act(grn["ref"], "count").status_code, 400)
+        self.client.patch(f"/api/v1/documents/{grn['ref']}", {"lines": [
+            {"item_id": self.cement.id, "qty_manifest": 100,
+             "qty_received": 100}]}, format="json")
         self.as_user(self.pm)
         r = self.act(grn["ref"], "count")
         self.assertEqual(r.status_code, 200, r.data)
@@ -577,6 +583,49 @@ class ChainTests(ProcBase):
         r = self.act(grn["ref"], "verify")
         self.assertEqual(r.data["status"], "COMPLETE")
         self.assertEqual(Document.objects.get(ref=lm["ref"]).status, "RECEIVED")
+
+    def test_grn_offmanifest_item_is_blocked(self):
+        lm = self.make_lm(self.mr_to_sent(), lines=[
+            {"item_id": self.cement.id, "qty_loaded": 100, "qty_pending": 0}])
+        self.act(lm["ref"], "depart")
+        self.as_user(self.sa)
+        grn = self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"],
+        }, format="json").data
+        # rebar is NOT on the manifest → adding it to the GRN is refused
+        r = self.client.patch(f"/api/v1/documents/{grn['ref']}", {"lines": [
+            {"item_id": self.cement.id, "qty_manifest": 100, "qty_received": 100},
+            {"item_id": self.rebar.id, "qty_manifest": 0, "qty_received": 5},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not on manifest", r.data["detail"])
+
+    def test_admin_reopens_a_shortage_grn(self):
+        admin = make_user("adm_grn", User.Role.ADMIN)
+        lm = self.make_lm(self.mr_to_sent(), lines=[
+            {"item_id": self.cement.id, "qty_loaded": 100, "qty_pending": 0}])
+        self.act(lm["ref"], "depart")
+        self.as_user(self.sa)
+        grn = self.client.post("/api/v1/documents", {
+            "doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"],
+        }, format="json").data
+        # the GRN-SJR-005 case: received 0 → count → verify → shortage
+        self.client.patch(f"/api/v1/documents/{grn['ref']}", {"lines": [
+            {"item_id": self.cement.id, "qty_manifest": 100, "qty_received": 0}]},
+            format="json")
+        self.act(grn["ref"], "count")
+        self.as_user(self.pm)
+        self.assertEqual(self.act(grn["ref"], "verify").data["status"],
+                         "SHORTAGE_REPORTED")
+        self.assertEqual(Document.objects.get(ref=lm["ref"]).status,
+                         "RECEIVED_WITH_SHORTAGE")
+        self.assertEqual(self.act(grn["ref"], "reopen").status_code, 403)  # PM
+        # admin re-opens → back to Draft, manifest back to in-transit
+        self.as_user(admin)
+        r = self.act(grn["ref"], "reopen")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=grn["ref"]).status, "DRAFT")
+        self.assertEqual(Document.objects.get(ref=lm["ref"]).status, "DEPARTED")
 
 
 class HOEndpointTests(ProcBase):

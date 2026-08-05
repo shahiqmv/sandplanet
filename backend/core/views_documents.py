@@ -240,6 +240,14 @@ def document_create(request):
                                 status=400)
             if not lines_data:
                 lines_data = grn_lines_from_lm(lm)
+            else:                       # client sent lines — receive only what's
+                from .procurement import grn_offmanifest_line   # on the manifest
+                bad = grn_offmanifest_line(lines_data, lm)
+                if bad:
+                    return Response(
+                        {"detail": f"'{bad}' is not on manifest {lm.ref}. A GRN "
+                         "can only receive manifested items — ask Purchasing to "
+                         "add it to the manifest first."}, status=400)
             payload.setdefault("manifest_ref", lm.ref)
             payload.setdefault("vessel",
                                (lm.current_revision.payload or {}).get(
@@ -341,6 +349,19 @@ def document_detail(request, ref):
             error = validate_mr_lines(request.data["lines"])
             if error:
                 return Response({"detail": error}, status=400)
+        if doc.doc_type == "GRN":       # receive only manifested items
+            lm_ref = (revision.payload or {}).get("manifest_ref")
+            lm = (Document.objects.filter(ref=lm_ref, doc_type="LM",
+                                          is_void=False).first()
+                  if lm_ref else None)
+            if lm is not None:
+                from .procurement import grn_offmanifest_line
+                bad = grn_offmanifest_line(request.data["lines"], lm)
+                if bad:
+                    return Response(
+                        {"detail": f"'{bad}' is not on manifest {lm.ref}. A GRN "
+                         "can only receive manifested items — ask Purchasing to "
+                         "add it to the manifest first."}, status=400)
         save_lines(revision, request.data["lines"],
                    previous_revision=_previous_revision(doc))
     if "doc_date" in request.data and doc.doc_type in ("DPR", "TWS", "DMA"):
@@ -562,7 +583,7 @@ def document_action(request, ref, action_name):
         "authorise": _do_authorise,
         "withdraw-authorisation": _do_withdraw,
         "send": _do_send, "depart": _do_depart, "count": _do_count,
-        "close": _do_close,
+        "reopen": _do_reopen, "close": _do_close,
         "record-result": _do_record_result, "client-verify": _do_client_verify,
         "acknowledge": _do_acknowledge,
         "ho-review": _do_ho_review, "size-release": _do_size_release,
@@ -1162,11 +1183,36 @@ def _do_depart(request, doc, comment):
     return err
 
 
+def _grn_blank_received(doc):
+    """True if any GRN line has no received figure entered — a blank reads as a
+    shortage, so we force a real count (0 for nothing arrived)."""
+    return doc.current_revision.lines.filter(qty_received__isnull=True).exists()
+
+
+_COUNT_BLANK_MSG = ("Enter a received quantity for every item (0 if none "
+                    "arrived) before confirming the count.")
+
+
 def _do_count(request, doc, comment):
     if doc.doc_type != "GRN":
         return Response({"detail": "Count applies to GRN."}, status=400)
+    if _grn_blank_received(doc):
+        return Response({"detail": _COUNT_BLANK_MSG}, status=400)
     return _apply(request, doc, "COUNTED", "COUNT",
                   roles={"SITE_ADMIN", "SITE_ENGINEER", "PM"}, comment=comment)
+
+
+def _do_reopen(request, doc, comment):
+    """Admin re-opens a wrongly-verified GRN to correct the received counts."""
+    if doc.doc_type != "GRN":
+        return Response({"detail": "Re-open applies to a GRN."}, status=400)
+    if request.user.role != "ADMIN":
+        return Response({"detail": "Only an admin re-opens a GRN."}, status=403)
+    from .procurement import reopen_grn
+    msg = reopen_grn(doc, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return None
 
 
 def _do_verify(request, doc, comment):
@@ -1176,6 +1222,8 @@ def _do_verify(request, doc, comment):
     if doc.doc_type == "GRN":  # SE/PM verify; immutable afterwards (spec §5.6)
         if not _can(request, "GRN", {"SITE_ENGINEER", "PM"}):
             return Response({"detail": "Only SE/PM can verify a GRN."}, status=403)
+        if _grn_blank_received(doc):           # backstop: no blank received
+            return Response({"detail": _COUNT_BLANK_MSG}, status=400)
         shortage = any(
             (line.qty_received or 0) < (line.qty_manifest or 0)
             for line in doc.current_revision.lines.all()

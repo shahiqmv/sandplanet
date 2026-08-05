@@ -73,6 +73,8 @@ const ACTIONS = {
                                            "DIRECTOR", "ADMIN"]],
     ["verify", "Verify (SE/PM)", ["COUNTED"],
      ["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"]],
+    ["reopen", "Re-open to fix counts", ["SHORTAGE_REPORTED", "COMPLETE"],
+     ["ADMIN"], "comment"],
   ],
   PMR: [
     ["submit", "Submit", ["DRAFT"], ["SITE_ENGINEER", "SITE_ADMIN", "DIRECTOR", "PM",
@@ -654,6 +656,20 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       <SectionTitle>
         {docType === "PR" ? "Vendors" : "Items"}
       </SectionTitle>
+      {docType === "GRN" && rows.length > 0 && (
+        <div style={{ margin: "0 0 8px" }}>
+          <button type="button"
+            onClick={() => setRows(rows.map((r) => ({ ...r,
+              qty_received: r.qty_manifest ?? r.qty_received })))}
+            title="Fill Received = Manifest for every line (for a full delivery)"
+            style={{ ...ghostButton, padding: "3px 12px", fontSize: 12.5 }}>
+            Receive all in full
+          </button>
+          <span style={{ fontSize: 11.5, color: "#5a6b78", marginLeft: 8 }}>
+            then adjust any line that was short or over.
+          </span>
+        </div>
+      )}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
