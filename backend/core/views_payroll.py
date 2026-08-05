@@ -168,6 +168,115 @@ def payroll_readiness(request):
     })
 
 
+def _site_roster_ids(site):
+    """The payroll workers on a site — the same roster a run covers (both
+    currencies), so the review matches what will be posted."""
+    from .models import Employee, EmployeeSiteAllocation
+    emp_ids = EmployeeSiteAllocation.objects.filter(
+        site=site, to_date__isnull=True).values_list("employee_id", flat=True)
+    return list(Employee.objects.payroll_eligible().filter(
+        id__in=emp_ids, is_active=True).values_list("id", flat=True))
+
+
+def _site_attendance_totals(site, year, month):
+    """Month totals for a site from its locked attendance — days worked, OT
+    hours, absences and rest-day (Friday) work — the figures that drive the
+    run. Same rules as the per-worker attendance register."""
+    import calendar
+    from datetime import date
+
+    from .models import Attendance
+    ids = _site_roster_ids(site)
+    t = {"workers": len(ids), "days_worked": 0, "ot_hours": Decimal("0"),
+         "absences": 0, "rest_day_work": 0, "half_days": 0}
+    if not ids:
+        return t
+    ndays = calendar.monthrange(year, month)[1]
+    work_week = set(site.working_days)
+    rest = {d for d in range(1, ndays + 1)
+            if date(year, month, d).isoweekday() not in work_week}
+    for a in Attendance.objects.filter(site=site, day__year=year,
+                                       day__month=month, employee_id__in=ids):
+        t["ot_hours"] += a.ot_approved or 0
+        if a.remark == "PRESENT":
+            if a.day.day in rest:
+                t["rest_day_work"] += 1
+            else:
+                t["days_worked"] += 1
+        elif a.remark in ("ABSENT", "SICK", "LEAVE"):
+            t["absences"] += 1
+        elif a.remark == "HALF_DAY":
+            t["half_days"] += 1
+    return t
+
+
+@api_view(["GET"])
+def payroll_attendance_summary(request):
+    """A pre-run review: per-site attendance + OT totals for the month plus a
+    company-wide roll-up, so HR checks the figures feeding payroll before
+    generating a run (owner 2026-08-05)."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    from .models import TimesheetMonth
+    year = int(request.GET.get("year") or 0)
+    month = int(request.GET.get("month") or 0)
+    keys = ("workers", "days_worked", "ot_hours", "absences", "rest_day_work",
+            "half_days")
+    rows = []
+    totals = {k: (Decimal("0") if k == "ot_hours" else 0) for k in keys}
+    for site in Site.objects.filter(status=Site.Status.ACTIVE).order_by("code"):
+        t = _site_attendance_totals(site, year, month)
+        if not t["workers"]:
+            continue
+        locked = TimesheetMonth.objects.filter(
+            site=site, year=year, month=month, status="LOCKED").exists()
+        rows.append({"site_id": site.id, "site_code": site.code,
+                     "is_head_office": site.is_head_office, "locked": locked,
+                     **t})
+        for k in keys:
+            totals[k] += t[k]
+    return Response({"sites": rows, "totals": totals,
+                     "all_locked": all(r["locked"] for r in rows) if rows
+                     else False})
+
+
+@api_view(["GET"])
+def payroll_ot_breakdown(request):
+    """The approved-OT detail for a month — who worked overtime, on which days,
+    how many hours and who approved it — company-wide or for one site. The
+    dedicated OT view HR wanted before running payroll (owner 2026-08-05)."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    from collections import OrderedDict
+
+    from .models import Attendance
+    year = int(request.GET.get("year") or 0)
+    month = int(request.GET.get("month") or 0)
+    qs = Attendance.objects.filter(day__year=year, day__month=month,
+                                   ot_approved__gt=0)
+    site_id = request.GET.get("site_id")
+    if site_id:
+        qs = qs.filter(site_id=site_id)
+    qs = qs.select_related("employee__job_category", "site",
+                           "ot_approved_by").order_by("employee__emp_no", "day")
+    workers = OrderedDict()
+    total = Decimal("0")
+    for a in qs:
+        w = workers.setdefault(a.employee_id, {
+            "emp_no": a.employee.emp_no, "full_name": a.employee.full_name,
+            "job_title": (a.employee.job_category.name
+                          if a.employee.job_category_id else ""),
+            "site_code": a.site.code, "total_ot": Decimal("0"), "days": []})
+        w["days"].append({
+            "day": a.day.isoformat(), "hours": a.ot_approved,
+            "approved_by": (a.ot_approved_by.full_name
+                            if a.ot_approved_by_id else "")})
+        w["total_ot"] += a.ot_approved or 0
+        total += a.ot_approved or 0
+    return Response({"workers": list(workers.values()), "total_ot": total,
+                     "worker_count": len(workers)})
+
+
 @api_view(["GET", "POST"])
 def payroll_run_detail(request, pk):
     if not _guard(request):

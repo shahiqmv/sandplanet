@@ -390,6 +390,68 @@ class FridayPrefillTests(TestCase):
             employee=self.emp, day=self.friday).exists())
 
 
+class PayrollAttendanceReviewTests(TestCase):
+    """The pre-run attendance + OT review HR checks before generating."""
+
+    def setUp(self):
+        from datetime import date
+
+        from .models import Attendance, EmployeeSiteAllocation, TimesheetMonth
+        self.hr = make_user("hr1", User.Role.HO_HR)
+        self.pm = make_user("pm1", User.Role.PM)
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.emp = Employee.objects.create(emp_no="EMP-0001", full_name="Kumar",
+                                           basic_pay=6000, currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        # Mon 4 May: worked 3h OT; Tue 5 May: absent; Fri 1 May (rest): worked.
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 4), remark="PRESENT",
+                                  ot_approved=Decimal("3"), ot_approved_by=self.pm)
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 5), remark="ABSENT")
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 1), remark="PRESENT")
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=5,
+                                      status="LOCKED")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_summary_totals_per_site_and_company_wide(self):
+        r = self.client.get(
+            "/api/v1/payroll/attendance-summary?year=2026&month=5")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = next(s for s in r.data["sites"] if s["site_code"] == "VKR")
+        self.assertEqual(row["workers"], 1)
+        self.assertEqual(row["days_worked"], 1)       # Mon 4 May
+        self.assertEqual(row["rest_day_work"], 1)     # Fri 1 May
+        self.assertEqual(row["absences"], 1)          # Tue 5 May
+        self.assertEqual(float(row["ot_hours"]), 3.0)
+        self.assertTrue(row["locked"])
+        self.assertEqual(r.data["totals"]["ot_hours"], 3
+                         if isinstance(r.data["totals"]["ot_hours"], int)
+                         else float(r.data["totals"]["ot_hours"]))
+        self.assertTrue(r.data["all_locked"])
+
+    def test_ot_breakdown_lists_days_and_approver(self):
+        r = self.client.get("/api/v1/payroll/ot-breakdown?year=2026&month=5")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["worker_count"], 1)
+        w = r.data["workers"][0]
+        self.assertEqual(w["emp_no"], "EMP-0001")
+        self.assertEqual(float(w["total_ot"]), 3.0)
+        self.assertEqual(len(w["days"]), 1)
+        self.assertEqual(w["days"][0]["day"], "2026-05-04")
+        self.assertEqual(w["days"][0]["approved_by"], self.pm.full_name)
+
+    def test_review_is_hr_finance_admin_only(self):
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(
+            "/api/v1/payroll/attendance-summary?year=2026&month=5").status_code,
+            403)
+
+
 class SubcontractorPayrollExclusionTests(TestCase):
     """Acceptance #2 — a subcontract worker is structurally excluded from
     payroll and absent from the HR register (subcontractor module Phase 1)."""

@@ -15,6 +15,7 @@ export default function PayrollRunPage({ me, sites }) {
   const [month, setMonth] = useState(now.getMonth() + 1);  // last month is common
   const [runs, setRuns] = useState([]);
   const [ready, setReady] = useState(null);
+  const [summary, setSummary] = useState(null);
   const [openRun, setOpenRun] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -27,6 +28,8 @@ export default function PayrollRunPage({ me, sites }) {
       .catch((e) => setError(e.message));
     api(`/payroll/readiness?year=${year}&month=${month}`).then(setReady)
       .catch(() => setReady(null));
+    api(`/payroll/attendance-summary?year=${year}&month=${month}`)
+      .then(setSummary).catch(() => setSummary(null));
   }
   useEffect(() => { if (!openRun) loadRuns(); },
     [year, month, openRun]); // eslint-disable-line
@@ -79,6 +82,9 @@ export default function PayrollRunPage({ me, sites }) {
         no need to wait for the others. The USD / Head Office run is one combined
         run and needs every USD-staffed site locked first.
       </p>
+
+      {summary && <AttendanceReview summary={summary} year={year}
+                                    month={month} />}
 
       {canGenerate && ready && (
         <div style={{ marginBottom: 18 }}>
@@ -168,6 +174,155 @@ export default function PayrollRunPage({ me, sites }) {
         </tbody>
       </table>
     </section>
+  );
+}
+
+const hrs = (v) => Number(v || 0).toLocaleString("en-US",
+  { maximumFractionDigits: 2 });
+const rnum = { ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" };
+
+// Pre-run review: per-site attendance + OT totals for the month, a company-wide
+// roll-up, and a drill-down into the OT detail — so HR checks the figures
+// feeding payroll before generating (owner 2026-08-05).
+function AttendanceReview({ summary, year, month }) {
+  const [ot, setOt] = useState(null);   // {siteId|null, label} or null
+  const { sites, totals } = summary;
+  if (!sites.length) {
+    return (
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 14px" }}>
+        No payroll-eligible workers on any site for this period.</p>
+    );
+  }
+  const otBtn = (siteId, label) => (
+    <button onClick={() => setOt(ot && ot.siteId === siteId
+      ? null : { siteId, label })}
+      style={{ ...ghostButton, padding: "2px 10px", fontSize: 11.5 }}>
+      {ot && ot.siteId === siteId ? "Hide OT" : "OT details"}</button>
+  );
+  const H = ({ children, r }) => (
+    <th style={{ ...th, textAlign: r ? "right" : "left" }}>{children}</th>);
+  return (
+    <div style={{ marginBottom: 18, border: "1px solid var(--sp-border)",
+                  borderRadius: 8, padding: "10px 12px",
+                  background: "var(--sp-bg-subtle, #f8fafc)" }}>
+      <h3 style={{ margin: "0 0 2px", fontSize: 13.5, color: "var(--sp-navy)" }}>
+        Review attendance &amp; OT before you run</h3>
+      <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        These are the days and overtime from the locked attendance — exactly what
+        each run will post. Check them before generating.</p>
+      <div style={{ overflowX: "auto" }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead><tr>
+          <H>Site</H><H r>Workers</H><H r>Days worked</H><H r>OT hrs</H>
+          <H r>Absences</H><H r>Rest-day work</H><H>Attendance</H><H />
+        </tr></thead>
+        <tbody>
+          {sites.map((s) => (
+            <tr key={s.site_id}>
+              <td style={{ ...td, fontWeight: 600 }}>
+                {s.site_code}{s.is_head_office ? " (HO)" : ""}</td>
+              <td style={rnum}>{s.workers}</td>
+              <td style={rnum}>{s.days_worked}</td>
+              <td style={{ ...rnum, fontWeight: 600 }}>{hrs(s.ot_hours)}</td>
+              <td style={rnum}>{s.absences || ""}</td>
+              <td style={rnum}>{s.rest_day_work || ""}</td>
+              <td style={td}>{s.locked
+                ? <span style={{ color: "#1a7f37" }}>🔒 Locked</span>
+                : <span style={{ color: "#b35900" }}>Provisional</span>}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {s.ot_hours > 0 ? otBtn(s.site_id, s.site_code) : null}</td>
+            </tr>
+          ))}
+          <tr style={{ fontWeight: 700, borderTop: "2px solid var(--sp-navy)" }}>
+            <td style={td}>All sites</td>
+            <td style={rnum}>{totals.workers}</td>
+            <td style={rnum}>{totals.days_worked}</td>
+            <td style={rnum}>{hrs(totals.ot_hours)}</td>
+            <td style={rnum}>{totals.absences || ""}</td>
+            <td style={rnum}>{totals.rest_day_work || ""}</td>
+            <td style={td} />
+            <td style={{ ...td, textAlign: "right" }}>
+              {totals.ot_hours > 0 ? otBtn(null, "All sites") : null}</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      {!summary.all_locked && (
+        <p style={{ fontSize: 11.5, color: "#b35900", margin: "8px 0 0" }}>
+          ⚠ "Provisional" sites aren't locked yet — their figures are as-of-today
+          and can still change. Lock the month before running them.</p>
+      )}
+      {ot && <OtBreakdown year={year} month={month} siteId={ot.siteId}
+                          label={ot.label} onClose={() => setOt(null)} />}
+    </div>
+  );
+}
+
+function OtBreakdown({ year, month, siteId, label, onClose }) {
+  const [data, setData] = useState(null);
+  const [open, setOpen] = useState({});
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    setData(null); setErr(null);
+    const q = `year=${year}&month=${month}` + (siteId ? `&site_id=${siteId}` : "");
+    api(`/payroll/ot-breakdown?${q}`).then(setData)
+      .catch((e) => setErr(e.message));
+  }, [year, month, siteId]);
+  return (
+    <div style={{ marginTop: 10, border: "1px solid var(--sp-border)",
+                  borderRadius: 8, padding: "10px 12px", background: "#fff" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <strong style={{ fontSize: 12.5, color: "var(--sp-navy)" }}>
+          Overtime detail — {label}</strong>
+        {data && <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          {data.worker_count} worker{data.worker_count === 1 ? "" : "s"} ·
+          {" "}{hrs(data.total_ot)} hrs total</span>}
+        <button onClick={onClose} style={{ ...ghostButton, marginLeft: "auto",
+          padding: "2px 10px", fontSize: 11.5 }}>Close</button>
+      </div>
+      {err && <p style={{ color: "#c0392b", fontSize: 12 }}>{err}</p>}
+      {data && data.workers.length === 0 && (
+        <p style={{ fontSize: 12, color: "var(--muted)", margin: "8px 0 0" }}>
+          No approved overtime recorded for this period.</p>
+      )}
+      {data && data.workers.map((w) => {
+        const isOpen = open[w.emp_no];
+        return (
+          <div key={w.emp_no} style={{ borderTop: "1px solid var(--line, #eee)",
+            padding: "6px 0" }}>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline",
+              cursor: "pointer", fontSize: 12.5 }}
+              onClick={() => setOpen((o) => ({ ...o, [w.emp_no]: !isOpen }))}>
+              <span style={{ color: "var(--muted)", width: 12 }}>
+                {isOpen ? "▾" : "▸"}</span>
+              <b>{w.emp_no}</b> {w.full_name}
+              <span style={{ color: "var(--muted)" }}>
+                {w.job_title ? ` · ${w.job_title}` : ""}
+                {siteId ? "" : ` · ${w.site_code}`}</span>
+              <span style={{ marginLeft: "auto", fontWeight: 700 }}>
+                {hrs(w.total_ot)} hrs</span>
+            </div>
+            {isOpen && (
+              <table style={{ margin: "4px 0 4px 20px", fontSize: 12,
+                borderCollapse: "collapse" }}>
+                <tbody>
+                  {w.days.map((d, i) => (
+                    <tr key={i}>
+                      <td style={{ padding: "1px 14px 1px 0" }}>{d.day}</td>
+                      <td style={{ padding: "1px 14px 1px 0",
+                        textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                        {hrs(d.hours)} hrs</td>
+                      <td style={{ padding: "1px 0", color: "var(--muted)" }}>
+                        {d.approved_by ? `approved by ${d.approved_by}` : ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
