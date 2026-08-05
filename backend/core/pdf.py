@@ -676,13 +676,17 @@ def _lines_context(document, revision):
 LETTER_TEMPLATES = {
     "LOA": "letter_appointment.html",
     "SPL": "letter_sponsor.html",
+    "AC": "letter_confirmation.html",
 }
 
 
-def render_onboarding_letter(document, kind, ref, fields, issue_date):
-    """Render an onboarding letter (LOA/SPL) from HR-supplied merge fields and
-    archive it as a GENERATED_PDF attachment on the case. Returns the Attachment
-    (or None when the PDF engine is unavailable locally, per D4)."""
+def render_onboarding_letter(document, kind, ref, fields, issue_date,
+                             stamp_src="", draft=False):
+    """Render an onboarding letter (LOA/SPL/AC) from HR-supplied merge fields and
+    archive it as a GENERATED_PDF attachment on the case. `stamp_src` (a data
+    URI) stamps the signatory's approval on a signed Appointment Confirmation;
+    `draft` overlays a DRAFT watermark on an unsigned copy. Returns the
+    Attachment (or None when the PDF engine is unavailable locally, per D4)."""
     template = LETTER_TEMPLATES[kind]
     context = {
         "mark_src": mark_src(),
@@ -690,6 +694,8 @@ def render_onboarding_letter(document, kind, ref, fields, issue_date):
         "co": company_info(),
         "ref": ref,
         "issue_date": issue_date,
+        "stamp_src": stamp_src,
+        "draft": draft,
         **fields,
     }
     html = render_to_string(f"pdf/{template}", context)
@@ -703,15 +709,16 @@ def render_onboarding_letter(document, kind, ref, fields, issue_date):
             raise
         logger.warning("PDF engine unavailable; skipped letter %s", ref)
         return None
+    name = f"{ref}-DRAFT.pdf" if draft else f"{ref}.pdf"
     attachment = Attachment(
         document=document,
         revision=document.current_revision,
         kind="GENERATED_PDF",
-        file_name=f"{ref}.pdf",
+        file_name=name,
         content_type="application/pdf",
         size_bytes=len(pdf_bytes),
     )
-    attachment.file.save(f"{ref}.pdf", ContentFile(pdf_bytes), save=True)
+    attachment.file.save(name, ContentFile(pdf_bytes), save=True)
     return attachment
 
 

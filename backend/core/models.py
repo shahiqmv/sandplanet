@@ -43,6 +43,10 @@ class User(AbstractUser):
     # opt-out if the in-app bell is enough for this user.
     phone = models.CharField(max_length=20, blank=True)
     notify_external = models.BooleanField(default=True)
+    # A signatory's digital approval stamp (a stamp/seal image, not a handwritten
+    # signature) — uploaded once and applied to letters they approve, e.g. the
+    # onboarding Appointment Confirmation (owner 2026-08-04).
+    stamp = models.FileField(upload_to="stamps/", null=True, blank=True)
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]
@@ -2122,12 +2126,24 @@ class OnboardingLetter(models.Model):
 
     case = models.ForeignKey(OnboardingCase, on_delete=models.CASCADE,
                              related_name="letters")
-    kind = models.CharField(max_length=3)         # LOA | SPL
+    kind = models.CharField(max_length=3)         # LOA | SPL | AC
     ref = models.CharField(max_length=20)         # global sequence, e.g. LOA-001
     attachment = models.ForeignKey(Attachment, on_delete=models.SET_NULL,
                                    null=True, blank=True, related_name="+")
     fields = models.JSONField(default=dict)       # merge fields it was built from
     version = models.PositiveIntegerField(default=1)
+    # The Appointment Confirmation (AC) must be signed by a signatory before it
+    # is official: ISSUED = generated, no sign-off needed (LOA/SPL); PENDING =
+    # a draft awaiting the signatory's stamp; SIGNED = approved + stamped.
+    class Status(models.TextChoices):
+        ISSUED = "ISSUED", "Issued"
+        PENDING = "PENDING", "Pending signatory"
+        SIGNED = "SIGNED", "Signed"
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.ISSUED)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                    blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     created_by = models.ForeignKey(User, null=True,
                                    on_delete=models.SET_NULL, related_name="+")

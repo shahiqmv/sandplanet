@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+<style>
+  .cand { margin-top: 10pt; }
+  .cand .nm { font-weight: 600; font-size: 11pt; color: #1A2530; }
+  .cand .meta { font-size: 8.5pt; color: #5B6672; margin-top: 1pt; }
+  .salut { margin-top: 10pt; }
+  .terms-lead { margin-top: 6pt; }
+  .signblock { margin-top: 14pt; }
+  .signblock .yours { margin-bottom: 4pt; }
+  .stamp { height: 68pt; margin: 2pt 0; }
+  .signblock .snm { font-weight: 600; color: #1A2530; font-size: 9.5pt; }
+  .signblock .sdesig { color: #5B6672; font-size: 8.5pt; }
+  .signblock .sfor { color: #5B6672; font-size: 8.5pt; margin-top: 1pt; }
+  .accept-title { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+                  font-weight: 700; font-size: 12pt; letter-spacing: 2pt;
+                  text-transform: uppercase; color: #16527E; }
+  .accept-rule { width: 120pt; height: 1.5pt; background: #29ABE2; margin: 3pt 0 12pt 0; }
+  .acc-sig { margin-top: 40pt; width: 100%; border-collapse: collapse; }
+  .acc-sig td { width: 50%; padding-right: 24pt; }
+  .acc-line { border-top: 1pt solid #1A2530; padding-top: 4pt; font-size: 8.5pt;
+              color: #5B6672; }
+  .draft-wm { position: fixed; top: 42%; left: 0; right: 0; text-align: center;
+              font-family: "Barlow Condensed", Helvetica, sans-serif;
+              font-size: 96pt; font-weight: 700; letter-spacing: 10pt;
+              color: rgba(41,171,226,0.10); transform: rotate(-28deg); }
+</style>
+</head>
+<body>
+{% if draft %}<div class="draft-wm">DRAFT</div>{% endif %}
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="lettertitle">Appointment Confirmation</div>
+<div class="lettertitle-rule"></div>
+
+<div class="cand">
+  <div class="nm">{{ candidate_name }}</div>
+  <div class="meta">Passport {{ passport_no }} &nbsp;·&nbsp; {{ nationality }}</div>
+</div>
+
+<div class="body-text salut">
+  <p>Dear {{ salutation }},</p>
+  <p class="subject">Re: Offer of Employment — {{ position }}</p>
+  <p>We are pleased to offer you employment with {{ co.legal_name }} in the position
+  of {{ position }}. This letter confirms our offer of appointment and sets out the
+  principal terms of your employment. We were impressed by your background, and we
+  look forward to welcoming you to our team.</p>
+  <p class="terms-lead">The main terms of your appointment are as follows:</p>
+</div>
+
+<table class="fields">
+  <tr><td class="k">POSITION</td><td class="v">{{ position }}</td></tr>
+  <tr><td class="k">EMPLOYMENT STATUS</td><td class="v">{{ employment_status }}</td></tr>
+  <tr><td class="k">WORK SITE</td><td class="v">{{ work_site }}</td></tr>
+  <tr><td class="k">BASIC SALARY</td><td class="v">{{ basic_salary }} per month</td></tr>
+  {% for a in allowances %}
+  <tr><td class="k">{{ a.label|upper }} ALLOWANCE</td><td class="v">{{ a.amount }} per month</td></tr>
+  {% endfor %}
+  <tr><td class="k">SALARY PAYMENT</td><td class="v">{{ salary_payment }}</td></tr>
+  <tr><td class="k">WORKING HOURS</td><td class="v">{{ working_hours }}</td></tr>
+  <tr><td class="k">DURATION OF CONTRACT</td><td class="v">{{ contract_duration }}</td></tr>
+  <tr><td class="k">COMMENCEMENT</td><td class="v">{{ commencement }}</td></tr>
+</table>
+
+<div class="body-text">
+  <p>This offer is made subject to the grant of a valid work permit and visa by the
+  relevant authorities of the Republic of Maldives, satisfactory completion of any
+  required medical examination, and verification of your documents. A formal contract
+  of employment will be issued upon your arrival and commencement of duties.</p>
+  <p>To accept this offer, please sign and return a copy of this letter at your
+  earliest convenience. We are delighted at the prospect of you joining
+  {{ co.legal_name }} and are confident you will make a valued contribution to our
+  company.</p>
+</div>
+
+<div class="signblock">
+  <div class="yours">Yours sincerely,</div>
+  {% if stamp_src %}<img class="stamp" src="{{ stamp_src }}">{% endif %}
+  <div class="snm">{{ signatory_name }}</div>
+  <div class="sdesig">{{ signatory_designation }}</div>
+  <div class="sfor">For and on behalf of {{ co.legal_name }}</div>
+</div>
+
+<div style="page-break-before: always;"></div>
+<div class="accept-title">Acceptance by the Employee</div>
+<div class="accept-rule"></div>
+<div class="body-text">
+  <p>I, {{ candidate_name }}, accept the offer of employment on the terms set out
+  in this letter.</p>
+</div>
+<table class="acc-sig">
+  <tr>
+    <td><div class="acc-line">Signature</div></td>
+    <td><div class="acc-line">Date</div></td>
+  </tr>
+</table>
+
+</body>
+</html>

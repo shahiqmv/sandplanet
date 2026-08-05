@@ -368,22 +368,31 @@ class OnboardingSpineTests(TestCase):
         detail = self.client.get(f"/api/v1/onboarding/{pk}").data
         opts = {o["kind"]: o for o in detail["letter_options"]}
         self.assertTrue(opts["SPL"]["available"])
-        # LOA is now issuable in advance on a recruitment BV case (below).
-        self.assertTrue(opts["LOA"]["available"])
+        # LOA rolled back to the appointment stage — not issuable pre-arrival.
+        self.assertFalse(opts["LOA"]["available"])
         r = self._gen_letter(pk, "SPL", project_site="Ha. Dhidhdhoo Harbour",
                              addressee_line_1="The Controller of Immigration")
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data["letters"][0]["ref"], "SPL-001")
 
-    def test_loa_in_advance_for_recruitment_bv(self):
-        # A recruitment BV case can issue the appointment letter in advance —
-        # before the post-arrival conversion stage (owner 2026-08-03).
+    def test_appointment_confirmation_available_early_for_recruitment(self):
+        # The lean Appointment Confirmation is available from the start of
+        # processing for any recruitment case (owner 2026-08-04), replacing the
+        # old advance-LOA. The detailed LOA is NOT available pre-arrival.
         pk = self._approved(route="BV", bv_justification="urgent mobilisation")
         self._adv(pk)                          # → BV_SPONSOR (pre-arrival)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
-        self.assertTrue(opts["LOA"]["available"])
-        self.assertEqual(self._gen_letter(pk, "LOA").status_code, 201)
+        self.assertTrue(opts["AC"]["available"])
+        self.assertFalse(opts["LOA"]["available"])
+
+    def test_appointment_confirmation_not_for_subcontract(self):
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT")
+        self._adv(pk)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertFalse(opts["AC"]["available"])
 
     def test_loa_not_available_for_subcontract_bv(self):
         pk = self._approved(route="BV", bv_justification="short job",
@@ -420,6 +429,59 @@ class OnboardingSpineTests(TestCase):
         r = self.client.get(f"/api/v1/onboarding/{pk}/letters/{lid}.pdf")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
+
+    def _tiny_png(self):
+        import io
+
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGBA", (160, 80), (0, 0, 0, 0)).save(buf, "PNG")
+        return SimpleUploadedFile("stamp.png", buf.getvalue(),
+                                  content_type="image/png")
+
+    def test_ac_generates_pending_and_signatory_signs(self):
+        from .models import Notification, OnboardingLetter
+        sig = make_user("ob_sig", User.Role.SIGNATORY)
+        pk = self._approved()                  # WP recruitment
+        self._adv(pk)                          # begin → IN_PROGRESS
+        r = self._gen_letter(pk, "AC")
+        self.assertEqual(r.status_code, 201, r.data)
+        ac = next(x for x in r.data["letters"] if x["kind"] == "AC")
+        self.assertEqual(ac["status"], "PENDING")
+        self.assertTrue(ac["needs_sign"])
+        self.assertTrue(Notification.objects.filter(
+            recipient=sig, title__icontains="to sign").exists())
+        lid = ac["id"]
+        # the signatory sees it in their limited queue
+        self.client.force_authenticate(sig)
+        q = self.client.get("/api/v1/onboarding/letters/to-sign").data
+        self.assertEqual([x["id"] for x in q["letters"]], [lid])
+        self.assertFalse(q["has_stamp"])
+        # can't sign without a stamp
+        self.assertEqual(self.client.post(
+            f"/api/v1/onboarding/letters/{lid}/sign").status_code, 400)
+        # upload the stamp, then sign
+        self.client.post("/api/v1/onboarding/my-stamp",
+                         {"stamp": self._tiny_png()}, format="multipart")
+        r = self.client.post(f"/api/v1/onboarding/letters/{lid}/sign")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["letters"], [])            # queue cleared
+        lt = OnboardingLetter.objects.get(pk=lid)
+        self.assertEqual(lt.status, "SIGNED")
+        self.assertEqual(lt.approved_by_id, sig.id)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.hr, title__icontains="signed").exists())
+
+    def test_only_signatory_can_sign_or_see_queue(self):
+        pk = self._approved()
+        self._adv(pk)
+        lid = next(x for x in self._gen_letter(pk, "AC").data["letters"]
+                   if x["kind"] == "AC")["id"]
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(
+            "/api/v1/onboarding/letters/to-sign").status_code, 403)
+        self.assertEqual(self.client.post(
+            f"/api/v1/onboarding/letters/{lid}/sign").status_code, 400)
 
     def test_allowances_captured_and_on_appointment_letter(self):
         from core.models import OnboardingCase

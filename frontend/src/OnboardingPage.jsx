@@ -970,12 +970,18 @@ function Letters({ c, busy, run }) {
           marginBottom: 8 }}>
           {done.map((l) => (
             <div key={l.id} style={{ display: "flex", gap: 8,
-              alignItems: "baseline", fontSize: 12.5 }}>
+              alignItems: "baseline", fontSize: 12.5, flexWrap: "wrap" }}>
               <a href={`/api/v1${l.download}`} target="_blank" rel="noreferrer"
                  style={{ color: "var(--navy)", fontWeight: 600 }}>{l.ref}</a>
+              {l.status === "PENDING" && <Chip tone="warn">Pending signatory</Chip>}
+              {l.status === "SIGNED" && <Chip tone="ok">Signed</Chip>}
               <span style={{ color: "var(--muted)" }}>
                 {l.title} · v{l.version} · {fmtDate(l.created_at)}
-                {l.created_by ? ` · ${l.created_by}` : ""}</span>
+                {l.status === "PENDING" ? " · draft (awaiting stamp)" : ""}
+                {l.status === "SIGNED" && l.approved_by
+                  ? ` · signed by ${l.approved_by}` : ""}
+                {l.status !== "SIGNED" && l.created_by
+                  ? ` · ${l.created_by}` : ""}</span>
             </div>
           ))}
         </div>
@@ -1007,9 +1013,15 @@ function Letters({ c, busy, run }) {
                   </label>
                 ))}
               </div>
+              {o.needs_sign && (
+                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
+                  This goes to the signatory for approval — once they stamp it,
+                  the signed copy is available to print.</div>)}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <Btn variant="primary" disabled={busy}
-                     onClick={() => gen(o.kind)}>Generate {o.kind}</Btn>
+                     onClick={() => gen(o.kind)}>
+                  {o.needs_sign ? "Generate & send for signature" : "Generate"}
+                </Btn>
                 <Btn variant="ghost" disabled={busy}
                      onClick={() => setOpenKind(null)}>Cancel</Btn>
               </div>

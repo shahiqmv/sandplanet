@@ -873,35 +873,46 @@ def on_fee_paid(pyr_doc, actor):
 
 # ---- official letters (Phase 4) ------------------------------------------
 
-# kind -> {stage it belongs to, human title}. LOA is issued at the appointment
-# stage (WP track, and the BV→WP conversion); SPL at the BV sponsor stage.
+# kind -> {stage, human title, sign}. LOA is issued at the appointment stage
+# (WP track, and the BV→WP conversion); SPL at the BV sponsor stage. AC (the
+# official Appointment Confirmation) has no stage gate — it is a lean, early
+# appointment offer for any recruitment case, signed by a signatory (`sign`).
 LETTER_META = {
     "LOA": {"stage": "WP_APPOINTMENT", "title": "Letter of Appointment"},
     "SPL": {"stage": "BV_SPONSOR", "title": "Sponsor Letter"},
+    "AC": {"stage": None, "title": "Appointment Confirmation", "sign": True},
 }
 _QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"}
 
 
 def letter_available(case, kind):
     """A letter can be generated once the case is in processing and has reached
-    the stage the letter belongs to (so it stays available for regeneration).
-    Exception: on a recruitment BV case the Letter of Appointment can be issued
-    in ADVANCE — as an employment confirmation before its normal post-arrival
-    stage (owner 2026-08-03)."""
+    the stage the letter belongs to (so it stays available for regeneration)."""
     meta = LETTER_META.get(kind)
     if not meta or case.document.status != "IN_PROGRESS":
         return False
+    # The Appointment Confirmation is an early, pre-travel offer for recruitment
+    # cases — available throughout processing (any route), but NOT for a
+    # subcontract worker (no appointment letter, no salary — owner 2026-08-04).
+    if kind == "AC":
+        return not _is_subcontract(case)
     seq = sequence(case)
     if meta["stage"] not in seq or case.stage not in seq:
         return False
-    if (kind == "LOA" and case.route == "BV"
-            and case.bv_purpose == "RECRUITMENT"):
-        return True
     return seq.index(case.stage) >= seq.index(meta["stage"])
 
 
 def _fmt_date(d):
     return d.strftime("%d %b %Y") if d else ""
+
+
+def _salutation(case):
+    """A courteous 'Mr. Rodrigo' / 'Ms. X' from gender + the last name; falls
+    back to the full name when gender or name is missing."""
+    honor = {"Male": "Mr.", "Female": "Ms."}.get(case.gender or "", "")
+    parts = (case.full_name or "").split()
+    last = parts[-1] if parts else ""
+    return f"{honor} {last}".strip() or (case.full_name or "")
 
 
 def _salary_str(case):
@@ -948,6 +959,23 @@ def letter_defaults(case, kind):
         "signatory_name": sig_name,
         "signatory_designation": sig_title,
     }
+    if kind == "AC":
+        return {
+            **common,
+            "candidate_name": case.full_name or "",
+            "salutation": _salutation(case),
+            "position": case.trade_designation or "",
+            "employment_status": "Full-time",
+            "work_site": "Malé, Republic of Maldives",
+            "basic_salary": _salary_str(case),
+            "allowances": _allowances_for_letter(case),
+            "salary_payment": "On or before the 10th day of the following month",
+            "working_hours": "8 hours per day, 6 days per week",
+            "contract_duration": "2 years",
+            "commencement": "On the date of arrival in the Maldives",
+            # The confirmation is signed by a company signatory, not the Director.
+            "signatory_designation": "Managing Director",
+        }
     if kind == "LOA":
         return {
             **common,
@@ -999,20 +1027,105 @@ def generate_letter(case, kind, overrides, actor):
              if k in defaults and k != "allowances" and v is not None}
     fields = {**defaults, **clean}
     issue_date = timezone.localdate().strftime("%d %b %Y")
+    needs_sign = bool(LETTER_META[kind].get("sign"))
     with transaction.atomic():
         ref = next_ref(kind, None)
+        # A sign-required letter (AC) renders as an unsigned DRAFT first — the
+        # official copy is re-rendered with the signatory's stamp on approval.
         att = pdf.render_onboarding_letter(case.document, kind, ref, fields,
-                                           issue_date)
+                                           issue_date, draft=needs_sign)
         if att is None:
             transaction.set_rollback(True)
             return None, "The PDF engine is unavailable in this environment."
         version = case.letters.filter(kind=kind).count() + 1
         letter = OnboardingLetter.objects.create(
             case=case, kind=kind, ref=ref, attachment=att, fields=fields,
-            version=version, created_by=actor)
+            version=version, created_by=actor,
+            status="PENDING" if needs_sign else "ISSUED")
     audit("document", case.document_id, "OBR_LETTER", actor=actor,
           detail={"kind": kind, "ref": ref, "version": version})
+    if needs_sign:
+        _notify_signatories(letter)
     return letter, None
+
+
+def _notify_signatories(letter):
+    """Ping every signatory that an Appointment Confirmation is waiting for their
+    stamp."""
+    from . import notify
+    case = letter.case
+    for u in notify._role_users("SIGNATORY"):
+        notify.notify_user(
+            u, f"Appointment Confirmation to sign — {case.full_name}",
+            f"{letter.ref} is ready for your approval and stamp.",
+            doc=case.document, category="approval")
+
+
+def sign_letter(letter, actor):
+    """A signatory approves an Appointment Confirmation: re-render it with their
+    digital stamp and mark it signed. Requires the signatory to have uploaded a
+    stamp (owner 2026-08-04)."""
+    from . import pdf
+    if actor.role not in ("SIGNATORY", "ADMIN"):
+        return None, "Only a signatory signs an Appointment Confirmation."
+    if letter.kind != "AC" or letter.status != "PENDING":
+        return None, "This letter isn't awaiting a signature."
+    if not getattr(actor, "stamp", None):
+        return None, "Upload your approval stamp before signing."
+    stamp_src = _file_data_uri(actor.stamp)
+    if not stamp_src:
+        return None, "Your stamp image could not be read."
+    # The signed copy carries the approving signatory's name + designation.
+    fields = {**(letter.fields or {}), "signatory_name": actor.full_name}
+    issue_date = timezone.localdate().strftime("%d %b %Y")
+    old_att = letter.attachment
+    with transaction.atomic():
+        att = pdf.render_onboarding_letter(
+            letter.case.document, "AC", letter.ref, fields, issue_date,
+            stamp_src=stamp_src, draft=False)
+        if att is None:
+            transaction.set_rollback(True)
+            return None, "The PDF engine is unavailable in this environment."
+        letter.attachment = att
+        letter.fields = fields
+        letter.status = "SIGNED"
+        letter.approved_by = actor
+        letter.approved_at = timezone.now()
+        letter.save(update_fields=["attachment", "fields", "status",
+                                   "approved_by", "approved_at"])
+    if old_att:                                  # drop the superseded draft file
+        old_att.delete()
+    audit("document", letter.case.document_id, "OBR_LETTER_SIGNED", actor=actor,
+          detail={"ref": letter.ref})
+    _notify_letter_signed(letter)
+    return letter, None
+
+
+def _notify_letter_signed(letter):
+    from . import notify
+    case = letter.case
+    recipients = set(notify._role_users("HO_HR"))
+    if case.document.created_by_id:
+        recipients.add(case.document.created_by)
+    for u in recipients:
+        notify.notify_user(
+            u, f"Appointment Confirmation signed — {case.full_name}",
+            f"{letter.ref} has been signed by {letter.approved_by.full_name}.",
+            doc=case.document, category="info")
+
+
+def _file_data_uri(filefield):
+    """A data: URI for a stored image (stamp) — S3- and local-safe, so WeasyPrint
+    embeds it without a filesystem path."""
+    import base64
+    import mimetypes
+    try:
+        with filefield.open("rb") as fh:
+            raw = fh.read()
+    except Exception:
+        return ""
+    mime = mimetypes.guess_type(filefield.name)[0] or "image/png"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
 
 
 def _letter_dict(letter):
@@ -1024,7 +1137,60 @@ def _letter_dict(letter):
                        if letter.created_by_id else ""),
         "download": (f"/onboarding/{letter.case_id}/letters/{letter.id}.pdf"
                      if letter.attachment_id else None),
+        "status": letter.status,
+        "needs_sign": bool(LETTER_META.get(letter.kind, {}).get("sign")),
+        "approved_by": (letter.approved_by.full_name
+                        if letter.approved_by_id else ""),
+        "approved_at": letter.approved_at,
     }
+
+
+def pending_signature_letters(user):
+    """Appointment Confirmations awaiting a signatory's stamp — the signatory's
+    limited sign queue (candidate + position + the draft to review, NOT the full
+    case with its sensitive documents)."""
+    from .models import OnboardingLetter
+    if user.role not in ("SIGNATORY", "ADMIN"):
+        return []
+    qs = (OnboardingLetter.objects.filter(kind="AC", status="PENDING")
+          .select_related("case", "case__document", "created_by")
+          .order_by("created_at"))
+    out = []
+    for lt in qs:
+        c = lt.case
+        out.append({
+            "id": lt.id, "ref": lt.ref,
+            "candidate_name": c.full_name,
+            "position": c.trade_designation,
+            "nationality": c.nationality,
+            "case_ref": c.document.ref,
+            "created_at": lt.created_at,
+            "created_by": lt.created_by.full_name if lt.created_by_id else "",
+            "draft": f"/onboarding/letters/{lt.id}/draft.pdf",
+        })
+    return out
+
+
+def set_stamp(user, upload):
+    """A signatory uploads (or replaces) their digital approval stamp."""
+    if user.role not in ("SIGNATORY", "ADMIN"):
+        return "Only a signatory keeps an approval stamp."
+    if upload is None:
+        return "Attach a stamp image."
+    ctype = (getattr(upload, "content_type", "") or "").lower()
+    if not ctype.startswith("image/"):
+        return "The stamp must be an image (PNG or JPG)."
+    try:                                     # reject a corrupt/unreadable image
+        from PIL import Image
+        Image.open(upload).verify()
+        upload.seek(0)
+    except Exception:
+        return "The stamp image couldn't be read — try a PNG or JPG."
+    if user.stamp:
+        user.stamp.delete(save=False)
+    user.stamp = upload
+    user.save(update_fields=["stamp"])
+    return None
 
 
 # ---- countdown clocks + alerts (Phase 5) ---------------------------------
@@ -1333,9 +1499,10 @@ def case_dict(case):
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),
         "letters": [_letter_dict(ltr) for ltr
-                    in case.letters.select_related("created_by")],
+                    in case.letters.select_related("created_by", "approved_by")],
         "letter_options": [
             {"kind": k, "title": m["title"],
+             "needs_sign": bool(m.get("sign")),
              "available": letter_available(case, k),
              "fields": letter_defaults(case, k)
              if letter_available(case, k) else None}

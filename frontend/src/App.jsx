@@ -15,6 +15,7 @@ import ClientUsersPage from "./ClientUsersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import HeadOfficePage from "./HeadOfficePage.jsx";
 import OnboardingPage from "./OnboardingPage.jsx";
+import AppointmentSignoff from "./AppointmentSignoff.jsx";
 import ProcurementSchedulePage from "./ProcurementSchedulePage.jsx";
 import UsersPage from "./UsersPage.jsx";
 import PayrollRunPage from "./PayrollRunPage.jsx";
@@ -103,10 +104,12 @@ const NAV_GROUPS = [
             "FINANCE", "ADMIN"],
     subs: [["my-pyr", "Payment Requests", null]] },
   { key: "people", label: "People",
-    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA"],
+    roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA", "SIGNATORY"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
            ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM",
                                          "PA"]],
+           ["appointment-signoff", "Appointment Sign-off",
+            ["SIGNATORY", "ADMIN"]],
            ["employees", "Employees", null],
            ["ho-staff", "Head Office", ["HO_HR", "FINANCE", "DIRECTOR",
                                         "ADMIN", "PA"]],
@@ -883,6 +886,11 @@ export default function App() {
             ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA"].includes(me.role) &&
             hoPage === "onboarding" && (
             <OnboardingPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["SIGNATORY", "ADMIN"].includes(me.role) &&
+            hoPage === "appointment-signoff" && (
+            <AppointmentSignoff />
           )}
           {!docView && !openSite &&
             ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"]

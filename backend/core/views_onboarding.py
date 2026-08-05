@@ -294,6 +294,74 @@ def onboarding_letter_download(request, pk, letter_id):
                         filename=f"{letter.ref}.pdf")
 
 
+def _get_letter(request, letter_id):
+    """A single onboarding letter, scoped to who may act on it."""
+    from .models import OnboardingLetter
+    lt = (OnboardingLetter.objects.select_related(
+        "case__document__site", "attachment", "approved_by").filter(
+            pk=letter_id).first())
+    return lt
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def onboarding_letters_to_sign(request):
+    """The signatory's queue of Appointment Confirmations awaiting their stamp
+    (a limited view — no access to the underlying case documents)."""
+    if request.user.role not in ("SIGNATORY", "ADMIN"):
+        return Response({"detail": "Not permitted."}, status=403)
+    return Response({
+        "letters": ob.pending_signature_letters(request.user),
+        "has_stamp": bool(request.user.stamp),
+    })
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def onboarding_letter_draft(request, letter_id):
+    """Stream an Appointment Confirmation's PDF for the signatory to review —
+    reachable without full case access, but only by a signatory."""
+    if request.user.role not in ("SIGNATORY", "ADMIN"):
+        return Response({"detail": "Not permitted."}, status=403)
+    lt = _get_letter(request, letter_id)
+    if lt is None or lt.kind != "AC" or not lt.attachment_id \
+            or not lt.attachment.file:
+        return Response({"detail": "Not found."}, status=404)
+    from django.http import FileResponse
+    return FileResponse(lt.attachment.file.open("rb"),
+                        content_type="application/pdf",
+                        filename=f"{lt.ref}.pdf")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_letter_sign(request, letter_id):
+    """A signatory approves + stamps an Appointment Confirmation."""
+    lt = _get_letter(request, letter_id)
+    if lt is None:
+        return Response({"detail": "Not found."}, status=404)
+    _, msg = ob.sign_letter(lt, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"letters": ob.pending_signature_letters(request.user),
+                     "has_stamp": bool(request.user.stamp)})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def onboarding_my_stamp(request):
+    """The signatory's own approval stamp — GET whether one is set, POST to
+    upload/replace it."""
+    if request.user.role not in ("SIGNATORY", "ADMIN"):
+        return Response({"detail": "Not permitted."}, status=403)
+    if request.method == "POST":
+        msg = ob.set_stamp(request.user, request.FILES.get("stamp"))
+        if msg:
+            return Response({"detail": msg}, status=400)
+    return Response({"has_stamp": bool(request.user.stamp)})
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def onboarding_stage_data(request, pk):
