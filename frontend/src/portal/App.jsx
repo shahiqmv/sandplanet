@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, downloadFile, getToken, setToken } from "./api.js";
 import ClientGantt from "./ClientGantt.jsx";
 
@@ -127,7 +127,7 @@ function DocRow({ icon, label, sub, status, onView }) {
 
 /* --------------------------------------------------------------- overview */
 function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
-  goGallery, goCameras }) {
+  goGallery, goCameras, goSubmittals }) {
   const projects = d.projects || [];
   const active = projects[proj] || null;
   const mp = d.manpower;
@@ -250,25 +250,15 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
             onView={() => openDoc(r.ref)} />))}
       </div>)}
 
-      {vis.show_submittals && d.submittals && d.submittals.length > 0 && (
-      <div className="card">
-        <div className="sec-title"><h2>Submittals</h2>
-          <span className="hint">material approvals · shop drawings ·
-            method statements</span></div>
-        {d.submittals.map((s) => (
-          <DocRow key={s.id} icon="📄"
-            label={`${s.type_label} · ${s.ref}${s.revision
-              && s.revision !== "R0" ? " " + s.revision : ""}${s.title
-              ? " — " + s.title : ""}`}
-            sub={s.project || undefined}
-            status={{ cls: { ok: "ok", warn: "warn", bad: "warn",
-              info: "mut" }[s.status_tone] || "mut", text: s.status_label }}
-            onView={() => downloadFile(`/submittals/${s.id}/pdf`,
-              `${s.ref}.pdf`).catch(() => {})} />))}
-      </div>)}
-
       {/* quick links */}
       <div className="quick">
+        {vis.show_submittals && (d.submittals || []).length > 0 && (
+          <div className="qcard" onClick={goSubmittals}>
+            <div className="qic">📄</div>
+            <div><h3>Submittals</h3><p>Material approvals, shop drawings &amp;
+              method statements ({d.submittals.length})</p></div>
+            <div className="arw">→</div>
+          </div>)}
         {vis.show_programme && <div className="qcard" onClick={goProgramme}>
           <div className="qic">📅</div>
           <div><h3>Construction programme</h3><p>Timeline &amp; % complete per activity</p></div>
@@ -496,10 +486,47 @@ const statusClass = (s) => {
   return "mut";
 };
 
+const etaCell = (v) => !v ? "—"
+  : (/^\d{4}-\d\d-\d\d/.test(v) ? fmt(v) : v);
+
+function ProcRow({ r, bundle, variant, open, onToggle }) {
+  const sub = [r.category, r.make_brand].filter(
+    (x) => x && x !== "Multiple").join(" · ");
+  return (
+    <tr className={variant ? "pvar" : bundle ? "pbun" : ""}>
+      <td>
+        <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+          {bundle && <button className="pexp" onClick={onToggle}>
+            {open ? "▾" : "▸"}</button>}
+          <div style={{ paddingLeft: variant ? 18 : 0 }}>
+            {variant && <span style={{ color: "var(--ink-3)" }}>↳ </span>}
+            {r.description}
+            {sub && <div className="psub">{sub}</div>}
+          </div>
+        </div>
+      </td>
+      <td className="num">{cell(r.quantity)} {r.uom}</td>
+      <td>{r.supply_by || "—"}</td>
+      <td>{r.source_country || "—"}</td>
+      <td>{fmt(r.required_date)}</td>
+      <td className="pstg">{r.tds || "—"}</td>
+      <td className="pstg">{r.order || "—"}</td>
+      <td className="pstg">{r.production || "—"}</td>
+      <td className="pstg">{r.shipment || "—"}</td>
+      <td className="pstg">{r.delivery || "—"}</td>
+      <td>{etaCell(r.eta)}</td>
+      <td><span className={`pill ${statusClass(r.status)}`}>
+        {r.status || "—"}</span></td>
+      <td>{r.remarks}</td>
+    </tr>
+  );
+}
+
 function ProcurementPage({ site, onBack }) {
   const [plan, setPlan] = useState(null);
   const [err, setErr] = useState(null);
   const [filter, setFilter] = useState("all");
+  const [open, setOpen] = useState({});   // expanded bundle rows
   useEffect(() => { setPlan(null);
     api(`/sites/${site.id}/procurement`).then(setPlan).catch((e) => setErr(e.message)); },
     [site.id]);
@@ -558,22 +585,78 @@ function ProcurementPage({ site, onBack }) {
                 <div className="pgrp-h">{sec.title || "Items"}
                   {sec.code && <span className="c">· {sec.code}</span>}
                   <span className="c">· {srows.length} item{srows.length > 1 ? "s" : ""}</span></div>
-                <div className="scroll-x"><table className="data">
-                  <thead><tr><th>Item</th><th className="num">Qty</th><th>Required on site</th>
-                    <th>Pipeline</th><th>ETA</th><th>Status</th></tr></thead>
-                  <tbody>{srows.map((r, j) => (
-                    <tr key={j}>
-                      <td>{r.description}</td>
-                      <td className="num">{cell(r.quantity)} {r.uom}</td>
-                      <td>{fmt(r.required_date)}</td>
-                      <td>{r.shipment ? <span className="stage"><span className="dot" />{r.shipment}</span> : "—"}</td>
-                      <td>{fmt(r.eta)}</td>
-                      <td><span className={`pill ${statusClass(r.status)}`}>{r.status || "—"}</span></td>
-                    </tr>))}</tbody>
+                <div className="scroll-x"><table className="data proc">
+                  <thead><tr>
+                    <th>Item</th><th className="num">Qty</th><th>Supply</th>
+                    <th>Country</th><th>Required</th><th>TDS</th><th>Order</th>
+                    <th>Prod.</th><th>Shipment</th><th>Delivery</th><th>ETA</th>
+                    <th>Status</th><th>Remarks</th></tr></thead>
+                  <tbody>{srows.map((r, j) => {
+                    const key = `${i}-${j}`;
+                    return (
+                      <Fragment key={key}>
+                        <ProcRow r={r} bundle={r.is_bundle} open={!!open[key]}
+                          onToggle={r.is_bundle
+                            ? () => setOpen((o) => ({ ...o, [key]: !o[key] }))
+                            : null} />
+                        {r.is_bundle && open[key] && (r.variants || []).map(
+                          (v, vi) => <ProcRow key={`${key}-${vi}`} r={v}
+                            variant />)}
+                      </Fragment>);
+                  })}</tbody>
                 </table></div>
               </div>);
           })}
         </div>)}
+      <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
+    </>
+  );
+}
+
+const SUBMITTAL_GROUPS = [
+  ["MAR", "Material Approvals"],
+  ["SD", "Shop Drawings"],
+  ["MS", "Method Statements"],
+];
+
+function SubmittalsView({ submittals, onBack }) {
+  const list = submittals || [];
+  return (
+    <>
+      <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>
+        ‹ Back to overview</button>
+      <div className="card">
+        <div className="rpt-head" style={{ border: 0, padding: 0 }}>
+          <div className="t">
+            <div className="rpt-kind">Submittals</div>
+            <h1>For your review</h1>
+            <div className="proj-sub" style={{ marginTop: 6 }}>
+              Material approvals, shop drawings &amp; method statements issued
+              to you</div>
+          </div>
+        </div>
+      </div>
+      {!list.length && <div className="card">
+        <p className="muted">No submittals issued yet.</p></div>}
+      {SUBMITTAL_GROUPS.map(([type, title]) => {
+        const rows = list.filter((s) => s.type === type);
+        if (!rows.length) return null;
+        return (
+          <div className="card" key={type}>
+            <div className="sec-title"><h2>{title}</h2>
+              <span className="hint">{rows.length} document
+                {rows.length > 1 ? "s" : ""}</span></div>
+            {rows.map((s) => (
+              <DocRow key={s.id} icon="📄"
+                label={`${s.ref}${s.revision && s.revision !== "R0"
+                  ? " " + s.revision : ""}${s.title ? " — " + s.title : ""}`}
+                sub={s.project ? `${s.project} · ${fmt(s.date)}` : fmt(s.date)}
+                status={{ cls: { ok: "ok", warn: "warn", bad: "warn",
+                  info: "mut" }[s.status_tone] || "mut", text: s.status_label }}
+                onView={() => downloadFile(`/submittals/${s.id}/pdf`,
+                  `${s.ref}.pdf`).catch(() => {})} />))}
+          </div>);
+      })}
       <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
     </>
   );
@@ -715,6 +798,9 @@ function SitePortal({ id, single, onBackToSites }) {
           onClick={() => setView({ name: "gallery" })}>Gallery</button>}
         {vis.show_procurement && <button className={`seg ${seg === "proc" ? "on" : ""}`}
           onClick={() => setView({ name: "proc" })}>Procurement</button>}
+        {vis.show_submittals && (d.submittals || []).length > 0 &&
+          <button className={`seg ${seg === "submittals" ? "on" : ""}`}
+            onClick={() => setView({ name: "submittals" })}>Submittals</button>}
         {vis.show_cameras && <button className={`seg ${seg === "cameras" ? "on" : ""}`}
           onClick={() => setView({ name: "cameras" })}>Live Feeds</button>}
       </div></div>
@@ -725,7 +811,10 @@ function SitePortal({ id, single, onBackToSites }) {
           goProc={() => setView({ name: "proc" })}
           goProgramme={() => setView({ name: "programme" })}
           goGallery={() => setView({ name: "gallery" })}
+          goSubmittals={() => setView({ name: "submittals" })}
           goCameras={() => setView({ name: "cameras" })} />}
+        {seg === "submittals" && <SubmittalsView submittals={d.submittals}
+          onBack={() => setView({ name: "overview" })} />}
         {seg === "report" && <ReportView docRef={view.ref}
           onBack={() => setView({ name: "overview" })} />}
         {seg === "programme" && (activeProject

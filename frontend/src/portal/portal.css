@@ -285,3 +285,13 @@ table.data td.num, table.data th.num{ text-align:right; font-variant-numeric:tab
 .soon h3{ color:var(--ink); margin:10px 0 6px; }
 .footer{ text-align:center; color:var(--ink-3); font-size:12px; padding:8px 0 0; }
 .loading{ color:var(--ink-3); }
+
+/* ---- procurement: dense rich table + expandable variants ---- */
+table.data.proc td, table.data.proc th{ padding:7px 8px; font-size:12.5px; }
+table.data.proc td.pstg{ color:var(--ink-2); white-space:nowrap; }
+.psub{ font-size:11px; color:var(--ink-3); margin-top:2px; }
+.pbun td{ background:var(--line-2); font-weight:600; }
+.pvar td{ background:#fbfdff; }
+.pvar td:first-child{ color:var(--ink-2); }
+.pexp{ border:none; background:none; cursor:pointer; color:var(--brand,#2b7bb9);
+  font-size:12px; padding:0; line-height:1; }

@@ -166,21 +166,31 @@ def build_client_xlsx_from_plan(plan):
             ws.cell(row=row, column=cc).border = _BORDER
         row += 1
 
-        for i, r in enumerate(sec["rows"]):
-            zebra = alt_fill if i % 2 else None
+        def _write(r, at, zebra, variant=False):
             for cidx, val in enumerate(_row_values(r), start=1):
-                cell = ws.cell(row=row, column=cidx, value=val)
+                if variant and cidx == 3 and val:      # indent variant name
+                    val = f"   ↳ {val}"
+                cell = ws.cell(row=at, column=cidx, value=val)
                 cell.border = _BORDER
-                cell.font = Font(size=9)
+                cell.font = Font(size=9, italic=variant,
+                                 color=(_NAVY if variant else "FF000000"))
                 cell.alignment = (_LEFT_TOP if cidx in (3, 4, 5, 19)
                                   else _CENTER)
                 if zebra:
                     cell.fill = zebra
             colour = RISK_COLOR.get(r["status_level"])
             if colour:
-                ws.cell(row=row, column=18).font = Font(size=9, bold=True,
-                                                        color=colour)
+                ws.cell(row=at, column=18).font = Font(size=9, bold=True,
+                                                       color=colour)
+
+        for i, r in enumerate(sec["rows"]):
+            zebra = alt_fill if i % 2 else None
+            _write(r, row, zebra)
             row += 1
+            # a bundle's variants expand underneath it
+            for v in r.get("variants") or []:
+                _write(v, row, zebra, variant=True)
+                row += 1
 
     ws.freeze_panes = "A5"
     ws.sheet_view.showGridLines = False

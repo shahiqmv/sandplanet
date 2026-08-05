@@ -117,3 +117,57 @@ class ProcurementClientTests(TestCase):
             client_last_update=self.today - timedelta(days=40),
             client_delivered_on=self.today)
         self.assertEqual(pp.sweep_client_staleness(), 0)
+
+
+class BundleVariantsTests(ProcurementClientTests):
+    def test_client_plan_bundle_carries_variants(self):
+        from . import procurement_client as pc
+        from .models import ProcurementSchedule
+        self.client.force_authenticate(self.pm)
+        pk = self.client.post(
+            f"/api/v1/projects/{self.project.id}/procurement-schedule"
+        ).data["id"]
+        for desc in ("uPVC 20mm", "uPVC 25mm"):
+            self.client.post(
+                f"/api/v1/procurement-schedules/{pk}/lines",
+                {"description": desc, "section_code": "D",
+                 "bundle": "uPVC fittings", "quantity": "10", "uom": "nos"},
+                format="json")
+        ScheduleLine.objects.filter(schedule__document_id=pk).update(
+            planned_supplier="S-LON")
+        sched = ProcurementSchedule.objects.get(document_id=pk)
+        rows = [r for sec in pc.client_plan(sched)["sections"]
+                for r in sec["rows"]]
+        bundle = next(r for r in rows if r.get("is_bundle"))
+        self.assertEqual(bundle["remarks"], "2 variants")
+        self.assertEqual({v["description"] for v in bundle["variants"]},
+                         {"uPVC 20mm", "uPVC 25mm"})
+
+    def test_xlsx_export_includes_expanded_variants(self):
+        import io
+
+        from openpyxl import load_workbook
+
+        from . import procurement_client as pc, procurement_export as pe
+        from .models import ProcurementSchedule
+        self.client.force_authenticate(self.pm)
+        pk = self.client.post(
+            f"/api/v1/projects/{self.project.id}/procurement-schedule"
+        ).data["id"]
+        for desc in ("uPVC 20mm", "uPVC 25mm"):
+            self.client.post(
+                f"/api/v1/procurement-schedules/{pk}/lines",
+                {"description": desc, "section_code": "D",
+                 "bundle": "uPVC fittings", "quantity": "10", "uom": "nos"},
+                format="json")
+        ScheduleLine.objects.filter(schedule__document_id=pk).update(
+            planned_supplier="S-LON")
+        sched = ProcurementSchedule.objects.get(document_id=pk)
+        wb = pe.build_client_xlsx_from_plan(pc.client_plan(sched))
+        buf = io.BytesIO()
+        wb.save(buf)
+        text = " ".join(
+            str(c.value) for row in load_workbook(io.BytesIO(buf.getvalue()))
+            .active.iter_rows() for c in row if c.value)
+        self.assertIn("uPVC 20mm", text)          # variant expanded into xlsx
+        self.assertIn("uPVC 25mm", text)

@@ -100,9 +100,11 @@ def _grouping_dict(line):
     }
 
 
-def _bundle_client_row(summary):
+def _bundle_client_row(summary, members=None):
     """A collapsed bundle as the client sees it — one summary line reusing the
-    same rollup the planner shows, mapped to the client's stage vocabulary."""
+    same rollup the planner shows, mapped to the client's stage vocabulary. The
+    member variants ride along under `variants` so the client can expand them
+    (and the export can list them)."""
     lvl = summary["risk"]["level"]
     country = summary.get("source_country") or ""
     return {
@@ -126,6 +128,7 @@ def _bundle_client_row(summary):
                 else (summary["risk"].get("projected") or "")),
         "status": RISK_WORD.get(lvl, ""), "status_level": lvl,
         "remarks": f"{summary['count']} variants", "is_bundle": True,
+        "variants": [client_row(m["_line"]) for m in (members or [])],
     }
 
 
@@ -159,7 +162,8 @@ def client_plan(sched, updated_by=""):
             continue
         grouped = group_rows([_grouping_dict(ln) for ln in rows], values=False)
         crows = [client_row(r["line"]["_line"]) if r["kind"] == "line"
-                 else _bundle_client_row(r["summary"]) for r in grouped]
+                 else _bundle_client_row(r["summary"], r["members"])
+                 for r in grouped]
         sections.append({"code": code, "title": title, "rows": crows})
 
     return {
