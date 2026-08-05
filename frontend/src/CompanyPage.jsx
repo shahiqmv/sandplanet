@@ -16,6 +16,12 @@ const IDENTITY = [
   ["company_website", "Website", "www.sandplanet.mv"],
   ["company_tagline", "Tagline (external documents)", ""],
 ];
+// The authorised signee printed in the sponsor block of the IM30 visa form.
+const SIGNEE = [
+  ["company_signee_name", "Authorised signee — name", "e.g. Ahmed Shahiq"],
+  ["company_signee_designation", "Signee designation", "e.g. Managing Director"],
+  ["company_signee_mobile", "Signee mobile", ""],
+];
 // Bank accounts are managed as a list below (used for receipts + PVs); the
 // primary account is the 'pay to' printed on invoices.
 const FIELDS = IDENTITY;
@@ -23,12 +29,14 @@ const FIELDS = IDENTITY;
 const SETTINGS = [
   ["wp_monthly_fee", "Work-permit fee — per permit, per month (MVR)", "e.g. 350"],
 ];
-const ALL = [...IDENTITY, ...SETTINGS];
+const ALL = [...IDENTITY, ...SIGNEE, ...SETTINGS];
 
 export default function CompanyPage() {
   const [values, setValues] = useState({});
   const [logo, setLogo] = useState(null);       // {url, uploaded}
   const [logoFile, setLogoFile] = useState(null);
+  const [stamp, setStamp] = useState(null);     // {url, uploaded}
+  const [stampFile, setStampFile] = useState(null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -39,6 +47,7 @@ export default function CompanyPage() {
         .catch(() => [key, ""])
     )).then((pairs) => setValues(Object.fromEntries(pairs)));
     api("/company/logo").then(setLogo).catch(() => {});
+    api("/company/stamp").then(setStamp).catch(() => {});
   }, []);
 
   async function save() {
@@ -55,6 +64,12 @@ export default function CompanyPage() {
         fd.append("file", logoFile);
         setLogo(await apiUpload("/company/logo", fd));
         setLogoFile(null);
+      }
+      if (stampFile) {
+        const fd = new FormData();
+        fd.append("file", stampFile);
+        setStamp(await apiUpload("/company/stamp", fd));
+        setStampFile(null);
       }
       setNotice("Company details saved — new PDFs use them immediately "
                 + "(already-issued PDFs are archived and stay as printed).");
@@ -95,6 +110,28 @@ export default function CompanyPage() {
         </label>
       </div>
 
+      <div style={{ display: "flex", gap: 16, alignItems: "center",
+                    margin: "12px 0", padding: 12,
+                    border: "1px solid var(--sp-border)", borderRadius: 8 }}>
+        {stamp?.url ? (
+          <img src={stamp.url} alt="Company stamp"
+               style={{ height: 60, background: "#fff" }} />
+        ) : (
+          <span style={{ fontSize: 12, color: "#5a6b78" }}>
+            No company stamp uploaded yet
+          </span>
+        )}
+        <label style={{ fontSize: 13 }}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Company stamp
+            (round seal)</div>
+          <div style={{ fontSize: 11, color: "#5a6b78", marginBottom: 4 }}>
+            Overlaid on the IM30 visa form and the Letter of Appointment — use a
+            clean PNG with a transparent background.</div>
+          <input type="file" accept="image/png,image/jpeg"
+                 onChange={(e) => setStampFile(e.target.files[0] || null)} />
+        </label>
+      </div>
+
       {IDENTITY.map(([key, label, placeholder]) => (
         <label key={key}
                style={{ display: "block", fontSize: 13, marginBottom: 10 }}>
@@ -105,6 +142,24 @@ export default function CompanyPage() {
                  style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
         </label>
       ))}
+
+      <div style={{ borderTop: "1px solid var(--sp-border)", margin: "16px 0",
+                    paddingTop: 12 }}>
+        <div style={{ fontWeight: 600, color: "var(--sp-navy)", fontSize: 13.5 }}>
+          Authorised signee</div>
+        <p style={{ fontSize: 12, color: "#5a6b78", margin: "2px 0 8px" }}>
+          Printed in the sponsor block of the IM30 visa form.</p>
+        {SIGNEE.map(([key, label, placeholder]) => (
+          <label key={key}
+                 style={{ display: "block", fontSize: 13, marginBottom: 10 }}>
+            {label}
+            <input value={values[key] || ""} placeholder={placeholder}
+                   onChange={(e) => setValues({ ...values,
+                                                [key]: e.target.value })}
+                   style={{ ...inputStyle, width: "100%", marginTop: 3 }} />
+          </label>
+        ))}
+      </div>
 
       <div style={{ borderTop: "1px solid var(--sp-border)", margin: "16px 0",
                     paddingTop: 12 }}>

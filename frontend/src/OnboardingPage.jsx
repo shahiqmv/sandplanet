@@ -121,6 +121,7 @@ export default function OnboardingPage({ me, sites }) {
 
 const BLANK = {
   full_name: "", nationality: "", date_of_birth: "", gender: "",
+  marital_status: "", old_passport_no: "",
   passport_no: "", passport_expiry: "", category: "", trade_designation: "",
   proposed_salary: "", currency: "MVR", allowances: [], route: "WP",
   bv_justification: "", bv_purpose: "", subcontractor_id: "",
@@ -211,7 +212,14 @@ function CaseForm({ value, onChange, subs = [] }) {
           <select style={inputStyle} value={value.gender} onChange={set("gender")}>
             <option value="">—</option><option>Male</option><option>Female</option>
           </select></label>
+        <label style={fld}>Marital status
+          <select style={inputStyle} value={value.marital_status || ""}
+                  onChange={set("marital_status")}>
+            <option value="">—</option>
+            <option value="Single">Single</option>
+            <option value="Married">Married</option></select></label>
         {F({ label: "Passport expiry", k: "passport_expiry", type: "date" })}
+        {F({ label: "Old passport no.", k: "old_passport_no" })}
         <label style={fld}>Category <span style={{ color: "var(--red-fg)" }}>*</span>
           <select style={inputStyle} value={value.category}
                   onChange={set("category")}>

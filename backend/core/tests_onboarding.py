@@ -439,6 +439,57 @@ class OnboardingSpineTests(TestCase):
         return SimpleUploadedFile("stamp.png", buf.getvalue(),
                                   content_type="image/png")
 
+    def test_im30_available_only_for_sri_lankan_wp(self):
+        # Indian WP → no IM30; Sri-Lankan WP → IM30; SL subcontract BV → none.
+        pk = self._approved(nationality="Indian")     # WP
+        self._adv(pk)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertFalse(opts["IM30"]["available"])
+
+        sl = self._approved(nationality="Sri Lankan")  # WP
+        self._adv(sl)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{sl}").data["letter_options"]}
+        self.assertTrue(opts["IM30"]["available"])
+        # prefilled: work site carries the company tax no, purpose is Employment
+        f = opts["IM30"]["fields"]
+        self.assertEqual(f["purpose_of_stay"], "Employment")
+        self.assertIn("ST00042609", f["work_site"])
+
+        sub = self._approved(route="BV", bv_justification="short job",
+                             nationality="Sri Lankan", bv_purpose="SUBCONTRACT")
+        self._adv(sub)
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{sub}").data["letter_options"]}
+        self.assertFalse(opts["IM30"]["available"])
+
+    def test_im30_generates_pdf(self):
+        pk = self._approved(nationality="Sri Lankan")
+        self._adv(pk)
+        r = self._gen_letter(pk, "IM30", marital_status="Married",
+                             old_passport_no="N999")
+        self.assertEqual(r.status_code, 201, r.data)
+        im = next(x for x in r.data["letters"] if x["kind"] == "IM30")
+        self.assertEqual(im["ref"], "IM30-001")
+        self.client.force_authenticate(self.hr)
+        pdf = self.client.get(f"/api/v1/onboarding/{pk}/letters/{im['id']}.pdf")
+        self.assertEqual(pdf.status_code, 200)
+        self.assertEqual(pdf["Content-Type"], "application/pdf")
+        body = b"".join(pdf.streaming_content)
+        self.assertTrue(body[:4] == b"%PDF")
+
+    def test_signatory_stamp_reused_for_marks(self):
+        # Once a signatory has uploaded a stamp, it is reused as the signature
+        # mark without any re-approval (owner 2026-08-05).
+        from . import onboarding as ob
+        sig = make_user("ob_sig2", User.Role.SIGNATORY)
+        self.assertIsNone(ob._signatory_stamp_bytes())
+        self.client.force_authenticate(sig)
+        self.client.post("/api/v1/onboarding/my-stamp",
+                         {"stamp": self._tiny_png()}, format="multipart")
+        self.assertTrue(ob._signatory_stamp_bytes())
+
     def test_ac_generates_pending_and_signatory_signs(self):
         from .models import Notification, OnboardingLetter
         sig = make_user("ob_sig", User.Role.SIGNATORY)

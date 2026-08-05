@@ -519,6 +519,37 @@ def company_logo(request):
     return Response({"url": None, "uploaded": False})
 
 
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def company_stamp(request):
+    """The round company seal overlaid on the IM30 visa form and official
+    letters, so HR doesn't have to print, stamp and scan. Stored at
+    company/stamp.png|jpg via the configured storage (owner 2026-08-05)."""
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+
+    names = ("company/stamp.png", "company/stamp.jpg")
+    if request.method == "POST":
+        if request.user.role != User.Role.ADMIN:
+            return Response({"detail": "Admin only."}, status=403)
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "Attach the stamp as 'file'."}, status=400)
+        ext = {"image/png": "png", "image/jpeg": "jpg"}.get(file.content_type)
+        if not ext:
+            return Response({"detail": "PNG or JPEG only."}, status=400)
+        for old in names:  # one stamp at a time
+            if default_storage.exists(old):
+                default_storage.delete(old)
+        default_storage.save(f"company/stamp.{ext}", ContentFile(file.read()))
+        audit("parameter", 0, "COMPANY_STAMP_UPDATED", actor=request.user,
+              detail={"file_name": file.name, "size": file.size})
+    for name in names:
+        if default_storage.exists(name):
+            return Response({"url": default_storage.url(name), "uploaded": True})
+    return Response({"url": None, "uploaded": False})
+
+
 @api_view(["GET", "PUT"])
 @permission_classes([IsAuthenticated])
 def parameter_detail(request, key):

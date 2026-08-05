@@ -2040,7 +2040,9 @@ class OnboardingCase(models.Model):
     nationality = models.TextField(blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
     gender = models.CharField(max_length=10, blank=True)
+    marital_status = models.CharField(max_length=10, blank=True)  # Single/Married
     passport_no = models.TextField(blank=True)
+    old_passport_no = models.TextField(blank=True)   # prior passport (IM30 form)
     passport_expiry = models.DateField(null=True, blank=True)
     category = models.CharField(max_length=10, choices=Category.choices,
                                 blank=True)

@@ -96,7 +96,8 @@ def _set_status(doc, new_status, action, user, comment=""):
 
 # ---- create / edit -------------------------------------------------------
 
-_FIELDS = ("full_name", "nationality", "gender", "passport_no",
+_FIELDS = ("full_name", "nationality", "gender", "marital_status",
+           "passport_no", "old_passport_no",
            "trade_designation", "permanent_address", "mobile",
            "emergency_contact", "bv_justification")
 _DATE_FIELDS = ("date_of_birth", "passport_expiry", "mobilisation_date")
@@ -881,6 +882,9 @@ LETTER_META = {
     "LOA": {"stage": "WP_APPOINTMENT", "title": "Letter of Appointment"},
     "SPL": {"stage": "BV_SPONSOR", "title": "Sponsor Letter"},
     "AC": {"stage": None, "title": "Appointment Confirmation", "sign": True},
+    # The Maldives Immigration IM30 visa form — a filled PDF overlay, not an
+    # HTML letter — submitted with the LOA for Sri-Lankan work-permit cases.
+    "IM30": {"stage": None, "title": "Visa Form (IM30)", "im30": True},
 }
 _QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"}
 
@@ -896,14 +900,30 @@ def letter_available(case, kind):
     # subcontract worker (no appointment letter, no salary — owner 2026-08-04).
     if kind == "AC":
         return not _is_subcontract(case)
+    # The IM30 visa form accompanies the LOA on the work-permit application, for
+    # Sri-Lankan candidates only (owner 2026-08-05). Available throughout a case
+    # that has a WP application in its path (a straight WP, or a recruitment BV
+    # that converts) — never a subcontract worker.
+    if kind == "IM30":
+        return (not _is_subcontract(case) and _is_sri_lankan(case)
+                and "WP_APPLICATION" in sequence(case))
     seq = sequence(case)
     if meta["stage"] not in seq or case.stage not in seq:
         return False
     return seq.index(case.stage) >= seq.index(meta["stage"])
 
 
+def _is_sri_lankan(case):
+    return "sri" in (case.nationality or "").lower()
+
+
 def _fmt_date(d):
     return d.strftime("%d %b %Y") if d else ""
+
+
+def _fmt_slash(d):
+    """DD/MM/YYYY — the IM30 form's date-box layout."""
+    return d.strftime("%d/%m/%Y") if d else ""
 
 
 def _salutation(case):
@@ -976,6 +996,34 @@ def letter_defaults(case, kind):
             # The confirmation is signed by a company signatory, not the Director.
             "signatory_designation": "Managing Director",
         }
+    if kind == "IM30":
+        from .pdf import company_info
+        co = company_info()
+        work_site = co["legal_name"]
+        if co.get("tin"):
+            work_site += f" ({co['tin']})"
+        return {
+            "port_of_entry": "Velana International Airport",
+            "name": case.full_name or "",
+            "dob": _fmt_slash(case.date_of_birth),
+            "gender": case.gender or "",
+            "nationality": case.nationality or "",
+            "marital_status": case.marital_status or "",
+            "passport_no": case.passport_no or "",
+            "expiry": _fmt_slash(case.passport_expiry),
+            "old_passport_no": case.old_passport_no or "",
+            "purpose_of_stay": "Employment",
+            "work_site": work_site,
+            "home_address": case.permanent_address or "",
+            "email": "",
+            "mobile": case.mobile or "",
+            "company": co["legal_name"],
+            "reg_no": co.get("reg_no", ""),
+            "signee": co.get("signee_name", ""),
+            "sponsor_mobile": co.get("signee_mobile", ""),
+            "designation": co.get("signee_designation", ""),
+            "sponsor_date": _fmt_slash(timezone.localdate()),
+        }
     if kind == "LOA":
         return {
             **common,
@@ -1030,10 +1078,20 @@ def generate_letter(case, kind, overrides, actor):
     needs_sign = bool(LETTER_META[kind].get("sign"))
     with transaction.atomic():
         ref = next_ref(kind, None)
-        # A sign-required letter (AC) renders as an unsigned DRAFT first — the
-        # official copy is re-rendered with the signatory's stamp on approval.
-        att = pdf.render_onboarding_letter(case.document, kind, ref, fields,
-                                           issue_date, draft=needs_sign)
+        if LETTER_META[kind].get("im30"):
+            att = _render_im30(case, ref, fields)
+        else:
+            # A sign-required letter (AC) renders as an unsigned DRAFT first — the
+            # official copy is re-rendered with the signatory's stamp on approval.
+            # The LOA carries the signatory's stamp + company seal from the start
+            # (no separate sign step — owner 2026-08-05).
+            stamp_src = seal_src = ""
+            if kind == "LOA":
+                stamp_src = _signatory_stamp_data_uri()
+                seal_src = pdf.company_stamp_data_uri()
+            att = pdf.render_onboarding_letter(
+                case.document, kind, ref, fields, issue_date,
+                stamp_src=stamp_src, seal_src=seal_src, draft=needs_sign)
         if att is None:
             transaction.set_rollback(True)
             return None, "The PDF engine is unavailable in this environment."
@@ -1047,6 +1105,37 @@ def generate_letter(case, kind, overrides, actor):
     if needs_sign:
         _notify_signatories(letter)
     return letter, None
+
+
+def _signatory_stamp_bytes():
+    """The approval stamp of the first signatory who has uploaded one — reused
+    on the IM30 form and the LOA without asking them to re-sign (owner
+    2026-08-05). None when no signatory has a stamp yet."""
+    from . import notify
+    for u in notify._role_users("SIGNATORY"):
+        f = getattr(u, "stamp", None)
+        if f:
+            try:
+                with f.open("rb") as fh:
+                    return fh.read()
+            except Exception:
+                continue
+    return None
+
+
+def _signatory_stamp_data_uri():
+    from .pdf import _img_data_uri
+    return _img_data_uri(_signatory_stamp_bytes())
+
+
+def _render_im30(case, ref, fields):
+    """Overlay the IM30 visa form and archive it as a case attachment, stamped
+    with the signatory's mark + the company seal."""
+    from . import im30, pdf
+    pdf_bytes = im30.render_bytes(
+        fields, signature=_signatory_stamp_bytes(),
+        seal=pdf.company_stamp_bytes())
+    return pdf.store_generated_pdf(case.document, f"{ref}.pdf", pdf_bytes)
 
 
 def _notify_signatories(letter):
@@ -1478,7 +1567,9 @@ def case_dict(case):
             .select_related("document").order_by("created_at")],
         "full_name": case.full_name, "nationality": case.nationality,
         "date_of_birth": case.date_of_birth, "gender": case.gender,
+        "marital_status": case.marital_status,
         "passport_no": case.passport_no, "passport_expiry": case.passport_expiry,
+        "old_passport_no": case.old_passport_no,
         "trade_designation": case.trade_designation,
         "job_category_id": case.job_category_id,
         "proposed_salary": case.proposed_salary, "currency": case.currency,

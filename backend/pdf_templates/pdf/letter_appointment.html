@@ -62,6 +62,10 @@
   <tr>
     <td>
       <div class="sigfor">For and on behalf of the employer</div>
+      <div class="sigmarks">
+        {% if stamp_src %}<img class="sigstamp" src="{{ stamp_src }}">{% endif %}
+        {% if seal_src %}<img class="sigseal" src="{{ seal_src }}">{% endif %}
+      </div>
       <div class="sigline">
         <span class="signame">{{ signatory_name }}</span><br>
         <span class="sigrole">{{ signatory_designation }} &nbsp;·&nbsp; Date: {{ issue_date }}</span>

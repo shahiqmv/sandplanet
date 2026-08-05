@@ -70,6 +70,12 @@ font_dir in context (core/pdf._font_dir()).
   .sigfor { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
             font-weight: 600; font-size: 9.5pt; letter-spacing: 1pt;
             text-transform: uppercase; color: #16527E; margin-bottom: 2pt; }
+  /* The signatory's stamp + round company seal applied above the signature
+     line on the appointment letter, side by side (owner 2026-08-05). */
+  .sigmarks { display: flex; align-items: flex-end; gap: 16pt;
+              height: 64pt; margin-top: 2pt; }
+  .sigstamp { max-height: 54pt; max-width: 120pt; }
+  .sigseal { max-height: 62pt; max-width: 82pt; opacity: 0.92; }
 
   .docfooter { position: running(docfooter); width: 100%; }
   .footer-rule-a { height: 2.5pt; background: #16527E; }

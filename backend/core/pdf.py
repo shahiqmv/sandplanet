@@ -53,6 +53,36 @@ def mark_src():
     return f"file:///{asset}"
 
 
+def company_stamp_bytes():
+    """Raw bytes of the uploaded company seal (company/stamp.png|jpg), or None.
+    Used to overlay the round company stamp on the IM30 visa form and letters so
+    HR needn't print, stamp and scan (owner 2026-08-05)."""
+    from django.core.files.storage import default_storage
+    for name in ("company/stamp.png", "company/stamp.jpg"):
+        if default_storage.exists(name):
+            try:
+                with default_storage.open(name, "rb") as fh:
+                    return fh.read()
+            except Exception:
+                return None
+    return None
+
+
+def _img_data_uri(raw):
+    """A data: URI for raw image bytes (PNG/JPEG), sniffing the mime from the
+    file header — WeasyPrint-safe (no filesystem path)."""
+    if not raw:
+        return ""
+    import base64
+    mime = "image/jpeg" if raw[:3] == b"\xff\xd8\xff" else "image/png"
+    return f"data:{mime};base64,{base64.b64encode(raw).decode()}"
+
+
+def company_stamp_data_uri():
+    """The company seal as a data: URI for HTML letters, or '' if none uploaded."""
+    return _img_data_uri(company_stamp_bytes())
+
+
 def _font_dir():
     """file:// URL of the bundled-fonts directory. The letter templates point
     their @font-face rules here; if the TTFs aren't present WeasyPrint falls
@@ -66,13 +96,19 @@ def company_info():
     tax info, registration no, address on the reports)."""
     return {
         "legal_name": _param("company_legal_name", "Sand Planet Pvt Ltd"),
-        "reg_no": _param("company_reg_no", ""),
-        "tin": _param("company_tin", ""),
+        "reg_no": _param("company_reg_no", "C-0059/2015"),
+        "tin": _param("company_tin", "ST00042609"),
         "address": _param("company_address", ""),
         "phone": _param("company_phone", ""),
         "email": _param("company_email", ""),
         "website": _param("company_website", "www.sandplanet.mv"),
         "tagline": _param("company_tagline", ""),
+        # The person who signs official forms on the company's behalf (the IM30
+        # visa form's sponsor block); editable via company parameters.
+        "signee_name": _param("company_signee_name", "Ahmed Shahiq"),
+        "signee_designation": _param("company_signee_designation",
+                                     "Managing Director"),
+        "signee_mobile": _param("company_signee_mobile", "7992611"),
         # Bank / remittance details shown on invoices so the client knows where
         # to pay = the primary company bank account (owner 2026-07-24: the bank
         # accounts are now a managed list, used for receipts + PVs too).
@@ -682,11 +718,26 @@ LETTER_TEMPLATES = {
 }
 
 
+def store_generated_pdf(document, name, pdf_bytes):
+    """Archive rendered PDF bytes as a GENERATED_PDF attachment on a document."""
+    attachment = Attachment(
+        document=document,
+        revision=document.current_revision,
+        kind="GENERATED_PDF",
+        file_name=name,
+        content_type="application/pdf",
+        size_bytes=len(pdf_bytes),
+    )
+    attachment.file.save(name, ContentFile(pdf_bytes), save=True)
+    return attachment
+
+
 def render_onboarding_letter(document, kind, ref, fields, issue_date,
-                             stamp_src="", draft=False):
+                             stamp_src="", seal_src="", draft=False):
     """Render an onboarding letter (LOA/SPL/AC) from HR-supplied merge fields and
     archive it as a GENERATED_PDF attachment on the case. `stamp_src` (a data
-    URI) stamps the signatory's approval on a signed Appointment Confirmation;
+    URI) stamps the signatory's approval; `seal_src` overlays the round company
+    seal (both applied on the Letter of Appointment so HR needn't stamp by hand);
     `draft` overlays a DRAFT watermark on an unsigned copy. Returns the
     Attachment (or None when the PDF engine is unavailable locally, per D4)."""
     template = LETTER_TEMPLATES[kind]
@@ -697,6 +748,7 @@ def render_onboarding_letter(document, kind, ref, fields, issue_date,
         "ref": ref,
         "issue_date": issue_date,
         "stamp_src": stamp_src,
+        "seal_src": seal_src,
         "draft": draft,
         **fields,
     }
@@ -712,16 +764,7 @@ def render_onboarding_letter(document, kind, ref, fields, issue_date,
         logger.warning("PDF engine unavailable; skipped letter %s", ref)
         return None
     name = f"{ref}-DRAFT.pdf" if draft else f"{ref}.pdf"
-    attachment = Attachment(
-        document=document,
-        revision=document.current_revision,
-        kind="GENERATED_PDF",
-        file_name=name,
-        content_type="application/pdf",
-        size_bytes=len(pdf_bytes),
-    )
-    attachment.file.save(name, ContentFile(pdf_bytes), save=True)
-    return attachment
+    return store_generated_pdf(document, name, pdf_bytes)
 
 
 # ===== External Purchase Order (owner format, R2) =====

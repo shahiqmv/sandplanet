@@ -50,6 +50,7 @@ urlpatterns = [
          name="notifications-read"),
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
     path("company/logo", views.company_logo, name="company-logo"),
+    path("company/stamp", views.company_stamp, name="company-stamp"),
     path("pms", views.pm_list, name="pm-list"),
     path("cost-heads", views.cost_heads, name="cost-heads"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
