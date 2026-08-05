@@ -295,3 +295,5 @@ table.data.proc td.pstg{ color:var(--ink-2); white-space:nowrap; }
 .pvar td:first-child{ color:var(--ink-2); }
 .pexp{ border:none; background:none; cursor:pointer; color:var(--brand,#2b7bb9);
   font-size:12px; padding:0; line-height:1; }
+.pthumb{ width:38px; height:38px; object-fit:cover; border-radius:4px;
+  border:1px solid var(--line-2); display:block; }

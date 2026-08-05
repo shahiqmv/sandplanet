@@ -81,6 +81,7 @@ def client_row(line):
         "status": RISK_WORD.get(risk["level"], ""),
         "status_level": risk["level"],
         "remarks": line.remarks,
+        "image": line.reference_image.url if line.reference_image else "",
     }
 
 

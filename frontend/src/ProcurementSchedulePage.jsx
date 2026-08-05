@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
@@ -134,48 +134,17 @@ function PipelineStrip({ stages }) {
 
 // One line row in the schedule table. `member` = a line shown expanded under a
 // bundle summary (indented, serial hidden).
-// A reference image for the material — a small thumbnail (click to enlarge) +
-// upload / replace / remove for anyone who can edit the schedule.
-function RefImage({ ln, c, on }) {
-  const ref = useRef(null);
+// The line's reference thumbnail — read-only in the list (click to enlarge).
+// It's added / replaced on the line's Edit form, not here.
+function RefImage({ ln }) {
   const img = ln.reference_image;
-  const mini = { border: "none", background: "none", cursor: "pointer",
-    fontSize: 12, padding: 0, color: "var(--sky)" };
-  if (!img && !c.can_link) return null;
+  if (!img) return null;
   return (
-    <div style={{ width: 42, flexShrink: 0, textAlign: "center" }}>
-      {img ? (
-        <a href={img} target="_blank" rel="noreferrer" title="Reference image">
-          <img src={img} alt="" style={{ width: 42, height: 42,
-            objectFit: "cover", borderRadius: 4,
-            border: "1px solid var(--line)", display: "block" }} />
-        </a>
-      ) : (
-        <button type="button" onClick={() => ref.current?.click()}
-          title="Add a reference image"
-          style={{ width: 42, height: 42, borderRadius: 4,
-            border: "1px dashed var(--line)", background: "var(--sky-soft)",
-            cursor: "pointer", color: "var(--muted)", fontSize: 18 }}>＋</button>
-      )}
-      {c.can_link && (
-        <>
-          <input ref={ref} type="file" accept="image/*"
-            style={{ display: "none" }}
-            onChange={(e) => { const f = e.target.files?.[0];
-              if (f) on.image(ln.id, f); e.target.value = ""; }} />
-          {img && (
-            <div style={{ display: "flex", gap: 6, justifyContent: "center",
-              marginTop: 1 }}>
-              <button type="button" style={mini} title="Replace"
-                onClick={() => ref.current?.click()}>↻</button>
-              <button type="button" title="Remove"
-                style={{ ...mini, color: "var(--red-fg)" }}
-                onClick={() => on.clearImage(ln.id)}>×</button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <a href={img} target="_blank" rel="noreferrer" title="Reference image"
+      style={{ flexShrink: 0 }}>
+      <img src={img} alt="" style={{ width: 42, height: 42, objectFit: "cover",
+        borderRadius: 4, border: "1px solid var(--line)", display: "block" }} />
+    </a>
   );
 }
 
@@ -188,7 +157,7 @@ function LineRow({ ln, c, member, sel, on }) {
         {member ? "" : ln.s_no}</td>
       <td style={cell}>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-          <RefImage ln={ln} c={c} on={on} />
+          <RefImage ln={ln} />
           <div>{ln.description}
             {ln.specification && <div style={{ color: "var(--muted)",
               fontSize: 11 }}>{ln.specification}</div>}
@@ -462,12 +431,6 @@ function ScheduleDetail({ id, me, onBack }) {
     try { await fn(); await load(); } catch (e) { setError(e.message); }
     setBusy(false);
   }
-  const uploadImage = (lineId, file) => run(async () => {
-    const fd = new FormData(); fd.append("image", file);
-    await apiUpload(`/procurement-schedule-lines/${lineId}/image`, fd);
-  });
-  const clearImage = (lineId) => run(() =>
-    api(`/procurement-schedule-lines/${lineId}/image`, { method: "DELETE" }));
   const act = (action) => run(async () => {
     let note = "";
     if (action === "return") {
@@ -574,7 +537,7 @@ function ScheduleDetail({ id, me, onBack }) {
         const grows = c.groups?.[gkey] || [];
         if (!grows.length && sec.id !== "none") return null;
         const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId,
-          split: setSplitId, image: uploadImage, clearImage };
+          split: setSplitId };
         const sel = { track: trackId, quotes: quotesId };
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,
@@ -1052,6 +1015,8 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
   const [err, setErr] = useState(null);
   const [items, setItems] = useState([]);
   const [cats, setCats] = useState([]);
+  const [imgFile, setImgFile] = useState(null);     // reference image to upload
+  const [removeImg, setRemoveImg] = useState(false); // clear existing on save
   const set = (k) => (e) => setF({ ...f,
     [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value });
   const patch = (o) => setF((prev) => ({ ...prev, ...o }));
@@ -1091,12 +1056,22 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
   async function save() {
     setBusy(true); setErr(null);
     try {
+      let lineId = line?.id;
       if (isNew) {
-        await api(`/procurement-schedules/${c.id}/lines`,
+        const known = new Set((c.lines || []).map((l) => l.id));
+        const d = await api(`/procurement-schedules/${c.id}/lines`,
           { method: "POST", body: f });
+        lineId = ((d.lines || []).find((l) => !known.has(l.id)) || {}).id;
       } else {
         await api(`/procurement-schedule-lines/${line.id}`,
           { method: "PATCH", body: f });
+      }
+      if (lineId && imgFile) {
+        const fd = new FormData(); fd.append("image", imgFile);
+        await apiUpload(`/procurement-schedule-lines/${lineId}/image`, fd);
+      } else if (lineId && removeImg && line?.reference_image) {
+        await api(`/procurement-schedule-lines/${lineId}/image`,
+          { method: "DELETE" });
       }
       onSaved();
     } catch (e) { setErr(e.message); setBusy(false); }
@@ -1142,6 +1117,37 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
           </L>
           <L k="Make / brand"><input style={inputStyle} value={f.make_brand}
             onChange={set("make_brand")} /></L>
+          <L k="Reference image">
+            {imgFile ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <img src={URL.createObjectURL(imgFile)} alt="" style={{
+                  width: 44, height: 44, objectFit: "cover", borderRadius: 4,
+                  border: "1px solid var(--line)" }} />
+                <button type="button" onClick={() => setImgFile(null)}
+                  style={{ ...linkBtn, color: "var(--red-fg)", fontSize: 12 }}>
+                  Clear</button>
+              </div>
+            ) : (f.reference_image && !removeImg) ? (
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <img src={f.reference_image} alt="" style={{ width: 44,
+                  height: 44, objectFit: "cover", borderRadius: 4,
+                  border: "1px solid var(--line)" }} />
+                <label style={{ ...linkBtn, color: "var(--sky)", fontSize: 12 }}>
+                  Replace<input type="file" accept="image/*"
+                    style={{ display: "none" }}
+                    onChange={(e) => setImgFile(e.target.files?.[0] || null)} />
+                </label>
+                <button type="button" onClick={() => setRemoveImg(true)}
+                  style={{ ...linkBtn, color: "var(--red-fg)", fontSize: 12 }}>
+                  Remove</button>
+              </div>
+            ) : (
+              <input type="file" accept="image/*"
+                style={{ ...inputStyle, padding: 4 }}
+                onChange={(e) => { setImgFile(e.target.files?.[0] || null);
+                  setRemoveImg(false); }} />
+            )}
+          </L>
           <L k="Bundle / group">
             <input style={inputStyle} list="psc-bundles" value={f.bundle || ""}
               onChange={set("bundle")} placeholder="e.g. Deck & Fence Timber" />

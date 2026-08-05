@@ -495,10 +495,13 @@ function ProcRow({ r, bundle, variant, open, onToggle }) {
   return (
     <tr className={variant ? "pvar" : bundle ? "pbun" : ""}>
       <td>
-        <div style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
           {bundle && <button className="pexp" onClick={onToggle}>
             {open ? "▾" : "▸"}</button>}
-          <div style={{ paddingLeft: variant ? 18 : 0 }}>
+          {r.image && <a href={r.image} target="_blank" rel="noreferrer"
+            style={{ flexShrink: 0 }}><img src={r.image} alt="" className="pthumb"
+            /></a>}
+          <div style={{ paddingLeft: variant && !r.image ? 18 : 0 }}>
             {variant && <span style={{ color: "var(--ink-3)" }}>↳ </span>}
             {r.description}
             {sub && <div className="psub">{sub}</div>}
