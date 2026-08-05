@@ -119,3 +119,32 @@ class ScheduleSplitTests(TestCase):
         self.assertEqual(sib.supply_by, "CONTRACTOR")
         self.assertIsNone(sib.ipr_id)      # each split gets its own IPR later
         self.assertIsNone(sib.grn_id)
+
+
+class ScheduleLineImageTests(ScheduleSplitTests):
+    def test_reference_image_upload_and_clear(self):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (20, 20), (200, 0, 0)).save(buf, "PNG")
+        img = SimpleUploadedFile("ref.png", buf.getvalue(),
+                                 content_type="image/png")
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(
+            f"/api/v1/procurement-schedule-lines/{self.line_id}/image",
+            {"image": img}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        line = next(x for x in r.data["lines"] if x["id"] == self.line_id)
+        self.assertTrue(line["reference_image"])
+        # non-image is refused
+        bad = SimpleUploadedFile("x.txt", b"hi", content_type="text/plain")
+        self.assertEqual(self.client.post(
+            f"/api/v1/procurement-schedule-lines/{self.line_id}/image",
+            {"image": bad}, format="multipart").status_code, 400)
+        # clear
+        r = self.client.delete(
+            f"/api/v1/procurement-schedule-lines/{self.line_id}/image")
+        line = next(x for x in r.data["lines"] if x["id"] == self.line_id)
+        self.assertEqual(line["reference_image"], "")

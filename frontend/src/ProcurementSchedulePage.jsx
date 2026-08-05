@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
@@ -134,6 +134,51 @@ function PipelineStrip({ stages }) {
 
 // One line row in the schedule table. `member` = a line shown expanded under a
 // bundle summary (indented, serial hidden).
+// A reference image for the material — a small thumbnail (click to enlarge) +
+// upload / replace / remove for anyone who can edit the schedule.
+function RefImage({ ln, c, on }) {
+  const ref = useRef(null);
+  const img = ln.reference_image;
+  const mini = { border: "none", background: "none", cursor: "pointer",
+    fontSize: 12, padding: 0, color: "var(--sky)" };
+  if (!img && !c.can_link) return null;
+  return (
+    <div style={{ width: 42, flexShrink: 0, textAlign: "center" }}>
+      {img ? (
+        <a href={img} target="_blank" rel="noreferrer" title="Reference image">
+          <img src={img} alt="" style={{ width: 42, height: 42,
+            objectFit: "cover", borderRadius: 4,
+            border: "1px solid var(--line)", display: "block" }} />
+        </a>
+      ) : (
+        <button type="button" onClick={() => ref.current?.click()}
+          title="Add a reference image"
+          style={{ width: 42, height: 42, borderRadius: 4,
+            border: "1px dashed var(--line)", background: "var(--sky-soft)",
+            cursor: "pointer", color: "var(--muted)", fontSize: 18 }}>＋</button>
+      )}
+      {c.can_link && (
+        <>
+          <input ref={ref} type="file" accept="image/*"
+            style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0];
+              if (f) on.image(ln.id, f); e.target.value = ""; }} />
+          {img && (
+            <div style={{ display: "flex", gap: 6, justifyContent: "center",
+              marginTop: 1 }}>
+              <button type="button" style={mini} title="Replace"
+                onClick={() => ref.current?.click()}>↻</button>
+              <button type="button" title="Remove"
+                style={{ ...mini, color: "var(--red-fg)" }}
+                onClick={() => on.clearImage(ln.id)}>×</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function LineRow({ ln, c, member, sel, on }) {
   return (
     <tr style={{ borderTop: member ? "1px dashed var(--line)"
@@ -141,11 +186,15 @@ function LineRow({ ln, c, member, sel, on }) {
       background: member ? "var(--sky-soft)" : undefined }}>
       <td style={{ ...cell, paddingLeft: member ? 26 : 10 }}>
         {member ? "" : ln.s_no}</td>
-      <td style={cell}>{ln.description}
-        {ln.specification && <div style={{ color: "var(--muted)",
-          fontSize: 11 }}>{ln.specification}</div>}
-        {ln.client_stale && <div style={{ color: "var(--amber-fg)",
-          fontSize: 10.5 }}>⚠ client update overdue</div>}</td>
+      <td style={cell}>
+        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+          <RefImage ln={ln} c={c} on={on} />
+          <div>{ln.description}
+            {ln.specification && <div style={{ color: "var(--muted)",
+              fontSize: 11 }}>{ln.specification}</div>}
+            {ln.client_stale && <div style={{ color: "var(--amber-fg)",
+              fontSize: 10.5 }}>⚠ client update overdue</div>}</div>
+        </div></td>
       <td style={cell}>{ln.make_brand || "—"}</td>
       <td style={cell}>{ln.quantity != null
         ? `${Number(ln.quantity)}${ln.uom ? " " + ln.uom : ""}`
@@ -413,6 +462,12 @@ function ScheduleDetail({ id, me, onBack }) {
     try { await fn(); await load(); } catch (e) { setError(e.message); }
     setBusy(false);
   }
+  const uploadImage = (lineId, file) => run(async () => {
+    const fd = new FormData(); fd.append("image", file);
+    await apiUpload(`/procurement-schedule-lines/${lineId}/image`, fd);
+  });
+  const clearImage = (lineId) => run(() =>
+    api(`/procurement-schedule-lines/${lineId}/image`, { method: "DELETE" }));
   const act = (action) => run(async () => {
     let note = "";
     if (action === "return") {
@@ -519,7 +574,7 @@ function ScheduleDetail({ id, me, onBack }) {
         const grows = c.groups?.[gkey] || [];
         if (!grows.length && sec.id !== "none") return null;
         const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId,
-          split: setSplitId };
+          split: setSplitId, image: uploadImage, clearImage };
         const sel = { track: trackId, quotes: quotesId };
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,

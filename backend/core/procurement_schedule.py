@@ -287,6 +287,27 @@ def split_line(line, quantities, actor):
     return [line, *siblings], None
 
 
+def set_reference_image(line, upload, actor):
+    """Attach (or clear) a reference image on a schedule line — a product photo /
+    sample shot so the planner and client plan show what's being procured."""
+    if actor.role not in (*PROPOSE_ROLES, *CONFIRM_ROLES):
+        return "Not permitted to edit this line."
+    if upload is None:                           # clear it
+        if line.reference_image:
+            line.reference_image.delete(save=False)
+        line.reference_image = None
+        line.save(update_fields=["reference_image"])
+        return None
+    ctype = (getattr(upload, "content_type", "") or "").lower()
+    if not ctype.startswith("image/"):
+        return "The reference must be an image (PNG or JPG)."
+    if line.reference_image:
+        line.reference_image.delete(save=False)
+    line.reference_image = upload
+    line.save(update_fields=["reference_image"])
+    return None
+
+
 def _apply_plan(line, data):
     for f in _PLAN_FIELDS:
         if f in data:
@@ -436,6 +457,8 @@ def line_dict(line, values=True):
         "trade": line.trade, "supply_by": line.supply_by,
         "required_date": line.required_date, "tds_required": line.tds_required,
         "remarks": line.remarks, "state": line.state,
+        "reference_image": (line.reference_image.url
+                            if line.reference_image else ""),
         "production_status": line.production_status,
         "planned_supplier": line.planned_supplier,
         "source_country": line.source_country,

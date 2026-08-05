@@ -184,6 +184,22 @@ def schedule_line_production(request, line_id):
     return Response(ps.schedule_dict(line.schedule, request.user))
 
 
+@api_view(["POST", "DELETE"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def schedule_line_image(request, line_id):
+    """Attach (POST multipart 'image') or clear (DELETE) the line's reference
+    image — a product photo shown on the planner + client plan."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    upload = None if request.method == "DELETE" else request.FILES.get("image")
+    msg = ps.set_reference_image(line, upload, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def schedule_line_split(request, line_id):

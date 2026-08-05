@@ -493,6 +493,8 @@ urlpatterns = [
          psched_api.schedule_line_production, name="psched-line-production"),
     path("procurement-schedule-lines/<int:line_id>/split",
          psched_api.schedule_line_split, name="psched-line-split"),
+    path("procurement-schedule-lines/<int:line_id>/image",
+         psched_api.schedule_line_image, name="psched-line-image"),
     path("procurement-schedule-lines/<int:line_id>/client-update",
          psched_api.schedule_line_client_update, name="psched-line-client"),
     path("procurement-schedule-lines/<int:line_id>/raise-ipr",

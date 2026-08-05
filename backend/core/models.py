@@ -3826,6 +3826,10 @@ class ScheduleLine(models.Model):
     required_date = models.DateField(null=True, blank=True)   # required on site
     tds_required = models.BooleanField(default=False)
     remarks = models.TextField(blank=True)
+    # A reference image for the material (a product photo / sample shot) so the
+    # planner and client plan show what's being procured (owner 2026-08-05).
+    reference_image = models.FileField(upload_to="schedule-refs/", null=True,
+                                       blank=True)
 
     # --- commercial (Purchasing; internal-only values) ---
     planned_supplier = models.CharField(max_length=160, blank=True)
