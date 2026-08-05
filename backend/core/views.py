@@ -297,6 +297,54 @@ class UserViewSet(viewsets.ModelViewSet):
         audit("user", user.id, "USER_UPDATED", actor=self.request.user,
               detail={"fields": sorted(self.request.data.keys())})
 
+    @action(detail=True, methods=["post"], url_path="change-role")
+    def change_role(self, request, pk=None):
+        """Promote/demote a user to another role. When promoting to PM, an
+        optional `assign_site_id` also makes them a (co-)PM of that site in the
+        same step. Changing AWAY from PM closes any open site-PM assignments."""
+        user = self.get_object()
+        new_role = request.data.get("role")
+        if new_role not in User.Role.values:
+            return Response({"detail": "Unknown role."}, status=400)
+        if user.id == request.user.id:
+            return Response(
+                {"detail": "You can't change your own role."}, status=400)
+        old_role = user.role
+        if new_role == old_role and not request.data.get("assign_site_id"):
+            return Response({"detail": "That's already their role."}, status=400)
+        from django.db import transaction
+        today = date.today()
+        with transaction.atomic():
+            if old_role != new_role:
+                user.role = new_role
+                user.save(update_fields=["role"])
+                audit("user", user.id, "USER_ROLE_CHANGED", actor=request.user,
+                      from_state=old_role, to_state=new_role)
+                # No longer a PM anywhere → close open site-PM assignments.
+                if old_role == User.Role.PM and new_role != User.Role.PM:
+                    SitePmHistory.objects.filter(
+                        pm_user=user, to_date__isnull=True).update(to_date=today)
+            assigned = None
+            site_id = request.data.get("assign_site_id")
+            if new_role == User.Role.PM and site_id:
+                site = Site.objects.filter(pk=site_id).first()
+                if site is None:
+                    return Response({"detail": "Unknown site."}, status=400)
+                if not site.pm_history.filter(
+                        pm_user=user, to_date__isnull=True).exists():
+                    SitePmHistory.objects.create(
+                        site=site, pm_user=user, from_date=today)
+                if not UserSiteAllocation.objects.filter(
+                        user=user, site=site, to_date__isnull=True).exists():
+                    UserSiteAllocation.objects.create(
+                        user=user, site=site, from_date=today)
+                assigned = site.code
+                audit("site", site.id, "SITE_PM_ADDED", actor=request.user,
+                      to_state=user.username)
+        data = self.get_serializer(user).data
+        data["assigned_pm_site"] = assigned
+        return Response(data)
+
     @action(detail=True, methods=["post"])
     def resend_invite(self, request, pk=None):
         """Re-issue a temporary password and email it (e.g. lost invite)."""

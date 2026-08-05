@@ -28,6 +28,7 @@ export default function UsersPage({ me, sites }) {
   const [draftSite, setDraftSite] = useState("");
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [roleEdit, setRoleEdit] = useState(null);   // { id, role, assignSite }
 
   const projectSites = sites.filter((s) => !s.is_head_office);
 
@@ -80,6 +81,20 @@ export default function UsersPage({ me, sites }) {
               { method: "POST", body: { pm_user_id: user.id } });
     setNotice(`${user.full_name} is now the Project PM there.`);
     load();
+  }
+
+  async function changeRole(user, role, assignSiteId) {
+    setError(null); setNotice(null);
+    try {
+      const body = { role };
+      if (assignSiteId) body.assign_site_id = +assignSiteId;
+      const r = await api(`/users/${user.id}/change-role`,
+                          { method: "POST", body });
+      setNotice(`${user.full_name} is now ${role.replace(/_/g, " ")}`
+        + (r.assigned_pm_site ? `, and PM of ${r.assigned_pm_site}.` : "."));
+      setRoleEdit(null);
+      load();
+    } catch (e) { setError(e.message); }
   }
 
   async function resendInvite(user) {
@@ -206,7 +221,56 @@ export default function UsersPage({ me, sites }) {
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{user.username}</td>
               <td style={td}>{user.full_name}</td>
-              <td style={td}>{user.role.replace(/_/g, " ")}</td>
+              <td style={td}>
+                {roleEdit?.id === user.id ? (
+                  <div style={{ display: "flex", flexDirection: "column",
+                    gap: 4, minWidth: 170 }}>
+                    <select value={roleEdit.role}
+                      onChange={(e) => setRoleEdit({ ...roleEdit,
+                        role: e.target.value })}
+                      style={{ ...inputStyle, padding: "3px 6px" }}>
+                      {ROLES.map(([v]) => (
+                        <option key={v} value={v}>
+                          {v.replace(/_/g, " ")}</option>
+                      ))}
+                    </select>
+                    {roleEdit.role === "PM" && user.allocations[0] && (
+                      <label style={{ fontSize: 11, color: "#5a6b78",
+                        display: "flex", gap: 4, alignItems: "center" }}>
+                        <input type="checkbox" checked={roleEdit.assignSite}
+                          onChange={(e) => setRoleEdit({ ...roleEdit,
+                            assignSite: e.target.checked })} />
+                        Assign as PM of {user.allocations[0].site_code}
+                      </label>
+                    )}
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button onClick={() => changeRole(user, roleEdit.role,
+                        (roleEdit.role === "PM" && roleEdit.assignSite
+                          && user.allocations[0])
+                          ? user.allocations[0].site : null)}
+                        style={{ ...buttonStyle, padding: "2px 12px",
+                          fontSize: 12 }}>Save</button>
+                      <button onClick={() => setRoleEdit(null)}
+                        style={{ ...ghostButton, padding: "2px 10px",
+                          fontSize: 12 }}>Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <span style={{ display: "flex", gap: 6,
+                    alignItems: "baseline" }}>
+                    {user.role.replace(/_/g, " ")}
+                    {me.role === "ADMIN" && user.is_active
+                      && user.id !== me.id && (
+                      <button title="Change this user's role"
+                        onClick={() => setRoleEdit({ id: user.id,
+                          role: user.role, assignSite: true })}
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "#2b7bb9", fontSize: 11,
+                          padding: 0 }}>change</button>
+                    )}
+                  </span>
+                )}
+              </td>
               <td style={td}>
                 {user.allocations.map((a) => a.site_code).join(", ") || "—"}
               </td>

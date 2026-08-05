@@ -119,3 +119,61 @@ class UserInviteTests(TestCase):
             format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("username", r.data)
+
+
+class ChangeRoleTests(TestCase):
+    def setUp(self):
+        from datetime import date
+
+        from .models import Site, SitePmHistory, UserSiteAllocation
+        self.admin = make_user("adm_role", User.Role.ADMIN)
+        self.site = Site.objects.create(code="SJR", name="Jani",
+                                        status=Site.Status.ACTIVE)
+        self.eng = make_user("eng1", User.Role.SITE_ENGINEER, site=self.site)
+        UserSiteAllocation.objects.create(user=self.eng, site=self.site,
+                                          from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+        self._SitePmHistory = SitePmHistory
+
+    def test_promote_engineer_to_pm_and_assign_site(self):
+        r = self.client.post(f"/api/v1/users/{self.eng.id}/change-role",
+                             {"role": "PM", "assign_site_id": self.site.id},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["assigned_pm_site"], "SJR")
+        self.eng.refresh_from_db()
+        self.assertEqual(self.eng.role, "PM")
+        self.assertTrue(self.site.is_current_pm(self.eng))     # now the site PM
+
+    def test_promote_without_assign_leaves_no_pm_history(self):
+        r = self.client.post(f"/api/v1/users/{self.eng.id}/change-role",
+                             {"role": "PM"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["assigned_pm_site"])
+        self.assertFalse(self.site.is_current_pm(self.eng))    # role only
+
+    def test_demoting_a_pm_closes_site_pm_assignment(self):
+        from datetime import date
+        pm = make_user("pmx", User.Role.PM, site=self.site)
+        self._SitePmHistory.objects.create(site=self.site, pm_user=pm,
+                                            from_date=date(2026, 1, 1))
+        self.assertTrue(self.site.is_current_pm(pm))
+        r = self.client.post(f"/api/v1/users/{pm.id}/change-role",
+                             {"role": "SITE_ENGINEER"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(self.site.is_current_pm(pm))          # PM row closed
+
+    def test_cannot_change_own_role_or_unknown_role(self):
+        self.assertEqual(self.client.post(
+            f"/api/v1/users/{self.admin.id}/change-role",
+            {"role": "PM"}, format="json").status_code, 400)
+        self.assertEqual(self.client.post(
+            f"/api/v1/users/{self.eng.id}/change-role",
+            {"role": "WIZARD"}, format="json").status_code, 400)
+
+    def test_non_admin_cannot_change_roles(self):
+        self.client.force_authenticate(self.eng)
+        self.assertIn(self.client.post(
+            f"/api/v1/users/{self.eng.id}/change-role",
+            {"role": "PM"}, format="json").status_code, (403, 404))
