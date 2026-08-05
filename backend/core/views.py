@@ -178,23 +178,45 @@ class SiteViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="assign-pm")
     def assign_pm(self, request, pk=None):
-        """Reassign the project PM; history kept (spec §2.1)."""
+        """Manage the site's PM(s); history kept (spec §2.1). `mode`:
+          - "replace" (default): this PM becomes the sole current PM (any
+            existing PMs are closed today) — the classic reassignment.
+          - "add": add this PM as a co-PM alongside the existing one(s). A busy
+            site can carry several — co-PMs share full PM authority.
+          - "remove": close this PM's current assignment (leaves any others)."""
         site = self.get_object()
+        mode = (request.data.get("mode") or "replace").lower()
         try:
-            pm = User.objects.get(pk=request.data.get("pm_user_id"), role=User.Role.PM,
-                                  is_active=True)
+            pm = User.objects.get(pk=request.data.get("pm_user_id"),
+                                  role=User.Role.PM, is_active=True)
         except User.DoesNotExist:
-            return Response({"detail": "pm_user_id must be an active PM."}, status=400)
+            return Response({"detail": "pm_user_id must be an active PM."},
+                            status=400)
         today = date.today()
         previous = site.current_pm()
-        site.pm_history.filter(to_date__isnull=True).update(to_date=today)
-        SitePmHistory.objects.create(site=site, pm_user=pm, from_date=today)
+        if mode == "remove":
+            n = site.pm_history.filter(
+                pm_user=pm, to_date__isnull=True).update(to_date=today)
+            if not n:
+                return Response({"detail": "That PM is not a current PM here."},
+                                status=400)
+            audit("site", site.id, "SITE_PM_REMOVED", actor=request.user,
+                  from_state=pm.username, to_state="")
+            return Response(self.get_serializer(site).data)
+        if mode != "add":                        # replace — close the others
+            site.pm_history.filter(to_date__isnull=True).update(to_date=today)
+        # add / replace — open a row for this PM if they aren't already current
+        if not site.pm_history.filter(
+                pm_user=pm, to_date__isnull=True).exists():
+            SitePmHistory.objects.create(site=site, pm_user=pm, from_date=today)
         # PM approval routing needs a read allocation on the site
         if not UserSiteAllocation.objects.filter(
             user=pm, site=site, to_date__isnull=True
         ).exists():
             UserSiteAllocation.objects.create(user=pm, site=site, from_date=today)
-        audit("site", site.id, "SITE_PM_ASSIGNED", actor=request.user,
+        audit("site", site.id,
+              "SITE_PM_ADDED" if mode == "add" else "SITE_PM_ASSIGNED",
+              actor=request.user,
               from_state=previous.username if previous else "",
               to_state=pm.username)
         return Response(self.get_serializer(site).data)

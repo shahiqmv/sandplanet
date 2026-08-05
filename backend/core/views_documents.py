@@ -109,8 +109,7 @@ def _get_scoped_document(request, ref):
 
 
 def _is_site_pm(user, site):
-    pm = site.current_pm()
-    return user.role == User.Role.PM and pm is not None and pm.id == user.id
+    return user.role == User.Role.PM and site.is_current_pm(user)
 
 
 def _is_pm_for(user, doc):

@@ -341,3 +341,50 @@ class CentralPaymentTests(PyrBase):
                              {"source_refs": [mvr, usd]}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("single currency", r.data["detail"])
+
+
+class CoPmTests(PyrBase):
+    """A busy site can carry more than one PM; co-PMs share full PM authority
+    (approvals + alerts). (owner 2026-08-05)"""
+
+    def _add_co_pm(self):
+        admin = make_user("adm_copm", User.Role.ADMIN)
+        pm2 = make_user("pm2", User.Role.PM, site=self.site)
+        self.client.force_authenticate(admin)
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/assign-pm",
+                             {"pm_user_id": pm2.id, "mode": "add"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        return pm2
+
+    def test_co_pm_shares_approval_and_alerts(self):
+        from .models import Notification
+        pm2 = self._add_co_pm()
+        self.site.refresh_from_db()
+        self.assertEqual({p.id for p in self.site.current_pms()},
+                         {self.pm.id, pm2.id})
+        self.assertTrue(self.site.is_current_pm(pm2))
+        # add (not replace) keeps the original PM as the primary for display
+        self.assertEqual(self.site.current_pm().id, self.pm.id)
+
+        ref = self.raise_pyr().data["ref"]
+        Notification.objects.all().delete()
+        self.act(ref, "submit", self.sa)
+        notified = set(Notification.objects.filter(doc_ref=ref)
+                       .values_list("recipient_id", flat=True))
+        self.assertIn(self.pm.id, notified)       # both PMs alerted
+        self.assertIn(pm2.id, notified)
+        # the co-PM (not the first-assigned) can approve
+        r = self.act(ref, "approve", pm2)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "PM_APPROVED")
+
+    def test_remove_co_pm_leaves_the_other(self):
+        pm2 = self._add_co_pm()
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/assign-pm",
+                             {"pm_user_id": pm2.id, "mode": "remove"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.site.refresh_from_db()
+        self.assertFalse(self.site.is_current_pm(pm2))
+        self.assertTrue(self.site.is_current_pm(self.pm))   # original remains

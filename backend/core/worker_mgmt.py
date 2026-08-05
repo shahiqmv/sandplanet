@@ -35,8 +35,7 @@ def _dec(v):
 def _is_site_pm(actor, site):
     if actor.role == "ADMIN":
         return True
-    pm = site.current_pm()
-    return actor.role == "PM" and pm is not None and pm.id == actor.id
+    return actor.role == "PM" and site.is_current_pm(actor)
 
 
 def _validate_add(data):

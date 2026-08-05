@@ -15,13 +15,13 @@ def can_view_contract_value(user, site):
     if user.is_ho:
         return True
     if user.role == User.Role.PM:
-        pm = site.current_pm()
-        return pm is not None and pm.id == user.id
+        return site.is_current_pm(user)      # any co-PM of the site
     return False
 
 
 class SiteSerializer(serializers.ModelSerializer):
     current_pm = serializers.SerializerMethodField()
+    current_pms = serializers.SerializerMethodField()
 
     class Meta:
         model = Site
@@ -34,13 +34,18 @@ class SiteSerializer(serializers.ModelSerializer):
             "client_designation", "client_phone", "client_email",
             "consultant_name", "consultant_contact",
             "working_hours_from", "working_hours_to", "working_days",
-            "current_pm",
+            "current_pm", "current_pms",
         ]
-        read_only_fields = ["status", "current_pm"]  # status via /status action only
+        # status via /status action only; PMs via /assign-pm
+        read_only_fields = ["status", "current_pm", "current_pms"]
 
     def get_current_pm(self, site):
         pm = site.current_pm()
         return {"id": pm.id, "full_name": pm.full_name} if pm else None
+
+    def get_current_pms(self, site):
+        return [{"id": p.id, "full_name": p.full_name}
+                for p in site.current_pms()]
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

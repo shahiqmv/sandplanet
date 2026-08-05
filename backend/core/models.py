@@ -120,14 +120,27 @@ class Site(models.Model):
     def __str__(self):
         return f"{self.code} — {self.name}"
 
-    def current_pm(self):
-        row = (
+    def current_pms(self):
+        """Every PM currently assigned to the site. A busy site can carry more
+        than one co-PM — they share full PM authority (approvals + alerts). The
+        earliest-assigned is treated as the primary (first in the list)."""
+        return [
+            r.pm_user for r in
             self.pm_history.filter(to_date__isnull=True)
-            .order_by("-from_date")
-            .select_related("pm_user")
-            .first()
-        )
-        return row.pm_user if row else None
+            .order_by("from_date", "id").select_related("pm_user")
+        ]
+
+    def current_pm(self):
+        """The primary current PM (for display / single-PM callers)."""
+        pms = self.current_pms()
+        return pms[0] if pms else None
+
+    def is_current_pm(self, user):
+        """True if `user` is one of the site's current PMs (co-PMs included)."""
+        if user is None or getattr(user, "id", None) is None:
+            return False
+        return self.pm_history.filter(
+            to_date__isnull=True, pm_user=user).exists()
 
 
 class SitePmHistory(models.Model):

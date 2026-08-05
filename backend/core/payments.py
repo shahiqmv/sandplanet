@@ -242,8 +242,7 @@ def _is_pm_for(user, doc):
         return True
     if user.role != "PM":
         return False
-    pm = doc.site.current_pm()
-    return pm is not None and pm.id == user.id
+    return doc.site.is_current_pm(user)      # any co-PM of the site
 
 
 # ---- Actions --------------------------------------------------------------

@@ -48,8 +48,7 @@ def _is_custodian(user, fl):
 def _is_site_pm(user, site):
     if user.role == "ADMIN":
         return True
-    pm = site.current_pm()
-    return pm is not None and pm.id == user.id
+    return site.is_current_pm(user)          # any co-PM of the site
 
 
 def _float_summary(fl):

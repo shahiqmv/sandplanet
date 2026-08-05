@@ -43,9 +43,23 @@ export default function PmsPage({ me, sites }) {
     setNotice(null);
     try {
       await api(`/sites/${siteId}/assign-pm`,
-                { method: "POST", body: { pm_user_id: pm.id } });
-      setNotice(`${pm.full_name} is now the Site PM there (previous PM's ` +
-                "assignment closed today — history kept).");
+                { method: "POST", body: { pm_user_id: pm.id, mode: "add" } });
+      setNotice(`${pm.full_name} is now a Site PM there. A site can have more ` +
+                "than one PM — co-PMs share approvals and alerts.");
+      load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function removeSite(pm, siteId, code) {
+    setError(null);
+    setNotice(null);
+    try {
+      await api(`/sites/${siteId}/assign-pm`,
+                { method: "POST", body: { pm_user_id: pm.id, mode: "remove" } });
+      setNotice(`${pm.full_name} removed as a Site PM of ${code} ` +
+                "(history kept).");
       load();
     } catch (e) {
       setError(e.message);
@@ -61,8 +75,8 @@ export default function PmsPage({ me, sites }) {
           Project Managers
         </h2>
         <span style={{ fontSize: 12, color: "#5a6b78" }}>
-          Site PM drives approval routing; project PM overrides it per project
-          (set on Site Setup).
+          Site PM drives approval routing; a busy site can have more than one
+          (co-PMs share approvals + alerts). Project PM overrides per project.
         </span>
         {me.role === "ADMIN" && !adding && (
           <button onClick={() => setAdding(true)}
@@ -110,7 +124,7 @@ export default function PmsPage({ me, sites }) {
             <th style={th}>PM</th>
             <th style={th}>Site PM of</th>
             <th style={th}>Project PM of</th>
-            <th style={th}>Assign as Site PM</th>
+            <th style={th}>Add as Site PM</th>
           </tr>
         </thead>
         <tbody>
@@ -125,9 +139,18 @@ export default function PmsPage({ me, sites }) {
               </td>
               <td style={td}>
                 {pm.sites.length ? pm.sites.map((s) => (
-                  <div key={s.site_id} style={{ fontSize: 13 }}>
-                    <b>{s.code}</b> {s.name}
-                    <span style={{ color: "#5a6b78" }}> · since {s.since}</span>
+                  <div key={s.site_id} style={{ fontSize: 13,
+                    display: "flex", alignItems: "baseline", gap: 6 }}>
+                    <span><b>{s.code}</b> {s.name}
+                      <span style={{ color: "#5a6b78" }}>
+                        {" "}· since {s.since}</span></span>
+                    {me.role === "ADMIN" && (
+                      <button title="Remove as Site PM"
+                        onClick={() => removeSite(pm, s.site_id, s.code)}
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "#c0392b", fontSize: 14,
+                          padding: 0, lineHeight: 1 }}>×</button>
+                    )}
                   </div>
                 )) : <span style={{ color: "#5a6b78" }}>—</span>}
               </td>
@@ -149,7 +172,7 @@ export default function PmsPage({ me, sites }) {
                                              e.target.value = ""; }}
                           style={{ ...inputStyle, width: 170,
                                    padding: "4px 6px" }}>
-                    <option value="">site…</option>
+                    <option value="">+ add to site…</option>
                     {projectSites.map((s) => (
                       <option key={s.id} value={s.id}>
                         {s.code} — {s.name}</option>

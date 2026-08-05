@@ -19,14 +19,16 @@ def _role_users(*roles):
 
 
 def _pm_for(doc):
-    """The project's PM if the document belongs to a project that has one, else
-    the site's current PM."""
+    """Who to alert as 'the PM' for a document: the project's PM if it belongs to
+    a project that has one, otherwise EVERY current site PM (a busy site may have
+    co-PMs who share approvals — they all get the alert)."""
     if doc.project_id and getattr(doc.project, "pm_id", None):
         u = User.objects.filter(pk=doc.project.pm_id, is_active=True).first()
         if u:
             return [u]
-    pm = doc.site.current_pm() if doc.site_id else None
-    return [pm] if pm else []
+    if not doc.site_id:
+        return []
+    return [p for p in doc.site.current_pms() if p.is_active]
 
 
 def targets_for(doc):
@@ -269,8 +271,7 @@ def notify_worker_request(batch):
              WCR.Kind.TRANSFER: "transfers"}.get(batch.kind, "changes")
     body = f"{n} worker(s) · {site.code}"
     if batch.status == WCR.Status.SUBMITTED:
-        pm = site.current_pm()
-        if pm:
+        for pm in site.current_pms():           # every co-PM
             notify_user(pm, f"Worker {label} — needs your approval",
                         body=body, category="approval")
     elif batch.status == WCR.Status.PM_APPROVED:    # ADD awaiting Director
@@ -286,8 +287,7 @@ def notify_salary_revision(rev):
     from .models import SalaryRevision as SR
     body = f"{rev.employee.full_name} · {rev.site.code}"
     if rev.status == SR.Status.SUBMITTED:
-        pm = rev.site.current_pm()
-        if pm:
+        for pm in rev.site.current_pms():        # every co-PM
             notify_user(pm, "Salary revision — needs your approval",
                         body=body, category="approval")
     elif rev.status == SR.Status.PM_APPROVED:

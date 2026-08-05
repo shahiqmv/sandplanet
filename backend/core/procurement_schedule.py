@@ -417,7 +417,7 @@ def can_see_values(user, sched):
         return True
     if user.role == "PM":
         proj = sched.project
-        return proj.pm_id == user.id or proj.site.current_pm() == user
+        return proj.pm_id == user.id or proj.site.is_current_pm(user)
     return False
 
 

@@ -489,10 +489,7 @@ def _stage_notify(case, stage):
     if not msg:
         return
     body = f"{case.full_name} · {doc.site.code}"
-    recips = list(notify._role_users("HO_HR"))
-    pm = doc.site.current_pm()
-    if pm:
-        recips.append(pm)
+    recips = list(notify._role_users("HO_HR")) + doc.site.current_pms()
     for u in recips:
         notify.notify_user(u, f"Onboarding {doc.ref} — {msg}",
                            body=body, category="alert")
@@ -851,9 +848,7 @@ def _stage_notify_text(case, msg):
     from . import notify
     doc = case.document
     recips = set(notify._role_users("HO_HR"))
-    pm = doc.site.current_pm()
-    if pm:
-        recips.add(pm)
+    recips.update(doc.site.current_pms())
     for u in recips:
         notify.notify_user(u, f"Onboarding {doc.ref} — {msg}",
                            body=f"{case.full_name} · {doc.site.code}",
@@ -1231,9 +1226,7 @@ def _bv_level(days):
 def _clock_recipients(case, escalate):
     from . import notify
     recips = set(notify._role_users("HO_HR"))
-    pm = case.document.site.current_pm()
-    if pm:
-        recips.add(pm)
+    recips.update(case.document.site.current_pms())
     if escalate:                                     # T-3 / overdue → the PD
         recips |= set(notify._role_users("DIRECTOR"))
     return recips
@@ -1386,9 +1379,7 @@ def _notify_handover(case, emp):
     doc = case.document
     join = emp.join_date
     recips = set(notify._role_users("HO_HR"))
-    pm = doc.site.current_pm()
-    if pm:
-        recips.add(pm)
+    recips.update(doc.site.current_pms())
     sub = emp.engagement_type == "SUBCONTRACT"
     kind = "subcontract worker (no payroll)" if sub else "DIRECT hire"
     for u in recips:
