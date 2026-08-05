@@ -704,9 +704,11 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
         if err:
             transaction.set_rollback(True)
             return None, err
-        # Onboarding fees route Director → Finance, skipping the site PM — a
-        # recruitment cost, not a site spend (owner 2026-08-04). Same chain as a
-        # COMMERCIAL PYR; forced here regardless of who raises it.
+        # Onboarding fees carry NO approval layer — not the site PM and not the
+        # Director. A recruitment cost, not a site spend; it clears straight to
+        # Finance (owner 2026-08-05, revised from the earlier Director step).
+        # Same end state as a CENTRAL/FINANCE request: DIRECTOR_APPROVED = ready
+        # for the payment voucher.
         pr.origin = "ONBOARDING"
         pr.save(update_fields=["origin"])
         if refundable:                          # deposit posts nothing
@@ -729,6 +731,9 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
             defaults={"document": pyr, "refundable": refundable})
         _set_status(pyr, "SUBMITTED", "SUBMIT", actor,
                     f"{label} — onboarding {doc.ref}")
+        # No PM / Director step — clear straight to Finance's payment voucher.
+        _set_status(pyr, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", actor,
+                    "Onboarding fee — no approval step; cleared to Finance")
     return pyr, None
 
 

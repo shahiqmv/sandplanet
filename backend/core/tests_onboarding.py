@@ -285,7 +285,7 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("already been raised", r.data["detail"])
 
-    def test_onboarding_fee_skips_pm_routes_to_director(self):
+    def test_onboarding_fee_clears_straight_to_finance(self):
         pk = self._approved()
         self._to_deposit(pk)
         self.client.force_authenticate(self.hr)
@@ -295,9 +295,9 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 201, r.data)
         pr = (OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
               .document.payment_request)
-        # recruitment cost — Director → Finance, no site PM in the chain
+        # recruitment cost — NO PM and NO Director; cleared straight to Finance
         self.assertEqual(pr.origin, "ONBOARDING")
-        self.assertEqual(pr.document.status, "SUBMITTED")   # waits on Director
+        self.assertEqual(pr.document.status, "DIRECTOR_APPROVED")   # → Finance
 
     def test_cancelled_fee_can_be_re_raised(self):
         from .onboarding import active_fee_for
@@ -322,7 +322,7 @@ class OnboardingSpineTests(TestCase):
         # tracker repointed to the fresh, live PYR (the cancelled Document stays)
         self.assertEqual(case.fees.filter(stage="WP_DEPOSIT").count(), 1)
         live = active_fee_for(OnboardingCase.objects.get(pk=pk), "WP_DEPOSIT")
-        self.assertEqual(live.document.status, "SUBMITTED")
+        self.assertEqual(live.document.status, "DIRECTOR_APPROVED")   # → Finance
         self.assertNotEqual(live.document_id, fee.document_id)
 
     def test_fee_paid_notifies_hr(self):
