@@ -5,7 +5,8 @@ import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
 const EMPTY = { full_name: "", nationality: "", job_category: "",
-                basic_pay: "", currency: "MVR", passport_no: "",
+                basic_pay: "", usd_basic_pay: "", currency: "MVR",
+                passport_no: "",
                 employment_type: "PERMANENT", join_date: "", site_id: "" };
 
 const EMPLOYMENT = [["PERMANENT", "Permanent"], ["CONTRACT", "Contract"]];
@@ -63,6 +64,7 @@ export default function EmployeesPage({ me, sites }) {
     try {
       const body = { ...draft };
       if (!body.basic_pay) delete body.basic_pay;
+      if (!body.usd_basic_pay) delete body.usd_basic_pay;
       if (!body.join_date) delete body.join_date;
       if (!body.job_category) delete body.job_category;
       await api("/employees", { method: "POST", body });
@@ -167,6 +169,13 @@ export default function EmployeesPage({ me, sites }) {
               <option value="MVR">MVR</option>
               <option value="USD">USD</option>
             </select>
+            <input placeholder="USD basic (split pay)" type="number"
+                   title="If set, this worker's basic runs in USD (combined run)
+ while OT / allowances / deductions stay MVR with their site team"
+                   value={draft.usd_basic_pay}
+                   onChange={(e) => setDraft({ ...draft,
+                                               usd_basic_pay: e.target.value })}
+                   style={{ ...inputStyle, width: 130 }} />
             <select value={draft.employment_type}
                     onChange={(e) => setDraft({ ...draft,
                                                 employment_type: e.target.value })}
@@ -523,6 +532,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
     nationality: employee.nationality || "",
     job_category: employee.job_category || "",
     basic_pay: employee.basic_pay ?? "",
+    usd_basic_pay: employee.usd_basic_pay ?? "",
     currency: employee.currency || "MVR",
     ot_applies: employee.ot_applies,   // true | false | null
     passport_no: employee.passport_no || "",
@@ -555,6 +565,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
     try {
       const body = { ...f };
       if (body.basic_pay === "") body.basic_pay = null;
+      if (body.usd_basic_pay === "") body.usd_basic_pay = null;
       if (!body.job_category) body.job_category = null;
       ["date_of_birth", "work_permit_expiry", "join_date"].forEach((k) => {
         if (!body[k]) body[k] = null;
@@ -651,6 +662,15 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
                 <option value="MVR">MVR</option>
                 <option value="USD">USD (middle management +)</option>
               </select></L>
+          )}
+          {seesPay && (
+            <L label="USD basic (split pay)">
+              <input type="number" value={f.usd_basic_pay}
+                     onChange={(e) => set({ usd_basic_pay: e.target.value })}
+                     style={inputStyle} />
+              <span style={{ fontSize: 11, color: "#5a6b78" }}>
+                If set, basic runs in USD (combined run); OT / allowances /
+                deductions stay MVR with the site team.</span></L>
           )}
           {seesPay && (
             <L label="Overtime">

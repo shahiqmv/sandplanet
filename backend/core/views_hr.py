@@ -31,7 +31,7 @@ HR_ROLES = ("HO_HR", "ADMIN", "PA")
 PAYROLL_ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # R3 addendum
 # passport/permit/contact: HR+Admin only; basic_pay also visible to Finance
 SENSITIVE_FIELDS = ("passport_no", "work_permit_no", "emergency_contact")
-PAY_FIELDS = ("basic_pay",)
+PAY_FIELDS = ("basic_pay", "usd_basic_pay")
 
 
 def _is_hr(user):
@@ -67,7 +67,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         model = Employee
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",
                   "date_of_birth", "passport_no", "nationality",
-                  "job_category", "job_category_name", "basic_pay", "currency",
+                  "job_category", "job_category_name", "basic_pay",
+                  "usd_basic_pay", "currency",
                   "ot_applies", "ot_rate", "ot_effective", "employment_type",
                   "work_permit_no", "work_permit_expiry", "permit_state",
                   "permit_days", "permit_pending", "emergency_contact",

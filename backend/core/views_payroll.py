@@ -159,10 +159,13 @@ def payroll_readiness(request):
             "has_run": PayrollRun.objects.filter(
                 site=site, currency="MVR", year=year, month=month).exists(),
         })
+    from django.db.models import Q
     return Response({
         "sites": rows,
+        # the combined USD run carries full-USD workers + split-pay workers' basic
         "usd_staff": Employee.objects.payroll_eligible().filter(
-            is_active=True, currency="USD").count(),
+            is_active=True).filter(
+            Q(currency="USD") | Q(usd_basic_pay__gt=0)).count(),
         "usd_has_run": PayrollRun.objects.filter(
             site__isnull=True, currency="USD", year=year, month=month).exists(),
     })

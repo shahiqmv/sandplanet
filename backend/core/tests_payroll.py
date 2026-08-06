@@ -204,6 +204,43 @@ class PayrollRunTests(TestCase):
         # paid pro-rata on the full-month daily rate: 6200/31 × 12 = 2400
         self.assertEqual(float(line["earned_basic"]), 2400.0)
 
+    def test_split_pay_basic_in_usd_remainder_in_mvr(self):
+        # A split-pay worker: attendance-based basic in USD (combined USD run),
+        # OT + everything else in MVR with the site team (owner 2026-08-06).
+        from datetime import date
+
+        from core import payroll
+        from core.models import Attendance, EmployeeSiteAllocation
+        emp = Employee.objects.create(
+            emp_no="EMP-0009", full_name="Split", job_category=self.mason,
+            currency="MVR", usd_basic_pay=Decimal("1000"))
+        EmployeeSiteAllocation.objects.create(employee=emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        Attendance.objects.create(employee=emp, site=self.site,
+                                  day=date(2026, 5, 6), remark="PRESENT",
+                                  ot_approved=Decimal("2"))
+        # site MVR run: no basic, OT in MVR (2h × 25)
+        mvr = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = mvr.lines.get(employee=emp)
+        m = payroll.compute_line(line)
+        self.assertEqual(float(line.basic_pay), 0.0)
+        self.assertEqual(float(m["earned_basic"]), 0.0)
+        self.assertEqual(float(m["ot_pay"]), 50.0)
+        self.assertEqual(float(m["net"]), 50.0)
+        # combined USD run: basic only, attendance-based (1000/31 × 31 = 1000)
+        usd = payroll.generate_run(site=None, currency="USD", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        uline = usd.lines.get(employee=emp)
+        um = payroll.compute_line(uline)
+        self.assertEqual(float(uline.basic_pay), 1000.0)
+        self.assertEqual(float(um["ot_pay"]), 0.0)
+        self.assertAlmostEqual(float(um["earned_basic"]), 1000.0, places=1)
+        self.assertAlmostEqual(float(um["net"]), 1000.0, places=1)
+        # the full-USD gate now also waits on the split worker's site
+        self.assertNotIn(self.site.code,
+                         payroll.unlocked_sites(2026, 5, currency="USD"))
+
     def test_edit_and_compute(self):
         run = self.client.post("/api/v1/payroll/runs", {
             "site_id": self.site.id, "year": 2026, "month": 5,

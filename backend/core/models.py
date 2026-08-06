@@ -1682,6 +1682,12 @@ class Employee(models.Model):
     basic_pay = models.DecimalField(max_digits=12, decimal_places=2,  # sensitive
                                     null=True, blank=True)
     currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
+    # A group of workers are paid their attendance-based BASIC in USD while the
+    # rest of their pay (OT, allowances, deductions) stays MVR with their site
+    # team. When set (>0), the worker's basic runs on the combined USD run and
+    # their site MVR line carries no basic (owner 2026-08-06).
+    usd_basic_pay = models.DecimalField(max_digits=12, decimal_places=2,
+                                        null=True, blank=True)  # sensitive
     # NULL = inherit the category's OT default; True/False overrides per worker
     ot_applies = models.BooleanField(null=True, blank=True)
 

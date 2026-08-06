@@ -86,10 +86,19 @@ def _attendance_prefill(employee, site, year, month, working_days):
     return Decimal(days), ot, fridays
 
 
+def is_split_pay(emp):
+    """A worker paid their attendance-based basic in USD, everything else MVR
+    with their site team (owner 2026-08-06)."""
+    return bool(emp.usd_basic_pay and emp.usd_basic_pay > 0)
+
+
 def generate_run(*, site, currency, year, month, working_days, actor):
-    """Create a draft run and a prefilled line per eligible worker. MVR runs
-    are scoped to one site; the USD run spans all sites (site=None)."""
+    """Create a draft run and a prefilled line per eligible worker. MVR runs are
+    scoped to one site; the USD run spans all sites (site=None). Split-pay
+    workers (basic in USD) appear in BOTH: a basic-only line on the combined USD
+    run and a no-basic line (OT/allowances/deductions) on their site MVR run."""
     from django.db import transaction
+    from django.db.models import Q
 
     from .models import EmployeeSiteAllocation, PayrollLine, PayrollRun
 
@@ -97,24 +106,46 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         run = PayrollRun.objects.create(
             site=site, currency=currency, year=year, month=month,
             working_days=working_days, created_by=actor)
-        if site is not None:
+        if site is not None:                    # a site's MVR run
             emp_ids = EmployeeSiteAllocation.objects.filter(
                 site=site, to_date__isnull=True).values_list(
                 "employee_id", flat=True)
             workers = Employee.objects.payroll_eligible().filter(
                 id__in=emp_ids, is_active=True, currency=currency)
-        else:  # USD combined across all sites
+        elif currency == "USD":                 # combined USD run
+            # full-USD workers + split-pay workers (their USD basic only)
+            workers = Employee.objects.payroll_eligible().filter(
+                is_active=True).filter(Q(currency="USD")
+                                       | Q(usd_basic_pay__gt=0))
+        else:
             workers = Employee.objects.payroll_eligible().filter(
                 is_active=True, currency=currency)
         for emp in workers.select_related("job_category").order_by("emp_no"):
             days, ot, fridays = _attendance_prefill(emp, site, year, month,
                                                     working_days)
-            ded = deductions_for(emp, year, month)
-            PayrollLine.objects.create(
-                run=run, employee=emp, site_id=emp.current_site_id(),
-                basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
-                days_worked=days, ot_hours=ot, fridays_worked=fridays,
-                advance=ded["advance"], loan=ded["loan"])
+            split = is_split_pay(emp)
+            if currency == "USD" and split:
+                # basic-only, attendance-based, in USD — nothing else here
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=emp.usd_basic_pay, ot_rate=Decimal("0"),
+                    days_worked=days, ot_hours=Decimal("0"), fridays_worked=0)
+            elif currency != "USD" and split:
+                # site MVR line: no basic (paid in USD); OT (incl. rest-day
+                # hours) + allowances + deductions stay MVR
+                ded = deductions_for(emp, year, month)
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=Decimal("0"), ot_rate=emp.ot_rate(),
+                    days_worked=days, ot_hours=ot, fridays_worked=0,
+                    advance=ded["advance"], loan=ded["loan"])
+            else:
+                ded = deductions_for(emp, year, month)
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
+                    days_worked=days, ot_hours=ot, fridays_worked=fridays,
+                    advance=ded["advance"], loan=ded["loan"])
     return run
 
 
@@ -130,6 +161,8 @@ def unlocked_sites(year, month, currency=None):
     """Active, staffed sites whose attendance is NOT locked for the month.
     A site-wise MVR run is gated only on its own site; the combined USD run is
     gated on every USD-staffed site (pass currency="USD")."""
+    from django.db.models import Q
+
     from .models import EmployeeSiteAllocation, Site, TimesheetMonth
 
     # Only direct workers gate payroll — a site staffed solely by subcontract
@@ -137,7 +170,12 @@ def unlocked_sites(year, month, currency=None):
     staffed_q = EmployeeSiteAllocation.objects.filter(
         to_date__isnull=True, employee__is_active=True,
         employee__engagement_type="DIRECT")
-    if currency:
+    if currency == "USD":
+        # the USD run also carries split-pay workers' basic, so their sites
+        # must be locked too.
+        staffed_q = staffed_q.filter(Q(employee__currency="USD")
+                                     | Q(employee__usd_basic_pay__gt=0))
+    elif currency:
         staffed_q = staffed_q.filter(employee__currency=currency)
     staffed = set(staffed_q.values_list("site_id", flat=True))
     out = []
