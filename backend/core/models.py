@@ -310,8 +310,10 @@ class Document(models.Model):
             "DRAFT": {"SUBMITTED", "CANCELLED"},
             "SUBMITTED": {"APPROVED", "RETURNED", "REJECTED"},
             "RETURNED": {"SUBMITTED", "CANCELLED"},
-            "APPROVED": {"IN_PROGRESS", "CANCELLED"},
-            "IN_PROGRESS": {"COMPLETED", "CANCELLED"},
+            # The Director can also pull an approved / clean in-progress case
+            # back to RETURNED for detail edits (owner 2026-08-06).
+            "APPROVED": {"IN_PROGRESS", "CANCELLED", "RETURNED"},
+            "IN_PROGRESS": {"COMPLETED", "CANCELLED", "RETURNED"},
             "COMPLETED": set(),
             "REJECTED": set(),
             "CANCELLED": set(),

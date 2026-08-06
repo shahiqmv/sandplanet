@@ -138,6 +138,49 @@ class OnboardingSpineTests(TestCase):
         r = self.client.post(f"/api/v1/onboarding/{pk}/submit")
         self.assertEqual(r.data["status"], "SUBMITTED")
 
+    def test_director_sends_back_approved_case_for_edits(self):
+        # The Director can pull an already-approved case back to RETURNED so the
+        # raiser can fix details, then resubmit (owner 2026-08-06).
+        pk = self._approved()
+        self.assertTrue(self.client.get(
+            f"/api/v1/onboarding/{pk}").data["can_send_back"])
+        self.client.force_authenticate(self.director)
+        self.assertEqual(self.client.post(          # reason still required
+            f"/api/v1/onboarding/{pk}/action", {"action": "return"},
+            format="json").status_code, 400)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/action",
+                             {"action": "return", "note": "Passport no. wrong"},
+                             format="json")
+        self.assertEqual(r.data["status"], "RETURNED", r.data)
+        self.client.force_authenticate(self.pm)
+        self.client.patch(f"/api/v1/onboarding/{pk}",
+                          {"passport_no": "P9999999"}, format="json")
+        self.assertEqual(self.client.post(
+            f"/api/v1/onboarding/{pk}/submit").data["status"], "SUBMITTED")
+
+    def test_send_back_clean_in_progress_resets_stage(self):
+        from core.models import OnboardingCase
+        pk = self._approved()
+        self._adv(pk)                               # begin → WP_APPOINTMENT
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/action",
+                             {"action": "return", "note": "fix salary"},
+                             format="json")
+        self.assertEqual(r.data["status"], "RETURNED", r.data)
+        self.assertEqual(OnboardingCase.objects.get(pk=pk).stage, "")
+
+    def test_send_back_blocked_once_a_letter_is_issued(self):
+        pk = self._approved()
+        self._adv(pk)                               # → WP_APPOINTMENT
+        self._gen_letter(pk, "LOA")                 # a letter now exists
+        self.assertFalse(self.client.get(
+            f"/api/v1/onboarding/{pk}").data["can_send_back"])
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/action",
+                             {"action": "return", "note": "x"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("letter", r.data["detail"].lower())
+
     def test_other_site_pm_cannot_see_case(self):
         pk = self._create().data["id"]
         self.client.force_authenticate(self.other_pm)

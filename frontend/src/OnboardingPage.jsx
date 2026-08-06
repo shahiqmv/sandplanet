@@ -552,6 +552,12 @@ function CaseDetail({ id, me, onBack }) {
           <Btn variant="danger" disabled={busy}
                onClick={() => decide("reject")}>Reject</Btn>
         </>)}
+        {c.status !== "SUBMITTED" && c.can_send_back && canApprove && (
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => decide("return")}
+               title="Return this case to the raiser to correct details">
+            ↩ Send back to edit</Btn>
+        )}
         {editable && canRaise && (
           <button style={{ ...linkBtn, color: "var(--red-fg)" }}
             onClick={() => decide("cancel")}>Cancel case</button>

@@ -222,6 +222,34 @@ def submit_case(case, actor):
     return None
 
 
+_DEAD_FEE = ("CANCELLED", "REJECTED", "VOID")
+
+
+def _post_approval_return_block(case):
+    """Why an approved / in-progress case can't be sent back for edits — None if
+    it can. Blocks once processing has real side effects."""
+    if case.employee_id:
+        return ("This worker is already mobilised — their details live on the "
+                "Employee record now, so the case can't be sent back. Edit the "
+                "employee instead.")
+    if case.fees.exclude(document__status__in=_DEAD_FEE).exists():
+        return ("A payment request has already been raised in processing. "
+                "Cancel that PYR (or the whole case) rather than sending it "
+                "back for edits.")
+    if case.letters.exists():
+        return ("A letter has already been issued for this case. Send-back is "
+                "blocked to avoid an inconsistent letter — cancel and re-raise "
+                "if the details are wrong.")
+    return None
+
+
+def can_send_back(case):
+    """A Director can return an approved / in-progress case to edits when
+    processing hasn't produced side effects yet (drives the UI button)."""
+    return (case.document.status in ("APPROVED", "IN_PROGRESS")
+            and _post_approval_return_block(case) is None)
+
+
 def decide_case(case, action, actor, note=""):
     doc = case.document
     if action == "approve":
@@ -236,8 +264,23 @@ def decide_case(case, action, actor, note=""):
             return "Only the Director can return a case."
         if not note.strip():
             return "A reason is required to return the case."
+        prev = doc.status
+        # Sending an already-approved / in-progress case back for edits is
+        # allowed, but not once processing has produced side effects — a raised
+        # fee, an issued letter, or a mobilised worker (owner 2026-08-06).
+        if prev in ("APPROVED", "IN_PROGRESS"):
+            block = _post_approval_return_block(case)
+            if block:
+                return block
         if not _transition(doc, "RETURNED"):
             return f"Cannot return a {doc.status} case."
+        # Re-editing means re-approval: clear the processing stage so the track
+        # restarts cleanly when it's approved again.
+        if prev in ("APPROVED", "IN_PROGRESS") and (case.stage
+                                                    or case.portal_status):
+            case.stage = ""
+            case.portal_status = ""
+            case.save(update_fields=["stage", "portal_status"])
         _set_status(doc, "RETURNED", "RETURN", actor, comment=note)
         return None
     if action == "reject":
@@ -1581,6 +1624,7 @@ def case_dict(case):
         "created_by": doc.created_by.full_name if doc.created_by_id else "",
         "employee_id": case.employee_id,
         "employee_no": case.employee.emp_no if case.employee_id else None,
+        "can_send_back": can_send_back(case),
         "photo_att_id": (lambda p: p.id if p else None)(_photo_att(case)),
         "documents": documents_list(case),
         "checklist": checklist(case),
