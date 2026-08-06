@@ -142,7 +142,18 @@ class EmployeeSensitivityTests(HrBase):
         # a filter matching no one still returns a valid workbook
         self.assertEqual(self.client.get(
             "/api/v1/employees/export?employment=CONTRACT").status_code, 200)
-        # a non-pay role can't export the register
+        # the HR master export includes the sensitive identity columns
+        import io
+
+        import openpyxl
+        self.as_user(self.hr)
+        r = self.client.get("/api/v1/employees/export?full=1")
+        self.assertEqual(r.status_code, 200)
+        ws = openpyxl.load_workbook(io.BytesIO(r.content)).active
+        header = [c.value for c in ws[1]]
+        self.assertIn("Passport No", header)
+        self.assertIn("Date of Birth", header)
+        # a non-pay role can't export the register at all
         self.as_user(self.pm)
         self.assertEqual(self.client.get(
             "/api/v1/employees/export").status_code, 403)

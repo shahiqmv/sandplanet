@@ -206,6 +206,13 @@ export default function EmployeesPage({ me, sites }) {
                         padding: "5px 12px", marginLeft: "auto" }}>
               ⬇ Export to Excel</a>
           )}
+          {isHr && (
+            <a href={exportUrl + "&full=1"}
+               title="All fields incl. passport, DOB, work-permit — to share for reconciliation"
+               style={{ ...buttonStyle, textDecoration: "none",
+                        padding: "5px 12px" }}>
+              ⬇ Master list (all data)</a>
+          )}
         </div>
 
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
