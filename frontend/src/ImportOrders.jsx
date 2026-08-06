@@ -107,9 +107,10 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
     loading_port: o.loading_port || "", discharge_port: o.discharge_port || "",
     pi_ref: o.pi_ref || "", notes: o.notes || "",
     discount: o.discount ?? "", freight_handling: o.freight_handling ?? "",
+    misc_fee: o.misc_fee ?? "",
   } : { supplier_id: "", order_currency: "USD",
     exchange_rate: "", incoterm: "", loading_port: "", discharge_port: "",
-    pi_ref: "", notes: "", discount: "", freight_handling: "" });
+    pi_ref: "", notes: "", discount: "", freight_handling: "", misc_fee: "" });
   const [pmrRefs, setPmrRefs] = useState(existing?.pmr_refs || []);
   const [lines, setLines] = useState(o ? o.lines.map((l) => ({
     ...newLine(), item_id: l.item || null,
@@ -170,7 +171,7 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
   const lineSubtotal = useMemo(() =>
     lines.reduce((a, l) => a + num(l.order_qty) * num(l.unit_price), 0), [lines]);
   const orderTotal = lineSubtotal - num(hdr.discount)
-    + num(hdr.freight_handling);
+    + num(hdr.freight_handling) + num(hdr.misc_fee);
   const mvrTotal = orderTotal * num(hdr.exchange_rate);
 
   // Promote a free-text "new item" line to a real catalog item, so it becomes
@@ -401,6 +402,13 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
         <input type="number" value={hdr.freight_handling} placeholder="0"
                onChange={(e) => setH("freight_handling", e.target.value)}
                style={{ ...inputStyle, width: 130, textAlign: "right" }} />
+        <label style={{ fontSize: 13, alignSelf: "center" }}>
+          Miscellaneous fee ({hdr.order_currency})
+          <div style={{ fontSize: 10.5, color: "#8a97a1" }}>
+            e.g. documentation — unrelated to shipping</div></label>
+        <input type="number" value={hdr.misc_fee} placeholder="0"
+               onChange={(e) => setH("misc_fee", e.target.value)}
+               style={{ ...inputStyle, width: 130, textAlign: "right" }} />
       </div>
       <p style={{ marginTop: 12, fontSize: 14, fontWeight: 600,
                   color: "var(--sp-navy)" }}>
@@ -548,7 +556,8 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
             ))}
           </tbody>
           <tfoot>
-            {(Number(o.discount) > 0 || Number(o.freight_handling) > 0) && (
+            {(Number(o.discount) > 0 || Number(o.freight_handling) > 0
+              || Number(o.misc_fee) > 0) && (
               <>
                 <tr>
                   <td colSpan={4} style={{ ...td, textAlign: "right",
@@ -573,6 +582,16 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
                       Freight / handling</td>
                     <td style={{ ...td, textAlign: "right" }}>
                       + {o.order_currency} {money(o.freight_handling)}</td>
+                    <td colSpan={2} style={td}></td>
+                  </tr>
+                )}
+                {Number(o.misc_fee) > 0 && (
+                  <tr>
+                    <td colSpan={4} style={{ ...td, textAlign: "right",
+                                             color: "#5a6b78" }}>
+                      Miscellaneous fee</td>
+                    <td style={{ ...td, textAlign: "right" }}>
+                      + {o.order_currency} {money(o.misc_fee)}</td>
                     <td colSpan={2} style={td}></td>
                   </tr>
                 )}

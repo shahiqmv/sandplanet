@@ -74,7 +74,7 @@ class OrderSerializer(serializers.ModelSerializer):
         fields = ["supplier", "supplier_name", "supplier_country",
                   "order_currency", "exchange_rate", "incoterm",
                   "loading_port", "discharge_port", "pi_ref",
-                  "discount", "freight_handling",
+                  "discount", "freight_handling", "misc_fee",
                   "proforma_invoice_url", "notes", "lines"]
 
     def get_proforma_invoice_url(self, obj):

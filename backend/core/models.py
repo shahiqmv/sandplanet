@@ -1016,6 +1016,11 @@ class ImportOrder(models.Model):
                                    null=True, blank=True)
     freight_handling = models.DecimalField(max_digits=14, decimal_places=2,
                                            null=True, blank=True)
+    # A miscellaneous supplier charge unrelated to shipping (e.g. documentation)
+    # billed on the PI even when the supplier doesn't handle freight — added to
+    # the order total and apportioned like freight (owner 2026-08-06).
+    misc_fee = models.DecimalField(max_digits=14, decimal_places=2,
+                                   null=True, blank=True)
     # The supplier's proforma invoice file, uploaded by HO for the Director /
     # Signatory to view before authorising the order (owner 2026-07-13).
     proforma_invoice = models.FileField(upload_to="import-docs/pi/", null=True,

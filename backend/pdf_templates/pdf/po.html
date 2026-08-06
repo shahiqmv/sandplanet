@@ -99,13 +99,20 @@
 </table>
 
 <table class="totals">
+  <tr><td>Subtotal</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
   {% if show_gst %}
-  <tr><td>Untaxed Amount</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
   <tr><td>GST ({{ totals.gst_rate }}%)</td><td class="num">{{ currency }} {{ totals.gst }}</td></tr>
-  <tr class="grand"><td>Total</td><td class="num">{{ currency }} {{ totals.total }}</td></tr>
-  {% else %}
-  <tr class="grand"><td>Total</td><td class="num">{{ currency }} {{ totals.untaxed }}</td></tr>
   {% endif %}
+  {% if totals.has_discount %}
+  <tr><td>Discount</td><td class="num">&minus; {{ currency }} {{ totals.discount }}</td></tr>
+  {% endif %}
+  {% if totals.has_freight %}
+  <tr><td>Freight / handling</td><td class="num">{{ currency }} {{ totals.freight }}</td></tr>
+  {% endif %}
+  {% if totals.has_misc %}
+  <tr><td>Miscellaneous fee</td><td class="num">{{ currency }} {{ totals.misc_fee }}</td></tr>
+  {% endif %}
+  <tr class="grand"><td>Total</td><td class="num">{{ currency }} {{ totals.total }}</td></tr>
 </table>
 
 {% if payload.notes %}

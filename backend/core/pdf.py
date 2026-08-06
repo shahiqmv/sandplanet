@@ -810,6 +810,12 @@ def _po_context(document, revision):
     currency = payload.get("currency") or "MVR"
     gst_rate = Decimal(str(payload.get("tax_rate", _param("gst_rate", 8))))
     gst = (untaxed * gst_rate / 100).quantize(Decimal("0.01"))
+    # Order-level charges from an import PO (owner 2026-08-06): discount off the
+    # goods, supplier freight/handling, and a miscellaneous fee.
+    disc = Decimal(str(payload.get("discount") or 0))
+    freight = Decimal(str(payload.get("freight") or 0))
+    misc = Decimal(str(payload.get("misc_fee") or 0))
+    grand = untaxed + gst - disc + freight + misc
     issue_stamp = ""
     for a in document.approvals.select_related("actor"):
         if a.action == "ISSUE":
@@ -829,7 +835,10 @@ def _po_context(document, revision):
             "untaxed": _money(untaxed),
             "gst_rate": _fmt(float(gst_rate)),
             "gst": _money(gst),
-            "total": _money(untaxed + gst),
+            "has_discount": disc > 0, "discount": _money(disc),
+            "has_freight": freight > 0, "freight": _money(freight),
+            "has_misc": misc > 0, "misc_fee": _money(misc),
+            "total": _money(grand),
         },
         "issue_stamp": issue_stamp,
         "company": company_info(),

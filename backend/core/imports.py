@@ -38,9 +38,9 @@ def ipr_line_subtotal(order):
 
 def ipr_order_total(order):
     """Order value in the order currency: line subtotal − discount + supplier
-    freight/handling (owner 2026-07-21)."""
+    freight/handling + a miscellaneous supplier fee (owner 2026-07-21 / -08-06)."""
     return (ipr_line_subtotal(order) - (order.discount or ZERO)
-            + (order.freight_handling or ZERO))
+            + (order.freight_handling or ZERO) + (order.misc_fee or ZERO))
 
 
 def ipr_mvr_total(order):
@@ -119,7 +119,8 @@ def create_ipr(data, actor):
         discharge_port=data.get("discharge_port", ""),
         pi_ref=data.get("pi_ref", ""), notes=data.get("notes", ""),
         discount=_dec(data.get("discount")) or None,
-        freight_handling=_dec(data.get("freight_handling")) or None)
+        freight_handling=_dec(data.get("freight_handling")) or None,
+        misc_fee=_dec(data.get("misc_fee")) or None)
     _save_lines(order, lines_data)
 
     for pmr in pmrs:
@@ -158,7 +159,7 @@ def update_ipr(doc, data, actor):
     for f in ("incoterm", "loading_port", "discharge_port", "pi_ref", "notes"):
         if f in data:
             setattr(order, f, data.get(f) or "")
-    for f in ("discount", "freight_handling"):
+    for f in ("discount", "freight_handling", "misc_fee"):
         if f in data:
             setattr(order, f, _dec(data.get(f)) or None)
     order.save()
@@ -217,8 +218,8 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
     General Stock pool (never a project). Shared by commitment and payment."""
     gs_head = costing.head("General Stock")
     ho = _ho_site()
-    # Apportion the order-level discount / freight across every line so the
-    # committed MVR equals the real order value, not just the goods subtotal.
+    # Apportion the order-level discount / freight / misc fee across every line
+    # so the committed MVR equals the real order value, not just the subtotal.
     subtotal = ipr_line_subtotal(order)
     net_factor = (ipr_order_total(order) / subtotal) if subtotal else Decimal("1")
     for line in order.lines.all():
@@ -263,6 +264,12 @@ def generate_po_for_ipr(doc, actor):
                 "tax_rate": 0,             # imports: no domestic GST on the PO
                 "payment_terms": order.incoterm or "",
                 "pi_ref": order.pi_ref,
+                # Order-level charges belong on the PO total (owner 2026-08-06):
+                # a discount off the goods, supplier freight/handling, and a
+                # miscellaneous fee (e.g. documentation).
+                "discount": str(order.discount or 0),
+                "freight": str(order.freight_handling or 0),
+                "misc_fee": str(order.misc_fee or 0),
             })
         po.current_revision = revision
         po.save(update_fields=["current_revision"])

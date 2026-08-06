@@ -224,19 +224,21 @@ class IprFlowTests(IprBase):
         self.assertEqual(float(pool_leg.amount), 6000.0)
         self.assertEqual(float(sum(p.amount for p in posts)), 15000.0)
 
-    def test_discount_and_freight_fold_into_total_and_commitment(self):
-        """Order-level discount / supplier freight adjust the order total and
-        apportion across the committed legs (owner 2026-07-21)."""
+    def test_discount_freight_misc_fold_into_total_commitment_and_po(self):
+        """Order-level discount / supplier freight / misc fee adjust the order
+        total, apportion across the committed legs, and appear on the PO
+        (owner 2026-07-21 / -08-06)."""
         self.client.force_authenticate(self.ho)
         body = self.order_body()
         body["discount"] = "100"
         body["freight_handling"] = "50"
+        body["misc_fee"] = "25"
         r = self.client.post("/api/v1/ipr", body, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         ref = r.data["ref"]
         self.assertEqual(float(r.data["line_subtotal"]), 1000.0)
-        self.assertEqual(float(r.data["order_total"]), 950.0)     # 1000-100+50
-        self.assertEqual(float(r.data["mvr_total"]), 14250.0)     # 950 * 15
+        self.assertEqual(float(r.data["order_total"]), 975.0)   # 1000-100+50+25
+        self.assertEqual(float(r.data["mvr_total"]), 14625.0)   # 975 * 15
 
         self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
                          format="json")
@@ -247,13 +249,22 @@ class IprFlowTests(IprBase):
         self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
                          format="json")
         posts = CostPosting.objects.filter(source="IPR", state="COMMITTED")
-        # net_factor 0.95: project 9000*0.95=8550, pool 6000*0.95=5700
+        # net_factor 0.975: project 9000*0.975=8775, pool 6000*0.975=5850
         self.assertAlmostEqual(
-            float(posts.get(is_stock_pool=False).amount), 8550.0, places=1)
+            float(posts.get(is_stock_pool=False).amount), 8775.0, places=1)
         self.assertAlmostEqual(
-            float(posts.get(is_stock_pool=True).amount), 5700.0, places=1)
+            float(posts.get(is_stock_pool=True).amount), 5850.0, places=1)
+
+        # the generated PO carries the order-level charges + the right total
+        from core.models import Document
+        from core.pdf import _po_context
+        po = Document.objects.filter(doc_type="PO").latest("id")
+        totals = _po_context(po, po.current_revision)["totals"]
+        self.assertTrue(totals["has_discount"] and totals["has_freight"]
+                        and totals["has_misc"])
+        self.assertEqual(totals["total"], "975.00")
         self.assertAlmostEqual(
-            float(sum(p.amount for p in posts)), 14250.0, places=1)
+            float(sum(p.amount for p in posts)), 14625.0, places=1)
 
     def test_authorising_generates_supplier_po(self):
         # Owner 2026-07-16: authorising an IPR raises the supplier PO, like a
