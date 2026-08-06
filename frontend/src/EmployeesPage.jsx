@@ -557,6 +557,8 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
   const [f, setF] = useState({
     full_name: employee.full_name || "",
     date_of_birth: employee.date_of_birth || "",
+    gender: employee.gender || "",
+    marital_status: employee.marital_status || "",
     nationality: employee.nationality || "",
     job_category: employee.job_category || "",
     basic_pay: employee.basic_pay ?? "",
@@ -564,9 +566,13 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
     currency: employee.currency || "MVR",
     ot_applies: employee.ot_applies,   // true | false | null
     passport_no: employee.passport_no || "",
+    passport_expiry: employee.passport_expiry || "",
     employment_type: employee.employment_type || "PERMANENT",
     work_permit_no: employee.work_permit_no || "",
     work_permit_expiry: employee.work_permit_expiry || "",
+    work_visa_number: employee.work_visa_number || "",
+    medical_expiry: employee.medical_expiry || "",
+    insurance_expiry: employee.insurance_expiry || "",
     emergency_contact: employee.emergency_contact || "",
     join_date: employee.join_date || "",
     is_active: employee.is_active ?? true,
@@ -597,7 +603,8 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
       if (body.basic_pay === "") body.basic_pay = null;
       if (body.usd_basic_pay === "") body.usd_basic_pay = null;
       if (!body.job_category) body.job_category = null;
-      ["date_of_birth", "work_permit_expiry", "join_date"].forEach((k) => {
+      ["date_of_birth", "passport_expiry", "work_permit_expiry",
+       "medical_expiry", "insurance_expiry", "join_date"].forEach((k) => {
         if (!body[k]) body[k] = null;
       });
       const id = creating
@@ -623,6 +630,16 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
       <span style={{ color: "#5a6b78" }}>{label}</span>
       {children}
     </label>
+  );
+  const Section = ({ title, children }) => (
+    <div style={{ marginTop: 14 }}>
+      <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.5,
+        textTransform: "uppercase", color: "var(--sp-navy)",
+        borderBottom: "1px solid var(--sp-border)", paddingBottom: 4,
+        marginBottom: 10 }}>{title}</div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
+        gap: 10 }}>{children}</div>
+    </div>
   );
 
   return (
@@ -662,8 +679,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
 
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
-                      gap: 10, marginTop: 14 }}>
+        <Section title="Personal info">
           <L label="Full name">
             <input value={f.full_name}
                    onChange={(e) => set({ full_name: e.target.value })}
@@ -672,10 +688,39 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
             <input type="date" value={f.date_of_birth || ""}
                    onChange={(e) => set({ date_of_birth: e.target.value })}
                    style={inputStyle} /></L>
+          <L label="Gender">
+            <select value={f.gender}
+                    onChange={(e) => set({ gender: e.target.value })}
+                    style={inputStyle}>
+              <option value="">—</option>
+              <option value="Male">Male</option>
+              <option value="Female">Female</option></select></L>
+          <L label="Marital status">
+            <select value={f.marital_status}
+                    onChange={(e) => set({ marital_status: e.target.value })}
+                    style={inputStyle}>
+              <option value="">—</option>
+              <option value="Single">Single</option>
+              <option value="Married">Married</option></select></L>
           <L label="Nationality">
             <SelectOrOther value={f.nationality} options={NATIONALITIES}
                            placeholder="Nationality…"
                            onChange={(v) => set({ nationality: v })} /></L>
+          <L label="Passport no.">
+            <input value={f.passport_no}
+                   onChange={(e) => set({ passport_no: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="Passport expiry">
+            <input type="date" value={f.passport_expiry || ""}
+                   onChange={(e) => set({ passport_expiry: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="Emergency contact">
+            <input value={f.emergency_contact}
+                   onChange={(e) => set({ emergency_contact: e.target.value })}
+                   style={inputStyle} /></L>
+        </Section>
+
+        <Section title="Employment info">
           <L label="Job category">
             <select value={f.job_category || ""}
                     onChange={(e) => set({ job_category: e.target.value })}
@@ -685,6 +730,25 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select></L>
+          <L label="Employment type">
+            <select value={f.employment_type}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      // USD basic (split pay) is permanent-only
+                      set(v === "PERMANENT" ? { employment_type: v }
+                                            : { employment_type: v,
+                                                usd_basic_pay: "" });
+                    }}
+                    style={inputStyle}>
+              {EMPLOYMENT.map(([v, l]) => (
+                <option key={v} value={v}>{l}</option>
+              ))}
+            </select>
+            <span style={{ fontSize: 11, color: "#5a6b78" }}>
+              {f.employment_type === "CONTRACT"
+                ? "Temporary hire — not on the company work permit"
+                : "On the company work permit (expiry tracked)"}
+            </span></L>
           {seesPay && (
             <L label="Basic salary (monthly)">
               <input type="number" value={f.basic_pay}
@@ -728,8 +792,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                         e.target.value === "on" ? true
                         : e.target.value === "off" ? false : null })}
                       style={inputStyle}>
-                <option value="inherit">Inherit category default
-                  {employee.ot_effective ? "" : ""}</option>
+                <option value="inherit">Inherit category default</option>
                 <option value="on">Always applies</option>
                 <option value="off">Never applies</option>
               </select>
@@ -739,29 +802,6 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                   : "Currently: no overtime"}
               </span></L>
           )}
-          <L label="Passport no.">
-            <input value={f.passport_no}
-                   onChange={(e) => set({ passport_no: e.target.value })}
-                   style={inputStyle} /></L>
-          <L label="Employment type">
-            <select value={f.employment_type}
-                    onChange={(e) => {
-                      const v = e.target.value;
-                      // USD basic (split pay) is permanent-only
-                      set(v === "PERMANENT" ? { employment_type: v }
-                                            : { employment_type: v,
-                                                usd_basic_pay: "" });
-                    }}
-                    style={inputStyle}>
-              {EMPLOYMENT.map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-            <span style={{ fontSize: 11, color: "#5a6b78" }}>
-              {f.employment_type === "CONTRACT"
-                ? "Temporary hire — not on the company work permit"
-                : "On the company work permit (expiry tracked)"}
-            </span></L>
           <L label="Work permit no.">
             <input value={f.work_permit_no}
                    onChange={(e) => set({ work_permit_no: e.target.value })}
@@ -770,13 +810,21 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
             <input type="date" value={f.work_permit_expiry || ""}
                    onChange={(e) => set({ work_permit_expiry: e.target.value })}
                    style={inputStyle} /></L>
+          <L label="Work visa number">
+            <input value={f.work_visa_number}
+                   onChange={(e) => set({ work_visa_number: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="Medical expiry">
+            <input type="date" value={f.medical_expiry || ""}
+                   onChange={(e) => set({ medical_expiry: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="Insurance expiry">
+            <input type="date" value={f.insurance_expiry || ""}
+                   onChange={(e) => set({ insurance_expiry: e.target.value })}
+                   style={inputStyle} /></L>
           <L label="Join date">
             <input type="date" value={f.join_date || ""}
                    onChange={(e) => set({ join_date: e.target.value })}
-                   style={inputStyle} /></L>
-          <L label="Emergency contact">
-            <input value={f.emergency_contact}
-                   onChange={(e) => set({ emergency_contact: e.target.value })}
                    style={inputStyle} /></L>
           {creating && (
             <L label="Post to site (optional)">
@@ -790,7 +838,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                   <option key={s.id} value={s.id}>{s.code}</option>))}
               </select></L>
           )}
-        </div>
+        </Section>
 
         {isHr && f.employment_type === "PERMANENT" && history
           && history.length > 0 && (

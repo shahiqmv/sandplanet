@@ -1673,7 +1673,10 @@ class Employee(models.Model):
     full_name = models.TextField()
     photo = models.FileField(upload_to="employees/", null=True, blank=True)
     date_of_birth = models.DateField(null=True, blank=True)
+    gender = models.CharField(max_length=10, blank=True)   # Male / Female
+    marital_status = models.CharField(max_length=10, blank=True)  # Single/Married
     passport_no = models.TextField(blank=True)          # sensitive
+    passport_expiry = models.DateField(null=True, blank=True)
     nationality = models.TextField(blank=True)
     job_category = models.ForeignKey(  # company-wide DPR list (spec §6A.1)
         ManpowerCategory, on_delete=models.PROTECT, null=True, blank=True,
@@ -1702,6 +1705,11 @@ class Employee(models.Model):
         default=EmploymentType.PERMANENT)
     work_permit_no = models.TextField(blank=True)
     work_permit_expiry = models.DateField(null=True, blank=True)
+    # Immigration expiries + visa reference from the govt work-permit report,
+    # mirrored so Planet tallies with it (owner 2026-08-06).
+    work_visa_number = models.TextField(blank=True)
+    medical_expiry = models.DateField(null=True, blank=True)
+    insurance_expiry = models.DateField(null=True, blank=True)
     emergency_contact = models.TextField(blank=True)
     join_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)  # deactivate, never delete

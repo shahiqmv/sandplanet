@@ -30,7 +30,9 @@ from .permissions import scoped_site_ids
 HR_ROLES = ("HO_HR", "ADMIN", "PA")
 PAYROLL_ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # R3 addendum
 # passport/permit/contact: HR+Admin only; basic_pay also visible to Finance
-SENSITIVE_FIELDS = ("passport_no", "work_permit_no", "emergency_contact")
+SENSITIVE_FIELDS = ("passport_no", "passport_expiry", "work_permit_no",
+                    "work_visa_number", "medical_expiry", "insurance_expiry",
+                    "emergency_contact")
 PAY_FIELDS = ("basic_pay", "usd_basic_pay")
 
 
@@ -66,11 +68,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Employee
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",
-                  "date_of_birth", "passport_no", "nationality",
+                  "date_of_birth", "gender", "marital_status",
+                  "passport_no", "passport_expiry", "nationality",
                   "job_category", "job_category_name", "basic_pay",
                   "usd_basic_pay", "currency",
                   "ot_applies", "ot_rate", "ot_effective", "employment_type",
-                  "work_permit_no", "work_permit_expiry", "permit_state",
+                  "work_permit_no", "work_permit_expiry", "work_visa_number",
+                  "medical_expiry", "insurance_expiry", "permit_state",
                   "permit_days", "permit_pending", "emergency_contact",
                   "join_date", "is_active", "site_id", "site_code"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
@@ -219,9 +223,13 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         ws.title = "Employees"
         headers = ["Emp No", "Name", "Nationality"]
         if full:
-            headers += ["Date of Birth", "Passport No"]
+            headers += ["Gender", "Marital Status", "Date of Birth",
+                        "Passport No", "Passport Expiry"]
         headers += ["Category", "Site", "Employment",
-                    "Work Permit No", "WP Expiry", "Permit Status"]
+                    "Work Permit No", "WP Expiry"]
+        if full:
+            headers += ["Work Visa No", "Medical Expiry", "Insurance Expiry"]
+        headers += ["Permit Status"]
         if seespay:
             headers += ["Basic Pay", "Currency", "USD Basic", "Overtime"]
         headers += ["Join Date"]
@@ -234,12 +242,18 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         for e in rows:
             row = [e["emp_no"], e["full_name"], e.get("nationality", "")]
             if full:
-                row += [e.get("date_of_birth") or "", e.get("passport_no", "")]
+                row += [e.get("gender", ""), e.get("marital_status", ""),
+                        e.get("date_of_birth") or "", e.get("passport_no", ""),
+                        e.get("passport_expiry") or ""]
             row += [e.get("job_category_name") or "", e.get("site_code") or "",
                     emp_label.get(e["employment_type"], e["employment_type"]),
                     e.get("work_permit_no", ""),
-                    e.get("work_permit_expiry") or "",
-                    e.get("permit_state") or ""]
+                    e.get("work_permit_expiry") or ""]
+            if full:
+                row += [e.get("work_visa_number", ""),
+                        e.get("medical_expiry") or "",
+                        e.get("insurance_expiry") or ""]
+            row += [e.get("permit_state") or ""]
             if seespay:
                 row += [e.get("basic_pay") or "", e.get("currency") or "",
                         e.get("usd_basic_pay") or "",
