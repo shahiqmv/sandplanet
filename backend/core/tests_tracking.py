@@ -192,6 +192,37 @@ class _Fake:
         return ShipsGoProvider()._normalise(_ocean_payload(), "SEA")
 
 
+class HealthReasonTests(TestCase):
+    """The tracker's derived health + actionable reason (owner 2026-08-06)."""
+
+    def _t(self, **kw):
+        return ShipmentTracking(mode="SEA", **kw)     # unsaved is enough
+
+    def test_untracked_booking_points_to_container(self):
+        # the GCL case: provider says UNTRACKED, key is a booking (not container)
+        t = self._t(state=ShipmentTracking.State.ACTIVE, raw_status="UNTRACKED",
+                    tracking_key="GCL2610385")
+        self.assertEqual(tracking.health_for(t), "UNTRACKED")
+        self.assertIn("container number", tracking.reason_for(t).lower())
+
+    def test_untracked_container_suggests_manual(self):
+        t = self._t(state=ShipmentTracking.State.ACTIVE, raw_status="UNTRACKED",
+                    tracking_key="CSQU3054383")       # a valid container number
+        self.assertIn("manual", tracking.reason_for(t).lower())
+
+    def test_failed_reason_is_the_provider_error(self):
+        t = self._t(state=ShipmentTracking.State.FAILED,
+                    last_error="Insufficient credits")
+        self.assertEqual(tracking.health_for(t), "FAILED")
+        self.assertEqual(tracking.reason_for(t), "Insufficient credits")
+
+    def test_healthy_active_has_no_reason(self):
+        t = self._t(state=ShipmentTracking.State.ACTIVE, raw_status="SAILING",
+                    last_event_at=timezone.now())
+        self.assertEqual(tracking.health_for(t), ShipmentTracking.State.ACTIVE)
+        self.assertEqual(tracking.reason_for(t), "")
+
+
 class RegistrationTests(TestCase):
     def test_ensure_prefers_bl_then_registers_active(self):
         ship, _ = _make_shipment(bl_no="MEDUQY000000",

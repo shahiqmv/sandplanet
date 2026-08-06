@@ -312,3 +312,37 @@ def is_stale(tracking, days=7):
         return False
     ref = tracking.last_event_at or tracking.created_at
     return (timezone.now() - ref).days >= days
+
+
+def health_for(tracking):
+    """The display health of a tracking row — its state, but an ACTIVE shipment
+    the provider reports UNTRACKED (or one gone quiet) is surfaced distinctly so
+    the tracker doesn't show a misleading green (owner 2026-08-06)."""
+    if tracking.state == tracking.State.ACTIVE:
+        if (tracking.raw_status or "").upper() == "UNTRACKED":
+            return "UNTRACKED"
+        if is_stale(tracking):
+            return "STALE"
+    return tracking.state
+
+
+def reason_for(tracking, health=None):
+    """A short, actionable explanation of why a shipment isn't showing live
+    milestones, so UNTRACKED/STALE/FAILED isn't a dead end on the tracker."""
+    health = health or health_for(tracking)
+    has_container = is_valid_container((tracking.tracking_key or "").strip())
+    if health == "FAILED":
+        return tracking.last_error or "The provider refused this registration."
+    if health == "UNTRACKED":
+        if not has_container:
+            return ("The provider can't resolve this reference. Track by the "
+                    "container number instead — it detects the carrier "
+                    "automatically — or check the carrier is correct.")
+        return ("The provider can't resolve this shipment — this carrier or "
+                "route may not be in its network. Consider switching to "
+                "manual updates.")
+    if health == "STALE":
+        return "No new movement from the carrier in over a week."
+    if health == tracking.State.PENDING:
+        return "Waiting for the provider to register this shipment."
+    return ""

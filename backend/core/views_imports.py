@@ -187,11 +187,18 @@ class ShipmentSerializer(serializers.ModelSerializer):
             return None
         # stakeholder timeline shows only the normalised milestones, newest last
         events = [e for e in t.events.all() if e.code != "OTHER"]
+        from . import tracking as trk
+        health = trk.health_for(t)
         return {
             "state": t.state, "state_display": t.get_state_display(),
+            "health": health, "reason": trk.reason_for(t, health),
             "mode": t.mode, "carrier_scac": t.carrier_scac,
+            "tracking_key": t.tracking_key,
             "raw_status": t.raw_status, "map_url": t.map_url,
             "current_eta": t.current_eta, "last_event_at": t.last_event_at,
+            "last_polled_at": t.last_polled_at, "registered_at": t.created_at,
+            "register_attempts": t.register_attempts,
+            "provider_tracking_id": t.provider_tracking_id,
             "last_error": t.last_error,
             "events": [{
                 "code": e.code, "code_display": e.get_code_display(),

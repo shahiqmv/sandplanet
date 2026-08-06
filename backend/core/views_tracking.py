@@ -72,15 +72,16 @@ def tracking_health(request):
         "shipment__order__document").order_by("-updated_at")
     for t in qs:
         doc = t.shipment.order.document
-        health = t.state
-        if t.state == ShipmentTracking.State.ACTIVE and trk.is_stale(t):
-            health = "STALE"
+        health = trk.health_for(t)
         rows.append({
             "ipr_ref": doc.ref, "shipment_seq": t.shipment.seq,
+            "shipment_id": t.shipment_id,
             "mode": t.mode, "carrier_scac": t.carrier_scac,
             "tracking_key": t.tracking_key, "state": t.state,
             "health": health, "raw_status": t.raw_status,
+            "reason": trk.reason_for(t, health),
             "current_eta": t.current_eta, "last_event_at": t.last_event_at,
+            "last_polled_at": t.last_polled_at, "registered_at": t.created_at,
             "provider_tracking_id": t.provider_tracking_id,
             "map_url": t.map_url, "last_error": t.last_error,
             "register_attempts": t.register_attempts})

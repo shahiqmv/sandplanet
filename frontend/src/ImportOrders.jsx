@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, SectionTitle,
          StatusChip, td, th } from "./ui.jsx";
@@ -679,6 +679,9 @@ const TRACK_STATE_STYLE = {
   PENDING_REGISTRATION: { bg: "#fdf3e7", fg: "#8a5a00", label: "Registering…" },
   FAILED: { bg: "#fbeae8", fg: "#b0402f", label: "Tracking failed" },
   MANUAL: { bg: "#eef0f2", fg: "#41505c", label: "Manual updates" },
+  // health-only states (state stays ACTIVE, but the provider isn't delivering)
+  UNTRACKED: { bg: "#fbeae8", fg: "#b0402f", label: "Not trackable" },
+  STALE: { bg: "#fdf3e7", fg: "#8a5a00", label: "No recent movement" },
 };
 const MILE_LABEL = { DEPARTED: "Departed origin",
   TRANSSHIPMENT: "Transshipment", ARRIVED: "Arrived Malé",
@@ -690,7 +693,8 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
   const [ev, setEv] = useState({ code: "DEPARTED", description: "",
     location: "" });
   if (!t) return null;
-  const st = TRACK_STATE_STYLE[t.state] || TRACK_STATE_STYLE.MANUAL;
+  const st = TRACK_STATE_STYLE[t.health] || TRACK_STATE_STYLE[t.state]
+    || TRACK_STATE_STYLE.MANUAL;
 
   async function post(action, body) {
     onError(null);
@@ -720,9 +724,20 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
             onClick={() => post("manual", { action: "switch" })}>
             Switch to manual</button>)}
       </div>
-      {t.last_error && t.state === "FAILED" && (
-        <div style={{ fontSize: 11.5, color: "#b0402f", marginTop: 4 }}>
-          {t.last_error}</div>)}
+      <div style={{ fontSize: 11, color: "#8a97a1", marginTop: 3,
+        display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <span>{t.mode === "AIR" ? "AWB" : "Carrier"}:{" "}
+          {t.carrier_scac || (t.mode === "AIR" ? "—" : "auto-detect")}</span>
+        {t.tracking_key && <span>Key: {t.tracking_key}</span>}
+        {t.raw_status && <span>Provider: {t.raw_status}</span>}
+        {t.registered_at && <span>Registered {t.registered_at.slice(0, 10)}</span>}
+        {t.last_polled_at && <span>Checked {t.last_polled_at.slice(0, 10)}</span>}
+        {t.register_attempts > 1 && <span>{t.register_attempts} attempts</span>}
+      </div>
+      {t.reason && ["FAILED", "STALE", "UNTRACKED",
+        "PENDING_REGISTRATION"].includes(t.health) && (
+        <div style={{ fontSize: 11.5, color: HEALTH_TONE[t.health] || "#b0402f",
+          marginTop: 4 }}>⚠ {t.reason}</div>)}
       {t.events && t.events.length > 0 && (
         <div style={{ marginTop: 6 }}>
           {t.events.map((e, i) => (
@@ -1767,16 +1782,27 @@ const SHIP_TONE = { BOOKED: "#8a97a1", SHIPPED: "#1d6fb8",
 
 const HEALTH_TONE = { ACTIVE: "#1a7f37", ARRIVED: "#1d6fb8",
   PENDING_REGISTRATION: "#b35900", FAILED: "#c0392b", MANUAL: "#6b7681",
-  STALE: "#c0392b" };
+  STALE: "#c0392b", UNTRACKED: "#b0402f" };
+const HEALTH_LABEL = { PENDING_REGISTRATION: "Registering",
+  UNTRACKED: "Untracked", STALE: "Stale", FAILED: "Failed",
+  ACTIVE: "Active", ARRIVED: "Arrived", MANUAL: "Manual" };
+const ATTENTION = ["FAILED", "STALE", "PENDING_REGISTRATION", "UNTRACKED"];
+const dt = (s) => (s ? s.slice(0, 10) : "—");
 
-function TrackingHealth() {
+function TrackingHealth({ canManage }) {
   const [rows, setRows] = useState(null);
+  const [busy, setBusy] = useState(null);
   const load = () => api("/tracking/health")
     .then((d) => setRows(d.items || [])).catch(() => setRows([]));
   useEffect(() => { load(); }, []);
+  async function retry(id) {
+    setBusy(id);
+    try { await api(`/tracking/shipments/${id}/retry`, { method: "POST" }); }
+    catch { /* surfaced by the reason on reload */ }
+    finally { setBusy(null); load(); }
+  }
   if (!rows || rows.length === 0) return null;
-  const attention = rows.filter((r) =>
-    ["FAILED", "STALE", "PENDING_REGISTRATION"].includes(r.health)).length;
+  const attention = rows.filter((r) => ATTENTION.includes(r.health)).length;
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1793,26 +1819,51 @@ function TrackingHealth() {
                         fontSize: 12.5 }}>
           <thead><tr>
             <th style={th}>Order</th><th style={th}>Mode</th>
-            <th style={th}>Key</th><th style={th}>State</th>
-            <th style={th}>Live status</th><th style={th}>ETA</th>
-            <th style={th}>Last event</th>
+            <th style={th}>Carrier</th><th style={th}>Key</th>
+            <th style={th}>Health</th><th style={th}>Live status</th>
+            <th style={th}>ETA</th><th style={th}>Last event</th>
+            <th style={th}>Checked</th><th style={th} />
           </tr></thead>
           <tbody>
-            {rows.map((r, i) => (
-              <tr key={i}>
-                <td style={td}>{r.ipr_ref} · S{r.shipment_seq}</td>
-                <td style={td}>{r.mode}</td>
-                <td style={td}>{r.carrier_scac ? r.carrier_scac + " · " : ""}
-                  {r.tracking_key || "—"}</td>
-                <td style={{ ...td, color: HEALTH_TONE[r.health] || "#41505c",
-                  fontWeight: 600 }}>{r.health}</td>
-                <td style={td}>{r.raw_status || "—"}</td>
-                <td style={td}>{r.current_eta
-                  ? r.current_eta.slice(0, 10) : "—"}</td>
-                <td style={td}>{r.last_event_at
-                  ? r.last_event_at.slice(0, 10) : "—"}</td>
-              </tr>
-            ))}
+            {rows.map((r, i) => {
+              const needs = ATTENTION.includes(r.health);
+              return (
+                <Fragment key={i}>
+                  <tr>
+                    <td style={td}>{r.ipr_ref} · S{r.shipment_seq}</td>
+                    <td style={td}>{r.mode}</td>
+                    <td style={td}>{r.carrier_scac
+                      || <span style={{ color: "#8a97a1" }}>auto</span>}</td>
+                    <td style={{ ...td, fontVariantNumeric: "tabular-nums" }}>
+                      {r.tracking_key || "—"}</td>
+                    <td style={{ ...td, color: HEALTH_TONE[r.health]
+                      || "#41505c", fontWeight: 600 }}>
+                      {HEALTH_LABEL[r.health] || r.health}
+                      {r.register_attempts > 1
+                        ? ` ·${r.register_attempts}×` : ""}</td>
+                    <td style={td}>{r.raw_status || "—"}</td>
+                    <td style={td}>{dt(r.current_eta)}</td>
+                    <td style={td}>{dt(r.last_event_at)}</td>
+                    <td style={{ ...td, color: "#8a97a1" }}>
+                      {dt(r.last_polled_at)}</td>
+                    <td style={td}>{canManage && ["FAILED",
+                      "PENDING_REGISTRATION"].includes(r.state)
+                      && r.shipment_id && (
+                      <button style={{ ...ghostButton, padding: "1px 9px",
+                        fontSize: 11.5 }} disabled={busy === r.shipment_id}
+                        onClick={() => retry(r.shipment_id)}>
+                        {busy === r.shipment_id ? "…" : "Retry"}</button>)}</td>
+                  </tr>
+                  {needs && r.reason && (
+                    <tr>
+                      <td /><td colSpan={9} style={{ padding: "0 8px 7px 8px",
+                        fontSize: 11.5, color: HEALTH_TONE[r.health]
+                        || "#b0402f" }}>↳ {r.reason}</td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1878,7 +1929,8 @@ export function ImportTracker({ me, onOpenIpr }) {
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
       <CarrierAdmin isAdmin={me && me.role === "ADMIN"} />
-      <TrackingHealth />
+      <TrackingHealth canManage={me
+        && ["HO_PURCHASING", "ADMIN"].includes(me.role)} />
 
       {data?.awaiting_order?.length > 0 && (
         <section style={card}>
