@@ -264,6 +264,25 @@ class RegistrationTests(TestCase):
             ship.order, {"mode": "AIR", "container_awb": "17612345676"}, actor)
         self.assertIn("awb", (msg or "").lower())
 
+    def test_container_edit_reregisters_stuck_untracked(self):
+        # The GCL case: an ACTIVE-but-UNTRACKED tracking must re-register when
+        # the key is corrected to a container number — the old code only
+        # re-registered PENDING/FAILED, so the edit was ignored (owner 2026-08-06).
+        ship, actor = _make_shipment(container="GCL2610385")
+        ship.status = "SHIPPED"
+        ship.save()
+        t = ShipmentTracking.objects.create(
+            shipment=ship, mode="SEA", state=ShipmentTracking.State.ACTIVE,
+            raw_status="UNTRACKED", tracking_key="GCL2610385",
+            provider_ref="IPR-HO-001-S1", register_attempts=1)
+        with patch("core.tracking.get_provider", return_value=_Fake()):
+            ipr_svc.update_shipment_details(
+                ship, {"container_awb": "CSQU3054383"}, actor)
+        t.refresh_from_db()
+        self.assertEqual(t.tracking_key, "CSQU3054383")   # new key took effect
+        self.assertEqual(t.state, "ACTIVE")
+        self.assertTrue(t.events.exists())                # and it tracked
+
     def test_adding_bl_after_shipping_registers_a_multishipment_leg(self):
         # A shipment booked + shipped with no key (common: B/L arrives later).
         ship, actor = _make_shipment()

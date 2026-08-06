@@ -346,3 +346,22 @@ def reason_for(tracking, health=None):
     if health == tracking.State.PENDING:
         return "Waiting for the provider to register this shipment."
     return ""
+
+
+def movements_for(tracking):
+    """Every stored provider movement as display rows (the full ShipsGo-style
+    timeline) — shared by the IPR shipment panel and the tracking-health list."""
+    from .models import TrackingEvent
+    from .tracking_shipsgo import move_label
+    out = []
+    for e in tracking.events.all():
+        out.append({
+            "label": (move_label(e.provider_event_code, tracking.mode,
+                                 e.code == TrackingEvent.Code.TRANSSHIPMENT)
+                      if e.provider_event_code else e.get_code_display()),
+            "provider_code": e.provider_event_code,
+            "location": e.location, "vessel_flight": e.vessel_flight,
+            "event_time": e.event_time, "is_actual": e.is_actual,
+            "is_milestone": e.code != TrackingEvent.Code.OTHER,
+        })
+    return out

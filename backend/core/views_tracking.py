@@ -84,24 +84,39 @@ def tracking_health(request):
             "last_polled_at": t.last_polled_at, "registered_at": t.created_at,
             "provider_tracking_id": t.provider_tracking_id,
             "map_url": t.map_url, "last_error": t.last_error,
-            "register_attempts": t.register_attempts})
+            "register_attempts": t.register_attempts,
+            "movements": trk.movements_for(t)})
     return Response({"items": rows})
 
 
 @api_view(["POST"])
 def tracking_retry(request, pk):
-    """Re-attempt registration of a PENDING/FAILED tracking."""
+    """Re-attempt tracking: re-sync the shipment's current keys and force a fresh
+    registration — for a failed/pending tracking OR an active one the provider
+    can't resolve (owner 2026-08-06). Arrived / manual shipments are left alone."""
     if request.user.role not in MANAGE:
         return Response({"detail": "Head Office manages tracking."}, status=403)
-    t = ShipmentTracking.objects.filter(shipment_id=pk).first()
-    if t is None:
-        t = trk.ensure_tracking(_shipment_for(request, pk))
+    ship = _shipment_for(request, pk)
+    if ship is None:
+        return Response({"detail": "Not found."}, status=404)
+    t = ShipmentTracking.objects.filter(shipment_id=pk).first() \
+        or trk.ensure_tracking(ship)
     if t is None:
         return Response({"detail": "No tracking key on this shipment."},
                         status=400)
-    if t.state == ShipmentTracking.State.FAILED:
-        t.state = ShipmentTracking.State.PENDING
-        t.save(update_fields=["state", "updated_at"])
+    if t.state in (ShipmentTracking.State.ARRIVED, ShipmentTracking.State.MANUAL):
+        return Response({"state": t.state, "error": ""})
+    key = (ship.container_awb.strip() if ship.mode == "AIR"
+           else trk._sea_key(ship))
+    if key:
+        t.tracking_key = trk.normalise_key(key)
+    t.carrier_scac = (ship.carrier_scac or "").strip().upper()
+    t.mode = ship.mode
+    t.raw_status = ""
+    t.last_error = ""
+    t.register_attempts = 0
+    t.state = ShipmentTracking.State.PENDING
+    t.save()
     trk.register_tracking(t)
     t.refresh_from_db()
     return Response({"state": t.state, "error": t.last_error})

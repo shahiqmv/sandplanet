@@ -593,10 +593,26 @@ def _register_tracking(shipment):
             return
         key = (shipment.container_awb.strip() if shipment.mode == "AIR"
                else trk._sea_key(shipment))
-        if t.state in (t.State.PENDING, t.State.FAILED) and key:
+        if not key:
+            return
+        new_key = trk.normalise_key(key)
+        new_scac = (shipment.carrier_scac or "").strip().upper()
+        key_changed = new_key != t.tracking_key or new_scac != t.carrier_scac
+        # Re-register a pending/failed tracking — but ALSO an active one whose
+        # keys changed (the common "entered the container number later" fix) or
+        # that the provider still can't resolve. Never disturb an arrived or
+        # manual shipment (owner 2026-08-06 — a container edit was being ignored
+        # because the untracked shipment sat in ACTIVE).
+        stuck = t.state == t.State.ACTIVE and trk.health_for(t) == "UNTRACKED"
+        if t.state in (t.State.PENDING, t.State.FAILED) or (
+                t.state == t.State.ACTIVE and (key_changed or stuck)):
             t.mode = shipment.mode
-            t.carrier_scac = (shipment.carrier_scac or "").strip().upper()
-            t.tracking_key = trk.normalise_key(key)
+            t.carrier_scac = new_scac
+            t.tracking_key = new_key
+            t.raw_status = ""
+            t.last_error = ""
+            if key_changed:
+                t.register_attempts = 0      # a new key gets a fresh budget
             t.state = t.State.PENDING
             t.save()
             trk.register_tracking(t)

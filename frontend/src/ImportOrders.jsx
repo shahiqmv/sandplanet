@@ -687,6 +687,44 @@ const MILE_LABEL = { DEPARTED: "Departed origin",
   TRANSSHIPMENT: "Transshipment", ARRIVED: "Arrived Malé",
   ETA_UPDATED: "ETA updated", OTHER: "Update" };
 
+// The full provider movement list (ShipsGo-style) — move · location · vessel ·
+// date, actual (green) vs estimated. Shared by the IPR panel + health list.
+function MovementsTable({ movements }) {
+  if (!movements || movements.length === 0) return null;
+  const hc = { padding: "0 10px 4px 0", fontWeight: 500 };
+  return (
+    <div style={{ marginTop: 8, maxHeight: 240, overflowY: "auto",
+      overflowX: "auto" }}>
+      <table style={{ borderCollapse: "collapse", fontSize: 11.5,
+        width: "100%" }}>
+        <thead><tr style={{ color: "#8a97a1", textAlign: "left" }}>
+          <th style={{ ...hc, paddingLeft: 16 }}>Move</th>
+          <th style={hc}>Location</th><th style={hc}>Vessel</th>
+          <th style={hc}>Date</th>
+        </tr></thead>
+        <tbody>
+          {movements.map((m, i) => (
+            <tr key={i} style={{ color: "#41505c" }}>
+              <td style={{ padding: "2px 8px 2px 0", whiteSpace: "nowrap",
+                fontWeight: m.is_milestone ? 600 : 400 }}>
+                <span style={{ marginRight: 6, color: m.is_actual
+                  ? "#1f7a3d" : "#c4ccd2" }}>●</span>{m.label}</td>
+              <td style={{ padding: "2px 10px 2px 0" }}>{m.location}</td>
+              <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78" }}>
+                {m.vessel_flight || "—"}</td>
+              <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78",
+                whiteSpace: "nowrap" }}>
+                {m.event_time ? m.event_time.slice(0, 10) : "—"}
+                {!m.is_actual && <span style={{ color: "#8a97a1" }}>
+                  {" "}· est.</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function TrackingBlock({ s, canManage, onChanged, onError }) {
   const t = s.tracking;
   const [logging, setLogging] = useState(false);
@@ -716,8 +754,8 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
         {t.map_url && (<a href={t.map_url} target="_blank" rel="noreferrer"
           style={{ fontSize: 12, color: "var(--sp-navy)", fontWeight: 600 }}>
           📍 Live position ↗</a>)}
-        {canManage && (t.state === "FAILED"
-          || t.state === "PENDING_REGISTRATION") && (
+        {canManage && ["FAILED", "PENDING_REGISTRATION", "UNTRACKED",
+          "STALE"].includes(t.health) && (
           <button style={{ ...ghostButton, padding: "2px 10px" }}
             onClick={() => post("retry", {})}>Retry</button>)}
         {canManage && t.state !== "MANUAL" && t.state !== "ARRIVED" && (
@@ -739,39 +777,7 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
         "PENDING_REGISTRATION"].includes(t.health) && (
         <div style={{ fontSize: 11.5, color: HEALTH_TONE[t.health] || "#b0402f",
           marginTop: 4 }}>⚠ {t.reason}</div>)}
-      {t.movements && t.movements.length > 0 && (
-        <div style={{ marginTop: 8, maxHeight: 240, overflowY: "auto",
-          overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 11.5,
-            width: "100%" }}>
-            <thead><tr style={{ color: "#8a97a1", textAlign: "left" }}>
-              <th style={{ padding: "0 8px 4px 16px", fontWeight: 500 }}>Move</th>
-              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>
-                Location</th>
-              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>Vessel</th>
-              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>Date</th>
-            </tr></thead>
-            <tbody>
-              {t.movements.map((m, i) => (
-                <tr key={i} style={{ color: "#41505c" }}>
-                  <td style={{ padding: "2px 8px 2px 0", whiteSpace: "nowrap",
-                    fontWeight: m.is_milestone ? 600 : 400 }}>
-                    <span style={{ marginRight: 6, color: m.is_actual
-                      ? "#1f7a3d" : "#c4ccd2" }}>●</span>{m.label}</td>
-                  <td style={{ padding: "2px 10px 2px 0" }}>{m.location}</td>
-                  <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78" }}>
-                    {m.vessel_flight || "—"}</td>
-                  <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78",
-                    whiteSpace: "nowrap" }}>
-                    {m.event_time ? m.event_time.slice(0, 10) : "—"}
-                    {!m.is_actual && <span style={{ color: "#8a97a1" }}>
-                      {" "}· est.</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+      <MovementsTable movements={t.movements} />
       {canManage && (logging ? (
         <div style={{ marginTop: 6, display: "flex", gap: 6, flexWrap: "wrap",
                       alignItems: "center" }}>
@@ -1808,6 +1814,7 @@ const dt = (s) => (s ? s.slice(0, 10) : "—");
 function TrackingHealth({ canManage }) {
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(null);
+  const [open, setOpen] = useState({});
   const load = () => api("/tracking/health")
     .then((d) => setRows(d.items || [])).catch(() => setRows([]));
   useEffect(() => { load(); }, []);
@@ -1843,10 +1850,18 @@ function TrackingHealth({ canManage }) {
           <tbody>
             {rows.map((r, i) => {
               const needs = ATTENTION.includes(r.health);
+              const hasMoves = r.movements && r.movements.length > 0;
+              const isOpen = open[i];
               return (
                 <Fragment key={i}>
                   <tr>
-                    <td style={td}>{r.ipr_ref} · S{r.shipment_seq}</td>
+                    <td style={{ ...td, cursor: hasMoves ? "pointer" : "default",
+                      whiteSpace: "nowrap" }}
+                      onClick={() => hasMoves
+                        && setOpen((o) => ({ ...o, [i]: !isOpen }))}>
+                      {hasMoves && <span style={{ color: "#8a97a1",
+                        marginRight: 4 }}>{isOpen ? "▾" : "▸"}</span>}
+                      {r.ipr_ref} · S{r.shipment_seq}</td>
                     <td style={td}>{r.mode}</td>
                     <td style={td}>{r.carrier_scac
                       || <span style={{ color: "#8a97a1" }}>auto</span>}</td>
@@ -1862,9 +1877,7 @@ function TrackingHealth({ canManage }) {
                     <td style={td}>{dt(r.last_event_at)}</td>
                     <td style={{ ...td, color: "#8a97a1" }}>
                       {dt(r.last_polled_at)}</td>
-                    <td style={td}>{canManage && ["FAILED",
-                      "PENDING_REGISTRATION"].includes(r.state)
-                      && r.shipment_id && (
+                    <td style={td}>{canManage && needs && r.shipment_id && (
                       <button style={{ ...ghostButton, padding: "1px 9px",
                         fontSize: 11.5 }} disabled={busy === r.shipment_id}
                         onClick={() => retry(r.shipment_id)}>
@@ -1876,6 +1889,10 @@ function TrackingHealth({ canManage }) {
                         fontSize: 11.5, color: HEALTH_TONE[r.health]
                         || "#b0402f" }}>↳ {r.reason}</td>
                     </tr>
+                  )}
+                  {isOpen && hasMoves && (
+                    <tr><td /><td colSpan={9} style={{ padding: "0 8px 8px 8px" }}>
+                      <MovementsTable movements={r.movements} /></td></tr>
                   )}
                 </Fragment>
               );
