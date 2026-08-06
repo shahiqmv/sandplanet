@@ -4,10 +4,6 @@ import { NATIONALITIES } from "./constants.js";
 import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
-const EMPTY = { full_name: "", nationality: "", job_category: "",
-                basic_pay: "", usd_basic_pay: "", currency: "MVR",
-                passport_no: "",
-                employment_type: "PERMANENT", join_date: "", site_id: "" };
 
 const EMPLOYMENT = [["PERMANENT", "Permanent"], ["CONTRACT", "Contract"]];
 
@@ -41,10 +37,17 @@ export default function EmployeesPage({ me, sites }) {
   const [employees, setEmployees] = useState([]);
   const [categories, setCategories] = useState([]);
   const [alerts, setAlerts] = useState(null);
-  const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(null);   // employee being edited
+  const [creating, setCreating] = useState(false); // new-employee modal
   const [batch, setBatch] = useState(false);       // batch-renew modal
+  const [showAlerts, setShowAlerts] = useState(false);
+  const [q, setQ] = useState("");
+  const [fSite, setFSite] = useState("");
+  const [fCat, setFCat] = useState("");
+  const [fCur, setFCur] = useState("");
+  const [fStatus, setFStatus] = useState("active");
+  const [fPermit, setFPermit] = useState("");
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
@@ -59,21 +62,18 @@ export default function EmployeesPage({ me, sites }) {
       setCategories(all.filter((c) => c.list_type === "DPR" && c.is_active)));
   }, []);
 
-  async function add() {
-    setError(null);
-    try {
-      const body = { ...draft };
-      if (!body.basic_pay) delete body.basic_pay;
-      if (!body.usd_basic_pay) delete body.usd_basic_pay;
-      if (!body.join_date) delete body.join_date;
-      if (!body.job_category) delete body.job_category;
-      await api("/employees", { method: "POST", body });
-      setDraft(EMPTY);
-      load();
-    } catch (e) {
-      setError(e.message);
-    }
-  }
+  const filtered = employees.filter((e) => {
+    if (q && !`${e.emp_no} ${e.full_name}`.toLowerCase()
+      .includes(q.toLowerCase())) return false;
+    if (fSite === "__none") { if (e.site_code) return false; }
+    else if (fSite && e.site_code !== fSite) return false;
+    if (fCat && String(e.job_category) !== fCat) return false;
+    if (fCur && e.currency !== fCur) return false;
+    if (fStatus === "active" && !e.is_active) return false;
+    if (fStatus === "inactive" && e.is_active) return false;
+    if (fPermit && e.permit_state !== fPermit) return false;
+    return true;
+  });
 
   async function allocate(employee, siteId) {
     if (!siteId) return;
@@ -88,124 +88,104 @@ export default function EmployeesPage({ me, sites }) {
         <div style={{ display: "flex", justifyContent: "space-between",
                       alignItems: "baseline", flexWrap: "wrap", gap: 10 }}>
           <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-            Employees
-          </h2>
+            Employees</h2>
           {isHr && (
-            <button onClick={() => setBatch(true)} style={ghostButton}>
-              🪪 Renew work permits</button>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={() => setCreating(true)} style={buttonStyle}>
+                ＋ New employee</button>
+              <button onClick={() => setBatch(true)} style={ghostButton}>
+                🪪 Renew permits</button>
+            </div>
           )}
         </div>
 
-        {alerts && (alerts.expired.length > 0 || alerts.expiring.length > 0) && (
+        {alerts && (alerts.expired.length + alerts.expiring.length) > 0 && (
           <div style={{ border: "1px solid #f0c9a8", background: "#fdf6ef",
-                        borderRadius: 8, padding: "10px 12px", margin: "6px 0",
+                        borderRadius: 8, padding: "8px 12px", margin: "10px 0",
                         fontSize: 13 }}>
-            <strong style={{ color: "#b35900" }}>
-              Work permits needing attention
-            </strong>
-            <span style={{ color: "#5a6b78" }}>
-              {" "}— permanent workers expiring within {alerts.within_days} days
-            </span>
-            {isHr && (
-              <button onClick={() => setBatch(true)}
-                      style={{ ...buttonStyle, padding: "3px 12px",
-                               fontSize: 12, marginLeft: 10 }}>
-                Renew as batch →</button>
-            )}
-            <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap",
-                          gap: 6 }}>
-              {[...alerts.expired, ...alerts.expiring].map((r) => (
-                <button key={r.id}
-                        onClick={() => isHr && setEditing(
-                          employees.find((e) => e.id === r.id) || null)}
-                        title={`${r.work_permit_no || "no permit no"} · `
-                               + `${r.work_permit_expiry}`}
-                        style={{ border: "none", borderRadius: 6, cursor:
-                          isHr ? "pointer" : "default", padding: "3px 8px",
-                          fontSize: 12, color: "#fff",
-                          background: r.state === "EXPIRED"
-                            ? "#c0392b" : "#b35900" }}>
-                  {r.emp_no} {r.full_name}
-                  {r.site_code ? ` · ${r.site_code}` : ""}
-                  {" · "}
-                  {r.state === "EXPIRED"
-                    ? `expired ${Math.abs(r.days)}d`
-                    : `${r.days}d left`}
-                </button>
-              ))}
+            <div style={{ display: "flex", alignItems: "center", gap: 10,
+                          flexWrap: "wrap" }}>
+              <span style={{ color: "#b35900", fontWeight: 600 }}>
+                🪪 {alerts.expired.length + alerts.expiring.length} work permits
+                need attention</span>
+              <span style={{ color: "#5a6b78" }}>
+                {alerts.expired.length} expired · {alerts.expiring.length}{" "}
+                expiring within {alerts.within_days}d</span>
+              <button onClick={() => setShowAlerts((v) => !v)}
+                style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}>
+                {showAlerts ? "Hide" : "Show"}</button>
+              {isHr && (
+                <button onClick={() => setBatch(true)}
+                  style={{ ...buttonStyle, padding: "3px 12px", fontSize: 12,
+                           marginLeft: "auto" }}>Renew as batch →</button>
+              )}
             </div>
+            {showAlerts && (
+              <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap",
+                            gap: 6 }}>
+                {[...alerts.expired, ...alerts.expiring].map((r) => (
+                  <button key={r.id}
+                    onClick={() => isHr && setEditing(
+                      employees.find((e) => e.id === r.id) || null)}
+                    title={`${r.work_permit_no || "no permit no"} · `
+                           + `${r.work_permit_expiry}`}
+                    style={{ border: "none", borderRadius: 6,
+                      cursor: isHr ? "pointer" : "default", padding: "3px 8px",
+                      fontSize: 12, color: "#fff", background:
+                        r.state === "EXPIRED" ? "#c0392b" : "#b35900" }}>
+                    {r.emp_no} {r.full_name}
+                    {r.site_code ? ` · ${r.site_code}` : ""}{" · "}
+                    {r.state === "EXPIRED"
+                      ? `expired ${Math.abs(r.days)}d` : `${r.days}d left`}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        {isHr && (
-          <div style={{ display: "flex", gap: 8, margin: "12px 0",
-                        flexWrap: "wrap" }}>
-            <input placeholder="Full name" value={draft.full_name}
-                   onChange={(e) => setDraft({ ...draft,
-                                               full_name: e.target.value })}
-                   style={{ ...inputStyle, flex: 1.5, minWidth: 160 }} />
-            <SelectOrOther value={draft.nationality} options={NATIONALITIES}
-                           placeholder="Nationality…" width={140}
-                           onChange={(v) => setDraft({ ...draft,
-                                                       nationality: v })} />
-            <select value={draft.job_category}
-                    onChange={(e) => setDraft({ ...draft,
-                                                job_category: e.target.value })}
-                    style={{ ...inputStyle, width: 160 }}>
-              <option value="">Job category…</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+        <div style={{ display: "flex", gap: 8, margin: "12px 0",
+                      flexWrap: "wrap", alignItems: "center" }}>
+          <input placeholder="Search name / emp no…" value={q}
+                 onChange={(e) => setQ(e.target.value)}
+                 style={{ ...inputStyle, flex: 1, minWidth: 180 }} />
+          <select value={fSite} onChange={(e) => setFSite(e.target.value)}
+                  style={{ ...inputStyle, width: 140 }}>
+            <option value="">All sites</option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.code}>
+                {s.is_head_office ? "🏢 Head Office" : s.code}</option>))}
+            <option value="__none">Unassigned</option>
+          </select>
+          <select value={fCat} onChange={(e) => setFCat(e.target.value)}
+                  style={{ ...inputStyle, width: 150 }}>
+            <option value="">All categories</option>
+            {categories.map((c) => (
+              <option key={c.id} value={String(c.id)}>{c.name}</option>))}
+          </select>
+          {seesPay && (
+            <select value={fCur} onChange={(e) => setFCur(e.target.value)}
+                    style={{ ...inputStyle, width: 100 }}>
+              <option value="">All cur.</option>
+              <option value="MVR">MVR</option><option value="USD">USD</option>
             </select>
-            <input placeholder="Basic pay" type="number"
-                   value={draft.basic_pay}
-                   onChange={(e) => setDraft({ ...draft,
-                                               basic_pay: e.target.value })}
-                   style={{ ...inputStyle, width: 110 }} />
-            <select value={draft.currency}
-                    onChange={(e) => setDraft({ ...draft,
-                                                currency: e.target.value })}
-                    style={{ ...inputStyle, width: 80 }}>
-              <option value="MVR">MVR</option>
-              <option value="USD">USD</option>
-            </select>
-            <input placeholder="USD basic (split pay)" type="number"
-                   title="If set, this worker's basic runs in USD (combined run)
- while OT / allowances / deductions stay MVR with their site team"
-                   value={draft.usd_basic_pay}
-                   onChange={(e) => setDraft({ ...draft,
-                                               usd_basic_pay: e.target.value })}
-                   style={{ ...inputStyle, width: 130 }} />
-            <select value={draft.employment_type}
-                    onChange={(e) => setDraft({ ...draft,
-                                                employment_type: e.target.value })}
-                    style={{ ...inputStyle, width: 120 }}
-                    title={"Permanent workers are on the company work permit; "
-                           + "contract workers are temporary"}>
-              {EMPLOYMENT.map(([v, l]) => (
-                <option key={v} value={v}>{l}</option>
-              ))}
-            </select>
-            <select value={draft.site_id || ""}
-                    onChange={(e) => setDraft({ ...draft,
-                                                site_id: e.target.value })}
-                    style={{ ...inputStyle, width: 150 }}
-                    title={"Post to a site or Head Office — optional, can "
-                           + "transfer later"}>
-              <option value="">Post to… (optional)</option>
-              {sites.filter((s) => s.is_head_office).map((s) => (
-                <option key={s.id} value={s.id}>🏢 Head Office</option>))}
-              {sites.filter((s) => !s.is_head_office).map((s) => (
-                <option key={s.id} value={s.id}>{s.code}</option>))}
-            </select>
-            <button onClick={add} disabled={!draft.full_name}
-                    style={buttonStyle}>Add employee</button>
-          </div>
-        )}
-        <p style={{ color: "#5a6b78", fontSize: 12, margin: "0 0 8px" }}>
-          {isHr ? "Click a row to open the full profile (photo, DOB, permit, "
-                + "currency, overtime, pay)." : ""}
-        </p>
+          )}
+          <select value={fStatus} onChange={(e) => setFStatus(e.target.value)}
+                  style={{ ...inputStyle, width: 110 }}>
+            <option value="active">Active</option>
+            <option value="inactive">Inactive</option>
+            <option value="all">All</option>
+          </select>
+          <select value={fPermit} onChange={(e) => setFPermit(e.target.value)}
+                  style={{ ...inputStyle, width: 130 }}>
+            <option value="">Permit: any</option>
+            <option value="EXPIRING">Expiring</option>
+            <option value="EXPIRED">Expired</option>
+          </select>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {filtered.length} of {employees.length}</span>
+        </div>
+
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -220,7 +200,7 @@ export default function EmployeesPage({ me, sites }) {
             <th style={th}>Allocate</th>
           </tr></thead>
           <tbody>
-            {employees.map((emp) => (
+            {filtered.map((emp) => (
               <tr key={emp.id} style={{ cursor: isHr ? "pointer" : "default" }}>
                 <td style={td} onClick={() => isHr && setEditing(emp)}>
                   {emp.photo_url ? (
@@ -278,8 +258,10 @@ export default function EmployeesPage({ me, sites }) {
                 </td>
               </tr>
             ))}
-            {employees.length === 0 && (
-              <tr><td style={td} colSpan={10}>No employees yet.</td></tr>
+            {filtered.length === 0 && (
+              <tr><td style={{ ...td, color: "var(--muted)" }} colSpan={10}>
+                {employees.length === 0 ? "No employees yet."
+                  : "No employees match these filters."}</td></tr>
             )}
           </tbody>
         </table>
@@ -287,10 +269,18 @@ export default function EmployeesPage({ me, sites }) {
 
       {editing && (
         <EmployeeProfile employee={editing} categories={categories}
-          seesPay={seesPay} isHr={isHr}
+          seesPay={seesPay} isHr={isHr} sites={sites}
           onClose={() => setEditing(null)}
           onChanged={load}
           onSaved={() => { setEditing(null); load(); }} />
+      )}
+
+      {creating && (
+        <EmployeeProfile employee={{}} categories={categories}
+          seesPay={seesPay} isHr={isHr} sites={sites}
+          onClose={() => setCreating(false)}
+          onChanged={load}
+          onSaved={() => { setCreating(false); load(); }} />
       )}
 
       {batch && (
@@ -524,8 +514,9 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
   );
 }
 
-function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
-                          onSaved, onChanged }) {
+function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
+                          onClose, onSaved, onChanged }) {
+  const creating = !employee.id;
   const [f, setF] = useState({
     full_name: employee.full_name || "",
     date_of_birth: employee.date_of_birth || "",
@@ -541,7 +532,8 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
     work_permit_expiry: employee.work_permit_expiry || "",
     emergency_contact: employee.emergency_contact || "",
     join_date: employee.join_date || "",
-    is_active: employee.is_active,
+    is_active: employee.is_active ?? true,
+    site_id: "",                        // create-only: initial allocation
   });
   const [photo, setPhoto] = useState(null);
   const [photoUrl, setPhotoUrl] = useState(employee.photo_url);
@@ -554,27 +546,35 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
                  : f.ot_applies === false ? "off" : "inherit";
 
   useEffect(() => {
-    if (isHr) {
+    if (isHr && !creating) {
       api(`/employees/${employee.id}/permit-renewals`)
         .then(setHistory).catch(() => setHistory([]));
     }
-  }, [employee.id, isHr]);
+  }, [employee.id, isHr, creating]);
 
   async function save() {
     setBusy(true); setError(null);
     try {
       const body = { ...f };
+      const siteId = body.site_id; delete body.site_id;
       if (body.basic_pay === "") body.basic_pay = null;
       if (body.usd_basic_pay === "") body.usd_basic_pay = null;
       if (!body.job_category) body.job_category = null;
       ["date_of_birth", "work_permit_expiry", "join_date"].forEach((k) => {
         if (!body[k]) body[k] = null;
       });
-      await api(`/employees/${employee.id}`, { method: "PATCH", body });
+      const id = creating
+        ? (await api("/employees", { method: "POST", body })).id
+        : (await api(`/employees/${employee.id}`,
+                     { method: "PATCH", body }), employee.id);
+      if (creating && siteId) {
+        await api(`/employees/${id}/allocate`,
+                  { method: "POST", body: { site_id: +siteId } });
+      }
       if (photo) {
         const fd = new FormData();
         fd.append("photo", photo);
-        await apiUpload(`/employees/${employee.id}`, fd, "PATCH");
+        await apiUpload(`/employees/${id}`, fd, "PATCH");
       }
       onSaved();
     } catch (e) { setError(e.message); }
@@ -609,7 +609,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
           )}
           <div style={{ flex: 1 }}>
             <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
-              {employee.emp_no}</h2>
+              {creating ? "New employee" : employee.emp_no}</h2>
             <label style={{ fontSize: 12, color: "#3f6f9f", cursor: "pointer" }}>
               {photoUrl ? "Change photo" : "Add photo"}
               <input type="file" accept="image/*" style={{ display: "none" }}
@@ -723,6 +723,18 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, onClose,
             <input value={f.emergency_contact}
                    onChange={(e) => set({ emergency_contact: e.target.value })}
                    style={inputStyle} /></L>
+          {creating && (
+            <L label="Post to site (optional)">
+              <select value={f.site_id}
+                      onChange={(e) => set({ site_id: e.target.value })}
+                      style={inputStyle}>
+                <option value="">—</option>
+                {sites.filter((s) => s.is_head_office).map((s) => (
+                  <option key={s.id} value={s.id}>🏢 Head Office</option>))}
+                {sites.filter((s) => !s.is_head_office).map((s) => (
+                  <option key={s.id} value={s.id}>{s.code}</option>))}
+              </select></L>
+          )}
         </div>
 
         {isHr && f.employment_type === "PERMANENT" && history
