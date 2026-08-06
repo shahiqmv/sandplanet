@@ -47,7 +47,7 @@ export default function EmployeesPage({ me, sites }) {
   const [fCat, setFCat] = useState("");
   const [fCur, setFCur] = useState("");
   const [fStatus, setFStatus] = useState("active");
-  const [fPermit, setFPermit] = useState("");
+  const [fEmp, setFEmp] = useState("");
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
@@ -71,9 +71,13 @@ export default function EmployeesPage({ me, sites }) {
     if (fCur && e.currency !== fCur) return false;
     if (fStatus === "active" && !e.is_active) return false;
     if (fStatus === "inactive" && e.is_active) return false;
-    if (fPermit && e.permit_state !== fPermit) return false;
+    if (fEmp && e.employment_type !== fEmp) return false;
     return true;
   });
+
+  const exportUrl = "/api/v1/employees/export?" + new URLSearchParams(
+    Object.entries({ q, site: fSite, category: fCat, currency: fCur,
+      status: fStatus, employment: fEmp }).filter(([, v]) => v));
 
   async function allocate(employee, siteId) {
     if (!siteId) return;
@@ -176,14 +180,20 @@ export default function EmployeesPage({ me, sites }) {
             <option value="inactive">Inactive</option>
             <option value="all">All</option>
           </select>
-          <select value={fPermit} onChange={(e) => setFPermit(e.target.value)}
-                  style={{ ...inputStyle, width: 130 }}>
-            <option value="">Permit: any</option>
-            <option value="EXPIRING">Expiring</option>
-            <option value="EXPIRED">Expired</option>
+          <select value={fEmp} onChange={(e) => setFEmp(e.target.value)}
+                  style={{ ...inputStyle, width: 140 }}>
+            <option value="">All types</option>
+            <option value="PERMANENT">Permanent</option>
+            <option value="CONTRACT">Contract</option>
           </select>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {filtered.length} of {employees.length}</span>
+          {seesPay && (
+            <a href={exportUrl}
+               style={{ ...ghostButton, textDecoration: "none",
+                        padding: "5px 12px", marginLeft: "auto" }}>
+              ⬇ Export to Excel</a>
+          )}
         </div>
 
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}

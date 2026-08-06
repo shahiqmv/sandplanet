@@ -117,6 +117,20 @@ class EmployeeSensitivityTests(HrBase):
         self.assertNotIn("basic_pay", log.detail["fields"])
         self.assertIn("nationality", log.detail["fields"])
 
+    def test_employee_export_xlsx_and_gating(self):
+        self.as_user(self.hr)
+        r = self.client.get("/api/v1/employees/export")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("spreadsheetml", r["Content-Type"])
+        self.assertEqual(r.content[:2], b"PK")            # xlsx is a zip
+        # a filter matching no one still returns a valid workbook
+        self.assertEqual(self.client.get(
+            "/api/v1/employees/export?employment=CONTRACT").status_code, 200)
+        # a non-pay role can't export the register
+        self.as_user(self.pm)
+        self.assertEqual(self.client.get(
+            "/api/v1/employees/export").status_code, 403)
+
 
 class AttendanceTests(HrBase):
     def test_grid_prefills_site_hours(self):

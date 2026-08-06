@@ -140,6 +140,89 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_active=True)
         return qs.distinct()
 
+    @action(detail=False, methods=["get"])
+    def export(self, request):
+        """Download the employee register as xlsx, matching the on-screen
+        filters (owner 2026-08-06). Pay columns only for pay-seeing roles."""
+        if request.user.role not in PAYROLL_ROLES:
+            return Response({"detail": "Not permitted."}, status=403)
+        from openpyxl import Workbook
+        from openpyxl.styles import Font
+        from openpyxl.utils import get_column_letter
+
+        qs = Employee.objects.select_related("job_category").order_by("emp_no")
+        if request.GET.get("include_subcontract") != "1":
+            qs = qs.hr_managed()
+        site_ids = scoped_site_ids(request.user)
+        if site_ids is not None:
+            qs = qs.filter(site_allocations__site_id__in=site_ids,
+                           site_allocations__to_date__isnull=True)
+        data = EmployeeSerializer(qs.distinct(), many=True,
+                                  context={"request": request}).data
+
+        q = request.GET.get("q", "").lower()
+        fsite = request.GET.get("site", "")
+        fcat = request.GET.get("category", "")
+        fcur = request.GET.get("currency", "")
+        fstatus = request.GET.get("status", "active")
+        femp = request.GET.get("employment", "")
+
+        def keep(e):
+            if q and q not in f"{e['emp_no']} {e['full_name']}".lower():
+                return False
+            if fsite == "__none":
+                if e.get("site_code"):
+                    return False
+            elif fsite and e.get("site_code") != fsite:
+                return False
+            if fcat and str(e.get("job_category")) != fcat:
+                return False
+            if fcur and e.get("currency") != fcur:
+                return False
+            if fstatus == "active" and not e["is_active"]:
+                return False
+            if fstatus == "inactive" and e["is_active"]:
+                return False
+            if femp and e["employment_type"] != femp:
+                return False
+            return True
+
+        rows = [e for e in data if keep(e)]
+        seespay = _sees_pay(request.user)
+        emp_label = {"PERMANENT": "Permanent", "CONTRACT": "Contract"}
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Employees"
+        headers = ["Emp No", "Name", "Nationality", "Category", "Site",
+                   "Employment", "Permit No", "Permit Expiry", "Permit Status"]
+        if seespay:
+            headers += ["Basic Pay", "Currency", "USD Basic", "Overtime"]
+        headers += ["Join Date", "Status"]
+        ws.append(headers)
+        for c in ws[1]:
+            c.font = Font(bold=True)
+        for e in rows:
+            row = [e["emp_no"], e["full_name"], e.get("nationality", ""),
+                   e.get("job_category_name") or "", e.get("site_code") or "",
+                   emp_label.get(e["employment_type"], e["employment_type"]),
+                   e.get("work_permit_no", ""),
+                   e.get("work_permit_expiry") or "",
+                   e.get("permit_state") or ""]
+            if seespay:
+                row += [e.get("basic_pay") or "", e.get("currency") or "",
+                        e.get("usd_basic_pay") or "",
+                        f'{e["ot_rate"]}/hr' if e.get("ot_effective") else ""]
+            row += [e.get("join_date") or "",
+                    "Active" if e["is_active"] else "Inactive"]
+            ws.append(row)
+        for i, h in enumerate(headers, 1):
+            ws.column_dimensions[get_column_letter(i)].width = max(12, len(h) + 3)
+        resp = HttpResponse(content_type="application/vnd.openxmlformats-"
+                            "officedocument.spreadsheetml.sheet")
+        resp["Content-Disposition"] = 'attachment; filename="employees.xlsx"'
+        wb.save(resp)
+        return resp
+
     def perform_create(self, serializer):
         from .numbering import next_ref
 
