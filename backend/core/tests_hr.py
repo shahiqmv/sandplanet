@@ -117,6 +117,17 @@ class EmployeeSensitivityTests(HrBase):
         self.assertNotIn("basic_pay", log.detail["fields"])
         self.assertIn("nationality", log.detail["fields"])
 
+    def test_set_all_contract_command(self):
+        from django.core.management import call_command
+        # dry run changes nothing
+        call_command("set_all_contract")
+        self.mason.refresh_from_db()
+        self.assertEqual(self.mason.employment_type, "PERMANENT")
+        # --apply flips direct employees to CONTRACT
+        call_command("set_all_contract", "--apply")
+        self.mason.refresh_from_db()
+        self.assertEqual(self.mason.employment_type, "CONTRACT")
+
     def test_usd_basic_is_permanent_only_and_zeroes_mvr_basic(self):
         self.as_user(self.hr)
         # setting a USD basic zeroes the MVR basic
