@@ -181,6 +181,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         fcur = request.GET.get("currency", "")
         fstatus = request.GET.get("status", "active")
         femp = request.GET.get("employment", "")
+        fnat = request.GET.get("nationality", "")
 
         def keep(e):
             if q and q not in f"{e['emp_no']} {e['full_name']}".lower():
@@ -199,6 +200,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             if fstatus == "inactive" and e["is_active"]:
                 return False
             if femp and e["employment_type"] != femp:
+                return False
+            if fnat and e.get("nationality") != fnat:
                 return False
             return True
 

@@ -48,6 +48,7 @@ export default function EmployeesPage({ me, sites }) {
   const [fCur, setFCur] = useState("");
   const [fStatus, setFStatus] = useState("active");
   const [fEmp, setFEmp] = useState("");
+  const [fNat, setFNat] = useState("");
 
   const isHr = ["HO_HR", "ADMIN"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
@@ -72,12 +73,17 @@ export default function EmployeesPage({ me, sites }) {
     if (fStatus === "active" && !e.is_active) return false;
     if (fStatus === "inactive" && e.is_active) return false;
     if (fEmp && e.employment_type !== fEmp) return false;
+    if (fNat && e.nationality !== fNat) return false;
     return true;
   });
 
+  const nationalities = [...new Set(employees.map((e) => e.nationality)
+    .filter(Boolean))].sort();
+
   const exportUrl = "/api/v1/employees/export?" + new URLSearchParams(
     Object.entries({ q, site: fSite, category: fCat, currency: fCur,
-      status: fStatus, employment: fEmp }).filter(([, v]) => v));
+      status: fStatus, employment: fEmp, nationality: fNat })
+      .filter(([, v]) => v));
 
   async function allocate(employee, siteId) {
     if (!siteId) return;
@@ -160,6 +166,12 @@ export default function EmployeesPage({ me, sites }) {
               <option key={s.id} value={s.code}>
                 {s.is_head_office ? "🏢 Head Office" : s.code}</option>))}
             <option value="__none">Unassigned</option>
+          </select>
+          <select value={fNat} onChange={(e) => setFNat(e.target.value)}
+                  style={{ ...inputStyle, width: 130 }}>
+            <option value="">All nationalities</option>
+            {nationalities.map((n) => (
+              <option key={n} value={n}>{n}</option>))}
           </select>
           <select value={fCat} onChange={(e) => setFCat(e.target.value)}
                   style={{ ...inputStyle, width: 150 }}>
