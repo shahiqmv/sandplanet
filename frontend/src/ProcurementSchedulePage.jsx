@@ -44,6 +44,31 @@ const RISK_TONE = { LATE: "alert", AT_RISK: "warn", ON_TRACK: "ok",
 const RISK_LABEL = { LATE: "Late", AT_RISK: "At risk", ON_TRACK: "On track",
   DELIVERED: "Delivered" };
 
+// Live shipment tracking (from the linked IPR's shipment) shown inline on a
+// planner line — see [[shipsgo-tracking]].
+const TRACK_HEALTH = { UNTRACKED: "Not trackable", STALE: "No recent movement",
+  FAILED: "Tracking failed", PENDING_REGISTRATION: "Registering…",
+  ACTIVE: "Tracking", ARRIVED: "Arrived", MANUAL: "Manual" };
+const TRACK_BAD = ["UNTRACKED", "STALE", "FAILED"];
+
+function TrackingLine({ t }) {
+  if (!t) return null;
+  const bad = TRACK_BAD.includes(t.health);
+  const lastTip = t.last_move
+    ? `${t.last_move.label}${t.last_move.location
+        ? " · " + t.last_move.location : ""}${t.last_move.event_time
+        ? " · " + fmt(t.last_move.event_time) : ""}` : "";
+  return (
+    <div style={{ fontSize: 9.5, marginTop: 3,
+      color: bad ? "var(--amber-fg)" : "var(--muted)" }} title={lastTip}>
+      🚢 {t.live_status || TRACK_HEALTH[t.health] || "—"}
+      {t.current_eta ? ` · ETA ${fmt(t.current_eta)}` : ""}
+      {t.map_url && <>{" · "}<a href={t.map_url} target="_blank"
+        rel="noreferrer" style={{ color: "var(--sky)" }}>Live ↗</a></>}
+    </div>
+  );
+}
+
 function ValueCell({ ln }) {
   return (
     <div>
@@ -186,6 +211,7 @@ function LineRow({ ln, c, member, sel, on }) {
               {ln.state.replace(/_/g, " ")}</Chip>}
         {ln.stage && <div style={{ fontSize: 9.5, color: "var(--muted)",
           marginTop: 2 }}>{ln.state.replace(/_/g, " ").toLowerCase()}</div>}
+        <TrackingLine t={ln.tracking} />
       </td>
       <td style={{ ...cell, whiteSpace: "nowrap" }}>
         {(c.can_edit_plan || c.can_confirm) &&

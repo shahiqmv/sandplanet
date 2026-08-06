@@ -442,6 +442,39 @@ def can_see_values(user, sched):
     return False
 
 
+def _line_tracking(line):
+    """Compact live-shipment tracking for a planner line — the linked shipment's
+    health, live status, ETA, latest actual movement and the provider's
+    live-position link, so planners see the shipment without leaving the
+    schedule (owner 2026-08-06). None when the line has no tracked shipment."""
+    from . import tracking as trk
+    from .models import ShipmentTracking
+    from .procurement_pipeline import _shipment_for
+    from .tracking_shipsgo import move_label
+    sh = _shipment_for(line)
+    if sh is None:
+        return None
+    t = ShipmentTracking.objects.filter(shipment=sh).first()
+    if t is None:
+        return None
+    ev = (t.events.filter(is_actual=True).exclude(code="OTHER")
+          .order_by("-event_time", "-id").first()
+          or t.events.filter(is_actual=True).order_by("-event_time", "-id")
+          .first())
+    last = None
+    if ev:
+        last = {
+            "label": (move_label(ev.provider_event_code, t.mode,
+                                 ev.code == "TRANSSHIPMENT")
+                      if ev.provider_event_code else ev.get_code_display()),
+            "location": ev.location, "event_time": ev.event_time}
+    return {
+        "shipment_id": sh.id, "ipr_ref": line.ipr.ref if line.ipr_id else "",
+        "mode": t.mode, "health": trk.health_for(t),
+        "live_status": t.raw_status, "current_eta": t.current_eta,
+        "map_url": t.map_url, "last_move": last}
+
+
 def line_dict(line, values=True):
     d = {
         "id": line.id, "s_no": line.s_no,
@@ -476,6 +509,7 @@ def line_dict(line, values=True):
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
     d["stage"] = line_stage(line)
+    d["tracking"] = _line_tracking(line)
     # The supplier a line groups under (awarded → IPR → planned). Not a money
     # value — it's the bundle key, so it's exposed to every role.
     d["bundle_supplier"] = effective_supplier(line)
