@@ -117,6 +117,22 @@ class EmployeeSensitivityTests(HrBase):
         self.assertNotIn("basic_pay", log.detail["fields"])
         self.assertIn("nationality", log.detail["fields"])
 
+    def test_usd_basic_is_permanent_only_and_zeroes_mvr_basic(self):
+        self.as_user(self.hr)
+        # setting a USD basic zeroes the MVR basic
+        r = self.client.patch(f"/api/v1/employees/{self.mason.id}",
+                              {"usd_basic_pay": "900"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.mason.refresh_from_db()
+        self.assertEqual(float(self.mason.usd_basic_pay), 900.0)
+        self.assertEqual(float(self.mason.basic_pay), 0.0)
+        # a contract worker can't be given a USD basic
+        r = self.client.patch(f"/api/v1/employees/{self.mason.id}",
+                              {"employment_type": "CONTRACT",
+                               "usd_basic_pay": "900"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("permanent", str(r.data).lower())
+
     def test_employee_export_xlsx_and_gating(self):
         self.as_user(self.hr)
         r = self.client.get("/api/v1/employees/export")

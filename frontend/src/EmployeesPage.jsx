@@ -673,15 +673,27 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                 <option value="USD">USD (middle management +)</option>
               </select></L>
           )}
-          {seesPay && (
+          {seesPay && (() => {
+            const permanent = f.employment_type === "PERMANENT";
+            return (
             <L label="USD basic (split pay)">
-              <input type="number" value={f.usd_basic_pay}
-                     onChange={(e) => set({ usd_basic_pay: e.target.value })}
-                     style={inputStyle} />
+              <input type="number" value={f.usd_basic_pay} disabled={!permanent}
+                     onChange={(e) => {
+                       const v = e.target.value;
+                       // basic is paid in USD now → clear the MVR basic
+                       set(Number(v) > 0 ? { usd_basic_pay: v, basic_pay: "0" }
+                                         : { usd_basic_pay: v });
+                     }}
+                     style={{ ...inputStyle,
+                              background: permanent ? undefined : "#f2f4f6" }} />
               <span style={{ fontSize: 11, color: "#5a6b78" }}>
-                If set, basic runs in USD (combined run); OT / allowances /
-                deductions stay MVR with the site team.</span></L>
-          )}
+                {permanent
+                  ? "If set, basic runs in USD (combined run) and the MVR basic "
+                    + "is set to 0; OT / allowances / deductions stay MVR with "
+                    + "the site team."
+                  : "Permanent workers only."}</span></L>
+            );
+          })()}
           {seesPay && (
             <L label="Overtime">
               <select value={otChoice}
@@ -706,7 +718,13 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                    style={inputStyle} /></L>
           <L label="Employment type">
             <select value={f.employment_type}
-                    onChange={(e) => set({ employment_type: e.target.value })}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      // USD basic (split pay) is permanent-only
+                      set(v === "PERMANENT" ? { employment_type: v }
+                                            : { employment_type: v,
+                                                usd_basic_pay: "" });
+                    }}
                     style={inputStyle}>
               {EMPLOYMENT.map(([v, l]) => (
                 <option key={v} value={v}>{l}</option>

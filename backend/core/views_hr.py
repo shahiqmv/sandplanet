@@ -105,6 +105,21 @@ class EmployeeSerializer(serializers.ModelSerializer):
             .select_related("site").first()
         return row.site.code if row else None
 
+    def validate(self, attrs):
+        inst = self.instance
+        usd = attrs.get("usd_basic_pay",
+                        getattr(inst, "usd_basic_pay", None))
+        emp_type = attrs.get("employment_type",
+                             getattr(inst, "employment_type", "PERMANENT"))
+        # Split pay (USD basic) is permanent-only, and a split worker is paid no
+        # MVR basic — force it to 0 (owner 2026-08-06).
+        if usd and usd > 0:
+            if emp_type != "PERMANENT":
+                raise serializers.ValidationError({"usd_basic_pay":
+                    "Only permanent workers can be paid a USD basic."})
+            attrs["basic_pay"] = Decimal("0")
+        return attrs
+
     def to_representation(self, instance):
         data = super().to_representation(instance)
         request = self.context.get("request")

@@ -88,8 +88,9 @@ def _attendance_prefill(employee, site, year, month, working_days):
 
 def is_split_pay(emp):
     """A worker paid their attendance-based basic in USD, everything else MVR
-    with their site team (owner 2026-08-06)."""
-    return bool(emp.usd_basic_pay and emp.usd_basic_pay > 0)
+    with their site team. Permanent staff only (owner 2026-08-06)."""
+    return bool(emp.usd_basic_pay and emp.usd_basic_pay > 0
+                and emp.employment_type == "PERMANENT")
 
 
 def generate_run(*, site, currency, year, month, working_days, actor):
@@ -115,8 +116,9 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         elif currency == "USD":                 # combined USD run
             # full-USD workers + split-pay workers (their USD basic only)
             workers = Employee.objects.payroll_eligible().filter(
-                is_active=True).filter(Q(currency="USD")
-                                       | Q(usd_basic_pay__gt=0))
+                is_active=True).filter(
+                Q(currency="USD")
+                | Q(usd_basic_pay__gt=0, employment_type="PERMANENT"))
         else:
             workers = Employee.objects.payroll_eligible().filter(
                 is_active=True, currency=currency)
@@ -172,9 +174,11 @@ def unlocked_sites(year, month, currency=None):
         employee__engagement_type="DIRECT")
     if currency == "USD":
         # the USD run also carries split-pay workers' basic, so their sites
-        # must be locked too.
-        staffed_q = staffed_q.filter(Q(employee__currency="USD")
-                                     | Q(employee__usd_basic_pay__gt=0))
+        # must be locked too (split pay is permanent-only).
+        staffed_q = staffed_q.filter(
+            Q(employee__currency="USD")
+            | Q(employee__usd_basic_pay__gt=0,
+                employee__employment_type="PERMANENT"))
     elif currency:
         staffed_q = staffed_q.filter(employee__currency=currency)
     staffed = set(staffed_q.values_list("site_id", flat=True))
