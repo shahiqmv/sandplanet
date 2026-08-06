@@ -223,6 +223,32 @@ class HealthReasonTests(TestCase):
         self.assertEqual(tracking.reason_for(t), "")
 
 
+class AdoptExistingTests(TestCase):
+    def test_duplicate_reference_adopts_the_existing_shipment(self):
+        # Re-registering a reference the provider already has (an earlier
+        # attempt) must adopt that live shipment, not sit stuck (owner 2026-08-06).
+        from .tracking_shipsgo import ShipsGoError, ShipsGoProvider
+        prov = ShipsGoProvider()
+        tr = ShipmentTracking(mode="SEA", tracking_key="CSQU3054383",
+                              provider_ref="IPR-HO-001-S1")
+        seen = []
+
+        def fake_request(method, path, body=None):
+            seen.append((method, path))
+            if method == "POST":
+                raise ShipsGoError("ShipsGo 422: reference already exists",
+                                   status=422)
+            if "/shipments/" in path:                 # the detail GET
+                return {"shipment": _ocean_payload()}
+            return {"shipments": [{"id": 99,          # the reference lookup
+                                   "reference": "IPR-HO-001-S1"}]}
+
+        with patch.object(ShipsGoProvider, "_request", side_effect=fake_request):
+            snap = prov.register(tr)
+        self.assertTrue(snap.events)                  # adopted the live shipment
+        self.assertTrue(any("shipments/99" in p for _, p in seen))
+
+
 class MoveLabelTests(TestCase):
     def test_labels_map_codes_to_readable_moves(self):
         from .tracking_shipsgo import move_label

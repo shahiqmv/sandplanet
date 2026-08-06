@@ -331,8 +331,12 @@ def reason_for(tracking, health=None):
     milestones, so UNTRACKED/STALE/FAILED isn't a dead end on the tracker."""
     health = health or health_for(tracking)
     has_container = is_valid_container((tracking.tracking_key or "").strip())
+    err = (tracking.last_error or "").strip()
     if health == "FAILED":
-        return tracking.last_error or "The provider refused this registration."
+        return err or "The provider refused this registration."
+    if health == tracking.State.PENDING:
+        # a stuck "Registering" almost always carries a provider error — show it
+        return err or "Waiting for the provider to register this shipment."
     if health == "UNTRACKED":
         if not has_container:
             return ("The provider can't resolve this reference. Track by the "
@@ -343,8 +347,6 @@ def reason_for(tracking, health=None):
                 "manual updates.")
     if health == "STALE":
         return "No new movement from the carrier in over a week."
-    if health == tracking.State.PENDING:
-        return "Waiting for the provider to register this shipment."
     return ""
 
 

@@ -102,10 +102,10 @@ class ShipsGoProvider(TrackingProvider):
     # -- adapter interface ---------------------------------------------------
 
     def register(self, tracking) -> Snapshot:
+        leg = "air" if tracking.mode == "AIR" else "ocean"
         if tracking.mode == "AIR":
             body = {"reference": tracking.provider_ref,
                     "awb_number": tracking.tracking_key}
-            resp = self._request("POST", "/air/shipments", body)
         else:
             body = {"reference": tracking.provider_ref}
             if tracking.carrier_scac:
@@ -117,8 +117,43 @@ class ShipsGoProvider(TrackingProvider):
                 body["container_number"] = key
             else:
                 body["booking_number"] = key
-            resp = self._request("POST", "/ocean/shipments", body)
+        try:
+            resp = self._request("POST", f"/{leg}/shipments", body)
+        except ShipsGoError as e:
+            # The reference is already registered with the provider (e.g. an
+            # earlier attempt) — adopt that shipment instead of failing, so a
+            # re-key or retry picks up the live tracking it already has.
+            if e.status in (400, 409, 422):
+                snap = self._adopt_existing(tracking, leg)
+                if snap is not None:
+                    return snap
+            raise
         return self._normalise(resp.get("shipment") or {}, tracking.mode)
+
+    def _adopt_existing(self, tracking, leg):
+        """Find a shipment already registered under our reference and return its
+        live snapshot — makes (re)registration idempotent (owner 2026-08-06)."""
+        from urllib.parse import quote
+        try:
+            ref = tracking.provider_ref
+            resp = self._request(
+                "GET", f"/{leg}/shipments?reference={quote(ref)}")
+            items = (resp.get("shipments") or resp.get("data")
+                     or resp.get("items") or [])
+            match = next((s for s in items
+                          if (s.get("reference") or "") == ref), None)
+            if match is None and items:
+                match = items[0]            # provider ignored the filter — take it
+            if not match:
+                return None
+            sid = match.get("id")
+            if sid:
+                detail = self._request("GET", f"/{leg}/shipments/{sid}")
+                return self._normalise(detail.get("shipment") or match,
+                                       tracking.mode)
+            return self._normalise(match, tracking.mode)
+        except Exception:                   # never worse than the original error
+            return None
 
     def list_carriers(self):
         """Every ocean carrier, paging skip/take until meta.more is false

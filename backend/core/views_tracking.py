@@ -108,13 +108,17 @@ def tracking_retry(request, pk):
         return Response({"state": t.state, "error": ""})
     key = (ship.container_awb.strip() if ship.mode == "AIR"
            else trk._sea_key(ship))
-    if key:
-        t.tracking_key = trk.normalise_key(key)
-    t.carrier_scac = (ship.carrier_scac or "").strip().upper()
+    new_key = trk.normalise_key(key) if key else t.tracking_key
+    new_scac = (ship.carrier_scac or "").strip().upper()
+    # A genuinely new key/carrier earns a fresh attempt budget; retrying the same
+    # key doesn't, so a persistent provider error still surfaces as Failed.
+    if new_key != t.tracking_key or new_scac != t.carrier_scac:
+        t.register_attempts = 0
+    t.tracking_key = new_key
+    t.carrier_scac = new_scac
     t.mode = ship.mode
     t.raw_status = ""
     t.last_error = ""
-    t.register_attempts = 0
     t.state = ShipmentTracking.State.PENDING
     t.save()
     trk.register_tracking(t)
