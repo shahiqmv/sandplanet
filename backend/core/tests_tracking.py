@@ -223,6 +223,17 @@ class HealthReasonTests(TestCase):
         self.assertEqual(tracking.reason_for(t), "")
 
 
+class MoveLabelTests(TestCase):
+    def test_labels_map_codes_to_readable_moves(self):
+        from .tracking_shipsgo import move_label
+        self.assertEqual(move_label("DISC", "SEA"), "Discharged")
+        self.assertEqual(move_label("DISC", "SEA", transshipment=True),
+                         "Discharged in transshipment")
+        self.assertEqual(move_label("LOAD", "SEA"), "Loaded on board")
+        self.assertEqual(move_label("DLV", "AIR"), "Delivered")
+        self.assertEqual(move_label("ZZZ", "SEA"), "ZZZ")   # unknown → passthrough
+
+
 class RegistrationTests(TestCase):
     def test_ensure_prefers_bl_then_registers_active(self):
         ship, _ = _make_shipment(bl_no="MEDUQY000000",

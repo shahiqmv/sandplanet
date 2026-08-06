@@ -714,7 +714,8 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
         {t.current_eta && (<span style={{ fontSize: 12, color: "#5a6b78" }}>
           Live ETA {t.current_eta.slice(0, 10)}</span>)}
         {t.map_url && (<a href={t.map_url} target="_blank" rel="noreferrer"
-          style={{ fontSize: 12, color: "var(--sp-navy)" }}>Live map ↗</a>)}
+          style={{ fontSize: 12, color: "var(--sp-navy)", fontWeight: 600 }}>
+          📍 Live position ↗</a>)}
         {canManage && (t.state === "FAILED"
           || t.state === "PENDING_REGISTRATION") && (
           <button style={{ ...ghostButton, padding: "2px 10px" }}
@@ -738,22 +739,37 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
         "PENDING_REGISTRATION"].includes(t.health) && (
         <div style={{ fontSize: 11.5, color: HEALTH_TONE[t.health] || "#b0402f",
           marginTop: 4 }}>⚠ {t.reason}</div>)}
-      {t.events && t.events.length > 0 && (
-        <div style={{ marginTop: 6 }}>
-          {t.events.map((e, i) => (
-            <div key={i} style={{ fontSize: 12, color: "#41505c",
-              display: "flex", gap: 8 }}>
-              <span style={{ color: e.is_actual ? "#1f7a3d" : "#8a97a1" }}>
-                ●</span>
-              <span style={{ fontWeight: 500 }}>
-                {MILE_LABEL[e.code] || e.code}</span>
-              <span style={{ color: "#5a6b78" }}>
-                {[e.location, e.vessel_flight,
-                  e.event_time && e.event_time.slice(0, 10),
-                  e.is_actual ? "" : "(est.)"].filter(Boolean).join(" · ")}
-              </span>
-            </div>
-          ))}
+      {t.movements && t.movements.length > 0 && (
+        <div style={{ marginTop: 8, maxHeight: 240, overflowY: "auto",
+          overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11.5,
+            width: "100%" }}>
+            <thead><tr style={{ color: "#8a97a1", textAlign: "left" }}>
+              <th style={{ padding: "0 8px 4px 16px", fontWeight: 500 }}>Move</th>
+              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>
+                Location</th>
+              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>Vessel</th>
+              <th style={{ padding: "0 10px 4px 0", fontWeight: 500 }}>Date</th>
+            </tr></thead>
+            <tbody>
+              {t.movements.map((m, i) => (
+                <tr key={i} style={{ color: "#41505c" }}>
+                  <td style={{ padding: "2px 8px 2px 0", whiteSpace: "nowrap",
+                    fontWeight: m.is_milestone ? 600 : 400 }}>
+                    <span style={{ marginRight: 6, color: m.is_actual
+                      ? "#1f7a3d" : "#c4ccd2" }}>●</span>{m.label}</td>
+                  <td style={{ padding: "2px 10px 2px 0" }}>{m.location}</td>
+                  <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78" }}>
+                    {m.vessel_flight || "—"}</td>
+                  <td style={{ padding: "2px 10px 2px 0", color: "#5a6b78",
+                    whiteSpace: "nowrap" }}>
+                    {m.event_time ? m.event_time.slice(0, 10) : "—"}
+                    {!m.is_actual && <span style={{ color: "#8a97a1" }}>
+                      {" "}· est.</span>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
       {canManage && (logging ? (

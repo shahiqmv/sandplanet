@@ -30,6 +30,24 @@ _AIR_DEPART = {"DEP"}
 _OCEAN_ARRIVED_STATUS = {"ARRIVED", "DISCHARGED"}
 _AIR_ARRIVED_STATUS = {"LANDED", "DELIVERED"}
 
+# Friendly names for every provider movement code, so the full timeline reads
+# like the ShipsGo dashboard rather than raw codes (owner 2026-08-06).
+_OCEAN_MOVE = {"EMSH": "Empty to shipper", "GTIN": "Gate in",
+               "LOAD": "Loaded on board", "DEPA": "Departed",
+               "ARRV": "Vessel arrival", "DISC": "Discharged",
+               "GTOT": "Gate out", "EMRT": "Empty returned"}
+_AIR_MOVE = {"RCS": "Received from shipper", "MAN": "Manifested",
+             "DEP": "Departed", "ARR": "Arrived",
+             "RCF": "Received from flight", "DLV": "Delivered"}
+
+
+def move_label(provider_code, mode="SEA", transshipment=False):
+    """A human move name for a provider event code (e.g. DISC → 'Discharged'),
+    tagged '… in transshipment' at an intermediate port."""
+    table = _AIR_MOVE if mode == "AIR" else _OCEAN_MOVE
+    base = table.get((provider_code or "").upper()) or provider_code or "Update"
+    return f"{base} in transshipment" if transshipment else base
+
 
 class ShipsGoError(Exception):
     def __init__(self, message, status=None, insufficient_credits=False):

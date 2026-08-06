@@ -186,9 +186,20 @@ class ShipmentSerializer(serializers.ModelSerializer):
         if t is None:
             return None
         # stakeholder timeline shows only the normalised milestones, newest last
-        events = [e for e in t.events.all() if e.code != "OTHER"]
+        all_events = list(t.events.all())
+        events = [e for e in all_events if e.code != "OTHER"]
         from . import tracking as trk
+        from .tracking_shipsgo import move_label
         health = trk.health_for(t)
+        movements = [{
+            "label": (move_label(e.provider_event_code, t.mode,
+                                 e.code == "TRANSSHIPMENT")
+                      if e.provider_event_code else e.get_code_display()),
+            "provider_code": e.provider_event_code,
+            "location": e.location, "vessel_flight": e.vessel_flight,
+            "event_time": e.event_time, "is_actual": e.is_actual,
+            "is_milestone": e.code != "OTHER",
+        } for e in all_events]
         return {
             "state": t.state, "state_display": t.get_state_display(),
             "health": health, "reason": trk.reason_for(t, health),
@@ -200,6 +211,7 @@ class ShipmentSerializer(serializers.ModelSerializer):
             "register_attempts": t.register_attempts,
             "provider_tracking_id": t.provider_tracking_id,
             "last_error": t.last_error,
+            "movements": movements,
             "events": [{
                 "code": e.code, "code_display": e.get_code_display(),
                 "description": e.description, "location": e.location,
