@@ -40,14 +40,18 @@ def m_login(request):
     token to carry as a Bearer header."""
     username = (request.data.get("username") or "").strip()
     password = request.data.get("password") or ""
+    from .views import record_login_event
     user = dj_authenticate(username=username, password=password)
     if not user or not user.is_active:
+        record_login_event(request, "FAILED", username=username,
+                           source="MOBILE")
         return Response({"detail": "Wrong username or password."}, status=401)
     device = MobileDevice.objects.create(
         user=user, token=new_token(),
         label=(request.META.get("HTTP_USER_AGENT") or "")[:120])
     audit("user", user.id, "MOBILE_SIGN_IN", actor=user,
           detail={"device": device.id})
+    record_login_event(request, "LOGIN", user=user, source="MOBILE")
     return Response({"token": device.token, "user": me_payload(user)},
                     status=201)
 

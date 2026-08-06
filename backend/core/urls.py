@@ -51,6 +51,8 @@ urlpatterns = [
     path("parameters/<str:key>", views.parameter_detail, name="parameter-detail"),
     path("company/logo", views.company_logo, name="company-logo"),
     path("company/stamp", views.company_stamp, name="company-stamp"),
+    path("admin/login-activity", views.login_activity, name="login-activity"),
+    path("admin/audit-trail", views.audit_trail, name="audit-trail"),
     path("pms", views.pm_list, name="pm-list"),
     path("cost-heads", views.cost_heads, name="cost-heads"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,

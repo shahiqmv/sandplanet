@@ -42,6 +42,7 @@ import StockPage from "./StockPage.jsx";
 import ToolsPage from "./ToolsPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
+import ActivityPage from "./ActivityPage.jsx";
 import ProfilePage from "./ProfilePage.jsx";
 import ApprovalsPage from "./ApprovalsPage.jsx";
 import HRDashboard from "./HRDashboard.jsx";
@@ -123,7 +124,8 @@ const NAV_GROUPS = [
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
            ["users", "Users", ["ADMIN"]],
            ["client-portal", "Client Portal", ["ADMIN"]],
-           ["company", "Company", ["ADMIN"]]] },
+           ["company", "Company", ["ADMIN"]],
+           ["activity", "Login & Audit", ["ADMIN"]]] },
   { key: "profileGrp", label: "Profile", roles: PROFILE_ROLES,
     subs: [["profile", "Company Profile", PROFILE_ROLES]] },
 ];
@@ -957,6 +959,10 @@ export default function App() {
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "client-portal" && (
             <ClientUsersPage sites={sites} />
+          )}
+          {!docView && !openSite && me.role === "ADMIN" &&
+            hoPage === "activity" && (
+            <ActivityPage />
           )}
           {!docView && !openSite && PROFILE_ROLES.includes(me.role) &&
             hoPage === "profile" && (

@@ -49,22 +49,45 @@ def health(request):
 # ===== Auth =====
 
 
+def _client_ip(request):
+    xff = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if xff:
+        return xff.split(",")[0].strip()[:45]
+    return (request.META.get("REMOTE_ADDR") or "")[:45]
+
+
+def record_login_event(request, kind, user=None, username="", source="WEB"):
+    """Append a sign-in / sign-out / failed-attempt row for the admin security
+    view. Never raises — auth must not break on a logging hiccup."""
+    from .models import LoginEvent
+    try:
+        LoginEvent.objects.create(
+            user=user if (user and user.pk) else None,
+            username=(username or (user.username if user else ""))[:150],
+            kind=kind, source=source, ip_address=_client_ip(request),
+            user_agent=(request.META.get("HTTP_USER_AGENT") or "")[:300])
+    except Exception:                                   # pragma: no cover
+        pass
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def auth_login(request):
-    user = authenticate(
-        request,
-        username=request.data.get("username", ""),
-        password=request.data.get("password", ""),
-    )
+    username = request.data.get("username", "")
+    user = authenticate(request, username=username,
+                        password=request.data.get("password", ""))
     if user is None or not user.is_active:
+        record_login_event(request, "FAILED", username=username)
         return Response({"detail": "Invalid credentials."}, status=400)
     login(request, user)
+    record_login_event(request, "LOGIN", user=user)
     return Response(_me_payload(user))
 
 
 @api_view(["POST"])
 def auth_logout(request):
+    if request.user.is_authenticated:
+        record_login_event(request, "LOGOUT", user=request.user)
     logout(request)
     return Response({"detail": "Logged out."})
 
@@ -548,6 +571,87 @@ def company_stamp(request):
         if default_storage.exists(name):
             return Response({"url": default_storage.url(name), "uploaded": True})
     return Response({"url": None, "uploaded": False})
+
+
+def _paginate(request, default=50, cap=200):
+    try:
+        limit = min(int(request.GET.get("limit", default)), cap)
+    except (TypeError, ValueError):
+        limit = default
+    try:
+        offset = max(int(request.GET.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        offset = 0
+    return limit, offset
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def login_activity(request):
+    """Sign-in activity for the admin security view — successful and failed
+    sign-ins and sign-outs, newest first (owner 2026-08-06)."""
+    from .models import LoginEvent
+    if request.user.role != User.Role.ADMIN:
+        return Response({"detail": "Administrators only."}, status=403)
+    qs = LoginEvent.objects.select_related("user")
+    kind = request.GET.get("kind")
+    if kind:
+        qs = qs.filter(kind=kind)
+    if request.GET.get("user_id"):
+        qs = qs.filter(user_id=request.GET["user_id"])
+    if request.GET.get("q"):
+        qs = qs.filter(username__icontains=request.GET["q"])
+    if request.GET.get("since"):
+        qs = qs.filter(at__date__gte=request.GET["since"])
+    if request.GET.get("until"):
+        qs = qs.filter(at__date__lte=request.GET["until"])
+    total = qs.count()
+    limit, offset = _paginate(request)
+    rows = [{
+        "id": e.id, "at": e.at, "kind": e.kind, "source": e.source,
+        "username": e.username or (e.user.username if e.user_id else ""),
+        "full_name": e.user.full_name if e.user_id else "",
+        "role": e.user.role if e.user_id else "",
+        "ip_address": e.ip_address, "user_agent": e.user_agent,
+    } for e in qs[offset:offset + limit]]
+    return Response({"items": rows, "total": total,
+                     "limit": limit, "offset": offset})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def audit_trail(request):
+    """The append-only audit log for the admin security view — every state
+    change and administrative action, filterable, newest first."""
+    from .models import AuditLog
+    if request.user.role != User.Role.ADMIN:
+        return Response({"detail": "Administrators only."}, status=403)
+    qs = AuditLog.objects.select_related("actor")
+    for field in ("entity", "event"):
+        if request.GET.get(field):
+            qs = qs.filter(**{field: request.GET[field]})
+    if request.GET.get("actor_id"):
+        qs = qs.filter(actor_id=request.GET["actor_id"])
+    if request.GET.get("entity_id"):
+        qs = qs.filter(entity_id=request.GET["entity_id"])
+    if request.GET.get("since"):
+        qs = qs.filter(at__date__gte=request.GET["since"])
+    if request.GET.get("until"):
+        qs = qs.filter(at__date__lte=request.GET["until"])
+    total = qs.count()
+    limit, offset = _paginate(request)
+    rows = [{
+        "id": a.id, "at": a.at, "entity": a.entity, "entity_id": a.entity_id,
+        "event": a.event, "from_state": a.from_state, "to_state": a.to_state,
+        "actor": a.actor.full_name if a.actor_id else "",
+        "actor_role": a.actor.role if a.actor_id else "",
+        "detail": a.detail,
+    } for a in qs[offset:offset + limit]]
+    # distinct entity/event lists power the filter dropdowns
+    return Response({"items": rows, "total": total, "limit": limit,
+                     "offset": offset,
+                     "entities": sorted(AuditLog.objects.values_list(
+                         "entity", flat=True).distinct())})
 
 
 @api_view(["GET", "PUT"])

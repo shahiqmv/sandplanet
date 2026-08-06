@@ -234,6 +234,32 @@ class AuditLog(models.Model):
         ordering = ["-at"]
 
 
+class LoginEvent(models.Model):
+    """Sign-in activity for the admin security view — every successful and
+    failed sign-in and every sign-out, with the IP + device it came from
+    (owner 2026-08-06). Append-only; never holds a password."""
+
+    class Kind(models.TextChoices):
+        LOGIN = "LOGIN", "Signed in"
+        FAILED = "FAILED", "Failed sign-in"
+        LOGOUT = "LOGOUT", "Signed out"
+
+    user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                             blank=True, related_name="+")
+    username = models.CharField(max_length=150, blank=True)   # as typed
+    kind = models.CharField(max_length=10, choices=Kind.choices,
+                            default=Kind.LOGIN)
+    source = models.CharField(max_length=10, default="WEB")   # WEB / MOBILE
+    ip_address = models.CharField(max_length=45, blank=True)
+    user_agent = models.CharField(max_length=300, blank=True)
+    at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-at"]
+        indexes = [models.Index(fields=["-at"]),
+                   models.Index(fields=["user", "-at"])]
+
+
 class Notification(models.Model):
     """An alert that a user needs to approve or attend to something. Created on
     the workflow transitions that block a specific person/role; surfaced in-app
