@@ -202,6 +202,7 @@ export default function EmployeesPage({ me, sites }) {
           <thead><tr>
             <th style={th} />
             <th style={th}>Emp No</th><th style={th}>Name</th>
+            <th style={th}>Nationality</th>
             <th style={th}>Category</th><th style={th}>Site</th>
             <th style={th}>Permit</th>
             {seesPay && <th style={th}>Basic Pay</th>}
@@ -231,12 +232,19 @@ export default function EmployeesPage({ me, sites }) {
                     onClick={() => isHr && setEditing(emp)}>{emp.emp_no}</td>
                 <td style={td} onClick={() => isHr && setEditing(emp)}>
                   {emp.full_name}</td>
+                <td style={td}>{emp.nationality || "—"}</td>
                 <td style={td}>{emp.job_category_name}</td>
                 <td style={td}>{emp.site_code || "—"}</td>
                 <td style={td} onClick={() => isHr && setEditing(emp)}>
                   <PermitBadge emp={emp} /></td>
-                {seesPay && <td style={td}>{emp.basic_pay}</td>}
-                {seesPay && <td style={td}>{emp.currency}</td>}
+                {seesPay && <td style={td}>{Number(emp.usd_basic_pay) > 0
+                  ? Number(emp.usd_basic_pay).toLocaleString() : emp.basic_pay}</td>}
+                {seesPay && <td style={td}>{Number(emp.usd_basic_pay) > 0
+                  ? <span title="Basic paid in USD; OT/allowances in MVR"
+                      style={{ fontSize: 10.5, fontWeight: 700, color: "#1f5fae",
+                        background: "#e7f0fb", borderRadius: 5,
+                        padding: "1px 6px" }}>USD basic</span>
+                  : emp.currency}</td>}
                 {seesPay && (
                   <td style={td}>
                     {emp.ot_effective
@@ -269,7 +277,7 @@ export default function EmployeesPage({ me, sites }) {
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td style={{ ...td, color: "var(--muted)" }} colSpan={10}>
+              <tr><td style={{ ...td, color: "var(--muted)" }} colSpan={11}>
                 {employees.length === 0 ? "No employees yet."
                   : "No employees match these filters."}</td></tr>
             )}
