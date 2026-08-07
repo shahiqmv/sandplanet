@@ -146,11 +146,9 @@ export function VesselPicker({ name, vesselId, onPick }) {
 }
 
 // ---- Browse: "what supply vessels are near us" ----------------------------
-// Embedded on the site + purchasing dashboards. `collapsible` keeps it quiet
-// until opened — and only then does it hit the API (no vessel call, no error
-// banner, on a dashboard where nobody asked for it).
-export function VesselsPage({ collapsible = false, defaultAtoll = "" }) {
-  const [open, setOpen] = useState(!collapsible);
+// A full page opened from a dashboard button (kept off the dashboards
+// themselves so they don't grow). `onClose` returns to wherever it opened from.
+export function VesselsPage({ onClose, defaultAtoll = "" }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -175,29 +173,25 @@ export function VesselsPage({ collapsible = false, defaultAtoll = "" }) {
       setLoading(false);
     }
   }
-  useEffect(() => { if (open) load(); }, [atoll, supply, open]);  // eslint-disable-line
+  useEffect(() => { load(); }, [atoll, supply]);  // eslint-disable-line
 
   const vessels = data?.vessels || [];
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 10,
                     flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
           🛥️ Vessels nearby</h2>
-        {collapsible && (
-          <button onClick={() => setOpen((o) => !o)}
-                  style={{ ...ghostButton, marginLeft: "auto",
-                           padding: "4px 14px", fontSize: 12.5 }}>
-            {open ? "Hide" : "Check vessels"}</button>
+        {onClose && (
+          <button onClick={onClose}
+                  style={{ ...ghostButton, marginLeft: "auto" }}>
+            Close</button>
         )}
       </div>
-      {(!collapsible || open) && (
-        <p style={{ fontSize: 13, color: "#5a6b78", margin: "6px 0 14px" }}>
-          Live positions of local vessels (FollowMe). Filter by atoll to see
-          what's near a site, or search a boat by name.
-        </p>
-      )}
-      {!open ? null : (
+      <p style={{ fontSize: 13, color: "#5a6b78", margin: "6px 0 14px" }}>
+        Live positions of local vessels (FollowMe). Filter by atoll to see
+        what's near a site, or search a boat by name.
+      </p>
       <>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
                     alignItems: "flex-end", marginBottom: 14 }}>
@@ -276,7 +270,6 @@ export function VesselsPage({ collapsible = false, defaultAtoll = "" }) {
         </>
       )}
       </>
-      )}
     </section>
   );
 }

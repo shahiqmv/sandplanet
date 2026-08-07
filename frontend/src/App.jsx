@@ -11,6 +11,7 @@ import SuppliersPage from "./SuppliersPage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
+import { VesselsPage } from "./Vessels.jsx";
 import ClientUsersPage from "./ClientUsersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import HeadOfficePage from "./HeadOfficePage.jsx";
@@ -628,6 +629,9 @@ export default function App() {
             <ProjectPage projectId={docView.projectId} me={me}
                          onClose={closeDoc} onOpenDoc={openDoc} />
           )}
+          {docView?.mode === "vessels" && (
+            <VesselsPage onClose={closeDoc} />
+          )}
 
           {!docView && openSite && (
             <>
@@ -791,6 +795,7 @@ export default function App() {
                 onNewPmr={() => setDocView({ mode: "line-form",
                                             docType: "PMR", doc: null })}
                 onOpenDoc={openDoc}
+                onVessels={() => setDocView({ mode: "vessels" })}
               />
             </>
           )}
@@ -800,6 +805,7 @@ export default function App() {
                          onNewPayment={() => setDocView({
                            mode: "central-pyr-form" })}
                          onPmrRegister={() => setHoPage("pmr-register")}
+                         onVessels={() => setDocView({ mode: "vessels" })}
                          onNew={(docType) => setDocView({ mode: "line-form",
                                                           docType, doc: null })} />
           )}

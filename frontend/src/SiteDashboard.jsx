@@ -3,7 +3,6 @@ import { api } from "./api.js";
 import { twsDefaultDate } from "./QADocs.jsx";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
-import { VesselsPage } from "./Vessels.jsx";
 
 const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
                                 "DIRECTOR", "ADMIN"];
@@ -15,7 +14,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onManpower, onNewPyr, onPyrRegister,
                                         onPettyCash, onStock, onTools,
                                         onCreateGrn, onNewPmr, onOpenDoc,
-                                        onWorkforce, refresh }) {
+                                        onWorkforce, onVessels, refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -194,6 +193,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
             <button onClick={onWorkforce}
                     style={{ ...buttonStyle, background: "#5a3fa0" }}>
               👷 Workforce
+            </button>
+          )}
+          {onVessels && (
+            <button onClick={onVessels} style={buttonStyle}
+                    title="Live positions of local vessels (FollowMe)">
+              🛥️ Vessels nearby
             </button>
           )}
         </span>
@@ -624,8 +629,6 @@ that adds your existing quantities to the system"
         </div>
       </section>
 
-      <Eyebrow>Vessels nearby</Eyebrow>
-      <VesselsPage collapsible />
     </>
   );
 }

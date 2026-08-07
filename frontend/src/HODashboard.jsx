@@ -3,10 +3,8 @@ import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
-import { VesselsPage } from "./Vessels.jsx";
-
 export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
-                                      onPmrRegister, refresh }) {
+                                      onPmrRegister, onVessels, refresh }) {
   const [stats, setStats] = useState(null);
   const [tab, setTab] = useState("MR");
   const [rows, setRows] = useState([]);
@@ -78,6 +76,11 @@ export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
             </button>
           ))}
           <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            {onVessels && (
+              <button onClick={onVessels} style={ghostButton}
+                      title="Live positions of local vessels (FollowMe)">
+                🛥️ Vessels nearby</button>
+            )}
             {canPurchase && (
               <>
                 <button onClick={() => onNew("PR")} style={ghostButton}>
@@ -172,9 +175,6 @@ export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
           </table>
         )}
       </section>
-
-      <Eyebrow>Vessel tracking</Eyebrow>
-      <VesselsPage collapsible />
     </>
   );
 }
