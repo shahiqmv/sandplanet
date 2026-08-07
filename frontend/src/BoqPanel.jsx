@@ -9,6 +9,39 @@ const fmt = (v) =>
   Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 3,
     maximumFractionDigits: 3 });
 
+// Row reordering helpers for the BOQ editors — the backend stores rows in the
+// order sent (sort_order = array index), so shuffling the array is all it takes.
+const moveRow = (rows, i, dir) => {
+  const j = i + dir;
+  if (j < 0 || j >= rows.length) return rows;
+  const next = rows.slice();
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+};
+const insertBelow = (rows, i, row) => {
+  const next = rows.slice();
+  next.splice(i + 1, 0, row);
+  return next;
+};
+const miniBtn = { ...ghostButton, padding: "1px 6px", fontSize: 12,
+  lineHeight: 1.3, minWidth: 22 };
+// The compact per-row toolbar: move up / down, insert below, delete.
+function RowTools({ rows, i, setRows, blank }) {
+  return (
+    <div style={{ display: "flex", gap: 2 }}>
+      <button type="button" title="Move up" disabled={i === 0}
+        onClick={() => setRows(moveRow(rows, i, -1))} style={miniBtn}>▲</button>
+      <button type="button" title="Move down" disabled={i === rows.length - 1}
+        onClick={() => setRows(moveRow(rows, i, 1))} style={miniBtn}>▼</button>
+      <button type="button" title="Insert a row below"
+        onClick={() => setRows(insertBelow(rows, i, blank()))} style={miniBtn}>＋</button>
+      <button type="button" title="Delete row"
+        onClick={() => setRows(rows.filter((_, j) => j !== i))}
+        style={{ ...miniBtn, color: "#c0392b" }}>×</button>
+    </div>
+  );
+}
+
 // The project's Bill of Quantities — the priced contract schedule the QS runs
 // progress claims against. Import from Excel (or edit by hand), reconcile to
 // the contract value, then lock it to start claiming.
@@ -367,7 +400,7 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
           <th style={{ ...th, textAlign: "right", width: 84 }}>Material</th>
           <th style={{ ...th, textAlign: "right", width: 84 }}>Labour</th>
           <th style={{ ...th, textAlign: "right", width: 100 }}>Amount</th>
-          <th style={{ ...th, width: 24 }}></th>
+          <th style={{ ...th, width: 108 }}></th>
         </tr></thead>
         <tbody>
           {rows.map((r, i) => (
@@ -397,11 +430,9 @@ function CategoryDetail({ cat, projectId, editable, onChanged }) {
               </td>
               <td style={{ ...td, textAlign: "right" }}>{fmt(amt(r))}</td>
               <td style={{ padding: 2, textAlign: "center" }}>
-                {editable && rows.length > 1 && (
-                  <button onClick={() => setRows((rs) =>
-                    rs.filter((_, j) => j !== i))} style={{ border: "none",
-                    background: "none", cursor: "pointer",
-                    color: "var(--muted)" }}>×</button>)}</td>
+                {editable && (
+                  <RowTools rows={rows} i={i} setRows={setRows} blank={blank} />
+                )}</td>
             </tr>
           ))}
           <tr style={{ fontWeight: 600 }}>
@@ -670,10 +701,8 @@ function BoqEditor({ projectId, boq, onDone }) {
                   style={cell(80)} disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "rate_install", e.target.value)} /></td>
                 <td style={td}>
-                  <button style={{ ...ghostButton, color: "#c0392b",
-                                   padding: "2px 8px" }}
-                          onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-                    ×</button></td>
+                  <RowTools rows={rows} i={i} setRows={setRows} blank={blank} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -697,6 +726,9 @@ function BoqCaptureReview({ draft, onDone }) {
     qty: r.qty ?? "", rate_supply: r.rate_supply ?? "",
     rate_install: r.rate_install ?? "", rate_combined: r.rate_combined ?? "",
     is_heading: !!r.is_heading }));
+  const blank = () => ({ section: "", item_code: "", description: "", unit: "",
+    qty: "", rate_supply: "", rate_install: "", rate_combined: "",
+    is_heading: false });
   const [d, setD] = useState(draft);
   const [rows, setRows] = useState(clean(draft.rows));
   const [error, setError] = useState(null);
@@ -826,10 +858,8 @@ function BoqCaptureReview({ draft, onDone }) {
                     maxWidth: 130 }} title={w.join(", ")}>
                     {w.length ? w.join(", ") : ""}</td>
                   <td style={td}>
-                    <button style={{ ...ghostButton, color: "#c0392b",
-                      padding: "2px 8px" }}
-                      onClick={() => setRows(rows.filter((_, j) => j !== i))}>
-                      ×</button></td>
+                    <RowTools rows={rows} i={i} setRows={setRows}
+                      blank={blank} /></td>
                 </tr>
               );
             })}
@@ -837,9 +867,7 @@ function BoqCaptureReview({ draft, onDone }) {
         </table>
       </div>
       <button style={{ ...ghostButton, padding: "3px 10px", marginTop: 8 }}
-        onClick={() => setRows([...rows, { section: "", item_code: "",
-          description: "", unit: "", qty: "", rate_supply: "",
-          rate_install: "", rate_combined: "", is_heading: false }])}>
+        onClick={() => setRows([...rows, blank()])}>
         + row</button>
       <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 10 }}>
         Warnings refresh on Save draft.</span>
