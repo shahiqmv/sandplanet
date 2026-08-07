@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
+import { VesselsPage } from "./Vessels.jsx";
 
 export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
                                       onPmrRegister, refresh }) {
@@ -171,6 +172,9 @@ export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
           </table>
         )}
       </section>
+
+      <Eyebrow>Vessel tracking</Eyebrow>
+      <VesselsPage collapsible />
     </>
   );
 }

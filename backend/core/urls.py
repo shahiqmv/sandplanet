@@ -8,7 +8,8 @@ from . import views, views_commercial as commercial, views_cost as cost, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_tools as tools_api, \
-    views_tracking as tracking_api, views_vouchers as vouchers, \
+    views_tracking as tracking_api, views_vessels as vessels_api, \
+    views_vouchers as vouchers, \
     views_receivables as receivables_api, \
     views_onboarding as onboarding_api, \
     views_procurement_schedule as psched_api, \
@@ -119,6 +120,8 @@ urlpatterns = [
     path("ipr/<str:ref>/shipments/<int:pk>/receive",
          imports_api.ipr_shipment_receive, name="ipr-shipment-receive"),
     # --- shipment tracking (ShipsGo) ---
+    path("vessels", vessels_api.vessels_list, name="vessels-list"),
+    path("vessels/<str:vid>", vessels_api.vessel_detail, name="vessel-detail"),
     path("tracking/carriers", tracking_api.tracking_carriers,
          name="tracking-carriers"),
     path("tracking/carriers/refresh", tracking_api.tracking_carriers_refresh,

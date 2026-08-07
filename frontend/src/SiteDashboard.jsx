@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { twsDefaultDate } from "./QADocs.jsx";
 import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
+import { VesselsPage } from "./Vessels.jsx";
 
 const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
                                 "DIRECTOR", "ADMIN"];
@@ -622,6 +623,9 @@ that adds your existing quantities to the system"
           </table>
         </div>
       </section>
+
+      <Eyebrow>Vessels nearby</Eyebrow>
+      <VesselsPage collapsible />
     </>
   );
 }

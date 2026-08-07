@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
+import { VesselPicker, VesselTrack } from "./Vessels.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
          td, th } from "./ui.jsx";
 
@@ -540,11 +541,18 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           </label>
         )}
         {HEADER_FIELDS[docType].map(([key, label, type]) => (
+          docType === "LM" && key === "vessel" ? (
+            <VesselPicker key={key} name={payload.vessel}
+              vesselId={payload.vessel_id}
+              onPick={({ vessel, vessel_id }) =>
+                setPayload((pl) => ({ ...pl, vessel, vessel_id }))} />
+          ) : (
           <label key={key} style={{ fontSize: 13 }}>{label}
             <input type={type} value={payload[key] || ""}
                    onChange={(e) => setP(key, e.target.value)}
                    style={inputStyle} />
           </label>
+          )
         ))}
         {isHOForm && !existing && (
           <RefPicker label="MR Reference(s)" refs={mrRefs} setRefs={setMrRefs}
@@ -963,6 +971,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
     setError(null);
     setEditLm({
       vessel: (doc.payload || {}).vessel || "",
+      vessel_id: (doc.payload || {}).vessel_id || "",
       lines: (doc.lines || []).map((l) => ({
         item_id: l.item || null,
         free_text_desc: l.free_text_desc || "",
@@ -990,7 +999,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       const fresh = await api(`/documents/${doc.ref}/edit-manifest`, {
         method: "POST",
         body: {
-          payload: { vessel: editLm.vessel },
+          payload: { vessel: editLm.vessel, vessel_id: editLm.vessel_id || "" },
           lines: editLm.lines.map((l) => ({
             item_id: l.item_id, free_text_desc: l.free_text_desc,
             unit: l.unit, qty_loaded: l.qty_loaded,
@@ -1201,8 +1210,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         <table style={{ borderCollapse: "collapse", fontSize: 13,
                         marginBottom: 8 }}>
           <tbody>
-            {Object.entries(p).filter(([, v]) => v !== "" && v != null &&
-                                                 typeof v !== "object")
+            {Object.entries(p).filter(([k, v]) => v !== "" && v != null &&
+                                                 typeof v !== "object" &&
+                                                 k !== "vessel_id")
               .map(([k, v]) => (
                 <tr key={k}>
                   <td style={{ ...td, color: "#5a6b78", borderTop: "none",
@@ -1215,6 +1225,13 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         </table>
       )}
 
+      {doc.doc_type === "LM" && (doc.payload || {}).vessel_id && (
+        <div style={{ margin: "4px 0 12px", maxWidth: 460 }}>
+          <VesselTrack vesselId={doc.payload.vessel_id}
+                       name={doc.payload.vessel} />
+        </div>
+      )}
+
       {editLm && (
         <div style={{ margin: "12px 0", padding: 12, borderRadius: 8,
                       border: "1px solid var(--sp-navy)",
@@ -1223,12 +1240,11 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                         flexWrap: "wrap", marginBottom: 8 }}>
             <strong style={{ color: "var(--sp-navy)", fontSize: 14 }}>
               Fix manifest — correct the loaded / pending quantities</strong>
-            <label style={{ fontSize: 12.5, marginLeft: "auto" }}>Vessel{" "}
-              <input value={editLm.vessel}
-                     onChange={(e) => setEditLm({ ...editLm,
-                       vessel: e.target.value })}
-                     style={{ ...inputStyle, width: 180, display: "inline" }} />
-            </label>
+            <div style={{ marginLeft: "auto", width: 240 }}>
+              <VesselPicker name={editLm.vessel} vesselId={editLm.vessel_id}
+                onPick={({ vessel, vessel_id }) =>
+                  setEditLm((e) => ({ ...e, vessel, vessel_id }))} />
+            </div>
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse",
                           fontSize: 13 }}>

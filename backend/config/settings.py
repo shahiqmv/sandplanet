@@ -21,6 +21,12 @@ SHIPSGO_BASE_URL = os.environ.get("SHIPSGO_BASE_URL",
                                   "https://api.shipsgo.com/v2")
 SHIPSGO_API_KEY = os.environ.get("SHIPSGO_API_KEY", "")
 SHIPSGO_WEBHOOK_SECRET = os.environ.get("SHIPSGO_WEBHOOK_SECRET", "")
+
+# --- Local vessel tracking (FollowMe, owner 2026-08-07). Key set in platform
+# env, never here. The key is part of the URL path in this provider's API.
+FOLLOWME_BASE_URL = os.environ.get("FOLLOWME_BASE_URL",
+                                   "https://followme.mv/api/v5")
+FOLLOWME_API_KEY = os.environ.get("FOLLOWME_API_KEY", "")
 TRACKING_ETA_SLIP_HOURS = int(os.environ.get("TRACKING_ETA_SLIP_HOURS", "24"))
 TRACKING_CREDIT_FLOOR = int(os.environ.get("TRACKING_CREDIT_FLOOR", "10"))
 # Dev default "*" lets the team-review tunnel (trycloudflare.com) reach the
