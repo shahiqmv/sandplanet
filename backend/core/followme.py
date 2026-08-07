@@ -50,7 +50,15 @@ def _http_get(path):
     base = getattr(settings, "FOLLOWME_BASE_URL",
                    "https://followme.mv/api/v5").rstrip("/")
     url = f"{base}/public/{key}/{path}"
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    # FollowMe sits behind a WAF that 403s the default "Python-urllib" agent
+    # (curl and browsers get 200 — verified on the droplet 2026-08-07), so we
+    # present a normal browser User-Agent.
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/124.0 Safari/537.36",
+        "Accept": "application/json, text/html;q=0.9",
+    })
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
             return resp.read().decode()
