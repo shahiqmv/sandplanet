@@ -551,6 +551,26 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
   );
 }
 
+// Module-scope so their component identity is stable across renders — defining
+// these inside EmployeeProfile remounted every field on each keystroke, so the
+// input lost focus after one character (owner reported 2026-08-08).
+const L = ({ label, children }) => (
+  <label style={{ fontSize: 12.5, display: "block" }}>
+    <span style={{ color: "#5a6b78" }}>{label}</span>
+    {children}
+  </label>
+);
+const Section = ({ title, children }) => (
+  <div style={{ marginTop: 14 }}>
+    <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.5,
+      textTransform: "uppercase", color: "var(--sp-navy)",
+      borderBottom: "1px solid var(--sp-border)", paddingBottom: 4,
+      marginBottom: 10 }}>{title}</div>
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
+      gap: 10 }}>{children}</div>
+  </div>
+);
+
 function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                           onClose, onSaved, onChanged }) {
   const creating = !employee.id;
@@ -625,22 +645,6 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
     finally { setBusy(false); }
   }
 
-  const L = ({ label, children }) => (
-    <label style={{ fontSize: 12.5, display: "block" }}>
-      <span style={{ color: "#5a6b78" }}>{label}</span>
-      {children}
-    </label>
-  );
-  const Section = ({ title, children }) => (
-    <div style={{ marginTop: 14 }}>
-      <div style={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.5,
-        textTransform: "uppercase", color: "var(--sp-navy)",
-        borderBottom: "1px solid var(--sp-border)", paddingBottom: 4,
-        marginBottom: 10 }}>{title}</div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr",
-        gap: 10 }}>{children}</div>
-    </div>
-  );
 
   return (
     <div onClick={onClose}
