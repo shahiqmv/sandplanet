@@ -388,3 +388,67 @@ class CoPmTests(PyrBase):
         self.site.refresh_from_db()
         self.assertFalse(self.site.is_current_pm(pm2))
         self.assertTrue(self.site.is_current_pm(self.pm))   # original remains
+
+
+class HrPyrDirectorGateTests(PyrBase):
+    """HR-raised PYRs (advances/welfare) get a Director (PD) gate — no PM, and
+    separate from the onboarding PYR flow (owner 2026-08-08)."""
+
+    def setUp(self):
+        super().setUp()
+        self.hr = make_user("hr1", User.Role.HO_HR)
+
+    def _raise_hr(self, amount=2000, user=None):
+        self.client.force_authenticate(user or self.hr)
+        body = {"doc_type": "PYR", "site_id": self.site.id, "payload": {},
+                "cost_head_id": self.head.id, "payee": "Kumar (advance)",
+                "payment_type": "ADVANCE", "payment_method": "BANK",
+                "amount_requested": amount, "purpose": "Salary advance",
+                "has_supporting_doc": True}
+        return self.client.post("/api/v1/documents", body, format="json")
+
+    def test_hr_pyr_waits_for_director_then_clears(self):
+        r = self._raise_hr()
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        self.assertEqual(r.data["payment_request"]["origin"], "HR")
+        # submit → stays SUBMITTED (PD gate), NOT auto-cleared to voucher
+        self.assertEqual(self.act(ref, "submit", self.hr).status_code, 200)
+        self.assertEqual(Document.objects.get(ref=ref).status, "SUBMITTED")
+        # a PM cannot approve it
+        self.assertEqual(self.act(ref, "approve", self.pm).status_code, 403)
+        # the Director approves → clears onto the voucher
+        self.assertEqual(self.act(ref, "approve", self.director).status_code,
+                         200)
+        self.assertEqual(Document.objects.get(ref=ref).status,
+                         "DIRECTOR_APPROVED")
+
+    def test_hr_pyr_in_director_queue_not_pm(self):
+        ref = self._raise_hr().data["ref"]
+        self.act(ref, "submit", self.hr)
+        self.client.force_authenticate(self.director)
+        refs = [i["ref"] for g in
+                self.client.get("/api/v1/approvals/pending").data["groups"]
+                for i in g["items"]]
+        self.assertIn(ref, refs)
+        self.client.force_authenticate(self.pm)
+        refs_pm = [i["ref"] for g in
+                   self.client.get("/api/v1/approvals/pending").data["groups"]
+                   for i in g["items"]]
+        self.assertNotIn(ref, refs_pm)
+
+    def test_pa_can_raise_hr_pyr(self):
+        pa = make_user("pa1", User.Role.PA)
+        r = self._raise_hr(user=pa)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["payment_request"]["origin"], "HR")
+
+    def test_purchasing_central_pyr_still_auto_clears(self):
+        # regression: a non-HR central PYR still skips the Director step
+        buyer = make_user("buy1", User.Role.HO_PURCHASING)
+        r = self._raise_hr(user=buyer)
+        ref = r.data["ref"]
+        self.assertEqual(r.data["payment_request"]["origin"], "CENTRAL")
+        self.act(ref, "submit", buyer)
+        self.assertEqual(Document.objects.get(ref=ref).status,
+                         "DIRECTOR_APPROVED")

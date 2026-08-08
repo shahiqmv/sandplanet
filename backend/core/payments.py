@@ -17,11 +17,17 @@ from .models import Approval, CostHead, Document, PaymentRequest
 
 SITE_RAISERS = {"SITE_ADMIN", "SITE_ENGINEER", "PM"}
 CENTRAL_RAISERS = {"HO_PURCHASING", "HO_HR", "DIRECTOR", "SIGNATORY", "QS"}
+# HR-raised manual PYRs (worker salary advances / welfare) get a Director (PD)
+# gate before the voucher — no PM (owner 2026-08-08). PA = the delegated HR
+# person, so she raises them too. This is deliberately SEPARATE from the
+# onboarding PYR flow, where the PD layer was removed for speed.
+HR_RAISERS = {"HO_HR", "PA"}
 FINANCE_RAISERS = {"FINANCE"}
-RAISER_ROLES = SITE_RAISERS | CENTRAL_RAISERS | FINANCE_RAISERS | {"ADMIN"}
+RAISER_ROLES = (SITE_RAISERS | CENTRAL_RAISERS | FINANCE_RAISERS
+                | HR_RAISERS | {"ADMIN"})
 # Only Head-Office centres may raise a foreign-currency request; site teams
 # request in MVR only (owner 2026-07-13).
-USD_RAISERS = CENTRAL_RAISERS | FINANCE_RAISERS | {"ADMIN"}
+USD_RAISERS = CENTRAL_RAISERS | FINANCE_RAISERS | HR_RAISERS | {"ADMIN"}
 RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",
                   "MISSING_DOCUMENT", "DUPLICATE", "ON_HOLD", "OTHER"}
 
@@ -32,7 +38,9 @@ def origin_for(role):
         return "FINANCE"
     if role in SITE_RAISERS:
         return "SITE"
-    return "CENTRAL"      # HO Purchasing / HR / Director / Signatory / QS / Admin
+    if role in HR_RAISERS:
+        return "HR"       # HR advances / welfare → Director (PD) gate, no PM
+    return "CENTRAL"      # HO Purchasing / Director / Signatory / QS / Admin
 
 
 def _param(key, default):
@@ -277,13 +285,17 @@ def pyr_action(request, doc, action_name):
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin != "SITE" or pr.is_capitalized:
-            # Everything except a plain site PYR skips approval and clears
+        if pr.origin == "HR" and not pr.is_capitalized:
+            # HR advances / welfare wait for the Director (PD) — no PM, and kept
+            # separate from onboarding (which has no PD layer). It stays at
+            # SUBMITTED until the Director approves it onto a voucher.
+            pass
+        elif pr.origin != "SITE" or pr.is_capitalized:
+            # Everything else except a plain site PYR skips approval and clears
             # straight to a Payment Voucher for signatory approval: CENTRAL (HO
-            # Purchasing/HR, QS, Director…), FINANCE (rent, salaries…),
-            # ONBOARDING recruitment fees, COMMERCIAL insurance/bond premiums
-            # (owner 2026-08-05 — no PM/Director), and capitalized import
-            # charges. Only a site PYR keeps the PM → Director chain.
+            # Purchasing, QS, Director…), FINANCE (rent, salaries…), ONBOARDING
+            # recruitment fees, COMMERCIAL insurance/bond premiums (owner
+            # 2026-08-05 — no PM/Director), and capitalized import charges.
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
                         "No approval step — authorised on a Payment Voucher")
         return None

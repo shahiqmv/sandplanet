@@ -61,7 +61,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     # Payment request (M6): site teams + Head-Office centres (HO Purchasing,
     # HR, Accounts/Finance) for non-purchase spend (owner 2026-07-13)
     "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "HO_HR",
-            "FINANCE", "DIRECTOR", "SIGNATORY", "QS"},
+            "FINANCE", "DIRECTOR", "SIGNATORY", "QS", "PA"},  # PA = delegated HR
     "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},  # import requirement (§5.10)
     "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # subcontract agreement
 }
@@ -720,10 +720,18 @@ def pending_groups(user):
         add("To approve — PM-approved payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="PM_APPROVED")),
                  "Director approval of the requisition"))
-        # (Non-site PYRs — CENTRAL/FINANCE/ONBOARDING/COMMERCIAL — no longer wait
-        # on the Director; they clear straight to Finance's voucher, owner
-        # 2026-08-05. The Director's only PYR step is the PM-approved site chain
-        # above.)
+        # HR advances / welfare (owner 2026-08-08) DO wait on the Director — a PD
+        # gate before the voucher, no PM. Kept separate from onboarding PYRs
+        # (no PD layer). Central PYRs have no site, so build rows by hand.
+        hr_pyrs = base.filter(doc_type="PYR", status="SUBMITTED",
+                              payment_request__origin="HR").select_related("site")
+        add("To approve — HR payment requests (advances / welfare)",
+            [{"ref": d.ref, "doc_type": "PYR",
+              "site_code": d.site.code if d.site_id else "HO",
+              "project_code": None, "doc_date": d.doc_date, "status": d.status,
+              "hint": "Director (PD) approval"} for d in hr_pyrs])
+        # (Other non-site PYRs — CENTRAL/FINANCE/ONBOARDING/COMMERCIAL — clear
+        # straight to Finance's voucher, no Director step, owner 2026-08-05.)
         add("To size & release — reviewed import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="HO_REVIEWED")),
                  "Size the order (MOQ) and release to sourcing"))

@@ -86,8 +86,12 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
 
   // Available actions per stage
   const canSubmit = st === "DRAFT" && (isRaiser || isAdmin);
-  const canPmApprove = st === "SUBMITTED" && (isPmHere || isAdmin);
-  const canDirApprove = st === "PM_APPROVED" && (isDirector || isAdmin);
+  // PM approves only a site PYR; HR advances/welfare (origin HR) get a Director
+  // (PD) gate at SUBMITTED — no PM (owner 2026-08-08).
+  const canPmApprove = st === "SUBMITTED" && pr.origin === "SITE"
+    && (isPmHere || isAdmin);
+  const canDirApprove = ((st === "PM_APPROVED")
+    || (st === "SUBMITTED" && pr.origin === "HR")) && (isDirector || isAdmin);
   // A Director-approved PYR is authorised on a Payment Voucher (M6d), not
   // here — Finance batches it and a signatory approves the batch.
   const awaitingVoucher = st === "DIRECTOR_APPROVED";
