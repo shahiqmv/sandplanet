@@ -65,6 +65,9 @@ const secTitle = { fontSize: 11, fontWeight: 700, letterSpacing: 0.6,
   paddingBottom: 5, borderBottom: "1px solid var(--line)" };
 const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 };
 const spanAll = { gridColumn: "1 / -1" };
+// Consistent card heading for the meeting-detail sections.
+const cardH = { margin: "0 0 10px", fontSize: 14.5, fontWeight: 700,
+  color: "var(--navy)" };
 const fmtSize = (b) => !b ? "" : b < 1048576
   ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
 
@@ -554,13 +557,14 @@ function MeetingDetail({ id, me, onBack }) {
     as.map((a, j) => j === i ? { ...a, [k]: v } : a));
 
   return (
-    <div>
+    <div style={{ maxWidth: 900 }}>
       <button style={{ ...ghostButton, marginBottom: 10 }}
         onClick={onBack}>← All meetings</button>
       <div style={{ ...card }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center",
           flexWrap: "wrap" }}>
-          <h2 style={{ margin: 0, color: "var(--navy)" }}>{m.title}</h2>
+          <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 20 }}>
+            {m.title}</h2>
           <Chip tone={TYPE_TONE[m.meeting_type]}>
             {TYPE_LABEL[m.meeting_type]}</Chip>
           <Chip tone={STATUS_TONE[m.status]}>{m.status.toLowerCase()}</Chip>
@@ -621,8 +625,8 @@ function MeetingDetail({ id, me, onBack }) {
           </div>)}
       </div>
 
-      <div style={{ ...card, marginTop: 10 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Attendees</h3>
+      <div style={{ ...card, marginTop: 14 }}>
+        <h3 style={cardH}>Attendees</h3>
         <AttendeeEditor attendees={att} setAttendees={setAtt} users={users}
           editable={canManage} />
         {canManage && (
@@ -653,8 +657,8 @@ function MeetingDetail({ id, me, onBack }) {
             RSVP shown on each attendee above.</div>)}
       </div>
 
-      <div style={{ ...card, marginTop: 10 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Pre-read files</h3>
+      <div style={{ ...card, marginTop: 14 }}>
+        <h3 style={cardH}>Pre-read files</h3>
         <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
           Attached to the invitation email so attendees get the agenda pack up
           front.</div>
@@ -688,13 +692,13 @@ function MeetingDetail({ id, me, onBack }) {
       </div>
 
       {m.agenda && (
-        <div style={{ ...card, marginTop: 10 }}>
-          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Agenda</h3>
+        <div style={{ ...card, marginTop: 14 }}>
+          <h3 style={cardH}>Agenda</h3>
           <div style={{ whiteSpace: "pre-wrap", fontSize: 13 }}>{m.agenda}</div>
         </div>)}
 
-      <div style={{ ...card, marginTop: 10 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Audio recordings</h3>
+      <div style={{ ...card, marginTop: 14 }}>
+        <h3 style={cardH}>Audio recordings</h3>
         {!(m.recordings || []).length && (
           <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
             No recordings yet.</div>)}
@@ -732,9 +736,9 @@ function MeetingDetail({ id, me, onBack }) {
           </label>)}
       </div>
 
-      <div style={{ ...card, marginTop: 10 }}>
+      <div style={{ ...card, marginTop: 14 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Minutes</h3>
+          <h3 style={cardH}>Minutes</h3>
           <Chip tone={m.minutes_status === "FINAL" ? "ok" : "info"}>
             {m.minutes_status === "FINAL" ? "final"
               : m.minutes_status === "DRAFT" ? "draft" : "none"}</Chip>
@@ -784,8 +788,8 @@ function MeetingDetail({ id, me, onBack }) {
           </div>)}
       </div>
 
-      <div style={{ ...card, marginTop: 10 }}>
-        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Follow-ups</h3>
+      <div style={{ ...card, marginTop: 14 }}>
+        <h3 style={cardH}>Follow-ups</h3>
         <table style={{ width: "100%", borderCollapse: "collapse",
           fontSize: 13 }}>
           <thead><tr>
