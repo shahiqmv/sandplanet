@@ -292,7 +292,8 @@ export default function ProcurementSchedulePage({ me, sites }) {
 
   if (openId)
     return <ScheduleDetail id={openId} me={me}
-             onBack={() => { setOpenId(null); load(); }} />;
+             onBack={() => { setOpenId(null); load(); }}
+             onDeleted={() => { setOpenId(null); load(); }} />;
   if (view === "new")
     return <NewSchedule sites={sites} onCancel={() => setView("list")}
              onDone={(d) => { setView("list"); setOpenId(d.id); load(); }} />;
@@ -382,7 +383,8 @@ export function ProjectScheduleTab({ project, me }) {
         Start the procurement schedule</Btn>}
     </div>
   );
-  return <ScheduleDetail id={id} me={me} onBack={null} />;
+  return <ScheduleDetail id={id} me={me} onBack={null}
+    onDeleted={() => { setId(null); setState("none"); }} />;
 }
 
 function NewSchedule({ sites, onCancel, onDone }) {
@@ -437,7 +439,7 @@ function NewSchedule({ sites, onCancel, onDone }) {
   );
 }
 
-function ScheduleDetail({ id, me, onBack }) {
+function ScheduleDetail({ id, me, onBack, onDeleted }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -480,6 +482,17 @@ function ScheduleDetail({ id, me, onBack }) {
     api(`/procurement-schedules/${id}/share`, { method: "POST" }));
   const revokeShare = () => run(() =>
     api(`/procurement-schedules/${id}/share`, { method: "DELETE" }));
+  // Admin removes a draft opened in error (e.g. a PM created it on the wrong
+  // project). Don't run load() afterwards — the schedule is gone.
+  const del = async () => {
+    if (!window.confirm(`Delete draft schedule ${c.ref}? This permanently `
+      + "removes the plan and all its lines. This cannot be undone.")) return;
+    setBusy(true); setError(null);
+    try {
+      await api(`/procurement-schedules/${id}`, { method: "DELETE" });
+      (onDeleted || onBack)?.();
+    } catch (e) { setError(e.message); setBusy(false); }
+  };
 
   if (error && !c) return <div style={card}>{error}
     <div><button style={linkBtn} onClick={onBack}>← Back</button></div></div>;
@@ -545,6 +558,11 @@ function ScheduleDetail({ id, me, onBack }) {
             <Btn variant="secondary" disabled={busy} onClick={reopen}
               title="Reopen the signed-off schedule so the team can edit lines">
               Reopen for changes</Btn>}
+          {me.role === "ADMIN" && c.status === "DRAFT" && (
+            <Btn variant="ghost" disabled={busy} onClick={del}
+              title={"Delete this draft schedule (e.g. opened on the wrong "
+                + "project). Removes the plan and all its lines."}>
+              🗑 Delete draft</Btn>)}
           <a href={`/api/v1/procurement-schedules/${c.id}/export`}
             style={{ ...linkBtn, marginLeft: "auto", textDecoration: "none" }}
             title="Download the client procurement plan (Excel)">

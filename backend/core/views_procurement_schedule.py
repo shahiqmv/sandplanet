@@ -95,12 +95,17 @@ def project_schedule(request, project_id):
     return Response(ps.schedule_dict(sched, request.user))
 
 
-@api_view(["GET"])
+@api_view(["GET", "DELETE"])
 @permission_classes([IsAuthenticated])
 def schedule_detail(request, pk):
     sched, err = _get_sched(request, pk)
     if err:
         return err
+    if request.method == "DELETE":
+        msg = ps.delete_schedule(sched, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(status=204)
     return Response(ps.schedule_dict(sched, request.user))
 
 

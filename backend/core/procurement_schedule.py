@@ -101,6 +101,37 @@ def get_or_create_schedule(project, actor):
     return sched, None
 
 
+def delete_schedule(sched, actor):
+    """Admin removes a whole procurement schedule opened in error (e.g. a PM
+    created one on the wrong project). Restricted to a DRAFT that is still being
+    planned — a schedule that has been submitted, confirmed or signed off may
+    have been shared with the client, so it is protected (reopen/cancel first).
+    Deleting the PSC document cascades to its lines and quotes. Returns an error
+    string, or None on success."""
+    doc = sched.document
+    if actor.role != "ADMIN":
+        return "Only an administrator can delete a procurement schedule."
+    if doc.status != "DRAFT":
+        return ("Only a draft schedule can be deleted — this one has already "
+                "been submitted or signed off. Cancel it instead.")
+    ref, project_code = doc.ref, sched.project.code
+    audit("document", doc.id, "PSC_DELETED", actor=actor,
+          detail={"ref": ref, "project": project_code})
+    with transaction.atomic():
+        # Unwind the protected references by hand. Lines PROTECT their section,
+        # so lines (and their cascaded quotes) go first; the schedule's CASCADE
+        # then clears the sections. Revisions PROTECT the document and the
+        # document PROTECTs its current revision, so drop that pointer and
+        # remove the revisions before deleting the document.
+        sched.lines.all().delete()
+        sched.delete()
+        doc.current_revision = None
+        doc.save(update_fields=["current_revision"])
+        doc.revisions.all().delete()
+        doc.delete()
+    return None
+
+
 def _get_section(sched, data):
     """Resolve or create the line's section from {section_id} or {section_code,
     section_title}. A supplied section_title always renames the resolved section

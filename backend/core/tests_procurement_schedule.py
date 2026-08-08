@@ -282,3 +282,39 @@ class ProcurementScheduleTests(TestCase):
         a = m.post(f"/api/mobile/v1/documents/{ref}/approve", {}, format="json")
         self.assertEqual(a.status_code, 200, a.data)
         self.assertEqual(Document.objects.get(ref=ref).status, "SIGNED_OFF")
+
+
+class ScheduleDeleteTests(ProcurementScheduleTests):
+    """Admin deletes a draft schedule a PM opened in error (owner 2026-08-08)."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = make_user("psched_admin", User.Role.ADMIN)
+
+    def test_admin_deletes_a_draft(self):
+        pk = self._open()
+        self._add_line(pk)
+        self.client.force_authenticate(self.admin)
+        r = self.client.delete(f"/api/v1/procurement-schedules/{pk}")
+        self.assertEqual(r.status_code, 204, getattr(r, "data", r))
+        # gone — document, schedule and its lines all cascade away
+        self.assertFalse(Document.objects.filter(pk=pk).exists())
+        self.assertEqual(self.client.get(
+            f"/api/v1/procurement-schedules/{pk}").status_code, 404)
+
+    def test_non_admin_cannot_delete(self):
+        pk = self._open()
+        for who in (self.pm, self.purch, self.director, self.qs):
+            self.client.force_authenticate(who)
+            r = self.client.delete(f"/api/v1/procurement-schedules/{pk}")
+            self.assertEqual(r.status_code, 400, f"{who.role}: {r.data}")
+        self.assertTrue(Document.objects.filter(pk=pk).exists())
+
+    def test_only_a_draft_can_be_deleted(self):
+        pk = self._open()
+        self._add_line(pk)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.admin)
+        r = self.client.delete(f"/api/v1/procurement-schedules/{pk}")
+        self.assertEqual(r.status_code, 400)
+        self.assertTrue(Document.objects.filter(pk=pk).exists())
