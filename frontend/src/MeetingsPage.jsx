@@ -80,6 +80,19 @@ function F({ label, children }) {
 }
 
 // A month grid of meetings; click a meeting to open it.
+// A soft [background, text] pair per meeting type, so the calendar reads at a
+// glance instead of every chip being the same colour.
+const TYPE_CHIP = {
+  PROJECT: ["#e7f0fb", "#1c4e80"],
+  PROSPECT: ["#e6f4ea", "#137333"],
+  SITE: ["#fdf3e0", "#8a5a00"],
+  OTHER: ["#eceff2", "#41505e"],
+};
+const navBtn = { width: 30, height: 30, borderRadius: 8, cursor: "pointer",
+  border: "1px solid var(--line)", background: "#fff", color: "var(--navy)",
+  fontSize: 16, lineHeight: 1, display: "flex", alignItems: "center",
+  justifyContent: "center" };
+
 function MonthCalendar({ meetings, onOpen }) {
   const now = new Date();
   const [cur, setCur] = useState({ y: now.getFullYear(), m: now.getMonth() });
@@ -92,6 +105,8 @@ function MonthCalendar({ meetings, onOpen }) {
     if (p.y === cur.y && p.m === cur.m)
       (byDay[p.d] = byDay[p.d] || []).push(mm);
   });
+  Object.values(byDay).forEach((list) =>
+    list.sort((a, b) => a.scheduled_at.localeCompare(b.scheduled_at)));
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
   for (let d = 1; d <= days; d++) cells.push(d);
@@ -99,45 +114,81 @@ function MonthCalendar({ meetings, onOpen }) {
     const d = new Date(c.y, c.m + n, 1);
     return { y: d.getFullYear(), m: d.getMonth() };
   });
-  const isToday = (d) => now.getFullYear() === cur.y
-    && now.getMonth() === cur.m && now.getDate() === d;
+  const tp = mvParts(now.toISOString());
+  const isToday = (d) => tp.y === cur.y && tp.m === cur.m && tp.d === d;
+
   return (
-    <div style={card}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10,
-        marginBottom: 8 }}>
-        <button style={ghostBtn} onClick={() => shift(-1)}>‹</button>
-        <b style={{ fontSize: 15, color: "var(--navy)", minWidth: 150,
-          textAlign: "center" }}>
+    <div style={{ ...card, padding: "18px 20px" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8,
+        marginBottom: 14 }}>
+        <button style={navBtn} title="Previous month"
+          onClick={() => shift(-1)}>‹</button>
+        <button style={navBtn} title="Next month"
+          onClick={() => shift(1)}>›</button>
+        <b style={{ fontSize: 18, color: "var(--navy)", marginLeft: 6 }}>
           {first.toLocaleDateString("en-GB", { month: "long",
             year: "numeric" })}</b>
-        <button style={ghostBtn} onClick={() => shift(1)}>›</button>
-        <button style={{ ...ghostBtn, marginLeft: 4 }}
+        <button style={{ ...ghostBtn, marginLeft: "auto", padding: "6px 14px" }}
           onClick={() => setCur({ y: now.getFullYear(),
             m: now.getMonth() })}>Today</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)",
-        gap: 4 }}>
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-          <div key={d} style={{ fontSize: 11, color: "var(--muted)",
-            textAlign: "center", padding: 2 }}>{d}</div>))}
-        {cells.map((d, i) => (
-          <div key={i} style={{ minHeight: 76, border: "1px solid var(--line)",
-            borderRadius: 6, padding: 3, background: d ? "#fff" : "transparent",
-            outline: d && isToday(d) ? "2px solid var(--sky)" : "none" }}>
-            {d && <div style={{ fontSize: 11, color: "var(--muted)",
-              textAlign: "right" }}>{d}</div>}
-            {(byDay[d] || []).map((mm) => (
-              <div key={mm.id} onClick={() => onOpen(mm.id)} title={mm.title}
-                style={{ cursor: "pointer", fontSize: 10.5, marginTop: 2,
-                  padding: "1px 4px", borderRadius: 4, whiteSpace: "nowrap",
-                  overflow: "hidden", textOverflow: "ellipsis",
-                  background: mm.status === "CANCELLED" ? "#eee"
-                    : "var(--sky-soft)", color: "var(--navy)" }}>
-                {new Date(mm.scheduled_at).toLocaleTimeString("en-GB",
-                  { hour: "2-digit", minute: "2-digit", ...MV })} {mm.title}</div>
-            ))}
-          </div>
-        ))}
+        gap: 6 }}>
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => (
+          <div key={d} style={{ fontSize: 11, fontWeight: 700,
+            letterSpacing: 0.5, color: i > 4 ? "var(--muted)" : "var(--navy)",
+            textAlign: "center", padding: "2px 0 6px",
+            textTransform: "uppercase" }}>{d}</div>))}
+        {cells.map((d, i) => {
+          const weekend = i % 7 > 4;
+          const today = d && isToday(d);
+          const list = (d && byDay[d]) || [];
+          return (
+            <div key={i} style={{ minHeight: 104, borderRadius: 10,
+              padding: 5, border: today ? "1.5px solid var(--sky)"
+                : "1px solid var(--line)",
+              background: !d ? "transparent"
+                : today ? "var(--sky-soft, #eef6fd)"
+                : weekend ? "#fafbfc" : "#fff",
+              display: "flex", flexDirection: "column", gap: 2 }}>
+              {d && (
+                <div style={{ display: "flex", justifyContent: "flex-end",
+                  marginBottom: 1 }}>
+                  <span style={{ fontSize: 11.5, fontWeight: today ? 700 : 500,
+                    minWidth: 20, height: 20, borderRadius: 10,
+                    display: "inline-flex", alignItems: "center",
+                    justifyContent: "center", padding: "0 5px",
+                    color: today ? "#fff" : "var(--muted)",
+                    background: today ? "var(--sky)" : "transparent" }}>
+                    {d}</span>
+                </div>)}
+              {list.slice(0, 3).map((mm) => {
+                const cancelled = mm.status === "CANCELLED";
+                const [bg, fg] = TYPE_CHIP[mm.meeting_type] || TYPE_CHIP.OTHER;
+                return (
+                  <div key={mm.id} onClick={() => onOpen(mm.id)}
+                    title={`${mm.title} · ${TYPE_LABEL[mm.meeting_type]}`}
+                    style={{ cursor: "pointer", fontSize: 10.5,
+                      padding: "2px 6px", borderRadius: 5,
+                      whiteSpace: "nowrap", overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      borderLeft: `3px solid ${cancelled ? "#b6bcc2" : fg}`,
+                      textDecoration: cancelled ? "line-through" : "none",
+                      background: cancelled ? "#f0f1f3" : bg,
+                      color: cancelled ? "var(--muted)" : fg }}>
+                    <b>{new Date(mm.scheduled_at).toLocaleTimeString("en-GB",
+                      { hour: "2-digit", minute: "2-digit", ...MV })}</b>{" "}
+                    {mm.title}</div>
+                );
+              })}
+              {list.length > 3 && (
+                <div onClick={() => onOpen(list[3].id)}
+                  style={{ fontSize: 10, color: "var(--navy)", cursor: "pointer",
+                    padding: "0 6px", fontWeight: 600 }}>
+                  +{list.length - 3} more</div>)}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -311,7 +362,7 @@ export default function MeetingsPage({ me }) {
 function MeetingList({ me }) {
   const [data, setData] = useState(null);
   const [type, setType] = useState("");
-  const [view, setView] = useState("list");
+  const [view, setView] = useState("calendar");
   const [selected, setSelected] = useState(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
