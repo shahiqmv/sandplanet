@@ -56,6 +56,15 @@ async function confirmNoConflicts({ scheduled_at, duration_minutes,
 
 const sel = { padding: "6px 8px", border: "1px solid var(--line)",
   borderRadius: 6, fontSize: 13, background: "#fff" };
+// Full-width field + section styles for the New-meeting form grid.
+const field = { padding: "9px 11px", border: "1px solid var(--line)",
+  borderRadius: 8, fontSize: 13.5, background: "#fff", width: "100%",
+  boxSizing: "border-box", fontFamily: "inherit" };
+const secTitle = { fontSize: 11, fontWeight: 700, letterSpacing: 0.6,
+  textTransform: "uppercase", color: "var(--navy)", margin: "20px 0 12px",
+  paddingBottom: 5, borderBottom: "1px solid var(--line)" };
+const grid2 = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 };
+const spanAll = { gridColumn: "1 / -1" };
 const fmtSize = (b) => !b ? "" : b < 1048576
   ? `${Math.round(b / 1024)} KB` : `${(b / 1048576).toFixed(1)} MB`;
 
@@ -890,102 +899,114 @@ function NewMeeting({ me, onDone, onCancel }) {
   }
 
   return (
-    <div style={{ ...card, maxWidth: 760 }}>
+    <div style={{ ...card, maxWidth: 900, padding: "22px 26px" }}>
       <div style={{ display: "flex", justifyContent: "space-between",
-        marginBottom: 12 }}>
-        <h2 style={{ margin: 0, fontSize: 18 }}>New meeting</h2>
-        <button onClick={onCancel} style={{ border: "none", background: "none",
-          cursor: "pointer", color: "var(--muted)" }}>Cancel</button>
+        alignItems: "baseline", gap: 12 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20, color: "var(--navy)" }}>
+            New meeting</h2>
+          <p style={{ margin: "2px 0 0", fontSize: 12.5,
+            color: "var(--muted)" }}>
+            Schedule it, add attendees, and issue the invite once it's saved.</p>
+        </div>
+        <button onClick={onCancel} style={{ border: "1px solid var(--line)",
+          background: "#fff", borderRadius: 8, padding: "6px 14px",
+          cursor: "pointer", color: "var(--navy)", fontSize: 13 }}>Cancel</button>
       </div>
-      {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
+      {error && <p style={{ color: "var(--red-fg)", fontSize: 13,
+        background: "var(--red-bg)", padding: "8px 12px", borderRadius: 8,
+        margin: "12px 0 0" }}>{error}</p>}
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-        marginBottom: 8 }}>
+      <div style={secTitle}>Details</div>
+      <div style={grid2}>
         <F label="Type">
           <select value={f.meeting_type} onChange={set("meeting_type")}
-            style={sel}>
+            style={field}>
             {Object.entries(TYPE_LABEL).map(([k, v]) =>
               <option key={k} value={k}>{v}</option>)}
           </select></F>
-        <F label="Title"><input value={f.title} onChange={set("title")}
-          placeholder="e.g. Weekly progress review"
-          style={{ ...sel, width: 260 }} /></F>
         <F label="Cadence">
-          <select value={f.cadence} onChange={set("cadence")} style={sel}>
+          <select value={f.cadence} onChange={set("cadence")} style={field}>
             <option value="ONE_OFF">One-off</option>
             <option value="WEEKLY">Weekly</option>
             <option value="FORTNIGHTLY">Fortnightly</option>
             <option value="MONTHLY">Monthly</option>
           </select></F>
-      </div>
-
-      {(isProject || isSite) && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-          marginBottom: 8 }}>
+        <div style={spanAll}>
+          <F label="Title"><input value={f.title} onChange={set("title")}
+            placeholder="e.g. Weekly progress review" style={field} /></F>
+        </div>
+        {(isProject || isSite) && (
           <F label="Client / site">
             <select value={siteId} onChange={(e) => setSiteId(e.target.value)}
-              style={sel}>
+              style={field}>
               <option value="">Select…</option>
               {sites.map((s) => <option key={s.id} value={s.id}>
                 {s.client_name || s.name} ({s.code})</option>)}
-            </select></F>
-          {isProject && (
-            <F label="Project">
-              <select value={f.project_id} onChange={set("project_id")}
-                style={sel} disabled={!siteId}>
-                <option value="">Select project…</option>
-                {projects.map((p) => <option key={p.id} value={p.id}>
-                  {p.code} — {p.title}</option>)}
-              </select></F>)}
-        </div>)}
-
-      {isProspect && (
-        <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-          marginBottom: 8 }}>
+            </select></F>)}
+        {isProject && (
+          <F label="Project">
+            <select value={f.project_id} onChange={set("project_id")}
+              style={field} disabled={!siteId}>
+              <option value="">Select project…</option>
+              {projects.map((p) => <option key={p.id} value={p.id}>
+                {p.code} — {p.title}</option>)}
+            </select></F>)}
+        {isProspect && (<>
           <F label="Organisation"><input value={f.org_name}
             onChange={set("org_name")} placeholder="e.g. Blue Lagoon Resort"
-            style={{ ...sel, width: 240 }} /></F>
+            style={field} /></F>
           <F label="Contact"><input value={f.org_contact}
             onChange={set("org_contact")} placeholder="name / role"
-            style={{ ...sel, width: 200 }} /></F>
-        </div>)}
+            style={field} /></F>
+        </>)}
+      </div>
 
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
-        marginBottom: 8 }}>
-        <F label="Date & time"><input type="datetime-local"
+      <div style={secTitle}>When &amp; where</div>
+      <div style={grid2}>
+        <F label="Date &amp; time"><input type="datetime-local"
           value={f.scheduled_at} onChange={set("scheduled_at")}
-          style={sel} /></F>
-        <F label="Duration (min)"><input type="number" value={f.duration_minutes}
-          onChange={set("duration_minutes")} style={{ ...sel, width: 90 }} /></F>
+          style={field} /></F>
+        <F label="Duration (min)"><input type="number"
+          value={f.duration_minutes} onChange={set("duration_minutes")}
+          style={field} /></F>
         <F label="Location">
           <select value={f.location_kind} onChange={set("location_kind")}
-            style={sel}>
+            style={field}>
             {Object.entries(LOC).map(([k, v]) =>
               <option key={k} value={k}>{v}</option>)}
           </select></F>
         <F label="Location note"><input value={f.location_note}
-          onChange={set("location_note")} style={{ ...sel, width: 180 }} /></F>
+          onChange={set("location_note")} placeholder="room / address"
+          style={field} /></F>
         {f.location_kind === "ONLINE" && (
-          <F label="Meeting link"><input value={f.meeting_link} type="url"
-            placeholder="https://…" onChange={set("meeting_link")}
-            style={{ ...sel, width: 260 }} /></F>)}
+          <div style={spanAll}>
+            <F label="Meeting link"><input value={f.meeting_link} type="url"
+              placeholder="https://…" onChange={set("meeting_link")}
+              style={field} /></F>
+          </div>)}
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 4 }}>
-          Attendees — our team are notified when you schedule it</div>
+      <div style={secTitle}>Attendees</div>
+      <div style={{ fontSize: 12, color: "var(--muted)", margin: "-4px 0 8px" }}>
+        Our team are notified in-app; external guests with an email can be sent
+        the invite after you save.</div>
+      <div style={{ border: "1px solid var(--line)", borderRadius: 10,
+        padding: 14, background: "var(--sky-soft, #f5f8fb)" }}>
         <AttendeeEditor attendees={attendees} setAttendees={setAttendees}
           users={users} editable />
       </div>
 
-      <div style={{ marginBottom: 12 }}>
-        <F label="Agenda (optional)"><textarea value={f.agenda}
-          onChange={set("agenda")} rows={3}
-          style={{ ...sel, width: "100%", fontFamily: "inherit",
-            resize: "vertical" }} /></F>
-      </div>
+      <div style={secTitle}>Agenda</div>
+      <textarea value={f.agenda} onChange={set("agenda")} rows={4}
+        placeholder="Optional — one line per item; carries into the invite."
+        style={{ ...field, resize: "vertical" }} />
 
-      <div style={{ display: "flex", justifyContent: "flex-end" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10,
+        marginTop: 20, paddingTop: 16, borderTop: "1px solid var(--line)" }}>
+        <button onClick={onCancel} style={{ border: "1px solid var(--line)",
+          background: "#fff", borderRadius: 8, padding: "9px 18px",
+          cursor: "pointer", color: "var(--navy)", fontSize: 13.5 }}>Cancel</button>
         <Btn variant="primary" onClick={save} disabled={saving}>
           {saving ? "Saving…" : "Schedule meeting"}</Btn>
       </div>
