@@ -439,6 +439,28 @@ function NewSchedule({ sites, onCancel, onDone }) {
   );
 }
 
+// Pops a line's Edit/Track/Quotes/Split form over the table, centred, instead
+// of pushing it below every section (owner 2026-08-08 — the table is long, so
+// an inline form far down was easy to lose). Backdrop or Esc closes it.
+function Modal({ onClose, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, zIndex: 1000,
+      background: "rgba(20,30,40,.45)", display: "flex",
+      alignItems: "flex-start", justifyContent: "center",
+      padding: "40px 16px", overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 820, margin: "auto" }}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function ScheduleDetail({ id, me, onBack, onDeleted }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState(null);
@@ -572,9 +594,11 @@ function ScheduleDetail({ id, me, onBack, onDeleted }) {
         </div>
       </div>
 
-      {adding && <LineForm mode="plan" c={c} me={me}
-        onCancel={() => setAdding(false)}
-        onSaved={() => { setAdding(false); load(); }} />}
+      {adding && <Modal onClose={() => setAdding(false)}>
+        <LineForm mode="plan" c={c} me={me}
+          onCancel={() => setAdding(false)}
+          onSaved={() => { setAdding(false); load(); }} />
+      </Modal>}
 
       {secList.map((sec) => {
         const gkey = String(sec.id === "none" ? 0 : sec.id);
@@ -635,20 +659,28 @@ function ScheduleDetail({ id, me, onBack, onDeleted }) {
         );
       })}
 
-      {editId && <LineForm mode={c.can_confirm ? "commercial" : "plan"} c={c}
-        me={me} line={c.lines.find((l) => l.id === editId)}
-        onCancel={() => setEditId(null)}
-        onSaved={() => { setEditId(null); load(); }} />}
+      {editId && <Modal onClose={() => setEditId(null)}>
+        <LineForm mode={c.can_confirm ? "commercial" : "plan"} c={c}
+          me={me} line={c.lines.find((l) => l.id === editId)}
+          onCancel={() => setEditId(null)}
+          onSaved={() => { setEditId(null); load(); }} />
+      </Modal>}
 
-      {trackId && <LinkPanel line={c.lines.find((l) => l.id === trackId)}
-        onClose={() => setTrackId(null)} onSaved={setC} />}
+      {trackId && <Modal onClose={() => setTrackId(null)}>
+        <LinkPanel line={c.lines.find((l) => l.id === trackId)}
+          onClose={() => setTrackId(null)} onSaved={setC} />
+      </Modal>}
 
-      {quotesId && <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
-        canAward={c.can_award} onClose={() => setQuotesId(null)}
-        onSaved={setC} />}
+      {quotesId && <Modal onClose={() => setQuotesId(null)}>
+        <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
+          canAward={c.can_award} onClose={() => setQuotesId(null)}
+          onSaved={setC} />
+      </Modal>}
 
-      {splitId && <SplitPanel line={c.lines.find((l) => l.id === splitId)}
-        onClose={() => setSplitId(null)} onSaved={setC} />}
+      {splitId && <Modal onClose={() => setSplitId(null)}>
+        <SplitPanel line={c.lines.find((l) => l.id === splitId)}
+          onClose={() => setSplitId(null)} onSaved={setC} />
+      </Modal>}
     </div>
   );
 }
