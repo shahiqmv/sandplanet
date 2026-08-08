@@ -128,3 +128,41 @@ class OfficialReceiptTests(TestCase):
         self.assertEqual(r.status_code, 200)
         self.assertTrue(any(b["label"] == "BML USD"
                             for b in r.data["accounts"]))
+
+
+class ManualInvoiceReceiptTests(OfficialReceiptTests):
+    """Receipting manual invoices individually — they carry no claim_id, so the
+    per-invoice keying + backend path must handle them (owner 2026-08-08)."""
+
+    def _manual(self, project, no, amount="500"):
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(
+            "/api/v1/receivables/manual-invoices",
+            {"origin": "HISTORICAL", "project_id": project.id,
+             "invoice_no": no, "invoice_date": str(timezone.localdate()),
+             "gst_pct": "0",
+             "lines": [{"description": "Old bill", "amount": amount}]},
+            format="json")
+        self.assertIn(r.status_code, (200, 201), r.data)
+        from .models import ManualInvoice
+        return ManualInvoice.objects.get(invoice_no=no)
+
+    def test_receipt_one_manual_invoice_leaves_the_other(self):
+        from decimal import Decimal
+
+        from .receipts import manual_outstanding
+        m1 = self._manual(self.p1, "APSP/2026/0058", "500")
+        m2 = self._manual(self.p1, "APSP/2026/0068", "500")
+        r = self._receipt([{"manual_invoice_id": m1.id, "amount": "500"}])
+        self.assertEqual(r.status_code, 201, r.data)
+        m1.refresh_from_db(); m2.refresh_from_db()
+        self.assertEqual(manual_outstanding(m1), Decimal("0.00"))
+        self.assertEqual(manual_outstanding(m2), Decimal("500.00"))
+        # the receipt lists the manual invoice number
+        self.assertEqual(r.data["lines"][0]["invoice_no"], "APSP/2026/0058")
+
+    def test_manual_receipt_cannot_overpay(self):
+        m1 = self._manual(self.p1, "APSP/2026/0070", "300")
+        r = self._receipt([{"manual_invoice_id": m1.id, "amount": "400"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("exceeds", r.data["detail"])

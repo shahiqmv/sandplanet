@@ -333,6 +333,12 @@ function Receipts({ canReceipt }) {
   );
 }
 
+// A stable per-invoice key: claims carry a claim_id, manual invoices carry a
+// manual_invoice_id (claim_id is null for those) — keying by claim_id alone made
+// every manual invoice share the null slot, so ticking one ticked them all.
+const invKey = (inv) =>
+  inv.claim_id ? `c${inv.claim_id}` : `m${inv.manual_invoice_id}`;
+
 function NewReceipt({ onDone, onCancel }) {
   const [clients, setClients] = useState(null);
   const [banks, setBanks] = useState([]);
@@ -361,7 +367,8 @@ function NewReceipt({ onDone, onCancel }) {
       setInvoices(r.invoices);
       const a = {};
       r.invoices.forEach((inv) => {
-        a[inv.claim_id] = { on: false, amount: Number(inv.outstanding).toFixed(2) };
+        a[invKey(inv)] = { on: false,
+                           amount: Number(inv.outstanding).toFixed(2) };
       });
       setAlloc(a);
     }).catch((e) => setError(e.message));
@@ -370,15 +377,18 @@ function NewReceipt({ onDone, onCancel }) {
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
   const setLine = (id, patch) =>
     setAlloc((a) => ({ ...a, [id]: { ...a[id], ...patch } }));
-  const total = invoices.reduce((s, inv) =>
-    s + (alloc[inv.claim_id]?.on ? Number(alloc[inv.claim_id].amount) || 0 : 0), 0);
+  const total = invoices.reduce((s, inv) => {
+    const a = alloc[invKey(inv)];
+    return s + (a?.on ? Number(a.amount) || 0 : 0);
+  }, 0);
 
   async function save() {
     setError(null);
     const allocations = invoices
-      .filter((inv) => alloc[inv.claim_id]?.on)
+      .filter((inv) => alloc[invKey(inv)]?.on)
       .map((inv) => ({ claim_id: inv.claim_id,
-                       amount: alloc[inv.claim_id].amount }));
+                       manual_invoice_id: inv.manual_invoice_id,
+                       amount: alloc[invKey(inv)].amount }));
     if (!allocations.length) { setError("Select at least one invoice."); return; }
     setSaving(true);
     try {
@@ -454,12 +464,13 @@ function NewReceipt({ onDone, onCancel }) {
                   No outstanding invoices for this client.</td></tr>
               )}
               {invoices.map((inv) => {
-                const a = alloc[inv.claim_id] || {};
+                const key = invKey(inv);
+                const a = alloc[key] || {};
                 return (
-                  <tr key={inv.claim_id}>
+                  <tr key={key}>
                     <td style={{ ...td, textAlign: "center" }}>
                       <input type="checkbox" checked={!!a.on}
-                        onChange={(e) => setLine(inv.claim_id,
+                        onChange={(e) => setLine(key,
                           { on: e.target.checked })} /></td>
                     <td style={{ ...td, ...mono }}>{inv.invoice_no}</td>
                     <td style={td}>{inv.project_code}</td>
@@ -471,7 +482,7 @@ function NewReceipt({ onDone, onCancel }) {
                     <td style={{ ...td, textAlign: "right" }}>
                       <input type="number" step="0.01" value={a.amount || ""}
                         disabled={!a.on}
-                        onChange={(e) => setLine(inv.claim_id,
+                        onChange={(e) => setLine(key,
                           { amount: e.target.value })}
                         style={{ ...sel, width: 110, textAlign: "right",
                           ...mono, opacity: a.on ? 1 : 0.5 }} /></td>

@@ -14,8 +14,8 @@ from django.db.models import Sum
 
 from .audit import audit
 from .commercial import _q2, amount_in_words, claim_valuation, set_claim_status
-from .models import (ClientReceipt, CompanyBankAccount, OfficialReceipt,
-                     ProgressClaim, Site)
+from .models import (ClientReceipt, CompanyBankAccount, ManualInvoice,
+                     OfficialReceipt, ProgressClaim, Site)
 
 ZERO = Decimal("0")
 
@@ -46,6 +46,17 @@ def _received(claim, exclude_or=None):
 def outstanding(claim):
     """What is still owed on an invoice = its value less all money received."""
     return _invoice_due(claim) - _received(claim)
+
+
+def _manual_received(mi, exclude_or=None):
+    qs = ClientReceipt.objects.filter(manual_invoice=mi)
+    if exclude_or is not None:
+        qs = qs.exclude(official_receipt=exclude_or)
+    return _q2(qs.aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
+def manual_outstanding(mi):
+    return _q2(mi.amount) - _manual_received(mi)
 
 
 def _settle(claim, actor):
@@ -80,22 +91,39 @@ def create_official_receipt(data, actor):
             return None, "That bank account no longer exists."
 
     rows = data.get("allocations") or []
-    parsed = []
+    # Each allocation is a certified claim OR a manual invoice (which carries no
+    # claim_id). Parse both so a receipt can settle either kind, individually.
+    parsed = []      # (claim | None, manual_invoice | None, amount)
     for row in rows:
         amt = _dec(row.get("amount"))
         if amt is None or amt <= ZERO:
             continue                       # skip blank / zero lines
-        claim = ProgressClaim.objects.filter(
-            pk=row.get("claim_id"), project__site=site,
-            status__in=["CERTIFIED", "PAID"]).exclude(invoice_no="").first()
-        if claim is None:
-            return None, "An invoice on this receipt isn't a certified " \
-                         "invoice for this client."
-        due = outstanding(claim)
-        if amt > due + Decimal("0.01"):
-            return None, (f"{amt:,.2f} exceeds the {due:,.2f} outstanding on "
-                          f"invoice {claim.invoice_no}.")
-        parsed.append((claim, _q2(amt)))
+        if row.get("claim_id"):
+            claim = ProgressClaim.objects.filter(
+                pk=row["claim_id"], project__site=site,
+                status__in=["CERTIFIED", "PAID"]).exclude(invoice_no="").first()
+            if claim is None:
+                return None, ("An invoice on this receipt isn't a certified "
+                              "invoice for this client.")
+            due = outstanding(claim)
+            if amt > due + Decimal("0.01"):
+                return None, (f"{amt:,.2f} exceeds the {due:,.2f} outstanding "
+                              f"on invoice {claim.invoice_no}.")
+            parsed.append((claim, None, _q2(amt)))
+        elif row.get("manual_invoice_id"):
+            mi = ManualInvoice.objects.filter(
+                pk=row["manual_invoice_id"], project__site=site,
+                is_void=False).first()
+            if mi is None:
+                return None, ("An invoice on this receipt isn't a live invoice "
+                              "for this client.")
+            due = manual_outstanding(mi)
+            if amt > due + Decimal("0.01"):
+                return None, (f"{amt:,.2f} exceeds the {due:,.2f} outstanding "
+                              f"on invoice {mi.invoice_no}.")
+            parsed.append((None, mi, _q2(amt)))
+        else:
+            return None, "An allocation is missing its invoice."
     if not parsed:
         return None, "Add at least one invoice and amount to receipt."
 
@@ -104,13 +132,15 @@ def create_official_receipt(data, actor):
         receipt_date=data["receipt_date"], method=method,
         reference=data.get("reference") or "", bank_account=bank,
         note=data.get("note") or "", recorded_by=actor)
-    for claim, amt in parsed:
+    for claim, mi, amt in parsed:
         ClientReceipt.objects.create(
-            project=claim.project, claim=claim, official_receipt=receipt,
+            project=claim.project if claim else mi.project,
+            claim=claim, manual_invoice=mi, official_receipt=receipt,
             amount=amt, received_on=receipt.receipt_date,
             reference=receipt.reference, recorded_by=actor)
-    for claim, _ in parsed:
-        _settle(claim, actor)
+    for claim, mi, _ in parsed:
+        if claim:
+            _settle(claim, actor)
     audit("site", site.id, "OFFICIAL_RECEIPT", actor=actor,
           detail={"receipt_no": receipt.receipt_no,
                   "amount": str(receipt.total)})
@@ -134,14 +164,16 @@ def delete_official_receipt(receipt, actor):
 
 def receipt_dict(receipt):
     lines = []
-    for r in receipt.receipts.select_related("claim", "project").all():
-        c = r.claim
+    for r in receipt.receipts.select_related(
+            "claim", "manual_invoice", "project").all():
+        c, mi = r.claim, r.manual_invoice
         lines.append({
             "id": r.id, "amount": r.amount,
-            "invoice_no": c.invoice_no if c else "",
-            "claim_ref": c.ref if c else "",
+            "invoice_no": c.invoice_no if c else (mi.invoice_no if mi else ""),
+            "claim_ref": c.ref if c else (mi.invoice_no if mi else ""),
             "project_code": r.project.code,
-            "invoice_amount": _invoice_due(c) if c else None,
+            "invoice_amount": _invoice_due(c) if c
+                              else (_q2(mi.amount) if mi else None),
         })
     ba = receipt.bank_account
     return {
@@ -161,7 +193,8 @@ def receipt_dict(receipt):
 
 def list_receipts(site_id=None):
     qs = OfficialReceipt.objects.select_related("site", "bank_account") \
-        .prefetch_related("receipts__claim", "receipts__project")
+        .prefetch_related("receipts__claim", "receipts__manual_invoice",
+                          "receipts__project")
     if site_id is not None:
         qs = qs.filter(site_id=site_id)
     return [receipt_dict(r) for r in qs]
