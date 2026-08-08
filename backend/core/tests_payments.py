@@ -224,6 +224,40 @@ class PyrSupportingDocTests(PyrBase):
         r = self.act(ref, "submit", self.sa)
         self.assertEqual(r.status_code, 400)
 
+    def _worker(self):
+        from .models import Employee
+        return Employee.objects.create(
+            emp_no="E999", full_name="Test Worker", gender="",
+            marital_status="", passport_no="", nationality="",
+            work_permit_no="", work_visa_number="", emergency_contact="")
+
+    def test_salary_advance_skips_doc_and_cap(self):
+        # A salary advance / loan (worker breakdown) submits with no document
+        # and no reason, even above the 5,000 cap (owner 2026-08-08).
+        emp = self._worker()
+        self.client.force_authenticate(self.sa)
+        body = {"doc_type": "PYR", "site_id": self.site.id, "payload": {},
+                "cost_head_id": self.head.id,
+                "payment_type": "SALARY_ADVANCE", "payment_method": "BANK",
+                "salary_lines": [{"employee_id": emp.id, "kind": "ADVANCE",
+                                  "amount": 8000, "months": 1}],
+                "deduct_year": 2026, "deduct_month": 9,
+                "has_supporting_doc": False, "no_doc_reason": ""}
+        ref = self.client.post("/api/v1/documents", body,
+                               format="json").data["ref"]
+        r = self.act(ref, "submit", self.sa)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=ref).status, "SUBMITTED")
+
+    def test_generic_advance_still_needs_doc(self):
+        # a plain "Advance" (no worker breakdown) above the cap is still gated
+        ref = self.raise_pyr(amount=8000, payment_type="ADVANCE",
+                             has_supporting_doc=False,
+                             no_doc_reason="x").data["ref"]
+        r = self.act(ref, "submit", self.sa)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("supporting document", r.data["detail"].lower())
+
 
 class CentralPaymentTests(PyrBase):
     """Head-Office (central) payment requests + two-currency mode

@@ -271,15 +271,21 @@ def pyr_action(request, doc, action_name):
         if not _transition(doc, "SUBMITTED"):
             return Response({"detail": f"Cannot submit from {doc.status}."},
                             status=400)
-        # Supporting-document control (§5.9)
+        # Supporting-document control (§5.9). A salary advance / loan is exempt
+        # — its per-worker breakdown IS the record and it just needs approval,
+        # so no bill/reason and no over-threshold override (owner 2026-08-08).
+        # Keyed on the presence of advance lines, so a generic "Advance" payment
+        # (no worker breakdown) still needs a document like any other PYR.
+        is_salary_advance = doc.salary_advances.exists()
         has_doc = pr.has_supporting_doc or doc.attachments.filter(
             kind__in=("EVIDENCE", "QUOTATION", "ENCLOSURE")).exists()
-        if not has_doc and not pr.no_doc_reason.strip():
+        if not is_salary_advance and not has_doc \
+                and not pr.no_doc_reason.strip():
             return Response({"detail": "Attach a bill/quotation, or give a "
                                        "reason for no supporting document."},
                             status=400)
-        if (pr.amount_requested >= pyr_doc_threshold() and not has_doc
-                and not pr.override_by_id):
+        if (not is_salary_advance and pr.amount_requested >= pyr_doc_threshold()
+                and not has_doc and not pr.override_by_id):
             return Response({
                 "detail": f"Above MVR {pyr_doc_threshold():,.0f} a PYR needs "
                           "a supporting document or a PM override with reason.",

@@ -302,6 +302,12 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         </label>
       )}
 
+      {isSalary ? (
+        <p style={{ fontSize: 12, color: "var(--faint)", marginTop: 12 }}>
+          The per-worker breakdown above is the record — a salary advance / loan
+          needs no supporting document, just approval.
+        </p>
+      ) : (
       <div style={{ marginTop: 12, padding: 12, borderRadius: 8,
                     border: "1px dashed var(--line)" }}>
         <label style={{ fontSize: 13 }}>Supporting document (bill / quote /
@@ -321,6 +327,7 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
           Above MVR 5,000 an attachment (or a PM override) is required.
         </p>
       </div>
+      )}
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
       <div style={{ marginTop: 14 }}>
