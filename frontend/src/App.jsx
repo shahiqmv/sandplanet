@@ -553,7 +553,8 @@ export default function App() {
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "hr" && (
-            <HRDashboard refresh={refresh} />
+            <HRDashboard me={me} refresh={refresh}
+              onNewPayment={() => setDocView({ mode: "central-pyr-form" })} />
           )}
 
           {docView?.mode === "dpr-form" && (

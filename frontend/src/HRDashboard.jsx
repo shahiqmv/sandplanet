@@ -7,7 +7,8 @@ import { ActionCard, Chip, Eyebrow, IssuedStamp, StampTile, Stat, card }
 // export is enabled only when every site is locked), then alerts, then
 // workforce summaries.
 
-export default function HRDashboard({ refresh, onOpenPayroll }) {
+export default function HRDashboard({ me, refresh, onNewPayment,
+                                     onOpenPayroll }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
 
@@ -23,6 +24,23 @@ export default function HRDashboard({ refresh, onOpenPayroll }) {
 
   return (
     <>
+      {onNewPayment && (
+        <section style={{ ...card, display: "flex", alignItems: "center",
+          gap: 12, flexWrap: "wrap", marginBottom: 14 }}>
+          <div>
+            <div style={{ fontWeight: 600, color: "var(--navy)" }}>
+              Worker advances &amp; welfare payments</div>
+            <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              Raise a payment request for a salary advance, welfare or other
+              HR spend — it goes straight to a Payment Voucher (no PM).</div>
+          </div>
+          <button onClick={onNewPayment}
+            style={{ marginLeft: "auto", background: "var(--navy)", color: "#fff",
+              border: "none", borderRadius: 8, padding: "8px 14px", fontSize: 13,
+              fontWeight: 600, cursor: "pointer" }}>
+            ＋ Raise a payment (MVR / USD)</button>
+        </section>
+      )}
       <Eyebrow meta={data.all_locked
                  ? "all sites locked — payroll export ready"
                  : `${data.lock_board.filter((b) => b.status !== "LOCKED")
