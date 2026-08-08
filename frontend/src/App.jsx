@@ -37,6 +37,7 @@ import FinanceDashboard from "./FinanceDashboard.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
+import PayablesPage from "./PayablesPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
 import StockPage from "./StockPage.jsx";
@@ -96,6 +97,7 @@ const NAV_GROUPS = [
     subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
+           ["payables", "Payables", ["FINANCE", "ADMIN"]],
            ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
                                            "QS", "PA"]]] },
@@ -817,6 +819,9 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
             <PaymentVouchersPage me={me} onOpenDoc={openDoc} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "payables" && (
+            <PayablesPage me={me} onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "my-pyr" && (
             <MyPaymentRequests me={me} onOpenDoc={openDoc} />

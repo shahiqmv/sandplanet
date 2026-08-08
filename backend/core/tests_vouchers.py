@@ -358,3 +358,49 @@ class VoucherVoidTests(VoucherBase):
         r = self.voucher_action(pv, "void", self.signatory)
         self.assertEqual(r.status_code, 400)
         self.assertIn("payment", r.data["detail"].lower())
+
+
+class VoucherListPerfTests(VoucherBase):
+    """Paginated/searchable list + trimmed dashboard + payables page endpoint
+    (owner 2026-08-08)."""
+
+    def test_list_is_paginated_and_searchable(self):
+        a = self.create_voucher([self.director_approved_pyr(payee="A")]).data
+        b = self.create_voucher([self.director_approved_pyr(payee="B")]).data
+        self.client.force_authenticate(self.finance)
+        # object shape with total + has_more
+        r = self.client.get("/api/v1/payment-vouchers?limit=1")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["total"], 2)
+        self.assertEqual(len(r.data["vouchers"]), 1)
+        self.assertTrue(r.data["has_more"])
+        # page 2
+        r2 = self.client.get("/api/v1/payment-vouchers?limit=1&offset=1")
+        self.assertEqual(len(r2.data["vouchers"]), 1)
+        self.assertFalse(r2.data["has_more"])
+        # ref search narrows to one
+        r3 = self.client.get(f"/api/v1/payment-vouchers?q={a['ref']}")
+        self.assertEqual(r3.data["total"], 1)
+        self.assertEqual(r3.data["vouchers"][0]["ref"], a["ref"])
+
+    def test_dashboard_returns_to_pay_count(self):
+        pv = self.create_voucher(
+            [self.director_approved_pyr(payee="C")]).data["ref"]
+        self.voucher_action(pv, "submit", self.finance)
+        self.voucher_action(pv, "approve", self.signatory)
+        self.client.force_authenticate(self.finance)
+        d = self.client.get("/api/v1/finance/dashboard").data
+        self.assertIn("to_pay_count", d["vouchers"])
+        self.assertIsInstance(d["vouchers"]["to_pay"], list)
+        self.assertGreaterEqual(d["vouchers"]["to_pay_count"], 1)
+
+    def test_payables_endpoint_shape_and_auth(self):
+        self.client.force_authenticate(self.finance)
+        r = self.client.get("/api/v1/finance/payables")
+        self.assertEqual(r.status_code, 200)
+        for k in ("payables", "total", "count", "overdue"):
+            self.assertIn(k, r.data)
+        # signatory (not finance) is not allowed on this Finance-only page
+        self.client.force_authenticate(self.signatory)
+        self.assertEqual(
+            self.client.get("/api/v1/finance/payables").status_code, 403)

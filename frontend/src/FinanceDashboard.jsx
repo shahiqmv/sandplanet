@@ -67,9 +67,10 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
               sub={`${d.vouchers.draft} draft in preparation`}
               onClick={onVouchers} />
         <Tile label="Vouchers to pay"
-              value={d.vouchers.to_pay.length}
+              value={d.vouchers.to_pay_count ?? d.vouchers.to_pay.length}
               sub="approved, lines still unpaid"
-              tone={d.vouchers.to_pay.length ? "var(--red-fg)" : undefined}
+              tone={(d.vouchers.to_pay_count ?? d.vouchers.to_pay.length)
+                ? "var(--red-fg)" : undefined}
               onClick={onVouchers} />
         <Tile label="Payment requests to pay"
               value={d.pyr_to_pay.count}
@@ -87,8 +88,21 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
 
       {d.vouchers.to_pay.length > 0 && (
         <div style={card}>
-          <h3 style={{ margin: "0 0 8px", fontSize: 14,
-                       color: "var(--navy)" }}>Approved vouchers to settle</h3>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                        marginBottom: 8 }}>
+            <h3 style={{ margin: 0, fontSize: 14, color: "var(--navy)" }}>
+              Approved vouchers to settle</h3>
+            {(d.vouchers.to_pay_count ?? 0) > d.vouchers.to_pay.length && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                showing {d.vouchers.to_pay.length} of {d.vouchers.to_pay_count}
+                {d.vouchers.to_pay_total != null
+                  ? ` · MVR ${money(d.vouchers.to_pay_total)} outstanding` : ""}
+              </span>
+            )}
+            <a href="#" onClick={(e) => { e.preventDefault(); onVouchers(); }}
+               style={{ marginLeft: "auto", fontSize: 12.5,
+                        color: "var(--navy)" }}>Open Payment Vouchers →</a>
+          </div>
           {d.vouchers.to_pay.map((v) => (
             <div key={v.ref} style={{ display: "flex", gap: 12,
                                       alignItems: "center", padding: "4px 0" }}>
@@ -99,7 +113,7 @@ export default function FinanceDashboard({ me, onVouchers, onNewPayment }) {
                 {v.paid}/{v.lines} lines paid</span>
               <span style={{ marginLeft: "auto",
                              fontFamily: "var(--font-mono)", fontSize: 14 }}>
-                MVR {money(v.total)}</span>
+                {v.currency || "MVR"} {money(v.total)}</span>
             </div>
           ))}
         </div>

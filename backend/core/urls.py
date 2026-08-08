@@ -58,6 +58,7 @@ urlpatterns = [
     path("cost-heads", views.cost_heads, name="cost-heads"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
          name="awaiting-voucher"),
+    path("finance/payables", vouchers.payables, name="finance-payables"),
     path("finance/dashboard", vouchers.finance_dashboard,
          name="finance-dashboard"),
     path("payment-vouchers", vouchers.payment_vouchers,

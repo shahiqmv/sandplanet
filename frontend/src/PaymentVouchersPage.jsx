@@ -39,6 +39,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
 
   const [awaiting, setAwaiting] = useState([]);
   const [vouchers, setVouchers] = useState([]);
+  const [vTotal, setVTotal] = useState(0);       // matches on the server
+  const [vHasMore, setVHasMore] = useState(false);
+  const [vq, setVq] = useState("");              // voucher search box (ref)
   const [picked, setPicked] = useState({});     // source ref -> bool
   const [open, setOpen] = useState(null);        // expanded voucher ref
   const [tab, setTab] = useState("all");
@@ -57,16 +60,32 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [payFx, setPayFx] = useState("");
   const [paySlip, setPaySlip] = useState(null);
 
+  const VPAGE = 25;
+  // Load a page of vouchers, filtered server-side by the status tab + ref
+  // search. reset=true restarts at the top; otherwise it appends (Load more).
+  const loadVouchers = (reset = true) => {
+    const offset = reset ? 0 : vouchers.length;
+    const p = new URLSearchParams({ limit: String(VPAGE),
+                                    offset: String(offset) });
+    if (tab !== "all") p.set("status", tab);
+    if (vq.trim()) p.set("q", vq.trim());
+    return api(`/payment-vouchers?${p.toString()}`).then((r) => {
+      setVouchers(reset ? r.vouchers : [...vouchers, ...r.vouchers]);
+      setVTotal(r.total);
+      setVHasMore(r.has_more);
+    }).catch((e) => setError(e.message));
+  };
   const reload = () => {
     setError(null);
     if (isFinance) {
       api("/finance/awaiting-voucher").then(setAwaiting)
         .catch((e) => setError(e.message));
     }
-    api("/payment-vouchers").then(setVouchers)
-      .catch((e) => setError(e.message));
+    loadVouchers(true);
   };
   useEffect(reload, []);
+  // Refetch from the top whenever the status tab changes.
+  useEffect(() => { loadVouchers(true); }, [tab]);   // eslint-disable-line
   useEffect(() => {
     if (isFinance)
       api("/receivables/bank-accounts?active=1")
@@ -83,7 +102,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   // invoice to pay rather than seeing them all queued as pending (owner 07-15).
   const reqAwaiting = awaiting.filter((d) => d.kind !== "PAYABLE");
   const payables = awaiting.filter((d) => d.kind === "PAYABLE");
-  const shown = vouchers.filter((v) => tab === "all" || v.status === tab);
+  const shown = vouchers;               // already filtered server-side
 
   const run = async (fn) => {
     setBusy(true); setError(null);
@@ -368,29 +387,14 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
         </section>
       )}
 
-      {/* Finance: credit payables — pick which invoice(s) to pay now */}
+      {/* Credit payables moved to their own Finance → Payables page (owner
+          2026-08-08) — this page stays focused on the voucher builder + list. */}
       {isFinance && payables.length > 0 && (
-        <section style={{ ...card, margin: 0 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12,
-                        flexWrap: "wrap", marginBottom: 4 }}>
-            <h3 style={heading}>Outstanding payables</h3>
-            <span style={{ fontSize: 13, color: "var(--muted)" }}>
-              {payables.length} invoice{payables.length === 1 ? "" : "s"} on
-              credit
-            </span>
-            {pickedBar}
-          </div>
-          <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 8px" }}>
-            These aren't queued for payment. Tick the invoice(s) you want to
-            settle — when due, or early — and raise a voucher for just those.
-          </p>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              {pickerHead}
-              <tbody>{payables.map(pickerRow)}</tbody>
-            </table>
-          </div>
-        </section>
+        <p style={{ ...card, margin: 0, fontSize: 13, color: "var(--muted)" }}>
+          {payables.length} outstanding credit payable
+          {payables.length === 1 ? "" : "s"} — settle them on the{" "}
+          <strong>Finance → Payables</strong> page.
+        </p>
       )}
 
       {/* Vouchers list + history tabs */}
@@ -398,7 +402,18 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
         <div style={{ display: "flex", alignItems: "center", gap: 12,
                       flexWrap: "wrap", marginBottom: 12 }}>
           <h3 style={heading}>Vouchers</h3>
-          <div style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            {vTotal} total</span>
+          <form onSubmit={(e) => { e.preventDefault(); loadVouchers(true); }}
+                style={{ display: "flex", gap: 6, marginLeft: "auto" }}>
+            <input value={vq} onChange={(e) => setVq(e.target.value)}
+                   placeholder="Search PV ref…"
+                   style={{ ...inputStyle, padding: "4px 10px", fontSize: 13,
+                            width: 150 }} />
+            <button type="submit" style={{ ...ghostButton, padding: "4px 12px",
+              fontSize: 13 }}>Search</button>
+          </form>
+          <div style={{ display: "flex", gap: 6 }}>
             {TABS.map(([key, label]) => (
               <button key={key} onClick={() => setTab(key)}
                       style={{ ...ghostButton, padding: "4px 14px",
@@ -721,10 +736,18 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
           })}
           {shown.length === 0 && (
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
-              No vouchers{tab === "all" ? "" : ` (${tab.toLowerCase()})`} yet.
+              No vouchers{tab === "all" ? "" : ` (${tab.toLowerCase()})`}
+              {vq.trim() ? ` matching “${vq.trim()}”` : ""} yet.
             </p>
           )}
         </div>
+        {vHasMore && (
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <Btn variant="ghost" disabled={busy}
+                 onClick={() => loadVouchers(false)}>
+              Load more ({vouchers.length} of {vTotal})</Btn>
+          </div>
+        )}
       </section>
     </div>
   );

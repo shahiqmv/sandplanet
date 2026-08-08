@@ -10,6 +10,44 @@ from . import vouchers
 from .models import Document
 
 
+def _line_paid(ln):
+    """Whether a voucher line is paid — the same rule as _line_info but without
+    building the full dict (used by the dashboard's settled count)."""
+    if ln.source_milestone_id:
+        return ln.source_milestone.status == "PAID"
+    if ln.source_payable_id:
+        return ln.source_payable.status == "SETTLED"
+    src = ln.source_document
+    if src.doc_type == "PYR":
+        return src.status == "PAID"
+    if src.doc_type == "PR" and src.current_revision_id:
+        cash_rows = [l for l in src.current_revision.lines.all()
+                     if (l.amount_cash or 0) > 0]
+        return (all((l.action_taken or "").strip() for l in cash_rows)
+                if cash_rows else True)
+    return False
+
+
+def _pv_pay_summary(pv):
+    """Cheap paid/settled summary for the Finance dashboard — reads prefetched
+    lines, skips the approvals + full line dicts that _voucher_info builds."""
+    total = Decimal("0")
+    approved = paid = 0
+    currency = "MVR"
+    for i, ln in enumerate(pv.voucher_lines.all()):
+        if i == 0:
+            currency = ln.currency
+        total += ln.amount or Decimal("0")
+        if ln.status != "APPROVED":
+            continue
+        approved += 1
+        if _line_paid(ln):
+            paid += 1
+    return {"ref": pv.ref, "total": total, "currency": currency,
+            "paid": paid, "lines": approved,
+            "settled": approved > 0 and paid == approved}
+
+
 def _line_info(line):
     if line.source_milestone_id:
         m = line.source_milestone
@@ -158,6 +196,34 @@ def awaiting_voucher(request):
     return Response(out)
 
 
+@api_view(["GET"])
+def payables(request):
+    """Outstanding credit payables on their own — the payables page (moved off
+    the voucher builder, owner 2026-08-08). Optional ?q search on vendor / ref."""
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance only."}, status=403)
+    today = date.today()
+    q = (request.GET.get("q") or "").strip().lower()
+    rows = []
+    for p in vouchers.awaiting_payables():
+        if q and q not in (p.vendor or "").lower() \
+                and q not in p.document.ref.lower():
+            continue
+        rows.append({
+            "kind": "PAYABLE", "payable_id": p.id,
+            "ref": p.document.ref, "doc_type": "PAYABLE",
+            "site_code": p.site.code if p.site_id else "HO",
+            "doc_date": p.due_date, "due_date": p.due_date,
+            "overdue": bool(p.due_date and p.due_date < today),
+            "amount": p.amount, "currency": "MVR",
+            "payee": p.vendor, "cost_head": "Credit payable",
+            "purpose": f"Terms {p.terms or '—'}"})
+    total = sum((Decimal(str(r["amount"] or 0)) for r in rows), Decimal("0"))
+    overdue = sum(1 for r in rows if r["overdue"])
+    return Response({"payables": rows, "total": total,
+                     "count": len(rows), "overdue": overdue})
+
+
 @api_view(["GET", "POST"])
 def payment_vouchers(request):
     if request.method == "POST":
@@ -175,9 +241,26 @@ def payment_vouchers(request):
     if request.user.role not in ("FINANCE", "SIGNATORY", "ADMIN"):
         return Response({"detail": "Finance / signatory only."}, status=403)
     qs = Document.objects.filter(doc_type="PV").order_by("-id")
-    if request.GET.get("status"):
-        qs = qs.filter(status=request.GET["status"])
-    return Response([_voucher_info(pv) for pv in qs[:100]])
+    status = request.GET.get("status")
+    if status and status != "all":
+        qs = qs.filter(status=status)
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        qs = qs.filter(ref__icontains=q)
+    try:
+        limit = min(int(request.GET.get("limit", 25)), 100)
+    except (TypeError, ValueError):
+        limit = 25
+    try:
+        offset = max(int(request.GET.get("offset", 0)), 0)
+    except (TypeError, ValueError):
+        offset = 0
+    total = qs.count()
+    page = list(qs[offset:offset + limit])
+    return Response({
+        "vouchers": [_voucher_info(pv) for pv in page],
+        "total": total, "offset": offset, "limit": limit,
+        "has_more": offset + limit < total})
 
 
 @api_view(["GET"])
@@ -260,13 +343,21 @@ def finance_dashboard(request):
         + sum(((m.due_amount(ipr_svc.ipr_order_total(m.order))
                 * m.order.exchange_rate) for m in aw_ms), Decimal("0")))
     pvs = Document.objects.filter(doc_type="PV")
-    to_pay = []          # approved vouchers still carrying unpaid lines
-    for pv in pvs.filter(status="APPROVED"):
-        info = _voucher_info(pv)
-        if not info["settled"]:
-            to_pay.append({"ref": pv.ref, "total": info["total"],
-                           "paid": info["paid_count"],
-                           "lines": info["approved_count"]})
+    # Approved vouchers still carrying unpaid lines. Iterate with the lines (+ PR
+    # cash rows) prefetched and a light settled check — then return only a small
+    # preview + a count, not every voucher (the list grew heavy, owner 2026-08-08).
+    approved_pvs = (pvs.filter(status="APPROVED").order_by("-id")
+                    .prefetch_related(
+                        "voucher_lines__source_document__current_revision__lines",
+                        "voucher_lines__source_milestone",
+                        "voucher_lines__source_payable"))
+    to_pay = []
+    to_pay_total = Decimal("0")
+    for pv in approved_pvs:
+        s = _pv_pay_summary(pv)
+        if not s["settled"]:
+            to_pay.append(s)
+            to_pay_total += _mvr(s["total"], s["currency"])
     # In-flight vouchers (draft = still being built, submitted = with the
     # signatory). Any requisition sitting on one drops off "awaiting a voucher",
     # so surfacing these keeps a PR/PYR from silently disappearing into an
@@ -311,7 +402,10 @@ def finance_dashboard(request):
         "awaiting_voucher": {"count": aw_count, "total": aw_total},
         "vouchers": {"draft": pvs.filter(status="DRAFT").count(),
                      "submitted": pvs.filter(status="SUBMITTED").count(),
-                     "in_flight": in_flight, "to_pay": to_pay},
+                     "in_flight": in_flight,
+                     "to_pay": to_pay[:10],          # preview only
+                     "to_pay_count": len(to_pay),
+                     "to_pay_total": to_pay_total},
         "pyr_to_pay": {"count": pyr_pay.count(), "total": pyr_total},
         "payables": {"count": payables.count(), "total": pay_total},
         "petty_cash": floats,
