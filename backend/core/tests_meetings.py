@@ -303,3 +303,61 @@ class MeetingTests(TestCase):
         r = self.client.get(f"/api/v1/meetings/{mid}/minutes.pdf")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
+
+
+class MeetingTimezoneAndConflictTests(MeetingTests):
+    """Maldives-time rendering + double-booking warning (owner 2026-08-08)."""
+
+    def test_naive_time_is_read_as_maldives(self):
+        # a bare datetime-local (no zone) means Maldives wall-clock, so 14:30
+        # local is stored as 09:30 UTC.
+        from datetime import timezone as dtz
+        r = self._create(scheduled_at="2026-08-05T14:30")
+        self.assertEqual(r.status_code, 201, r.data)
+        m = Meeting.objects.get(pk=r.data["id"])
+        self.assertEqual(m.scheduled_at.astimezone(dtz.utc).hour, 9)
+        self.assertEqual(m.scheduled_at.astimezone(dtz.utc).minute, 30)
+
+    def test_when_mvt_renders_plus_five(self):
+        # 09:30 UTC → 14:30 MVT in the reminder/notice text
+        from datetime import datetime, timezone as dtz
+        aware = datetime(2026, 8, 5, 9, 30, tzinfo=dtz.utc)
+        self.assertIn("14:30 MVT", svc.when_mvt(aware))
+
+    def test_conflict_flags_double_booked_attendee(self):
+        first = self._create(scheduled_at="2026-08-05T10:00:00Z",
+                             attendees=[{"user_id": self.pm.id,
+                                         "name": self.pm.full_name}])
+        self.assertEqual(first.status_code, 201, first.data)
+        # a second meeting overlapping the first, same attendee
+        self.client.force_authenticate(self.director)
+        r = self.client.post("/api/v1/meetings/conflicts",
+                             {"scheduled_at": "2026-08-05T10:30:00Z",
+                              "duration_minutes": 60,
+                              "attendee_ids": [self.pm.id]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["conflicts"]), 1)
+        self.assertEqual(r.data["conflicts"][0]["user_id"], self.pm.id)
+
+    def test_no_conflict_when_times_dont_overlap(self):
+        self._create(scheduled_at="2026-08-05T10:00:00Z",
+                     attendees=[{"user_id": self.pm.id}])
+        self.client.force_authenticate(self.director)
+        r = self.client.post("/api/v1/meetings/conflicts",
+                             {"scheduled_at": "2026-08-05T12:00:00Z",
+                              "duration_minutes": 60,
+                              "attendee_ids": [self.pm.id]}, format="json")
+        self.assertEqual(r.data["conflicts"], [])
+
+    def test_conflict_excludes_the_meeting_being_moved(self):
+        first = self._create(scheduled_at="2026-08-05T10:00:00Z",
+                             attendees=[{"user_id": self.pm.id}])
+        mid = first.data["id"]
+        self.client.force_authenticate(self.director)
+        # rescheduling the same meeting within its own slot isn't a conflict
+        r = self.client.post("/api/v1/meetings/conflicts",
+                             {"scheduled_at": "2026-08-05T10:15:00Z",
+                              "duration_minutes": 60,
+                              "attendee_ids": [self.pm.id],
+                              "exclude_id": mid}, format="json")
+        self.assertEqual(r.data["conflicts"], [])

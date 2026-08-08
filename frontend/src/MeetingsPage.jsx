@@ -13,10 +13,46 @@ const LOC = { OFFICE: "Head office", SITE: "At site", CLIENT: "Client's office",
 const AI_STATUS = { OPEN: "Open", IN_PROGRESS: "In progress", DONE: "Done",
   CANCELLED: "Cancelled" };
 
+// The company runs on Maldives time (fixed UTC+5, no DST). Instants come from
+// the server in UTC; pin every render + every input to Maldives so a traveller's
+// device or the server's clock can't shift what attendees see (owner 2026-08-08).
+const MV = { timeZone: "Indian/Maldives" };
+// datetime-local (Maldives wall-clock "YYYY-MM-DDTHH:mm") → UTC ISO to send.
+const localToUtc = (s) => s
+  ? new Date(`${s.length === 16 ? `${s}:00` : s}+05:00`).toISOString() : s;
+// UTC ISO → datetime-local Maldives wall-clock, to prefill an edit field.
+const utcToLocal = (iso) => iso
+  ? new Date(new Date(iso).getTime() + 5 * 3600e3).toISOString().slice(0, 16)
+  : "";
+// The Maldives calendar-day parts of a UTC instant (for bucketing/highlighting).
+const mvParts = (iso) => {
+  const d = new Date(new Date(iso).getTime() + 5 * 3600e3);
+  return { y: d.getUTCFullYear(), m: d.getUTCMonth(), d: d.getUTCDate() };
+};
+
 const dt = (s) => s ? new Date(s).toLocaleString("en-GB", { day: "2-digit",
-  month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+  month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+  ...MV }) : "—";
 const dOnly = (s) => s ? new Date(s).toLocaleDateString("en-GB",
-  { day: "2-digit", month: "short", year: "numeric" }) : "—";
+  { day: "2-digit", month: "short", year: "numeric", ...MV }) : "—";
+
+// Warn if any internal attendee already has an overlapping meeting. Returns
+// true to proceed (no conflict, or the user chose to book anyway); false to
+// abort. A check failure never blocks scheduling.
+async function confirmNoConflicts({ scheduled_at, duration_minutes,
+  attendee_ids, exclude_id }) {
+  if (!attendee_ids?.length) return true;
+  try {
+    const r = await api("/meetings/conflicts", { method: "POST",
+      body: { scheduled_at, duration_minutes, attendee_ids, exclude_id } });
+    if (!r.conflicts?.length) return true;
+    const lines = r.conflicts.map((c) => `• ${c.name}: ${c.meetings
+      .map((mm) => `${mm.title} (${dt(mm.scheduled_at)})`).join("; ")}`)
+      .join("\n");
+    return window.confirm(`Some attendees are already booked at that time:\n\n`
+      + `${lines}\n\nSchedule anyway?`);
+  } catch { return true; }
+}
 
 const sel = { padding: "6px 8px", border: "1px solid var(--line)",
   borderRadius: 6, fontSize: 13, background: "#fff" };
@@ -40,9 +76,9 @@ function MonthCalendar({ meetings, onOpen }) {
   const days = new Date(cur.y, cur.m + 1, 0).getDate();
   const byDay = {};
   meetings.forEach((mm) => {
-    const d = new Date(mm.scheduled_at);
-    if (d.getFullYear() === cur.y && d.getMonth() === cur.m)
-      (byDay[d.getDate()] = byDay[d.getDate()] || []).push(mm);
+    const p = mvParts(mm.scheduled_at);           // bucket by Maldives day
+    if (p.y === cur.y && p.m === cur.m)
+      (byDay[p.d] = byDay[p.d] || []).push(mm);
   });
   const cells = [];
   for (let i = 0; i < startDow; i++) cells.push(null);
@@ -86,7 +122,7 @@ function MonthCalendar({ meetings, onOpen }) {
                   background: mm.status === "CANCELLED" ? "#eee"
                     : "var(--sky-soft)", color: "var(--navy)" }}>
                 {new Date(mm.scheduled_at).toLocaleTimeString("en-GB",
-                  { hour: "2-digit", minute: "2-digit" })} {mm.title}</div>
+                  { hour: "2-digit", minute: "2-digit", ...MV })} {mm.title}</div>
             ))}
           </div>
         ))}
@@ -370,9 +406,15 @@ function MeetingDetail({ id, me, onBack }) {
   };
   const doReschedule = () => {
     if (!newDt) return;
+    const scheduled_at = localToUtc(newDt);
+    const attendee_ids = (m.attendees || []).filter((a) => a.user_id)
+      .map((a) => a.user_id);
     run(async () => {
+      if (!(await confirmNoConflicts({ scheduled_at,
+        duration_minutes: m.duration_minutes, attendee_ids, exclude_id: id })))
+        return;
       const d = await api(`/meetings/${id}/reschedule`, { method: "POST",
-        body: { scheduled_at: new Date(newDt).toISOString() } });
+        body: { scheduled_at } });
       setM(d); setResched(false); setNewDt("");
     }, "Rescheduled — participants notified");
   };
@@ -659,9 +701,14 @@ function NewMeeting({ me, onDone, onCancel }) {
     setError(null);
     if (!f.title.trim()) { setError("Give the meeting a title."); return; }
     if (!f.scheduled_at) { setError("Set the date and time."); return; }
+    const scheduled_at = localToUtc(f.scheduled_at);
+    const attendee_ids = attendees.filter((a) => a.user_id)
+      .map((a) => a.user_id);
+    if (!(await confirmNoConflicts({ scheduled_at,
+      duration_minutes: f.duration_minutes, attendee_ids }))) return;
     setSaving(true);
     try {
-      const body = { ...f, attendees };
+      const body = { ...f, attendees, scheduled_at };
       if (!isProject) body.project_id = null;
       if (isProject || isSite) body.site_id = siteId || null;
       const m = await api("/meetings", { method: "POST", body });

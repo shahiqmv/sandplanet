@@ -1,5 +1,7 @@
 """Meetings API — the calendar/log, minutes and action-item follow-up.
 Custodians (PD/Admin) see everything; others see meetings they're part of."""
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -12,6 +14,23 @@ def _get_visible(request, pk):
     if m is None:
         return None, Response({"detail": "Not found."}, status=404)
     return m, None
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_conflicts(request):
+    """Which internal attendees are already booked over the proposed slot — the
+    form calls this before saving to warn about a double-booking."""
+    val = parse_datetime(request.data.get("scheduled_at") or "")
+    if val is None:
+        return Response({"conflicts": []})
+    if timezone.is_naive(val):
+        val = timezone.make_aware(val, svc.MALE_TZ)
+    conflicts = svc.attendee_conflicts(
+        val, request.data.get("duration_minutes") or 60,
+        request.data.get("attendee_ids") or [],
+        exclude_id=request.data.get("exclude_id"))
+    return Response({"conflicts": conflicts})
 
 
 @api_view(["GET", "POST"])

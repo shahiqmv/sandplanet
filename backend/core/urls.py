@@ -325,6 +325,8 @@ urlpatterns = [
     path("meetings", meetings_api.meetings, name="meetings"),
     path("meetings/my-actions", meetings_api.my_action_items,
          name="meeting-my-actions"),
+    path("meetings/conflicts", meetings_api.meeting_conflicts,
+         name="meeting-conflicts"),
     path("meetings/<int:pk>", meetings_api.meeting_detail,
          name="meeting-detail"),
     path("meetings/<int:pk>/actions", meetings_api.meeting_actions,

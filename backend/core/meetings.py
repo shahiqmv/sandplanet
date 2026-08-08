@@ -7,6 +7,7 @@ ones they're part of. A recurring meeting forms a series — closing an
 occurrence can spawn the next and roll its open action items forward.
 """
 from datetime import date, timedelta
+from zoneinfo import ZoneInfo
 
 from django.db.models import Q
 from django.utils import timezone
@@ -14,6 +15,16 @@ from django.utils import timezone
 from .audit import audit
 from .models import (Meeting, MeetingActionItem, MeetingAttendee, Project,
                      Site, User)
+
+# The company runs on Maldives time (fixed UTC+5, no DST). Instants are stored
+# in UTC; every attendee-facing time (notices, reminders) is rendered in MVT so
+# the server's UTC clock never leaks into what people read (owner 2026-08-08).
+MALE_TZ = ZoneInfo("Indian/Maldives")
+
+
+def when_mvt(dt):
+    """Format a stored (UTC) datetime as Maldives local wall-clock."""
+    return dt.astimezone(MALE_TZ).strftime("%d %b %Y, %H:%M") + " MVT"
 
 # The meeting custodian(s) — the PD owns the module; Admin too. Extend this
 # with the PD's assistant (an EA role or a per-user flag) once she is onboarded.
@@ -90,7 +101,7 @@ def _apply(meeting, data):
             from django.utils.dateparse import parse_datetime
             val = parse_datetime(val) or val
         if val and not isinstance(val, str) and timezone.is_naive(val):
-            val = timezone.make_aware(val)
+            val = timezone.make_aware(val, MALE_TZ)   # a bare time = Maldives
         meeting.scheduled_at = val
     if "duration_minutes" in data:
         try:
@@ -105,6 +116,38 @@ def _apply(meeting, data):
     if "site_id" in data:
         meeting.site = (Site.objects.filter(pk=data["site_id"]).first()
                         if data["site_id"] else None)
+
+
+def attendee_conflicts(scheduled_at, duration_minutes, user_ids,
+                       exclude_id=None):
+    """Internal attendees who already have a SCHEDULED meeting overlapping the
+    proposed [start, end) window. Returns
+    [{user_id, name, meetings: [{id, title, scheduled_at, duration_minutes}]}].
+    Meeting volumes are small, so we refine the overlap in Python rather than
+    build a per-backend duration expression."""
+    user_ids = [int(u) for u in (user_ids or []) if u]
+    if not scheduled_at or not user_ids:
+        return []
+    end = scheduled_at + timedelta(minutes=int(duration_minutes or 60))
+    names = dict(User.objects.filter(id__in=user_ids)
+                 .values_list("id", "full_name"))
+    qs = (Meeting.objects
+          .filter(status="SCHEDULED", attendees__user_id__in=user_ids)
+          .exclude(pk=exclude_id or 0)
+          .prefetch_related("attendees").distinct())
+    by_user = {}
+    for m in qs:
+        m_end = m.scheduled_at + timedelta(minutes=m.duration_minutes or 60)
+        if m.scheduled_at < end and m_end > scheduled_at:      # true overlap
+            for a in m.attendees.all():
+                if a.user_id in names:
+                    by_user.setdefault(a.user_id, []).append(m)
+    return [{"user_id": uid, "name": names.get(uid, ""),
+             "meetings": [{"id": m.id, "title": m.title,
+                           "scheduled_at": m.scheduled_at.isoformat(),
+                           "duration_minutes": m.duration_minutes}
+                          for m in sorted(mtgs, key=lambda x: x.scheduled_at)]}
+            for uid, mtgs in by_user.items()]
 
 
 def create_meeting(data, actor):
@@ -143,7 +186,7 @@ def notify_meeting_created(meeting, actor):
     ids.discard(actor.id if actor else None)
     if not ids:
         return
-    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    when = when_mvt(meeting.scheduled_at)
     type_label = dict(Meeting.Type.choices).get(meeting.meeting_type, "")
     body = f"{when}{f' · {type_label}' if type_label else ''}. " \
            f"Organiser: {meeting.organiser.full_name if meeting.organiser_id else '—'}"
@@ -168,7 +211,7 @@ def reschedule_meeting(meeting, data, actor):
     if not val:
         return None, "Couldn't read the new date and time."
     if timezone.is_naive(val):
-        val = timezone.make_aware(val)
+        val = timezone.make_aware(val, MALE_TZ)
     old = meeting.scheduled_at
     meeting.scheduled_at = val
     if data.get("duration_minutes"):
@@ -222,7 +265,7 @@ def _remind(meeting):
         ids.add(meeting.organiser_id)
     if not ids:
         return
-    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    when = when_mvt(meeting.scheduled_at)
     extra = meeting.meeting_link or meeting.location_note
     body = f"Coming up: {when}." + (f" {extra}" if extra else "")
     for u in User.objects.filter(id__in=ids, is_active=True):
@@ -239,7 +282,7 @@ def _notify_rescheduled(meeting, actor):
     ids.discard(actor.id if actor else None)
     if not ids:
         return
-    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    when = when_mvt(meeting.scheduled_at)
     for u in User.objects.filter(id__in=ids, is_active=True):
         notify_user(u, f"Meeting rescheduled — {meeting.title}",
                     body=f"New time: {when}.", category="info")
