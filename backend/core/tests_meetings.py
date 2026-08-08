@@ -361,3 +361,86 @@ class MeetingTimezoneAndConflictTests(MeetingTests):
                               "attendee_ids": [self.pm.id],
                               "exclude_id": mid}, format="json")
         self.assertEqual(r.data["conflicts"], [])
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    APP_BASE_URL="https://app.example")
+class MeetingEmailTests(MeetingTests):
+    """Email invites (.ics), RSVP, minutes-final gate, contact book (2026-08-08)."""
+
+    GUEST = [{"name": "Client X", "email": "cx@example.com",
+              "is_external": True}]
+
+    def test_send_invite_emails_guest_with_ics_and_rsvp(self):
+        from django.core import mail
+        mail.outbox = []
+        mid = self._create(attendees=self.GUEST).data["id"]
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["sent"], 1)
+        self.assertEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertIn("cx@example.com", msg.to)
+        self.assertIn("invite.ics", [a[0] for a in msg.attachments])
+        self.assertIn("/api/v1/meetings/rsvp/", msg.body)
+        self.assertIsNotNone(Meeting.objects.get(pk=mid).invite_sent_at)
+
+    def test_send_invite_needs_an_email_somewhere(self):
+        # an external guest with no email → nothing to send
+        mid = self._create(attendees=[{"name": "No Email",
+                                       "is_external": True}]).data["id"]
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        self.assertEqual(r.status_code, 400)
+
+    def test_public_rsvp_records_response(self):
+        from .models import MeetingAttendee
+        mid = self._create(attendees=self.GUEST).data["id"]
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        att = MeetingAttendee.objects.get(meeting_id=mid)
+        self.assertTrue(att.rsvp_token)
+        anon = APIClient()                        # no auth — public link
+        resp = anon.get(f"/api/v1/meetings/rsvp/{att.rsvp_token}?r=yes")
+        self.assertEqual(resp.status_code, 200)
+        att.refresh_from_db()
+        self.assertEqual(att.rsvp, "ACCEPTED")
+
+    def test_rsvp_survives_attendee_resave(self):
+        # re-saving the attendee list must not wipe a reply already given
+        from .models import MeetingAttendee
+        mid = self._create(attendees=self.GUEST).data["id"]
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        att = MeetingAttendee.objects.get(meeting_id=mid)
+        APIClient().get(f"/api/v1/meetings/rsvp/{att.rsvp_token}?r=no")
+        # edit attendees (same guest) via PATCH
+        self.client.patch(f"/api/v1/meetings/{mid}",
+                          {"attendees": self.GUEST}, format="json")
+        att = MeetingAttendee.objects.get(meeting_id=mid)
+        self.assertEqual(att.rsvp, "DECLINED")
+
+    def test_send_minutes_requires_final(self):
+        mid = self._create(attendees=self.GUEST).data["id"]
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/meetings/{mid}/send-minutes")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Final", r.data["detail"])
+
+    def test_contact_book_upsert_and_search(self):
+        self.client.force_authenticate(self.director)
+        c = self.client.post("/api/v1/meeting-contacts",
+                             {"name": "Jane", "email": "jane@x.com",
+                              "org": "Resort"}, format="json")
+        self.assertEqual(c.status_code, 201, c.data)
+        self.assertEqual(len(self.client.get(
+            "/api/v1/meeting-contacts?q=jane").data["contacts"]), 1)
+        # same email updates in place, no duplicate
+        self.client.post("/api/v1/meeting-contacts",
+                        {"name": "Jane Doe", "email": "jane@x.com"},
+                        format="json")
+        got = self.client.get("/api/v1/meeting-contacts?q=jane").data["contacts"]
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["name"], "Jane Doe")

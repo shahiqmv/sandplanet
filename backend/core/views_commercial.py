@@ -751,14 +751,20 @@ def receipt_delete(request, pk):
 
 # ---- Claim / invoice PDFs (P5) ------------------------------------------
 
-def _render_pdf(template, context, filename):
+def pdf_bytes(template, context):
+    """Render a template to PDF bytes (raises if the engine is unavailable).
+    Shared by the download responses and the meeting-minutes email."""
     from django.conf import settings
-    from django.http import HttpResponse
     from django.template.loader import render_to_string
+    from weasyprint import HTML
     html = render_to_string(template, context)
+    return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+
+
+def _render_pdf(template, context, filename):
+    from django.http import HttpResponse
     try:
-        from weasyprint import HTML
-        pdf = HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+        pdf = pdf_bytes(template, context)
     except Exception as e:                       # pragma: no cover - env dep
         return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
     resp = HttpResponse(pdf, content_type="application/pdf")

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { card, th, td, Btn, Chip, ghostButton } from "./ui.jsx";
 
@@ -131,21 +131,52 @@ function MonthCalendar({ meetings, onOpen }) {
   );
 }
 
-// Add/remove attendees — internal Planet users + external guests.
+const RSVP_PILL = { ACCEPTED: ["✓ Accepted", "#137333", "#e6f4ea"],
+  DECLINED: ["✕ Declined", "#a50e0e", "#fce8e6"],
+  TENTATIVE: ["? Tentative", "#8a6d00", "#fef7e0"] };
+
+// Add/remove attendees — internal Planet users + external guests (with email
+// so they can be sent the invite + minutes). Guests can be pulled from / saved
+// to a reusable contact book.
 function AttendeeEditor({ attendees, setAttendees, users, editable }) {
   const [pick, setPick] = useState("");
-  const [g, setG] = useState({ name: "", org: "", role: "" });
+  const [g, setG] = useState({ name: "", email: "", org: "", role: "" });
+  const [saveContact, setSaveContact] = useState(false);
+  const [cq, setCq] = useState("");
+  const [contacts, setContacts] = useState([]);
+  const timer = useRef(null);
+
+  const searchContacts = (q) => {
+    setCq(q);
+    clearTimeout(timer.current);
+    if (q.trim().length < 2) { setContacts([]); return; }
+    timer.current = setTimeout(() => {
+      api(`/meeting-contacts?q=${encodeURIComponent(q.trim())}`)
+        .then((r) => setContacts(r.contacts || [])).catch(() => {});
+    }, 250);
+  };
   const addUser = () => {
     const u = users.find((x) => String(x.id) === pick);
     if (u && !attendees.some((a) => a.user_id === u.id))
       setAttendees([...attendees,
-        { user_id: u.id, name: u.full_name, is_external: false }]);
+        { user_id: u.id, name: u.full_name, email: u.email,
+          is_external: false }]);
     setPick("");
   };
   const addGuest = () => {
     if (!g.name.trim()) return;
     setAttendees([...attendees, { ...g, is_external: true }]);
-    setG({ name: "", org: "", role: "" });
+    if (saveContact && g.email.trim())
+      api("/meeting-contacts", { method: "POST", body: g }).catch(() => {});
+    setG({ name: "", email: "", org: "", role: "" });
+    setSaveContact(false);
+  };
+  const addContact = (c) => {
+    const dup = attendees.some((a) => (a.email || "").toLowerCase()
+      === (c.email || "").toLowerCase() && c.email);
+    if (!dup) setAttendees([...attendees, { name: c.name, email: c.email,
+      org: c.org, role: c.role, is_external: true }]);
+    setCq(""); setContacts([]);
   };
   return (
     <div>
@@ -153,38 +184,85 @@ function AttendeeEditor({ attendees, setAttendees, users, editable }) {
         marginBottom: editable ? 8 : 0 }}>
         {attendees.length === 0 && <span style={{ fontSize: 12,
           color: "var(--muted)" }}>No attendees yet.</span>}
-        {attendees.map((a, i) => (
-          <span key={i} style={{ fontSize: 12.5, padding: "3px 8px",
-            borderRadius: 999, display: "inline-flex", gap: 6,
-            alignItems: "center", background: a.is_external
-              ? "var(--amber-bg)" : "var(--sky-soft)" }}>
-            {a.name}{a.org ? ` · ${a.org}` : ""}
-            {editable && <button onClick={() =>
-              setAttendees(attendees.filter((_, j) => j !== i))}
-              style={{ border: "none", background: "none", cursor: "pointer",
-                color: "var(--muted)", padding: 0 }}>×</button>}
-          </span>
-        ))}
+        {attendees.map((a, i) => {
+          const pill = RSVP_PILL[a.rsvp];
+          const noEmail = a.is_external && !((a.email || "").trim());
+          return (
+            <span key={i} style={{ fontSize: 12.5, padding: "3px 8px",
+              borderRadius: 999, display: "inline-flex", gap: 6,
+              alignItems: "center", background: a.is_external
+                ? "var(--amber-bg)" : "var(--sky-soft)" }}>
+              {a.name}{a.org ? ` · ${a.org}` : ""}
+              {a.email ? <span style={{ color: "var(--muted)" }}>
+                &lt;{a.email}&gt;</span>
+                : noEmail ? <span title="No email — can't be invited"
+                  style={{ color: "#a50e0e" }}>⚠ no email</span> : null}
+              {pill && <span style={{ fontSize: 10.5, padding: "0 6px",
+                borderRadius: 999, color: pill[1], background: pill[2] }}>
+                {pill[0]}</span>}
+              {editable && <button onClick={() =>
+                setAttendees(attendees.filter((_, j) => j !== i))}
+                style={{ border: "none", background: "none", cursor: "pointer",
+                  color: "var(--muted)", padding: 0 }}>×</button>}
+            </span>
+          );
+        })}
       </div>
       {editable && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-          alignItems: "center" }}>
-          <select value={pick} onChange={(e) => setPick(e.target.value)}
-            style={{ ...sel, maxWidth: 180 }}>
-            <option value="">Add our team…</option>
-            {users.filter((u) => !attendees.some((a) => a.user_id === u.id))
-              .map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-          </select>
-          <button style={ghostBtn} disabled={!pick} onClick={addUser}>Add</button>
-          <span style={{ color: "var(--muted)", fontSize: 12 }}>·</span>
-          <input value={g.name} onChange={(e) => setG({ ...g, name:
-            e.target.value })} placeholder="Guest name" style={{ ...sel,
-            width: 130 }} />
-          <input value={g.org} onChange={(e) => setG({ ...g, org:
-            e.target.value })} placeholder="Organisation" style={{ ...sel,
-            width: 130 }} />
-          <button style={ghostBtn} disabled={!g.name.trim()}
-            onClick={addGuest}>Add guest</button>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+            alignItems: "center" }}>
+            <select value={pick} onChange={(e) => setPick(e.target.value)}
+              style={{ ...sel, maxWidth: 180 }}>
+              <option value="">Add our team…</option>
+              {users.filter((u) => !attendees.some((a) => a.user_id === u.id))
+                .map((u) => <option key={u.id} value={u.id}>
+                  {u.full_name}</option>)}
+            </select>
+            <button style={ghostBtn} disabled={!pick}
+              onClick={addUser}>Add</button>
+            <span style={{ color: "var(--muted)", fontSize: 12 }}>·</span>
+            <div style={{ position: "relative" }}>
+              <input value={cq} onChange={(e) => searchContacts(e.target.value)}
+                placeholder="Search saved contacts…"
+                style={{ ...sel, width: 170 }} />
+              {contacts.length > 0 && (
+                <div style={{ position: "absolute", top: "100%", left: 0,
+                  zIndex: 30, background: "#fff", border: "1px solid var(--line)",
+                  borderRadius: 6, minWidth: 200, maxHeight: 200,
+                  overflowY: "auto", boxShadow: "0 8px 24px rgba(0,0,0,.12)" }}>
+                  {contacts.map((c) => (
+                    <div key={c.id} onMouseDown={() => addContact(c)}
+                      style={{ padding: "6px 10px", cursor: "pointer",
+                        fontSize: 12.5, borderBottom: "1px solid #eef2f5" }}>
+                      <b>{c.name}</b>{c.org ? ` · ${c.org}` : ""}
+                      {c.email ? <span style={{ color: "var(--muted)" }}>
+                        {" "}&lt;{c.email}&gt;</span> : ""}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+            alignItems: "center" }}>
+            <input value={g.name} onChange={(e) => setG({ ...g,
+              name: e.target.value })} placeholder="Guest name"
+              style={{ ...sel, width: 130 }} />
+            <input value={g.email} type="email" onChange={(e) => setG({ ...g,
+              email: e.target.value })} placeholder="guest@email"
+              style={{ ...sel, width: 160 }} />
+            <input value={g.org} onChange={(e) => setG({ ...g,
+              org: e.target.value })} placeholder="Organisation"
+              style={{ ...sel, width: 120 }} />
+            <button style={ghostBtn} disabled={!g.name.trim()}
+              onClick={addGuest}>Add guest</button>
+            <label style={{ fontSize: 12, color: "var(--muted)",
+              display: "flex", alignItems: "center", gap: 4 }}>
+              <input type="checkbox" checked={saveContact}
+                onChange={(e) => setSaveContact(e.target.checked)} />
+              save to contacts</label>
+          </div>
         </div>)}
     </div>
   );
@@ -353,7 +431,8 @@ function MeetingDetail({ id, me, onBack }) {
     setLinkVal(d.meeting_link || "");
     setActions(d.action_items.map((a) => ({ ...a })));
     setAtt(d.attendees.map((a) => ({ user_id: a.user_id, name: a.name,
-      org: a.org, role: a.role, is_external: a.is_external })));
+      email: a.email, org: a.org, role: a.role, is_external: a.is_external,
+      rsvp: a.rsvp })));
   }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
   useEffect(() => { api("/directory").then((r) =>
@@ -436,6 +515,29 @@ function MeetingDetail({ id, me, onBack }) {
     run(async () => { await api(`/meetings/${id}/audio/${aid}`,
       { method: "DELETE" }); load(); });
   };
+  const sendInvite = () => run(async () => {
+    const d = await api(`/meetings/${id}/send-invite`, { method: "POST" });
+    setM(d);
+    const skip = (d.skipped || []).length;
+    setMsg(`Invitation emailed to ${d.sent} recipient(s).`
+      + (skip ? ` ${skip} attendee(s) have no email.` : "")
+      + (d.email_configured ? "" : " (Dev: email isn't configured — logged only.)"));
+  });
+  const sendMinutes = () => run(async () => {
+    const d = await api(`/meetings/${id}/send-minutes`, { method: "POST" });
+    setM(d); setMsg(`Minutes emailed to ${d.sent} recipient(s).`);
+  });
+  const uploadFile = (file) => {
+    if (!file) return;
+    run(async () => {
+      const fd = new FormData(); fd.append("file", file);
+      const d = await apiUpload(`/meetings/${id}/files`, fd);
+      setM(d);
+    }, "Pre-read attached");
+  };
+  const removeFile = (fid) => run(async () => {
+    await api(`/meetings/${id}/files/${fid}`, { method: "DELETE" }); load();
+  });
 
   if (!m) return <div style={card}>{error || "Loading…"}</div>;
   const canManage = m.can_manage;
@@ -515,8 +617,65 @@ function MeetingDetail({ id, me, onBack }) {
         <AttendeeEditor attendees={att} setAttendees={setAtt} users={users}
           editable={canManage} />
         {canManage && (
-          <Btn variant="secondary" disabled={busy} onClick={saveAtt}
-            style={{ marginTop: 8 }}>Save attendees</Btn>)}
+          <div style={{ display: "flex", gap: 8, marginTop: 8,
+            alignItems: "center", flexWrap: "wrap" }}>
+            <Btn variant="secondary" disabled={busy}
+              onClick={saveAtt}>Save attendees</Btn>
+            <Btn variant="primary" disabled={busy || !m.email_recipients}
+              onClick={sendInvite}
+              title={m.email_recipients
+                ? `Email the invite + calendar file to ${m.email_recipients} `
+                  + "attendee(s) with an email"
+                : "No attendee has an email yet"}>
+              {m.invite_sent_at ? "✉ Resend invite" : "✉ Send invite"}</Btn>
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              {m.email_recipients
+                ? `${m.email_recipients} with email`
+                : "add emails to invite by email"}
+              {m.invite_sent_at ? ` · last sent ${dt(m.invite_sent_at)}` : ""}
+            </span>
+            {m.email_configured === false && (
+              <span style={{ fontSize: 11.5, color: "#8a6d00" }}>
+                Email isn't configured on the server yet — sends are logged
+                only.</span>)}
+          </div>)}
+        {!canManage && att.some((a) => a.rsvp && a.rsvp !== "NONE") && (
+          <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 6 }}>
+            RSVP shown on each attendee above.</div>)}
+      </div>
+
+      <div style={{ ...card, marginTop: 10 }}>
+        <h3 style={{ margin: "0 0 6px", fontSize: 14 }}>Pre-read files</h3>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+          Attached to the invitation email so attendees get the agenda pack up
+          front.</div>
+        {!(m.files || []).length && (
+          <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            No files attached.</div>)}
+        {(m.files || []).map((f) => (
+          <div key={f.id} style={{ display: "flex", alignItems: "center",
+            gap: 10, padding: "5px 0", borderBottom: "1px solid var(--line)",
+            fontSize: 12.5 }}>
+            <a href={f.url} target="_blank" rel="noreferrer"
+              style={{ color: "var(--sky)", textDecoration: "none" }}>
+              📎 {f.file_name}</a>
+            <span style={{ color: "var(--muted)", fontSize: 11 }}>
+              {fmtSize(f.size_bytes)}</span>
+            {canManage && (
+              <button onClick={() => removeFile(f.id)} style={{ border: "none",
+                background: "none", cursor: "pointer", color: "var(--red-fg)",
+                fontSize: 12, marginLeft: "auto" }}>Remove</button>)}
+          </div>
+        ))}
+        {canManage && (
+          <label style={{ display: "inline-block", marginTop: 8,
+            ...ghostButton, cursor: busy ? "default" : "pointer",
+            fontSize: 12.5 }}>
+            {busy ? "Uploading…" : "＋ Attach file"}
+            <input type="file" style={{ display: "none" }} disabled={busy}
+              onChange={(e) => { uploadFile(e.target.files[0]);
+                e.target.value = ""; }} />
+          </label>)}
       </div>
 
       {m.agenda && (
@@ -595,11 +754,24 @@ function MeetingDetail({ id, me, onBack }) {
           style={{ width: "100%", ...sel, fontFamily: "inherit",
             resize: "vertical" }} />
         {canManage && (
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+          <div style={{ display: "flex", gap: 8, marginTop: 6,
+            alignItems: "center", flexWrap: "wrap" }}>
             <Btn variant="secondary" disabled={busy}
               onClick={() => saveMinutes()}>Save draft</Btn>
             <Btn variant="primary" disabled={busy}
               onClick={() => saveMinutes("FINAL")}>Finalise</Btn>
+            <Btn variant="secondary"
+              disabled={busy || m.minutes_status !== "FINAL"
+                || !m.email_recipients}
+              onClick={sendMinutes}
+              title={m.minutes_status !== "FINAL"
+                ? "Finalise the minutes first"
+                : !m.email_recipients ? "No attendee has an email"
+                : "Email the minutes PDF to attendees"}>
+              {m.minutes_sent_at ? "✉ Resend minutes" : "✉ Email minutes"}</Btn>
+            {m.minutes_sent_at && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                last sent {dt(m.minutes_sent_at)}</span>)}
           </div>)}
       </div>
 

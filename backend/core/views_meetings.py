@@ -3,7 +3,7 @@ Custodians (PD/Admin) see everything; others see meetings they're part of."""
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from . import meetings as svc
@@ -203,6 +203,102 @@ def meeting_audio_item(request, pk, audio_id):
     resp["Content-Disposition"] = \
         f'inline; filename="{a.file_name or "recording"}"'
     return resp
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_send_invite(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user, m):
+        return Response({"detail": "Only the organiser or a custodian can "
+                                   "send invitations."}, status=403)
+    from . import meeting_emails as em
+    sent, skipped, msg = em.send_invite(m, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    d = svc.meeting_dict(m, detail=True)
+    d.update({"sent": sent, "skipped": skipped,
+              "email_configured": em.email_configured()})
+    return Response(d)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_send_minutes(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user, m):
+        return Response({"detail": "Only the organiser or a custodian can "
+                                   "send minutes."}, status=403)
+    from . import meeting_emails as em
+    sent, msg = em.send_minutes(m, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    d = svc.meeting_dict(m, detail=True)
+    d.update({"sent": sent, "email_configured": em.email_configured()})
+    return Response(d)
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def meeting_rsvp(request, token):
+    """One-click RSVP from an invite email — public, tokened, no login."""
+    from django.http import HttpResponse
+
+    from . import meeting_emails as em
+    attendee, msg = em.record_rsvp(token, request.GET.get("r"))
+    if msg:
+        inner = f"<h2>{msg}</h2>"
+    else:
+        verb = {"ACCEPTED": "accepted", "DECLINED": "declined",
+                "TENTATIVE": "tentatively accepted"}.get(attendee.rsvp, "")
+        inner = ("<h2>Thank you — your response was recorded.</h2>"
+                 f"<p>You have <b>{verb}</b> the invitation to "
+                 f"“{attendee.meeting.title}”.</p>")
+    return HttpResponse(
+        "<html><body style='font-family:system-ui,sans-serif;max-width:480px;"
+        "margin:64px auto;text-align:center;color:#1c2b36'>"
+        f"{inner}</body></html>")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def meeting_contacts(request):
+    """The reusable external-guest contact book."""
+    if request.method == "POST":
+        c, msg = svc.upsert_contact(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(svc.contact_dict(c), status=201)
+    return Response({"contacts": [svc.contact_dict(c) for c in
+                                  svc.list_contacts(request.query_params.get("q"))]})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def meeting_files(request, pk):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    _, msg = svc.add_attachment(m, request.FILES.get("file"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(svc.meeting_dict(m, detail=True), status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def meeting_file_item(request, pk, file_id):
+    m, err = _get_visible(request, pk)
+    if err:
+        return err
+    msg = svc.delete_attachment(m, file_id, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(status=204)
 
 
 @api_view(["GET"])

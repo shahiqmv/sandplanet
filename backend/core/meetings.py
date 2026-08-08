@@ -221,8 +221,9 @@ def reschedule_meeting(meeting, data, actor):
             pass
     meeting.status = "SCHEDULED"
     meeting.reminded_at = None              # remind again for the new time
+    meeting.ics_sequence += 1              # a resent invite supersedes the old
     meeting.save(update_fields=["scheduled_at", "duration_minutes", "status",
-                                "reminded_at", "updated_at"])
+                                "reminded_at", "ics_sequence", "updated_at"])
     _notify_rescheduled(meeting, actor)
     audit("meeting", meeting.id, "MEETING_RESCHEDULED", actor=actor,
           detail={"from": old.isoformat() if old else "",
@@ -322,6 +323,74 @@ def delete_audio(meeting, audio_id, actor):
     return None
 
 
+def add_attachment(meeting, upload, actor):
+    """Attach a pre-read document to a meeting (goes out with the invite email)."""
+    if not can_manage(actor, meeting):
+        return None, "Only the organiser or a custodian can add a file."
+    if not upload:
+        return None, "Attach a file."
+    from .models import MeetingAttachment
+    att = MeetingAttachment.objects.create(
+        meeting=meeting,
+        file_name=(getattr(upload, "name", "") or "file")[:255],
+        content_type=(getattr(upload, "content_type", "") or "")[:100],
+        size_bytes=getattr(upload, "size", 0) or 0, uploaded_by=actor)
+    att.file = upload             # pk now set → unique upload path
+    att.save(update_fields=["file"])
+    audit("meeting", meeting.id, "MEETING_FILE_ADDED", actor=actor,
+          detail={"file": att.file_name})
+    return att, None
+
+
+def delete_attachment(meeting, file_id, actor):
+    if not can_manage(actor, meeting):
+        return "Only the organiser or a custodian can remove a file."
+    from .models import MeetingAttachment
+    a = MeetingAttachment.objects.filter(pk=file_id, meeting=meeting).first()
+    if a is None:
+        return "That file isn't on this meeting."
+    if a.file:
+        a.file.delete(save=False)
+    a.delete()
+    audit("meeting", meeting.id, "MEETING_FILE_REMOVED", actor=actor)
+    return None
+
+
+def list_contacts(query=""):
+    """The reusable external-guest contact book, optionally filtered by name /
+    org / email."""
+    from .models import MeetingContact
+    qs = MeetingContact.objects.all()
+    q = (query or "").strip()
+    if q:
+        qs = qs.filter(Q(name__icontains=q) | Q(org__icontains=q)
+                       | Q(email__icontains=q))
+    return list(qs[:50])
+
+
+def upsert_contact(data, actor):
+    """Save (or update by email) an external guest for reuse."""
+    from .models import MeetingContact
+    name = (data.get("name") or "").strip()
+    email = (data.get("email") or "").strip()
+    if not name:
+        return None, "Give the contact a name."
+    existing = (MeetingContact.objects.filter(email__iexact=email).first()
+                if email else None)
+    c = existing or MeetingContact(created_by=actor)
+    c.name = name
+    c.email = email
+    c.org = (data.get("org") or "").strip()
+    c.role = (data.get("role") or "").strip()
+    c.save()
+    return c, None
+
+
+def contact_dict(c):
+    return {"id": c.id, "name": c.name, "email": c.email, "org": c.org,
+            "role": c.role}
+
+
 def delete_meeting(meeting, actor):
     """Permanently remove a meeting (and its attendees/action items, via
     cascade). Restricted to the organiser, its creator, or a custodian. Use
@@ -357,21 +426,31 @@ def update_meeting(meeting, data, actor):
 def _set_attendees(meeting, rows, actor=None, notify=True):
     """Replace the attendee list; newly-added internal people get an invite
     notification (notify-only — no RSVP, no external email). Pass notify=False
-    at creation, where a single 'meeting scheduled' ping covers everyone."""
+    at creation, where a single 'meeting scheduled' ping covers everyone.
+    Preserves each surviving attendee's RSVP + token (keyed by user or email) so
+    re-saving the list doesn't wipe replies already given."""
+    prior = {}
+    for a in meeting.attendees.all():
+        key = f"u{a.user_id}" if a.user_id else f"e{(a.email or '').lower()}"
+        prior[key] = (a.rsvp, a.rsvp_token, a.responded_at)
     already = set(meeting.attendees.filter(user__isnull=False)
                   .values_list("user_id", flat=True))
     meeting.attendees.all().delete()
     fresh = []
     for r in rows:
         uid = r.get("user_id")
+        email = (r.get("email") or "").strip()
+        key = f"u{uid}" if uid else f"e{email.lower()}"
+        rsvp, token, responded = prior.get(key, ("NONE", "", None))
         MeetingAttendee.objects.create(
             meeting=meeting,
             user=(User.objects.filter(pk=uid).first() if uid else None),
-            name=(r.get("name") or "").strip(),
+            name=(r.get("name") or "").strip(), email=email,
             org=(r.get("org") or "").strip(),
             role=(r.get("role") or "").strip(),
             is_external=bool(r.get("is_external") or (not uid)),
-            present=bool(r.get("present", True)))
+            present=bool(r.get("present", True)),
+            rsvp=rsvp, rsvp_token=token, responded_at=responded)
         if uid and uid not in already:
             fresh.append(uid)
     if notify:
@@ -384,7 +463,7 @@ def _invite(meeting, user_ids, actor):
         return
     from .notify import notify_user
     actor_id = actor.id if actor else None
-    when = timezone.localtime(meeting.scheduled_at).strftime("%d %b, %H:%M")
+    when = when_mvt(meeting.scheduled_at)
     for u in User.objects.filter(id__in=user_ids).exclude(id=actor_id):
         notify_user(u, f"Meeting invite — {meeting.title}",
                     body=f"{when}. Organiser: "
@@ -484,8 +563,10 @@ def create_next_occurrence(meeting, actor):
 def attendee_dict(a):
     return {"id": a.id, "user_id": a.user_id,
             "name": (a.user.full_name if a.user_id else a.name),
+            "email": (a.user.email if a.user_id else a.email),
             "org": a.org, "role": a.role, "is_external": a.is_external,
-            "present": a.present}
+            "present": a.present, "rsvp": a.rsvp,
+            "responded_at": a.responded_at}
 
 
 def audio_dict(a):
@@ -494,6 +575,15 @@ def audio_dict(a):
         "size_bytes": a.size_bytes, "content_type": a.content_type,
         "uploaded_by": a.uploaded_by.full_name if a.uploaded_by_id else "",
         "uploaded_at": a.uploaded_at,
+    }
+
+
+def attachment_dict(a):
+    return {
+        "id": a.id, "file_name": a.file_name, "size_bytes": a.size_bytes,
+        "content_type": a.content_type,
+        "url": a.file.url if a.file else "",
+        "uploaded_by": a.uploaded_by.full_name if a.uploaded_by_id else "",
     }
 
 
@@ -554,14 +644,27 @@ def meeting_dict(meeting, detail=False):
         "organiser": meeting.organiser.full_name if meeting.organiser_id else "",
         "open_actions": meeting.action_items.filter(
             status__in=("OPEN", "IN_PROGRESS")).count(),
+        "invite_sent_at": meeting.invite_sent_at,
+        "minutes_sent_at": meeting.minutes_sent_at,
     }
     if detail:
+        attendees = list(meeting.attendees.select_related("user").all())
+        reachable = sum(1 for a in attendees
+                        if ((a.user.email if a.user_id else a.email) or "").strip())
         d.update({
             "agenda": meeting.agenda, "minutes": meeting.minutes,
             "notes": meeting.notes,
-            "attendees": [attendee_dict(a) for a in meeting.attendees.all()],
+            "attendees": [attendee_dict(a) for a in attendees],
             "action_items": [action_item_dict(a)
                              for a in meeting.action_items.all()],
             "recordings": [audio_dict(a) for a in meeting.recordings.all()],
+            "files": [attachment_dict(a) for a in meeting.files.all()],
+            "email_recipients": reachable,
+            "email_configured": _email_configured(),
         })
     return d
+
+
+def _email_configured():
+    from django.conf import settings
+    return bool(getattr(settings, "EMAIL_HOST", ""))

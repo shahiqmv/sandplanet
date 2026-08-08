@@ -4158,6 +4158,12 @@ class Meeting(models.Model):
     # Stamped when the upcoming-meeting reminder has been sent, so it fires
     # once; cleared on reschedule so the moved meeting reminds again.
     reminded_at = models.DateTimeField(null=True, blank=True)
+    # Email dispatch tracking. invite_sent_at/minutes_sent_at drive the "last
+    # sent" hint + resend; ics_sequence increments on reschedule so a resent
+    # calendar invite supersedes the previous one in recipients' calendars.
+    invite_sent_at = models.DateTimeField(null=True, blank=True)
+    minutes_sent_at = models.DateTimeField(null=True, blank=True)
+    ics_sequence = models.PositiveIntegerField(default=0)
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -4172,17 +4178,30 @@ class Meeting(models.Model):
 
 class MeetingAttendee(models.Model):
     """Who was invited/attended — an internal Planet user or an external guest
-    named free-text (client-side, consultant…)."""
+    named free-text (client-side, consultant…). External guests carry an email
+    so they can be sent the meeting request + minutes."""
+
+    class Rsvp(models.TextChoices):
+        NONE = "NONE", "No reply"
+        ACCEPTED = "ACCEPTED", "Accepted"
+        DECLINED = "DECLINED", "Declined"
+        TENTATIVE = "TENTATIVE", "Tentative"
 
     meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE,
                                 related_name="attendees")
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True,
                              blank=True, related_name="+")
     name = models.CharField(max_length=160, blank=True)     # external guest
+    email = models.EmailField(blank=True)                   # external guest
     org = models.CharField(max_length=160, blank=True)
     role = models.CharField(max_length=120, blank=True)
     is_external = models.BooleanField(default=False)
     present = models.BooleanField(default=True)
+    # RSVP: one-click accept/decline from the invite email (tokened, no login).
+    rsvp = models.CharField(max_length=9, choices=Rsvp.choices,
+                            default=Rsvp.NONE)
+    rsvp_token = models.CharField(max_length=32, blank=True, db_index=True)
+    responded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         ordering = ["is_external", "id"]
@@ -4248,5 +4267,44 @@ class MeetingAudio(models.Model):
 
     class Meta:
         ordering = ["uploaded_at", "id"]
+
+
+def meeting_file_path(instance, filename):
+    return f"meeting-files/{instance.meeting_id}/f{instance.pk}-{filename}"
+
+
+class MeetingAttachment(models.Model):
+    """A pre-read document attached to a meeting — sent with the invite email so
+    attendees get the agenda pack up front (owner 2026-08-08)."""
+
+    meeting = models.ForeignKey(Meeting, on_delete=models.CASCADE,
+                                related_name="files")
+    file = models.FileField(upload_to=meeting_file_path)
+    file_name = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=100, blank=True)
+    size_bytes = models.PositiveIntegerField(default=0)
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                    blank=True, related_name="+")
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["uploaded_at", "id"]
+
+
+class MeetingContact(models.Model):
+    """A reusable external guest (client, consultant, supplier contact) so the
+    same person can be added to meetings without retyping their email — a light
+    contact book scoped to the meeting module (owner 2026-08-08)."""
+
+    name = models.CharField(max_length=160)
+    email = models.EmailField(blank=True)
+    org = models.CharField(max_length=160, blank=True)
+    role = models.CharField(max_length=120, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name", "id"]
 
 
