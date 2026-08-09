@@ -193,15 +193,22 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
         (r.material || "").trim().toLowerCase()));
       const added = major
         .filter((m) => !have.has(m.description.trim().toLowerCase()))
-        .map((m) => ({ item_id: m.item_id, material: m.description,
-                       unit: m.unit, opening: String(m.on_hand),
-                       received: m.received_today
-                         ? String(m.received_today) : "",
-                       consumed: "", remarks: "" }));
+        .map((m) => {
+          // on_hand already includes today's GRN receipts, so the opening
+          // (start-of-day) balance is on_hand minus what came in today — else
+          // Balance = Opening + Received − Consumed double-counts the receipt.
+          const rx = Number(m.received_today) || 0;
+          const opening = (Number(m.on_hand) || 0) - rx;
+          return { item_id: m.item_id, material: m.description,
+                   unit: m.unit, opening: String(opening),
+                   received: rx ? String(rx) : "",
+                   consumed: "", remarks: "" };
+        });
       setMaterials([...materials.filter((r) => r.material), ...added]);
-      setMatNotice(`Loaded ${added.length} major material(s). Opening = current `
-                   + `stock; today's GRN receipts prefilled. Enter Consumed to `
-                   + `draw it down — issuing the DPR posts that to stock.`);
+      setMatNotice(`Loaded ${added.length} major material(s). Opening = stock `
+                   + `before today's receipts; today's GRN receipts prefilled. `
+                   + `Enter Consumed to draw it down — issuing the DPR posts `
+                   + `that to stock.`);
     } catch (e) {
       setMatNotice(e.message);
     }
