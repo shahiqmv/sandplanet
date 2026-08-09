@@ -482,6 +482,13 @@ function ValuationView({ vref, me, onBack }) {
         <Chip tone={SCA_TONE[d.status] || "info"}>
           {d.status.replace(/_/g, " ")}</Chip>
         {live.over_warning && <Chip tone="alert">over-contract qty</Chip>}
+        {d.status !== "DRAFT" && ["PM", "DIRECTOR", "SIGNATORY", "FINANCE",
+                                  "ADMIN", "QS"].includes(me.role) && (
+          <a href={`/api/v1/subcontract-valuations/${d.ref}/certificate.pdf`}
+             target="_blank" rel="noreferrer"
+             style={{ marginLeft: "auto", fontSize: 13, fontWeight: 600,
+                      color: "var(--navy)", textDecoration: "none" }}>
+            ↓ Certificate PDF</a>)}
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       <div style={{ overflowX: "auto", marginTop: 8 }}>

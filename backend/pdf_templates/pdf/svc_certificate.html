@@ -1,0 +1,148 @@
+<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+<style>
+  table.dv { width: 100%; border-collapse: collapse; margin-top: 3mm; }
+  table.dv th, table.dv td { border: 0.5px solid #C4D0DA; padding: 2.5px 6px;
+                             font-size: 8.4pt; vertical-align: top; }
+  table.dv thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+                      text-align: right; }
+  table.dv thead th.l { text-align: left; }
+  table.dv td.num { text-align: right; font-variant-numeric: tabular-nums;
+                    white-space: nowrap; }
+  table.dv tr.grand td { background: #BFD3E3; font-weight: 800; color: #10344F;
+                         font-size: 8.8pt; }
+  table.dv tbody tr { page-break-inside: avoid; }
+  table.dv tr.over td { background: #FBEDEA; }
+  .wf td { font-size: 9pt; }
+  .wf .amt { text-align: right; font-family: 'Courier New', monospace;
+             width: 38mm; }
+  .wf .sub td { background: #EAF1F6; font-weight: 700; }
+  .wf .grand td { background: #BFD3E3; font-weight: 800; font-size: 10pt;
+                  color: #10344F; }
+  .neg { color: #b0402f; }
+  .words { margin-top: 3mm; font-style: italic; font-size: 9pt;
+           color: #10344F; }
+  .overnote { margin-top: 2mm; font-size: 8.4pt; color: #b0402f; }
+  .provisional { display: inline-block; margin-left: 3mm; padding: 1px 8px;
+                 border: 1.2pt solid #9a5b00; border-radius: 3px;
+                 color: #9a5b00; font-weight: 700; font-size: 8.5pt;
+                 letter-spacing: .05em; }
+  table.sig4 { width: 100%; border-collapse: collapse; margin-top: 9mm;
+               page-break-inside: avoid; }
+  table.sig4 td { width: 25%; padding: 0 3mm 0 0; vertical-align: top; }
+  table.sig4 .t { border-top: 0.75pt solid #10344F; padding-top: 1.5mm;
+                  font-size: 8pt; color: #5a6b78; }
+  table.sig4 .dn { font-size: 9pt; color: #10344F; font-weight: 700; }
+  table.sig4 .dd { font-size: 7.6pt; color: #5a6b78; }
+  .ack { margin-top: 8mm; page-break-inside: avoid; }
+  .ack .h { font-size: 9pt; font-weight: 700; color: #10344F; }
+  .ack .l { margin-top: 9mm; border-top: 0.75pt solid #10344F; width: 70mm;
+            padding-top: 1.5mm; font-size: 8pt; color: #5a6b78; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc=doc_ref %}
+{% include "pdf/_letterhead.html" with title=doc_title subline=subline %}
+
+<table class="kv">
+  <tr><td class="k">Subcontractor</td><td>{{ sub.name }}</td>
+      <td class="k">Certificate No</td>
+      <td>{{ doc_ref }}{% if not is_authorised %}<span class="provisional">PROVISIONAL — NOT AUTHORISED</span>{% endif %}</td></tr>
+  <tr><td class="k">Agreement</td><td>{{ sca_ref }} · {{ a.title }}</td>
+      <td class="k">Valuation No</td><td>{{ seq }}</td></tr>
+  <tr><td class="k">Site / Project</td>
+      <td>{{ site_name }}{% if project_title %} · {{ project_title }}{% endif %}</td>
+      <td class="k">Work done up to</td>
+      <td>{% if work_done_upto %}{{ work_done_upto|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+  <tr><td class="k">Agreement value</td>
+      <td>{{ currency }} {{ contract_value|floatformat:2 }}</td>
+      <td class="k">Certificate date</td><td>{{ issue_date|date:"d M Y" }}</td></tr>
+</table>
+
+<h2>Measured works ({{ currency }})</h2>
+<table class="dv">
+  <thead><tr>
+    <th class="l">Item</th><th class="l">Unit</th><th>Rate</th>
+    <th>Contract qty</th><th>Previous qty</th><th>Cumulative qty</th>
+    <th>This period</th><th>This value</th><th>Cumulative value</th>
+  </tr></thead>
+  <tbody>
+    {% for ln in lines %}
+    <tr{% if ln.over %} class="over"{% endif %}>
+      <td>{% if ln.item_code %}{{ ln.item_code }} · {% endif %}{{ ln.description }}</td>
+      <td>{{ ln.unit }}</td>
+      <td class="num">{{ ln.rate|floatformat:2 }}</td>
+      <td class="num">{{ ln.contract_qty|floatformat:"-3" }}</td>
+      <td class="num">{{ ln.previous_qty|floatformat:"-3" }}</td>
+      <td class="num">{{ ln.cumulative_qty|floatformat:"-3" }}</td>
+      <td class="num">{{ ln.this_qty|floatformat:"-3" }}</td>
+      <td class="num">{{ ln.this_value|floatformat:2 }}</td>
+      <td class="num">{{ ln.cumulative_value|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="grand">
+      <td colspan="8">Gross value of work done to date</td>
+      <td class="num">{{ gross_cumulative|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+{% if over_warning %}
+<div class="overnote">Shaded lines exceed the agreement quantity — certified
+as measured, subject to the agreement's variation provisions.</div>
+{% endif %}
+
+<h2>Certification ({{ currency }})</h2>
+<table class="wf">
+  <tr><td>Gross certified to date</td>
+      <td class="amt">{{ gross_cumulative|floatformat:2 }}</td></tr>
+  {% if advance_recovered != 0 %}
+  <tr><td>Less advance recovered ({{ advance_pct }}%)</td>
+      <td class="amt neg">({{ advance_recovered|floatformat:2 }})</td></tr>
+  {% endif %}
+  {% if retention_held != 0 %}
+  <tr><td>Less retention held ({{ retention_pct }}%)</td>
+      <td class="amt neg">({{ retention_held|floatformat:2 }})</td></tr>
+  {% endif %}
+  {% if deductions != 0 %}
+  <tr><td>Less deductions</td>
+      <td class="amt neg">({{ deductions|floatformat:2 }})</td></tr>
+  {% endif %}
+  {% if adjustment != 0 %}
+  <tr><td>Adjustment</td><td class="amt">{{ adjustment|floatformat:2 }}</td></tr>
+  {% endif %}
+  <tr class="sub"><td>Net certified to date</td>
+      <td class="amt">{{ net_cumulative|floatformat:2 }}</td></tr>
+  <tr><td>Less previously certified</td>
+      <td class="amt neg">({{ previous_net|floatformat:2 }})</td></tr>
+  <tr class="grand"><td>Amount now payable</td>
+      <td class="amt">{{ currency }} {{ now_due|floatformat:2 }}</td></tr>
+</table>
+<div class="words">{{ amount_words }}</div>
+{% if note %}<p style="font-size:8.6pt;color:#5a6b78;margin-top:2mm;">{{ note }}</p>{% endif %}
+
+<table class="sig4">
+  <tr>
+    <td><div class="t">Prepared — Site</div>
+      {% if sig_prepared %}<div class="dn">{{ sig_prepared.name }}</div>
+      <div class="dd">Digitally · {{ sig_prepared.at|date:"d M Y" }}</div>{% endif %}</td>
+    <td><div class="t">Quantities verified — Project Manager</div>
+      {% if sig_verified %}<div class="dn">{{ sig_verified.name }}</div>
+      <div class="dd">Digitally · {{ sig_verified.at|date:"d M Y" }}</div>{% endif %}</td>
+    <td><div class="t">Approved — Director</div>
+      {% if sig_approved %}<div class="dn">{{ sig_approved.name }}</div>
+      <div class="dd">Digitally · {{ sig_approved.at|date:"d M Y" }}</div>{% endif %}</td>
+    <td><div class="t">Authorised — Signatory</div>
+      {% if sig_authorised %}<div class="dn">{{ sig_authorised.name }}</div>
+      <div class="dd">Digitally · {{ sig_authorised.at|date:"d M Y" }}</div>{% endif %}</td>
+  </tr>
+</table>
+
+<div class="ack">
+  <div class="h">Subcontractor's acknowledgement</div>
+  <div class="l">Signature &amp; date — for {{ sub.name }}</div>
+</div>
+
+</body>
+</html>

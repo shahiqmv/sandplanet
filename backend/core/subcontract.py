@@ -416,9 +416,21 @@ def value_svc(v, data, actor):
     return v, None
 
 
+_SVC_APPROVAL_ACTION = {"SUBMITTED": "SUBMIT", "PM_VERIFIED": "VERIFY",
+                        "DIRECTOR_APPROVED": "APPROVE",
+                        "AUTHORISED": "AUTHORISE", "DRAFT": "RETURN"}
+
+
 def _svc_set_status(doc, new, actor, comment=""):
+    from .models import Approval
     doc.status = new
     doc.save(update_fields=["status", "updated_at"])
+    # The immutable trail — also what the certificate PDF prints as the
+    # digital signature blocks.
+    Approval.objects.create(
+        document=doc, revision=doc.current_revision,
+        action=_SVC_APPROVAL_ACTION.get(new, new), actor=actor,
+        actor_role=actor.role, comment=comment)
     audit("document", doc.id, f"SVC_{new}", actor=actor, to_state=new,
           detail={"note": comment} if comment else None)
     try:
@@ -594,6 +606,60 @@ def sca_pdf_context(doc):
                                       or "Muditha Samanthilaka"),
         "contractor_signatory_title": (a.contractor_signatory_title
                                        or "Director, Projects"),
+    }
+
+
+def svc_pdf_context(doc):
+    """Merge-field context for the Subcontract Valuation Certificate PDF."""
+    from .commercial import amount_in_words
+    from .pdf import _font_dir, company_info, mark_src
+    v = doc.subcontract_valuation
+    a = v.agreement
+    val = svc_valuation(v)
+    q2 = lambda x: (x or Decimal("0")).quantize(Decimal("0.01"))
+    # Digital signature blocks: the latest approval per action (a RETURN wipes
+    # the run, so only actions after the last return count).
+    approvals = list(doc.approvals.select_related("actor"))
+    last_return = max((i for i, ap in enumerate(approvals)
+                       if ap.action == "RETURN"), default=-1)
+    by_action = {}
+    for ap in approvals[last_return + 1:]:
+        by_action[ap.action] = ap
+    def sig(action):
+        ap = by_action.get(action)
+        return {"name": ap.actor.full_name, "role": ap.actor_role,
+                "at": ap.acted_at} if ap else None
+    now_due = q2(val["now_due"])
+    return {
+        "mark_src": mark_src(), "font_dir": _font_dir(),
+        "co": company_info(), "doc_title": "Subcontract Valuation Certificate",
+        "doc_no_label": "Certificate No", "doc_ref": doc.ref,
+        "subline": f"Valuation No. {v.seq} · {a.title}",
+        "ref": doc.ref, "seq": v.seq, "status": doc.status,
+        "is_authorised": doc.status in ("AUTHORISED", "PAID"),
+        "issue_date": doc.doc_date, "work_done_upto": v.work_done_upto,
+        "sub": a.subcontractor, "a": a, "sca_ref": a.document.ref,
+        "site_name": doc.site.name if doc.site_id else "",
+        "project_title": (a.project or doc.project).title
+                         if (a.project or doc.project) else "",
+        "currency": val["currency"], "contract_value": q2(val["contract_value"]),
+        "lines": [{**ln, "rate": q2(ln["rate"]),
+                   "this_value": q2(ln["this_value"]),
+                   "cumulative_value": q2(ln["cumulative_value"])}
+                  for ln in val["lines"]],
+        "gross_cumulative": q2(val["gross_cumulative"]),
+        "advance_recovered": q2(val["advance_recovered"]),
+        "advance_pct": _pct(val["advance_pct"]),
+        "retention_pct": _pct(val["retention_pct"]),
+        "retention_held": q2(val["retention_held"]),
+        "deductions": q2(val["deductions"]), "adjustment": q2(val["adjustment"]),
+        "net_cumulative": q2(val["net_cumulative"]),
+        "previous_net": q2(val["previous_net"]), "now_due": now_due,
+        "amount_words": amount_in_words(now_due, val["currency"]),
+        "over_warning": val["over_warning"],
+        "sig_prepared": sig("SUBMIT"), "sig_verified": sig("VERIFY"),
+        "sig_approved": sig("APPROVE"), "sig_authorised": sig("AUTHORISE"),
+        "note": v.note,
     }
 
 

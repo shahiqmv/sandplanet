@@ -607,3 +607,48 @@ class SubcontractValuationTests(TestCase):
         subcontract.svc_action(v, "approve", director)
         self.assertIn(ref, refs(signatory))                 # Signatory authorises
         self.assertIn(("SVC", "DIRECTOR_APPROVED"), APPROVABLE)
+
+    def test_certificate_pdf_context_and_template(self):
+        """The certificate renders the measured works, the certification
+        waterfall and the digital approval trail; PROVISIONAL is stamped
+        until the signatory authorises."""
+        from django.template.loader import render_to_string
+
+        from . import subcontract
+        pm = make_user("pm_pdf", User.Role.PM, site=self.site)
+        director = make_user("dir_pdf", User.Role.DIRECTOR)
+        signatory = make_user("sig_pdf", User.Role.SIGNATORY)
+        a = self._approved_sca()
+        v = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v, "1", "40")
+        self._set(v, "2", "100")           # gross 11,000 / net 9,350
+        subcontract.svc_action(v, "submit", self.sa)
+        html = render_to_string("pdf/svc_certificate.html",
+                                subcontract.svc_pdf_context(v.document))
+        self.assertIn("PROVISIONAL", html)          # not yet authorised
+        self.assertIn(v.document.ref, html)
+        self.assertIn("11000.00", html)             # gross
+        subcontract.svc_action(v, "verify", pm)
+        subcontract.svc_action(v, "approve", director)
+        subcontract.svc_action(v, "authorise", signatory)
+        html = render_to_string("pdf/svc_certificate.html",
+                                subcontract.svc_pdf_context(v.document))
+        self.assertNotIn("PROVISIONAL", html)
+        self.assertIn("9350.00", html)              # amount now payable
+        for u in (self.sa, pm, director, signatory):
+            self.assertIn(u.full_name, html)        # digital signature blocks
+
+    def test_certificate_endpoint_blocks_draft_and_site_roles(self):
+        from . import subcontract
+        a = self._approved_sca()
+        v = subcontract.create_svc(a, self.sa)[0].subcontract_valuation
+        self._set(v, "1", "40")
+        url = f"/api/v1/subcontract-valuations/{v.document.ref}/certificate.pdf"
+        pm = make_user("pm_cert", User.Role.PM, site=self.site)
+        self.client.force_login(pm)
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 400)         # draft — not printable
+        subcontract.svc_action(v, "submit", self.sa)
+        self.client.force_login(self.sa)
+        r = self.client.get(url)
+        self.assertEqual(r.status_code, 403)         # rates: PM and above

@@ -409,6 +409,8 @@ urlpatterns = [
          subcontract_api.valuation_detail, name="svc-detail"),
     path("subcontract-valuations/<str:ref>/action",
          subcontract_api.valuation_action, name="svc-action"),
+    path("subcontract-valuations/<str:ref>/certificate.pdf",
+         subcontract_api.valuation_certificate_pdf, name="svc-certificate"),
     # Site worker management (direct/salaried workforce) — approval batches
     path("worker-batches", worker_api.worker_batches, name="worker-batches"),
     path("worker-batches/<int:pk>/action", worker_api.batch_action,

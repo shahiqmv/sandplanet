@@ -299,6 +299,26 @@ def valuation_detail(request, ref):
     return Response(subcontract.svc_payload(v))
 
 
+@api_view(["GET"])
+def valuation_certificate_pdf(request, ref):
+    """The printable Subcontract Valuation Certificate. Carries rates, so PM
+    and above only (same gate as the agreement PDF). Draft valuations can't
+    print — the quantities aren't even submitted yet."""
+    doc, err = _get_svc(request, ref)
+    if err:
+        return err
+    if not _can_see_all(request.user):
+        return Response({"detail": "The certificate PDF is for PM and above."},
+                        status=403)
+    if doc.status == "DRAFT":
+        return Response({"detail": "Submit the valuation before printing the "
+                                   "certificate."}, status=400)
+    from .views_commercial import _render_pdf
+    return _render_pdf("pdf/svc_certificate.html",
+                       subcontract.svc_pdf_context(doc),
+                       f"{doc.ref}-Valuation-Certificate")
+
+
 @api_view(["POST"])
 def valuation_action(request, ref):
     doc, err = _get_svc(request, ref)
