@@ -1148,6 +1148,9 @@ class OnboardingSpineTests(TestCase):
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertTrue(opts["EA"]["available"])
         self.assertTrue(opts["EA"]["needs_sign"])
+        # the signatory identity comes from the case sign-off, not HR's form
+        self.assertNotIn("signatory_name", opts["EA"]["fields"])
+        self.assertNotIn("signatory_designation", opts["EA"]["fields"])
         # generate it — fields prefill from the case, ref gets its own series
         r = self.client.post(f"/api/v1/onboarding/{pk}/letter",
                              {"kind": "EA", "fields": {

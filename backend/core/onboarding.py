@@ -1150,7 +1150,11 @@ def generate_letter(case, kind, overrides, actor):
     # `allowances` is a structured list derived from the case, never an editable
     # text field — keep HR's text overrides from clobbering it.
     clean = {k: str(v) for k, v in (overrides or {}).items()
-             if k in defaults and k != "allowances" and v is not None}
+             if k in defaults and v is not None
+             # allowances is structured; the signatory identity comes from the
+             # case sign-off, never from HR's form
+             and k not in ("allowances", "signatory_name",
+                           "signatory_designation")}
     fields = {**defaults, **clean}
     issue_date = timezone.localdate().strftime("%d %b %Y")
     # Every letter is stamped with the signatory's signature + company seal ONCE
@@ -1186,7 +1190,12 @@ def _render_letter(case, kind, ref, fields, issue_date, signed):
     seal_src = pdf.company_stamp_data_uri() if signed else ""
     fld = dict(fields)
     if signed and case.signatory_approved_by_id:
-        fld["signatory_name"] = case.signatory_approved_by.full_name
+        # The letter carries whoever actually signed the case off — name AND
+        # title come from that approval, not from the generation form.
+        signer = case.signatory_approved_by
+        fld["signatory_name"] = signer.full_name
+        fld["signatory_designation"] = ("Director" if signer.role == "DIRECTOR"
+                                        else "Authorised Signatory")
     return pdf.render_onboarding_letter(
         case.document, kind, ref, fld, issue_date,
         stamp_src=stamp_src, seal_src=seal_src, draft=not signed)
@@ -1745,7 +1754,12 @@ def case_dict(case):
             {"kind": k, "title": m["title"],
              "needs_sign": bool(m.get("sign")),
              "available": letter_available(case, k),
-             "fields": letter_defaults(case, k)
+             # The signatory's name/title never come from HR — they're set by
+             # whoever signs the case off (owner 2026-08-09), so they don't
+             # appear on the generation form.
+             "fields": {f: v for f, v in letter_defaults(case, k).items()
+                        if f not in ("signatory_name",
+                                     "signatory_designation")}
              if letter_available(case, k) else None}
             for k, m in LETTER_META.items()],
         "approvals": [{"action": a.action, "by": a.actor.full_name,
