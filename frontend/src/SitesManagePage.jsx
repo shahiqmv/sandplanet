@@ -114,18 +114,30 @@ export default function SitesManagePage({ me, onChanged }) {
     }
   }
 
-  async function assignSitePm(pmId) {
+  // Add a PM as a co-PM (mode "add" — does NOT remove the existing PM(s)). A
+  // busy site can carry several; they share full PM authority.
+  async function addSitePm(pmId) {
     if (!pmId) return;
     setError(null);
     try {
       const fresh = await api(`/sites/${selected.id}/assign-pm`,
-                              { method: "POST", body: { pm_user_id: +pmId } });
+        { method: "POST", body: { pm_user_id: +pmId, mode: "add" } });
       setSelected(fresh);
-      setNotice("Site PM assigned.");
+      setNotice("PM added — they share the site's PM approvals.");
       loadSites();
-    } catch (e) {
-      setError(e.message);
-    }
+    } catch (e) { setError(e.message); }
+  }
+  async function removeSitePm(pmId, name) {
+    if (!window.confirm(`Remove ${name} as a PM of this site? Their pending `
+      + `approvals pass to the remaining PM(s).`)) return;
+    setError(null);
+    try {
+      const fresh = await api(`/sites/${selected.id}/assign-pm`,
+        { method: "POST", body: { pm_user_id: +pmId, mode: "remove" } });
+      setSelected(fresh);
+      setNotice("PM removed.");
+      loadSites();
+    } catch (e) { setError(e.message); }
   }
 
   async function saveProject() {
@@ -254,17 +266,36 @@ export default function SitesManagePage({ me, onChanged }) {
                        style={inputStyle} />
               </label>
             ))}
-            <label style={{ fontSize: 13 }}>Site PM
+            <label style={{ fontSize: 13 }}>Site PM(s)
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6,
+                marginTop: 4, marginBottom: 6 }}>
+                {(selected.current_pms || []).length === 0 && (
+                  <span style={{ fontSize: 12.5, color: "var(--sp-muted, "
+                    + "#5a6b78)" }}>— none assigned —</span>)}
+                {(selected.current_pms || []).map((p) => (
+                  <span key={p.id} style={{ display: "inline-flex",
+                    alignItems: "center", gap: 6, fontSize: 12.5,
+                    background: "var(--sp-sky-soft, #eef6fd)",
+                    color: "var(--sp-navy)", padding: "3px 6px 3px 10px",
+                    borderRadius: 999 }}>
+                    {p.full_name}
+                    {canEditSite && (
+                      <button type="button"
+                        onClick={() => removeSitePm(p.id, p.full_name)}
+                        title="Remove this PM"
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "#b0402f", fontSize: 14,
+                          lineHeight: 1, padding: 0 }}>×</button>)}
+                  </span>
+                ))}
+              </div>
               <select value="" disabled={!canEditSite}
-                      onChange={(e) => assignSitePm(e.target.value)}
+                      onChange={(e) => addSitePm(e.target.value)}
                       style={inputStyle}>
-                <option value="">
-                  {selected.current_pm?.full_name || "— not assigned —"}
-                </option>
-                {pms.filter((p) => p.id !== selected.current_pm?.id)
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      Assign: {p.full_name}</option>
+                <option value="">＋ Add a PM…</option>
+                {pms.filter((p) => !(selected.current_pms || [])
+                  .some((c) => c.id === p.id)).map((p) => (
+                    <option key={p.id} value={p.id}>{p.full_name}</option>
                   ))}
               </select>
             </label>
