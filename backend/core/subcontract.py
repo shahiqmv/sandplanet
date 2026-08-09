@@ -324,6 +324,7 @@ def svc_valuation(v):
         "gross_cumulative": gross_cum, "previous_gross": prev_gross,
         "this_gross": gross_cum - prev_gross,
         "advance_total": adv_total, "advance_recovered": recovery,
+        "advance_pct": adv_pct,
         "retention_pct": ret_pct, "retention_held": retention,
         "deductions": v.deductions or Decimal("0"),
         "adjustment": v.adjustment or Decimal("0"),

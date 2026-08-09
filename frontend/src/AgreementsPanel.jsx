@@ -350,7 +350,9 @@ function Valuations({ scaRef, me, currency }) {
   const canRaise = SITE_TEAM_V.includes(me.role);
   const load = () => api(`/subcontract-agreements/${scaRef}/valuations`)
     .then(setList).catch((e) => setError(e.message));
-  useEffect(load, [scaRef]);
+  // NOT useEffect(load, …): load returns a promise, and React treats an
+  // effect's return value as the cleanup fn — it crashed the panel on unmount.
+  useEffect(() => { load(); }, [scaRef]);
 
   async function create() {
     setError(null);
@@ -405,7 +407,8 @@ function ValuationView({ vref, me, onBack }) {
       adjustment: v.valuation.adjustment || "",
       work_done_upto: v.work_done_upto || "", note: v.note || "" });
   }).catch((e) => setError(e.message));
-  useEffect(load, [vref]);
+  // See Valuations: load returns a promise — don't hand it to useEffect raw.
+  useEffect(() => { load(); }, [vref]);
 
   async function run(fn) {
     setBusy(true); setError(null);
@@ -442,6 +445,35 @@ function ValuationView({ vref, me, onBack }) {
   const actions = (SVC_ACTIONS[d.status] || [])
     .filter(([, , roles]) => roles.includes(me.role));
 
+  // While drafting, mirror the server's valuation math live from the typed
+  // quantities — the team shouldn't have to Save just to see the numbers.
+  // The server recomputes authoritatively on save/submit.
+  const n = (x) => { const f = Number(x); return Number.isFinite(f) ? f : 0; };
+  let live = v;
+  if (editable) {
+    let gross = 0;
+    const lines = v.lines.map((l, i) => {
+      const cum = n(rows[i]?.cumulative_qty);
+      const thisQty = cum - n(l.previous_qty);
+      const thisValue = thisQty * n(l.rate);
+      gross += cum * n(l.rate);
+      return { ...l, cumulative_qty: cum, this_qty: thisQty,
+               this_value: thisValue,
+               over: n(l.contract_qty) > 0 && cum > n(l.contract_qty) };
+    });
+    const advTotal = n(v.advance_pct) / 100 * n(v.contract_value);
+    const recovery = Math.min(n(v.advance_pct) / 100 * gross, advTotal);
+    const retention = n(v.retention_pct) / 100 * gross;
+    const net = gross - recovery - retention - n(hdr.deductions)
+                + n(hdr.adjustment);
+    live = { ...v, lines, gross_cumulative: gross,
+      advance_recovered: recovery, retention_held: retention,
+      deductions: n(hdr.deductions), adjustment: n(hdr.adjustment),
+      net_cumulative: net, previous_net: n(v.previous_net),
+      now_due: net - n(v.previous_net),
+      over_warning: lines.some((l) => l.over) };
+  }
+
   return (
     <div style={{ marginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -449,7 +481,7 @@ function ValuationView({ vref, me, onBack }) {
         <b style={{ fontFamily: "var(--font-mono)" }}>{d.ref}</b>
         <Chip tone={SCA_TONE[d.status] || "info"}>
           {d.status.replace(/_/g, " ")}</Chip>
-        {v.over_warning && <Chip tone="alert">over-contract qty</Chip>}
+        {live.over_warning && <Chip tone="alert">over-contract qty</Chip>}
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       <div style={{ overflowX: "auto", marginTop: 8 }}>
@@ -462,7 +494,7 @@ function ValuationView({ vref, me, onBack }) {
                 {h}</th>))}
           </tr></thead>
           <tbody>
-            {v.lines.map((l, i) => (
+            {live.lines.map((l, i) => (
               <tr key={l.id} style={l.over ? { background: "#FDECEA" } : {}}>
                 <td style={td}>{l.item_code ? `${l.item_code} · ` : ""}
                   {l.description}</td>
@@ -502,14 +534,14 @@ function ValuationView({ vref, me, onBack }) {
 
       <table style={{ marginTop: 10, fontSize: 13, borderCollapse: "collapse" }}>
         <tbody>
-          {[["Gross certified to date", v.gross_cumulative],
-            [`Less advance recovered`, neg(v.advance_recovered)],
-            [`Less retention held (${v.retention_pct || 0}%)`,
-             neg(v.retention_held)],
-            ["Less deductions", neg(v.deductions)],
-            ["Adjustment", v.adjustment],
-            ["Net certified to date", v.net_cumulative],
-            ["Less previously certified", neg(v.previous_net)]].map(
+          {[["Gross certified to date", live.gross_cumulative],
+            [`Less advance recovered`, neg(live.advance_recovered)],
+            [`Less retention held (${Number(v.retention_pct) || 0}%)`,
+             neg(live.retention_held)],
+            ["Less deductions", neg(live.deductions)],
+            ["Adjustment", live.adjustment],
+            ["Net certified to date", live.net_cumulative],
+            ["Less previously certified", neg(live.previous_net)]].map(
             ([k, val], i) => (
             <tr key={i}><td style={{ padding: "2px 16px 2px 0",
               color: "var(--muted)" }}>{k}</td>
@@ -519,7 +551,7 @@ function ValuationView({ vref, me, onBack }) {
             Amount now payable</td>
             <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700,
               fontFamily: "var(--font-mono)" }}>
-              {v.currency} {money(v.now_due)}</td></tr>
+              {v.currency} {money(live.now_due)}</td></tr>
         </tbody>
       </table>
 
