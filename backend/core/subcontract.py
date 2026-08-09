@@ -612,11 +612,12 @@ def sca_pdf_context(doc):
 def svc_pdf_context(doc):
     """Merge-field context for the Subcontract Valuation Certificate PDF."""
     from .commercial import amount_in_words
-    from .pdf import _font_dir, company_info, mark_src
+    from .pdf import _font_dir, company_info, logo_src
     v = doc.subcontract_valuation
     a = v.agreement
     val = svc_valuation(v)
-    q2 = lambda x: (x or Decimal("0")).quantize(Decimal("0.01"))
+    # Money renders pre-formatted with thousand separators (owner 2026-08-09)
+    q2 = lambda x: f"{(x or Decimal('0')).quantize(Decimal('0.01')):,}"
     # Digital signature blocks: the latest approval per action (a RETURN wipes
     # the run, so only actions after the last return count).
     approvals = list(doc.approvals.select_related("actor"))
@@ -629,9 +630,10 @@ def svc_pdf_context(doc):
         ap = by_action.get(action)
         return {"name": ap.actor.full_name, "role": ap.actor_role,
                 "at": ap.acted_at} if ap else None
-    now_due = q2(val["now_due"])
+    nonzero = lambda x: bool(x and x != Decimal("0"))
+    now_due = (val["now_due"] or Decimal("0")).quantize(Decimal("0.01"))
     return {
-        "mark_src": mark_src(), "font_dir": _font_dir(),
+        "logo_src": logo_src(), "font_dir": _font_dir(),
         "co": company_info(), "doc_title": "Subcontract Valuation Certificate",
         "doc_no_label": "Certificate No", "doc_ref": doc.ref,
         "subline": f"Valuation No. {v.seq} · {a.title}",
@@ -649,12 +651,17 @@ def svc_pdf_context(doc):
                   for ln in val["lines"]],
         "gross_cumulative": q2(val["gross_cumulative"]),
         "advance_recovered": q2(val["advance_recovered"]),
+        "show_advance": nonzero(val["advance_recovered"]),
         "advance_pct": _pct(val["advance_pct"]),
         "retention_pct": _pct(val["retention_pct"]),
         "retention_held": q2(val["retention_held"]),
-        "deductions": q2(val["deductions"]), "adjustment": q2(val["adjustment"]),
+        "show_retention": nonzero(val["retention_held"]),
+        "deductions": q2(val["deductions"]),
+        "show_deductions": nonzero(val["deductions"]),
+        "adjustment": q2(val["adjustment"]),
+        "show_adjustment": nonzero(val["adjustment"]),
         "net_cumulative": q2(val["net_cumulative"]),
-        "previous_net": q2(val["previous_net"]), "now_due": now_due,
+        "previous_net": q2(val["previous_net"]), "now_due": q2(now_due),
         "amount_words": amount_in_words(now_due, val["currency"]),
         "over_warning": val["over_warning"],
         "sig_prepared": sig("SUBMIT"), "sig_verified": sig("VERIFY"),

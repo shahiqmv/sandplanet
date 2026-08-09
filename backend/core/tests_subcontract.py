@@ -627,14 +627,14 @@ class SubcontractValuationTests(TestCase):
                                 subcontract.svc_pdf_context(v.document))
         self.assertIn("PROVISIONAL", html)          # not yet authorised
         self.assertIn(v.document.ref, html)
-        self.assertIn("11000.00", html)             # gross
+        self.assertIn("11,000.00", html)            # gross, currency-formatted
         subcontract.svc_action(v, "verify", pm)
         subcontract.svc_action(v, "approve", director)
         subcontract.svc_action(v, "authorise", signatory)
         html = render_to_string("pdf/svc_certificate.html",
                                 subcontract.svc_pdf_context(v.document))
         self.assertNotIn("PROVISIONAL", html)
-        self.assertIn("9350.00", html)              # amount now payable
+        self.assertIn("9,350.00", html)             # amount now payable
         for u in (self.sa, pm, director, signatory):
             self.assertIn(u.full_name, html)        # digital signature blocks
 

@@ -57,7 +57,7 @@
       <td class="k">Work done up to</td>
       <td>{% if work_done_upto %}{{ work_done_upto|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
   <tr><td class="k">Agreement value</td>
-      <td>{{ currency }} {{ contract_value|floatformat:2 }}</td>
+      <td>{{ currency }} {{ contract_value }}</td>
       <td class="k">Certificate date</td><td>{{ issue_date|date:"d M Y" }}</td></tr>
 </table>
 
@@ -73,18 +73,18 @@
     <tr{% if ln.over %} class="over"{% endif %}>
       <td>{% if ln.item_code %}{{ ln.item_code }} · {% endif %}{{ ln.description }}</td>
       <td>{{ ln.unit }}</td>
-      <td class="num">{{ ln.rate|floatformat:2 }}</td>
+      <td class="num">{{ ln.rate }}</td>
       <td class="num">{{ ln.contract_qty|floatformat:"-3" }}</td>
       <td class="num">{{ ln.previous_qty|floatformat:"-3" }}</td>
       <td class="num">{{ ln.cumulative_qty|floatformat:"-3" }}</td>
       <td class="num">{{ ln.this_qty|floatformat:"-3" }}</td>
-      <td class="num">{{ ln.this_value|floatformat:2 }}</td>
-      <td class="num">{{ ln.cumulative_value|floatformat:2 }}</td>
+      <td class="num">{{ ln.this_value }}</td>
+      <td class="num">{{ ln.cumulative_value }}</td>
     </tr>
     {% endfor %}
     <tr class="grand">
       <td colspan="8">Gross value of work done to date</td>
-      <td class="num">{{ gross_cumulative|floatformat:2 }}</td>
+      <td class="num">{{ gross_cumulative }}</td>
     </tr>
   </tbody>
 </table>
@@ -96,28 +96,28 @@ as measured, subject to the agreement's variation provisions.</div>
 <h2>Certification ({{ currency }})</h2>
 <table class="wf">
   <tr><td>Gross certified to date</td>
-      <td class="amt">{{ gross_cumulative|floatformat:2 }}</td></tr>
-  {% if advance_recovered != 0 %}
+      <td class="amt">{{ gross_cumulative }}</td></tr>
+  {% if show_advance %}
   <tr><td>Less advance recovered ({{ advance_pct }}%)</td>
-      <td class="amt neg">({{ advance_recovered|floatformat:2 }})</td></tr>
+      <td class="amt neg">({{ advance_recovered }})</td></tr>
   {% endif %}
-  {% if retention_held != 0 %}
+  {% if show_retention %}
   <tr><td>Less retention held ({{ retention_pct }}%)</td>
-      <td class="amt neg">({{ retention_held|floatformat:2 }})</td></tr>
+      <td class="amt neg">({{ retention_held }})</td></tr>
   {% endif %}
-  {% if deductions != 0 %}
+  {% if show_deductions %}
   <tr><td>Less deductions</td>
-      <td class="amt neg">({{ deductions|floatformat:2 }})</td></tr>
+      <td class="amt neg">({{ deductions }})</td></tr>
   {% endif %}
-  {% if adjustment != 0 %}
-  <tr><td>Adjustment</td><td class="amt">{{ adjustment|floatformat:2 }}</td></tr>
+  {% if show_adjustment %}
+  <tr><td>Adjustment</td><td class="amt">{{ adjustment }}</td></tr>
   {% endif %}
   <tr class="sub"><td>Net certified to date</td>
-      <td class="amt">{{ net_cumulative|floatformat:2 }}</td></tr>
+      <td class="amt">{{ net_cumulative }}</td></tr>
   <tr><td>Less previously certified</td>
-      <td class="amt neg">({{ previous_net|floatformat:2 }})</td></tr>
+      <td class="amt neg">({{ previous_net }})</td></tr>
   <tr class="grand"><td>Amount now payable</td>
-      <td class="amt">{{ currency }} {{ now_due|floatformat:2 }}</td></tr>
+      <td class="amt">{{ currency }} {{ now_due }}</td></tr>
 </table>
 <div class="words">{{ amount_words }}</div>
 {% if note %}<p style="font-size:8.6pt;color:#5a6b78;margin-top:2mm;">{{ note }}</p>{% endif %}
