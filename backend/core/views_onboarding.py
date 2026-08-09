@@ -306,12 +306,12 @@ def _get_letter(request, letter_id):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def onboarding_letters_to_sign(request):
-    """The signatory's queue of Appointment Confirmations awaiting their stamp
-    (a limited view — no access to the underlying case documents)."""
+    """The signatory's queue of onboarding cases awaiting their sign-off (a
+    limited view — no access to the underlying case documents)."""
     if request.user.role not in ("SIGNATORY", "ADMIN"):
         return Response({"detail": "Not permitted."}, status=403)
     return Response({
-        "letters": ob.pending_signature_letters(request.user),
+        "cases": ob.cases_to_sign_off(request.user),
         "has_stamp": bool(request.user.stamp),
     })
 
@@ -319,12 +319,12 @@ def onboarding_letters_to_sign(request):
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def onboarding_letter_draft(request, letter_id):
-    """Stream an Appointment Confirmation's PDF for the signatory to review —
-    reachable without full case access, but only by a signatory."""
+    """Stream a case letter's PDF for the signatory to review — reachable
+    without full case access, but only by a signatory."""
     if request.user.role not in ("SIGNATORY", "ADMIN"):
         return Response({"detail": "Not permitted."}, status=403)
     lt = _get_letter(request, letter_id)
-    if lt is None or lt.kind != "AC" or not lt.attachment_id \
+    if lt is None or lt.kind == "IM30" or not lt.attachment_id \
             or not lt.attachment.file:
         return Response({"detail": "Not found."}, status=404)
     from django.http import FileResponse
@@ -335,15 +335,17 @@ def onboarding_letter_draft(request, letter_id):
 
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
-def onboarding_letter_sign(request, letter_id):
-    """A signatory approves + stamps an Appointment Confirmation."""
-    lt = _get_letter(request, letter_id)
-    if lt is None:
+def onboarding_case_sign_off(request, pk):
+    """A signatory signs off a whole onboarding case — stamps all its letters."""
+    from .models import OnboardingCase
+    case = OnboardingCase.objects.select_related("document").filter(
+        document_id=pk).first()
+    if case is None:
         return Response({"detail": "Not found."}, status=404)
-    _, msg = ob.sign_letter(lt, request.user)
+    _, msg = ob.sign_off_case(case, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response({"letters": ob.pending_signature_letters(request.user),
+    return Response({"cases": ob.cases_to_sign_off(request.user),
                      "has_stamp": bool(request.user.stamp)})
 
 

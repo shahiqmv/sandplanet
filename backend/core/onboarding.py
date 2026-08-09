@@ -922,8 +922,9 @@ def on_fee_paid(pyr_doc, actor):
 # official Appointment Confirmation) has no stage gate — it is a lean, early
 # appointment offer for any recruitment case, signed by a signatory (`sign`).
 LETTER_META = {
-    "LOA": {"stage": "WP_APPOINTMENT", "title": "Letter of Appointment"},
-    "SPL": {"stage": "BV_SPONSOR", "title": "Sponsor Letter"},
+    "LOA": {"stage": "WP_APPOINTMENT", "title": "Letter of Appointment",
+            "sign": True},
+    "SPL": {"stage": "BV_SPONSOR", "title": "Sponsor Letter", "sign": True},
     "AC": {"stage": None, "title": "Appointment Confirmation", "sign": True},
     # The Maldives Immigration IM30 visa form — a filled PDF overlay, not an
     # HTML letter — submitted with the LOA for Sri-Lankan work-permit cases.
@@ -1118,23 +1119,16 @@ def generate_letter(case, kind, overrides, actor):
              if k in defaults and k != "allowances" and v is not None}
     fields = {**defaults, **clean}
     issue_date = timezone.localdate().strftime("%d %b %Y")
-    needs_sign = bool(LETTER_META[kind].get("sign"))
+    # Every letter is stamped with the signatory's signature + company seal ONCE
+    # the case has been signed off by a signatory (owner 2026-08-08). Before that
+    # it renders as an unstamped DRAFT; the sign-off re-renders it as official.
+    signed = case.signatory_approved_at is not None
     with transaction.atomic():
         ref = next_ref(kind, None)
         if LETTER_META[kind].get("im30"):
             att = _render_im30(case, ref, fields)
         else:
-            # A sign-required letter (AC) renders as an unsigned DRAFT first — the
-            # official copy is re-rendered with the signatory's stamp on approval.
-            # The LOA carries the signatory's stamp + company seal from the start
-            # (no separate sign step — owner 2026-08-05).
-            stamp_src = seal_src = ""
-            if kind == "LOA":
-                stamp_src = _signatory_stamp_data_uri()
-                seal_src = pdf.company_stamp_data_uri()
-            att = pdf.render_onboarding_letter(
-                case.document, kind, ref, fields, issue_date,
-                stamp_src=stamp_src, seal_src=seal_src, draft=needs_sign)
+            att = _render_letter(case, kind, ref, fields, issue_date, signed)
         if att is None:
             transaction.set_rollback(True)
             return None, "The PDF engine is unavailable in this environment."
@@ -1142,12 +1136,69 @@ def generate_letter(case, kind, overrides, actor):
         letter = OnboardingLetter.objects.create(
             case=case, kind=kind, ref=ref, attachment=att, fields=fields,
             version=version, created_by=actor,
-            status="PENDING" if needs_sign else "ISSUED")
+            status="SIGNED" if signed else "PENDING")
     audit("document", case.document_id, "OBR_LETTER", actor=actor,
           detail={"kind": kind, "ref": ref, "version": version})
-    if needs_sign:
-        _notify_signatories(letter)
+    if not signed:
+        _notify_signatories(case)
     return letter, None
+
+
+def _render_letter(case, kind, ref, fields, issue_date, signed):
+    """Render one letter — stamped with the signatory signature + company seal
+    when the case is signed off, else an unsigned DRAFT."""
+    from . import pdf
+    stamp_src = _signatory_stamp_data_uri() if signed else ""
+    seal_src = pdf.company_stamp_data_uri() if signed else ""
+    fld = dict(fields)
+    if signed and case.signatory_approved_by_id:
+        fld["signatory_name"] = case.signatory_approved_by.full_name
+    return pdf.render_onboarding_letter(
+        case.document, kind, ref, fld, issue_date,
+        stamp_src=stamp_src, seal_src=seal_src, draft=not signed)
+
+
+def sign_off_case(case, actor):
+    """A signatory signs the whole case off ONCE — after this every letter it
+    has (and any generated later) carries the signatory signature + company
+    seal. Re-renders existing letters as the official stamped copies."""
+    if actor.role not in ("SIGNATORY", "ADMIN"):
+        return None, "Only a signatory can sign off an onboarding case."
+    if case.document.status != "IN_PROGRESS":
+        return None, "The case must be approved and in processing first."
+    if case.signatory_approved_at is not None:
+        return None, "This case is already signed off."
+    if not getattr(actor, "stamp", None):
+        return None, "Upload your approval stamp before signing off."
+    issue_date = timezone.localdate().strftime("%d %b %Y")
+    with transaction.atomic():
+        case.signatory_approved_by = actor
+        case.signatory_approved_at = timezone.now()
+        case.save(update_fields=["signatory_approved_by",
+                                 "signatory_approved_at", "updated_at"])
+        # re-render each existing (non-IM30) letter as the stamped official copy
+        for letter in case.letters.exclude(kind="IM30"):
+            old = letter.attachment
+            att = _render_letter(case, letter.kind, letter.ref,
+                                 letter.fields or {}, issue_date, signed=True)
+            if att is None:
+                transaction.set_rollback(True)
+                return None, "The PDF engine is unavailable in this environment."
+            fld = dict(letter.fields or {})
+            fld["signatory_name"] = actor.full_name
+            letter.attachment = att
+            letter.fields = fld
+            letter.status = "SIGNED"
+            letter.approved_by = actor
+            letter.approved_at = case.signatory_approved_at
+            letter.save(update_fields=["attachment", "fields", "status",
+                                       "approved_by", "approved_at"])
+            if old:
+                old.delete()
+    audit("document", case.document_id, "OBR_CASE_SIGNED_OFF", actor=actor,
+          detail={"letters": case.letters.exclude(kind="IM30").count()})
+    _notify_case_signed_off(case)
+    return case, None
 
 
 def _signatory_stamp_bytes():
@@ -1181,69 +1232,30 @@ def _render_im30(case, ref, fields):
     return pdf.store_generated_pdf(case.document, f"{ref}.pdf", pdf_bytes)
 
 
-def _notify_signatories(letter):
-    """Ping every signatory that an Appointment Confirmation is waiting for their
-    stamp."""
+def _notify_signatories(case):
+    """Ping every signatory that an onboarding case is waiting for their
+    sign-off (which stamps all its letters)."""
     from . import notify
-    case = letter.case
     for u in notify._role_users("SIGNATORY"):
         notify.notify_user(
-            u, f"Appointment Confirmation to sign — {case.full_name}",
-            f"{letter.ref} is ready for your approval and stamp.",
+            u, f"Onboarding case to sign off — {case.full_name}",
+            f"{case.document.ref}'s letters are ready for your signature "
+            "and company stamp.",
             doc=case.document, category="approval")
 
 
-def sign_letter(letter, actor):
-    """A signatory approves an Appointment Confirmation: re-render it with their
-    digital stamp and mark it signed. Requires the signatory to have uploaded a
-    stamp (owner 2026-08-04)."""
-    from . import pdf
-    if actor.role not in ("SIGNATORY", "ADMIN"):
-        return None, "Only a signatory signs an Appointment Confirmation."
-    if letter.kind != "AC" or letter.status != "PENDING":
-        return None, "This letter isn't awaiting a signature."
-    if not getattr(actor, "stamp", None):
-        return None, "Upload your approval stamp before signing."
-    stamp_src = _file_data_uri(actor.stamp)
-    if not stamp_src:
-        return None, "Your stamp image could not be read."
-    # The signed copy carries the approving signatory's name + designation.
-    fields = {**(letter.fields or {}), "signatory_name": actor.full_name}
-    issue_date = timezone.localdate().strftime("%d %b %Y")
-    old_att = letter.attachment
-    with transaction.atomic():
-        att = pdf.render_onboarding_letter(
-            letter.case.document, "AC", letter.ref, fields, issue_date,
-            stamp_src=stamp_src, draft=False)
-        if att is None:
-            transaction.set_rollback(True)
-            return None, "The PDF engine is unavailable in this environment."
-        letter.attachment = att
-        letter.fields = fields
-        letter.status = "SIGNED"
-        letter.approved_by = actor
-        letter.approved_at = timezone.now()
-        letter.save(update_fields=["attachment", "fields", "status",
-                                   "approved_by", "approved_at"])
-    if old_att:                                  # drop the superseded draft file
-        old_att.delete()
-    audit("document", letter.case.document_id, "OBR_LETTER_SIGNED", actor=actor,
-          detail={"ref": letter.ref})
-    _notify_letter_signed(letter)
-    return letter, None
-
-
-def _notify_letter_signed(letter):
+def _notify_case_signed_off(case):
     from . import notify
-    case = letter.case
     recipients = set(notify._role_users("HO_HR"))
     if case.document.created_by_id:
         recipients.add(case.document.created_by)
+    who = case.signatory_approved_by.full_name \
+        if case.signatory_approved_by_id else "a signatory"
     for u in recipients:
         notify.notify_user(
-            u, f"Appointment Confirmation signed — {case.full_name}",
-            f"{letter.ref} has been signed by {letter.approved_by.full_name}.",
-            doc=case.document, category="info")
+            u, f"Onboarding case signed off — {case.full_name}",
+            f"{case.document.ref}'s letters have been signed + stamped by "
+            f"{who}.", doc=case.document, category="info")
 
 
 def _file_data_uri(filefield):
@@ -1277,28 +1289,30 @@ def _letter_dict(letter):
     }
 
 
-def pending_signature_letters(user):
-    """Appointment Confirmations awaiting a signatory's stamp — the signatory's
-    limited sign queue (candidate + position + the draft to review, NOT the full
-    case with its sensitive documents)."""
-    from .models import OnboardingLetter
+def cases_to_sign_off(user):
+    """Onboarding cases whose letters are drafted and awaiting a signatory's
+    sign-off — the signatory's limited queue (candidate + position + the draft
+    letters to review, NOT the full case with its sensitive documents)."""
+    from .models import OnboardingCase, OnboardingLetter
     if user.role not in ("SIGNATORY", "ADMIN"):
         return []
-    qs = (OnboardingLetter.objects.filter(kind="AC", status="PENDING")
-          .select_related("case", "case__document", "created_by")
-          .order_by("created_at"))
+    qs = (OnboardingCase.objects.filter(
+            document__status="IN_PROGRESS", signatory_approved_at__isnull=True)
+          .filter(letters__isnull=False).distinct()
+          .select_related("document").order_by("document__doc_date"))
     out = []
-    for lt in qs:
-        c = lt.case
+    for c in qs:
+        letters = [
+            {"id": lt.id, "kind": lt.kind, "ref": lt.ref,
+             "title": LETTER_META.get(lt.kind, {}).get("title", lt.kind),
+             "draft": f"/onboarding/letters/{lt.id}/draft.pdf"}
+            for lt in c.letters.exclude(kind="IM30").order_by("kind")]
+        if not letters:
+            continue
         out.append({
-            "id": lt.id, "ref": lt.ref,
-            "candidate_name": c.full_name,
-            "position": c.trade_designation,
-            "nationality": c.nationality,
-            "case_ref": c.document.ref,
-            "created_at": lt.created_at,
-            "created_by": lt.created_by.full_name if lt.created_by_id else "",
-            "draft": f"/onboarding/letters/{lt.id}/draft.pdf",
+            "case_id": c.document_id, "case_ref": c.document.ref,
+            "candidate_name": c.full_name, "position": c.trade_designation,
+            "nationality": c.nationality, "letters": letters,
         })
     return out
 
@@ -1629,6 +1643,11 @@ def case_dict(case):
         "documents": documents_list(case),
         "checklist": checklist(case),
         "missing_docs": missing_documents(case),
+        # Signatory sign-off: once done, every letter carries the signature +
+        # company seal. Letters generated before it are unstamped drafts.
+        "signatory_signed_at": case.signatory_approved_at,
+        "signatory_signed_by": (case.signatory_approved_by.full_name
+                                if case.signatory_approved_by_id else None),
         "letters": [_letter_dict(ltr) for ltr
                     in case.letters.select_related("created_by", "approved_by")],
         "letter_options": [

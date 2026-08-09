@@ -42,7 +42,13 @@
   <tr>
     <td>
       <div class="sigfor">Yours faithfully,<br>for {{ co.legal_name }}</div>
-      <div class="sigline" style="margin-top:40pt;">
+      <div class="sigmarks" style="min-height:52pt;margin-top:8pt;">
+        {% if stamp_src %}<img src="{{ stamp_src }}"
+          style="height:48pt;vertical-align:bottom;">{% endif %}
+        {% if seal_src %}<img src="{{ seal_src }}"
+          style="height:48pt;margin-left:10pt;vertical-align:bottom;">{% endif %}
+      </div>
+      <div class="sigline">
         <span class="signame">{{ signatory_name }}</span><br>
         <span class="sigrole">{{ signatory_designation }}</span>
       </div>

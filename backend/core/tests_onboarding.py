@@ -533,7 +533,9 @@ class OnboardingSpineTests(TestCase):
                          {"stamp": self._tiny_png()}, format="multipart")
         self.assertTrue(ob._signatory_stamp_bytes())
 
-    def test_ac_generates_pending_and_signatory_signs(self):
+    def test_case_signoff_stamps_all_letters(self):
+        # A signatory signs off the whole case ONCE → every letter is stamped
+        # (owner 2026-08-08). Letters are unsigned drafts until then.
         from .models import Notification, OnboardingLetter
         sig = make_user("ob_sig", User.Role.SIGNATORY)
         pk = self._approved()                  # WP recruitment
@@ -541,41 +543,54 @@ class OnboardingSpineTests(TestCase):
         r = self._gen_letter(pk, "AC")
         self.assertEqual(r.status_code, 201, r.data)
         ac = next(x for x in r.data["letters"] if x["kind"] == "AC")
-        self.assertEqual(ac["status"], "PENDING")
-        self.assertTrue(ac["needs_sign"])
+        self.assertEqual(ac["status"], "PENDING")          # unsigned draft
         self.assertTrue(Notification.objects.filter(
-            recipient=sig, title__icontains="to sign").exists())
-        lid = ac["id"]
-        # the signatory sees it in their limited queue
+            recipient=sig, title__icontains="to sign off").exists())
+        # the signatory sees the CASE (not the letter) in their limited queue
         self.client.force_authenticate(sig)
         q = self.client.get("/api/v1/onboarding/letters/to-sign").data
-        self.assertEqual([x["id"] for x in q["letters"]], [lid])
+        self.assertEqual([c["case_id"] for c in q["cases"]], [pk])
         self.assertFalse(q["has_stamp"])
-        # can't sign without a stamp
+        # can't sign off without a stamp
         self.assertEqual(self.client.post(
-            f"/api/v1/onboarding/letters/{lid}/sign").status_code, 400)
-        # upload the stamp, then sign
+            f"/api/v1/onboarding/cases/{pk}/sign-off").status_code, 400)
+        # upload the stamp, then sign off the case
         self.client.post("/api/v1/onboarding/my-stamp",
                          {"stamp": self._tiny_png()}, format="multipart")
-        r = self.client.post(f"/api/v1/onboarding/letters/{lid}/sign")
+        r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(r.data["letters"], [])            # queue cleared
-        lt = OnboardingLetter.objects.get(pk=lid)
+        self.assertEqual(r.data["cases"], [])              # queue cleared
+        lt = OnboardingLetter.objects.get(pk=ac["id"])
         self.assertEqual(lt.status, "SIGNED")
         self.assertEqual(lt.approved_by_id, sig.id)
         self.assertTrue(Notification.objects.filter(
-            recipient=self.hr, title__icontains="signed").exists())
+            recipient=self.hr, title__icontains="signed off").exists())
+
+    def test_letters_generated_after_signoff_are_stamped(self):
+        from .models import OnboardingLetter
+        sig = make_user("ob_sig3", User.Role.SIGNATORY)
+        self.client.force_authenticate(sig)
+        self.client.post("/api/v1/onboarding/my-stamp",
+                         {"stamp": self._tiny_png()}, format="multipart")
+        pk = self._approved()
+        self._adv(pk)
+        self._gen_letter(pk, "AC")
+        self.client.force_authenticate(sig)
+        self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        # a letter generated AFTER sign-off comes out already SIGNED
+        r = self._gen_letter(pk, "LOA")
+        loa = next(x for x in r.data["letters"] if x["kind"] == "LOA")
+        self.assertEqual(loa["status"], "SIGNED")
 
     def test_only_signatory_can_sign_or_see_queue(self):
         pk = self._approved()
         self._adv(pk)
-        lid = next(x for x in self._gen_letter(pk, "AC").data["letters"]
-                   if x["kind"] == "AC")["id"]
+        self._gen_letter(pk, "AC")
         self.client.force_authenticate(self.pm)
         self.assertEqual(self.client.get(
             "/api/v1/onboarding/letters/to-sign").status_code, 403)
         self.assertEqual(self.client.post(
-            f"/api/v1/onboarding/letters/{lid}/sign").status_code, 400)
+            f"/api/v1/onboarding/cases/{pk}/sign-off").status_code, 400)
 
     def test_allowances_captured_and_on_appointment_letter(self):
         from core.models import OnboardingCase

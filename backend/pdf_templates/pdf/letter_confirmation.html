@@ -74,7 +74,11 @@
 
 <div class="signblock">
   <div class="yours">Yours sincerely,</div>
-  {% if stamp_src %}<img class="stamp" src="{{ stamp_src }}">{% endif %}
+  <div class="sigmarks">
+    {% if stamp_src %}<img class="stamp" src="{{ stamp_src }}">{% endif %}
+    {% if seal_src %}<img class="stamp" src="{{ seal_src }}"
+      style="margin-left:12pt;">{% endif %}
+  </div>
   <div class="snm">{{ signatory_name }}</div>
   <div class="sdesig">{{ signatory_designation }}</div>
   <div class="sfor">For and on behalf of {{ co.legal_name }}</div>

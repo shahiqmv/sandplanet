@@ -2147,6 +2147,14 @@ class OnboardingCase(models.Model):
     # --- handover ---
     employee = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True,
                                  blank=True, related_name="+")
+    # A company signatory signs the case off ONCE (owner 2026-08-08); after
+    # that every letter it produces carries the signatory's signature + the
+    # company seal. Distinct from the Director's case approval (which starts
+    # processing).
+    signatory_approved_at = models.DateTimeField(null=True, blank=True)
+    signatory_approved_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                              null=True, blank=True,
+                                              related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
