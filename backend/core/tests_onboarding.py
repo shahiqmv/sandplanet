@@ -1188,3 +1188,59 @@ class OnboardingSpineTests(TestCase):
         self.assertIn("Bureau of Foreign Employment", html)
         self.assertIn("Registered at the Embassy", html)
         self.assertIn("DRAFT", html)                   # unsigned = watermark
+
+    def test_signed_letters_carry_the_actual_signers_name_and_title(self):
+        """The rendered letter must carry WHO signed the case off — name and
+        title from the sign-off approval, overriding whatever the draft had
+        (owner 2026-08-09)."""
+        from unittest.mock import patch
+
+        sig = make_user("ob_sig_id", User.Role.SIGNATORY)
+        sig.full_name = "Ibrahim Fikury Hussain"
+        sig.save(update_fields=["full_name"])
+        pk = self._approved()
+        self._adv(pk)
+        self._gen_letter(pk, "AC")
+        self.client.force_authenticate(sig)
+        self.client.post("/api/v1/onboarding/my-stamp",
+                         {"stamp": self._tiny_png()}, format="multipart")
+        rendered = []
+        real = __import__("core.pdf", fromlist=["x"]).render_onboarding_letter
+        def spy(document, kind, ref, fields, issue_date, **kw):
+            rendered.append((kind, dict(fields), kw))
+            return real(document, kind, ref, fields, issue_date, **kw)
+        with patch("core.pdf.render_onboarding_letter", side_effect=spy):
+            r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(rendered)
+        kind, fields, kw = rendered[0]
+        self.assertEqual(fields["signatory_name"], "Ibrahim Fikury Hussain")
+        self.assertEqual(fields["signatory_designation"],
+                         "Authorised Signatory")
+        self.assertTrue(kw.get("stamp_src"))           # signature stamp applied
+        self.assertFalse(kw.get("draft"))              # official copy
+
+    def test_admin_signoff_prints_authorised_signatory_title(self):
+        # Only SIGNATORY/ADMIN may sign off; an admin signer prints as
+        # "Authorised Signatory" with their own name.
+        from unittest.mock import patch
+
+        admin = make_user("ob_adm_id", User.Role.ADMIN)
+        self.client.force_authenticate(admin)
+        self.client.post("/api/v1/onboarding/my-stamp",
+                         {"stamp": self._tiny_png()}, format="multipart")
+        pk = self._approved()
+        self._adv(pk)
+        self._gen_letter(pk, "AC")
+        rendered = []
+        real = __import__("core.pdf", fromlist=["x"]).render_onboarding_letter
+        def spy(document, kind, ref, fields, issue_date, **kw):
+            rendered.append(dict(fields))
+            return real(document, kind, ref, fields, issue_date, **kw)
+        self.client.force_authenticate(admin)
+        with patch("core.pdf.render_onboarding_letter", side_effect=spy):
+            r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(rendered[0]["signatory_name"], admin.full_name)
+        self.assertEqual(rendered[0]["signatory_designation"],
+                         "Authorised Signatory")
