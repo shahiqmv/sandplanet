@@ -13,10 +13,10 @@ import secrets
 from datetime import timedelta, timezone as _dtz
 
 from django.conf import settings
-from django.core.mail import EmailMultiAlternatives
 from django.utils import timezone
 
 from .audit import audit
+from .emailing import build_email
 from .meetings import when_mvt
 from .models import Meeting, MeetingAttendee
 
@@ -116,6 +116,8 @@ def send_invite(meeting, actor):
     where = _location_str(meeting)
     ics = build_ics(meeting, "REQUEST")
     files = list(meeting.files.all())
+    # Replies to the invite reach the organiser (fallback: the office inbox).
+    organiser = meeting.organiser if meeting.organiser_id else None
     subject = f"Meeting invitation — {meeting.title}"
     for attendee, email, name in recips:
         token = _ensure_token(attendee)
@@ -135,8 +137,7 @@ def send_invite(meeting, actor):
             "The calendar invite is attached — open it to add this to your "
             "calendar.\n\n— Sand Planet Pvt Ltd"
         )
-        msg = EmailMultiAlternatives(subject, body, settings.DEFAULT_FROM_EMAIL,
-                                     [email])
+        msg = build_email(subject, body, [email], from_user=organiser)
         msg.attach("invite.ics", ics, "text/calendar; method=REQUEST")
         msg.attach_alternative(ics, "text/calendar; method=REQUEST")
         for f in files:
@@ -173,12 +174,12 @@ def send_minutes(meeting, actor):
     except Exception as e:                       # pragma: no cover - env dep
         return 0, f"Couldn't render the minutes PDF: {e}"
     when = when_mvt(meeting.scheduled_at)
+    organiser = meeting.organiser if meeting.organiser_id else None
     subject = f"Minutes — {meeting.title}"
     for _a, email, name in recips:
         body = (f"Hello {name},\n\nPlease find attached the minutes of "
                 f"{meeting.title} held on {when}.\n\n— Sand Planet Pvt Ltd")
-        msg = EmailMultiAlternatives(subject, body, settings.DEFAULT_FROM_EMAIL,
-                                     [email])
+        msg = build_email(subject, body, [email], from_user=organiser)
         msg.attach(f"minutes-{meeting.id}.pdf", pdf, "application/pdf")
         msg.send(fail_silently=False)
     meeting.minutes_sent_at = timezone.now()

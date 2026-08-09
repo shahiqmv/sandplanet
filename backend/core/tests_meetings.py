@@ -444,3 +444,44 @@ class MeetingEmailTests(MeetingTests):
         got = self.client.get("/api/v1/meeting-contacts?q=jane").data["contacts"]
         self.assertEqual(len(got), 1)
         self.assertEqual(got[0]["name"], "Jane Doe")
+
+
+@override_settings(
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+    APP_BASE_URL="https://app.example",
+    DEFAULT_FROM_EMAIL="notifications@sandplanet.mv",
+    REPLY_TO_FALLBACK="login@sandplanet.mv")
+class MeetingFromReplyToTests(MeetingTests):
+    """From = notifications@ with the organiser's name; Reply-To = the organiser
+    so recipients reply to a person, not the notifications inbox (2026-08-08)."""
+
+    def setUp(self):
+        super().setUp()
+        self.director.email = "dir@sandplanet.mv"
+        self.director.save(update_fields=["email"])
+
+    def test_invite_from_name_and_reply_to_organiser(self):
+        from django.core import mail
+        mail.outbox = []
+        # director organises → their name + email drive the From/Reply-To
+        mid = self._create(user=self.director,
+                           attendees=[{"name": "Guest", "email": "g@x.com",
+                                       "is_external": True}]).data["id"]
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        msg = mail.outbox[0]
+        self.assertIn("notifications@sandplanet.mv", msg.from_email)
+        self.assertIn(self.director.full_name, msg.from_email)   # display name
+        self.assertEqual(msg.reply_to, ["dir@sandplanet.mv"])
+
+    def test_reply_to_falls_back_when_organiser_has_no_email(self):
+        from django.core import mail
+        self.director.email = ""
+        self.director.save(update_fields=["email"])
+        mail.outbox = []
+        mid = self._create(user=self.director,
+                           attendees=[{"name": "Guest", "email": "g@x.com",
+                                       "is_external": True}]).data["id"]
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/meetings/{mid}/send-invite")
+        self.assertEqual(mail.outbox[0].reply_to, ["login@sandplanet.mv"])

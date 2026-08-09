@@ -187,6 +187,9 @@ else:
 DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL", os.environ.get("EMAIL_HOST_USER",
                                          "no-reply@sandplanet.mv"))
+# App emails send From DEFAULT_FROM_EMAIL with the acting user's name + a
+# Reply-To to that user; a reply with no user routes to this office inbox.
+REPLY_TO_FALLBACK = os.environ.get("REPLY_TO_FALLBACK", DEFAULT_FROM_EMAIL)
 # The login link put in invite emails.
 APP_BASE_URL = os.environ.get(
     "APP_BASE_URL", "https://sandplanet.159.223.35.180.sslip.io")
