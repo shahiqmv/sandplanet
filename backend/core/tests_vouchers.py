@@ -366,7 +366,7 @@ class VoucherListPerfTests(VoucherBase):
 
     def test_list_is_paginated_and_searchable(self):
         a = self.create_voucher([self.director_approved_pyr(payee="A")]).data
-        b = self.create_voucher([self.director_approved_pyr(payee="B")]).data
+        self.create_voucher([self.director_approved_pyr(payee="B")])
         self.client.force_authenticate(self.finance)
         # object shape with total + has_more
         r = self.client.get("/api/v1/payment-vouchers?limit=1")

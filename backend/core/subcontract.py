@@ -617,7 +617,8 @@ def svc_pdf_context(doc):
     a = v.agreement
     val = svc_valuation(v)
     # Money renders pre-formatted with thousand separators (owner 2026-08-09)
-    q2 = lambda x: f"{(x or Decimal('0')).quantize(Decimal('0.01')):,}"
+    def q2(x):
+        return f"{(x or Decimal('0')).quantize(Decimal('0.01')):,}"
     # Digital signature blocks: the latest approval per action (a RETURN wipes
     # the run, so only actions after the last return count).
     approvals = list(doc.approvals.select_related("actor"))
@@ -630,7 +631,8 @@ def svc_pdf_context(doc):
         ap = by_action.get(action)
         return {"name": ap.actor.full_name, "role": ap.actor_role,
                 "at": ap.acted_at} if ap else None
-    nonzero = lambda x: bool(x and x != Decimal("0"))
+    def nonzero(x):
+        return bool(x and x != Decimal("0"))
     now_due = (val["now_due"] or Decimal("0")).quantize(Decimal("0.01"))
     return {
         "logo_src": logo_src(), "font_dir": _font_dir(),

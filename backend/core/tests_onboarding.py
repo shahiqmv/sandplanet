@@ -567,7 +567,6 @@ class OnboardingSpineTests(TestCase):
             recipient=self.hr, title__icontains="signed off").exists())
 
     def test_letters_generated_after_signoff_are_stamped(self):
-        from .models import OnboardingLetter
         sig = make_user("ob_sig3", User.Role.SIGNATORY)
         self.client.force_authenticate(sig)
         self.client.post("/api/v1/onboarding/my-stamp",

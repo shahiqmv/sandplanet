@@ -18,7 +18,7 @@ from django.utils import timezone
 from .audit import audit
 from .emailing import build_email
 from .meetings import when_mvt
-from .models import Meeting, MeetingAttendee
+from .models import MeetingAttendee
 
 _LOC = {"OFFICE": "Head office", "SITE": "At site",
         "CLIENT": "Client's office", "ONLINE": "Online", "OTHER": ""}

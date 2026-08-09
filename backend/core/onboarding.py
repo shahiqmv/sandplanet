@@ -1103,7 +1103,6 @@ def generate_letter(case, kind, overrides, actor):
     """HR generates an official letter for the case: prefill from the case,
     overlay HR's edits, allocate a global LOA-/SPL- ref, render the PDF and store
     it as a case attachment. Regenerating keeps prior copies and bumps version."""
-    from . import pdf
     from .models import OnboardingLetter
     if actor.role not in PROCESS_ROLES:
         return None, "Only HR generates onboarding letters."
@@ -1293,7 +1292,7 @@ def cases_to_sign_off(user):
     """Onboarding cases whose letters are drafted and awaiting a signatory's
     sign-off — the signatory's limited queue (candidate + position + the draft
     letters to review, NOT the full case with its sensitive documents)."""
-    from .models import OnboardingCase, OnboardingLetter
+    from .models import OnboardingCase
     if user.role not in ("SIGNATORY", "ADMIN"):
         return []
     qs = (OnboardingCase.objects.filter(
