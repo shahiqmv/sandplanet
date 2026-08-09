@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { twsDefaultDate } from "./QADocs.jsx";
-import { Btn, Eyebrow, IssuedStamp, RefStamp, StampTile, StatusChip,
+import { Btn, Eyebrow, Icon, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
 
 const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
@@ -78,8 +78,10 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           attendance is kept here.</p>
         <div style={{ display: "flex", gap: 8, marginTop: 10,
                       flexWrap: "wrap" }}>
-          <Btn variant="primary" onClick={onAttendance}>🕐 Attendance</Btn>
-          <Btn variant="secondary" onClick={onWorkforce}>👥 Staff</Btn>
+          <Btn variant="primary" onClick={onAttendance}>
+            <Icon name="clock" />Attendance</Btn>
+          <Btn variant="secondary" onClick={onWorkforce}>
+            <Icon name="users" />Staff</Btn>
         </div>
       </section>
     );
@@ -148,58 +150,57 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           {dash ? `${dash.unverified_dprs} DPR${dash.unverified_dprs === 1
                     ? "" : "s"} awaiting PM verification` : ""}
         </div>
-        <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                       alignItems: "center" }}>
+          {/* Raise a document — navy (authority chain starts here) */}
           {["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
             <>
-              <button onClick={() => onNewQa("IR")} style={buttonStyle}>
-                + IR</button>
-              <button onClick={() => onNewQa("MAR")} style={buttonStyle}>
-                + MAR</button>
-              <button onClick={() => onNewQa("SD")} style={buttonStyle}>
-                + SD</button>
-              <button onClick={() => onNewQa("MS")} style={buttonStyle}>
-                + MS</button>
+              <Btn variant="navy" onClick={() => onNewQa("IR")}>+ IR</Btn>
+              <Btn variant="navy" onClick={() => onNewQa("MAR")}>+ MAR</Btn>
+              <Btn variant="navy" onClick={() => onNewQa("SD")}>+ SD</Btn>
+              <Btn variant="navy" onClick={() => onNewQa("MS")}>+ MS</Btn>
             </>
           )}
           {canMr && (
-            <button onClick={onNewMr} style={buttonStyle}>+ MR</button>
+            <Btn variant="navy" onClick={onNewMr}>+ MR</Btn>
           )}
           {["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
-            <button onClick={onNewPmr} style={buttonStyle}
-                    title="Project Material Requisition — request imported material">
-              🌍 Import request</button>
+            <Btn variant="navy" onClick={onNewPmr}
+                 title="Project Material Requisition — request imported material">
+              <Icon name="globe" />Import request</Btn>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
-            <button onClick={onNewPyr} style={buttonStyle}>+ Payment</button>
+            <Btn variant="navy" onClick={onNewPyr}>+ Payment</Btn>
           )}
+          {/* Site registers — quieter secondary buttons with icons */}
+          <span style={{ width: 1, alignSelf: "stretch",
+                         background: "var(--line)", margin: "0 4px" }} />
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "DIRECTOR", "ADMIN"]
             .includes(me.role) && (
-            <button onClick={onPettyCash} style={buttonStyle}>💰 Petty Cash</button>
+            <Btn variant="secondary" onClick={onPettyCash}>
+              <Icon name="wallet" />Petty Cash</Btn>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
-            <button onClick={onStock} style={buttonStyle}>📦 Stock</button>
+            <Btn variant="secondary" onClick={onStock}>
+              <Icon name="box" />Stock</Btn>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
-            <button onClick={onTools} style={buttonStyle}>🔧 Tools</button>
+            <Btn variant="secondary" onClick={onTools}>
+              <Icon name="wrench" />Tools</Btn>
           )}
           {["SITE_ADMIN", "SITE_ENGINEER", "PM", "FINANCE", "HO_HR", "DIRECTOR", "ADMIN"]
             .includes(me.role) && (
-            <button onClick={onAttendance}
-                    style={{ ...buttonStyle, background: "#1a7f37" }}>
-              🕐 Attendance
-            </button>
+            <Btn variant="secondary" onClick={onAttendance}>
+              <Icon name="clock" />Attendance</Btn>
           )}
           {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
-            <button onClick={onWorkforce}
-                    style={{ ...buttonStyle, background: "#5a3fa0" }}>
-              👷 Workforce
-            </button>
+            <Btn variant="secondary" onClick={onWorkforce}>
+              <Icon name="users" />Workforce</Btn>
           )}
           {onVessels && (
-            <button onClick={onVessels} style={buttonStyle}
-                    title="Live positions of local vessels (FollowMe)">
-              🛥️ Vessels nearby
-            </button>
+            <Btn variant="secondary" onClick={onVessels}
+                 title="Live positions of local vessels (FollowMe)">
+              <Icon name="anchor" />Vessels nearby</Btn>
           )}
         </span>
       </section>
@@ -240,7 +241,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           <div style={{ display: "flex", alignItems: "baseline", gap: 10,
                         flexWrap: "wrap" }}>
             <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
-              👷 Manpower today
+              <Icon name="users" size={15} />Manpower today
             </h2>
             <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
               {dash.manpower.roster_total} on roster
@@ -315,7 +316,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         <div style={{ display: "flex", alignItems: "baseline", gap: 12,
                       flexWrap: "wrap" }}>
           <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
-            🚤 Incoming boats &amp; goods receiving
+            <Icon name="boat" size={15} />Incoming boats &amp; goods receiving
           </h2>
           {canMr && (
             <Btn onClick={() => onCreateGrn()}
@@ -410,7 +411,7 @@ that adds your existing quantities to the system"
         dash?.pending_materials_count > 0) && (
         <section style={card}>
           <h2 style={{ marginTop: 0, color: "var(--navy)", fontSize: 15 }}>
-            📦 Materials yet to reach the site
+            <Icon name="truck" size={15} />Materials yet to reach the site
           </h2>
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
             <div style={{ flex: 1, minWidth: 240 }}>
@@ -478,7 +479,7 @@ that adds your existing quantities to the system"
             <div style={{ display: "flex", alignItems: "baseline", gap: 10,
                           flexWrap: "wrap" }}>
               <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
-                📦 Site stock</h2>
+                <Icon name="box" size={15} />Site stock</h2>
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
                 {stock.balances.length} item
                 {stock.balances.length === 1 ? "" : "s"} on hand</span>
@@ -550,7 +551,7 @@ that adds your existing quantities to the system"
       {pmrs.length > 0 && (
         <section style={card}>
           <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
-            🌍 Import requests (PMR)
+            <Icon name="globe" size={15} />Import requests (PMR)
           </h2>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <tbody>
@@ -653,7 +654,7 @@ function PyrRegister({ pyrs, onOpenDoc, onOpenRegister }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 10,
                     flexWrap: "wrap" }}>
         <h2 style={{ margin: 0, color: "var(--navy)", fontSize: 15 }}>
-          💳 Pending Payments
+          <Icon name="card" size={15} />Pending Payments
         </h2>
         {pending.length > 0 && (
           <span style={{ fontSize: 12.5, color: "var(--amber-fg)" }}>

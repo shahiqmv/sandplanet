@@ -51,6 +51,211 @@ button {
   outline-offset: 2px;
 }
 
+::selection {
+  background: var(--sky-soft);
+}
+
+/* ---- Interaction states ------------------------------------------------
+   Screens style elements inline (no :hover possible there), so the states
+   live here. Btn renders .btn.btn-<variant>; legacy raw buttons that still
+   spread style objects get the universal brightness fallback below. */
+
+.btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease,
+              box-shadow 120ms ease, transform 60ms ease;
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn:not(:disabled):active { transform: translateY(1px); }
+
+.btn-primary { background: var(--sky); color: #fff; }
+.btn-primary:not(:disabled):hover {
+  background: #1e97cc;
+  box-shadow: 0 2px 8px rgba(41, 171, 226, 0.35);
+}
+.btn-navy { background: var(--navy); color: #fff; }
+.btn-navy:not(:disabled):hover {
+  background: var(--navy-deep);
+  box-shadow: 0 2px 8px rgba(22, 82, 126, 0.3);
+}
+.btn-secondary {
+  background: var(--paper);
+  color: var(--navy);
+  border-color: #bfd6e6;
+}
+.btn-secondary:not(:disabled):hover {
+  background: var(--sky-soft);
+  border-color: var(--sky);
+}
+.btn-ghost { background: transparent; color: var(--navy); }
+.btn-ghost:not(:disabled):hover { background: var(--sky-soft); }
+.btn-danger {
+  background: var(--paper);
+  color: var(--red-fg);
+  border-color: var(--red-fg);
+}
+.btn-danger:not(:disabled):hover { background: var(--red-bg); }
+
+/* Legacy raw <button style={...}> still gets a visible hover */
+main button:not(:disabled):not(.btn):hover { filter: brightness(0.94); }
+
+/* Form fields — calm ring instead of the chunky default outline */
+input:not([type="checkbox"]):not([type="radio"]):focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--sky) !important;
+  box-shadow: 0 0 0 3px rgba(41, 171, 226, 0.18);
+}
+
+/* Data tables — row hover so long registers are scannable */
+main tbody tr:hover > td {
+  background: rgba(41, 171, 226, 0.05);
+}
+
+/* ---- Top bar ----------------------------------------------------------- */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: linear-gradient(180deg, var(--navy) 0%, var(--navy-deep) 100%);
+  color: #fff;
+  border-bottom: 3px solid var(--sky);
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 0 24px;
+  min-height: 56px;
+  box-shadow: 0 2px 10px rgba(14, 58, 92, 0.25);
+}
+.brand {
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+  user-select: none;
+  line-height: 1;
+  padding: 8px 0;
+  flex-shrink: 0;
+}
+.brand-name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: 0.16em;
+  white-space: nowrap;
+}
+.brand-sub {
+  color: var(--sky);
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  margin-top: 3px;
+  white-space: nowrap;
+}
+.navtabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  align-self: stretch;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.navtabs::-webkit-scrollbar { display: none; }
+.navtab {
+  position: relative;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 0 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 120ms ease, color 120ms ease;
+}
+.navtab:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+.navtab.active {
+  color: #fff;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.1);
+}
+.navtab.active::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: var(--sky);
+}
+.nav-badge {
+  background: #e05243;
+  color: #fff;
+  border-radius: 10px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 700;
+}
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-shrink: 0;
+}
+.user-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.25;
+}
+.user-chip .u-name { font-size: 13px; font-weight: 600; color: #fff; }
+.user-chip .u-role {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sky);
+}
+.signout-btn {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.signout-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.7);
+}
+
+/* Quiet scrollbars (WebKit) */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb {
+  background: #c9c0ae;
+  border-radius: 6px;
+  border: 2px solid var(--sand);
+}
+::-webkit-scrollbar-thumb:hover { background: #b3a78f; }
+::-webkit-scrollbar-track { background: transparent; }
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition: none !important;

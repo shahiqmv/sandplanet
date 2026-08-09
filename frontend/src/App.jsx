@@ -280,16 +280,6 @@ function SiteList({ sites, onOpen }) {
   );
 }
 
-const navBtn = (active) => ({
-  background: "transparent",
-  color: active ? "#fff" : "var(--sp-sky)",
-  border: "none",
-  borderBottom: active ? "2px solid var(--sp-sky)" : "2px solid transparent",
-  padding: "4px 10px",
-  cursor: "pointer",
-  fontSize: 14,
-});
-
 export default function App() {
   const [me, setMe] = useState(null);
   const [sites, setSites] = useState([]);
@@ -442,59 +432,46 @@ export default function App() {
 
   return (
     <div>
-      <header style={{ background: "var(--navy)", color: "#fff",
-                       padding: "14px 28px",
-                       borderBottom: "3px solid var(--sky)",
-                       display: "flex", alignItems: "baseline", gap: 16 }}>
-        <h1 style={{ margin: 0, fontSize: 22,
-                     fontFamily: "var(--font-display)", fontWeight: 700,
-                     letterSpacing: "0.14em", cursor: "pointer" }}
-            onClick={() => { setDocView(null); setHoPage(landingPage(me));
-                             if (!me.landing_site_id) setOpenSite(null); }}>
-          SAND PLANET
-        </h1>
-        <span style={{ color: "var(--sp-sky)", fontSize: 14 }}>
-          Project Management</span>
+      <header className="topbar">
+        <div className="brand"
+             onClick={() => { setDocView(null); setHoPage(landingPage(me));
+                              if (!me.landing_site_id) setOpenSite(null); }}>
+          <h1 className="brand-name">SAND PLANET</h1>
+          <span className="brand-sub">Project Management</span>
+        </div>
         {showHoNav && (
-          <nav style={{ display: "flex", gap: 4 }}>
+          <nav className="navtabs">
             {groups.map((g) => (
               <button key={g.key}
-                      style={navBtn(activeGroup?.key === g.key && !openSite
-                                    && !docView)}
+                      className={"navtab" +
+                        (activeGroup?.key === g.key && !openSite && !docView
+                          ? " active" : "")}
                       onClick={() => { setHoPage(g.subs[0][0]);
                                        setOpenSite(null);
                                        setDocView(null); }}>
                 {g.label}
                 {g.key === "approvals" && pendingCount > 0 && (
-                  <span style={{ background: "#c0392b", color: "#fff",
-                                 borderRadius: 10, padding: "1px 7px",
-                                 fontSize: 11, marginLeft: 6 }}>
-                    {pendingCount}
-                  </span>
+                  <span className="nav-badge">{pendingCount}</span>
                 )}
               </button>
             ))}
           </nav>
         )}
         {me.authenticated && (
-          <NotificationBell onOpen={(ref, docType) => {
-            if (docType === "PV") { setDocView(null); setOpenSite(null);
-                                    setHoPage("vouchers"); }
-            else openDoc(ref);
-          }} />
-        )}
-        {me.authenticated && (
-          <span style={{ marginLeft: 16, fontSize: 13 }}>
-            {me.full_name} · {me.role.replace(/_/g, " ")}
-            <button onClick={logoutUser}
-                    style={{ marginLeft: 14, background: "transparent",
-                             color: "var(--sp-sky)",
-                             border: "1px solid var(--sp-sky)",
-                             borderRadius: 6, padding: "3px 10px",
-                             cursor: "pointer", fontSize: 12 }}>
+          <div className="topbar-right">
+            <NotificationBell onOpen={(ref, docType) => {
+              if (docType === "PV") { setDocView(null); setOpenSite(null);
+                                      setHoPage("vouchers"); }
+              else openDoc(ref);
+            }} />
+            <span className="user-chip">
+              <span className="u-name">{me.full_name}</span>
+              <span className="u-role">{me.role.replace(/_/g, " ")}</span>
+            </span>
+            <button className="signout-btn" onClick={logoutUser}>
               Sign out
             </button>
-          </span>
+          </div>
         )}
       </header>
 

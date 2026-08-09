@@ -5,7 +5,7 @@ export const card = {
   background: "var(--paper)",
   border: "1px solid var(--line)",
   borderRadius: 12,
-  boxShadow: "0 1px 3px rgba(24,36,48,.05)",
+  boxShadow: "0 1px 2px rgba(24,36,48,.04), 0 4px 14px rgba(24,36,48,.05)",
   padding: 24,
   marginBottom: 20,
 };
@@ -43,8 +43,53 @@ export const BTN = {
   danger: { ...btnBase, background: "var(--paper)", color: "var(--red-fg)",
             border: "1px solid var(--red-fg)" },
 };
-export function Btn({ variant = "primary", style, ...props }) {
-  return <button style={{ ...BTN[variant], ...style }} {...props} />;
+export function Btn({ variant = "primary", style, className, ...props }) {
+  // Hover/active/disabled states come from the .btn classes (index.css);
+  // the inline BTN object stays as the base so style={} overrides keep
+  // working exactly as before.
+  return <button
+    className={`btn btn-${variant}${className ? ` ${className}` : ""}`}
+    style={style} {...props} />;
+}
+
+// Small inline icon set (lucide-style strokes) — replaces the emoji that
+// used to label the site quick-action buttons. currentColor, so icons take
+// the button's text color automatically.
+const ICON_PATHS = {
+  clock: <><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></>,
+  users: <><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+    <circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.13a4 4 0 0 1 0 7.75" /></>,
+  wallet: <><path d="M20 12V8H6a2 2 0 0 1-2-2c0-1.1.9-2 2-2h12v4" />
+    <path d="M4 6v12c0 1.1.9 2 2 2h14v-4" />
+    <path d="M18 12a2 2 0 0 0-2 2c0 1.1.9 2 2 2h4v-4h-4z" /></>,
+  box: <><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" />
+    <polyline points="3 8 12 13 21 8" /><line x1="12" y1="13" x2="12" y2="21" /></>,
+  wrench: <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />,
+  anchor: <><circle cx="12" cy="5" r="3" /><line x1="12" y1="22" x2="12" y2="8" />
+    <path d="M5 12H2a10 10 0 0 0 20 0h-3" /></>,
+  globe: <><circle cx="12" cy="12" r="10" />
+    <line x1="2" y1="12" x2="22" y2="12" />
+    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" /></>,
+  boat: <><path d="M22 18H2a4 4 0 0 0 4 4h12a4 4 0 0 0 4-4Z" />
+    <path d="M21 14 10 2 3 14h18Z" /><path d="M10 2v16" /></>,
+  truck: <><rect x="1" y="3" width="15" height="13" />
+    <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
+    <circle cx="5.5" cy="18.5" r="2.5" /><circle cx="18.5" cy="18.5" r="2.5" /></>,
+  card: <><rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+    <line x1="1" y1="10" x2="23" y2="10" /></>,
+};
+export function Icon({ name, size = 14, style }) {
+  const paths = ICON_PATHS[name];
+  if (!paths) return null;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" strokeWidth="2" strokeLinecap="round"
+         strokeLinejoin="round" aria-hidden="true"
+         style={{ verticalAlign: -2, marginRight: 6, ...style }}>
+      {paths}
+    </svg>
+  );
 }
 
 // Dropdown of controlled options that still lets the user type a value not
