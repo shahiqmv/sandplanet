@@ -1079,3 +1079,55 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(self._adv(pk).status_code, 400)   # blocked on fail
         self.assertTrue(Notification.objects.filter(
             recipient=self.director, title__icontains="medical").exists())
+
+    def test_bv_register_buckets_and_countdown(self):
+        """The BV register splits in-country (soonest expiry first, with a
+        countdown level), pipeline (not arrived) and closed (converted or
+        departed), and counts the expiring ones."""
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        sub = self._subcontractor()
+        # in-country: walk a subcontract BV to arrival, expiry 10 days out
+        pk1 = self._approved(route="BV", bv_justification="short job",
+                             nationality="Indian", bv_purpose="SUBCONTRACT",
+                             subcontractor_id=sub.id, proposed_salary="")
+        self._adv(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_INSURANCE")
+        self._adv(pk1); self._sdata(pk1, portal_status="APPROVED")
+        self._adv(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_VISA_FEE")
+        self._adv(pk1); self._pay_fee(pk1, "BV_TICKET")
+        today = tz.localdate()
+        self._adv(pk1, arrived_date=str(today),
+                  bv_expiry=str(today + timedelta(days=10)))
+        # pipeline: a BV case still before arrival
+        pk2 = self._approved(route="BV", bv_justification="urgent",
+                             nationality="Indian")
+        reg = ob.bv_register()
+        in_ids = [r["case_id"] for r in reg["in_country"]]
+        self.assertIn(pk1, in_ids)
+        row = next(r for r in reg["in_country"] if r["case_id"] == pk1)
+        self.assertEqual(row["days_left"], 10)
+        self.assertEqual(row["level"], "T14")            # inside 14 days
+        self.assertEqual(row["subcontractor"], sub.name)
+        self.assertIn(pk2, [r["case_id"] for r in reg["pipeline"]])
+        self.assertEqual(reg["counts"]["expiring"], 1)
+        # departure closes it out of the live buckets
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk1}/close",
+                             {"departed_date": str(today)}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        reg = ob.bv_register()
+        self.assertNotIn(pk1, [r["case_id"] for r in reg["in_country"]])
+        self.assertIn(pk1, [r["case_id"] for r in reg["closed"]])
+
+    def test_bv_register_endpoint_roles(self):
+        self.client.force_authenticate(self.hr)
+        r = self.client.get("/api/v1/onboarding/bv-register")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("in_country", r.data)
+        # PMs use the case list — the register is an HR/PD tool
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(
+            self.client.get("/api/v1/onboarding/bv-register").status_code, 403)

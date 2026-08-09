@@ -121,6 +121,17 @@ def onboarding_cases(request):
     return Response([ob.case_dict(c) for c in qs[:200]])
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def onboarding_bv_register(request):
+    """The business-visa schedule: everyone in the country on a BV with the
+    visa expiry front and centre, plus the pipeline and recently closed
+    (owner 2026-08-09 — 'a separate register to monitor visa expiry')."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Not permitted."}, status=403)
+    return Response(ob.bv_register())
+
+
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser])

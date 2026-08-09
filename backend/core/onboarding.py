@@ -1457,6 +1457,63 @@ def run_clocks(today=None):
             "digest_sent": digest}
 
 
+# ---- business-visa register (owner 2026-08-09) ---------------------------
+
+def bv_register():
+    """Every business-visa person on one schedule, so HR watches the visa
+    clocks without digging through onboarding cases. Three buckets:
+    - in_country: arrived, on the BV clock — soonest expiry first
+    - pipeline:   case open but not arrived yet (no clock running)
+    - closed:     converted to a work permit, or the case ended
+    """
+    from .models import OnboardingCase
+    today = timezone.localdate()
+    rows = {"in_country": [], "pipeline": [], "closed": []}
+    qs = (OnboardingCase.objects.filter(route="BV")
+          .select_related("document__site", "subcontractor"))
+    for c in qs:
+        doc = c.document
+        days = (c.bv_expiry - today).days if c.bv_expiry else None
+        level = (None if days is None
+                 else "EXPIRED" if days < 0
+                 else "T3" if days <= 3
+                 else "T7" if days <= 7
+                 else "T14" if days <= 14 else "OK")
+        row = {
+            "case_id": doc.pk, "ref": doc.ref, "name": c.full_name,
+            "passport_no": c.passport_no, "nationality": c.nationality,
+            "site": doc.site.code if doc.site_id else "",
+            "position": c.trade_designation,
+            "purpose": c.bv_purpose or "",
+            "subcontractor": (c.subcontractor.name
+                              if c.subcontractor_id else ""),
+            "arrived": c.arrived_date, "expiry": c.bv_expiry,
+            "days_left": days, "level": level,
+            "renewals": c.bv_renewals, "stage": c.stage,
+            "doc_status": doc.status,
+            "converted": c.stage == "WP_ISSUED",
+        }
+        if doc.status in TERMINAL or c.stage == "WP_ISSUED":
+            rows["closed"].append(row)
+        elif c.bv_expiry and c.arrived_date:
+            rows["in_country"].append(row)
+        else:
+            rows["pipeline"].append(row)
+    rows["in_country"].sort(key=lambda r: (r["expiry"], r["ref"]))
+    rows["pipeline"].sort(key=lambda r: r["ref"])
+    rows["closed"].sort(key=lambda r: r["ref"], reverse=True)
+    rows["closed"] = rows["closed"][:50]
+    rows["counts"] = {
+        "in_country": len(rows["in_country"]),
+        "expiring": sum(1 for r in rows["in_country"]
+                        if r["level"] in ("T14", "T7", "T3")),
+        "expired": sum(1 for r in rows["in_country"]
+                       if r["level"] == "EXPIRED"),
+        "pipeline": len(rows["pipeline"]),
+    }
+    return rows
+
+
 # ---- employee handover (Phase 6) -----------------------------------------
 
 def _handover_employee(case, actor):

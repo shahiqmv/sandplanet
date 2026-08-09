@@ -16,6 +16,7 @@ import ClientUsersPage from "./ClientUsersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import HeadOfficePage from "./HeadOfficePage.jsx";
 import OnboardingPage from "./OnboardingPage.jsx";
+import BvRegisterPage from "./BvRegisterPage.jsx";
 import AppointmentSignoff from "./AppointmentSignoff.jsx";
 import ProcurementSchedulePage from "./ProcurementSchedulePage.jsx";
 import UsersPage from "./UsersPage.jsx";
@@ -112,6 +113,8 @@ const NAV_GROUPS = [
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
            ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM",
                                          "PA"]],
+           ["bv-register", "Business Visas", ["HO_HR", "DIRECTOR", "ADMIN",
+                                              "PA"]],
            ["appointment-signoff", "Appointment Sign-off",
             ["SIGNATORY", "ADMIN"]],
            ["employees", "Employees", null],
@@ -880,6 +883,11 @@ export default function App() {
             ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA"].includes(me.role) &&
             hoPage === "onboarding" && (
             <OnboardingPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&
+            hoPage === "bv-register" && (
+            <BvRegisterPage me={me} />
           )}
           {!docView && !openSite &&
             ["SIGNATORY", "ADMIN"].includes(me.role) &&

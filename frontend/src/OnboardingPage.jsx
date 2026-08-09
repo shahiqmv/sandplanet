@@ -406,7 +406,7 @@ function NewCase({ sites, onCancel, onDone }) {
   );
 }
 
-function CaseDetail({ id, me, onBack }) {
+export function CaseDetail({ id, me, onBack }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
