@@ -929,6 +929,11 @@ LETTER_META = {
     # The Maldives Immigration IM30 visa form — a filled PDF overlay, not an
     # HTML letter — submitted with the LOA for Sri-Lankan work-permit cases.
     "IM30": {"stage": None, "title": "Visa Form (IM30)", "im30": True},
+    # The employment contract the Sri Lankan Embassy attests (their format on
+    # our letterhead) — generated for every Sri Lankan once the work permit is
+    # approved, ahead of the embassy-endorsement stage (owner 2026-08-09).
+    "EA": {"stage": "WP_APPROVED",
+           "title": "Employment Agreement (Embassy Attestation)", "sign": True},
 }
 _QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"}
 
@@ -951,6 +956,11 @@ def letter_available(case, kind):
     if kind == "IM30":
         return (not _is_subcontract(case) and _is_sri_lankan(case)
                 and "WP_APPLICATION" in sequence(case))
+    # The embassy-attestation agreement is a Sri Lankan requirement only —
+    # beyond that it follows the normal stage gate (WP approved onward).
+    if kind == "EA" and not (_is_sri_lankan(case)
+                             and not _is_subcontract(case)):
+        return False
     seq = sequence(case)
     if meta["stage"] not in seq or case.stage not in seq:
         return False
@@ -1067,6 +1077,31 @@ def letter_defaults(case, kind):
             "sponsor_mobile": co.get("signee_mobile", ""),
             "designation": co.get("signee_designation", ""),
             "sponsor_date": _fmt_slash(timezone.localdate()),
+        }
+    if kind == "EA":
+        from .pdf import company_info
+        co = company_info()
+        return {
+            **common,
+            "employee_name": case.full_name or "",
+            "employee_address": case.permanent_address or "",
+            "passport_issue_date": "",           # not on the case — HR enters
+            "passport_issue_place": "Sri Lanka",
+            "passport_profession": "None",
+            "employment_site": f"{co['legal_name']}, {co.get('address', '')}",
+            "classification": _QUOTA_LABEL.get(case.category, ""),
+            "position": case.trade_designation or "",
+            "basic_pay": _salary_str(case),
+            "hours_per_day": "8 hours",
+            "hours_per_week": "48 hours",
+            "ot_regular": "",                    # e.g. "USD 1.50 per hour"
+            "ot_holiday": "",
+            "vacation_days": "30 days",
+            "sick_days": "30 days",
+            "contract_duration": ("2 years from the date of arrival in the "
+                                  "country of employment; renewable at the "
+                                  "option of both parties"),
+            "other_benefits": "Performance-based incentives",
         }
     if kind == "LOA":
         return {

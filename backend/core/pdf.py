@@ -715,6 +715,7 @@ LETTER_TEMPLATES = {
     "LOA": "letter_appointment.html",
     "SPL": "letter_sponsor.html",
     "AC": "letter_confirmation.html",
+    "EA": "letter_employment_agreement.html",
 }
 
 

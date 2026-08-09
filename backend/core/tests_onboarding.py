@@ -1131,3 +1131,57 @@ class OnboardingSpineTests(TestCase):
         self.client.force_authenticate(self.pm)
         self.assertEqual(
             self.client.get("/api/v1/onboarding/bv-register").status_code, 403)
+
+    def test_employment_agreement_sri_lankan_at_wp_approved(self):
+        """The embassy-attestation Employment Agreement (EA) unlocks for a
+        Sri Lankan once the work permit is approved — never for other
+        nationalities (owner 2026-08-09)."""
+        pk = self._approved(nationality="Sri Lankan")
+        self._adv(pk)                                  # begin → WP_APPOINTMENT
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertFalse(opts["EA"]["available"])      # not yet — WP not approved
+        self._adv(pk)                                  # WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk)                                  # WP_APPROVED
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertTrue(opts["EA"]["available"])
+        self.assertTrue(opts["EA"]["needs_sign"])
+        # generate it — fields prefill from the case, ref gets its own series
+        r = self.client.post(f"/api/v1/onboarding/{pk}/letter",
+                             {"kind": "EA", "fields": {
+                                 "passport_issue_date": "12 Aug 2021"}},
+                             format="json")
+        self.assertIn(r.status_code, (200, 201), r.data)
+        case = OnboardingCase.objects.get(pk=pk)
+        lt = case.letters.get(kind="EA")
+        self.assertTrue(lt.ref.startswith("EA-"))
+        self.assertEqual(lt.fields["passport_issue_date"], "12 Aug 2021")
+
+    def test_employment_agreement_not_for_other_nationalities(self):
+        pk = self._approved(nationality="Bangladeshi")
+        self._adv(pk)
+        self._adv(pk)
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk)                                  # WP_APPROVED
+        opts = {o["kind"]: o for o in self.client.get(
+            f"/api/v1/onboarding/{pk}").data["letter_options"]}
+        self.assertFalse(opts["EA"]["available"])
+
+    def test_employment_agreement_template_renders_contract(self):
+        from django.template.loader import render_to_string
+
+        from . import onboarding as ob
+        from .pdf import company_info
+        pk = self._approved(nationality="Sri Lankan")
+        case = OnboardingCase.objects.get(pk=pk)
+        fields = ob.letter_defaults(case, "EA")
+        html = render_to_string("pdf/letter_employment_agreement.html", {
+            "co": company_info(), "ref": "EA-001",
+            "issue_date": "09 Aug 2026", "draft": True, **fields})
+        self.assertIn("Employment Agreement", html)
+        self.assertIn(case.full_name, html)
+        self.assertIn("Bureau of Foreign Employment", html)
+        self.assertIn("Registered at the Embassy", html)
+        self.assertIn("DRAFT", html)                   # unsigned = watermark

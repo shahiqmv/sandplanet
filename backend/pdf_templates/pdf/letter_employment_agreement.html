@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+<style>
+  .lettertitle { margin-top: 4pt; }
+  .clause { margin-top: 8pt; page-break-inside: avoid; }
+  .clause > .ch { font-weight: 700; color: #1A2530; font-size: 10pt;
+                  margin-bottom: 2pt; }
+  .clause p { margin: 2pt 0; }
+  .clause ol { margin: 2pt 0 2pt 16pt; padding: 0; }
+  .clause ol li { margin: 1.5pt 0; }
+  .clause ol.alpha { list-style-type: lower-alpha; }
+  .terms td { padding: 2pt 8pt 2pt 0; vertical-align: top; font-size: 9.5pt; }
+  .terms td.k { color: #5B6672; white-space: nowrap; }
+  .terms td.v { font-weight: 600; color: #1A2530; }
+  .sigrow2 { width: 100%; border-collapse: collapse; margin-top: 16pt;
+             page-break-inside: avoid; }
+  .sigrow2 td { width: 50%; vertical-align: bottom; padding-right: 20pt; }
+  .sigmarks { min-height: 52pt; margin-top: 6pt; }
+  .sigline2 { border-top: 0.75pt solid #1A2530; padding-top: 3pt;
+              margin-top: 6pt; }
+  .signame2 { font-weight: 700; color: #1A2530; font-size: 9.5pt; }
+  .sigrole2 { color: #5B6672; font-size: 8.5pt; }
+  .embassy { margin-top: 16pt; border: 0.75pt solid #1A2530; padding: 10pt 12pt;
+             page-break-inside: avoid; }
+  .embassy .eh { font-weight: 700; font-size: 9.5pt; color: #1A2530;
+                 margin-bottom: 6pt; }
+  .embassy .row { margin: 8pt 0 0; font-size: 9.5pt; color: #1A2530; }
+  .dots { display: inline-block; min-width: 150pt;
+          border-bottom: 0.75pt dotted #1A2530; }
+  .draft-wm { position: fixed; top: 42%; left: 0; right: 0; text-align: center;
+              font-family: "Barlow Condensed", Helvetica, sans-serif;
+              font-size: 96pt; font-weight: 700; letter-spacing: 10pt;
+              color: rgba(41,171,226,0.10); transform: rotate(-28deg); }
+</style>
+</head>
+<body>
+{% if draft %}<div class="draft-wm">DRAFT</div>{% endif %}
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="lettertitle">Employment Agreement</div>
+<div class="lettertitle-rule"></div>
+
+<div class="body-text" style="margin-top:8pt;">
+  <p>This Employment Contract is executed and entered into by and between
+  <b>{{ co.legal_name }}</b> of {{ co.address }}, Republic of Maldives,
+  hereinafter referred to as the <b>Employer</b>, and
+  <b>{{ employee_name }}</b> of {{ employee_address }}, citizen of Sri Lanka,
+  hereinafter referred to as the <b>Employee</b>, and provides for the terms
+  and conditions of employment as follows:</p>
+</div>
+
+<div class="clause">
+  <div class="ch">A. &nbsp;Particulars of Employee</div>
+  <table class="terms">
+    <tr><td class="k">Full name as in the passport</td>
+        <td class="v">{{ employee_name }}</td></tr>
+    <tr><td class="k">Passport number</td><td class="v">{{ passport_no }}</td></tr>
+    <tr><td class="k">Date of issue</td>
+        <td class="v">{{ passport_issue_date|default:"—" }}</td></tr>
+    <tr><td class="k">Place of issue</td>
+        <td class="v">{{ passport_issue_place }}</td></tr>
+    <tr><td class="k">Profession in passport</td>
+        <td class="v">{{ passport_profession }}</td></tr>
+  </table>
+</div>
+
+<div class="clause">
+  <div class="ch">B. &nbsp;Basic Terms</div>
+  <table class="terms">
+    <tr><td class="k">Employment site</td>
+        <td class="v">{{ employment_site }}</td></tr>
+    <tr><td class="k">Employee's classification</td>
+        <td class="v">{{ classification }}</td></tr>
+    <tr><td class="k">Position or grade</td><td class="v">{{ position }}</td></tr>
+    <tr><td class="k">Basic pay</td><td class="v">{{ basic_pay }} per month</td></tr>
+    <tr><td class="k">Hours of work per day</td>
+        <td class="v">{{ hours_per_day }}</td></tr>
+    <tr><td class="k">Working hours per week</td>
+        <td class="v">{{ hours_per_week }}</td></tr>
+    <tr><td class="k">Overtime pay — over regular hours</td>
+        <td class="v">{{ ot_regular|default:"As per the Employment Act of the Maldives" }}</td></tr>
+    <tr><td class="k">Overtime pay — work on holidays</td>
+        <td class="v">{{ ot_holiday|default:"As per the Employment Act of the Maldives" }}</td></tr>
+    <tr><td class="k">Leave with full pay — vacation</td>
+        <td class="v">{{ vacation_days }} per contractual year</td></tr>
+    <tr><td class="k">Leave with full pay — sick leave</td>
+        <td class="v">{{ sick_days }} per contractual year</td></tr>
+    <tr><td class="k">Duration of contract</td>
+        <td class="v">{{ contract_duration }}</td></tr>
+    <tr><td class="k">Other benefits</td>
+        <td class="v">{{ other_benefits|default:"—" }}</td></tr>
+  </table>
+</div>
+
+<div class="clause">
+  <div class="ch">C. &nbsp;The Employer shall provide the Employee</div>
+  <ol>
+    <li>Free air ticket Colombo&ndash;Malé at the beginning of the contract.</li>
+    <li>Free return air ticket to Colombo in the following cases:
+      <ol class="alpha">
+        <li>expiration of the contract;</li>
+        <li>termination of the contract by the Employer without just cause;</li>
+        <li>if the Employee is unable to continue work due to work-connected
+          disease or injury;</li>
+        <li>force majeure; and</li>
+        <li>such other cases where the contract is terminated through no fault
+          of the Employee.</li>
+      </ol></li>
+    <li>Free food.</li>
+    <li>Free accommodation with living facilities.</li>
+    <li>Free emergency medical attention and medicines.</li>
+    <li>Workmen's compensation benefits for service-connected illness, injury
+      or death, according to the laws of the Republic of Maldives, and war
+      hazard protection.</li>
+    <li>Company benefits provided to other employees in the same work.</li>
+  </ol>
+</div>
+
+<div class="clause">
+  <div class="ch">D. &nbsp;Company Rules and Laws</div>
+  <p>The Employee shall observe the Employer's company rules and abide by the
+  pertinent laws of the Republic of Maldives.</p>
+</div>
+
+<div class="clause">
+  <div class="ch">E. &nbsp;Remittances</div>
+  <p>The Employer shall assist the Employee in the regular remittance of the
+  monthly salary and allowances, or any portion of them as the Employee may
+  decide, to the Employee's beneficiaries in Sri Lanka through the Sri Lanka
+  Bureau of Foreign Employment / the Embassy of Sri Lanka in the Republic of
+  Maldives, if requested.</p>
+</div>
+
+<div class="clause">
+  <div class="ch">F. &nbsp;In the Case of Death</div>
+  <p>In the case of the death of the Employee during the contract period, the
+  Employer agrees to the repatriation of the remains of the deceased along
+  with the personal effects and savings at the expense of the Employer, and
+  with the payment of compensation.</p>
+</div>
+
+<div class="clause">
+  <div class="ch">G. &nbsp;Compensation</div>
+  <ol>
+    <li>The Employer shall ensure that personal life and accident insurance is
+      provided for the Employee for work-connected illness, injury or death,
+      in accordance with the pertinent laws of the Republic of Maldives.</li>
+    <li>During the course of the employment, should any accident or sudden
+      death occur to the Employee, the Employer is responsible for the payment
+      of reasonable compensation where the legal system is silent or not
+      active in the country where the Employee is working.</li>
+  </ol>
+</div>
+
+<div class="clause">
+  <div class="ch">H. &nbsp;Termination of the Contract by the Employer</div>
+  <p>The Employer may terminate the contract of the Employee for any of the
+  following just causes:</p>
+  <ol>
+    <li>the closing or cessation of operation of the establishment, or
+      completion of the project;</li>
+    <li>serious misconduct or wilful disobedience of a lawful order of the
+      Employer or the Employer's representative at work;</li>
+    <li>gross, habitual or wilful neglect of duties;</li>
+    <li>fraud, criminal offence or assault by the Employee on the Employer,
+      the Employer's representative or a fellow worker.</li>
+  </ol>
+</div>
+
+<div class="clause">
+  <div class="ch">I. &nbsp;Other Grounds of Termination by the Employer</div>
+  <p>The Employer may also terminate the contract of the Employee in the
+  following circumstances:</p>
+  <ol>
+    <li>installation of labour-saving devices;</li>
+    <li>redundancy;</li>
+    <li>retrenchment to reduce or prevent losses; and</li>
+    <li>if the Employee is found to be suffering from any disease whose
+      continued employment is prohibited by law or is detrimental to the
+      Employee's health and/or that of the Employee's co-workers.</li>
+  </ol>
+  <p>Termination of employment due to the installation of labour-saving
+  devices, redundancy or retrenchment shall entitle the Employee affected
+  to repatriation pay equivalent to one (1) month's pay, or at least one (1)
+  month's pay for every year of service, whichever is higher (a fraction of
+  a year counting as a year), and all other benefits granted to those who may
+  be terminated at the end of the contract through the normal termination
+  process.</p>
+</div>
+
+<div class="clause">
+  <div class="ch">J. &nbsp;Termination of Employment by the Employee</div>
+  <ol>
+    <li>The Employee may terminate the employer&ndash;employee relationship
+      before the expiration of the Employment Contract by serving written
+      notice on the Employer at least one (1) month in advance. The Employer
+      upon whom no such notice has been served may hold the Employee liable
+      for damages. The return airfare in this case shall be borne by the
+      Employee.</li>
+    <li>The Employee may end the relationship without serving any notice on
+      the Employer for any of the following just causes:
+      <ol class="alpha">
+        <li>serious insult by the Employer or the Employer's representative
+          on the honour and person of the Employee;</li>
+        <li>inhuman and unbearable treatment accorded to the Employee by the
+          Employer or the Employer's representative;</li>
+        <li>commission of a crime or offence by the Employer or the Employer's
+          representative against the person of the Employee or any of the
+          immediate members of the Employee's family.</li>
+      </ol></li>
+  </ol>
+</div>
+
+<div class="clause">
+  <div class="ch">K. &nbsp;Dispute Settlement Procedures</div>
+  <p>All disputes arising from the employment contract shall initially be
+  settled amicably through negotiations, with the participation of either a
+  Sri Lankan Embassy representative or a representative of the Sri Lanka
+  Bureau of Foreign Employment. If attempts at amicable settlement fail, the
+  parties shall have recourse to the laws in effect in the country of
+  employment.</p>
+</div>
+
+<div class="clause">
+  <div class="ch">L. &nbsp;Applicable Laws</div>
+  <p>Other terms and conditions of employment not covered herein shall be
+  governed by the pertinent laws of the Republic of Maldives, without negating
+  or rendering nugatory other applicable laws of Sri Lanka and international
+  covenants on expatriate employment. In the event of a dispute arising out of
+  the interpretation of this agreement, the English version of the document
+  shall prevail.</p>
+</div>
+
+<div class="body-text" style="margin-top:10pt;">
+  <p>IN WITNESS WHEREOF, the parties, having read and understood all the
+  provisions of this Agreement, hereby freely manifest their full acceptance
+  of the terms and conditions embodied herein by signing this contract on
+  {{ issue_date }}.</p>
+</div>
+
+<table class="sigrow2">
+  <tr>
+    <td>
+      <div class="sigmarks">
+        {% if stamp_src %}<img src="{{ stamp_src }}"
+          style="height:48pt;vertical-align:bottom;">{% endif %}
+        {% if seal_src %}<img src="{{ seal_src }}"
+          style="height:48pt;margin-left:10pt;vertical-align:bottom;">{% endif %}
+      </div>
+      <div class="sigline2">
+        <span class="signame2">{{ signatory_name }}</span><br>
+        <span class="sigrole2">{{ signatory_designation }} —
+          for {{ co.legal_name }}</span>
+      </div>
+    </td>
+    <td>
+      <div class="sigmarks"></div>
+      <div class="sigline2">
+        <span class="signame2">{{ employee_name }}</span><br>
+        <span class="sigrole2">Employee</span>
+      </div>
+    </td>
+  </tr>
+</table>
+
+<div class="embassy">
+  <div class="eh">Registered at the Embassy of the Democratic Socialist
+    Republic of Sri Lanka in the Republic of Maldives</div>
+  <div class="row">Registration No: <span class="dots"></span></div>
+  <div class="row">Date of Registration: <span class="dots"></span></div>
+  <div class="row">Signature of Authorised Officer:
+    <span class="dots" style="min-width:200pt;"></span></div>
+</div>
+
+</body>
+</html>
