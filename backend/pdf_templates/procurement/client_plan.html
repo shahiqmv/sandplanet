@@ -32,10 +32,24 @@
     color: var(--green); font-weight: 600; }
   .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
     display: inline-block; }
-  .dl { margin-left: auto; display: inline-flex; align-items: center; gap: 6px;
+  .dl { display: inline-flex; align-items: center; gap: 6px;
     text-decoration: none; font-size: 12.5px; font-weight: 600; color: #fff;
     background: var(--blue); padding: 7px 13px; border-radius: 7px; }
   .dl:hover { background: #0f6fb0; }
+  .dl2 { background: #fff; color: var(--blue); border: 1px solid var(--blue); }
+  .dl2:hover { background: var(--tint); }
+  tr.bundle td { cursor: pointer; }
+  .btoggle { display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 700; color: var(--blue);
+    background: #eaf4fb; border-radius: 8px; padding: 1px 8px; margin-top: 3px;
+    user-select: none; white-space: nowrap; }
+  .btoggle .tri { display: inline-block; transition: transform 120ms ease; }
+  tr.bundle.open .btoggle .tri { transform: rotate(90deg); }
+  tr.variant { display: none; }
+  tr.variant.shown { display: table-row; }
+  tr.variant td { background: #fbfdff !important; }
+  tr.variant .desc { font-weight: 500; color: var(--ink); }
+  tr.variant td:first-child { position: relative; }
 
   .scroll { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12.5px;
@@ -91,7 +105,12 @@
         <div>Updated <b>{{ plan.last_update|date:"d M Y" }}</b></div>
         <div class="live"><span class="dot"></span> Live status</div>
         {% if download_url %}
-        <a class="dl" href="{{ download_url }}">⬇ Download Excel</a>
+        <span style="margin-left:auto;display:inline-flex;gap:8px;">
+          <a class="dl" href="{{ download_url }}">⬇ Download Excel</a>
+          <a class="dl dl2" href="{{ download_url }}?expand=1"
+             title="Every bundled variant listed on its own row">
+            ⬇ Excel · all variants</a>
+        </span>
         {% endif %}
       </div>
     </div>
@@ -119,9 +138,12 @@
               <span class="chip ON_TRACK">On track</span>
               <span class="chip AT_RISK">At risk</span>
               <span class="chip LATE">Late</span>.</li>
+            <li><b>Grouped items</b> — materials ordered in several sizes or
+              variants show as one line; click it to expand every variant.</li>
             <li><b>Want a fuller sheet?</b> Use <b>⬇ Download Excel</b> above for a
               structured, column-by-column copy you can keep, print or circulate —
-              the same information in the standard plan layout.</li>
+              <b>⬇ Excel · all variants</b> lists every variant of a grouped item
+              on its own row.</li>
           </ul>
         </div>
       </details>
@@ -153,7 +175,7 @@
             <td class="n">{{ sec.code }}</td><td colspan="13">{{ sec.title }}</td>
           </tr>
           {% for r in sec.rows %}
-          <tr>
+          <tr{% if r.is_bundle %} class="bundle" data-bundle="{{ forloop.parentloop.counter }}-{{ forloop.counter }}"{% endif %}>
             <td class="n">{{ r.s_no }}</td>
             <td class="item">
               <div class="desc">{{ r.description }}</div>
@@ -161,6 +183,8 @@
               <div class="sub">{{ r.make_brand }}{% if r.make_brand and r.specification %} · {% endif %}{{ r.specification }}</div>
               {% endif %}
               {% if r.category %}<span class="cat">{{ r.category }}</span>{% endif %}
+              {% if r.is_bundle %}<span class="btoggle"><span class="tri">▸</span>
+                {{ r.variants|length }} variant{{ r.variants|length|pluralize }}</span>{% endif %}
             </td>
             <td class="n">{% if r.quantity != None %}{{ r.quantity|floatformat:"-2" }} {{ r.uom }}{% endif %}</td>
             <td class="n">{{ r.supply_by }}</td>
@@ -175,6 +199,29 @@
             <td class="n">{% if r.status %}<span class="chip {{ r.status_level }}">{{ r.status }}</span>{% endif %}</td>
             <td>{{ r.remarks }}</td>
           </tr>
+          {% for v in r.variants %}
+          <tr class="variant" data-of="{{ forloop.parentloop.parentloop.counter }}-{{ forloop.parentloop.counter }}">
+            <td class="n"></td>
+            <td class="item">
+              <div class="desc">↳ {{ v.description }}</div>
+              {% if v.make_brand or v.specification %}
+              <div class="sub">{{ v.make_brand }}{% if v.make_brand and v.specification %} · {% endif %}{{ v.specification }}</div>
+              {% endif %}
+            </td>
+            <td class="n">{% if v.quantity != None %}{{ v.quantity|floatformat:"-2" }} {{ v.uom }}{% endif %}</td>
+            <td class="n">{{ v.supply_by }}</td>
+            <td class="n">{{ v.source_country }}</td>
+            <td class="n">{{ v.required_date|date:"d M Y" }}</td>
+            <td class="n">{{ v.tds }}</td>
+            <td class="n">{{ v.order }}</td>
+            <td class="n">{{ v.production }}</td>
+            <td class="n">{{ v.shipment }}</td>
+            <td class="n">{{ v.delivery }}</td>
+            <td class="n">{% if v.eta %}{{ v.eta|date:"d M Y"|default:v.eta }}{% endif %}</td>
+            <td class="n">{% if v.status %}<span class="chip {{ v.status_level }}">{{ v.status }}</span>{% endif %}</td>
+            <td>{{ v.remarks }}</td>
+          </tr>
+          {% endfor %}
           {% endfor %}
           {% endfor %}
         </tbody>
@@ -187,5 +234,16 @@
     </div>
   </div>
 </div>
+<script>
+  // Grouped items expand/collapse in place — no reload, nothing to install.
+  document.querySelectorAll("tr.bundle").forEach(function (row) {
+    row.addEventListener("click", function () {
+      row.classList.toggle("open");
+      var key = row.getAttribute("data-bundle");
+      document.querySelectorAll('tr.variant[data-of="' + key + '"]')
+        .forEach(function (v) { v.classList.toggle("shown"); });
+    });
+  });
+</script>
 </body>
 </html>

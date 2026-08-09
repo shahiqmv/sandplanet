@@ -34,10 +34,12 @@ def client_plan_page(request, token):
 
 
 def client_plan_xlsx(request, token):
-    """The full spreadsheet, same allowlist, from the client's link (no login)."""
+    """The full spreadsheet, same allowlist, from the client's link (no login).
+    ?expand=1 lists every bundled variant under its group."""
     from . import procurement_export
     sched = _resolve(token)
-    wb = procurement_export.build_client_xlsx(sched)
+    wb = procurement_export.build_client_xlsx(
+        sched, expand=request.GET.get("expand") == "1")
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")

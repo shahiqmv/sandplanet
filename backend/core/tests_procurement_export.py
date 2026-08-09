@@ -193,3 +193,64 @@ class ProcurementExportTests(TestCase):
             if ws.cell(row=r, column=c).value is not None)
         self.assertIn("Glass", allcells)
         self.assertNotIn("5000", allcells)
+
+    def test_bundle_export_grouped_by_default_expand_on_request(self):
+        """Bundled variants stay collapsed to one summary row on the default
+        export; ?expand=1 lists each variant beneath the group (owner
+        2026-07-30 — a per-export choice)."""
+        self._signed_schedule([
+            {"description": "Timber 25x50", "section_code": "A",
+             "section_title": "Villa Upgrades", "bundle": "Deck Timber",
+             "quantity": "10", "uom": "m3", "required_date": "2026-09-01"},
+            {"description": "Timber 50x100", "section_code": "A",
+             "bundle": "Deck Timber", "quantity": "8", "uom": "m3",
+             "required_date": "2026-09-01"},
+        ])
+        self.client.force_authenticate(self.director)
+
+        def celltext(resp):
+            ws = load_workbook(io.BytesIO(resp.content)).active
+            return "\n".join(str(ws.cell(row=r, column=c).value)
+                             for r in range(1, ws.max_row + 1)
+                             for c in range(1, ws.max_column + 1)
+                             if ws.cell(row=r, column=c).value is not None)
+
+        base = f"/api/v1/procurement-schedules/{self.pk}/export"
+        grouped = celltext(self.client.get(base))
+        self.assertIn("Deck Timber", grouped)        # the summary row
+        self.assertNotIn("Timber 25x50", grouped)    # variants collapsed
+        self.assertNotIn("Timber 50x100", grouped)
+
+        expanded = celltext(self.client.get(base + "?expand=1"))
+        self.assertIn("Deck Timber", expanded)
+        self.assertIn("Timber 25x50", expanded)      # every variant listed
+        self.assertIn("Timber 50x100", expanded)
+
+    def test_share_page_bundles_expandable_and_variant_xlsx(self):
+        """The live page renders bundle variants (hidden, click-to-expand) and
+        offers the all-variants spreadsheet from the same token."""
+        self._signed_schedule([
+            {"description": "Timber 25x50", "section_code": "A",
+             "bundle": "Deck Timber", "quantity": "10", "uom": "m3"},
+            {"description": "Timber 50x100", "section_code": "A",
+             "bundle": "Deck Timber", "quantity": "8", "uom": "m3"},
+        ])
+        self.client.force_authenticate(self.director)
+        path = self.client.post(
+            f"/api/v1/procurement-schedules/{self.pk}/share"
+        ).data["share"]["path"]
+        anon = APIClient()
+        html = anon.get(path).content.decode()
+        self.assertIn("Deck Timber", html)           # summary row
+        self.assertIn("Timber 25x50", html)          # variants in the page…
+        self.assertIn('class="variant"', html)       # …hidden until clicked
+        self.assertIn("2 variants", html)
+        self.assertIn(f"{path}/plan.xlsx?expand=1", html)  # all-variants dl
+        x = anon.get(f"{path}/plan.xlsx?expand=1")
+        self.assertEqual(x.status_code, 200)
+        ws = load_workbook(io.BytesIO(x.content)).active
+        allx = "\n".join(str(ws.cell(row=r, column=c).value)
+                         for r in range(1, ws.max_row + 1)
+                         for c in range(1, ws.max_column + 1)
+                         if ws.cell(row=r, column=c).value is not None)
+        self.assertIn("Timber 50x100", allx)

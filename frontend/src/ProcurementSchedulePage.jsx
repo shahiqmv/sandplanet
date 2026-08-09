@@ -280,7 +280,7 @@ function BundleRow({ group, c, open, onToggle }) {
 
 // Per-project procurement schedule: PM proposes lines, Purchasing confirms the
 // commercial fields, the Director signs off the baseline.
-export default function ProcurementSchedulePage({ me, sites }) {
+export default function ProcurementSchedulePage({ me, sites, onOpenDoc }) {
   const [list, setList] = useState(null);
   const [openId, setOpenId] = useState(null);
   const [view, setView] = useState("list");   // list | new
@@ -291,7 +291,7 @@ export default function ProcurementSchedulePage({ me, sites }) {
   useEffect(() => { load(); }, []);
 
   if (openId)
-    return <ScheduleDetail id={openId} me={me}
+    return <ScheduleDetail id={openId} me={me} onOpenDoc={onOpenDoc}
              onBack={() => { setOpenId(null); load(); }}
              onDeleted={() => { setOpenId(null); load(); }} />;
   if (view === "new")
@@ -352,7 +352,7 @@ export default function ProcurementSchedulePage({ me, sites }) {
 
 // The schedule as a tab inside a project (next to Commercials). Opens the
 // project's schedule, offering to start one if it doesn't exist yet.
-export function ProjectScheduleTab({ project, me }) {
+export function ProjectScheduleTab({ project, me, onOpenDoc }) {
   const [id, setId] = useState(null);
   const [state, setState] = useState("loading");   // loading|none|ready|error
   const [error, setError] = useState(null);
@@ -383,7 +383,7 @@ export function ProjectScheduleTab({ project, me }) {
         Start the procurement schedule</Btn>}
     </div>
   );
-  return <ScheduleDetail id={id} me={me} onBack={null}
+  return <ScheduleDetail id={id} me={me} onBack={null} onOpenDoc={onOpenDoc}
     onDeleted={() => { setId(null); setState("none"); }} />;
 }
 
@@ -461,7 +461,7 @@ function Modal({ onClose, children }) {
   );
 }
 
-function ScheduleDetail({ id, me, onBack, onDeleted }) {
+function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
   const [c, setC] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -587,8 +587,13 @@ function ScheduleDetail({ id, me, onBack, onDeleted }) {
               🗑 Delete draft</Btn>)}
           <a href={`/api/v1/procurement-schedules/${c.id}/export`}
             style={{ ...linkBtn, marginLeft: "auto", textDecoration: "none" }}
-            title="Download the client procurement plan (Excel)">
+            title="Download the client procurement plan (Excel) — bundled
+ variants grouped">
             ⬇ Export client plan</a>
+          <a href={`/api/v1/procurement-schedules/${c.id}/export?expand=1`}
+            style={{ ...linkBtn, textDecoration: "none", fontWeight: 400 }}
+            title="Same plan with every bundled variant on its own row">
+            all variants</a>
           {c.share?.can_share && <ClientLink share={c.share} busy={busy}
             onCreate={share} onRevoke={revokeShare} />}
         </div>
@@ -668,13 +673,14 @@ function ScheduleDetail({ id, me, onBack, onDeleted }) {
 
       {trackId && <Modal onClose={() => setTrackId(null)}>
         <LinkPanel line={c.lines.find((l) => l.id === trackId)}
-          onClose={() => setTrackId(null)} onSaved={setC} />
+          onClose={() => setTrackId(null)} onSaved={setC}
+          onOpenDoc={onOpenDoc} />
       </Modal>}
 
       {quotesId && <Modal onClose={() => setQuotesId(null)}>
         <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
           canAward={c.can_award} onClose={() => setQuotesId(null)}
-          onSaved={setC} />
+          onSaved={setC} onOpenDoc={onOpenDoc} />
       </Modal>}
 
       {splitId && <Modal onClose={() => setSplitId(null)}>
@@ -764,7 +770,7 @@ function SplitPanel({ line, onClose, onSaved }) {
 
 // Track panel: link the execution documents that fulfil a line (MAR/IPR/GRN)
 // and set the manual production flag. The pipeline above is derived from these.
-function LinkPanel({ line, onClose, onSaved }) {
+function LinkPanel({ line, onClose, onSaved, onOpenDoc }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [openSlot, setOpenSlot] = useState(null);   // slot showing suggestions
@@ -854,7 +860,13 @@ function LinkPanel({ line, onClose, onSaved }) {
               marginBottom: 6 }}>{label}</div>
             {line[refKey] ? (
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <RefStamp small>{line[refKey]}</RefStamp>
+                {onOpenDoc ? (
+                  <a href="#" onClick={(e) => { e.preventDefault();
+                      onOpenDoc(line[refKey]); }}
+                    style={{ textDecoration: "none" }}
+                    title="Open the document">
+                    <RefStamp small>{line[refKey]}</RefStamp></a>
+                ) : <RefStamp small>{line[refKey]}</RefStamp>}
                 <button style={linkBtn} disabled={busy}
                   onClick={() => unlink(slot)}>Unlink</button>
               </div>
@@ -915,7 +927,7 @@ const BLANK_QUOTE = { supplier_name: "", quoted_value: "", currency: "USD",
   country: "", lead_time_days: "", contact: "", valid_until: "", remarks: "",
   is_recommended: false };
 
-function QuotesPanel({ line, canAward, onClose, onSaved }) {
+function QuotesPanel({ line, canAward, onClose, onSaved, onOpenDoc }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -1033,11 +1045,21 @@ function QuotesPanel({ line, canAward, onClose, onSaved }) {
           <Btn variant="primary" disabled={busy} onClick={raiseIpr}>
             Raise IPR from award</Btn>}
         {line.ipr_ref && <span style={{ fontSize: 12.5, alignSelf: "center",
-          color: "var(--green-fg)" }}>IPR {line.ipr_ref} linked</span>}
+          color: "var(--green-fg)" }}>IPR{" "}
+          {onOpenDoc
+            ? <a href="#" onClick={(e) => { e.preventDefault();
+                onOpenDoc(line.ipr_ref); }}
+                style={{ color: "var(--navy)", fontWeight: 600 }}>
+                {line.ipr_ref}</a>
+            : line.ipr_ref} linked</span>}
       </div>
       {raisedRef && !line.ipr_ref && <p style={{ fontSize: 12.5,
         color: "var(--green-fg)", marginTop: 6 }}>Draft {raisedRef} raised and
-        linked — complete it in International Orders (supplier, rate, cost head).
+        linked — complete the supplier, rate and cost head.{" "}
+        {onOpenDoc && <a href="#" onClick={(e) => { e.preventDefault();
+            onOpenDoc(raisedRef); }}
+          style={{ color: "var(--navy)", fontWeight: 600 }}>
+          Open {raisedRef} →</a>}
         </p>}
 
       {adding && (

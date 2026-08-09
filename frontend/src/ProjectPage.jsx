@@ -217,7 +217,8 @@ manpower histogram, on the letterhead — send to the client"
       )}
 
       {tab === "procurement" && (
-        <ProjectScheduleTab project={{ id: projectId }} me={me} />
+        <ProjectScheduleTab project={{ id: projectId }} me={me}
+          onOpenDoc={onOpenDoc} />
       )}
 
       {tab === "documents" && (

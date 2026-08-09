@@ -136,6 +136,31 @@ BODY = f"""
   <em>TDS / MAR required</em> if the material needs approval first.</p>
 {fig("05-new-line", "Adding a line — catalogue-linked description, unit and category pick-lists, required date.")}
 
+<h2>Bundling variant lines</h2>
+<p>Some materials come in many variants — “Deck &amp; Fence Timber” in six sizes,
+  pool plumbing across dozens of fittings. Each variant still needs its
+  <strong>own line</strong>, because the order (IPR), shipment tracking and site
+  receipt (GRN) all attach per line. But dozens of near-identical rows make the
+  plan hard to read.</p>
+<p>Give those lines the <strong>same “Bundle / group” label</strong> on the
+  add-line form and they <strong>collapse into one tidy, expandable summary
+  row</strong>. The summary rolls the variants up for you: the earliest required
+  date, the total quantity (when they share a unit), the combined pipeline (a
+  stage only shows done once <em>every</em> variant reaches it) and the
+  <strong>worst risk</strong> in the group. Click the row to expand it and see —
+  or track — each variant on its own.</p>
+<div class="callout">A bundle <strong>splits automatically by supplier</strong>:
+  the moment Purchasing awards different suppliers, the group divides so each
+  summary still maps cleanly to one order. A bundle with only one line just shows
+  as a normal row.</div>
+<p>Bundling is <strong>purely for readability</strong> — every variant keeps its
+  own record and its own documents; nothing is merged or lost. The client sees
+  the same clean one-row-per-bundle view, with the detail one click away:
+  on the <strong>live link</strong> a grouped item expands in place to list its
+  variants, and the export comes in two flavours — <strong>Export client
+  plan</strong> (grouped) or <strong>all variants</strong> (every size/fitting
+  on its own row) for clients who want the full listing.</p>
+
 <h2>BOQ quotes &amp; the supplier award</h2>
 <p>During the BOQ stage the QS and project team already hold supplier quotes.
   Attach them to the line — supplier, price, lead time and the quote file — and

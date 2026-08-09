@@ -890,7 +890,8 @@ export default function App() {
             ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"]
               .includes(me.role) &&
             hoPage === "procurement-schedule" && (
-            <ProcurementSchedulePage me={me} sites={sites} />
+            <ProcurementSchedulePage me={me} sites={sites}
+              onOpenDoc={openDoc} />
           )}
           {!docView && !openSite &&
             ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",

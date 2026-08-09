@@ -252,7 +252,8 @@ def client_site_procurement_xlsx(request, pk):
     plan = pc.client_site_plan(site)
     if not plan.get("available"):
         return Response({"detail": "No plan."}, status=404)
-    wb = procurement_export.build_client_xlsx_from_plan(plan)
+    wb = procurement_export.build_client_xlsx_from_plan(
+        plan, expand=request.query_params.get("expand") == "1")
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")

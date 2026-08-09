@@ -330,7 +330,9 @@ def schedule_export(request, pk):
     sched, err = _get_sched(request, pk)
     if err:
         return err
-    wb = procurement_export.build_client_xlsx(sched, request.user)
+    wb = procurement_export.build_client_xlsx(
+        sched, request.user,
+        expand=request.query_params.get("expand") == "1")
     resp = HttpResponse(
         content_type="application/vnd.openxmlformats-officedocument."
         "spreadsheetml.sheet")

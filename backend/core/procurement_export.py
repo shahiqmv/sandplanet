@@ -66,15 +66,18 @@ def _row_values(r):
     ]
 
 
-def build_client_xlsx(sched, user=None):
+def build_client_xlsx(sched, user=None, expand=False):
     """An openpyxl Workbook of the client procurement plan for one project.
     `user` is the exporter (for the 'updated by' initials); the public,
-    token-gated download passes none."""
+    token-gated download passes none. `expand` lists every bundled variant
+    under its summary row (owner 2026-07-30: a per-export choice — some
+    clients want each size/fitting listed, others just the group)."""
     return build_client_xlsx_from_plan(
-        client_plan(sched, updated_by=initials(user) if user else ""))
+        client_plan(sched, updated_by=initials(user) if user else ""),
+        expand=expand)
 
 
-def build_client_xlsx_from_plan(plan):
+def build_client_xlsx_from_plan(plan, expand=False):
     """Build the workbook from an already-assembled client plan dict — shared
     by the per-project export and the site-wide portal export."""
     wb = Workbook()
@@ -187,10 +190,11 @@ def build_client_xlsx_from_plan(plan):
             zebra = alt_fill if i % 2 else None
             _write(r, row, zebra)
             row += 1
-            # a bundle's variants expand underneath it
-            for v in r.get("variants") or []:
-                _write(v, row, zebra, variant=True)
-                row += 1
+            # a bundle's variants list underneath it only on an expanded export
+            if expand:
+                for v in r.get("variants") or []:
+                    _write(v, row, zebra, variant=True)
+                    row += 1
 
     ws.freeze_panes = "A5"
     ws.sheet_view.showGridLines = False
