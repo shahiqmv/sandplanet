@@ -47,6 +47,10 @@ class User(AbstractUser):
     # signature) — uploaded once and applied to letters they approve, e.g. the
     # onboarding Appointment Confirmation (owner 2026-08-04).
     stamp = models.FileField(upload_to="stamps/", null=True, blank=True)
+    # The title printed under this user's signature on official letters —
+    # e.g. "Managing Director" / "Director" for the two signatories (owner
+    # 2026-08-09). Falls back to a role-derived title when blank.
+    designation = models.CharField(max_length=80, blank=True)
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]

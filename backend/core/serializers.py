@@ -82,7 +82,7 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             "id", "username", "full_name", "email", "phone", "notify_external",
             "role", "is_active", "last_login", "password", "allocations",
-            "must_change_password",
+            "must_change_password", "designation",
         ]
         read_only_fields = ["last_login", "is_active", "must_change_password"]
 

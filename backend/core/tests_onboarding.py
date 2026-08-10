@@ -1197,7 +1197,8 @@ class OnboardingSpineTests(TestCase):
 
         sig = make_user("ob_sig_id", User.Role.SIGNATORY)
         sig.full_name = "Ibrahim Fikury Hussain"
-        sig.save(update_fields=["full_name"])
+        sig.designation = "Director"          # each signatory's OWN title
+        sig.save(update_fields=["full_name", "designation"])
         pk = self._approved()
         self._adv(pk)
         self._gen_letter(pk, "AC")
@@ -1215,8 +1216,7 @@ class OnboardingSpineTests(TestCase):
         self.assertTrue(rendered)
         kind, fields, kw = rendered[0]
         self.assertEqual(fields["signatory_name"], "Ibrahim Fikury Hussain")
-        self.assertEqual(fields["signatory_designation"],
-                         "Authorised Signatory")
+        self.assertEqual(fields["signatory_designation"], "Director")
         self.assertTrue(kw.get("stamp_src"))           # signature stamp applied
         self.assertFalse(kw.get("draft"))              # official copy
 

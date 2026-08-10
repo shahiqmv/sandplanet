@@ -105,6 +105,21 @@ export default function UsersPage({ me, sites }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function editDesignation(user) {
+    const t = window.prompt(
+      "Title printed under this user's signature on official letters "
+      + "(e.g. Managing Director):", user.designation || "");
+    if (t === null) return;
+    setError(null);
+    try {
+      await api(`/users/${user.id}`,
+                { method: "PATCH", body: { designation: t.trim() } });
+      setNotice(`Signature title ${t.trim() ? "set" : "cleared"} for `
+                + user.full_name + ".");
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function resetPassword(user) {
     const pw = window.prompt(
       `Set a new password for ${user.username} (min 8 characters). `
@@ -220,7 +235,21 @@ export default function UsersPage({ me, sites }) {
             <tr key={user.id} style={user.is_active ? {} : { opacity: 0.5 }}>
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{user.username}</td>
-              <td style={td}>{user.full_name}</td>
+              <td style={td}>{user.full_name}
+                {(user.designation || ["SIGNATORY", "DIRECTOR", "ADMIN"]
+                    .includes(user.role)) && (
+                  <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                    {user.designation || "no signature title"}
+                    {me.role === "ADMIN" && (
+                      <button title={"Title printed under this user's "
+                          + "signature on official letters"}
+                        onClick={() => editDesignation(user)}
+                        style={{ border: "none", background: "none",
+                          cursor: "pointer", color: "#2b7bb9",
+                          fontSize: 11, padding: "0 0 0 6px" }}>edit</button>
+                    )}
+                  </div>
+                )}</td>
               <td style={td}>
                 {roleEdit?.id === user.id ? (
                   <div style={{ display: "flex", flexDirection: "column",

@@ -1011,13 +1011,14 @@ def _allowances_for_letter(case):
 
 def _default_signatory():
     """The company signatory who signs correspondence — a SIGNATORY if set,
-    else the Director. HR can override both name and title at generation."""
+    else the Director. Only a draft placeholder: the signed letter carries
+    whoever actually signs the case off (their own designation)."""
     from . import notify
     for role, title in (("SIGNATORY", "Authorised Signatory"),
                         ("DIRECTOR", "Director")):
         u = next(iter(notify._role_users(role)), None)
         if u:
-            return u.full_name, title
+            return u.full_name, (u.designation or title)
     return "", "Director"
 
 
@@ -1191,11 +1192,15 @@ def _render_letter(case, kind, ref, fields, issue_date, signed):
     fld = dict(fields)
     if signed and case.signatory_approved_by_id:
         # The letter carries whoever actually signed the case off — name AND
-        # title come from that approval, not from the generation form.
+        # title come from that approval, not from the generation form. Title =
+        # the user's own designation ("Managing Director" / "Director"), with
+        # a role fallback when it isn't set.
         signer = case.signatory_approved_by
         fld["signatory_name"] = signer.full_name
-        fld["signatory_designation"] = ("Director" if signer.role == "DIRECTOR"
-                                        else "Authorised Signatory")
+        fld["signatory_designation"] = (
+            signer.designation
+            or ("Director" if signer.role == "DIRECTOR"
+                else "Authorised Signatory"))
     return pdf.render_onboarding_letter(
         case.document, kind, ref, fld, issue_date,
         stamp_src=stamp_src, seal_src=seal_src, draft=not signed)
