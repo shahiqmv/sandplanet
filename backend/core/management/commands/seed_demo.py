@@ -31,9 +31,8 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError
 from rest_framework.test import APIClient
 
-from core.models import (CostHead, Employee, EmployeeSiteAllocation,
-                         Item, ItemCategory, ManpowerCategory, Project,
-                         Site, SitePmHistory, Supplier, User,
+from core.models import (CostHead, Employee, Item, ItemCategory, ManpowerCategory, Project,
+                         Site, SitePmHistory, User,
                          UserSiteAllocation)
 
 PW = "planet-demo"  # shared demo password; the capture script logs in with it
@@ -132,7 +131,7 @@ class Command(BaseCommand):
             self.catalogue, self.suppliers, self.employees,
             self.attendance_and_payroll, self.daily_reports, self.tws_and_dma,
             self.inspections, self.procurement_chain, self.payment_request,
-            self.petty_cash,
+            self.petty_cash, self.in_flight,
         ):
             try:
                 step()
@@ -381,10 +380,13 @@ class Command(BaseCommand):
                 }}, who="eng")
             self.photos(dpr["ref"], "eng", 4)
             self.act(dpr["ref"], "issue", "eng")
-            self.act(dpr["ref"], "verify", "pm")
+            # Verify all but the newest — leaving one awaiting PM verification
+            # so the dashboard's "waiting on you" count isn't zero.
+            if i < len(days) - 1:
+                self.act(dpr["ref"], "verify", "pm")
             last_ref = dpr["ref"]
-        self.stdout.write(f"  DPRs: {len(days)} issued + verified "
-                          f"(latest {last_ref})")
+        self.stdout.write(f"  DPRs: {len(days)} issued "
+                          f"(newest {last_ref} awaiting verification)")
 
     def tws_and_dma(self):
         tomorrow = self.today + timedelta(days=1)
@@ -584,6 +586,56 @@ class Command(BaseCommand):
         self.client.post(f"/api/v1/petty-cash/{self.site.id}/entries/approve",
                          {}, format="json")
         self.stdout.write(f"  petty cash: float + {len(entries)} approved entries")
+
+    def in_flight(self):
+        """Leave a few requisitions mid-workflow so the 'waiting on you'
+        queues (PM, Director, Signatory) and the Finance pipeline aren't
+        empty in the screenshots — the product's whole point is what needs
+        you today."""
+        cement = self.items["Cement OPC 50kg bag"]
+        # MR awaiting the PM's approval.
+        mr = self.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "payload": {"planned_loading": "September hired boat",
+                        "trades_covered": "Civil — Pools 7-12",
+                        "required_by": "2026-09-01", "stock_attested": True},
+            "lines": [{"item_id": cement.id, "qty_required": 300,
+                       "qty_stock": 40, "qty_to_order": 260,
+                       "priority": "NORMAL", "remarks": "Civil"}],
+            }, who="storekeeper")
+        self.act(mr["ref"], "submit", "storekeeper")
+
+        transport = CostHead.objects.get(name="Transport & Freight")
+        subcon = CostHead.objects.get(name="Subcontract")
+        # PYR awaiting the Director (PM has approved).
+        pyr_a = self.post("/api/v1/documents", {
+            "doc_type": "PYR", "site_id": self.site.id, "payload": {},
+            "cost_head_id": transport.id, "payee": "Blue Horizon Marine",
+            "payment_type": "DIRECT", "payment_method": "BANK",
+            "amount_requested": 18750, "required_by": "2026-08-05",
+            "purpose": "Crane barge hire — plant room lift",
+            "has_supporting_doc": True}, who="storekeeper")
+        self.act(pyr_a["ref"], "submit", "storekeeper")
+        self.act(pyr_a["ref"], "approve", "pm")
+
+        # PYR sitting on a submitted voucher, awaiting the Signatory.
+        pyr_b = self.post("/api/v1/documents", {
+            "doc_type": "PYR", "site_id": self.site.id, "payload": {},
+            "cost_head_id": subcon.id, "payee": "Reef Tiling Contractors",
+            "payment_type": "ADVANCE", "payment_method": "BANK",
+            "amount_requested": 62000, "required_by": "2026-08-10",
+            "purpose": "Mobilisation advance — pool tiling subcontract",
+            "has_supporting_doc": True}, who="storekeeper")
+        self.act(pyr_b["ref"], "submit", "storekeeper")
+        self.act(pyr_b["ref"], "approve", "pm")
+        self.act(pyr_b["ref"], "approve", "director")
+        pv = self.post("/api/v1/payment-vouchers",
+                       {"source_refs": [pyr_b["ref"]]}, who="finance")
+        self.as_("finance")
+        self.client.post(f"/api/v1/payment-vouchers/{pv['ref']}/actions/submit",
+                         {}, format="json")
+        self.stdout.write(f"  in-flight: {mr['ref']} (PM), {pyr_a['ref']} "
+                          f"(Director), {pyr_b['ref']} on {pv['ref']} (Signatory)")
 
     # -- helpers ---------------------------------------------------------
 

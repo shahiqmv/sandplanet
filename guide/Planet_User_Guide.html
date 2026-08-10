@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Planet User Guide — PLANET-UG-01 R2</title>
+<style>
+  :root {
+    --navy: #16527e; --navy-deep: #0e3a5c; --sky: #29abe2;
+    --sky-soft: #dff1fa; --sand: #f6f2e9; --line: #dcd5c6;
+    --ink: #1f2a33; --muted: #5a6b78;
+  }
+
+  @page {
+    size: A4;
+    margin: 22mm 17mm 18mm;
+    @top-left  { content: "SANDPLANET  ·  PLANET USER GUIDE"; font: 8pt "Arial Narrow", sans-serif; letter-spacing: .12em; color: #8a97a1; }
+    @top-right { content: "R2"; font: 8pt "Arial Narrow", sans-serif; letter-spacing: .12em; color: #8a97a1; }
+    @bottom-left  { content: "Sand Planet Pvt Ltd — internal"; font: 8pt "Arial Narrow", sans-serif; color: #8a97a1; }
+    @bottom-right { content: counter(page); font: 8pt "Arial Narrow", sans-serif; color: #8a97a1; }
+  }
+  @page cover { margin: 0;
+    @top-left{content:none} @top-right{content:none}
+    @bottom-left{content:none} @bottom-right{content:none} }
+
+  * { box-sizing: border-box; }
+  html { -weasy-hyphens: none; }
+  body { font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+         font-size: 10.2pt; line-height: 1.5; color: var(--ink); margin: 0; }
+
+  h1, h2, h3 { font-family: "Arial Narrow", "Segoe UI", sans-serif;
+               color: var(--navy); font-weight: 700; letter-spacing: .01em; }
+  h2 { font-size: 16pt; margin: 0 0 2mm; padding-bottom: 1.5mm;
+       border-bottom: 2px solid var(--sky); break-after: avoid; }
+  h3 { font-size: 11.5pt; margin: 4mm 0 1mm; color: var(--navy-deep);
+       break-after: avoid; }
+  p  { margin: 0 0 2.4mm; }
+  strong { color: var(--navy-deep); }
+  a { color: var(--navy); text-decoration: none; }
+  ul { margin: 0 0 2.4mm; padding-left: 5mm; }
+  li { margin: 0 0 1mm; }
+
+  .lead { font-size: 11pt; color: var(--muted); }
+  .section { break-before: page; padding-top: 1mm; }
+  .keep { break-inside: avoid; }
+
+  /* ---- cover ---- */
+  .cover { page: cover; height: 297mm; position: relative;
+           background: var(--navy);
+           background-image: linear-gradient(150deg, #0e3a5c 0%, #16527e 55%, #1c6ea6 100%);
+           color: #fff; padding: 34mm 24mm; }
+  .cover .wordmark { font-family:"Arial Narrow","Segoe UI",sans-serif;
+                     font-weight: 700; font-size: 22pt; letter-spacing: .34em;
+                     color: #fff; margin-bottom: 22mm; }
+  .cover .wordmark b { color: var(--sky); font-weight: 700; }
+  .cover .kicker { font-family:"Arial Narrow",sans-serif; letter-spacing:.5em;
+                   font-size: 12pt; color: var(--sky); margin-bottom: 4mm; }
+  .cover h1 { font-family:"Arial Narrow",sans-serif; color:#fff; font-size: 52pt;
+              line-height: .98; letter-spacing:.02em; margin: 0 0 6mm; }
+  .cover .sub { font-size: 13pt; color: #cfe6f5; max-width: 120mm; }
+  .cover .meta { position: absolute; left: 24mm; bottom: 26mm;
+                 border-top: 1px solid rgba(255,255,255,.3); padding-top: 6mm;
+                 width: 140mm; }
+  .cover .meta table { border-collapse: collapse; font-size: 9.5pt; color:#dce9f2; }
+  .cover .meta td { padding: 1mm 10mm 1mm 0; vertical-align: top; }
+  .cover .meta .lbl { color: var(--sky); letter-spacing:.14em;
+                      font-family:"Arial Narrow",sans-serif; font-size: 8.5pt;
+                      text-transform: uppercase; }
+  .cover .bar { position:absolute; left:0; bottom:0; height:8mm; width:100%;
+                background: var(--sky); }
+
+  /* ---- figures ---- */
+  figure { break-inside: avoid; margin: 3mm 0 4mm; text-align: center; }
+  /* Cap height so a single tall (full-page) screenshot never exceeds the
+     page and orphans its heading; wide shots still fill the column width. */
+  figure img { max-width: 100%; max-height: 150mm; border: 1px solid var(--line);
+               box-shadow: 0 1px 4px rgba(14,58,92,.12); border-radius: 3px; }
+  figure.pdf img { border-color: #c9cfd4; max-height: 165mm; }
+  figure.mobile img { max-width: 58mm; max-height: 130mm; }
+  figcaption { font-size: 8.6pt; color: var(--muted); margin-top: 1.6mm;
+               font-style: italic; }
+  .fig-row { display: flex; gap: 5mm; break-inside: avoid; align-items: flex-start; }
+  .fig-row figure { flex: 1; margin-top: 1mm; }
+  /* Two-up rows: keep each shot compact so a row (plus a heading) fits. */
+  .fig-row figure img { max-height: 92mm; }
+
+  .callout { background: var(--sky-soft); border-left: 3px solid var(--sky);
+             padding: 3mm 4mm; margin: 3mm 0; font-size: 9.6pt; border-radius: 2px; }
+  .later { background: #f4f1ea; border-left: 3px solid var(--line);
+           padding: 3mm 4mm; margin: 3mm 0; font-size: 9.6pt; color: var(--muted);
+           border-radius: 2px; }
+  .later b { color: var(--navy-deep); }
+
+  .steps { counter-reset: step; list-style: none; padding-left: 0; }
+  .steps li { counter-increment: step; position: relative; padding-left: 9mm;
+              margin-bottom: 2mm; }
+  .steps li::before { content: counter(step); position: absolute; left: 0; top: -0.3mm;
+    width: 6mm; height: 6mm; background: var(--navy); color:#fff; border-radius:50%;
+    font-size: 8pt; font-weight:700; display:flex; align-items:center;
+    justify-content:center; font-family:"Arial Narrow",sans-serif; }
+
+  .toc { break-after: page; }
+  .toc ol { list-style: none; padding-left: 0; font-size: 10.5pt; }
+  .toc li { display:flex; justify-content: space-between; padding: 1.4mm 0;
+            border-bottom: 1px dotted var(--line); }
+  .toc li span:first-child { color: var(--navy-deep); }
+  .toc a { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ======================= COVER ======================= -->
+<section class="cover">
+  <div class="wordmark">SAND<b>PLANET</b></div>
+  <div class="kicker">PLANET</div>
+  <h1>USER<br>GUIDE</h1>
+  <div class="sub">Site documents, procurement, and project cost control —
+    everything your team used to keep in Excel, now in one place.</div>
+  <div class="meta">
+    <table>
+      <tr><td class="lbl">Document</td><td class="lbl">Revision</td>
+          <td class="lbl">Prepared&nbsp;by</td><td class="lbl">Date</td></tr>
+      <tr><td>PLANET-UG-01</td><td>R2</td><td>Shahiq</td><td>10 / 07 / 26</td></tr>
+    </table>
+    <div style="margin-top:5mm; font-size:9.5pt; color:#bcd6e8;">
+      For Sand Planet Pvt&nbsp;Ltd · internal</div>
+  </div>
+  <div class="bar"></div>
+</section>
+
+<!-- ======================= THE IDEA ======================= -->
+<section class="section" id="idea" style="break-before: auto;">
+  <h2>The idea in one paragraph</h2>
+  <p class="lead">Every form you used to keep in Excel now lives in one place.
+    You fill it in, Planet numbers it, files it in the right register, and
+    produces the PDF you send to the client. The registers maintain
+    themselves.</p>
+  <p>But the real point is underneath: every material bought, every payment
+    made, every hour worked flows into one number per project — what it has
+    cost so far, against what you are being paid. Nothing gets lost, nothing
+    gets typed twice, and at any moment anyone with the right to know can see
+    exactly where a project stands.</p>
+
+  <h3>What's in this guide</h3>
+  <div class="toc">
+    <ol>
+      <li><span>Signing in &amp; your dashboard</span><a>3</a></li>
+      <li><span>How every document works</span><a>4</a></li>
+      <li><span>The site documents — DPR, TWS, DMA, IR, MAR, MR, GRN, PYR</span><a>5</a></li>
+      <li><span>Head Office documents — PR, LM</span><a>9</a></li>
+      <li><span>The item catalogue &amp; registers</span><a>10</a></li>
+      <li><span>Petty cash</span><a>11</a></li>
+      <li><span>Timesheets and payroll</span><a>12</a></li>
+      <li><span>How a payment travels</span><a>13</a></li>
+      <li><span>Projects and cost</span><a>14</a></li>
+      <li><span>International procurement (later phase)</span><a>15</a></li>
+    </ol>
+  </div>
+</section>
+
+<!-- ======================= SIGNING IN ======================= -->
+<section class="section" id="signing-in">
+  <h2>Signing in &amp; your dashboard</h2>
+  <p>Your account decides what you see. Sign in and you land straight on your
+    own dashboard — no menus to hunt, no site to choose. Site staff see only
+    their island. Head Office sees all of them. Your Project Manager sees every
+    site they run. Accounts are created by the Administrator; there is no
+    self-registration, and passwords are stored securely on the server.</p>
+
+  <figure><img src="screenshots/01-login.png" alt="Sign in">
+    <figcaption>Signing in — your role decides where you land and what you can do.</figcaption></figure>
+
+  <div class="callout"><strong>On your phone.</strong> Planet works in a phone
+    browser and can be added to your home screen. Take DPR photos straight from
+    the camera; drafts are held safely if the signal drops and sync when you're
+    back online — don't retype anything.</div>
+
+  <h3>Your dashboard answers one question: what needs me today?</h3>
+  <p>Your obligations sit at the top. Below them, the things waiting on you —
+    most urgent first, each saying what's wrong, how old it is, and the one
+    button that deals with it. Below that, the numbers, each with its meaning
+    attached: not "3 MRs" but "3 MRs open — oldest 6 days."</p>
+
+  <figure><img src="screenshots/02-site-dashboard.png" alt="Site dashboard">
+    <figcaption>The site dashboard — today's DPR, TWS and manpower as stamp
+      tiles, then everything waiting on the site.</figcaption></figure>
+
+  <h3>The same idea, shaped for each role</h3>
+  <div class="fig-row">
+    <figure><img src="screenshots/13-my-tasks-queue.png" alt="PM My Tasks">
+      <figcaption>Project Manager — every approval across their sites in one queue.</figcaption></figure>
+    <figure><img src="screenshots/17-purchasing-dashboard.png" alt="Purchasing dashboard">
+      <figcaption>Head Office Purchasing — MRs to process, the boat board, registers.</figcaption></figure>
+  </div>
+  <div class="fig-row">
+    <figure><img src="screenshots/28-finance-dashboard.png" alt="Finance dashboard">
+      <figcaption>Finance — authorised payments awaiting disbursement, committed vs paid.</figcaption></figure>
+    <figure><img src="screenshots/31-hr-dashboard.png" alt="HR dashboard">
+      <figcaption>HR &amp; Payroll — the month-lock board and permit expiries.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ======================= HOW DOCUMENTS WORK ======================= -->
+<section class="section" id="how-documents-work">
+  <h2>How every document works</h2>
+  <p>There are thirteen document types. They all behave the same way, so learn
+    it once.</p>
+  <ol class="steps">
+    <li><strong>Create.</strong> Pick the type, fill it in. Your site is already
+      filled in and locked — you cannot file paperwork under another island. The
+      reference (<em>DPR-SJR-001</em>) is issued by Planet, in order, with no gaps.</li>
+    <li><strong>Save as draft</strong> as often as you like. Nothing is final
+      until you issue it.</li>
+    <li><strong>Submit or issue.</strong> Some documents need approval first.
+      Once issued, the document locks — it is the official record.</li>
+    <li><strong>The PDF generates automatically</strong>, on company letterhead,
+      matching your old Excel layout. That is what goes to the client or vendor.</li>
+    <li><strong>The register updates itself.</strong> You never maintain a
+      register again.</li>
+  </ol>
+
+  <div class="fig-row">
+    <figure><img src="screenshots/07-dpr-form-blank.png" alt="Blank DPR form">
+      <figcaption>1 · You fill in the form on screen…</figcaption></figure>
+    <figure><img src="screenshots/03-dpr-view-filled.png" alt="Issued DPR">
+      <figcaption>2 · …Planet issues, numbers and stamps it…</figcaption></figure>
+  </div>
+  <figure class="pdf"><img src="screenshots/pdf-dpr-DPR-SJR-001.png" alt="DPR PDF">
+    <figcaption>3 · …and produces the letterhead PDF that goes to the client.</figcaption></figure>
+
+  <div class="callout"><strong>Made a mistake after issuing?</strong> You don't
+    edit — you revise. MARs and MRs keep their number and step a revision
+    (R0&nbsp;→&nbsp;R1), with changed lines flagged. A rejected IR returns as a
+    new IR quoting the old one. Anything else can be voided with a reason, and
+    the register keeps the record. <strong>Approval stamps</strong> print the
+    approver's name, role and exact time on the PDF — that is the digital
+    signature.</div>
+</section>
+
+<!-- ======================= SITE DOCUMENTS ======================= -->
+<section class="section" id="site-documents">
+  <h2>The site documents</h2>
+
+  <h3>DPR — Daily Progress Report</h3>
+  <p>Weather, rain and time lost, work done with progress percentages, manpower
+    by trade, machinery, key material stock, matters affecting progress,
+    visitors, safety. At least four captioned photos, or Planet won't let you
+    issue it. Goes to the client every working day — issue it without waiting
+    for your PM; the PM verifies afterwards.</p>
+
+  <h3>TWS — Tomorrow Work Schedule</h3>
+  <p>Goes out with the DPR before the day ends: planned activities, planned
+    manpower, and what you need from the client tomorrow — buggy, villa access,
+    power isolation.</p>
+  <figure class="pdf"><img src="screenshots/pdf-tws-TWS-SJR-001.png" alt="TWS PDF">
+    <figcaption>The Tomorrow Work Schedule as issued to the client.</figcaption></figure>
+
+  <h3>DMA — Daily Manpower Allocation <span style="font-weight:400;color:#8a97a1;font-size:9pt;">· internal</span></h3>
+  <p>Each morning the site turns yesterday's TWS into a crew plan: who works
+    where, on which task, under which project. The Site Engineer drafts it and
+    the PM issues it. It is an internal control document — it is not sent to the
+    client — and it feeds the "Manpower today" figures on the dashboard, flagging
+    idle crew when attendance outruns allocation.</p>
+  <figure class="pdf"><img src="screenshots/pdf-dma-DMA-SJR-001.png" alt="DMA PDF">
+    <figcaption>The Daily Manpower Allocation — an internal record of who is on
+      what today.</figcaption></figure>
+
+  <h3>IR — Inspection Request</h3>
+  <p>Submit at least 24 hours ahead. Your PM approves before it goes to the
+    client. Record the client's result — approved, approved with comments, or
+    rejected. Comments close out in Part C with evidence; rejected work returns
+    as a new IR.</p>
+  <figure><img src="screenshots/05-ir-view-filled.png" alt="Inspection Request">
+    <figcaption>An issued IR with the client result and full workflow trail recorded.</figcaption></figure>
+
+  <h3>MAR — Material Approval Request</h3>
+  <p>Getting a material approved before ordering: description, manufacturer,
+    origin, specification and drawing references, attachments. The PM approves,
+    then it goes to the client. Never order material before written approval.</p>
+  <figure><img src="screenshots/06-mar-view-filled.png" alt="Material Approval Request">
+    <figcaption>A Material Approval Request — approved by the client before ordering.</figcaption></figure>
+
+  <h3>MR — Material Requisition</h3>
+  <p>The only way a site asks for materials. One MR per loading, all trades. Pick
+    items from the catalogue; enter what you need and what's physically on site,
+    and Planet calculates what to order. Reach Head Office at least seven working
+    days before the boat. PM approval is mandatory. A new requirement before
+    loading? Amend the same MR — don't raise a second one.</p>
+  <figure><img src="screenshots/09-mr-view-filled.png" alt="Material Requisition">
+    <figcaption>A Material Requisition — catalogue items, stock on site, quantity to order.</figcaption></figure>
+
+  <h3>GRN — Goods Received Note</h3>
+  <p>When the boat arrives, choose the manifest and every item loads
+    automatically with the shipped quantities. Count physically, enter what
+    actually arrived, and Planet calculates shortages and flags them red. Report
+    shortages or damage within 24 hours — Planet starts that clock and notifies
+    Head Office.</p>
+  <figure class="pdf"><img src="screenshots/pdf-grn-GRN-SJR-001.png" alt="GRN PDF">
+    <figcaption>A Goods Received Note — received quantities counted against the manifest.</figcaption></figure>
+
+  <h3>PYR — Payment Request</h3>
+  <p>For spending that isn't materials: boat hire, subcontractors, equipment
+    rental, permits, repairs. Attach the bill or quotation; if there isn't one,
+    say so and give the reason — above a set amount an attachment or a PM
+    override is required. Then it travels: you&nbsp;→&nbsp;your PM&nbsp;→&nbsp;HO
+    Director&nbsp;→&nbsp;a company signatory&nbsp;→&nbsp;Finance pays.</p>
+  <figure><img src="screenshots/10-pyr-view-filled.png" alt="Payment Request">
+    <figcaption>A paid Payment Request, showing every step from raise to disbursement.</figcaption></figure>
+</section>
+
+<!-- ======================= HO DOCUMENTS ======================= -->
+<section class="section" id="ho-documents">
+  <h2>Head Office documents</h2>
+
+  <h3>PR — Procurement Requisition</h3>
+  <p>Raised against MRs: vendors, quotations, terms, amounts. Every local
+    purchase is either cash or credit — never part-paid. On authorisation the
+    purchase order issues on company letterhead.</p>
+  <div class="fig-row">
+    <figure><img src="screenshots/21-pr-view-filled.png" alt="Procurement Requisition">
+      <figcaption>The PR — vendors and amounts against the MR.</figcaption></figure>
+    <figure class="pdf"><img src="screenshots/pdf-pr-PR-001.png" alt="Purchase Order PDF">
+      <figcaption>…and the Purchase Order it produces for the vendor.</figcaption></figure>
+  </div>
+
+  <h3>LM — Loading Manifest</h3>
+  <p>What's on the boat: vessel, destination, quantities loaded, quantities still
+    pending. Pending items go automatically into the Pending Items Log. The
+    destination site raises its GRN straight from this manifest.</p>
+  <figure><img src="screenshots/22-lm-view-filled.png" alt="Loading Manifest">
+    <figcaption>A Loading Manifest — loaded and pending quantities per item.</figcaption></figure>
+</section>
+
+<!-- ======================= CATALOGUE & REGISTERS ======================= -->
+<section class="section" id="catalogue">
+  <h2>The item catalogue &amp; registers</h2>
+  <p>One company-wide list of materials, each with a fixed description and unit.
+    Build an MR by searching the catalogue and picking items — no more "steel
+    pipe" on one form and "25mm SS316 pipe, 6m" on another. Need something not
+    listed? Type it as free text; it's flagged as a new item and you're never
+    blocked. Head Office reviews it and either matches it to something existing
+    or adds it properly. Because everyone uses the same item, one product can be
+    followed all the way through: requested, purchased, loaded, received.</p>
+  <figure><img src="screenshots/18-items-catalogue.png" alt="Item catalogue">
+    <figcaption>The company-wide item catalogue, owned by Head Office Purchasing.</figcaption></figure>
+
+  <h3>Registers</h3>
+  <p>Every document type has a register, and every register builds itself. Filter
+    by date or status; export any register to Excel or PDF. The DPR &amp; TWS
+    register lists every working day, so a day with no report shows as a visible
+    gap — Fridays are off by default and never flagged. Head Office holds master
+    registers across all sites, plus the Pending Items Log: every item that
+    missed a boat, why, and which boat it's going on next. It clears itself when
+    the item ships.</p>
+</section>
+
+<!-- ======================= PETTY CASH ======================= -->
+<section class="section" id="petty-cash">
+  <h2>Petty cash</h2>
+  <p>Each site holds a fixed float with a named custodian — the Site Admin.</p>
+  <p><strong>Recording spending.</strong> Date, amount, what it was for, which
+    cost head, and a photo of the receipt. No receipt? Say so and give the
+    reason. Anything above the per-transaction cap is blocked — that spending
+    goes through a PYR instead. The PM approves the entries in a batch, weekly or
+    at replenishment.</p>
+  <figure><img src="screenshots/11-petty-cash.png" alt="Petty cash">
+    <figcaption>The site's petty-cash float, its entries and running balance.</figcaption></figure>
+  <p><strong>Getting the money back.</strong> When the balance runs low, raise a
+    replenishment request. Planet fills in the amount and attaches the whole
+    expense schedule with receipts — you type nothing. It travels the normal PYR
+    route, and when Finance pays it the float restores itself and the cycle
+    closes. <strong>Counting.</strong> Once a month, count the cash and enter
+    what you counted; Planet compares it to what it thinks you should have and
+    records any difference with your explanation.</p>
+</section>
+
+<!-- ======================= TIMESHEETS & PAYROLL ======================= -->
+<section class="section" id="payroll">
+  <h2>Timesheets and payroll</h2>
+  <p><strong>Employees (HR / Payroll).</strong> Name, passport, nationality, job
+    category, basic pay, work permit and expiry. Basic pay and passport numbers
+    are visible only to HR and the Administrator — never to site staff.</p>
+  <p><strong>Daily attendance (Site Admin).</strong> One screen, the whole crew,
+    times pre-filled from the site's working hours. Change the exceptions, mark
+    absences and leave, enter overtime.</p>
+  <figure><img src="screenshots/08-attendance.png" alt="Attendance">
+    <figcaption>Daily attendance — the whole crew on one screen, times pre-filled.</figcaption></figure>
+  <p><strong>Overtime approval (PM).</strong> Overtime counts only once the PM
+    approves it; unapproved hours are visible but can never reach payroll.
+    <strong>Month close.</strong> The PM signs off and the site's timesheet
+    locks. When every site is locked, HR exports the payroll figures. A locked
+    month reopens only through HR, with a reason, recorded.</p>
+  <figure><img src="screenshots/33-payroll.png" alt="Payroll">
+    <figcaption>The payroll export — gross pay built from approved hours only.</figcaption></figure>
+</section>
+
+<!-- ======================= HOW A PAYMENT TRAVELS ======================= -->
+<section class="section" id="payment-travel">
+  <h2>Money: how a payment actually travels</h2>
+  <p>Worth understanding, because it explains why things wait where they wait.</p>
+  <ol class="steps">
+    <li>You raise a PR or PYR.</li>
+    <li>Your PM approves it (PYR only).</li>
+    <li>The Director approves it — this is commercial approval: <em>should we buy this?</em></li>
+    <li>A signatory — one of the two executive directors — authorises it. This is
+      the moment the money is committed to the project. Either director can do
+      it. They may also send it back for review, with a reason, and nothing is
+      committed.</li>
+    <li>Finance pays it and records the transfer or cheque reference. Finance
+      does not authorise; Finance disburses.</li>
+  </ol>
+  <div class="callout">The person approving spending is never the person
+    releasing it. A credit purchase is authorised now and paid later on terms —
+    it appears in Finance's payables until settled.</div>
+  <div class="fig-row">
+    <figure><img src="screenshots/26-payment-vouchers-queue.png" alt="Signatory queue">
+      <figcaption>The signatory's queue — each request whole on one screen: authorise, or return.</figcaption></figure>
+    <figure class="pdf"><img src="screenshots/pdf-pv-PV-001.png" alt="Payment Voucher PDF">
+      <figcaption>The authorised Payment Voucher that releases the requisitions.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ======================= PROJECTS & COST ======================= -->
+<section class="section" id="projects-cost">
+  <h2>Projects and cost</h2>
+  <p>A site in Planet is a project: created when the contract is awarded, closed
+    when the work is done. It holds scope, contract value, dates, client and
+    consultant contacts, and its assigned PM — and that assignment routes every
+    approval on that site. Projects run
+    Awarded&nbsp;→&nbsp;Active&nbsp;→&nbsp;On&nbsp;Hold&nbsp;→&nbsp;Closed.
+    Awarded lets you buy before the site opens; Closed stops new documents but
+    keeps everything readable forever.</p>
+  <figure><img src="screenshots/16-project-workspace.png" alt="Project workspace">
+    <figcaption>The project workspace — scope, programme and progress in one place.</figcaption></figure>
+
+  <h3>Cost tracking — three numbers, three meanings</h3>
+  <p>Every purchase, payment, petty-cash entry and month of staff cost flows into
+    the project automatically. You see three numbers, and they mean different
+    things:</p>
+  <ul>
+    <li><strong>Committed</strong> — authorised and binding, not yet paid.</li>
+    <li><strong>Incurred</strong> — what the project has actually consumed.
+      Materials count when they land on site, not when they're ordered.</li>
+    <li><strong>Paid</strong> — cash out of the company.</li>
+  </ul>
+  <p>Each cost carries a cost head — Materials, Labour &amp; Staff, Subcontract,
+    Plant &amp; Equipment, Transport &amp; Freight, Site Overheads, Permits &amp;
+    Fees, Other — so you can see where the money went, and click any figure to
+    reach the document behind it. The Projects page shows percentage of contract
+    consumed beside percentage of duration elapsed; if the first runs ahead of
+    the second, that project needs attention.</p>
+  <div class="fig-row">
+    <figure><img src="screenshots/25-project-cost.png" alt="Project cost control">
+      <figcaption>Committed / Incurred / Paid per project, with consumed-vs-elapsed.</figcaption></figure>
+    <figure><img src="screenshots/24-portfolio.png" alt="Portfolio">
+      <figcaption>The portfolio — every project's value, cost and whether it's on track.</figcaption></figure>
+  </div>
+  <div class="callout">Cost figures are confidential: Head Office, the
+    Administrator, Senior Management, and the project's own PM. Site users see no
+    cost data — only their own petty-cash balance and the payment requests they
+    raise.</div>
+  <figure class="pdf"><img src="screenshots/pdf-programme-POOLS17.png" alt="Programme PDF">
+    <figcaption>The project programme, issued to the client with the award.</figcaption></figure>
+</section>
+
+<!-- ======================= INTERNATIONAL (LATER PHASE) ======================= -->
+<section class="section" id="international">
+  <h2>International procurement <span style="font-weight:400;color:#8a97a1;font-size:11pt;">· later phase</span></h2>
+  <div class="later">
+    <p><b>Arriving in a later phase.</b> The screens below are described here so
+      the whole picture is in one place, but they are not yet part of Planet —
+      you will not find them in the app today.</p>
+  </div>
+  <p>Head Office manages all imports, but your project's requirement is tracked at
+    project level and appears on your dashboard.</p>
+  <ul>
+    <li><strong>PMR — Project Material Requirement.</strong> How a project asks
+      for imported material. Raised by the project team, reviewed by HO project
+      staff, sized by the Director — whose order quantity may be much larger than
+      you asked for, because suppliers impose minimum orders. Your share is
+      reserved to your project; the surplus becomes general company stock.</li>
+    <li><strong>IPR — International Purchase Requisition.</strong> The overseas
+      order. Becomes the purchase order once a signatory authorises it.</li>
+    <li><strong>IRN — Import Receipt Note.</strong> The count against the packing
+      list when a shipment clears customs in Malé.</li>
+    <li><strong>SIN — Store Issue Note.</strong> How goods leave the Head Office
+      store for a site.</li>
+  </ul>
+  <p>Then you watch it move on your own dashboard:
+    sized&nbsp;→&nbsp;ordered&nbsp;→&nbsp;advance&nbsp;paid&nbsp;→&nbsp;in&nbsp;production&nbsp;→&nbsp;shipped&nbsp;→&nbsp;arrived&nbsp;Malé&nbsp;→&nbsp;clearing&nbsp;→&nbsp;on&nbsp;manifest&nbsp;→&nbsp;received.
+    Imported goods only become project cost when they land on your site — valued
+    at their true landed cost, including freight, duty and clearing, not just the
+    invoice price.</p>
+</section>
+
+<!-- ======================= ON YOUR PHONE / SMALL THINGS ======================= -->
+<section class="section" id="phone">
+  <h2>On your phone, and small things worth knowing</h2>
+  <p>Planet is built for the site as much as the office. On a phone it stays
+    legible and one-handed: today's obligations first, the camera one tap away
+    for DPR photos, drafts held safely through a dropped signal.</p>
+  <div class="fig-row">
+    <figure class="mobile"><img src="screenshots/39-mobile-site-dashboard.png" alt="Mobile dashboard">
+      <figcaption>The site dashboard on a phone.</figcaption></figure>
+    <figure class="mobile"><img src="screenshots/40-mobile-dpr-view.png" alt="Mobile DPR">
+      <figcaption>A DPR reviewed from the field.</figcaption></figure>
+  </div>
+  <ul>
+    <li><strong>Notifications</strong> tell you when something needs you — a
+      document to approve, a boat coming, a shortage reported.</li>
+    <li><strong>Everything is recorded.</strong> Who created, approved, changed,
+      returned or voided anything, and exactly when. Nothing is deleted.</li>
+    <li><strong>Conventions.</strong> Dates are dd/mm/yy. Times are 24-hour.
+      Money is MVR unless a supplier is overseas.</li>
+  </ul>
+  <h3>If something goes wrong</h3>
+  <p>Wrong figures on an issued document? Don't fight it. Revise it (MAR, MR),
+    raise a new one linked to the old (IR), or ask your Administrator to void it
+    with a reason. The register will show exactly what happened — which is the
+    point. Questions go to your Administrator.</p>
+</section>
+
+</body>
+</html>

@@ -175,7 +175,8 @@ async function main() {
   await run(browser, "pm", async (page) => {
     console.log("[pm]");
     await login(page, "pm");
-    await step(page, "my-tasks-queue", async () => {});
+    // A single-site PM auto-opens their site, so click through to the queue.
+    await step(page, "my-tasks-queue", () => group(page, "My Tasks"));
     await step(page, "sites-list", () => group(page, "Sites"));
     await step(page, "pm-site-dashboard", () => openSite(page, "Soneva Jani"));
     await step(page, "project-workspace", () => clickButton(page, "Open project"));
