@@ -621,6 +621,8 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
         </p>
       )}
 
+      <ChargeCorrectionPanel doc={doc} refIpr={refIpr} onChanged={load}
+                             onError={setError} />
       <MilestonePanel doc={doc} me={me} refIpr={refIpr} onChanged={load}
                       onError={setError} />
       <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
@@ -628,6 +630,110 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
                       onOpenDoc={onOpenDoc}
                       isAdmin={me.role === "ADMIN"} />
     </section>
+  );
+}
+
+// Commercial-charge correction on an authorised order (owner 2026-08-10): the
+// PI's discount / freight / misc was entered wrong and the order is already
+// in flight (shipment booked, part paid). Purchasing proposes the corrected
+// charges with a reason; the Director approves, a signatory authorises — the
+// committed total, ledger and PO move while paid milestones stay untouched.
+function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
+  const o = doc.order;
+  const corr = doc.charge_correction;
+  const [open, setOpen] = useState(false);
+  const [f, setF] = useState({ discount: "", freight_handling: "",
+                               misc_fee: "", reason: "" });
+  if (!corr && !doc.can_correct) return null;
+
+  async function propose() {
+    onError(null);
+    try {
+      await api(`/ipr/${refIpr}/correct-charges`, { method: "POST", body: f });
+      setOpen(false); onChanged();
+    } catch (e) { onError(e.message); }
+  }
+  async function decide(action) {
+    let reason = "";
+    if (action === "reject") {
+      reason = window.prompt("Reason for rejecting the correction:") || "";
+      if (!reason) return;
+    }
+    onError(null);
+    try {
+      await api(`/ipr/${refIpr}/correct-charges/decide`,
+                { method: "POST", body: { action, reason } });
+      onChanged();
+    } catch (e) { onError(e.message); }
+  }
+
+  if (corr) {
+    const stage = corr.status === "PENDING_DIRECTOR"
+      ? "awaiting the Director" : "awaiting a Signatory";
+    return (
+      <div style={{ border: "1px solid #e0c66b", background: "#fdf8e7",
+                    borderRadius: 8, padding: "8px 12px", margin: "10px 0",
+                    fontSize: 13 }}>
+        <strong style={{ color: "#8a6d00" }}>
+          Charge correction {stage}</strong>{" — "}
+        discount {o.order_currency} {money(corr.discount || 0)} · freight{" "}
+        {o.order_currency} {money(corr.freight_handling || 0)} · misc{" "}
+        {o.order_currency} {money(corr.misc_fee || 0)}
+        <div style={{ color: "#5a6b78", marginTop: 2 }}>
+          {corr.reason} — {corr.created_by}</div>
+        {doc.can_decide_correction && (
+          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <button style={buttonStyle} onClick={() => decide("approve")}>
+              {corr.status === "PENDING_DIRECTOR"
+                ? "Approve correction" : "Authorise corrected total"}</button>
+            <button style={ghostButton} onClick={() => decide("reject")}>
+              Reject</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (!open) return (
+    <p style={{ margin: "8px 0", fontSize: 12.5 }}>
+      <button style={ghostButton}
+        onClick={() => { setF({ discount: o.discount ?? "",
+          freight_handling: o.freight_handling ?? "",
+          misc_fee: o.misc_fee ?? "", reason: "" }); setOpen(true); }}>
+        Correct charges…</button>
+      <span style={{ color: "#8a97a1", marginLeft: 8 }}>
+        wrong discount / freight / misc on an authorised order</span>
+    </p>
+  );
+  return (
+    <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
+                  padding: 10, margin: "10px 0" }}>
+      <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
+        Correct commercial charges</strong>
+      <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 8px" }}>
+        Routed to the Director, then a Signatory who authorises the new
+        committed total. Percent milestones rescale automatically.</p>
+      <div style={{ display: "grid",
+                    gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
+        {[["discount", "Discount"], ["freight_handling", "Freight / handling"],
+          ["misc_fee", "Miscellaneous fee"]].map(([k, label]) => (
+          <label key={k} style={{ fontSize: 11, color: "#5a6b78" }}>
+            {label} ({o.order_currency})
+            <input type="number" value={f[k]} placeholder="0"
+              style={inputStyle}
+              onChange={(e) => setF({ ...f, [k]: e.target.value })} />
+          </label>
+        ))}
+      </div>
+      <input placeholder="Reason (e.g. the PI includes freight)"
+        value={f.reason} style={{ ...inputStyle, width: "100%", marginTop: 8 }}
+        onChange={(e) => setF({ ...f, reason: e.target.value })} />
+      <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+        <button style={buttonStyle} onClick={propose}>
+          Submit for approval</button>
+        <button style={ghostButton} onClick={() => setOpen(false)}>
+          Cancel</button>
+      </div>
+    </div>
   );
 }
 

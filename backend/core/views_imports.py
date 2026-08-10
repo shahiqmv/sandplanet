@@ -256,6 +256,17 @@ def _serialize(doc, request):
         .select_related("document", "shipment")]
     data["can_pay"] = request.user.role in PAY_ROLES
     data["can_manage"] = request.user.role in CREATE_ROLES
+    corr = ipr_svc.pending_charge_correction(order)
+    data["charge_correction"] = ({
+        "id": corr.id, "status": corr.status, "reason": corr.reason,
+        "discount": corr.discount, "freight_handling": corr.freight_handling,
+        "misc_fee": corr.misc_fee,
+        "created_by": corr.created_by.get_full_name() or corr.created_by.username,
+    } if corr else None)
+    data["can_correct"] = (request.user.role in CREATE_ROLES
+                           and doc.status == "AUTHORISED")
+    data["can_decide_correction"] = request.user.role in (
+        "DIRECTOR", "QS", "SIGNATORY", "ADMIN")
     return data
 
 
@@ -802,6 +813,40 @@ def ipr_set_milestones(request, ref):
         return Response({"detail": "Head Office sets the payment schedule."},
                         status=403)
     msg = ipr_svc.set_milestones(doc.import_order, request.data.get("rows") or [])
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_correct_charges(request, ref):
+    """Purchasing proposes corrected commercial charges (discount / supplier
+    freight / misc fee) on an AUTHORISED order — routed to the Director, then
+    a Signatory, who applies the new committed total."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    if request.user.role not in CREATE_ROLES:
+        return Response({"detail": "Head Office proposes the correction."},
+                        status=403)
+    _, msg = ipr_svc.propose_charge_correction(doc, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_serialize(doc, request))
+
+
+@api_view(["POST"])
+def ipr_correct_charges_decide(request, ref):
+    """Director approves / Signatory authorises (applies) / either rejects the
+    pending charge correction. Body: {action: approve|reject, reason}."""
+    doc, err = _get_ipr(request, ref)
+    if err:
+        return err
+    action = request.data.get("action")
+    if action not in ("approve", "reject"):
+        return Response({"detail": "Unknown action."}, status=400)
+    msg = ipr_svc.decide_charge_correction(
+        doc, action, request.user, reason=request.data.get("reason") or "")
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(_serialize(doc, request))

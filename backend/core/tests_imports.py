@@ -7,7 +7,8 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from .models import (CostHead, CostPosting, Document, DocumentRevision,
-                     Project, SitePmHistory, Site, Supplier, User)
+                     ImportPaymentMilestone, Project, SitePmHistory, Site,
+                     Supplier, User)
 from .tests import make_user
 
 
@@ -369,6 +370,134 @@ class MilestonePaymentTests(IprBase):
         # total cash out reconciles to what Finance paid
         self.assertEqual(float(sum(p.amount for p in paid)), 4626.0)
 
+    def test_charge_correction_full_chain_on_part_paid_order(self):
+        """The PI included freight but the order was authorised without it and
+        the advance is already paid (owner 2026-08-10). Purchasing proposes the
+        corrected freight, the Director approves, a Signatory authorises —
+        the order total, committed ledger and PO all move to the real value
+        while the paid milestone stays untouched."""
+        from .vouchers import approve_voucher, create_voucher, submit_voucher
+        ref = self.create_and_authorise()   # 1000 USD @ 15 = 15000 MVR
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "percent": "30"},
+            {"label": "Balance", "trigger": "BALANCE", "percent": "70"},
+        ]}, format="json")
+        advance = next(m for m in r.data["milestones"]
+                       if m["label"] == "Advance")
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{advance['id']}/due",
+                         {}, format="json")
+        pv, err = create_voucher([], self.finance,
+                                 milestone_ids=[advance["id"]])
+        self.assertIsNone(err, err)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+        self.client.force_authenticate(self.finance)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/milestones/{advance['id']}/pay",
+            {"mvr_paid": "4500", "tt_ref": "TT-1"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.ho)
+
+        # a reason is required
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "80"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # purchasing proposes: the PI includes USD 80 freight
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "80",
+                              "reason": "PI includes freight"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["charge_correction"]["status"],
+                         "PENDING_DIRECTOR")
+        self.assertEqual(float(r.data["order_total"]), 1000.0)  # not yet
+
+        # a second proposal is refused while one is pending
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "90", "reason": "again"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+        # the signatory can't jump the Director's approval
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["charge_correction"]["status"],
+                         "PENDING_SIGNATORY")
+
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["charge_correction"])
+        self.assertEqual(float(r.data["order_total"]), 1080.0)
+        self.assertEqual(float(r.data["mvr_total"]), 16200.0)
+        # supplier_charges_freight now suppresses the forwarder-freight charge
+        self.assertTrue(r.data["supplier_charges_freight"])
+        # the balance milestone rescales to the corrected total (70% of 1080)
+        balance = next(m for m in r.data["milestones"]
+                       if m["label"] == "Balance")
+        self.assertEqual(float(balance["due_amount"]), 756.0)
+        # committed ledger now carries the real order value
+        posts = CostPosting.objects.filter(source="IPR", state="COMMITTED")
+        self.assertAlmostEqual(float(sum(p.amount for p in posts)),
+                               16200.0, places=1)
+        # the PO is revised with the corrected charges
+        po = Document.objects.filter(doc_type="PO").latest("id")
+        self.assertEqual(po.current_revision.rev_label, "R1")
+        self.assertEqual(float(po.current_revision.payload["freight"]), 80.0)
+        self.assertEqual(po.current_revision.lines.count(), 1)
+        # the paid advance is untouched
+        adv = ImportPaymentMilestone.objects.get(pk=advance["id"])
+        self.assertEqual(adv.status, "PAID")
+        self.assertEqual(float(adv.mvr_paid), 4500.0)
+
+    def test_charge_correction_guards(self):
+        """Only HO proposes; a correction below the settled amount, or one
+        that changes nothing, is refused; a rejection needs an approver."""
+        ref = self.create_and_authorise()   # total 1000, nothing paid yet
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "80", "reason": "x"},
+                             format="json")
+        self.assertEqual(r.status_code, 403)
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"reason": "no change"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Nothing changed", r.data["detail"])
+        # milestone vouchered → the corrected total must still cover it
+        self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Full", "trigger": "ADVANCE", "percent": "100"}]},
+            format="json")
+        m = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"discount": "900", "reason": "wrong"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("below what is already", r.data["detail"])
+        # a valid proposal can be rejected by the Director with a reason
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "80", "reason": "PI freight"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "reject", "reason": "not agreed"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["charge_correction"])
+        order = Document.objects.get(ref=ref).import_order
+        self.assertIsNone(order.freight_handling)   # untouched
+        self.assertEqual(order.charge_corrections.get().status, "REJECTED")
+
     def test_milestone_voucher_does_not_hide_other_awaiting(self):
         """Regression: a milestone voucher line has a null source_document —
         it must not poison awaiting_voucher()'s exclude() (which wiped every
@@ -564,6 +693,35 @@ class ShipmentTests(IprBase):
                               "local_transport": "200"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(float(r.data["shipments"][0]["clearing_total"]), 3000.0)
+
+    def test_update_can_remove_forwarder(self):
+        """Blank forwarder on the edit form clears it (the supplier ships on
+        their own PI) — it must not 500 on the empty-string id."""
+        fwd = Supplier.objects.create(name="SeaTranz Maldives")
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                             {"mode": "SEA", "forwarder_id": fwd.id,
+                              "container_awb": "MSCU1234566"}, format="json")
+        sid = r.data["shipments"][0]["id"]
+        self.assertEqual(r.data["shipments"][0]["forwarder"], fwd.id)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/update",
+                             {"forwarder_id": ""}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["shipments"][0]["forwarder"])
+
+    def test_charge_payment_accepts_blank_payee(self):
+        """Saving a shipment charge with no payee chosen yet keeps the row
+        payee-less instead of crashing on the empty-string id."""
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                             format="json")
+        sid = r.data["shipments"][0]["id"]
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/payments/DO",
+                             {"payee_id": "", "amount": "500"},
+                             format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
 
     def test_only_ho_manages_shipments(self):
         ref = self.create_and_authorise()

@@ -665,7 +665,18 @@
       "Bash(.venv/bin/python manage.py test)",
       "Bash(.venv/bin/pip show *)",
       "Bash(.venv/bin/python manage.py test core.tests_procurement_client)",
-      "Bash(git -C /Users/ahmedshahiq/dev/siteapp diff)"
+      "Bash(git -C /Users/ahmedshahiq/dev/siteapp diff)",
+      "Bash(.venv/bin/python manage.py shell -c ' *)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports.ShipmentTests.test_charge_payment_accepts_blank_payee)",
+      "Bash(.venv/bin/python manage.py makemigrations core)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests.test_charge_correction_full_chain_on_part_paid_order core.tests_imports.MilestonePaymentTests.test_charge_correction_guards)",
+      "Bash(.venv/bin/python -m ruff check core/imports.py core/views_imports.py core/views_documents.py core/models.py core/urls.py core/tests_imports.py)",
+      "Bash(.venv/bin/python -m ruff --version)",
+      "Bash(.venv/bin/python -m ruff check core/imports.py)",
+      "Bash(.venv/bin/python -m ruff check core)",
+      "Bash(.venv/bin/python manage.py migrate)"
     ]
   }
 }

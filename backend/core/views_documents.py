@@ -753,6 +753,22 @@ def pending_groups(user):
         add("To award — submitted import orders (IPR)",
             rows(base.filter(doc_type="IPR", status="SUBMITTED"),
                  "Award the overseas order (Director / QS)"))
+    from .models import ImportChargeCorrection
+
+    def correction_rows(status):
+        return [{"ref": c.order.document.ref, "doc_type": "IPR",
+                 "site_code": c.order.document.site.code, "project_code": None,
+                 "doc_date": c.order.document.doc_date,
+                 "status": c.order.document.status,
+                 "hint": f"Charge correction: {c.reason}"[:120]}
+                for c in ImportChargeCorrection.objects.filter(status=status)
+                .select_related("order__document__site")[:50]]
+    if user.role in ("DIRECTOR", "QS", "ADMIN"):
+        add("To approve — import order charge corrections",
+            correction_rows("PENDING_DIRECTOR"))
+    if user.role in ("SIGNATORY", "ADMIN"):
+        add("To authorise — import order charge corrections",
+            correction_rows("PENDING_SIGNATORY"))
     if user.role in ("SIGNATORY", "ADMIN"):
         # Signatory approves whole Payment Vouchers (M6d), not each doc
         add("To approve — payment vouchers",

@@ -1311,6 +1311,50 @@ class ShipmentPayment(models.Model):
         return self.payee.name if self.payee_id else self.payee_name
 
 
+class ImportChargeCorrection(models.Model):
+    """A proposed correction of an AUTHORISED order's commercial charges
+    (discount / supplier freight / misc fee) — e.g. the PI included freight
+    but the order was authorised without it (owner 2026-08-10). Purchasing
+    proposes with a reason, the Director approves, a Signatory authorises;
+    applying updates the order, posts the COMMITTED delta and revises the PO
+    while shipments and paid milestones stay untouched."""
+
+    class Status(models.TextChoices):
+        PENDING_DIRECTOR = "PENDING_DIRECTOR", "Awaiting Director"
+        PENDING_SIGNATORY = "PENDING_SIGNATORY", "Awaiting Signatory"
+        APPLIED = "APPLIED", "Applied"
+        REJECTED = "REJECTED", "Rejected"
+
+    order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
+                              related_name="charge_corrections")
+    # the proposed values (order currency) — each replaces its field outright
+    discount = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                                   blank=True)
+    freight_handling = models.DecimalField(max_digits=14, decimal_places=2,
+                                           null=True, blank=True)
+    misc_fee = models.DecimalField(max_digits=14, decimal_places=2, null=True,
+                                   blank=True)
+    reason = models.TextField()
+    status = models.CharField(max_length=17, choices=Status.choices,
+                              default=Status.PENDING_DIRECTOR)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    director_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    director_at = models.DateTimeField(null=True, blank=True)
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    reject_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Charge correction on order {self.order_id} ({self.status})"
+
+
 def shipment_doc_path(instance, filename):
     return (f"import-docs/{instance.shipment.order.document.ref}/"
             f"{instance.doc_type}-{filename}")

@@ -226,8 +226,8 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
         unit_mvr = (line.unit_price or ZERO) * rate * net_factor
         for alloc in line.allocations.select_related("project__site"):
             amount = (alloc.qty * unit_mvr * fraction).quantize(Decimal("0.01"))
-            if amount <= ZERO:
-                continue
+            if not amount:   # charge corrections pass a signed fraction —
+                continue     # negative rows are §4A mirrors, only zero skips
             if alloc.project_id:
                 costing.post(site=alloc.project.site, cost_head=line.cost_head,
                              state=state, source="IPR", amount=amount,
@@ -348,6 +348,152 @@ def reverse_ipr_authorisation(doc, actor):
         link.delete()
     audit("document", doc.id, "IPR_AUTH_WITHDRAWN", actor=actor,
           detail={"ref": doc.ref})
+
+
+# ---- commercial-charge correction on an authorised order ---------------------
+# The full withdraw path (above) needs the order untouched downstream; once a
+# shipment is booked or a milestone paid, a wrong discount/freight/misc fee can
+# only be fixed forward. Purchasing proposes the corrected charges with a
+# reason, the Director approves, a Signatory authorises — the same chain that
+# authorised the original total (owner 2026-08-10).
+
+CORRECTION_FIELDS = ("discount", "freight_handling", "misc_fee")
+
+
+def pending_charge_correction(order):
+    return order.charge_corrections.filter(
+        status__in=("PENDING_DIRECTOR", "PENDING_SIGNATORY")).first()
+
+
+def propose_charge_correction(doc, data, actor):
+    from .models import ImportChargeCorrection
+    order = doc.import_order
+    if doc.status != "AUTHORISED":
+        return None, ("Only an authorised order needs a correction — a draft "
+                      "is edited directly.")
+    if pending_charge_correction(order):
+        return None, "A correction is already awaiting approval."
+    reason = (data.get("reason") or "").strip()
+    if not reason:
+        return None, ("Give the reason for the correction (e.g. the PI "
+                      "includes freight)."   )
+    new = {f: (_dec(data.get(f)) if data.get(f) not in (None, "") else None)
+           for f in CORRECTION_FIELDS}
+    if all((new[f] or ZERO) == (getattr(order, f) or ZERO)
+           for f in CORRECTION_FIELDS):
+        return None, "Nothing changed — the charges are already these values."
+    new_total = (ipr_line_subtotal(order) - (new["discount"] or ZERO)
+                 + (new["freight_handling"] or ZERO)
+                 + (new["misc_fee"] or ZERO))
+    if new_total <= ZERO:
+        return None, "The corrected charges wipe out the order value."
+    # what the paid / vouchered milestones were worth at the total they were
+    # raised against — the corrected total must still cover it
+    old_total = ipr_order_total(order)
+    settled = sum((m.due_amount(old_total) for m in
+                   order.milestones.exclude(status="PENDING")), ZERO)
+    if new_total < settled:
+        return None, (f"The corrected total ({new_total}) is below what is "
+                      f"already vouchered or paid ({settled}).")
+    corr = ImportChargeCorrection.objects.create(
+        order=order, reason=reason, created_by=actor, **new)
+    audit("document", doc.id, "IPR_CORRECTION_PROPOSED", actor=actor,
+          detail={"ref": doc.ref, "reason": reason,
+                  **{f: str(new[f] or 0) for f in CORRECTION_FIELDS}})
+    return corr, None
+
+
+def decide_charge_correction(doc, action, actor, reason=""):
+    """Advance or reject the pending correction. Director approves first,
+    then a Signatory authorises (which applies it); either can reject."""
+    from django.utils import timezone
+    order = doc.import_order
+    corr = pending_charge_correction(order)
+    if not corr:
+        return "No correction is awaiting approval."
+    if action == "reject":
+        if actor.role not in ("DIRECTOR", "QS", "SIGNATORY", "ADMIN"):
+            return "Only the approvers can reject a correction."
+        corr.status = "REJECTED"
+        corr.reject_reason = reason or ""
+        corr.decided_by, corr.decided_at = actor, timezone.now()
+        corr.save(update_fields=["status", "reject_reason", "decided_by",
+                                 "decided_at"])
+        audit("document", doc.id, "IPR_CORRECTION_REJECTED", actor=actor,
+              detail={"ref": doc.ref, "reason": reason})
+        return None
+    if corr.status == "PENDING_DIRECTOR":
+        # QS shares the Director's overseas-procurement authority
+        if actor.role not in ("DIRECTOR", "QS", "ADMIN"):
+            return "The Director approves the correction first."
+        corr.status = "PENDING_SIGNATORY"
+        corr.director_by, corr.director_at = actor, timezone.now()
+        corr.save(update_fields=["status", "director_by", "director_at"])
+        audit("document", doc.id, "IPR_CORRECTION_APPROVED", actor=actor,
+              detail={"ref": doc.ref})
+        return None
+    if actor.role not in ("SIGNATORY", "ADMIN"):
+        return "A signatory authorises the corrected total."
+    with transaction.atomic():
+        _apply_charge_correction(doc, corr, actor)
+    return None
+
+
+def _apply_charge_correction(doc, corr, actor):
+    """Write the corrected charges and post the COMMITTED delta so the ledger
+    carries the real order value; revise the PO so the supplier-facing total
+    matches. Negative deltas post as negative mirrors (§4A convention)."""
+    from django.utils import timezone
+    order = corr.order
+    old_total = ipr_order_total(order)
+    for f in CORRECTION_FIELDS:
+        setattr(order, f, getattr(corr, f))
+    order.save(update_fields=list(CORRECTION_FIELDS))
+    new_total = ipr_order_total(order)
+    if new_total:
+        delta_fraction = (new_total - old_total) / new_total
+        if delta_fraction:
+            _post_split(order, doc, "COMMITTED", delta_fraction,
+                        order.exchange_rate, actor)
+    _revise_po_charges(doc, order, actor)
+    corr.status = "APPLIED"
+    corr.decided_by, corr.decided_at = actor, timezone.now()
+    corr.save(update_fields=["status", "decided_by", "decided_at"])
+    audit("document", doc.id, "IPR_CORRECTION_APPLIED", actor=actor,
+          detail={"ref": doc.ref, "old_total": str(old_total),
+                  "new_total": str(new_total)})
+
+
+def _revise_po_charges(doc, order, actor):
+    """New PO revision carrying the corrected order-level charges — the lines
+    are unchanged; only the charge block (and so the PO total) moves."""
+    from .models import DocumentLine, DocumentRevision
+    link = doc.links_from.filter(link_type="IPR_PO").select_related(
+        "to_document").first()
+    if not link or link.to_document.is_void:
+        return
+    po = link.to_document
+    old = po.current_revision
+    payload = dict(old.payload or {})
+    payload.update({"discount": str(order.discount or 0),
+                    "freight": str(order.freight_handling or 0),
+                    "misc_fee": str(order.misc_fee or 0)})
+    old.is_current = False
+    old.save(update_fields=["is_current"])
+    revision = DocumentRevision.objects.create(
+        document=po, rev_label=f"R{int(old.rev_label[1:]) + 1}",
+        payload=payload, created_by=actor)
+    for line in old.lines.all():
+        DocumentLine.objects.create(
+            revision=revision, line_no=line.line_no, item=line.item,
+            free_text_desc=line.free_text_desc, unit=line.unit,
+            spec=line.spec, qty_required=line.qty_required, rate=line.rate,
+            amount=line.amount, remarks=line.remarks)
+    po.current_revision = revision
+    po.save(update_fields=["current_revision", "updated_at"])
+    audit("document", po.id, "PO_CHARGES_CORRECTED", actor=actor,
+          detail={"ref": po.ref, "rev": revision.rev_label,
+                  "ipr": doc.ref})
 
 
 def set_milestones(order, rows):
@@ -645,8 +791,10 @@ def update_shipment_details(shipment, data, actor):
     if err:
         return err
     if "forwarder_id" in data:
-        shipment.forwarder = Supplier.objects.filter(
+        # blank = remove the forwarder (supplier ships on their own PI)
+        shipment.forwarder = (Supplier.objects.filter(
             pk=data["forwarder_id"]).first()
+            if data.get("forwarder_id") else None)
     shipment.mode = mode
     for f in ("forwarder_name", "vessel_flight", "carrier_scac", "bl_no",
               "container_awb", "tracking_ref"):
@@ -708,7 +856,9 @@ def set_shipment_payment(shipment, kind, data, actor):
     if payment.pyr_id:
         return None, "This charge already has a PYR — it can't be edited."
     if "payee_id" in data:
-        payment.payee = Supplier.objects.filter(pk=data.get("payee_id")).first()
+        payment.payee = (Supplier.objects.filter(
+            pk=data["payee_id"]).first()
+            if data.get("payee_id") else None)
     if "payee_name" in data:
         payment.payee_name = data.get("payee_name") or ""
     if "amount" in data:
