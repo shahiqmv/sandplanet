@@ -498,6 +498,108 @@ class MilestonePaymentTests(IprBase):
         self.assertIsNone(order.freight_handling)   # untouched
         self.assertEqual(order.charge_corrections.get().status, "REJECTED")
 
+    def test_fold_freight_line_into_supplier_freight(self):
+        """The user typed the PI's freight as an order LINE (owner 2026-08-10:
+        the real stuck order). Folding it via a charge correction zeroes the
+        line, pulls it off the shipment manifest, moves its value into
+        freight_handling and reconciles the committed ledger — total unchanged,
+        paid advance untouched."""
+        from .models import ImportShipmentLine
+        self.client.force_authenticate(self.ho)
+        body = self.order_body()          # goods 10 × 100 = 1000
+        body["lines"].append({
+            "free_text_desc": "Sea Freight", "unit": "item", "order_qty": 1,
+            "unit_price": "80", "cost_head_id": self.head.id,
+            "allocations": [{"qty": 1}]})   # general stock
+        ref = self.client.post("/api/v1/ipr", body,
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        self.client.force_authenticate(self.ho)
+        doc = self.client.get(f"/api/v1/ipr/{ref}").data
+        self.assertEqual(float(doc["order_total"]), 1080.0)
+        goods, freight = doc["order"]["lines"]
+        # a whole-order shipment carries both lines
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                             format="json")
+        sid = r.data["shipments"][0]["id"]
+        self.assertEqual(ImportShipmentLine.objects.filter(
+            shipment_id=sid).count(), 2)
+
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/correct-charges",
+            {"freight_handling": "80", "fold_line_ids": [freight["id"]],
+             "reason": "PI freight was typed as a line item"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual([l["description"] for l in
+                          r.data["charge_correction"]["fold_lines"]],
+                         ["Sea Freight"])
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                         {"action": "approve"}, format="json")
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        # total unchanged, but freight now rides the charge field
+        self.assertEqual(float(r.data["line_subtotal"]), 1000.0)
+        self.assertEqual(float(r.data["order_total"]), 1080.0)
+        self.assertTrue(r.data["supplier_charges_freight"])
+        folded = next(l for l in r.data["order"]["lines"]
+                      if l["description"] == "Sea Freight")
+        self.assertEqual(float(folded["order_qty"]), 0.0)
+        # off the manifest; the goods line still ships
+        self.assertEqual(ImportShipmentLine.objects.filter(
+            shipment_id=sid).count(), 1)
+        # ledger reconciles to the corrected MVR total (1080 * 15)
+        posts = CostPosting.objects.filter(document__ref=ref,
+                                           state="COMMITTED")
+        self.assertAlmostEqual(float(sum(p.amount for p in posts)),
+                               16200.0, places=1)
+        # the folded line's committed value was mirrored, never deleted
+        self.assertTrue(posts.filter(amount__lt=0,
+                                     reversal_of__isnull=False).exists())
+
+    def test_fold_blocked_after_receipt(self):
+        """Once an IRN has counted the line into stock the fold is refused."""
+        self.client.force_authenticate(self.ho)
+        body = self.order_body()
+        body["lines"].append({
+            "free_text_desc": "Sea Freight", "unit": "item", "order_qty": 1,
+            "unit_price": "80", "cost_head_id": self.head.id,
+            "allocations": [{"qty": 1}]})
+        ref = self.client.post("/api/v1/ipr", body,
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        self.client.force_authenticate(self.ho)
+        doc = self.client.get(f"/api/v1/ipr/{ref}").data
+        freight = doc["order"]["lines"][1]
+        sid = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                               {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {"location": ""}, format="json").data["ref"]
+        self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/correct-charges",
+            {"freight_handling": "80", "fold_line_ids": [freight["id"]],
+             "reason": "typed as line"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("received on an IRN", r.data["detail"])
+
     def test_milestone_voucher_does_not_hide_other_awaiting(self):
         """Regression: a milestone voucher line has a null source_document —
         it must not poison awaiting_voucher()'s exclude() (which wiped every

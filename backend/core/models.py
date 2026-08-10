@@ -1334,6 +1334,12 @@ class ImportChargeCorrection(models.Model):
                                            null=True, blank=True)
     misc_fee = models.DecimalField(max_digits=14, decimal_places=2, null=True,
                                    blank=True)
+    # Order lines that were really supplier freight typed as items (a common
+    # entry mistake). Applying folds each into freight_handling: the line is
+    # zeroed (never deleted — COMMITTED postings PROTECT it), its shipment
+    # manifest rows are removed, and its ledger value respreads across the
+    # goods lines. Blocked once the line is on a received IRN.
+    fold_line_ids = models.JSONField(default=list, blank=True)
     reason = models.TextField()
     status = models.CharField(max_length=17, choices=Status.choices,
                               default=Status.PENDING_DIRECTOR)

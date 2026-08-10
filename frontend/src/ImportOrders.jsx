@@ -644,14 +644,26 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
   const [open, setOpen] = useState(false);
   const [f, setF] = useState({ discount: "", freight_handling: "",
                                misc_fee: "", reason: "" });
+  const [foldIds, setFoldIds] = useState([]);
   if (!corr && !doc.can_correct) return null;
 
   async function propose() {
     onError(null);
     try {
-      await api(`/ipr/${refIpr}/correct-charges`, { method: "POST", body: f });
+      await api(`/ipr/${refIpr}/correct-charges`,
+                { method: "POST", body: { ...f, fold_line_ids: foldIds } });
       setOpen(false); onChanged();
     } catch (e) { onError(e.message); }
+  }
+  function toggleFold(line) {
+    const on = foldIds.includes(line.id);
+    setFoldIds(on ? foldIds.filter((i) => i !== line.id)
+                  : [...foldIds, line.id]);
+    // seed the freight box with the folded value so the usual case (freight
+    // typed as a line, amount right) is one click; still editable
+    const delta = Number(line.line_value) || 0;
+    const cur = Number(f.freight_handling) || 0;
+    setF({ ...f, freight_handling: String(on ? cur - delta : cur + delta) });
   }
   async function decide(action) {
     let reason = "";
@@ -679,6 +691,11 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
         discount {o.order_currency} {money(corr.discount || 0)} · freight{" "}
         {o.order_currency} {money(corr.freight_handling || 0)} · misc{" "}
         {o.order_currency} {money(corr.misc_fee || 0)}
+        {corr.fold_lines?.length > 0 && (
+          <div style={{ color: "#8a6d00", marginTop: 2 }}>
+            Folds into supplier freight:{" "}
+            {corr.fold_lines.map((l) => l.description).join(" · ")}</div>
+        )}
         <div style={{ color: "#5a6b78", marginTop: 2 }}>
           {corr.reason} — {corr.created_by}</div>
         {doc.can_decide_correction && (
@@ -724,6 +741,22 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
           </label>
         ))}
       </div>
+      {o.lines.filter((l) => Number(l.line_value) > 0).length > 1 && (
+        <div style={{ marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: "#5a6b78" }}>
+            Freight typed as a line item? Tick it to fold its value into
+            supplier freight — the line is zeroed and comes off the shipment
+            manifest:</div>
+          {o.lines.filter((l) => Number(l.line_value) > 0).map((l) => (
+            <label key={l.id} style={{ display: "block", fontSize: 12.5,
+                                       marginTop: 3, cursor: "pointer" }}>
+              <input type="checkbox" checked={foldIds.includes(l.id)}
+                     onChange={() => toggleFold(l)} />{" "}
+              {l.description} — {o.order_currency} {money(l.line_value)}
+            </label>
+          ))}
+        </div>
+      )}
       <input placeholder="Reason (e.g. the PI includes freight)"
         value={f.reason} style={{ ...inputStyle, width: "100%", marginTop: 8 }}
         onChange={(e) => setF({ ...f, reason: e.target.value })} />

@@ -379,10 +379,17 @@ def propose_charge_correction(doc, data, actor):
                       "includes freight)."   )
     new = {f: (_dec(data.get(f)) if data.get(f) not in (None, "") else None)
            for f in CORRECTION_FIELDS}
-    if all((new[f] or ZERO) == (getattr(order, f) or ZERO)
-           for f in CORRECTION_FIELDS):
+    fold_ids, fold_err = _validate_fold_lines(order, data.get("fold_line_ids"))
+    if fold_err:
+        return None, fold_err
+    if not fold_ids and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
+                            for f in CORRECTION_FIELDS):
         return None, "Nothing changed — the charges are already these values."
-    new_total = (ipr_line_subtotal(order) - (new["discount"] or ZERO)
+    subtotal_after = sum((ln.line_value for ln in order.lines.all()
+                          if ln.id not in fold_ids), ZERO)
+    if subtotal_after <= ZERO:
+        return None, "Folding every line would leave no goods on the order."
+    new_total = (subtotal_after - (new["discount"] or ZERO)
                  + (new["freight_handling"] or ZERO)
                  + (new["misc_fee"] or ZERO))
     if new_total <= ZERO:
@@ -396,11 +403,37 @@ def propose_charge_correction(doc, data, actor):
         return None, (f"The corrected total ({new_total}) is below what is "
                       f"already vouchered or paid ({settled}).")
     corr = ImportChargeCorrection.objects.create(
-        order=order, reason=reason, created_by=actor, **new)
+        order=order, reason=reason, created_by=actor,
+        fold_line_ids=sorted(fold_ids), **new)
     audit("document", doc.id, "IPR_CORRECTION_PROPOSED", actor=actor,
           detail={"ref": doc.ref, "reason": reason,
+                  "fold_lines": sorted(fold_ids),
                   **{f: str(new[f] or 0) for f in CORRECTION_FIELDS}})
     return corr, None
+
+
+def _validate_fold_lines(order, ids):
+    """Lines proposed to fold into supplier freight: must be live lines of
+    this order and not already counted into stock by an IRN."""
+    from .models import ImportReceiptLine
+    if not ids:
+        return set(), None
+    try:
+        fold_ids = {int(i) for i in ids}
+    except (TypeError, ValueError):
+        return None, "Bad fold_line_ids."
+    lines = {ln.id: ln for ln in order.lines.all()}
+    for i in fold_ids:
+        ln = lines.get(i)
+        if not ln:
+            return None, "A folded line does not belong to this order."
+        if not ln.line_value:
+            return None, (f"Line {ln.line_no} has no value — it is already "
+                          f"folded or empty.")
+        if ImportReceiptLine.objects.filter(ipr_line=ln).exists():
+            return None, (f"Line {ln.line_no} has been received on an IRN — "
+                          f"it can no longer be folded into freight.")
+    return fold_ids, None
 
 
 def decide_charge_correction(doc, action, actor, reason=""):
@@ -434,34 +467,60 @@ def decide_charge_correction(doc, action, actor, reason=""):
         return None
     if actor.role not in ("SIGNATORY", "ADMIN"):
         return "A signatory authorises the corrected total."
-    with transaction.atomic():
-        _apply_charge_correction(doc, corr, actor)
+    try:
+        with transaction.atomic():
+            _apply_charge_correction(doc, corr, actor)
+    except ValueError as e:
+        return str(e)
     return None
 
 
 def _apply_charge_correction(doc, corr, actor):
-    """Write the corrected charges and post the COMMITTED delta so the ledger
-    carries the real order value; revise the PO so the supplier-facing total
-    matches. Negative deltas post as negative mirrors (§4A convention)."""
+    """Write the corrected charges, fold any freight-typed lines, then
+    reconcile the COMMITTED ledger to the corrected total; revise the PO so
+    the supplier-facing total matches. All ledger moves are append-only —
+    negative rows are §4A mirrors, never deletes."""
     from django.utils import timezone
+    from .models import CostPosting, ImportReceiptLine, ImportShipmentLine
     order = corr.order
     old_total = ipr_order_total(order)
+    for line in order.lines.filter(id__in=corr.fold_line_ids or []):
+        # re-check receipt inside the transaction; the IRN may have landed
+        # between propose and authorise
+        if ImportReceiptLine.objects.filter(ipr_line=line).exists():
+            raise ValueError(f"Line {line.line_no} has been received on an "
+                             f"IRN — the correction can no longer be applied.")
+        ImportShipmentLine.objects.filter(ipr_line=line).delete()
+        for p in CostPosting.objects.filter(
+                document=doc, ipr_line=line, state="COMMITTED",
+                reversal_of__isnull=True):
+            costing.post(site=p.site, cost_head=p.cost_head, state="COMMITTED",
+                         source="IPR", amount=-p.amount, document=doc,
+                         ipr_line=line, is_stock_pool=p.is_stock_pool,
+                         reversal_of=p, actor=actor)
+        line.allocations.all().delete()
+        line.order_qty = ZERO
+        line.save(update_fields=["order_qty"])
     for f in CORRECTION_FIELDS:
         setattr(order, f, getattr(corr, f))
     order.save(update_fields=list(CORRECTION_FIELDS))
-    new_total = ipr_order_total(order)
-    if new_total:
-        delta_fraction = (new_total - old_total) / new_total
-        if delta_fraction:
-            _post_split(order, doc, "COMMITTED", delta_fraction,
-                        order.exchange_rate, actor)
+    # Reconcile: whatever history got the ledger here (original commitment,
+    # earlier deltas, the mirrors above), one spread brings the committed sum
+    # to exactly the corrected MVR total.
+    target = ipr_mvr_total(order)
+    posted = sum((p.amount for p in CostPosting.objects.filter(
+        document=doc, state="COMMITTED")), ZERO)
+    if target and target != posted:
+        _post_split(order, doc, "COMMITTED", (target - posted) / target,
+                    order.exchange_rate, actor)
     _revise_po_charges(doc, order, actor)
     corr.status = "APPLIED"
     corr.decided_by, corr.decided_at = actor, timezone.now()
     corr.save(update_fields=["status", "decided_by", "decided_at"])
     audit("document", doc.id, "IPR_CORRECTION_APPLIED", actor=actor,
           detail={"ref": doc.ref, "old_total": str(old_total),
-                  "new_total": str(new_total)})
+                  "new_total": str(ipr_order_total(order)),
+                  "folded_lines": corr.fold_line_ids or []})
 
 
 def _revise_po_charges(doc, order, actor):

@@ -676,7 +676,22 @@
       "Bash(.venv/bin/python -m ruff --version)",
       "Bash(.venv/bin/python -m ruff check core/imports.py)",
       "Bash(.venv/bin/python -m ruff check core)",
-      "Bash(.venv/bin/python manage.py migrate)"
+      "Bash(.venv/bin/python manage.py migrate)",
+      "Bash(gh auth *)",
+      "Read(//Users/ahmedshahiq/.ssh/**)",
+      "Bash(ssh -T git@github.com -o BatchMode=yes -o ConnectTimeout=5)",
+      "Bash(ssh-keyscan -t ed25519,rsa,ecdsa github.com)",
+      "Bash(brew install *)",
+      "Bash(pkill -f \"gh auth login\")",
+      "Bash(rm -f /tmp/gh-login.log)",
+      "Bash(expect /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/gh-login.exp)",
+      "Bash(pkill -f gh-login.exp)",
+      "Bash(grep -a -viE \"^\\\\s*$\")",
+      "Bash(open \"https://github.com/login/device\")",
+      "Bash(sh /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/finish-auth.sh)",
+      "Bash(git -C /Users/ahmedshahiq/dev/siteapp status -sb)",
+      "Bash(rm -f /tmp/gh-login.log /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/gh-login.exp /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/finish-auth.sh)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests.test_fold_freight_line_into_supplier_freight core.tests_imports.MilestonePaymentTests.test_fold_blocked_after_receipt)"
     ]
   }
 }
