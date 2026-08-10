@@ -163,7 +163,7 @@ class BundleVariantsTests(ProcurementClientTests):
         ScheduleLine.objects.filter(schedule__document_id=pk).update(
             planned_supplier="S-LON")
         sched = ProcurementSchedule.objects.get(document_id=pk)
-        wb = pe.build_client_xlsx_from_plan(pc.client_plan(sched))
+        wb = pe.build_client_xlsx_from_plan(pc.client_plan(sched), expand=True)
         buf = io.BytesIO()
         wb.save(buf)
         text = " ".join(

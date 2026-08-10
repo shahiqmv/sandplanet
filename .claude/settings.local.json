@@ -651,7 +651,21 @@
       "Bash(.venv/Scripts/python.exe manage.py test core.tests_onboarding)",
       "Bash(.venv/Scripts/python.exe -m ruff check core/onboarding.py core/views_onboarding.py core/urls.py core/tests_onboarding.py)",
       "Bash(.venv/Scripts/python.exe -m ruff check core/onboarding.py core/tests_onboarding.py)",
-      "Bash(.venv/Scripts/python.exe -m ruff check core)"
+      "Bash(.venv/Scripts/python.exe -m ruff check core)",
+      "Bash(git -C /Users/ahmedshahiq/dev/siteapp status)",
+      "Bash(git -C /Users/ahmedshahiq/dev/siteapp log --oneline -3)",
+      "Bash(sw_vers)",
+      "Bash(xcode-select -p)",
+      "Bash(brew --version)",
+      "Bash(.venv/bin/python --version)",
+      "Bash(.venv/bin/python -c \"import django; print\\('Django', django.get_version\\(\\)\\)\")",
+      "Bash(.venv/bin/python manage.py check)",
+      "Bash(.venv/bin/python manage.py migrate --check)",
+      "Bash(.venv/bin/python manage.py test --parallel)",
+      "Bash(.venv/bin/python manage.py test)",
+      "Bash(.venv/bin/pip show *)",
+      "Bash(.venv/bin/python manage.py test core.tests_procurement_client)",
+      "Bash(git -C /Users/ahmedshahiq/dev/siteapp diff)"
     ]
   }
 }

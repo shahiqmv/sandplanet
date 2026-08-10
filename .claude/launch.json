@@ -3,14 +3,14 @@
   "configurations": [
     {
       "name": "backend",
-      "runtimeExecutable": "backend\\.venv\\Scripts\\python.exe",
-      "runtimeArgs": ["backend\\manage.py", "runserver", "127.0.0.1:8000"],
+      "runtimeExecutable": "backend/.venv/bin/python",
+      "runtimeArgs": ["backend/manage.py", "runserver", "127.0.0.1:8000"],
       "port": 8000
     },
     {
       "name": "frontend",
-      "runtimeExecutable": "scripts\\dev-frontend.cmd",
-      "runtimeArgs": [],
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "frontend", "run", "dev"],
       "port": 5173
     }
   ]
