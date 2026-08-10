@@ -68,6 +68,11 @@ def _boq_payload(project):
             "id": c.id, "ref": c.ref, "name": c.name, "unit": c.unit,
             "qty": c.qty, "is_lump": c.is_lump,
             "per_unit_total": c.per_unit_total, "line_total": c.line_total,
+            # Split-certified categories (material vs workmanship claimed
+            # independently) carry the two per-unit contract rates.
+            "unit_amount_supply": c.unit_amount_supply,
+            "unit_amount_install": c.unit_amount_install,
+            "is_split": c.has_split_rates,
             # The captured works' sum — shown against the contract rate so the
             # QS can see where a bill's detail doesn't reconcile.
             "items_total": c.items_total,

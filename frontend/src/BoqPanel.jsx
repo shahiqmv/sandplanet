@@ -323,7 +323,14 @@ function BoqUnitSummary({ boq, projectId, editable, onChanged }) {
                 <td style={{ ...td, textAlign: "right" }}>
                   {c.is_lump ? "—" : `${fmt(c.qty)} ${c.unit}`}</td>
                 <td style={{ ...td, textAlign: "right" }}>
-                  {c.is_lump ? "—" : fmt(c.per_unit_total)}</td>
+                  {c.is_lump ? "—" : fmt(c.per_unit_total)}
+                  {c.is_split && (
+                    <div style={{ fontSize: 10.5, color: "var(--muted)",
+                                  whiteSpace: "nowrap" }}
+                         title="Material and workmanship certified separately on claims">
+                      M {fmt(c.unit_amount_supply)} + W {fmt(c.unit_amount_install)}
+                    </div>)}
+                </td>
                 <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
                   {fmt(c.line_total)}</td>
                 <td style={{ ...td, textAlign: "right" }}>
@@ -462,6 +469,19 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
   const [err, setErr] = useState(null);
   const upd = (i, k, v) => setCats((cs) =>
     cs.map((c, j) => (j === i ? { ...c, [k]: v } : c)));
+  // Split-priced rows (material + workmanship per unit): editing either leg
+  // keeps the combined amount_per_unit = their sum.
+  const isSplit = (c) => !c.is_lump && (c.amount_per_unit_material !== ""
+    && c.amount_per_unit_material != null
+    || c.amount_per_unit_labour !== "" && c.amount_per_unit_labour != null);
+  const updSplit = (i, k, v) => setCats((cs) => cs.map((c, j) => {
+    if (j !== i) return c;
+    const next = { ...c, [k]: v };
+    next.amount_per_unit = String(
+      Number(next.amount_per_unit_material || 0)
+      + Number(next.amount_per_unit_labour || 0));
+    return next;
+  }));
   const lineTotal = (c) => c.is_lump ? Number(c.amount_per_unit || 0)
     : Number(c.amount_per_unit || 0) * Number(c.quantity || 0);
   const total = cats.reduce((a, c) => a + lineTotal(c), 0);
@@ -510,10 +530,28 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
                   onChange={(e) => upd(i, "quantity", e.target.value)} /></td>
                 <td style={td}><input style={cellIn} value={c.unit}
                   onChange={(e) => upd(i, "unit", e.target.value)} /></td>
-                <td style={td}><input style={{ ...cellIn, textAlign: "right" }}
-                  type="number" value={c.amount_per_unit}
-                  onChange={(e) => upd(i, "amount_per_unit",
-                                       e.target.value)} /></td>
+                <td style={td}>
+                  {isSplit(c) ? (
+                    <span style={{ whiteSpace: "nowrap" }}
+                          title="Material + workmanship per unit — certified separately on claims">
+                      <input style={{ ...cellIn, width: 64,
+                          textAlign: "right" }} type="number" placeholder="Mat"
+                        value={c.amount_per_unit_material || ""}
+                        onChange={(e) => updSplit(i, "amount_per_unit_material",
+                                                  e.target.value)} />
+                      {" + "}
+                      <input style={{ ...cellIn, width: 60,
+                          textAlign: "right" }} type="number" placeholder="Wm"
+                        value={c.amount_per_unit_labour || ""}
+                        onChange={(e) => updSplit(i, "amount_per_unit_labour",
+                                                  e.target.value)} />
+                    </span>
+                  ) : (
+                    <input style={{ ...cellIn, textAlign: "right" }}
+                      type="number" value={c.amount_per_unit}
+                      onChange={(e) => upd(i, "amount_per_unit",
+                                           e.target.value)} />
+                  )}</td>
                 <td style={{ ...td, textAlign: "center",
                   color: c.items?.length ? "var(--navy)" : "var(--muted)" }}
                   title="Detail works captured — review/fix after import">

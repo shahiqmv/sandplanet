@@ -345,23 +345,28 @@ def create_claim(project, data, actor):
     # An advance claim carries no work lines — its value is the flat advance %.
     if not is_advance and boq and boq.mode == "UNIT":
         # Unit BOQ: one claim line per detail WORK under each bill (valued by
-        # units done × its per-unit amount). A lump bill with no captured
-        # detail stays a single category line, claimed by %.
+        # units done × its per-unit amount). A lump bill — or a category with
+        # no captured detail — stays a single category line. A SPLIT-RATE
+        # category always claims at category level (its detail is a materials
+        # build-up, not claimable works): material qty and workmanship qty
+        # certified independently (owner 2026-08-10).
         for cat in boq.categories.all():
             items = list(cat.items.all())
-            if items:
+            if items and not cat.is_lump and not cat.has_split_rates:
                 for it in items:
                     pci = prev_map.get(("BOQ", it.id, None, None))
                     new_items.append(ProgressClaimItem(
                         claim=claim, source="BOQ", boq_item=it,
                         cumulative_pct=(pci.cumulative_pct if pci else None),
                         cumulative_qty=(pci.cumulative_qty if pci else None)))
-            elif cat.is_lump:
+            else:
                 pci = prev_map.get(("CAT", None, None, cat.id))
                 new_items.append(ProgressClaimItem(
                     claim=claim, source="CAT", boq_category=cat,
                     cumulative_pct=(pci.cumulative_pct if pci else None),
-                    cumulative_qty=(pci.cumulative_qty if pci else None)))
+                    cumulative_qty=(pci.cumulative_qty if pci else None),
+                    cumulative_qty_install=(pci.cumulative_qty_install
+                                            if pci else None)))
     if not is_advance and boq and boq.mode != "UNIT":
         for it in boq.items.all():
             if it.is_heading:
@@ -413,10 +418,13 @@ def set_claim_items(claim, rows, actor):
             ci.cumulative_pct = _dec(r.get("cumulative_pct"))
         if "cumulative_qty" in r:
             ci.cumulative_qty = _dec(r.get("cumulative_qty"))
+        if "cumulative_qty_install" in r:
+            ci.cumulative_qty_install = _dec(r.get("cumulative_qty_install"))
         changed.append(ci)
     if changed:
         ProgressClaimItem.objects.bulk_update(
-            changed, ["cumulative_pct", "cumulative_qty"])
+            changed, ["cumulative_pct", "cumulative_qty",
+                      "cumulative_qty_install"])
     # Keep the retention rate current with the project terms while still a draft.
     _refresh_draft_terms(claim)
     claim.save(update_fields=["retention_pct"])
@@ -608,19 +616,36 @@ def claim_valuation(claim):
         if ci.source == "CAT":
             # Unit-mode category: priced categories value by units complete
             # (qty × per-unit total); lump bills always by % of their amount.
+            # A split-rate category (MXM pool BOQ) certifies material and
+            # workmanship independently: two measured quantities per line.
             cat = ci.boq_category
             is_lump = cat.is_lump
+            split = (not is_lump) and cat.has_split_rates
+
+            def _split_val(qs, qi):
+                return ((qs or ZERO) * (cat.unit_amount_supply or ZERO)
+                        + (qi or ZERO) * (cat.unit_amount_install or ZERO))
+
             line_basis = "PERCENT" if is_lump else basis
             rate = cat.per_unit_total          # 0 for a lump bill
             contract_amt = cat.line_total
-            cum_val = _cum_value(line_basis, ci.cumulative_pct,
-                                 ci.cumulative_qty, contract_amt, rate, ONE)
             pci = prev_map.get(("CAT", None, None, cat.id))
-            prev_basis = ("PERCENT" if is_lump
-                          else (prev.basis if prev else line_basis))
-            prev_val = (_cum_value(prev_basis, pci.cumulative_pct,
-                                   pci.cumulative_qty, contract_amt, rate, ONE)
-                        if pci else ZERO)
+            if split:
+                cum_val = _split_val(ci.cumulative_qty,
+                                     ci.cumulative_qty_install)
+                prev_val = (_split_val(pci.cumulative_qty,
+                                       pci.cumulative_qty_install)
+                            if pci else ZERO)
+            else:
+                cum_val = _cum_value(line_basis, ci.cumulative_pct,
+                                     ci.cumulative_qty, contract_amt, rate,
+                                     ONE)
+                prev_basis = ("PERCENT" if is_lump
+                              else (prev.basis if prev else line_basis))
+                prev_val = (_cum_value(prev_basis, pci.cumulative_pct,
+                                       pci.cumulative_qty, contract_amt, rate,
+                                       ONE)
+                            if pci else ZERO)
             k1 += cum_val
             lines.append({
                 "id": ci.id, "source": "CAT",
@@ -629,14 +654,22 @@ def claim_valuation(claim):
                 "unit": ("" if is_lump else cat.unit),
                 "contract_qty": (None if is_lump else cat.qty),
                 "rate": (None if is_lump else rate),
+                "rate_supply": (cat.unit_amount_supply if split else None),
+                "rate_install": (cat.unit_amount_install if split else None),
                 "contract_amount": contract_amt,
                 "cumulative_pct": ci.cumulative_pct,
                 "cumulative_qty": ci.cumulative_qty,
+                "cumulative_qty_install": (ci.cumulative_qty_install
+                                           if split else None),
                 "previous_pct": (pci.cumulative_pct if pci else None),
                 "previous_qty": (pci.cumulative_qty if pci else None),
+                "previous_qty_install": (pci.cumulative_qty_install
+                                         if pci and split else None),
                 "is_discount": False, "is_lump": is_lump,
-                # A lump bill is claimed by % even on a measured claim.
+                # A lump bill is claimed by % even on a measured claim; a
+                # split category always claims by its two quantities.
                 "is_percent_only": is_lump,
+                "is_split": split,
                 "previous_value": prev_val, "current_value": cum_val - prev_val,
                 "cumulative_value": cum_val,
             })

@@ -691,7 +691,10 @@
       "Bash(sh /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/finish-auth.sh)",
       "Bash(git -C /Users/ahmedshahiq/dev/siteapp status -sb)",
       "Bash(rm -f /tmp/gh-login.log /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/gh-login.exp /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/finish-auth.sh)",
-      "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests.test_fold_freight_line_into_supplier_freight core.tests_imports.MilestonePaymentTests.test_fold_blocked_after_receipt)"
+      "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests.test_fold_freight_line_into_supplier_freight core.tests_imports.MilestonePaymentTests.test_fold_blocked_after_receipt)",
+      "Bash(/opt/homebrew/bin/python3.12 -c ' *)",
+      "Bash(/Users/ahmedshahiq/dev/siteapp/backend/.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python)"
     ]
   }
 }

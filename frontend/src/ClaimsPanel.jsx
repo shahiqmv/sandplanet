@@ -294,7 +294,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
       retention_held_override: c.retention_held_override ?? "" });
     const v = {};
     detail.lines.forEach((ln) => {
-      v[ln.id] = { pct: ln.cumulative_pct ?? "", qty: ln.cumulative_qty ?? "" };
+      v[ln.id] = { pct: ln.cumulative_pct ?? "", qty: ln.cumulative_qty ?? "",
+                   qi: ln.cumulative_qty_install ?? "" };
     });
     setVals(v);
     setDeds((detail.deduction_lines || []).map((dl) => ({
@@ -332,7 +333,9 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
         retention_held_override: meta.retention_held_override } });
       const rows = d.lines.map((ln) => ({ id: ln.id,
         cumulative_pct: vals[ln.id]?.pct === "" ? null : vals[ln.id]?.pct,
-        cumulative_qty: vals[ln.id]?.qty === "" ? null : vals[ln.id]?.qty }));
+        cumulative_qty: vals[ln.id]?.qty === "" ? null : vals[ln.id]?.qty,
+        ...(ln.is_split ? { cumulative_qty_install:
+          vals[ln.id]?.qi === "" ? null : vals[ln.id]?.qi } : {}) }));
       await api(`/claims/${claimId}/items`, { method: "POST", body: { rows } });
       await api(`/claims/${claimId}/deductions`, { method: "POST", body: {
         rows: deds.filter((x) => (x.label || "").trim()) } });
@@ -429,13 +432,33 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 <td style={{ ...td, textAlign: "right" }}>
                   {fmt(ln.contract_amount)}</td>
                 <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>
-                  {measuredLine(ln)
+                  {ln.is_split
+                    ? `M ${ln.previous_qty != null ? fmt(ln.previous_qty) : "—"}`
+                      + ` · W ${ln.previous_qty_install != null
+                        ? fmt(ln.previous_qty_install) : "—"}`
+                    : measuredLine(ln)
                     ? (ln.previous_qty != null ? fmt(ln.previous_qty) : "—")
                     : (ln.previous_pct != null
                         ? `${pct(ln.previous_pct)}%` : "—")}
                 </td>
                 <td style={{ ...td, textAlign: "right" }}>
-                  {editable ? (
+                  {/* A split category certifies material (delivered units)
+                      and workmanship (installed units) independently. */}
+                  {ln.is_split ? (editable ? (
+                    <span style={{ whiteSpace: "nowrap" }}>
+                      <input type="number" style={{ ...numCell, width: 52 }}
+                        title={`Material — units delivered (× ${fmt(ln.rate_supply)})`}
+                        placeholder="Mat" value={vals[ln.id]?.qty ?? ""}
+                        onChange={(e) => setV(ln.id, "qty", e.target.value)} />
+                      {" "}
+                      <input type="number" style={{ ...numCell, width: 52 }}
+                        title={`Workmanship — units installed (× ${fmt(ln.rate_install)})`}
+                        placeholder="Inst" value={vals[ln.id]?.qi ?? ""}
+                        onChange={(e) => setV(ln.id, "qi", e.target.value)} />
+                    </span>
+                  ) : `M ${fmt(ln.cumulative_qty)} · W ${fmt(
+                        ln.cumulative_qty_install)}`)
+                  : editable ? (
                     <input type="number" style={numCell}
                       value={measuredLine(ln) ? (vals[ln.id]?.qty ?? "")
                         : (vals[ln.id]?.pct ?? "")}

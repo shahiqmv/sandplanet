@@ -57,6 +57,11 @@ _TOOL = {
                         "quantity": {"type": "number"},
                         "unit": {"type": "string"},
                         "amount_per_unit": {"type": "number"},
+                        # A summary that prices MATERIAL and WORKMANSHIP
+                        # (labour) separately returns the two split per-unit
+                        # rates instead of the combined amount_per_unit.
+                        "amount_per_unit_material": {"type": "number"},
+                        "amount_per_unit_labour": {"type": "number"},
                         "is_lump": {"type": "boolean"},
                         "items": {
                             "type": "array",
@@ -190,6 +195,11 @@ def _sheet_name(text):
 
 def _is_summary_sheet(text):
     t = (text or "").lower()
+    if "summary" in _sheet_name(text).lower():
+        return True
+    # (No header-based fallback for the MXM pool-list shape: its detail
+    # sheets carry the same MATERIAL/WORKMANSHIP/Quant headers as its
+    # summary — only the SUMMARY sheet name tells them apart.)
     return any(k in t for k in ("amount per villa", "final summary",
                                 "no. of villas", "no of villas",
                                 "amount per unit"))
@@ -207,6 +217,17 @@ def _billkey(s):
         return "prelim"
     if "provision" in s:
         return "provisional"
+    # MXM pool-list shape (owner 2026-08-10): a summary row 'C2 Island 92
+    # Villa Pool …' / 'F Adası 113 Villa Pool …' and its detail sheet named
+    # 'C2-92' / 'F - 113' / 'C1-106.' both key to 'c2-92' / 'f-113'. Must run
+    # before the generic villa pattern ('… 92 Villa Pool' would key on the
+    # word after 'villa').
+    m = re.match(r"^([a-z]+\d*)\s+(?:island|adas[iı]|ada)\s+(\d+)", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
+    m = re.match(r"^([a-z]+\d*)\s*-\s*(\d+)\s*\.?$", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}"
     m = (re.search(r"category\s*[-:]?\s*([a-z0-9]+)", s)
          or re.search(r"villa\s+([a-z0-9]+)", s))
     if m:
@@ -230,9 +251,17 @@ def structure_excel(pages, model=None):
             body = ("This is the FINAL SUMMARY of a unit-based BOQ. Return each "
                     "Bill/category once with its ref, name, number of units, "
                     "unit, and Amount per unit. A bill's units, unit and "
-                    "amount-per-unit may span two rows — combine them. Mark "
-                    "Preliminaries/Provisional bills is_lump=true. Do NOT return "
-                    "detail work items here.\n\n" + tagged)
+                    "amount-per-unit may span two rows — combine them. If the "
+                    "summary prices MATERIAL and WORKMANSHIP (labour) in "
+                    "separate columns, return amount_per_unit_material and "
+                    "amount_per_unit_labour (the UNIT PRICE of each, not the "
+                    "row total) instead of amount_per_unit. When rows are "
+                    "grouped into blocks (e.g. ISLAND C / ISLAND A / ISLAND F) "
+                    "set each category's ref to its block letter and skip the "
+                    "block-total rows. Mark Preliminaries/Provisional/Food & "
+                    "Accommodation lump rows is_lump=true with the row total "
+                    "as the amount. Do NOT return detail work items here.\n\n"
+                    + tagged)
             out = _call_claude(body, model) or {}
             summary_cats.extend(out.get("categories") or [])
             gst = gst or out.get("gst_percent") or 0
@@ -338,6 +367,13 @@ def normalise(cats):
         items_sum = sum((_dec(i["amount"]) or Decimal("0") for i in items),
                         Decimal("0"))
         amt = _dec(c.get("amount_per_unit"))
+        # Split summary (material and workmanship priced per unit separately):
+        # the two split rates are authoritative and the combined per-unit rate
+        # is their sum (owner 2026-08-10).
+        amt_m = _dec(c.get("amount_per_unit_material"))
+        amt_l = _dec(c.get("amount_per_unit_labour"))
+        if amt is None and (amt_m is not None or amt_l is not None):
+            amt = (amt_m or Decimal("0")) + (amt_l or Decimal("0"))
         # The SUMMARY rate is the contract figure and is authoritative — the
         # detail works are only a breakdown and often don't sum to it. Fall back
         # to the breakdown sum only when the summary gave no rate.
@@ -354,6 +390,10 @@ def normalise(cats):
             "unit": (str(c.get("unit") or "").strip() or "no")[:20],
             "quantity": str(qty),
             "amount_per_unit": str(per_unit),      # contract rate (authoritative)
+            "amount_per_unit_material": (str(amt_m) if amt_m is not None
+                                         else ""),
+            "amount_per_unit_labour": (str(amt_l) if amt_l is not None
+                                       else ""),
             "items_total": str(items_sum),          # breakdown sum (reconcile)
             "is_lump": is_lump,
             "items": items,
@@ -404,7 +444,10 @@ def commit(project, categories, actor):
         # _dec strips commas/currency so a reviewed value like "26,491.41"
         # can't 500 the commit.
         amt = _dec(c.get("amount_per_unit")) or Decimal("0")
+        amt_m = _dec(c.get("amount_per_unit_material"))
+        amt_l = _dec(c.get("amount_per_unit_labour"))
         is_lump = bool(c.get("is_lump"))
+        split = (not is_lump) and (amt_m is not None or amt_l is not None)
         qty = _dec(c.get("quantity")) or Decimal("1")
         cat = BoqCategory.objects.create(
             boq=boq, sort_order=i * 10, ref=str(c.get("ref") or "")[:20],
@@ -413,17 +456,22 @@ def commit(project, categories, actor):
             lump_amount=amt if is_lump else None,
             # The summary rate is the contract figure (authoritative); the
             # detail works below are only a breakdown that may not sum to it.
-            unit_amount=None if is_lump else amt)
+            # Split summary → the two rates certify independently on claims.
+            unit_amount=None if is_lump else amt,
+            unit_amount_supply=amt_m if split else None,
+            unit_amount_install=amt_l if split else None)
         detail = c.get("items") or []
         if detail:
             _make_items(cat, detail, boq)
         elif not is_lump:
             # No detail captured — one per-unit line so the category is still
-            # claimable; its amount equals the summary rate.
+            # claimable; its amount equals the summary rate (split rates kept
+            # on their own legs).
             BoqItem.objects.create(
                 boq=boq, category=cat, sort_order=1,
                 description=f"{cat.name} — per {cat.unit}", qty=Decimal("1"),
-                rate_supply=amt)
+                rate_supply=(amt_m or Decimal("0")) if split else amt,
+                rate_install=(amt_l if split else None))
     return boq, None
 
 

@@ -359,3 +359,108 @@ class BoqUnitTests(TestCase):
         self.assertEqual(boq.mode, Boq.Mode.CONVENTIONAL)
         self.assertFalse(boq.categories.exists())
         self.assertEqual(boq.contract_value, Decimal("1000.000"))
+
+
+class BoqSplitRateTests(TestCase):
+    """MXM pool-list BOQ (owner 2026-08-10): the summary prices MATERIAL and
+    WORKMANSHIP per unit separately and the client certifies them
+    independently — material on delivered units, workmanship on installed."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="MXM", name="MXM",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("mx_qs", User.Role.QS)
+        self.project = Project.objects.create(
+            site=self.site, code="MXM-01", title="ACF Villa Pools")
+
+    def test_billkey_matches_pool_summary_rows_to_sheets(self):
+        # summary row name  ↔  its detail worksheet name
+        self.assertEqual(
+            ue._billkey("C2 Island 92 Villa Pool Filtration system"),
+            ue._billkey("C2-92"))
+        self.assertEqual(ue._billkey("C1 Island 106 Villa Pool Filtration"),
+                         ue._billkey("C1-106."))
+        self.assertEqual(ue._billkey("A4 Island 98 Villa Pool Filtration"),
+                         ue._billkey("A4- 98"))
+        self.assertEqual(ue._billkey("F Adası 113 Villa Pool Filtration"),
+                         ue._billkey("F - 113"))
+        self.assertNotEqual(ue._billkey("C2-92"), ue._billkey("C2-94"))
+        # the original vocabulary still resolves the same
+        self.assertEqual(ue._billkey("Villa Category - C"),
+                         ue._billkey("Villa C"))
+
+    def test_normalise_carries_split_unit_rates(self):
+        cats = ue.normalise([
+            {"name": "C2 Island 92 Villa Pool Filtration system",
+             "quantity": 8, "unit": "Pcs",
+             "amount_per_unit_material": "8828.173",
+             "amount_per_unit_labour": "2752.546"}])
+        self.assertEqual(len(cats), 1)
+        c = cats[0]
+        self.assertEqual(Decimal(c["amount_per_unit"]), Decimal("11580.719"))
+        self.assertEqual(Decimal(c["amount_per_unit_material"]),
+                         Decimal("8828.173"))
+        self.assertEqual(Decimal(c["amount_per_unit_labour"]),
+                         Decimal("2752.546"))
+        self.assertEqual(Decimal(c["line_total"]),
+                         Decimal("11580.719") * 8)
+
+    def test_split_category_claims_two_quantities(self):
+        """5 pools' materials delivered, 3 installed → the claim line values
+        5 × material rate + 3 × workmanship rate; the category claims at
+        CATEGORY level (its detail is a build-up, not claimable works)."""
+        from . import commercial
+        cats = ue.normalise([
+            {"name": "C2 Island 92 Villa Pool Filtration system",
+             "quantity": 8, "unit": "Pcs",
+             "amount_per_unit_material": "8828.173",
+             "amount_per_unit_labour": "2752.546",
+             "items": [{"description": "Sand filter", "quantity": 1,
+                        "rate_labour": "447.028"}]},
+            {"name": "Food & Accommodation", "amount_per_unit": "133500",
+             "is_lump": True}])
+        boq, err = ue.commit(self.project, cats, self.qs)
+        self.assertIsNone(err)
+        cat = boq.categories.get(name__startswith="C2 Island 92")
+        self.assertEqual(cat.unit_amount_supply, Decimal("8828.173"))
+        self.assertEqual(cat.unit_amount_install, Decimal("2752.546"))
+        self.assertEqual(cat.per_unit_total, Decimal("11580.719"))
+        self.project.contract_value = "226145.752"
+        self.project.save(update_fields=["contract_value"])
+
+        claim, err = commercial.create_claim(self.project, {}, self.qs)
+        self.assertIsNone(err)
+        # category-level lines: the split category + the lump — never
+        # per-component lines off the materials build-up
+        self.assertEqual(claim.items.count(), 2)
+        split_ci = claim.items.get(boq_category=cat)
+        self.assertEqual(split_ci.source, "CAT")
+        commercial.set_claim_items(claim, [
+            {"id": split_ci.id, "cumulative_qty": "5",
+             "cumulative_qty_install": "3"}], self.qs)
+        val = commercial.claim_valuation(claim)
+        ln = next(x for x in val["lines"] if x["id"] == split_ci.id)
+        self.assertTrue(ln["is_split"])
+        self.assertEqual(ln["rate_supply"], Decimal("8828.173"))
+        self.assertEqual(ln["rate_install"], Decimal("2752.546"))
+        # 5 × 8828.173 + 3 × 2752.546
+        self.assertEqual(ln["cumulative_value"], Decimal("52398.503"))
+        self.assertEqual(ln["cumulative_qty"], Decimal("5"))
+        self.assertEqual(ln["cumulative_qty_install"], Decimal("3"))
+
+        # next claim: install catches up to 5 → current = 2 × workmanship
+        claim.status = "CERTIFIED"
+        claim.save(update_fields=["status"])
+        claim2, err = commercial.create_claim(self.project, {}, self.qs)
+        self.assertIsNone(err)
+        ci2 = claim2.items.get(boq_category=cat)
+        self.assertEqual(ci2.cumulative_qty, Decimal("5"))        # carried
+        self.assertEqual(ci2.cumulative_qty_install, Decimal("3"))
+        commercial.set_claim_items(claim2, [
+            {"id": ci2.id, "cumulative_qty": "5",
+             "cumulative_qty_install": "5"}], self.qs)
+        val2 = commercial.claim_valuation(claim2)
+        ln2 = next(x for x in val2["lines"] if x["id"] == ci2.id)
+        self.assertEqual(ln2["previous_value"], Decimal("52398.503"))
+        self.assertEqual(ln2["current_value"],
+                         Decimal("2752.546") * 2)

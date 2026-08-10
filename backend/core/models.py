@@ -2852,6 +2852,15 @@ class BoqCategory(models.Model):
     # Null on an older / manually-built category → falls back to Σ items.
     unit_amount = models.DecimalField(max_digits=16, decimal_places=3,
                                       null=True, blank=True)
+    # Split per-unit rates (owner 2026-08-10, MXM pool BOQ): the summary prices
+    # MATERIAL and WORKMANSHIP separately per unit and the client certifies
+    # them independently — material on delivered units, workmanship on
+    # installed units. Both set → the category claims two quantities; null →
+    # the combined unit_amount path is unchanged.
+    unit_amount_supply = models.DecimalField(max_digits=16, decimal_places=3,
+                                             null=True, blank=True)
+    unit_amount_install = models.DecimalField(max_digits=16, decimal_places=3,
+                                              null=True, blank=True)
 
     class Meta:
         ordering = ["sort_order", "id"]
@@ -2864,9 +2873,19 @@ class BoqCategory(models.Model):
         return sum((i.amount for i in self.items.all()), Decimal("0"))
 
     @property
+    def has_split_rates(self):
+        """Material and workmanship certified independently per unit."""
+        return (self.unit_amount_supply is not None
+                or self.unit_amount_install is not None)
+
+    @property
     def per_unit_total(self):
         """The contract per-unit rate: the summary figure when known, else the
-        breakdown sum (a manually-built category)."""
+        breakdown sum (a manually-built category). Split rates sum to it."""
+        from decimal import Decimal
+        if self.has_split_rates:
+            return ((self.unit_amount_supply or Decimal("0"))
+                    + (self.unit_amount_install or Decimal("0")))
         if self.unit_amount is not None:
             return self.unit_amount
         return self.items_total
@@ -3145,6 +3164,13 @@ class ProgressClaimItem(models.Model):
                                          null=True, blank=True)   # 0..100
     cumulative_qty = models.DecimalField(max_digits=14, decimal_places=3,
                                          null=True, blank=True)
+    # Split-certified unit category only (category.has_split_rates):
+    # cumulative_qty then counts units whose MATERIAL is claimed (delivered)
+    # and this counts units whose WORKMANSHIP is claimed (installed) — the two
+    # progress independently (owner 2026-08-10, MXM pool BOQ).
+    cumulative_qty_install = models.DecimalField(max_digits=14,
+                                                 decimal_places=3, null=True,
+                                                 blank=True)
 
     class Meta:
         ordering = ["id"]
