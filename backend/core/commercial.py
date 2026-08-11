@@ -231,16 +231,18 @@ def set_variation_items(variation, rows, actor):
                           "editing it.")
     items = _variation_items(variation, rows)
     with transaction.atomic():
-        draft_claims = (list(variation.project.claims.filter(status="DRAFT")
-                             .exclude(claim_type="ADVANCE"))
-                        if approved_edit else [])
         variation.items.all().delete()   # cascades draft-claim VO lines only
         VariationItem.objects.bulk_create(items)
-        # keep open draft claims claimable — re-seed the fresh items
-        for c in draft_claims:
-            ProgressClaimItem.objects.bulk_create([
-                ProgressClaimItem(claim=c, source="VO", variation_item=it)
-                for it in variation.items.all() if not it.is_heading])
+        if approved_edit:
+            # Changing an approved VO invalidates the approval (owner
+            # 2026-08-11): it returns to DRAFT, leaves the revised contract
+            # sum, and must run submit → approve again. Draft claims regain
+            # its lines on re-approval.
+            variation.status = "DRAFT"
+            variation.save(update_fields=["status"])
+            audit("project", variation.project_id, "VARIATION_REOPENED",
+                  actor=actor, detail={"ref": variation.ref,
+                                       "reason": "edited after approval"})
     audit("project", variation.project_id, "VARIATION_SAVED", actor=actor,
           detail={"ref": variation.ref, "gross": str(variation.gross),
                   "approved_edit": approved_edit})
@@ -276,6 +278,19 @@ def set_variation_status(variation, to_status, actor):
         return None, "Add at least one variation item before submitting."
     variation.status = to_status
     variation.save(update_fields=["status"])
+    if to_status == "APPROVED":
+        # Open draft claims gain this VO's lines (idempotent) — covers both a
+        # first approval and a re-approval after an approved-VO edit, so the
+        # QS's working claim doesn't need recreating (owner 2026-08-11).
+        from .models import ProgressClaimItem
+        for c in variation.project.claims.filter(status="DRAFT") \
+                .exclude(claim_type="ADVANCE"):
+            have = set(c.items.filter(variation_item__variation=variation)
+                       .values_list("variation_item_id", flat=True))
+            ProgressClaimItem.objects.bulk_create([
+                ProgressClaimItem(claim=c, source="VO", variation_item=it)
+                for it in variation.items.all()
+                if not it.is_heading and it.id not in have])
     audit("project", variation.project_id, f"VARIATION_{to_status}",
           actor=actor, detail={"ref": variation.ref})
     return variation, None

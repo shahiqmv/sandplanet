@@ -216,6 +216,10 @@ function VariationEditor({ projectId, variation, onDone }) {
                     alignItems: "center", marginBottom: 8 }}>
         <strong style={{ fontSize: 13, color: "var(--navy)" }}>
           {isNew ? "New variation" : `Edit ${variation.ref}`}</strong>
+        {variation?.status === "APPROVED" && (
+          <span style={{ fontSize: 12, color: "#8a6d00" }}>
+            ⚠ Saving changes sends this VO back through approval — it leaves
+            the revised contract sum until re-approved.</span>)}
         <input placeholder="Title (e.g. Extra coping stone)" value={title}
                onChange={(e) => setTitle(e.target.value)}
                style={{ ...inputStyle, flex: "1 1 240px" }} />

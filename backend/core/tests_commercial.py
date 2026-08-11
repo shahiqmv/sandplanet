@@ -183,9 +183,10 @@ class VariationTests(TestCase):
         self.client.post(f"/api/v1/variations/{vid}/status",
                          {"status": "APPROVED"}, format="json")
 
-    def test_approved_variation_stays_editable_until_claimed(self):
-        # Owner 2026-08-11: the VO list must stay fixable after approval —
-        # the lock only bites once a submitted/certified claim carries value.
+    def test_approved_edit_reverts_to_draft_for_reapproval(self):
+        # Owner 2026-08-11: an approved VO stays fixable while unclaimed, but
+        # editing INVALIDATES the approval — it returns to DRAFT, leaves the
+        # revised contract sum, and runs submit → approve again.
         v = self._create()
         self._approve(v["id"])
         r = self.client.post(f"/api/v1/variations/{v['id']}/items",
@@ -196,7 +197,11 @@ class VariationTests(TestCase):
                              format="json")
         self.assertEqual(r.status_code, 200, r.data)
         vv = next(x for x in r.data["variations"] if x["id"] == v["id"])
+        self.assertEqual(vv["status"], "DRAFT")               # back for approval
         self.assertEqual(float(vv["gross"]), 1750.0)          # 50 × 35
+        self.assertEqual(float(r.data["contract"]["revised"]), 500000.0)
+        self._approve(v["id"])                                # re-approve
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/variations")
         self.assertEqual(float(r.data["contract"]["revised"]), 501750.0)
 
     def test_approved_edit_reseeds_draft_claims_and_locks_after_claiming(self):
@@ -213,7 +218,8 @@ class VariationTests(TestCase):
         claim = ProgressClaim.objects.get(pk=cid)
         self.assertEqual(
             claim.items.filter(variation_item__isnull=False).count(), 1)
-        # editing the approved VO under a DRAFT claim re-seeds its lines
+        # editing the approved VO drops it to DRAFT; the draft claim's VO
+        # lines cascade off and come back when the VO is re-approved
         r = self.client.post(f"/api/v1/variations/{v['id']}/items",
                              {"rows": [
                                  {"item_code": "V1", "description": "Coping",
@@ -224,6 +230,9 @@ class VariationTests(TestCase):
                                   "rate_supply": "8", "rate_install": "2"}]},
                              format="json")
         self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(
+            claim.items.filter(variation_item__isnull=False).count(), 0)
+        self._approve(v["id"])                                # re-approve
         self.assertEqual(
             claim.items.filter(variation_item__isnull=False).count(), 2)
         # claim value against it and submit → the VO is locked
