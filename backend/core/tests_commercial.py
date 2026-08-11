@@ -177,15 +177,66 @@ class VariationTests(TestCase):
                              {"status": "APPROVED"}, format="json")
         self.assertEqual(float(r.data["contract"]["revised"]), 498600.0)
 
-    def test_approved_variation_is_locked_for_edit(self):
-        v = self._create()
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
+    def _approve(self, vid):
+        self.client.post(f"/api/v1/variations/{vid}/status",
                          {"status": "SUBMITTED"}, format="json")
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
+        self.client.post(f"/api/v1/variations/{vid}/status",
                          {"status": "APPROVED"}, format="json")
+
+    def test_approved_variation_stays_editable_until_claimed(self):
+        # Owner 2026-08-11: the VO list must stay fixable after approval —
+        # the lock only bites once a submitted/certified claim carries value.
+        v = self._create()
+        self._approve(v["id"])
+        r = self.client.post(f"/api/v1/variations/{v['id']}/items",
+                             {"rows": [
+                                 {"item_code": "V1", "description":
+                                  "Coping stone", "unit": "m", "qty": "50",
+                                  "rate_supply": "25", "rate_install": "10"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        vv = next(x for x in r.data["variations"] if x["id"] == v["id"])
+        self.assertEqual(float(vv["gross"]), 1750.0)          # 50 × 35
+        self.assertEqual(float(r.data["contract"]["revised"]), 501750.0)
+
+    def test_approved_edit_reseeds_draft_claims_and_locks_after_claiming(self):
+        from .models import ProgressClaim
+        v = self._create()
+        self._approve(v["id"])
+        self.client.post(f"/api/v1/projects/{self.project.id}/boq/items",
+                         {"rows": [{"item_code": "A", "description": "Item A",
+                                    "unit": "no", "qty": "10",
+                                    "rate_combined": "10"}]}, format="json")
+        cid = self.client.post(
+            f"/api/v1/projects/{self.project.id}/claims/create", {},
+            format="json").data["claims"][-1]["id"]
+        claim = ProgressClaim.objects.get(pk=cid)
+        self.assertEqual(
+            claim.items.filter(variation_item__isnull=False).count(), 1)
+        # editing the approved VO under a DRAFT claim re-seeds its lines
+        r = self.client.post(f"/api/v1/variations/{v['id']}/items",
+                             {"rows": [
+                                 {"item_code": "V1", "description": "Coping",
+                                  "unit": "m", "qty": "40",
+                                  "rate_supply": "30", "rate_install": "10"},
+                                 {"item_code": "V2", "description": "Lights",
+                                  "unit": "no", "qty": "10",
+                                  "rate_supply": "8", "rate_install": "2"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(
+            claim.items.filter(variation_item__isnull=False).count(), 2)
+        # claim value against it and submit → the VO is locked
+        ci = claim.items.filter(variation_item__isnull=False).first()
+        from decimal import Decimal
+        ci.cumulative_qty = Decimal("5")
+        ci.save()
+        claim.status = "SUBMITTED"
+        claim.save(update_fields=["status"])
         r = self.client.post(f"/api/v1/variations/{v['id']}/items",
                              {"rows": []}, format="json")
         self.assertEqual(r.status_code, 400)
+        self.assertIn("correcting variation", r.data["detail"])
 
     def test_site_staff_cannot_see_variations(self):
         self.client.force_authenticate(self.se)

@@ -121,6 +121,14 @@ export default function VariationsPanel({ projectId, me }) {
                         <A danger onClick={() => status(v.id, "REJECTED")}>
                           reject</A>
                       </>)}
+                      {/* an approved VO stays viewable — and editable until
+                          a submitted/certified claim carries it (the server
+                          refuses after that) */}
+                      {canEdit && v.status === "APPROVED" && (
+                        <A onClick={() => setEditId(
+                          editId === v.id ? null : v.id)}>
+                          {editId === v.id ? "close" : "view / edit"}</A>
+                      )}
                       {canEdit && v.status === "REJECTED" && (
                         <A onClick={() => status(v.id, "DRAFT")}>reopen</A>
                       )}

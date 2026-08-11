@@ -208,14 +208,42 @@ def create_variation(project, data, actor):
 
 
 def set_variation_items(variation, rows, actor):
-    from .models import VariationItem
-    if variation.status not in ("DRAFT",):
-        return None, "Only a draft variation can be edited."
+    from django.db import transaction
+    from .models import ProgressClaimItem, VariationItem
+    if variation.status not in ("DRAFT", "APPROVED"):
+        return None, "Only a draft or approved variation can be edited."
+    # An APPROVED VO stays editable to fix its list (owner 2026-08-11) — but
+    # only until a claim beyond draft carries it. Its item rows CASCADE into
+    # claim lines, so past a submitted/certified claim the correction must be
+    # a fresh variation, not a rewrite of history.
+    approved_edit = variation.status == "APPROVED"
+    if approved_edit:
+        from django.db.models import Q
+        claimed = (ProgressClaimItem.objects
+                   .filter(variation_item__variation=variation)
+                   .exclude(claim__status__in=("DRAFT", "REJECTED"))
+                   .filter(Q(cumulative_pct__gt=0) | Q(cumulative_qty__gt=0)
+                           | Q(cumulative_qty_install__gt=0)).exists())
+        if claimed:
+            return None, ("A submitted or certified claim already carries "
+                          "value against this variation — raise a correcting "
+                          "variation (addition / omission) instead of "
+                          "editing it.")
     items = _variation_items(variation, rows)
-    variation.items.all().delete()
-    VariationItem.objects.bulk_create(items)
+    with transaction.atomic():
+        draft_claims = (list(variation.project.claims.filter(status="DRAFT")
+                             .exclude(claim_type="ADVANCE"))
+                        if approved_edit else [])
+        variation.items.all().delete()   # cascades draft-claim VO lines only
+        VariationItem.objects.bulk_create(items)
+        # keep open draft claims claimable — re-seed the fresh items
+        for c in draft_claims:
+            ProgressClaimItem.objects.bulk_create([
+                ProgressClaimItem(claim=c, source="VO", variation_item=it)
+                for it in variation.items.all() if not it.is_heading])
     audit("project", variation.project_id, "VARIATION_SAVED", actor=actor,
-          detail={"ref": variation.ref, "gross": str(variation.gross)})
+          detail={"ref": variation.ref, "gross": str(variation.gross),
+                  "approved_edit": approved_edit})
     return variation, None
 
 
