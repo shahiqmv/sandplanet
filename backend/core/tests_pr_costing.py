@@ -51,7 +51,7 @@ class PrCostingBase(TestCase):
         # MR first (a PR answers an MR)
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id, "payload": {},
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True, "payload": {},
             "lines": [{"free_text_desc": "Cement", "unit": "bag",
                        "qty_required": 100, "qty_to_order": 100}],
         }, format="json").data
@@ -80,7 +80,7 @@ class PrMrPickerTests(PrCostingBase):
     def make_mr(self, sent=True):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id, "payload": {},
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True, "payload": {},
             "lines": [{"free_text_desc": "Sand", "unit": "m3",
                        "qty_required": 10, "qty_to_order": 10}],
         }, format="json").data
@@ -98,7 +98,7 @@ class PrMrPickerTests(PrCostingBase):
     def _mr_sent(self):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id, "payload": {},
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True, "payload": {},
             "lines": [{"free_text_desc": "Cement", "unit": "bag",
                        "qty_required": 100, "qty_to_order": 100},
                       {"free_text_desc": "Sand", "unit": "m3",

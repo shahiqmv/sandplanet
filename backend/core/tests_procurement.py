@@ -43,7 +43,7 @@ class ProcBase(TestCase):
     def make_mr(self, lines=None):
         self.as_user(self.sa)
         r = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "payload": {"planned_loading": "August hired boat",
                         "trades_covered": "Civil - Villa 12",
                         "required_by": "2026-08-01", "stock_attested": True},
@@ -144,7 +144,7 @@ class MRFlowTests(ProcBase):
         full site-task parity with Site Admin (owner, 2026-07-13)."""
         self.as_user(self.se)      # SITE_ENGINEER
         r = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "payload": {"stock_attested": True},
             "lines": [{"item_id": self.cement.id, "qty_required": 10,
                        "qty_stock": 0, "qty_to_order": 10}],
@@ -171,7 +171,7 @@ class MRFlowTests(ProcBase):
     def test_urgent_line_requires_reason(self):
         self.as_user(self.sa)
         r = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "lines": [{"item_id": self.cement.id, "qty_required": 10,
                        "priority": "URGENT"}],
         }, format="json")

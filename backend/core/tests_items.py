@@ -111,7 +111,7 @@ class ItemFieldTests(TestCase):
 
             self.client.force_authenticate(sa)
             mr = self.client.post("/api/v1/documents", {
-                "doc_type": "MR", "site_id": site.id,
+                "doc_type": "MR", "site_id": site.id, "general_works": True,
                 "payload": {"required_by": "2026-08-01", "stock_attested": True},
                 "lines": [{"item_id": self.item.id, "qty_required": 10,
                            "qty_stock": 0, "qty_to_order": 10,
@@ -141,7 +141,7 @@ class MrLinePhotoTests(TestCase):
 
     def test_free_text_line_photo_surfaces_on_line(self):
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "payload": {"required_by": "2026-08-01", "stock_attested": True},
             "lines": [{"item_id": None, "free_text_desc": "Special gasket 3in",
                        "unit": "nos", "qty_required": 4, "qty_to_order": 4,

@@ -197,7 +197,8 @@ def document_create(request):
 
     # MR: the header project drives BOM drawdown (owner 2026-08-11) — sites
     # raise separate MRs per project; a requisition that isn't for a project
-    # must be DECLARED general site works, never silently blank.
+    # must be DECLARED general site works, never silently blank. The choice
+    # is MANDATORY on every MR (owner 2026-08-11, second round).
     if doc_type == "MR":
         project_id = request.data.get("project_id")
         if project_id:
@@ -209,8 +210,7 @@ def document_create(request):
             if project.status == "CLOSED":
                 return Response({"detail": "Project is closed — no new "
                                            "documents."}, status=400)
-        elif (not request.data.get("general_works")
-              and site.projects.filter(status="ACTIVE").exists()):
+        elif not request.data.get("general_works"):
             return Response({"detail": "Pick the project this MR draws "
                                        "materials for — or mark it General "
                                        "site works."}, status=400)

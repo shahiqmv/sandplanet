@@ -70,7 +70,7 @@ class DirectorSiteParityTests(DocBase):
 
     def test_director_can_raise_mr_from_site_level(self):
         r = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "doc_date": date.today().isoformat(),
             "payload": {"lines": [{"description": "Cement", "qty": "10",
                                    "unit": "bag"}]},

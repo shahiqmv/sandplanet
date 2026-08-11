@@ -275,6 +275,14 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   const [projectId, setProjectId] = useState(
     existing?.project || project?.id || "");
   const [bomWarned, setBomWarned] = useState(false); // over-BOM soft warning
+  // MR: when the site runs a single active project, pre-select it — the
+  // picker then only demands a choice on genuinely multi-project sites
+  // (owner 2026-08-11).
+  useEffect(() => {
+    if (docType !== "MR" || existing || projectId) return;
+    const active = (projects || []).filter((pr) => pr.status === "ACTIVE");
+    if (active.length === 1) setProjectId(active[0].id);
+  }, [docType, existing, projects]); // eslint-disable-line react-hooks/exhaustive-deps
   const [mrRefs, setMrRefs] = useState("");
   const [prRefs, setPrRefs] = useState("");
   const [poRefs, setPoRefs] = useState("");
@@ -448,9 +456,9 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       return;
     }
     // MR: the header project drives BOM drawdown (owner 2026-08-11) — pick
-    // the project, or declare General site works explicitly.
-    if (!existing && docType === "MR" && !projectId
-        && (projects || []).some((pr) => pr.status === "ACTIVE")) {
+    // the project, or declare General site works explicitly. Mandatory on
+    // every MR.
+    if (!existing && docType === "MR" && !projectId) {
       setError("Pick the project this MR draws materials for — or choose "
         + "General site works.");
       return;

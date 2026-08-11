@@ -65,7 +65,7 @@ class PARoleTests(TestCase):
 
     def test_pa_cannot_raise_site_documents(self):
         r = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id, "doc_date": "2026-08-02",
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True, "doc_date": "2026-08-02",
             "payload": {"lines": [{"description": "Cement", "qty": "1",
                                    "unit": "bag"}]}}, format="json")
         self.assertEqual(r.status_code, 403, getattr(r, "data", None))

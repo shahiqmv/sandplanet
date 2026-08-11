@@ -81,7 +81,7 @@ class ApprovalsQueueTests(TestCase):
     def test_purchasing_sees_mr_sent_to_ho(self):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "payload": {},
             "lines": [{"free_text_desc": "Rebar 16mm", "unit": "len",
                        "qty_required": 40, "qty_to_order": 40}],

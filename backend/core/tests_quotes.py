@@ -41,7 +41,7 @@ class QuoteBase(TestCase):
     def sent_mr(self):
         self.as_user(self.sa)
         mr = self.client.post("/api/v1/documents", {
-            "doc_type": "MR", "site_id": self.site.id,
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
             "lines": [
                 {"item_id": self.cement.id, "qty_required": 200,
                  "qty_stock": 50, "qty_to_order": 150},
