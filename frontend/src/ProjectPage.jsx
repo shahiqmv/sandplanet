@@ -32,6 +32,7 @@ const money = (v) => v == null ? null
 export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
   const [project, setProject] = useState(null);
   const [tab, setTab] = useState("overview");
+  const [commTab, setCommTab] = useState("boq");   // Commercial sub-tab
   const [docs, setDocs] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -210,10 +211,33 @@ manpower histogram, on the letterhead — send to the client"
 
       {tab === "commercial" && (
         <>
-          <BoqPanel projectId={projectId} project={project} me={me} />
-          <VariationsPanel projectId={projectId} me={me} />
-          <ClaimsPanel projectId={projectId} me={me} />
-          <BondsInsurancePanel projectId={projectId} me={me} />
+          {/* One long page became unmanageable with a big BOQ (owner
+              2026-08-11) — each commercial area gets its own sub-tab. */}
+          <div style={{ display: "flex", gap: 6, margin: "0 0 10px",
+                        flexWrap: "wrap" }}>
+            {[["boq", "BOQ"], ["variations", "Variations"],
+              ["claims", "Claims"], ["bonds", "Bonds & Insurance"]]
+              .map(([key, label]) => (
+              <button key={key} onClick={() => setCommTab(key)}
+                      style={{
+                        ...ghostButton, padding: "3px 12px", fontSize: 12.5,
+                        background: commTab === key ? "var(--sky-soft,#e8f1f8)"
+                                                    : "#fff",
+                        fontWeight: commTab === key ? 700 : 400,
+                        color: "var(--navy)",
+                      }}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {commTab === "boq" && (
+            <BoqPanel projectId={projectId} project={project} me={me} />)}
+          {commTab === "variations" && (
+            <VariationsPanel projectId={projectId} me={me} />)}
+          {commTab === "claims" && (
+            <ClaimsPanel projectId={projectId} me={me} />)}
+          {commTab === "bonds" && (
+            <BondsInsurancePanel projectId={projectId} me={me} />)}
         </>
       )}
 
