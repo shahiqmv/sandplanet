@@ -584,7 +584,8 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                     onChange={(e) => setProjectId(+e.target.value)}
                     style={inputStyle}>
               <option value="">Select project…</option>
-              {(projects || []).map((pr) => (
+              {(projects || []).filter((pr) => pr.status !== "CLOSED")
+                .map((pr) => (
                 <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
               ))}
             </select>
@@ -600,7 +601,10 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
                       setProjectId(v === "GENERAL" || v === "" ? v : +v); }}
                     style={inputStyle}>
               <option value="">— choose where this is charged —</option>
-              {(projects || []).map((pr) => (
+              {/* closed projects never appear in an operational picker —
+                  even for admins (nothing can be charged to them) */}
+              {(projects || []).filter((pr) => pr.status !== "CLOSED")
+                .map((pr) => (
                 <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
               ))}
               <option value="GENERAL">General site works (no project)</option>

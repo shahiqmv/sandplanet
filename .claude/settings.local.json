@@ -710,7 +710,8 @@
       "Bash(.venv/bin/python -m ruff check core --fix)",
       "Bash(.venv/bin/python -)",
       "Bash(.venv/bin/python manage.py test core.tests_imports.MrFromStoreTests.test_store_availability_reports_general_stock)",
-      "Bash(awk -F'\\(' '{print $2}')"
+      "Bash(awk -F'\\(' '{print $2}')",
+      "Bash(ssh -o BatchMode=yes planet-prod 'cd /root/sandplanet && docker compose -f docker-compose.prod.yml exec -T web python manage.py shell -c \" *)"
     ]
   }
 }

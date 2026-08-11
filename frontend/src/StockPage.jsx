@@ -281,7 +281,8 @@ function IssueForm({ site, projects, balances, onDone, onError }) {
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 320 }}>
           <option value="">— choose where this is charged —</option>
-          {projects.map((p) => (
+          {/* closed projects never appear in an operational picker */}
+          {projects.filter((p) => p.status !== "CLOSED").map((p) => (
             <option key={p.id} value={p.id}>{p.code} — {p.title}</option>
           ))}
           <option value="GENERAL">General site works (no project)</option>
