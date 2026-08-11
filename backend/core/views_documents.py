@@ -943,7 +943,8 @@ def _post_dpr_consumption(doc, actor):
         project = None
         if row.get("project"):
             project = Project.objects.filter(
-                code=row["project"], site=doc.site).first()
+                code=row["project"], site=doc.site).exclude(
+                status="CLOSED").first()
         stock.consume(doc.site, item, qty, project=project, document=doc,
                       actor=actor, movement_date=doc.doc_date,
                       reason=f"Consumed — DPR {doc.ref}")

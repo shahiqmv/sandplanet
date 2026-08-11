@@ -119,6 +119,9 @@ def stock_issue(request, site_id):
         except Project.DoesNotExist:
             return Response({"detail": "Unknown project for this site."},
                             status=400)
+        if project.status == "CLOSED":
+            return Response({"detail": "That project is closed — stock can't "
+                                       "be issued to it."}, status=400)
     elif not request.data.get("general_works"):
         return Response({"detail": "Pick the project this issue is for — or "
                                    "mark it General site works."}, status=400)

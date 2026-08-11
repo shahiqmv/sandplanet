@@ -265,3 +265,49 @@ class PlannerSeedTests(BomBase):
         r = self.client.post(f"/api/v1/procurement-schedules/{pk}/seed-bom")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["seeded"], 0)
+
+
+class ClosedProjectVisibilityTests(BomBase):
+    """Closed projects are finished business: hidden from every picker for
+    everyone but admins, and nothing new can be charged to them
+    (owner 2026-08-11)."""
+
+    def setUp(self):
+        super().setUp()
+        self.closed = Project.objects.create(
+            site=self.site, code="MXB-OLD", title="Done job",
+            status="CLOSED")
+        self.admin = make_user("bom_adm", User.Role.ADMIN)
+
+    def test_listing_hides_closed_from_non_admin(self):
+        self.client.force_authenticate(self.sa)
+        codes = [p["code"] for p in self.client.get(
+            f"/api/v1/sites/{self.site.id}/projects").data]
+        self.assertNotIn("MXB-OLD", codes)
+        self.assertIn("MXB-01", codes)
+        self.client.force_authenticate(self.admin)
+        codes = [p["code"] for p in self.client.get(
+            f"/api/v1/sites/{self.site.id}/projects").data]
+        self.assertIn("MXB-OLD", codes)
+
+    def test_stock_issue_to_closed_project_refused(self):
+        StockMovement.objects.create(
+            site=self.site, item=self.pipe, kind="RECEIPT", qty=Decimal("50"),
+            movement_date=date.today())
+        self.client.force_authenticate(self.sa)
+        r = self.client.post(f"/api/v1/stock/{self.site.id}/issue", {
+            "project_id": self.closed.id,
+            "lines": [{"item_id": self.pipe.id, "qty": 5}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("closed", r.data["detail"])
+
+    def test_mr_to_closed_project_refused(self):
+        self.client.force_authenticate(self.sa)
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id,
+            "project_id": self.closed.id, "doc_date": date.today().isoformat(),
+            "payload": {}, "lines": [
+                {"item_id": self.pipe.id, "qty_required": "5",
+                 "qty_to_order": "5", "unit": "mt"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("closed", r.data["detail"])

@@ -160,6 +160,11 @@ def site_projects(request, site_id):
                         status=201)
 
     qs = site.projects.all()
+    # Closed projects are finished business — completely hidden from everyone
+    # except admins (owner 2026-08-11): they vanish from every picker (MR,
+    # stock issue, DPR rows) and the site's project list.
+    if request.user.role != "ADMIN":
+        qs = qs.exclude(status="CLOSED")
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
     return Response(ProjectSerializer(qs, many=True,
