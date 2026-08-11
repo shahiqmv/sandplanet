@@ -195,6 +195,26 @@ def document_create(request):
             return Response({"detail": "Select the project this document "
                                        "belongs to."}, status=400)
 
+    # MR: the header project drives BOM drawdown (owner 2026-08-11) — sites
+    # raise separate MRs per project; a requisition that isn't for a project
+    # must be DECLARED general site works, never silently blank.
+    if doc_type == "MR":
+        project_id = request.data.get("project_id")
+        if project_id:
+            try:
+                project = Project.objects.get(pk=project_id, site=site)
+            except Project.DoesNotExist:
+                return Response({"detail": "Unknown project for this site."},
+                                status=400)
+            if project.status == "CLOSED":
+                return Response({"detail": "Project is closed — no new "
+                                           "documents."}, status=400)
+        elif (not request.data.get("general_works")
+              and site.projects.filter(status="ACTIVE").exists()):
+            return Response({"detail": "Pick the project this MR draws "
+                                       "materials for — or mark it General "
+                                       "site works."}, status=400)
+
     doc_date = request.data.get("doc_date") or date.today().isoformat()
     if doc_type in ("DPR", "TWS", "DMA"):  # one per SITE per day (R8/R5)
         clash = Document.objects.filter(
@@ -916,7 +936,15 @@ def _post_dpr_consumption(doc, actor):
             item = Item.objects.get(pk=item_id)
         except Item.DoesNotExist:
             continue
-        stock.consume(doc.site, item, qty, project=doc.project, document=doc,
+        # Attribute consumption to the row's project tag (owner 2026-08-11:
+        # BOM variance reads project-tagged issues; the DPR row's existing
+        # phase-2 tag is a project CODE, blank = general works). DPRs are
+        # site-wide, so doc.project is never set.
+        project = None
+        if row.get("project"):
+            project = Project.objects.filter(
+                code=row["project"], site=doc.site).first()
+        stock.consume(doc.site, item, qty, project=project, document=doc,
                       actor=actor, movement_date=doc.doc_date,
                       reason=f"Consumed — DPR {doc.ref}")
 

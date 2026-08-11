@@ -561,6 +561,11 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
           {c.can_edit_plan && <Btn variant="secondary" disabled={busy}
             onClick={() => setAdding(true)}>+ Add line</Btn>}
+          {c.can_edit_plan && <Btn variant="secondary" disabled={busy}
+            title="The BOM is the planner's source document — adds any BOM items not already on the plan"
+            onClick={() => run(() => api(
+              `/procurement-schedules/${id}/seed-bom`, { method: "POST" }))}>
+            ⤵ Seed from BOM</Btn>}
           {c.can_submit &&
             <Btn variant="primary" disabled={busy}
               onClick={submit}>Submit to Purchasing</Btn>}

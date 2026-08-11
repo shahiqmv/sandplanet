@@ -1,7 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_commercial as commercial, views_cost as cost, \
+from . import views, views_bom as bom_api, views_commercial as commercial, \
+    views_cost as cost, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
@@ -236,6 +237,11 @@ urlpatterns = [
          name="site-projects"),
     path("assignable/qs", projects.assignable_qs, name="assignable-qs"),
     path("projects/<int:pk>", projects.project_detail, name="project-detail"),
+    path("projects/<int:pid>/bom", bom_api.bom_detail, name="bom-detail"),
+    path("projects/<int:pid>/bom/save", bom_api.bom_save, name="bom-save"),
+    path("projects/<int:pid>/bom/seed", bom_api.bom_seed, name="bom-seed"),
+    path("projects/<int:pid>/bom/balance", bom_api.bom_balance,
+         name="bom-balance"),
     path("projects/<int:pk>/programme", projects.project_programme,
          name="project-programme"),
     path("projects/<int:pk>/programme/capture", projects.programme_capture,
@@ -499,6 +505,8 @@ urlpatterns = [
          psched_api.project_schedule, name="psched-project"),
     path("procurement-schedules/<int:pk>", psched_api.schedule_detail,
          name="psched-detail"),
+    path("procurement-schedules/<int:pk>/seed-bom",
+         psched_api.schedule_seed_bom, name="psc-seed-bom"),
     path("procurement-schedules/<int:pk>/lines", psched_api.schedule_lines,
          name="psched-lines"),
     path("procurement-schedules/<int:pk>/submit", psched_api.schedule_submit,

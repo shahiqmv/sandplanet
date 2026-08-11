@@ -121,6 +121,22 @@ def schedule_lines(request, pk):
     return Response(ps.schedule_dict(sched, request.user), status=201)
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_seed_bom(request, pk):
+    """Seed schedule lines from the project's BOM (the planner's source
+    document, owner 2026-08-11) — adds only items not already on the plan."""
+    sched, err = _get_sched(request, pk)
+    if err:
+        return err
+    added, msg = ps.seed_from_bom(sched, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    data = ps.schedule_dict(sched, request.user)
+    data["seeded"] = added
+    return Response(data, status=201 if added else 200)
+
+
 @api_view(["PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
 def schedule_line(request, line_id):

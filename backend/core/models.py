@@ -3779,6 +3779,43 @@ class PettyCashReconciliation(models.Model):
 # ===== Site inventory (Phase 1A — simple quantity ledger) =====
 
 
+class BomItem(models.Model):
+    """One line of a project's Bill of Materials — the QUANTITY budget for a
+    catalogue item on that project (owner 2026-08-11). The BOM is the control
+    document procurement draws against: MR lines and the procurement planner
+    source from it, and the variance report compares BOM qty against what has
+    been requested, ordered and issued — including items ordered outside the
+    BOM entirely. Rows seed from the BOQ's per-unit build-ups (× category
+    qty) mapped to Item-Master codes, or are entered manually by the QS."""
+
+    class Source(models.TextChoices):
+        BOQ = "BOQ", "Seeded from BOQ"
+        MANUAL = "MANUAL", "Manual"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="bom_items")
+    item = models.ForeignKey(Item, on_delete=models.PROTECT,
+                             related_name="bom_items")
+    qty = models.DecimalField(max_digits=14, decimal_places=3)
+    source = models.CharField(max_length=6, choices=Source.choices,
+                              default=Source.MANUAL)
+    remarks = models.CharField(max_length=200, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["item__code"]
+        constraints = [
+            models.UniqueConstraint(fields=["project", "item"],
+                                    name="uniq_bom_project_item"),
+        ]
+
+    def __str__(self):
+        return f"{self.project.code} BOM {self.item.code} × {self.qty}"
+
+
 class StockMovement(models.Model):
     """Append-only site-level inventory ledger. On-hand for a (site, item) is
     the sum of its movement qtys; the movement list is the history. No costing

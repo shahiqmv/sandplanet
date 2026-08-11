@@ -189,6 +189,47 @@ def add_line(sched, data, actor):
     return line, None
 
 
+def seed_from_bom(sched, actor):
+    """Seed the schedule from the project's BOM — the material budget is the
+    planner's source document (owner 2026-08-11). One line per BOM item not
+    already on the schedule (matched by catalogue item), landed in a 'From
+    BOM' section for the PM to re-section/date/bundle. Returns (added, err)."""
+    if actor.role not in PROPOSE_ROLES:
+        return None, "Only the PM proposes schedule lines."
+    doc = sched.document
+    if doc.status not in ("DRAFT", "SIGNED_OFF"):
+        return None, "The schedule is mid sign-off; wait for the current batch."
+    project = doc.project
+    bom = list(project.bom_items.select_related("item")) if project else []
+    if not bom:
+        return None, ("This project has no BOM yet — build it on the "
+                      "project's BOM tab first.")
+    existing = set(sched.lines.filter(item__isnull=False)
+                   .values_list("item_id", flat=True))
+    todo = [b for b in bom if b.item_id not in existing]
+    if not todo:
+        return 0, None
+    with transaction.atomic():
+        if doc.status == "SIGNED_OFF":       # reopen for a change batch
+            _set_status(doc, "DRAFT", "REOPEN", actor,
+                        comment="Change batch opened", notify=False)
+        section = sched.sections.filter(code="BOM").first()
+        if section is None:
+            section = ScheduleSection.objects.create(
+                schedule=sched, code="BOM", title="From BOM",
+                sort_order=500)
+        for b in todo:
+            ScheduleLine.objects.create(
+                schedule=sched, section=section, item=b.item,
+                description=b.item.description, uom=b.item.unit,
+                quantity=b.qty, supply_by="CONTRACTOR", created_by=actor,
+                remarks=b.remarks)
+        _renumber(section)
+    audit("document", doc.id, "PSC_SEEDED_FROM_BOM", actor=actor,
+          detail={"added": len(todo)})
+    return len(todo), None
+
+
 def update_line(line, data, actor):
     """PM edits planning fields (while draft); Purchasing edits commercial
     fields (while submitted)."""

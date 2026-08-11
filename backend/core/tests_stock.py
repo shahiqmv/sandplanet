@@ -112,6 +112,7 @@ class StockTests(StockBase):
         self.grn_to_verified()
         self.as_user(self.sa)
         self.client.post(f"/api/v1/stock/{self.site.id}/issue", {
+            "general_works": True,
             "lines": [{"item_id": self.cement.id, "qty": 40}],
         }, format="json")
         r = self.client.get(

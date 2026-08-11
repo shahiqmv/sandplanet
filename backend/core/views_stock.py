@@ -108,6 +108,9 @@ def stock_issue(request, site_id):
     if request.user.role not in ISSUE_ROLES:
         return Response({"detail": "Only site admin staff issue stock."},
                         status=403)
+    # Every issue is charged somewhere: a project, or explicitly the site's
+    # general works — never silently untagged (owner 2026-08-11, BOM variance
+    # needs consumption attributed).
     project = None
     pid = request.data.get("project_id")
     if pid:
@@ -116,6 +119,9 @@ def stock_issue(request, site_id):
         except Project.DoesNotExist:
             return Response({"detail": "Unknown project for this site."},
                             status=400)
+    elif not request.data.get("general_works"):
+        return Response({"detail": "Pick the project this issue is for — or "
+                                   "mark it General site works."}, status=400)
     raw = request.data.get("lines") or []
     lines = []
     for ln in raw:

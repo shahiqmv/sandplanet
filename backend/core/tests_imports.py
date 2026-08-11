@@ -1220,6 +1220,7 @@ class OpeningStockTests(PmrBase):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
             "doc_type": "MR", "site_id": self.site.id,
+            "project_id": self.project.id,
             "lines": [{"item_id": item.id, "qty_required": 30, "qty_stock": 0,
                        "qty_to_order": 30}]}, format="json").data
         self.client.post(f"/api/v1/documents/{mr['ref']}/actions/submit", {},
@@ -1437,6 +1438,7 @@ class MrFromStoreTests(IprBase):
         self.client.force_authenticate(self.sa)
         mr = self.client.post("/api/v1/documents", {
             "doc_type": "MR", "site_id": self.site.id,
+            "general_works": True,   # the no-project path is what's under test
             "lines": [{"item_id": self.item.id, "qty_required": qty_to_order,
                        "qty_stock": 0, "qty_to_order": qty_to_order}],
         }, format="json").data

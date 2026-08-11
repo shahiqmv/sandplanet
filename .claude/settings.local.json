@@ -694,7 +694,22 @@
       "Bash(.venv/bin/python manage.py test core.tests_imports.MilestonePaymentTests.test_fold_freight_line_into_supplier_freight core.tests_imports.MilestonePaymentTests.test_fold_blocked_after_receipt)",
       "Bash(/opt/homebrew/bin/python3.12 -c ' *)",
       "Bash(/Users/ahmedshahiq/dev/siteapp/backend/.venv/bin/python -c ' *)",
-      "Bash(.venv/bin/python)"
+      "Bash(.venv/bin/python)",
+      "Bash(/Users/ahmedshahiq/dev/siteapp/backend/.venv/bin/python parse_mxm_boq.py mxm_boq_categories.json)",
+      "Bash(cp /private/tmp/claude-501/-Users-ahmedshahiq-dev-siteapp/c8889d3a-3f6a-41b4-a6a6-6b5f94785409/scratchpad/mxm_boq_categories.json \"/Users/ahmedshahiq/Documents/mxm_boq_categories.json\")",
+      "Read(//Users/ahmedshahiq/Documents/**)",
+      "Bash(BOQ_PROJECT=MXM-POOL BOQ_JSON=/Users/ahmedshahiq/Documents/mxm_boq_categories.json .venv/bin/python manage.py shell)",
+      "Bash(ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new root@159.223.35.180 'hostname && cd /root/sandplanet && git log --oneline -1 && docker compose -f docker-compose.prod.yml exec -T web python manage.py showmigrations core 2>/dev/null | tail -2')",
+      "Bash(ssh -o BatchMode=yes -o ConnectTimeout=10 root@159.223.35.180 'hostname && cd /root/sandplanet && git log --oneline -1 && docker compose -f docker-compose.prod.yml exec -T web python manage.py showmigrations core 2>/dev/null | tail -2')",
+      "Bash(ssh-keygen -y -f ~/.ssh/id_ed25519)",
+      "Bash(ssh -o BatchMode=yes -o ConnectTimeout=10 planet-prod 'hostname && cd /root/sandplanet && git log --oneline -1 && docker compose -f docker-compose.prod.yml exec -T web python manage.py showmigrations core 2>/dev/null | tail -2')",
+      "Bash(.venv/bin/python -c \"import django,os; os.environ.setdefault\\('DJANGO_SETTINGS_MODULE','config.settings'\\); django.setup\\(\\); from core import bom; print\\('bom module OK'\\)\")",
+      "Bash(grep -n \"add_line\\\\|+ Add line\\\\|Add line\\\\|lines\\\\`\" src/ProcurementSchedulePage.jsx)",
+      "Bash(.venv/bin/python manage.py test core.tests_bom)",
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(.venv/bin/python -m ruff check core --fix)",
+      "Bash(.venv/bin/python -)",
+      "Bash(.venv/bin/python manage.py test core.tests_imports.MrFromStoreTests.test_store_availability_reports_general_stock)"
     ]
   }
 }

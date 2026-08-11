@@ -5,6 +5,7 @@ import ProgrammePage from "./ProgrammePage.jsx";
 import VariationsPanel from "./VariationsPanel.jsx";
 import ClaimsPanel from "./ClaimsPanel.jsx";
 import BondsInsurancePanel from "./BondsInsurancePanel.jsx";
+import BomPanel from "./BomPanel.jsx";
 import { ProjectScheduleTab } from "./ProcurementSchedulePage.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, inputStyle, td, th } from "./ui.jsx";
@@ -20,8 +21,8 @@ const TABS = [
   ["manpower", "Manpower plan", true],
   ["documents", "Documents", true],
   ["commercial", "Commercial", true],  // QS: BOQ (claims follow)
+  ["bom", "BOM", true],  // material quantity budget + variance (2026-08-11)
   ["procurement", "Procurement", true],  // procurement schedule (QS-led)
-  ["budget", "Budget · later", false],
   ["tender", "Tender · later", false],
 ];
 
@@ -216,6 +217,9 @@ manpower histogram, on the letterhead — send to the client"
         </>
       )}
 
+      {tab === "bom" && (
+        <BomPanel projectId={projectId} me={me} />
+      )}
       {tab === "procurement" && (
         <ProjectScheduleTab project={{ id: projectId }} me={me}
           onOpenDoc={onOpenDoc} />

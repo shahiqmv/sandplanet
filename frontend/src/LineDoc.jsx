@@ -274,6 +274,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
   // PMR is raised for a specific project (§5.10.3)
   const [projectId, setProjectId] = useState(
     existing?.project || project?.id || "");
+  const [bomWarned, setBomWarned] = useState(false); // over-BOM soft warning
   const [mrRefs, setMrRefs] = useState("");
   const [prRefs, setPrRefs] = useState("");
   const [poRefs, setPoRefs] = useState("");
@@ -446,6 +447,14 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       setError("Choose the project this import request is for.");
       return;
     }
+    // MR: the header project drives BOM drawdown (owner 2026-08-11) — pick
+    // the project, or declare General site works explicitly.
+    if (!existing && docType === "MR" && !projectId
+        && (projects || []).some((pr) => pr.status === "ACTIVE")) {
+      setError("Pick the project this MR draws materials for — or choose "
+        + "General site works.");
+      return;
+    }
     // Every material line must be a catalogue item — no raw free text (owner
     // 2026-07-14). Missing items are created (provisional) via "+ Add to
     // catalog" on the line.
@@ -455,6 +464,35 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         setError(`"${orphan.free_text_desc || "A line"}" isn't a catalogue `
           + "item. Pick it from the list, or use “+ Add to catalog” "
           + "to add it first.");
+        return;
+      }
+    }
+    // Over-BOM check (warn, never block — owner 2026-08-11): requesting more
+    // than the item's remaining BOM balance flags here and in the variance
+    // report; a second Save proceeds.
+    const bomPid = docType === "MR" && projectId && projectId !== "GENERAL"
+      ? (existing ? existing.project : projectId) : null;
+    if (bomPid && !bomWarned) {
+      setBusy(true);
+      const overs = [];
+      for (const l of linesForSave()) {
+        const want = Number(l.qty_to_order) || 0;
+        if (!l.item_id || want <= 0) continue;
+        try {
+          const b = await api(
+            `/projects/${bomPid}/bom/balance?item_id=${l.item_id}`);
+          const label = items.find((it) => it.id === l.item_id)?.description
+            || l.free_text_desc || `Item ${l.item_id}`;
+          if (!b.on_bom) overs.push(`${label} — not on this project's BOM`);
+          else if (want > Number(b.balance)) overs.push(
+            `${label} — requesting ${want}, BOM balance ${b.balance}`);
+        } catch { /* no BOM yet / offline — don't stall the site */ }
+      }
+      setBusy(false);
+      if (overs.length) {
+        setBomWarned(true);
+        setError("Over BOM — this will show in the variance report:\n• "
+          + overs.join("\n• ") + "\n\nPress Save again to proceed anyway.");
         return;
       }
     }
@@ -494,6 +532,10 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
         if (poRefs.trim()) body.po_refs = poRefs.split(",").map((s) => s.trim());
         if (docType === "GRN" && grnLmRef) body.lm_ref = grnLmRef;
         if (docType === "PMR" && projectId) body.project_id = projectId;
+        if (docType === "MR") {
+          if (projectId === "GENERAL") body.general_works = true;
+          else if (projectId) body.project_id = projectId;
+        }
         doc = await api("/documents", { method: "POST", body });
       }
       onSaved(doc);
@@ -537,6 +579,23 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
               {(projects || []).map((pr) => (
                 <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
               ))}
+            </select>
+          </label>
+        )}
+        {docType === "MR" && !existing && (
+          <label style={{ fontSize: 13 }}
+                 title="One MR per project — the BOM tracks each project's material budget. Not for a project? Choose General site works.">
+            Project
+            <select value={projectId}
+                    onChange={(e) => { setBomWarned(false);
+                      const v = e.target.value;
+                      setProjectId(v === "GENERAL" || v === "" ? v : +v); }}
+                    style={inputStyle}>
+              <option value="">— choose where this is charged —</option>
+              {(projects || []).map((pr) => (
+                <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
+              ))}
+              <option value="GENERAL">General site works (no project)</option>
             </select>
           </label>
         )}

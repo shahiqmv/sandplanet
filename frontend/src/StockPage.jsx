@@ -254,11 +254,19 @@ function IssueForm({ site, projects, balances, onDone, onError }) {
       .filter((l) => l.item_id && Number(l.qty) > 0)
       .map((l) => ({ item_id: Number(l.item_id), qty: Number(l.qty) }));
     if (!clean.length) { onError("Add at least one item and quantity."); return; }
+    // Every issue is charged to a project or explicitly to general works —
+    // the BOM variance reads these tags (owner 2026-08-11).
+    if (!projectId && projectId !== "GENERAL") {
+      onError("Pick the project — or choose General site works explicitly.");
+      return;
+    }
     setBusy(true); onError(null);
     try {
       await api(`/stock/${site.id}/issue`,
-                { method: "POST", body: { project_id: projectId || null,
-                                          lines: clean } });
+                { method: "POST", body: {
+                  project_id: projectId === "GENERAL" ? null : projectId,
+                  general_works: projectId === "GENERAL",
+                  lines: clean } });
       onDone();
     } catch (e) { onError(e.message); }
     finally { setBusy(false); }
@@ -272,10 +280,11 @@ function IssueForm({ site, projects, balances, onDone, onError }) {
         Project&nbsp;
         <select value={projectId} onChange={(e) => setProjectId(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 320 }}>
-          <option value="">— General / site-wide —</option>
+          <option value="">— choose where this is charged —</option>
           {projects.map((p) => (
             <option key={p.id} value={p.id}>{p.code} — {p.title}</option>
           ))}
+          <option value="GENERAL">General site works (no project)</option>
         </select>
       </label>
       {lines.map((l, i) => (
