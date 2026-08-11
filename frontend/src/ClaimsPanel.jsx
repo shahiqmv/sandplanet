@@ -423,8 +423,22 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
             <th style={{ ...th, textAlign: "right" }}>Cumulative</th>
           </tr></thead>
           <tbody>
-            {d.lines.map((ln) => (
-              <tr key={ln.id}>
+            {d.lines.map((ln, i) => (
+              <Fragment key={ln.id}>
+                {/* group header whenever the bill / model section changes —
+                    a 1,500-line measured bill is unreadable flat (owner
+                    2026-08-11) */}
+                {ln.section && ln.section !== d.lines[i - 1]?.section && (
+                  <tr>
+                    <td colSpan={measured ? 10 : 8}
+                        style={{ ...td, background: "var(--sky-soft,#eef4f9)",
+                                 fontWeight: 700, fontSize: 12,
+                                 color: "var(--navy)",
+                                 borderTop: "2px solid var(--sp-border,#d8e1e8)" }}>
+                      {ln.section}</td>
+                  </tr>
+                )}
+              <tr>
                 <td style={td}>{ln.item_code}
                   {ln.source === "VO" && (
                     <span style={{ marginLeft: 4, fontSize: 10,
@@ -491,6 +505,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 <td style={{ ...td, textAlign: "right" }}>
                   {fmt(ln.cumulative_value)}</td>
               </tr>
+              </Fragment>
             ))}
           </tbody>
         </table>

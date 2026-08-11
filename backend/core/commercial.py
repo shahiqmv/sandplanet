@@ -754,7 +754,8 @@ def claim_valuation(claim):
                 rate = line.amount or ZERO          # this work's amount PER unit
                 contract_amt = rate * units
                 disp_unit, disp_qty = cat.unit, units
-            disp_section = cat.name
+            disp_section = (f"Ref {cat.ref} — {cat.name}" if cat.ref
+                            else cat.name)
         else:
             rate = line.rate_total
             contract_amt = (line.amount or ZERO) * sign
