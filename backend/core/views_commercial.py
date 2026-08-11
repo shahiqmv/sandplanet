@@ -8,6 +8,8 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from decimal import Decimal
+
 from . import commercial
 from .audit import audit
 from .models import (BoqItem, ClientReceipt, ProgressClaim, Project,
@@ -57,15 +59,25 @@ def _boq_payload(project):
                 "split_rates": False, "mode": "CONVENTIONAL", "total": 0,
                 "total_supply": 0, "total_install": 0, "contract_value": 0,
                 "items": [], "categories": []}
+    # One items fetch for all three totals (the model properties each re-query
+    # and iterate — 4 full scans of a 1,500-line BOQ made this endpoint slow,
+    # 2026-08-11). Unit mode skips the flat list entirely: the screen reads
+    # categories[].items, so serializing all build-ups twice was pure waste.
+    is_unit = boq.mode == boq.Mode.UNIT
+    items = [] if is_unit else list(boq.items.all())
     data = {"exists": True, "currency": boq.currency,
             "is_locked": boq.is_locked, "split_rates": boq.split_rates,
             "mode": boq.mode, "claim_level": boq.claim_level,
-            "total": boq.total,
-            "total_supply": boq.total_supply, "total_install": boq.total_install,
-            "contract_value": boq.contract_value,
-            "items": BoqItemSerializer(boq.items.all(), many=True).data,
+            "total": sum((i.amount for i in items), Decimal("0")),
+            "total_supply": sum((i.amount_supply for i in items),
+                                Decimal("0")),
+            "total_install": sum((i.amount_install for i in items),
+                                 Decimal("0")),
+            "items": BoqItemSerializer(items, many=True).data,
             "categories": []}
-    if boq.mode == boq.Mode.UNIT:
+    # conventional contract value = the items total; unit mode overrides below
+    data["contract_value"] = data["total"]
+    if is_unit:
         data["categories"] = [{
             "id": c.id, "ref": c.ref, "name": c.name, "unit": c.unit,
             "qty": c.qty, "is_lump": c.is_lump,
@@ -85,7 +97,11 @@ def _boq_payload(project):
                        "rate_material": i.rate_supply, "rate_labour": i.rate_install,
                        "rate": i.rate_total, "amount": i.amount}
                       for i in c.items.all()],
-        } for c in boq.categories.all()]
+        } for c in boq.categories.prefetch_related("items")]
+        # unit contract value = Σ category line totals; a conventional BOQ's
+        # equals its items total (already computed above)
+        data["contract_value"] = sum(
+            (c["line_total"] for c in data["categories"]), Decimal("0"))
     return data
 
 
@@ -580,8 +596,12 @@ def _claims_payload(project):
     the waterfall, the contract summary, the money-in position and receipts."""
     claims = list(project.claims.all())
     rows = []
+    # One shared valuation cache: each claim in the register is valued once
+    # and the previously-certified chains reuse it — a 1,500-line measured
+    # BOQ made repeated chain revaluations the page's latency (2026-08-11).
+    cache = {}
     for c in claims:
-        w = commercial.claim_valuation(c)["waterfall"]
+        w = commercial.claim_valuation(c, _cache=cache)["waterfall"]
         rows.append({**_claim_meta(c),
                      "k_gross": w["k_gross"], "net_due": w["net_due"],
                      "gst": w["gst"], "total": w["total"]})
@@ -595,7 +615,7 @@ def _claims_payload(project):
             project.boq.categories.exists() if project.boq.mode == "UNIT"
             else project.boq.items.exists())),
         "claims": rows,
-        "revenue": commercial.project_revenue_summary(project),
+        "revenue": commercial.project_revenue_summary(project, _cache=cache),
         "receipts": [_receipt_json(r) for r in receipts],
     }
 

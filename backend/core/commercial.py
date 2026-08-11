@@ -621,19 +621,26 @@ def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
     return (cum_pct or ZERO) / Decimal("100") * contract_amount
 
 
-def _claim_net(claim):
+def _claim_net(claim, _cache=None):
     """Net cumulative certified (waterfall line N) — used as the 'previously
     certified' figure of the following claim."""
     if claim is None:
         return ZERO
-    return claim_valuation(claim)["waterfall"]["net_cumulative"]
+    return claim_valuation(claim, _cache=_cache)["waterfall"]["net_cumulative"]
 
 
-def claim_valuation(claim):
+def claim_valuation(claim, _cache=None):
     """The full IPA waterfall for one claim: per-line previous/current/
     cumulative values, per-section summary, and the header money cascade
     (gross K → advance recovery L → retention M → net N → less previous P →
-    net due Q → output GST R → total). Mirrors the owner's Soneva IPA."""
+    net due Q → output GST R → total). Mirrors the owner's Soneva IPA.
+
+    `_cache` (claim.id → result) short-circuits the recursive
+    previously-certified chain and lets register/summary views value each
+    claim once — a 1,500-line measured BOQ made the repeated chains the
+    page's latency (owner 2026-08-11)."""
+    if _cache is not None and claim.id in _cache:
+        return _cache[claim.id]
     from collections import OrderedDict
     project = claim.project
     original = Decimal(str(project.contract_value or 0))
@@ -659,8 +666,8 @@ def claim_valuation(claim):
     k1 = k4 = ZERO
     lines = []
     for ci in claim.items.select_related(
-            "boq_item", "variation_item", "variation_item__variation",
-            "boq_category"):
+            "boq_item", "boq_item__category", "variation_item",
+            "variation_item__variation", "boq_category"):
         line = ci.line
         if line is None:
             continue
@@ -857,7 +864,7 @@ def claim_valuation(claim):
 
     net_cumulative = _q(k_gross + advance_received - advance_recovered
                         + net_retention)               # N (certified, ex GST)
-    previously = _claim_net(prev)                                    # P
+    previously = _claim_net(prev, _cache=_cache)                     # P
     net_due = net_cumulative - previously                           # Q (taxable)
     gst = _q(claim.gst_pct / Decimal("100") * net_due)              # R
     total = net_due + gst                        # total with GST (present)
@@ -877,7 +884,7 @@ def claim_valuation(claim):
         d["current"] += ln["current_value"]
         d["cumulative"] += ln["cumulative_value"]
 
-    return {
+    result = {
         "lines": lines,
         "section_summary": list(secs.values()),
         "deduction_lines": deduction_lines,
@@ -903,6 +910,9 @@ def claim_valuation(claim):
             "net_to_pay_cumulative": net_to_pay_cumulative,
         },
     }
+    if _cache is not None:
+        _cache[claim.id] = result
+    return result
 
 
 # ---- Client receipts + project revenue (money-in, P4) --------------------
@@ -952,7 +962,7 @@ def delete_client_receipt(receipt, actor):
     return None
 
 
-def project_revenue_summary(project):
+def project_revenue_summary(project, _cache=None):
     """The project's money-in position (USD): certified revenue to date (gross
     value of work certified, ex-GST), amount billed incl GST, retention still
     held, client money received and what's still outstanding."""
@@ -963,7 +973,7 @@ def project_revenue_summary(project):
     revenue = billed = gst_billed = retention_held = ZERO
     last = None
     for c in certified:
-        w = claim_valuation(c)["waterfall"]
+        w = claim_valuation(c, _cache=_cache)["waterfall"]
         gst_billed += w["gst"]
         billed += w["net_to_pay"]           # after back-charge deductions
         last = w
