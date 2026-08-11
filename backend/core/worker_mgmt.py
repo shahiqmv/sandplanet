@@ -111,6 +111,10 @@ def create_add_batch(site, workers, actor):
                 engagement_type=Employee.Engagement.DIRECT,
                 is_active=False, hire_pending=True)
             _apply_add_fields(emp, w)
+            # Sites hire CONTRACT only (owner 2026-08-11): a PERMANENT worker
+            # goes on the company work permit and runs through HR/onboarding —
+            # never through the site batch, whatever the payload says.
+            emp.employment_type = Employee.EmploymentType.CONTRACT
             emp.save()
             WorkerChangeItem.objects.create(request=batch, employee=emp)
     audit("worker_batch", batch.id, "WORKER_ADD_REQUESTED", actor=actor,
@@ -257,6 +261,9 @@ def update_hire(employee, data, actor):
     if err:
         return err
     _apply_add_fields(employee, data)
+    # A pending SITE hire stays CONTRACT — the edit form can't flip it to
+    # PERMANENT either (that's HR's process).
+    employee.employment_type = Employee.EmploymentType.CONTRACT
     employee.save()
     audit("employee", employee.id, "WORKER_HIRE_EDITED", actor=actor)
     return None

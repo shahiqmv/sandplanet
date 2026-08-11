@@ -207,3 +207,31 @@ class RosterSalaryVisibilityTests(TestCase):
             r = self._roster(make_user(f"u{role}", role, site=self.site))
             self.assertIsNotNone(r["Site Engineer"]["basic_pay"])
             self.assertFalse(r["Site Engineer"]["pay_hidden"])
+
+
+class SiteHiresContractOnlyTests(WorkerBatchTests):
+    """Sites hire CONTRACT workers only (owner 2026-08-11): a PERMANENT
+    worker (company work permit) is created by HR / onboarding, never via a
+    site batch — whatever the payload claims. The employee DB was getting
+    messy with site-added 'permanent' workers."""
+
+    def test_site_add_forces_contract(self):
+        # even an explicit PERMANENT in the payload is overridden
+        r = self._add_batch([
+            self._worker("Cee", employment_type="PERMANENT"),
+            self._worker("Dee")])
+        self.assertEqual(r.status_code, 201, r.data)
+        for w in r.data["workers"]:
+            emp = Employee.objects.get(pk=w["id"])
+            self.assertEqual(emp.employment_type,
+                             Employee.EmploymentType.CONTRACT)
+
+    def test_hire_edit_cannot_flip_to_permanent(self):
+        r = self._add_batch([self._worker("Eee")])
+        emp_id = r.data["workers"][0]["id"]
+        r = self.client.patch(f"/api/v1/worker-hires/{emp_id}",
+                              {"employment_type": "PERMANENT"},
+                              format="json")
+        self.assertIn(r.status_code, (200, 204), getattr(r, "data", None))
+        self.assertEqual(Employee.objects.get(pk=emp_id).employment_type,
+                         Employee.EmploymentType.CONTRACT)

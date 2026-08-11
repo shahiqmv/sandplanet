@@ -377,9 +377,12 @@ function RevisionCard({ rev, me, onChanged }) {
     </div>
   );
 }
+// Site hires are CONTRACT workers only (owner 2026-08-11) — a PERMANENT
+// worker goes on the company work permit and is created by HR / onboarding,
+// never from the site batch. The server enforces this too.
 const BLANK = { full_name: "", passport_no: "", nationality: "",
   job_category_id: "", basic_pay: "", currency: "MVR",
-  employment_type: "PERMANENT", work_permit_no: "", work_permit_expiry: "" };
+  employment_type: "CONTRACT", work_permit_no: "", work_permit_expiry: "" };
 
 function HiresForm({ site, onCancel, onDone }) {
   const [rows, setRows] = useState([{ ...BLANK }]);
@@ -418,6 +421,9 @@ function HiresForm({ site, onCancel, onDone }) {
                                      marginBottom: 12 }}>
       <h4 style={{ margin: "0 0 8px", color: "var(--navy)" }}>
         New hires — submit as one batch</h4>
+      <p style={{ margin: "0 0 8px", fontSize: 12, color: "#8a6d00" }}>
+        Site hires are <b>Contract</b> workers. A permanent worker (company
+        work permit) is created by HR through Onboarding — not here.</p>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       {rows.map((r, i) => (
         <div key={i} style={{ border: "1px solid #e2e8f0", borderRadius: 8,
