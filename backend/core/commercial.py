@@ -471,11 +471,16 @@ def set_claim_meta(claim, data, actor):
     material-on/off-site and retention-release figures the QS enters direct."""
     if claim.status != "DRAFT":
         return None, "Only a draft claim can be edited."
-    # The basis is locked once the first claim exists — later claims inherit it
-    # so a % / measured-qty mismatch can't creep in mid-contract.
-    if "basis" in data and claim.previous_id and data["basis"] != claim.basis:
-        return None, ("The claim basis is set by the first claim and can't be "
-                      "changed on a later one.")
+    # Later claims inherit the previous basis by default, but the client can
+    # demand a switch mid-contract (owner 2026-08-11: North Jetty moved from
+    # % to site measurements). Safe because every prior claim is revalued by
+    # ITS OWN stored basis (the 2026-07-30 mixed-basis fix) — the change is
+    # audited rather than blocked.
+    if ("basis" in data and claim.previous_id
+            and data["basis"] and data["basis"] != claim.basis):
+        audit("project", claim.project_id, "CLAIM_BASIS_CHANGED", actor=actor,
+              detail={"ref": claim.ref, "from": claim.basis,
+                      "to": data["basis"]})
     for f in ("ref", "claim_type", "basis", "note"):
         if f in data:
             setattr(claim, f, data.get(f) or getattr(claim, f))

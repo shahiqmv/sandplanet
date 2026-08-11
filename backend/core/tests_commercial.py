@@ -339,20 +339,36 @@ class ProgressClaimTests(TestCase):
         self.assertEqual(float(line_a["previous_value"]), 500.0)   # 50% × 1000
         self.assertEqual(float(line_a["previous_pct"]), 50.0)
 
-    def test_basis_locks_to_the_first_claim(self):
-        # The first claim sets the basis; a later claim inherits it and the
-        # field is flagged locked so the QS can't flip % ↔ measured mid-contract.
+    def test_basis_inherits_but_can_switch_mid_contract(self):
+        # A later claim inherits the previous basis, but the QS may switch it
+        # (owner 2026-08-11: North Jetty moved from % to site measurements).
+        # Prior claims keep valuing by THEIR basis, so the chain stays exact.
         c1 = self._create()
         self.assertEqual(c1["basis"], "PERCENT")
+        self._value_pct(c1["id"], {"A": "50"})           # 50% of 1000 = 500
         self._status(c1["id"], "SUBMITTED")
         self._status(c1["id"], "CERTIFIED")
         c2 = self._create()
         d2 = self._detail(c2["id"])["claim"]
-        self.assertEqual(d2["basis"], "PERCENT")
-        self.assertTrue(d2["basis_locked"])
+        self.assertEqual(d2["basis"], "PERCENT")          # inherited
+        self.assertTrue(d2["basis_inherited"])
         r = self.client.post(f"/api/v1/claims/{c2['id']}/meta",
                              {"basis": "MEASURED"}, format="json")
-        self.assertEqual(r.status_code, 400, r.data)
+        self.assertEqual(r.status_code, 200, r.data)
+        # measured going forward: A now 70 no cumulative → 700; the previous
+        # %-based 500 still reads correctly, current = 200
+        d = self._detail(c2["id"])
+        row = next(ln for ln in d["lines"] if ln["item_code"] == "A")
+        self.client.post(f"/api/v1/claims/{c2['id']}/items",
+                         {"rows": [{"id": row["id"],
+                                    "cumulative_qty": "70"}]}, format="json")
+        d = self._detail(c2["id"])
+        row = next(ln for ln in d["lines"] if ln["item_code"] == "A")
+        self.assertEqual(float(row["previous_value"]), 500.0)
+        self.assertEqual(float(row["cumulative_value"]), 700.0)
+        self.assertEqual(float(row["current_value"]), 200.0)
+        self.assertEqual(float(row["contract_qty"]), 100.0)  # shown on screen
+        self.assertEqual(float(row["rate"]), 10.0)
 
     def test_previous_value_survives_a_legacy_basis_mismatch(self):
         # Safety net for pre-lock data: even if a chained claim carries a

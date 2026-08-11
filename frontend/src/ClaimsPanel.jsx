@@ -382,15 +382,16 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           </select>
         </label>
         <label>Basis{" "}
-          <select value={meta.basis} disabled={!editable || c.basis_locked}
+          <select value={meta.basis} disabled={!editable}
                   onChange={(e) => setM("basis", e.target.value)}
                   style={{ ...inputStyle, width: 140 }}>
             <option value="PERCENT">% complete</option>
             <option value="MEASURED">Measured qty</option>
           </select>
-          {c.basis_locked && (
-            <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}>
-              set by claim 1</span>)}
+          {(c.basis_inherited ?? c.basis_locked) && (
+            <span style={{ marginLeft: 6, fontSize: 11, color: "var(--muted)" }}
+                  title="Carried from the previous claim — change it if the client now certifies on the other basis; earlier claims keep their own basis.">
+              carried from previous claim</span>)}
         </label>
         <label>Work done up to{" "}
           <input type="date" value={meta.work_done_upto} disabled={!editable}
@@ -406,6 +407,12 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                         fontSize: 12 }}>
           <thead><tr>
             <th style={th}>Code</th><th style={th}>Description</th>
+            {measured && <>
+              <th style={{ ...th, textAlign: "right" }}
+                  title="The BOQ / contract quantity for this line">
+                Contract qty</th>
+              <th style={{ ...th, textAlign: "right" }}>Rate</th>
+            </>}
             <th style={{ ...th, textAlign: "right" }}>Contract {ccy}</th>
             <th style={{ ...th, textAlign: "right" }}>
               {measured ? "Prev qty" : "Prev %"}</th>
@@ -429,6 +436,16 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                       padding: "0 5px", borderRadius: 8 }}>Discount</span>)}
                 </td>
                 <td style={{ ...td, maxWidth: 260 }}>{ln.description}</td>
+                {measured && <>
+                  <td style={{ ...td, textAlign: "right",
+                               whiteSpace: "nowrap" }}>
+                    {ln.contract_qty != null
+                      ? `${fmt(ln.contract_qty)} ${ln.unit || ""}` : "—"}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {ln.is_split
+                      ? `M ${fmt(ln.rate_supply)} + W ${fmt(ln.rate_install)}`
+                      : ln.rate != null ? fmt(ln.rate) : "—"}</td>
+                </>}
                 <td style={{ ...td, textAlign: "right" }}>
                   {fmt(ln.contract_amount)}</td>
                 <td style={{ ...td, textAlign: "right", color: "var(--muted)" }}>
