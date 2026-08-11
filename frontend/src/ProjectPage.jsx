@@ -212,19 +212,26 @@ manpower histogram, on the letterhead — send to the client"
       {tab === "commercial" && (
         <>
           {/* One long page became unmanageable with a big BOQ (owner
-              2026-08-11) — each commercial area gets its own sub-tab. */}
-          <div style={{ display: "flex", gap: 6, margin: "0 0 10px",
-                        flexWrap: "wrap" }}>
+              2026-08-11) — each commercial area gets its own sub-tab.
+              Styled as a classic underline tab strip, not pills (owner). */}
+          <div style={{ display: "flex", gap: 2, margin: "0 0 12px",
+                        flexWrap: "wrap", alignItems: "flex-end",
+                        borderBottom: "2px solid var(--sp-border,#d8e1e8)" }}>
             {[["boq", "BOQ"], ["variations", "Variations"],
               ["claims", "Claims"], ["bonds", "Bonds & Insurance"]]
               .map(([key, label]) => (
               <button key={key} onClick={() => setCommTab(key)}
                       style={{
-                        ...ghostButton, padding: "3px 12px", fontSize: 12.5,
-                        background: commTab === key ? "var(--sky-soft,#e8f1f8)"
-                                                    : "#fff",
-                        fontWeight: commTab === key ? 700 : 400,
-                        color: "var(--navy)",
+                        background: "transparent", border: "none",
+                        cursor: "pointer", padding: "7px 16px 8px",
+                        fontSize: 13.5, marginBottom: -2,
+                        fontFamily: "inherit",
+                        borderBottom: commTab === key
+                          ? "2.5px solid var(--navy)"
+                          : "2.5px solid transparent",
+                        fontWeight: commTab === key ? 700 : 500,
+                        color: commTab === key ? "var(--navy)"
+                                               : "var(--muted,#5a6b78)",
                       }}>
                 {label}
               </button>
