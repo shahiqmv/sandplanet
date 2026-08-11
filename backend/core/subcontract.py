@@ -80,6 +80,11 @@ def set_subcontractor_status(sub, status, actor):
         return "Invalid status."
     if actor.role not in ("PM", "DIRECTOR", "ADMIN"):
         return "Suspend / close requires PM approval."
+    # Re-opening a CLOSED group is an admin-level correction (owner
+    # 2026-08-11) — closure ends the engagement; only an administrator
+    # reverses a mistaken close.
+    if sub.status == S.CLOSED and actor.role != "ADMIN":
+        return "Only an administrator can re-open a closed subcontractor."
     sub.status = status
     sub.save(update_fields=["status", "updated_at"])
     audit("subcontractor", sub.id, "SUB_STATUS", actor=actor, to_state=status)

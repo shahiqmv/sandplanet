@@ -196,6 +196,11 @@ function Detail({ sub, me, cats, onBack, onChanged }) {
   if (["APPROVED", "ACTIVE", "SUSPENDED"].includes(sub.status) && canSuspend)
     actions.push(<Btn key="cl" variant="danger" disabled={busy}
                       onClick={() => act("close")}>Close</Btn>);
+  // Re-opening a closed group is an admin-level correction (owner 2026-08-11)
+  if (sub.status === "CLOSED" && me.role === "ADMIN")
+    actions.push(<Btn key="reopen" variant="secondary" disabled={busy}
+                      title="Reverse a mistaken close — the group returns to Approved"
+                      onClick={() => act("reactivate")}>Re-open (admin)</Btn>);
 
   return (
     <section style={card}>

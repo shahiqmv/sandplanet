@@ -652,3 +652,45 @@ class SubcontractValuationTests(TestCase):
         self.client.force_login(self.sa)
         r = self.client.get(url)
         self.assertEqual(r.status_code, 403)         # rates: PM and above
+
+
+class ReopenClosedSubcontractorTests(TestCase):
+    """Re-opening a CLOSED subcontractor group is an admin-level correction
+    (owner 2026-08-11); a PM can still reactivate a SUSPENDED one."""
+
+    def setUp(self):
+        from .tests import make_user
+        self.site = Site.objects.create(code="RSC", name="Reopen Isle",
+                                        status=Site.Status.ACTIVE)
+        self.pm = make_user("rsc_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.admin = make_user("rsc_adm", User.Role.ADMIN)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Mistakenly Closed Team",
+            status=Subcontractor.Status.CLOSED, created_by=self.pm)
+        self.client = APIClient()
+
+    def _act(self, user, action):
+        self.client.force_authenticate(user)
+        return self.client.post(f"/api/v1/subcontractors/{self.sub.id}/action",
+                                {"action": action}, format="json")
+
+    def test_pm_cannot_reopen_closed(self):
+        r = self._act(self.pm, "reactivate")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("administrator", r.data["detail"])
+
+    def test_admin_reopens_closed_to_approved(self):
+        r = self._act(self.admin, "reactivate")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.sub.refresh_from_db()
+        self.assertEqual(self.sub.status, Subcontractor.Status.APPROVED)
+
+    def test_pm_still_reactivates_suspended(self):
+        self.sub.status = Subcontractor.Status.SUSPENDED
+        self.sub.save(update_fields=["status"])
+        r = self._act(self.pm, "reactivate")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.sub.refresh_from_db()
+        self.assertEqual(self.sub.status, Subcontractor.Status.APPROVED)
