@@ -390,12 +390,15 @@ def create_claim(project, data, actor):
         # Unit BOQ: one claim line per detail WORK under each bill (valued by
         # units done × its per-unit amount). A lump bill — or a category with
         # no captured detail — stays a single category line. A SPLIT-RATE
-        # category always claims at category level (its detail is a materials
-        # build-up, not claimable works): material qty and workmanship qty
-        # certified independently (owner 2026-08-10).
+        # category claims at category level (units delivered / installed,
+        # owner 2026-08-10) — unless the BOQ is set to DETAIL claiming (owner
+        # 2026-08-11, MXR): then the client certifies ACTUAL material
+        # quantities, one line per build-up material.
+        detail_split = boq.claim_level == "DETAIL"
         for cat in boq.categories.all():
             items = list(cat.items.all())
-            if items and not cat.is_lump and not cat.has_split_rates:
+            if items and not cat.is_lump and (not cat.has_split_rates
+                                              or detail_split):
                 for it in items:
                     pci = prev_map.get(("BOQ", it.id, None, None))
                     new_items.append(ProgressClaimItem(
@@ -731,12 +734,26 @@ def claim_valuation(claim):
         # and the bill is the section.
         unit_detail = (ci.source == "BOQ"
                        and getattr(line, "category_id", None))
+        line_rs = line_ri = None          # split M/W rates for the display
         if unit_detail:
             cat = line.category
             units = cat.qty or ONE
-            rate = line.amount or ZERO              # this work's amount PER unit
-            contract_amt = rate * units
-            disp_unit, disp_qty = cat.unit, units
+            if cat.has_split_rates:
+                line_rs, line_ri = (line.rate_supply or ZERO,
+                                    line.rate_install or ZERO)
+                # DETAIL claiming (owner 2026-08-11, MXR): the client
+                # certifies ACTUAL material quantities. Rate is per material
+                # unit (material + workmanship legs both derive from the one
+                # quantity); the contract qty is the per-unit build-up qty ×
+                # the category's unit count.
+                rate = line.rate_total
+                disp_qty = (line.qty or ZERO) * units
+                contract_amt = rate * disp_qty
+                disp_unit = line.unit
+            else:
+                rate = line.amount or ZERO          # this work's amount PER unit
+                contract_amt = rate * units
+                disp_unit, disp_qty = cat.unit, units
             disp_section = cat.name
         else:
             rate = line.rate_total
@@ -769,6 +786,7 @@ def claim_valuation(claim):
             "section": disp_section,
             "item_code": line.item_code, "description": line.description,
             "unit": disp_unit, "contract_qty": disp_qty, "rate": rate,
+            "rate_supply": line_rs, "rate_install": line_ri,
             "contract_amount": contract_amt,
             "cumulative_pct": ci.cumulative_pct,
             "cumulative_qty": ci.cumulative_qty,

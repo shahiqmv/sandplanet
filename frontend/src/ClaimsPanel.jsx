@@ -442,7 +442,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                     {ln.contract_qty != null
                       ? `${fmt(ln.contract_qty)} ${ln.unit || ""}` : "—"}</td>
                   <td style={{ ...td, textAlign: "right" }}>
-                    {ln.is_split
+                    {ln.rate_supply != null
                       ? `M ${fmt(ln.rate_supply)} + W ${fmt(ln.rate_install)}`
                       : ln.rate != null ? fmt(ln.rate) : "—"}</td>
                 </>}

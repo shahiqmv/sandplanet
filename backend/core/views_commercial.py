@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import commercial
+from .audit import audit
 from .models import (BoqItem, ClientReceipt, ProgressClaim, Project,
                      Variation, VariationItem)
 from .views_projects import PROJECT_EDIT_ROLES, _can_view_value
@@ -58,7 +59,8 @@ def _boq_payload(project):
                 "items": [], "categories": []}
     data = {"exists": True, "currency": boq.currency,
             "is_locked": boq.is_locked, "split_rates": boq.split_rates,
-            "mode": boq.mode, "total": boq.total,
+            "mode": boq.mode, "claim_level": boq.claim_level,
+            "total": boq.total,
             "total_supply": boq.total_supply, "total_install": boq.total_install,
             "contract_value": boq.contract_value,
             "items": BoqItemSerializer(boq.items.all(), many=True).data,
@@ -123,6 +125,32 @@ def boq_lock(request, pid):
                                      request.user)
     if msg:
         return Response({"detail": msg}, status=400)
+    return Response(_boq_payload(p))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def boq_claim_level(request, pid):
+    """Unit split-rate BOQs: switch how claims measure — per unit summary
+    (CATEGORY, default) or per build-up material (DETAIL — the client
+    certifies actual quantities used; owner 2026-08-11, MXR). Existing draft
+    claims keep their lines; delete + recreate the draft to re-seed."""
+    p, err = _get_project(request, pid)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    boq = getattr(p, "boq", None)
+    level = request.data.get("level")
+    if not boq or boq.mode != "UNIT":
+        return Response({"detail": "Only a unit-based BOQ has a claim "
+                                   "level."}, status=400)
+    if level not in ("CATEGORY", "DETAIL"):
+        return Response({"detail": "Unknown claim level."}, status=400)
+    boq.claim_level = level
+    boq.save(update_fields=["claim_level", "updated_at"])
+    audit("project", p.id, "BOQ_CLAIM_LEVEL", actor=request.user,
+          detail={"level": level})
     return Response(_boq_payload(p))
 
 

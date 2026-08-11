@@ -169,6 +169,27 @@ export default function BoqPanel({ projectId, project, me }) {
             {boq.is_locked ? "Locked" : "Draft"}</Chip>
         )}
         {boq.exists && boq.split_rates && <Chip tone="info">Supply + Install</Chip>}
+        {boq.exists && isUnit
+          && boq.categories?.some((c) => c.is_split) && (
+          <label style={{ fontSize: 12, color: "var(--muted)" }}
+                 title="CATEGORY: claim units delivered/installed × the per-unit rates. DETAIL: the client certifies actual material quantities from the build-ups — material and workmanship both derive from each quantity. Delete + recreate an open draft claim after switching.">
+            Claims{" "}
+            <select value={boq.claim_level || "CATEGORY"} disabled={!canEdit}
+                    onChange={async (e) => {
+                      try {
+                        setBoq(await api(
+                          `/projects/${projectId}/boq/claim-level`,
+                          { method: "POST",
+                            body: { level: e.target.value } }));
+                      } catch (err) { setError(err.message); }
+                    }}
+                    style={{ ...inputStyle, width: 210, padding: "2px 6px",
+                             fontSize: 12 }}>
+              <option value="CATEGORY">per unit (summary)</option>
+              <option value="DETAIL">per material (build-up qty)</option>
+            </select>
+          </label>
+        )}
         {canEdit && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8,
                         flexWrap: "wrap" }}>

@@ -258,6 +258,8 @@ urlpatterns = [
     path("projects/<int:pid>/boq", commercial.boq_detail, name="boq-detail"),
     path("projects/<int:pid>/boq/items", commercial.boq_save, name="boq-save"),
     path("projects/<int:pid>/boq/lock", commercial.boq_lock, name="boq-lock"),
+    path("projects/<int:pid>/boq/claim-level", commercial.boq_claim_level,
+         name="boq-claim-level"),
     path("projects/<int:pid>/boq/delete", commercial.boq_delete,
          name="boq-delete"),
     path("projects/<int:pid>/boq/import", commercial.boq_import,

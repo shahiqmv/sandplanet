@@ -464,3 +464,49 @@ class BoqSplitRateTests(TestCase):
         self.assertEqual(ln2["previous_value"], Decimal("52398.503"))
         self.assertEqual(ln2["current_value"],
                          Decimal("2752.546") * 2)
+
+    def test_detail_claim_level_values_actual_material_quantities(self):
+        """MXR (owner 2026-08-11): the client certifies ACTUAL material
+        quantities from the build-ups — one claim line per material, contract
+        qty = per-unit qty × unit count, material + labour valued off the one
+        quantity. CATEGORY level (the default) is untouched elsewhere."""
+        from . import commercial
+        cats = ue.normalise([
+            {"name": "C2 Island 92 Villa Pool Filtration system",
+             "quantity": 8, "unit": "Pcs",
+             "amount_per_unit_material": "132.15",
+             "amount_per_unit_labour": "45.41",
+             "items": [
+                 {"description": "Ø63 HDPE Pipe PE100", "quantity": 30,
+                  "unit": "mt", "rate_material": "4.27",
+                  "rate_labour": "0.51"},
+                 {"description": "Sand filter", "quantity": 1, "unit": "pcs",
+                  "rate_material": "4.05", "rate_labour": "30.11"}]}])
+        boq, err = ue.commit(self.project, cats, self.qs)
+        self.assertIsNone(err)
+        boq.claim_level = "DETAIL"
+        boq.save(update_fields=["claim_level"])
+        self.project.contract_value = "1420.48"
+        self.project.save(update_fields=["contract_value"])
+
+        claim, err = commercial.create_claim(self.project, {}, self.qs)
+        self.assertIsNone(err)
+        # one line per build-up material — NOT one per category
+        self.assertEqual(claim.items.count(), 2)
+        self.assertTrue(all(ci.source == "BOQ" for ci in claim.items.all()))
+        pipe_ci = claim.items.get(boq_item__description="Ø63 HDPE Pipe PE100")
+        # client certifies 150 mt of pipe actually used
+        commercial.set_claim_items(claim, [
+            {"id": pipe_ci.id, "cumulative_qty": "150"}], self.qs)
+        val = commercial.claim_valuation(claim)
+        ln = next(x for x in val["lines"] if x["id"] == pipe_ci.id)
+        self.assertEqual(ln["contract_qty"], Decimal("240"))   # 30 × 8
+        self.assertEqual(ln["unit"], "mt")
+        self.assertEqual(ln["rate"], Decimal("4.78"))          # 4.27 + 0.51
+        self.assertEqual(ln["rate_supply"], Decimal("4.27"))
+        self.assertEqual(ln["rate_install"], Decimal("0.51"))
+        # 150 × 4.78 — material and labour both derive from the quantity
+        self.assertEqual(ln["cumulative_value"], Decimal("717.00"))
+        self.assertEqual(ln["section"],
+                         "C2 Island 92 Villa Pool Filtration system")
+        self.assertEqual(float(val["waterfall"]["k1_work_done"]), 717.0)

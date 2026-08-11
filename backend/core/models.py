@@ -2730,6 +2730,18 @@ class Boq(models.Model):
     # bills — a strictly additive alternative selected per project.
     mode = models.CharField(max_length=14, choices=Mode.choices,
                             default=Mode.CONVENTIONAL)
+
+    class ClaimLevel(models.TextChoices):
+        CATEGORY = "CATEGORY", "Per unit (summary categories)"
+        DETAIL = "DETAIL", "Per material (build-up quantities)"
+
+    # Unit-mode split-rate BOQs only (owner 2026-08-11, MXR pools): how claims
+    # measure. CATEGORY = units delivered/installed × the per-unit rates (the
+    # default). DETAIL = the client certifies ACTUAL material quantities used —
+    # one claim line per build-up material, contract qty = per-unit qty × the
+    # category's unit count, material + labour both valued off that quantity.
+    claim_level = models.CharField(max_length=8, choices=ClaimLevel.choices,
+                                   default=ClaimLevel.CATEGORY)
     is_locked = models.BooleanField(default=False)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
