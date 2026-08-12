@@ -39,7 +39,7 @@
     <div class="row"><span class="lbl">Basic salary (monthly)</span><span>{{ i.f_basic_pay }}</span></div>
     <div class="row"><span class="lbl">Days worked / {{ run.working_days }} · daily {{ i.f_daily_rate }}</span><span>{{ i.days_worked }}</span></div>
     <div class="row"><span class="lbl">Earned basic</span><span>{{ i.f_earned_basic }}</span></div>
-    {% if line.fridays_worked %}<div class="row"><span class="lbl">Friday work ({{ line.fridays_worked }} day/s)</span><span>{{ i.f_friday_pay }}</span></div>{% endif %}
+    {% if line.fridays_worked %}<div class="row"><span class="lbl">Friday work ({{ line.fridays_worked }} day/s &times; {{ friday_ot_hours }}h OT)</span><span>{{ i.f_friday_pay }}</span></div>{% endif %}
     {% if line.ot_hours %}<div class="row"><span class="lbl">Overtime ({{ line.ot_hours }} h × {{ line.ot_rate }})</span><span>{{ i.f_ot_pay }}</span></div>{% endif %}
     {% if line.allowance %}<div class="row"><span class="lbl">Allowance / air ticket</span><span>{{ i.f_allowance }}</span></div>{% endif %}
     <div class="row tot"><span>Gross pay</span><span>{{ i.f_gross }}</span></div>

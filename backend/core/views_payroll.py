@@ -392,9 +392,11 @@ def payslip_pdf(request, pk):
               "deductions", "net", "amount_to_site", "amount_to_office"):
         info["f_" + k] = _money(info[k] or 0) if info.get(k) not in (None, "") \
             else "0.00"
+    from .payroll import friday_ot_hours
     html = render_to_string("pdf/payslip.html", {
         "line": line, "run": line.run, "i": info, "currency": line.run.currency,
         "period": f"{_month_name(line.run.month)} {line.run.year}",
+        "friday_ot_hours": friday_ot_hours().normalize(),
         "logo_src": logo_src(), "co": company_info(),
     })
     return _pdf_response(html, f"payslip-{line.employee.emp_no}-"

@@ -7,23 +7,42 @@ import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
-from .models import Attendance, Employee, SalaryAdvance
+from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 
 TWO = Decimal("0.01")
 ABSENT_MARKS = ("ABSENT", "SICK", "LEAVE")
+FRIDAY_OT_HOURS_DEFAULT = Decimal("12")
+
+
+def friday_ot_hours():
+    """Hours of OT a worked Friday earns (company policy, owner 2026-08-12:
+    a Friday pays 12 × the worker's OT rate — NOT an extra day of basic).
+    Editable via the `friday_ot_hours` company parameter."""
+    try:
+        v = (CompanyParameter.objects.get(key="friday_ot_hours").value
+             or "").strip()
+        return Decimal(v) if v else FRIDAY_OT_HOURS_DEFAULT
+    except (CompanyParameter.DoesNotExist, ArithmeticError, ValueError):
+        return FRIDAY_OT_HOURS_DEFAULT
 
 
 def q(v):
     return Decimal(v).quantize(TWO, rounding=ROUND_HALF_UP)
 
 
-def compute_line(line):
-    """Derive the money for one PayrollLine from its stored inputs. Friday work
-    is one extra day at the daily rate; OT is hours × the snapshot rate."""
+def compute_line(line, fri_hours=None):
+    """Derive the money for one PayrollLine from its stored inputs.
+
+    A worked Friday pays `friday_ot_hours` × the worker's OT rate (company
+    policy, owner 2026-08-12) — it no longer adds a day of basic. A worker
+    with no OT rate therefore earns nothing extra for a Friday, which is the
+    owner's explicit choice. OT hours recorded ON a Friday are excluded from
+    `ot_hours` at prefill so the day can't be paid twice."""
     wd = line.run.working_days or 1
+    fri_h = friday_ot_hours() if fri_hours is None else Decimal(fri_hours)
     daily = Decimal(line.basic_pay) / Decimal(wd)
     earned_basic = q(daily * Decimal(line.days_worked))
-    friday_pay = q(daily * Decimal(line.fridays_worked))
+    friday_pay = q(fri_h * Decimal(line.fridays_worked) * Decimal(line.ot_rate))
     ot_pay = q(Decimal(line.ot_hours) * Decimal(line.ot_rate))
     allowance = q(line.allowance)
     gross = q(earned_basic + friday_pay + ot_pay + allowance)
@@ -79,9 +98,12 @@ def _attendance_prefill(employee, site, year, month, working_days):
             continue                 # before the join date — ignore stray rows
         if a.remark in ABSENT_MARKS:
             absents += 1
-        ot += a.ot_approved or 0
-        if a.remark == "PRESENT" and a.day.isoweekday() not in work_week:
+        is_friday = a.day.isoweekday() not in work_week
+        if a.remark == "PRESENT" and is_friday:
             fridays += 1
+            continue        # the flat Friday OT covers the whole day (owner
+                            # 2026-08-12) — never add its hours again
+        ot += a.ot_approved or 0
     days = max(expected - absents, 0)
     return Decimal(days), ot, fridays
 

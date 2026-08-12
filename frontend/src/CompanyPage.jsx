@@ -28,6 +28,9 @@ const FIELDS = IDENTITY;
 // Fixed operational rates set once at company level.
 const SETTINGS = [
   ["wp_monthly_fee", "Work-permit fee — per permit, per month (MVR)", "e.g. 350"],
+  // A worked Friday pays this many hours at the worker's OT rate — it does
+  // NOT add a day of basic (owner 2026-08-12).
+  ["friday_ot_hours", "Friday work — OT hours paid per Friday", "12"],
 ];
 const ALL = [...IDENTITY, ...SIGNEE, ...SETTINGS];
 

@@ -252,10 +252,12 @@ class PayrollRunTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         d = r.data
         self.assertEqual(float(d["earned_basic"]), 3800.0)   # 6200*19/31
-        self.assertEqual(float(d["friday_pay"]), 400.0)      # 2 * 200 daily
+        # A Friday pays 12h × the OT rate, NOT a day of basic (owner
+        # 2026-08-12): 2 Fridays × 12h × 25 = 600
+        self.assertEqual(float(d["friday_pay"]), 600.0)
         self.assertEqual(float(d["ot_pay"]), 1225.0)         # 49 * 25
-        self.assertEqual(float(d["gross"]), 7425.0)          # 3800+400+1225+2000
-        self.assertEqual(float(d["net"]), 6925.0)            # gross - 500
+        self.assertEqual(float(d["gross"]), 7625.0)          # 3800+600+1225+2000
+        self.assertEqual(float(d["net"]), 7125.0)            # gross - 500
 
     def test_lock_posts_labour_cost(self):
         run = self.client.post("/api/v1/payroll/runs", {
@@ -553,3 +555,71 @@ class SubcontractorPayrollExclusionTests(TestCase):
         data2 = self.client.get("/api/v1/employees?include_subcontract=1").data
         rows2 = data2.get("results", data2) if isinstance(data2, dict) else data2
         self.assertIn("EMP-0002", {r["emp_no"] for r in rows2})
+
+
+class FridayOtPolicyTests(TestCase):
+    """A worked Friday pays 12h × the worker's OT rate — not a day of basic
+    (owner 2026-08-12). Workers with no OT rate earn nothing extra for it,
+    and OT hours recorded on the Friday itself are never paid twice."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, OvertimeRate)
+        self.hr = make_user("fri_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="FRI", name="Friday Isle",
+                                        status=Site.Status.ACTIVE)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        OvertimeRate.objects.create(category=self.cat, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-9001", full_name="OT Worker", basic_pay=6200,
+            currency="MVR", job_category=self.cat)
+        self.plain = Employee.objects.create(
+            emp_no="EMP-9002", full_name="No OT Worker", basic_pay=6200,
+            currency="MVR")                       # no category → no OT rate
+        for e in (self.emp, self.plain):
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+            # Friday 1 May 2026 worked, with 3h OT also recorded on it
+            Attendance.objects.create(employee=e, site=self.site,
+                                      day=date(2026, 5, 1), remark="PRESENT",
+                                      ot_approved=Decimal("3"))
+            # a normal working day with 2h OT
+            Attendance.objects.create(employee=e, site=self.site,
+                                      day=date(2026, 5, 4), remark="PRESENT",
+                                      ot_approved=Decimal("2"))
+
+    def test_friday_pays_twelve_hours_at_the_ot_rate(self):
+        from core import payroll
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(line.fridays_worked, 1)
+        # the Friday's own 3h OT is excluded — only the working day's 2h count
+        self.assertEqual(float(line.ot_hours), 2.0)
+        m = payroll.compute_line(line)
+        self.assertEqual(float(m["friday_pay"]), 300.0)      # 12 × 25
+        self.assertEqual(float(m["ot_pay"]), 50.0)           # 2 × 25
+
+    def test_worker_without_an_ot_rate_gets_nothing_for_friday(self):
+        from core import payroll
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.plain)
+        self.assertEqual(line.fridays_worked, 1)
+        self.assertEqual(float(line.ot_rate), 0.0)
+        m = payroll.compute_line(line)
+        self.assertEqual(float(m["friday_pay"]), 0.0)
+
+    def test_hours_come_from_the_company_parameter(self):
+        from core import payroll
+        from .models import CompanyParameter
+        CompanyParameter.objects.update_or_create(
+            key="friday_ot_hours", defaults={"value": "8"})
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(float(payroll.compute_line(line)["friday_pay"]),
+                         200.0)                                  # 8 × 25
