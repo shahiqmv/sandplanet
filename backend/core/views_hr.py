@@ -20,6 +20,7 @@ from .models import (
     Employee,
     EmployeeSiteAllocation,
     ManpowerCategory,
+    OnboardingCase,
     OvertimeRate,
     Site,
     TimesheetMonth,
@@ -140,7 +141,75 @@ class EmployeeSerializer(serializers.ModelSerializer):
 class EmployeeViewSet(viewsets.ModelViewSet):
     serializer_class = EmployeeSerializer
     permission_classes = [IsHrOrReadOnly]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    # What makes an employee record REAL history — anything here and the record
+    # is part of the company's books, so it may never be deleted (owner
+    # 2026-08-12: admin delete exists to remove duplicate/erroneous records
+    # found in the expat-portal reconciliation, not to erase people).
+    # NB salary_revisions / permit_renewals CASCADE off Employee — listing them
+    # here stops a delete silently taking real records with it.
+    _HISTORY = (
+        ("attendance", "attendance days"),
+        ("payroll_lines", "payroll lines"),
+        ("salary_advances", "salary advances"),
+        ("change_items", "worker-change batches"),
+        ("salary_revisions", "salary revisions"),
+        ("permit_renewals", "work-permit renewals"),
+    )
+
+    def _delete_blockers(self, emp):
+        out = []
+        for attr, label in self._HISTORY:
+            mgr = getattr(emp, attr, None)
+            n = mgr.count() if mgr is not None else 0
+            if n:
+                out.append(f"{n} {label}")
+        return out
+
+    @action(detail=True, methods=["get"])
+    def deletable(self, request, pk=None):
+        """Why this record can (or cannot) be deleted — the confirm dialog
+        reads this before offering the button."""
+        emp = self.get_object()
+        blockers = self._delete_blockers(emp)
+        return Response({
+            "can_delete": request.user.role == "ADMIN" and not blockers,
+            "is_admin": request.user.role == "ADMIN",
+            "blockers": blockers,
+            "allocations": emp.site_allocations.count(),
+            # an onboarding case merely detaches (SET_NULL, related_name="+"
+            # so it has no reverse accessor) — never a blocker
+            "onboarding_case": OnboardingCase.objects.filter(
+                employee=emp).exists(),
+        })
+
+    def destroy(self, request, *args, **kwargs):
+        """Delete an employee record — ADMIN only, and only when it carries no
+        real history. Site allocations (the only soft link) are removed with
+        it; an onboarding case is detached, not deleted."""
+        if request.user.role != "ADMIN":
+            return Response(
+                {"detail": "Only an administrator can delete an employee "
+                           "record."}, status=403)
+        emp = self.get_object()
+        blockers = self._delete_blockers(emp)
+        if blockers:
+            return Response(
+                {"detail": f"{emp.emp_no} carries " + ", ".join(blockers)
+                           + " — it can't be deleted. Deactivate it instead so "
+                             "the history stays intact."}, status=400)
+        emp_id = emp.id            # keep the id — the audit row outlives the record
+        detail = {"emp_no": emp.emp_no, "name": emp.full_name,
+                  "passport": emp.passport_no or "",
+                  "engagement": emp.engagement_type,
+                  "allocations_removed": emp.site_allocations.count()}
+        with transaction.atomic():
+            emp.site_allocations.all().delete()   # PROTECTed, but no history
+            emp.delete()
+        audit("employee", emp_id, "EMPLOYEE_DELETED", actor=request.user,
+              detail=detail)
+        return Response({"deleted": True, **detail})
 
     def get_queryset(self):
         qs = Employee.objects.select_related("job_category").order_by("emp_no")

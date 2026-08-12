@@ -235,3 +235,61 @@ class SiteHiresContractOnlyTests(WorkerBatchTests):
         self.assertIn(r.status_code, (200, 204), getattr(r, "data", None))
         self.assertEqual(Employee.objects.get(pk=emp_id).employment_type,
                          Employee.EmploymentType.CONTRACT)
+
+
+class EmployeeDeleteTests(TestCase):
+    """Admin-only delete of an employee record — for the duplicate / wrongly
+    created rows the expat-portal reconciliation surfaced (owner 2026-08-12).
+    A record carrying real history can never be deleted."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="DEL", name="Del Isle",
+                                        status=Site.Status.ACTIVE)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.admin = make_user("del_adm", User.Role.ADMIN)
+        self.hr = make_user("del_hr", User.Role.HO_HR)
+        self.client = APIClient()
+
+    def _emp(self, name="Dup Worker"):
+        e = Employee.objects.create(
+            emp_no=f"EMP-{Employee.objects.count() + 900:04d}",
+            full_name=name, job_category=self.mason,
+            basic_pay=Decimal("6000"), is_active=True)
+        EmployeeSiteAllocation.objects.create(
+            employee=e, site=self.site, from_date=date(2026, 1, 1))
+        return e
+
+    def test_admin_deletes_a_clean_duplicate(self):
+        e = self._emp()
+        self.client.force_authenticate(self.admin)
+        r = self.client.get(f"/api/v1/employees/{e.id}/deletable")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["can_delete"])
+        self.assertEqual(r.data["allocations"], 1)
+        r = self.client.delete(f"/api/v1/employees/{e.id}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(Employee.objects.filter(pk=e.id).exists())
+        self.assertFalse(EmployeeSiteAllocation.objects
+                         .filter(employee_id=e.id).exists())
+
+    def test_hr_cannot_delete(self):
+        e = self._emp()
+        self.client.force_authenticate(self.hr)
+        r = self.client.delete(f"/api/v1/employees/{e.id}")
+        self.assertEqual(r.status_code, 403)
+        self.assertTrue(Employee.objects.filter(pk=e.id).exists())
+
+    def test_record_with_history_is_refused(self):
+        from .models import Attendance
+        e = self._emp()
+        Attendance.objects.create(employee=e, site=self.site,
+                                  day=date(2026, 2, 1), normal_hours=8)
+        self.client.force_authenticate(self.admin)
+        r = self.client.get(f"/api/v1/employees/{e.id}/deletable")
+        self.assertFalse(r.data["can_delete"])
+        self.assertIn("1 attendance days", r.data["blockers"])
+        r = self.client.delete(f"/api/v1/employees/{e.id}")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Deactivate", r.data["detail"])
+        self.assertTrue(Employee.objects.filter(pk=e.id).exists())

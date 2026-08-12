@@ -307,6 +307,7 @@ export default function EmployeesPage({ me, sites }) {
       {editing && (
         <EmployeeProfile employee={editing} categories={categories}
           seesPay={seesPay} isHr={isHr} sites={sites}
+          isAdmin={me.role === "ADMIN"}
           onClose={() => setEditing(null)}
           onChanged={load}
           onSaved={() => { setEditing(null); load(); }} />
@@ -572,8 +573,31 @@ const Section = ({ title, children }) => (
 );
 
 function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
-                          onClose, onSaved, onChanged }) {
+                          isAdmin = false, onClose, onSaved, onChanged }) {
   const creating = !employee.id;
+  // Admin-only delete — for duplicate / erroneous records (owner 2026-08-12).
+  // The server refuses any record carrying attendance, payroll, advances,
+  // revisions, permit renewals or worker-change history.
+  const [delInfo, setDelInfo] = useState(null);
+  useEffect(() => {
+    if (!isAdmin || !employee.id) return;
+    api(`/employees/${employee.id}/deletable`).then(setDelInfo).catch(() => {});
+  }, [isAdmin, employee.id]);
+
+  async function removeRecord() {
+    const why = (delInfo?.blockers || []).join(", ");
+    if (why) { window.alert(`This record carries ${why}. Deactivate it instead — the history must stay.`); return; }
+    if (!window.confirm(
+      `Delete ${employee.emp_no} — ${employee.full_name}?\n\n`
+      + `Passport ${employee.passport_no || "(none)"}\n`
+      + `${delInfo?.allocations || 0} site allocation(s) will be removed.\n\n`
+      + "This cannot be undone. Use it only for a duplicate or wrongly "
+      + "created record.")) return;
+    try {
+      await api(`/employees/${employee.id}`, { method: "DELETE" });
+      onSaved();
+    } catch (e) { window.alert(e.message); }
+  }
   const [f, setF] = useState({
     full_name: employee.full_name || "",
     date_of_birth: employee.date_of_birth || "",
@@ -875,6 +899,17 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
           <button onClick={save} disabled={busy || !f.full_name}
                   style={buttonStyle}>
             {busy ? "Saving…" : "Save profile"}</button>
+          {isAdmin && !creating && (
+            <button onClick={removeRecord} disabled={busy}
+              title={(delInfo?.blockers || []).length
+                ? `Has ${delInfo.blockers.join(", ")} — deactivate instead`
+                : "Delete this record (duplicates / wrong entries only)"}
+              style={{ ...ghostButton, color: "var(--red-fg, #c0392b)",
+                       borderColor: "#e9c4c4",
+                       opacity: (delInfo?.blockers || []).length ? 0.5 : 1 }}>
+              Delete record
+            </button>
+          )}
           <label style={{ fontSize: 12.5, marginLeft: "auto" }}>
             <input type="checkbox" checked={f.is_active}
                    onChange={(e) => set({ is_active: e.target.checked })} />{" "}
