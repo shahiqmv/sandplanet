@@ -293,3 +293,90 @@ class EmployeeDeleteTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("Deactivate", r.data["detail"])
         self.assertTrue(Employee.objects.filter(pk=e.id).exists())
+
+
+class EmployeeMergeTests(TestCase):
+    """Merging a duplicate record moves its history onto the survivor so
+    payroll sees the work (owner 2026-08-12: HR re-created workers instead of
+    reactivating them, stranding July attendance on inactive records)."""
+
+    def setUp(self):
+        from core import employee_merge as em
+        self.em = em
+        self.site = Site.objects.create(code="MRG", name="Merge Isle",
+                                        status=Site.Status.ACTIVE)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.admin = make_user("mrg_adm", User.Role.ADMIN)
+
+    def _emp(self, name, active=True, pp="P1"):
+        e = Employee.objects.create(
+            emp_no=f"EMP-{Employee.objects.count() + 700:04d}", full_name=name,
+            job_category=self.mason, basic_pay=Decimal("6000"),
+            passport_no=pp, is_active=active)
+        EmployeeSiteAllocation.objects.create(
+            employee=e, site=self.site, from_date=date(2026, 1, 1))
+        return e
+
+    def _att(self, e, *days):
+        from .models import Attendance
+        for d in days:
+            Attendance.objects.create(employee=e, site=self.site,
+                                      day=date(2026, 7, d), normal_hours=8)
+
+    def test_merge_moves_attendance_and_deletes_duplicate(self):
+        old = self._emp("Worker Old", active=False)
+        new = self._emp("Worker New")
+        self._att(old, 1, 2, 3)
+        self._att(new, 10)
+        detail, err = self.em.merge(old, new, self.admin)
+        self.assertIsNone(err)
+        self.assertFalse(Employee.objects.filter(pk=old.pk).exists())
+        from .models import Attendance
+        self.assertEqual(Attendance.objects.filter(employee=new).count(), 4)
+        self.assertEqual(detail["moved"]["attendance"], 3)
+        self.assertEqual(detail["into"], new.emp_no)
+
+    def test_clashing_day_keeps_target_by_default(self):
+        from .models import Attendance
+        old = self._emp("Dup", active=False)
+        new = self._emp("Live")
+        self._att(old, 1, 5)
+        self._att(new, 5)
+        Attendance.objects.filter(employee=new, day=date(2026, 7, 5)).update(
+            normal_hours=Decimal("4"))
+        detail, err = self.em.merge(old, new, self.admin)
+        self.assertIsNone(err)
+        rows = Attendance.objects.filter(employee=new).order_by("day")
+        self.assertEqual([r.day.day for r in rows], [1, 5])
+        # the survivor's own row for the clashing day is the one kept
+        self.assertEqual(rows.get(day=date(2026, 7, 5)).normal_hours,
+                         Decimal("4.00"))
+        self.assertEqual(detail["clashing_days_dropped"], ["2026-07-05"])
+
+    def test_keep_source_rule_replaces_the_clashing_day(self):
+        from .models import Attendance
+        old = self._emp("Dup", active=False)
+        new = self._emp("Live")
+        self._att(old, 5)
+        self._att(new, 5)
+        Attendance.objects.filter(employee=new).update(normal_hours=Decimal("4"))
+        self.em.merge(old, new, self.admin, clash="keep_source")
+        self.assertEqual(
+            Attendance.objects.get(employee=new).normal_hours, Decimal("8.00"))
+
+    def test_merge_into_self_refused(self):
+        e = self._emp("Solo")
+        detail, err = self.em.merge(e, e, self.admin)
+        self.assertIsNotNone(err)
+        self.assertTrue(Employee.objects.filter(pk=e.pk).exists())
+
+    def test_preview_reports_clashes_and_warnings(self):
+        old = self._emp("Dup", active=False, pp="AAA")
+        new = self._emp("Live", pp="BBB")
+        self._att(old, 1, 2)
+        self._att(new, 2)
+        pv = self.em.preview(old, new)
+        self.assertEqual(pv["moves"]["attendance"], 2)
+        self.assertEqual(len(pv["attendance_clashes"]), 1)
+        self.assertIn("passport numbers differ", pv["warnings"])
