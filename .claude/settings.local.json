@@ -713,7 +713,8 @@
       "Bash(awk -F'\\(' '{print $2}')",
       "Bash(ssh -o BatchMode=yes planet-prod 'cd /root/sandplanet && docker compose -f docker-compose.prod.yml exec -T web python manage.py shell -c \" *)",
       "Bash(.venv/bin/python manage.py test core.tests_commercial)",
-      "Bash(.venv/bin/python manage.py test core.tests_commercial.VariationTests.test_approved_edit_reseeds_draft_claims_and_locks_after_claiming)"
+      "Bash(.venv/bin/python manage.py test core.tests_commercial.VariationTests.test_approved_edit_reseeds_draft_claims_and_locks_after_claiming)",
+      "Bash(ssh -o BatchMode=yes planet-prod 'cd /root/sandplanet && docker compose -f docker-compose.prod.yml exec -T web python -c \" *)"
     ]
   }
 }

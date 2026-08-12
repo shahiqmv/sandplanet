@@ -453,3 +453,30 @@ class CarrierEndpointTests(TestCase):
         self.assertEqual(
             self.client.post("/api/v1/tracking/carriers/refresh").status_code,
             403)
+
+
+class BookedShipmentRegistersTests(TestCase):
+    """A container entered on a still-BOOKED shipment must register (owner
+    2026-08-11): the carrier assigns the box at booking and it is often
+    already sailing while the app still reads BOOKED — the old gate meant
+    the number silently tracked nothing."""
+
+    def test_container_on_booked_shipment_registers(self):
+        ship, actor = _make_shipment()
+        self.assertEqual(ship.status, "BOOKED")
+        with patch("core.tracking.get_provider", return_value=_Fake()):
+            err = ipr_svc.update_shipment_details(
+                ship, {"container_awb": "CSQU3054383"}, actor)
+        self.assertIsNone(err)
+        t = ShipmentTracking.objects.get(shipment=ship)
+        self.assertEqual(t.state, "ACTIVE")
+        self.assertEqual(t.tracking_key, "CSQU3054383")
+        self.assertTrue(t.events.exists())
+
+    def test_booked_shipment_without_a_key_still_registers_nothing(self):
+        ship, actor = _make_shipment()
+        with patch("core.tracking.get_provider", return_value=_Fake()):
+            ipr_svc.update_shipment_details(ship, {"vessel_flight": "MV X"},
+                                            actor)
+        self.assertFalse(
+            ShipmentTracking.objects.filter(shipment=ship).exists())

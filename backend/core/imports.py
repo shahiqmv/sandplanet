@@ -787,16 +787,21 @@ def advance_shipment(shipment, to_status, actor):
 
 
 def _register_tracking(shipment):
-    """Best-effort live-tracking (re)registration for a shipped-or-later
-    shipment (D40). Handles the common case where the B/L is entered after
+    """Best-effort live-tracking (re)registration whenever a shipment carries a
+    usable key (D40). Handles the common case where the B/L is entered after
     the shipment already left — a pending/failed tracking is refreshed with
     the new key and retried. Never raises: tracking must not break the
-    shipment workflow."""
+    shipment workflow.
+
+    Registration does NOT wait for the SHIPPED transition (owner 2026-08-11):
+    the carrier assigns the container at booking and the box is often already
+    sailing while the app still reads BOOKED, so a container number entered on
+    a booked shipment silently tracked nothing. The provider is the authority
+    on whether the key resolves yet; an unresolvable one simply reads
+    UNTRACKED and re-registers on the next edit."""
     from . import tracking as trk
     from .models import ShipmentTracking
     try:
-        if shipment.status == "BOOKED":
-            return                       # nothing to track until it ships
         t = ShipmentTracking.objects.filter(shipment=shipment).first()
         if t is None:
             t = trk.ensure_tracking(shipment)
