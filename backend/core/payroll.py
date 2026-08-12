@@ -244,6 +244,121 @@ def generate_month(year, month, actor):
             "skipped": skipped, "working_days": working_days}
 
 
+def _run_pm_ids(run):
+    """Current PMs of the run's site (co-PMs share the duty). Empty for the
+    site-less combined USD run — it goes straight to the PD."""
+    if run.site_id is None:
+        return set()
+    return {u.id for u in run.site.current_pms()}
+
+
+def can_act(run, user, action):
+    """Whether `user` may perform `action` on `run` right now."""
+    role = user.role
+    st = run.status
+    if action == "submit":
+        return role in ("HO_HR", "FINANCE", "ADMIN", "PA") and st in (
+            "DRAFT", "RETURNED")
+    if action == "verify":                      # the site PM
+        return st == "PM_REVIEW" and (
+            role == "ADMIN" or user.id in _run_pm_ids(run))
+    if action == "approve":                     # the PD
+        return st == "PD_REVIEW" and role in ("DIRECTOR", "ADMIN")
+    if action == "return":
+        return st in ("PM_REVIEW", "PD_REVIEW") and (
+            role in ("DIRECTOR", "ADMIN") or user.id in _run_pm_ids(run))
+    if action == "lock":
+        return st == "APPROVED" and role in ("HO_HR", "FINANCE", "ADMIN", "PA")
+    return False
+
+
+def set_run_status(run, action, actor, reason=""):
+    """Move a run through the verification chain (owner 2026-08-12).
+    Returns (run, error)."""
+    from django.utils import timezone
+
+    from .models import PayrollRun
+    if run.status == "LOCKED":
+        return None, "This run is locked."
+    if not can_act(run, actor, action):
+        return None, {
+            "submit": "Only HR / Finance submits a run for verification.",
+            "verify": "Only this site's PM verifies the run.",
+            "approve": "Only the Director approves the run.",
+            "return": "Only the site PM or the Director returns a run.",
+            "lock": "The run must be approved before it can be locked.",
+        }.get(action, "Not permitted.")
+    if action == "return" and not (reason or "").strip():
+        return None, "Give the reason you're returning it."
+
+    if action == "submit":
+        target = "PD_REVIEW" if run.site_id is None else "PM_REVIEW"
+        run.submitted_by, run.submitted_at = actor, timezone.now()
+        run.return_reason = ""
+    elif action == "verify":
+        target = "PD_REVIEW"
+        run.verified_by, run.verified_at = actor, timezone.now()
+    elif action == "approve":
+        target = "APPROVED"
+        run.approved_by, run.approved_at = actor, timezone.now()
+    else:                                        # return
+        target = "RETURNED"
+        run.return_reason = reason.strip()
+        run.verified_by = run.verified_at = None
+        run.approved_by = run.approved_at = None
+    if target not in PayrollRun.FLOW.get(run.status, set()):
+        return None, f"Cannot move a {run.status} run to {target}."
+    run.status = target
+    run.save()
+    audit("payroll_run", run.id, f"PAYROLL_RUN_{action.upper()}", actor=actor,
+          to_state=target, detail={"period": f"{run.year}-{run.month:02d}",
+                                   "site": run.site.code if run.site_id
+                                   else "ALL", "reason": reason})
+    _notify_run(run, action, actor)
+    return run, None
+
+
+def reset_to_draft(run, actor, why):
+    """Any change to the figures voids the sign-offs (owner 2026-08-12) — an
+    approval must never outlive the numbers it was given."""
+    if run.status in ("DRAFT", "LOCKED"):
+        return run
+    run.status = "DRAFT"
+    run.verified_by = run.verified_at = None
+    run.approved_by = run.approved_at = None
+    run.save()
+    audit("payroll_run", run.id, "PAYROLL_RUN_REOPENED", actor=actor,
+          to_state="DRAFT", detail={"why": why})
+    return run
+
+
+def _notify_run(run, action, actor):
+    """Tell whoever the run is now waiting on."""
+    from .notify import _role_users, notify_user
+    where = run.site.code if run.site_id else "USD (all sites)"
+    body = f"{where} · {run.year}-{run.month:02d} · {run.currency}"
+    try:
+        if run.status == "PM_REVIEW":
+            for u in run.site.current_pms():          # every co-PM
+                notify_user(u, "Salary draft — verify your site",
+                            body=body, category="approval")
+        elif run.status == "PD_REVIEW":
+            for u in _role_users("DIRECTOR"):
+                notify_user(u, "Salary draft — needs your approval",
+                            body=body, category="approval")
+        elif run.status == "RETURNED":
+            for u in _role_users("HO_HR", "FINANCE"):
+                notify_user(u, "Salary draft returned",
+                            body=f"{body} — {run.return_reason}",
+                            category="approval")
+        elif run.status == "APPROVED":
+            for u in _role_users("HO_HR", "FINANCE"):
+                notify_user(u, "Salary draft approved — ready to lock",
+                            body=body, category="approval")
+    except Exception:                      # pragma: no cover - never block
+        pass
+
+
 def refresh_run(run, actor):
     """Re-prefill a DRAFT run from current attendance, rates and policy.
 
@@ -323,6 +438,8 @@ def refresh_run(run, actor):
                 days_worked=days, ot_hours=ot, fridays_worked=fridays,
                 advance=ded["advance"], loan=ded["loan"])
             added.append(emp.emp_no)
+    if changed or added:
+        reset_to_draft(run, actor, "figures refreshed from attendance")
     summary = {"changed": changed, "added": added, "no_longer_eligible": stale}
     audit("payroll_run", run.id, "PAYROLL_RUN_REFRESHED", actor=actor,
           detail={"period": f"{run.year}-{run.month:02d}",

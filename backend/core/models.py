@@ -2372,7 +2372,26 @@ class PayrollRun(models.Model):
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
+        # Draft salary verification (owner 2026-08-12): HR submits, the site
+        # PM verifies their own site's figures, the PD approves, and only then
+        # may HR/Finance lock (which posts the labour cost). Any line edit or
+        # refresh knocks it back to DRAFT so no sign-off outlives the numbers
+        # it was given.
+        PM_REVIEW = "PM_REVIEW", "With the site PM"
+        PD_REVIEW = "PD_REVIEW", "With the Director"
+        APPROVED = "APPROVED", "Approved — ready to lock"
+        RETURNED = "RETURNED", "Returned to HR"
         LOCKED = "LOCKED", "Locked"
+
+    # DRAFT/RETURNED → PM_REVIEW (or PD_REVIEW for the site-less USD run)
+    FLOW = {
+        "DRAFT": {"PM_REVIEW", "PD_REVIEW"},
+        "RETURNED": {"PM_REVIEW", "PD_REVIEW"},
+        "PM_REVIEW": {"PD_REVIEW", "RETURNED", "DRAFT"},
+        "PD_REVIEW": {"APPROVED", "RETURNED", "DRAFT"},
+        "APPROVED": {"LOCKED", "DRAFT"},
+        "LOCKED": set(),
+    }
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
                              blank=True, related_name="payroll_runs")
@@ -2380,10 +2399,20 @@ class PayrollRun(models.Model):
     year = models.IntegerField()
     month = models.IntegerField()
     working_days = models.IntegerField()  # divisor for pro-rating
-    status = models.CharField(max_length=8, choices=Status.choices,
+    status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.DRAFT)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    related_name="+")
+    submitted_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")   # site PM
+    verified_at = models.DateTimeField(null=True, blank=True)
+    approved_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")   # PD
+    approved_at = models.DateTimeField(null=True, blank=True)
+    return_reason = models.TextField(blank=True)
     locked_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                   blank=True, related_name="+")
     locked_at = models.DateTimeField(null=True, blank=True)

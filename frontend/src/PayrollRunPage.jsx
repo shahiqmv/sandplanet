@@ -75,6 +75,9 @@ export default function PayrollRunPage({ me, sites }) {
         </label>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {run.status === "RETURNED" && run.return_reason && (
+        <p style={{ fontSize: 12.5, color: "#c0392b", margin: "6px 0 0" }}>
+          Returned to HR: {run.return_reason}</p>)}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
 
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
@@ -337,7 +340,12 @@ const EDITABLE = [
 function RunDetail({ runId, onBack, me }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
-  const canLock = ["HO_HR", "ADMIN"].includes(me.role);
+  const canLock = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
+  // Draft salary verification (owner 2026-08-12): HR submits → the site PM
+  // verifies → the PD approves → HR/Finance locks.
+  const isHR = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
+  const isPM = ["PM", "ADMIN"].includes(me.role);
+  const isPD = ["DIRECTOR", "ADMIN"].includes(me.role);
 
   function load() {
     api(`/payroll/runs/${runId}`).then(setRun).catch((e) => setError(e.message));
@@ -352,6 +360,20 @@ function RunDetail({ runId, onBack, me }) {
         { method: "PATCH", body: { [field]: value } });
       setRun((r) => ({ ...r, lines: r.lines.map((l) =>
         l.id === lineId ? { ...l, ...updated } : l) }));
+    } catch (e) { setError(e.message); }
+  }
+
+  async function act(action) {
+    let reason = "";
+    if (action === "return") {
+      reason = window.prompt("Why are you returning this salary draft to HR?")
+               || "";
+      if (!reason.trim()) return;
+    }
+    try {
+      setRun(await api(`/payroll/runs/${runId}`,
+                       { method: "POST", body: { action, reason } }));
+      setError(null);
     } catch (e) { setError(e.message); }
   }
 
@@ -400,17 +422,41 @@ function RunDetail({ runId, onBack, me }) {
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
           {run.currency} · {run.working_days} working days · {lines.length}{" "}
           workers · {locked
-            ? <b style={{ color: "#1a7f37" }}>🔒 Locked</b> : "Draft"}</span>
+            ? <b style={{ color: "#1a7f37" }}>🔒 Locked</b>
+            : <b style={{ color: run.status === "APPROVED" ? "#1a7f37"
+                          : run.status === "RETURNED" ? "#c0392b"
+                          : "#8a6d00" }}>{run.status_label || run.status}</b>}
+          {run.verified_by && <span style={{ color: "var(--muted)" }}>
+            {" "}· verified by {run.verified_by}</span>}
+          {run.approved_by && <span style={{ color: "var(--muted)" }}>
+            {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
-          {!locked && (
+          {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
             <button onClick={refresh} style={ghostButton}
               title="Re-pull attendance, OT rates and pay policy — keeps your allowance/penalty entries">
               ↻ Refresh from attendance</button>
           )}
-          {!locked && canLock && (
+          {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
+            <button onClick={() => act("submit")} style={buttonStyle}
+              title="Send to the site PM to verify">
+              Submit for verification</button>
+          )}
+          {run.status === "PM_REVIEW" && isPM && (
+            <button onClick={() => act("verify")} style={buttonStyle}>
+              ✓ Verify (PM)</button>
+          )}
+          {run.status === "PD_REVIEW" && isPD && (
+            <button onClick={() => act("approve")} style={buttonStyle}>
+              ✓ Approve (PD)</button>
+          )}
+          {["PM_REVIEW", "PD_REVIEW"].includes(run.status) && (isPM || isPD) && (
+            <button onClick={() => act("return")} style={ghostButton}>
+              Return to HR</button>
+          )}
+          {run.status === "APPROVED" && canLock && (
             <button onClick={lock} style={buttonStyle}>Lock run</button>
           )}
         </div>

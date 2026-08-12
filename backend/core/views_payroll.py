@@ -21,6 +21,17 @@ def _guard(request):
     return request.user.role in ROLES
 
 
+def _can_see_run(request, run):
+    """Who may open a run: HR/Finance/Admin/PA always; the Director (they
+    approve every run); and a PM of the run's own site — they verify their
+    site's draft salary (owner 2026-08-12)."""
+    role = request.user.role
+    if role in ROLES or role == "DIRECTOR":
+        return True
+    return bool(role == "PM" and run.site_id
+                and run.site.is_current_pm(request.user))
+
+
 def _line_info(line):
     m = payroll.compute_line(line)
     return {
@@ -48,6 +59,12 @@ def _run_info(run, lines=True):
         "working_days": run.working_days, "status": run.status,
         "locked_by": run.locked_by.full_name if run.locked_by_id else None,
         "locked_at": run.locked_at,
+        "status_label": run.get_status_display(),
+        "verified_by": run.verified_by.full_name if run.verified_by_id else None,
+        "verified_at": run.verified_at,
+        "approved_by": run.approved_by.full_name if run.approved_by_id else None,
+        "approved_at": run.approved_at,
+        "return_reason": run.return_reason,
     }
     if lines:
         data["lines"] = [_line_info(ln) for ln in
@@ -283,12 +300,12 @@ def payroll_ot_breakdown(request):
 
 @api_view(["GET", "POST"])
 def payroll_run_detail(request, pk):
-    if not _guard(request):
-        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     try:
         run = PayrollRun.objects.select_related("site").get(pk=pk)
     except PayrollRun.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, run):
+        return Response({"detail": "Not permitted."}, status=403)
     if request.method == "POST" and request.data.get("action") == "refresh":
         # Re-pull attendance / rates / policy into a draft run (owner
         # 2026-08-12: the Friday policy changed after a run was generated,
@@ -297,9 +314,29 @@ def payroll_run_detail(request, pk):
         if err:
             return Response({"detail": err}, status=400)
         return Response({**_run_info(run), "refresh": summary})
+    if request.method == "POST" and request.data.get("action") in (
+            "submit", "verify", "approve", "return"):
+        # Draft salary verification: HR submits → site PM verifies → PD
+        # approves → HR/Finance locks (owner 2026-08-12).
+        action = request.data["action"]
+        # a refusal on WHO may act is a permission error; a refusal on the
+        # state or a missing reason is a bad request
+        if not payroll.can_act(run, request.user, action):
+            _, why = payroll.set_run_status(run, action, request.user,
+                                            request.data.get("reason", ""))
+            return Response({"detail": why}, status=403)
+        _, err = payroll.set_run_status(run, action, request.user,
+                                        request.data.get("reason", ""))
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(_run_info(run))
     if request.method == "POST":  # lock
         if run.status == "LOCKED":
             return Response({"detail": "Already locked."}, status=400)
+        if not payroll.can_act(run, request.user, "lock"):
+            return Response({"detail": "The run must be approved by the "
+                                       "Director before it can be locked."},
+                            status=400)
         payroll.lock_run(run, request.user)
         audit("payroll_run", run.id, "PAYROLL_RUN_LOCKED", actor=request.user)
         return Response(_run_info(run))
@@ -334,13 +371,14 @@ def _month_name(m):
 @api_view(["GET"])
 def payroll_report_pdf(request, pk):
     """The salary sheet for a run — grouped site-wise (a USD run spans sites)
-    with a totals summary. HR / Finance / Admin."""
-    if not _guard(request):
-        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    with a totals summary. HR / Finance / Admin, plus the PM and Director who
+    verify it (owner 2026-08-12) — they need the register to check against."""
     try:
         run = PayrollRun.objects.select_related("site").get(pk=pk)
     except PayrollRun.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, run):
+        return Response({"detail": "Not permitted."}, status=403)
     from collections import OrderedDict
 
     from django.template.loader import render_to_string
@@ -445,4 +483,8 @@ def payroll_line(request, pk):
             setattr(line, f, val)
             changed.append(f)
     line.save(update_fields=changed or None)
+    if changed:
+        # an approval must never outlive the numbers it was given
+        payroll.reset_to_draft(line.run, request.user,
+                               f"line edited ({', '.join(changed)})")
     return Response(_line_info(line))

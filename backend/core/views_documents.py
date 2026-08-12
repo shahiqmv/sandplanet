@@ -830,6 +830,26 @@ def pending_groups(user):
                                     status__in=("AUTHORISED",
                                                 "PAYMENT_PROCESSING"))),
                  "Record vendor payments / PO refs"))
+    # Draft salary verification (owner 2026-08-12): a run waits on the site
+    # PM, then the PD. PayrollRun isn't a Document, so it's added by hand.
+    from .models import PayrollRun
+
+    def payroll_rows(runs, hint):
+        return [{"ref": f"Payroll {r.year}-{r.month:02d}",
+                 "doc_type": "PAY",
+                 "site_code": r.site.code if r.site_id else "USD · all sites",
+                 "project_code": None, "doc_date": r.created_at.date(),
+                 "status": r.status, "hint": hint} for r in runs]
+    if user.role in ("PM", "ADMIN"):
+        mine = [r for r in PayrollRun.objects.filter(status="PM_REVIEW")
+                .select_related("site")
+                if user.role == "ADMIN" or r.site_id and r.site.is_current_pm(user)]
+        add("To verify — site salary drafts", payroll_rows(
+            mine, "Check your site's days, OT and Fridays, then verify"))
+    if user.role in ("DIRECTOR", "ADMIN"):
+        add("To approve — salary drafts", payroll_rows(
+            PayrollRun.objects.filter(status="PD_REVIEW").select_related("site"),
+            "Director approval before HR locks the payroll"))
     if user.role in ("FINANCE", "ADMIN"):
         # Finance builds vouchers from Director-approved requisitions and
         # pays authorised ones (M6d)

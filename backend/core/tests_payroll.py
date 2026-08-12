@@ -146,6 +146,13 @@ class PayrollRunTests(TestCase):
         self.hr = make_user("hr1", User.Role.HO_HR)
         self.site = Site.objects.create(code="VKR", name="Vakkaru",
                                         status=Site.Status.ACTIVE)
+        # Draft salary verification (owner 2026-08-12): HR submits, the site
+        # PM verifies, the PD approves, only then may HR lock.
+        from .models import SitePmHistory
+        self.pm = make_user("pay_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.director = make_user("pay_pd", User.Role.DIRECTOR)
         # A site's payroll can only run once its attendance is locked.
         TimesheetMonth.objects.create(site=self.site, year=2026, month=5,
                                       status="LOCKED")
@@ -259,10 +266,23 @@ class PayrollRunTests(TestCase):
         self.assertEqual(float(d["gross"]), 7625.0)          # 3800+600+1225+2000
         self.assertEqual(float(d["net"]), 7125.0)            # gross - 500
 
+    def _approve_chain(self, run_id):
+        """HR submits → PM verifies → PD approves, so the run may be locked."""
+        self.client.post(f"/api/v1/payroll/runs/{run_id}",
+                         {"action": "submit"}, format="json")
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/payroll/runs/{run_id}",
+                         {"action": "verify"}, format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/payroll/runs/{run_id}",
+                         {"action": "approve"}, format="json")
+        self.client.force_authenticate(self.hr)
+
     def test_lock_posts_labour_cost(self):
         run = self.client.post("/api/v1/payroll/runs", {
             "site_id": self.site.id, "year": 2026, "month": 5,
             "working_days": 31}, format="json").data
+        self._approve_chain(run["id"])
         r = self.client.post(f"/api/v1/payroll/runs/{run['id']}", {},
                              format="json")
         self.assertEqual(r.data["status"], "LOCKED")
@@ -277,6 +297,7 @@ class PayrollRunTests(TestCase):
             "site_id": self.site.id, "year": 2026, "month": 5,
             "working_days": 31}, format="json").data
         line_id = run["lines"][0]["id"]
+        self._approve_chain(run["id"])
         self.client.post(f"/api/v1/payroll/runs/{run['id']}", {}, format="json")
         r = self.client.patch(f"/api/v1/payroll/lines/{line_id}",
                              {"allowance": 100}, format="json")
@@ -773,3 +794,124 @@ class PayrollReportFridayColumnTests(TestCase):
         self.assertEqual(
             float(Decimal(info["earned_basic"]) + shown_allow
                   + Decimal(info["ot_pay"])), float(info["gross"]))
+
+
+class PayrollVerificationTests(TestCase):
+    """Draft salary verification (owner 2026-08-12): HR submits, the site PM
+    verifies their own site, the PD approves, and only then may HR lock."""
+
+    def setUp(self):
+        from .models import (EmployeeSiteAllocation, ManpowerCategory,
+                             SitePmHistory, TimesheetMonth)
+        self.hr = make_user("v_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="VER", name="Verify Isle",
+                                        status=Site.Status.ACTIVE)
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=5,
+                                      status="LOCKED")
+        self.pm = make_user("v_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.other_pm = make_user("v_pm2", User.Role.PM)
+        self.pd = make_user("v_pd", User.Role.DIRECTOR)
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-5001", full_name="Verify Worker", job_category=cat,
+            basic_pay=Decimal("6200"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+        self.run = self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": 5,
+            "working_days": 31}, format="json").data
+        self.rid = self.run["id"]
+
+    def _post(self, user, action, **body):
+        self.client.force_authenticate(user)
+        return self.client.post(f"/api/v1/payroll/runs/{self.rid}",
+                                {"action": action, **body}, format="json")
+
+    def test_full_chain_hr_pm_pd_then_lock(self):
+        self.assertEqual(self.run["status"], "DRAFT")
+        self.assertEqual(self._post(self.hr, "submit").data["status"],
+                         "PM_REVIEW")
+        self.assertEqual(self._post(self.pm, "verify").data["status"],
+                         "PD_REVIEW")
+        r = self._post(self.pd, "approve")
+        self.assertEqual(r.data["status"], "APPROVED")
+        self.assertEqual(r.data["verified_by"], self.pm.full_name)
+        self.assertEqual(r.data["approved_by"], self.pd.full_name)
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/payroll/runs/{self.rid}", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "LOCKED")
+
+    def test_cannot_lock_before_approval(self):
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/payroll/runs/{self.rid}", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("approved", r.data["detail"])
+
+    def test_only_the_sites_own_pm_may_verify(self):
+        self._post(self.hr, "submit")
+        self.assertEqual(self._post(self.other_pm, "verify").status_code, 403)
+        self.assertEqual(self._post(self.pm, "verify").data["status"],
+                         "PD_REVIEW")
+
+    def test_pm_cannot_approve_as_the_director(self):
+        self._post(self.hr, "submit")
+        self._post(self.pm, "verify")
+        self.assertEqual(self._post(self.pm, "approve").status_code, 403)
+
+    def test_return_needs_a_reason_and_clears_signoffs(self):
+        self._post(self.hr, "submit")
+        self._post(self.pm, "verify")
+        self.assertEqual(self._post(self.pd, "return").status_code, 400)
+        r = self._post(self.pd, "return", reason="OT hours look wrong")
+        self.assertEqual(r.data["status"], "RETURNED")
+        self.assertIsNone(r.data["verified_by"])
+        self.assertEqual(r.data["return_reason"], "OT hours look wrong")
+
+    def test_editing_a_line_sends_it_back_to_draft(self):
+        self._post(self.hr, "submit")
+        self._post(self.pm, "verify")
+        self._post(self.pd, "approve")
+        self.client.force_authenticate(self.hr)
+        line_id = self.run["lines"][0]["id"]
+        self.client.patch(f"/api/v1/payroll/lines/{line_id}",
+                          {"allowance": 500}, format="json")
+        d = self.client.get(f"/api/v1/payroll/runs/{self.rid}").data
+        self.assertEqual(d["status"], "DRAFT")
+        self.assertIsNone(d["approved_by"])      # the sign-off is void
+
+    def test_pm_and_pd_can_open_the_run_they_must_verify(self):
+        self._post(self.hr, "submit")
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(
+            self.client.get(f"/api/v1/payroll/runs/{self.rid}").status_code, 200)
+        self.client.force_authenticate(self.pd)
+        self.assertEqual(
+            self.client.get(f"/api/v1/payroll/runs/{self.rid}").status_code, 200)
+        self.client.force_authenticate(self.other_pm)
+        self.assertEqual(
+            self.client.get(f"/api/v1/payroll/runs/{self.rid}").status_code, 403)
+
+    def test_usd_run_skips_the_pm_and_goes_to_the_director(self):
+        from core import payroll
+        run = payroll.generate_run(site=None, currency="USD", year=2026,
+                                   month=6, working_days=30, actor=self.hr)
+        r, err = payroll.set_run_status(run, "submit", self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(r.status, "PD_REVIEW")
+
+    def test_pending_queue_shows_the_run_to_pm_then_pd(self):
+        self._post(self.hr, "submit")
+        self.client.force_authenticate(self.pm)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        self.assertTrue(any("verify" in g["title"].lower() for g in groups))
+        self._post(self.pm, "verify")
+        self.client.force_authenticate(self.pd)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        self.assertTrue(any("salary" in g["title"].lower() for g in groups))
