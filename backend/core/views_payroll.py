@@ -349,6 +349,12 @@ def payroll_report_pdf(request, pk):
 
     lines = [_line_info(ln) for ln in
              run.lines.select_related("employee__job_category", "site").all()]
+    # The register has no Friday-money column, so Friday pay rides in the
+    # allowance column (owner 2026-08-12) — otherwise the visible columns
+    # don't add up to Gross now that a Friday pays 12h × the OT rate.
+    for ln in lines:
+        ln["allowance"] = (Decimal(ln["allowance"] or 0)
+                           + Decimal(ln["friday_pay"] or 0))
     groups = OrderedDict()
     for ln in lines:
         groups.setdefault(ln["site_code"] or "—", []).append(ln)

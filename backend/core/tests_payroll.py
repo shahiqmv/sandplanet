@@ -727,3 +727,49 @@ class PayrollRefreshTests(TestCase):
                              {"action": "refresh"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertIn("refresh", r.data)
+
+
+class PayrollReportFridayColumnTests(TestCase):
+    """The register has no Friday-money column, so Friday pay is folded into
+    the allowance column — otherwise the printed columns don't add up to
+    Gross (owner 2026-08-12)."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, OvertimeRate)
+        self.hr = make_user("rep_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="REP", name="Report Isle",
+                                        status=Site.Status.ACTIVE)
+        cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        OvertimeRate.objects.create(category=cat, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-6001", full_name="Fri Worker", basic_pay=6200,
+            currency="MVR", job_category=cat)
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 1), remark="PRESENT")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def test_allowance_column_carries_friday_pay(self):
+        from core import payroll
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        line.allowance = Decimal("500")
+        line.save()
+        money = payroll.compute_line(line)
+        self.assertEqual(float(money["friday_pay"]), 300.0)      # 12h × 25
+        from core.views_payroll import _line_info
+        info = _line_info(line)
+        # the register adds friday_pay into allowance, so the printed
+        # Earned + Allow. + OT pay reconciles with Gross
+        shown_allow = Decimal(info["allowance"]) + Decimal(info["friday_pay"])
+        self.assertEqual(float(shown_allow), 800.0)              # 500 + 300
+        self.assertEqual(
+            float(Decimal(info["earned_basic"]) + shown_allow
+                  + Decimal(info["ot_pay"])), float(info["gross"]))
