@@ -301,6 +301,10 @@ export default function App() {
                        planned_completion: "", pm: "", scope: "" };
   const [projDraft, setProjDraft] = useState(PROJ_EMPTY);
   const [hoPage, setHoPage] = useState("sites");
+  // Set when a payroll run is opened straight from My Tasks. A PM has no
+  // Payroll nav entry and can't list runs, but they must be able to reach the
+  // one run that is waiting on them (owner 2026-08-12).
+  const [payrollRunId, setPayrollRunId] = useState(null);
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
@@ -434,6 +438,15 @@ export default function App() {
     if (item.doc_type === "DMA") {
       const site = sites.find((s) => s.code === item.site_code);
       if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
+      return;
+    }
+    // A payroll run is not a Document — sending its label to the document
+    // viewer is what made PMs see "Not found." Open the run itself.
+    if (item.doc_type === "PAY") {
+      setDocView(null);
+      setOpenSite(null);
+      setPayrollRunId(item.run_id);
+      setHoPage("payroll");
       return;
     }
     openDoc(item.ref);
@@ -879,10 +892,17 @@ export default function App() {
             hoPage === "users" && (
             <UsersPage me={me} sites={sites} />
           )}
-          {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
-            hoPage === "payroll" && (
-            <PayrollRunPage me={me} sites={sites} />
+          {!docView && !openSite && hoPage === "payroll" &&
+            (["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role)
+             || payrollRunId) && (
+            <PayrollRunPage me={me} sites={sites} initialRunId={payrollRunId}
+              onLeaveRun={() => {
+                setPayrollRunId(null);
+                bump();                     // the run may have just been acted on
+                if (!["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role)) {
+                  setHoPage("approvals");   // PMs have nowhere else to land
+                }
+              }} />
           )}
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&

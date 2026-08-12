@@ -49,7 +49,9 @@ export default function ApprovalsPage({ me, refresh, onOpen }) {
             {g.title}
           </Eyebrow>
           {g.items.map((item) => (
-            <ActionCard key={item.ref}
+            /* `ref` alone is not unique — two sites' payroll runs for the
+               same month carry the same label — so include the row's own id */
+            <ActionCard key={`${item.doc_type}-${item.run_id ?? item.ref}`}
               severity={severityFor(g.title)}
               refText={item.ref}
               text={`${item.site_code}${item.project_code

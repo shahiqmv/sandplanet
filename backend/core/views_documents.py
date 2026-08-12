@@ -835,7 +835,12 @@ def pending_groups(user):
     from .models import PayrollRun
 
     def payroll_rows(runs, hint):
+        # run_id matters: a run is not a Document, so the queue's `ref` is a
+        # label, not something the document viewer can open. The UI needs the
+        # id to open the run itself — and the id is also what makes each row
+        # unique, since two sites' runs for the same month share a ref.
         return [{"ref": f"Payroll {r.year}-{r.month:02d}",
+                 "run_id": r.id,
                  "doc_type": "PAY",
                  "site_code": r.site.code if r.site_id else "USD · all sites",
                  "project_code": None, "doc_date": r.created_at.date(),

@@ -915,3 +915,40 @@ class PayrollVerificationTests(TestCase):
         self.client.force_authenticate(self.pd)
         groups = self.client.get("/api/v1/approvals/pending").data["groups"]
         self.assertTrue(any("salary" in g["title"].lower() for g in groups))
+
+    def test_queue_row_carries_the_run_id(self):
+        """A run isn't a Document, so its `ref` can't be opened by the document
+        viewer — PMs got "Not found." until the row carried the id (owner
+        2026-08-12). The id is also what keeps two sites' same-month runs from
+        colliding in the list."""
+        self._post(self.hr, "submit")
+        self.client.force_authenticate(self.pm)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        rows = [i for g in groups for i in g["items"]
+                if i["doc_type"] == "PAY"]
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["run_id"], self.rid)
+        # and that id opens the run the PM was sent to verify
+        self.assertEqual(self.client.get(
+            f"/api/v1/payroll/runs/{rows[0]['run_id']}").status_code, 200)
+
+    def test_two_sites_same_month_are_distinguishable(self):
+        """Same label, different rows — the UI keys on run_id, so both must be
+        present and separable."""
+        from core import payroll
+        other = Site.objects.create(code="ZZZ", name="Other site",
+                                    status=Site.Status.ACTIVE)
+        SitePmHistory.objects.create(site=other, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        # same period as the fixture run, which is what makes the labels clash
+        run2 = payroll.generate_run(site=other, currency="MVR", year=2026,
+                                    month=5, working_days=31, actor=self.hr)
+        payroll.set_run_status(run2, "submit", self.hr)
+        self._post(self.hr, "submit")
+        self.client.force_authenticate(self.pm)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        rows = [i for g in groups for i in g["items"]
+                if i["doc_type"] == "PAY"]
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(len({r["ref"] for r in rows}), 1)      # same label…
+        self.assertEqual(len({r["run_id"] for r in rows}), 2)   # …distinct ids

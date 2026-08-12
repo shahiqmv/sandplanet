@@ -10,13 +10,15 @@ const money = (v) => v == null || v === "" ? ""
                                         maximumFractionDigits: 2 });
 const now = new Date();
 
-export default function PayrollRunPage({ me, sites }) {
+export default function PayrollRunPage({ me, sites, initialRunId,
+                                        onLeaveRun }) {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);  // last month is common
   const [runs, setRuns] = useState([]);
   const [ready, setReady] = useState(null);
   const [summary, setSummary] = useState(null);
-  const [openRun, setOpenRun] = useState(null);
+  const [openRun, setOpenRun] = useState(
+    initialRunId ? { id: initialRunId } : null);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -31,7 +33,10 @@ export default function PayrollRunPage({ me, sites }) {
     api(`/payroll/attendance-summary?year=${year}&month=${month}`)
       .then(setSummary).catch(() => setSummary(null));
   }
-  useEffect(() => { if (!openRun) loadRuns(); },
+  // Opened straight from My Tasks on one run: don't fetch the run LIST — a PM
+  // isn't permitted to list runs and the 403 would mask the run they came for.
+  const focused = !!initialRunId;
+  useEffect(() => { if (!openRun && !focused) loadRuns(); },
     [year, month, openRun]); // eslint-disable-line
 
   async function runOne(body, label) {
@@ -49,8 +54,12 @@ export default function PayrollRunPage({ me, sites }) {
   const generateUsd = () => runOne({ currency: "USD" }, "USD / Head Office");
 
   if (openRun) {
-    return <RunDetail runId={openRun.id} onBack={() => setOpenRun(null)}
-                      me={me} />;
+    return <RunDetail runId={openRun.id} me={me}
+                      backLabel={focused ? "‹ Back to My Tasks" : undefined}
+                      onBack={() => {
+                        setOpenRun(null);
+                        if (focused && onLeaveRun) onLeaveRun();
+                      }} />;
   }
 
   return (
@@ -334,7 +343,7 @@ const EDITABLE = [
   ["amount_to_office", "To office", 85],
 ];
 
-function RunDetail({ runId, onBack, me }) {
+function RunDetail({ runId, onBack, me, backLabel }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
   const canLock = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
@@ -412,7 +421,9 @@ function RunDetail({ runId, onBack, me }) {
     <section style={card}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12,
                     flexWrap: "wrap" }}>
-        <button onClick={onBack} style={ghostButton}>← Runs</button>
+        <button onClick={onBack} style={ghostButton}>
+          {backLabel || "← Runs"}
+        </button>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
           {run.site_code || "USD — all sites"} · {monthName} {run.year}
         </h2>
