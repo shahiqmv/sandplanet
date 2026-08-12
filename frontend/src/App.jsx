@@ -59,24 +59,41 @@ const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
 // Company Profile is office-only marketing; MARKETING is a minimal role that
 // sees ONLY this section.
 const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING", "PA"];
+// Who could reach the overseas import chain before Procurement absorbed the
+// Planning tab. Spelled out so widening the GROUP never widens these pages.
+const IMPORT_CHAIN = ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS",
+                      "PA"];
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
-  { key: "approvals", label: "My Tasks", roles: [...APPROVERS, "QS", "PA"],
+  // HO_HR is in this group only for their own payment requests, which used to
+  // be a separate "My Requests" tab — everything else names its roles.
+  { key: "approvals", label: "My Tasks",
+    roles: [...APPROVERS, "QS", "PA", "HO_HR"],
     subs: [["approvals", "My Tasks", APPROVERS],
            ["portfolio", "Portfolio", ["DIRECTOR", "ADMIN", "QS",
                                        "SIGNATORY", "PA"]],
            ["cost", "Project Cost", ["DIRECTOR", "FINANCE", "ADMIN", "QS",
-                                     "SIGNATORY", "PA"]]] },
+                                     "SIGNATORY", "PA"]],
+           // Head-Office raisers have no site register to fall back on, so
+           // their own payment requests would vanish on submit — this is
+           // their tracking view.
+           ["my-pyr", "My Payment Requests",
+            ["HO_PURCHASING", "HO_HR", "QS", "DIRECTOR", "SIGNATORY",
+             "FINANCE", "ADMIN"]]] },
+  // Live Feeds lives here rather than as its own tab: it is a view OF sites,
+  // and site staff reach their own camera from the same place they reach
+  // their site (owner 2026-08-12). Backend scopes it to sites they can see.
   { key: "sitesGrp", label: "Sites", roles: null,
-    subs: [["sites", "Sites", null]] },
-  // Its own page rather than a site tab: the value is seeing every site at
-  // once, and site staff reach their own camera from the same place (owner
-  // 2026-08-12). Backend scopes the list to sites the user can already see.
-  { key: "camerasGrp", label: "Live Feeds", roles: null,
-    subs: [["live-feeds", "Live Feeds", null]] },
+    subs: [["sites", "Sites", null],
+           ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
-    roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS", "PA"],
+    // PM and SIGNATORY are here ONLY for the Procurement Schedule, which used
+    // to be its own "Planning" tab. Every other page below therefore names its
+    // roles explicitly — leaving them null would silently hand PMs the whole
+    // import chain, which they have never been able to see.
+    roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS", "PA",
+            "PM", "SIGNATORY"],
     // QS shares the Director's overseas-procurement authority, so it only sees
     // the import chain (Requests / Orders / Tracker / Store), not domestic
     // purchasing pages (owner 2026-07-14). PA views everything (read-only).
@@ -86,15 +103,15 @@ const NAV_GROUPS = [
             ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN", "PA"]],
-           ["pmr-register", "Import Requests", null],
-           ["imports", "International Orders", null],
-           ["import-tracker", "Import Tracker", null],
-           ["store", "HO Store", null],
+           ["pmr-register", "Import Requests", IMPORT_CHAIN],
+           ["imports", "International Orders", IMPORT_CHAIN],
+           ["import-tracker", "Import Tracker", IMPORT_CHAIN],
+           ["store", "HO Store", IMPORT_CHAIN],
            ["suppliers", "Suppliers",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]]] },
-  { key: "planning", label: "Planning",
-    roles: ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN", "PA"],
-    subs: [["procurement-schedule", "Procurement Schedule", null]] },
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
+           ["procurement-schedule", "Procurement Schedule",
+            ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN",
+             "PA"]]] },
   { key: "meetingsGrp", label: "Meetings",
     roles: ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",
             "MARKETING", "HO_PURCHASING", "SIGNATORY", "PA"],
@@ -108,12 +125,6 @@ const NAV_GROUPS = [
            ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
                                            "QS", "PA"]]] },
-  // Head-Office raisers have no site register to fall back on, so their own
-  // payment requests would vanish on submit — this is their tracking view.
-  { key: "myreqGrp", label: "My Requests",
-    roles: ["HO_PURCHASING", "HO_HR", "QS", "DIRECTOR", "SIGNATORY",
-            "FINANCE", "ADMIN"],
-    subs: [["my-pyr", "Payment Requests", null]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA", "SIGNATORY"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
@@ -132,14 +143,18 @@ const NAV_GROUPS = [
            ["staff-cost", "Staff Cost",
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
-  { key: "adminGrp", label: "Admin", roles: ["DIRECTOR", "ADMIN"],
+  // "Company", not "Admin": Company Profile folds in here, and MARKETING is a
+  // minimal role that sees ONLY that page — labelling their whole app "Admin"
+  // would be plainly wrong. Every page below still names its own roles, so
+  // widening the group to the profile audience exposes nothing else.
+  { key: "adminGrp", label: "Company",
+    roles: ["DIRECTOR", "ADMIN", ...PROFILE_ROLES],
     subs: [["manage", "Site Setup", ["DIRECTOR", "ADMIN"]],
            ["users", "Users", ["ADMIN"]],
            ["client-portal", "Client Portal", ["ADMIN"]],
-           ["company", "Company", ["ADMIN"]],
-           ["activity", "Login & Audit", ["ADMIN"]]] },
-  { key: "profileGrp", label: "Profile", roles: PROFILE_ROLES,
-    subs: [["profile", "Company Profile", PROFILE_ROLES]] },
+           ["company", "Settings", ["ADMIN"]],
+           ["activity", "Login & Audit", ["ADMIN"]],
+           ["profile", "Company Profile", PROFILE_ROLES]] },
 ];
 
 function visibleGroups(me) {
@@ -305,6 +320,7 @@ export default function App() {
   // Payroll nav entry and can't list runs, but they must be able to reach the
   // one run that is waiting on them (owner 2026-08-12).
   const [payrollRunId, setPayrollRunId] = useState(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
@@ -313,6 +329,15 @@ export default function App() {
   useEffect(() => {
     if (me?.authenticated) setHoPage(landingPage(me));
   }, [me]);
+
+  // Escape closes the drawer, and it must never be left open behind a page
+  // the user reached some other way (a notification, an approval card).
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen]);
 
   useEffect(() => {
     if (!me?.authenticated || !APPROVERS.includes(me.role)) return;
@@ -455,6 +480,16 @@ export default function App() {
   return (
     <div>
       <header className="topbar">
+        {showHoNav && (
+          <button className="navtoggle" aria-label="Menu"
+                  aria-expanded={menuOpen}
+                  onClick={() => setMenuOpen((o) => !o)}>
+            <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
+            {!menuOpen && pendingCount > 0 && (
+              <span className="nav-badge nav-badge-dot" />
+            )}
+          </button>
+        )}
         <div className="brand"
              onClick={() => { setDocView(null); setHoPage(landingPage(me));
                               if (!me.landing_site_id) setOpenSite(null); }}>
@@ -497,6 +532,35 @@ export default function App() {
         )}
       </header>
 
+      {/* Phone navigation: one tap to any page, instead of tab-then-subtab
+          through a header that had nowhere near enough room for either. */}
+      {menuOpen && (
+        <div className="navdrawer-scrim" onClick={() => setMenuOpen(false)}>
+          <nav className="navdrawer" onClick={(e) => e.stopPropagation()}>
+            {groups.map((g) => (
+              <div key={g.key} className="nd-group">
+                <div className="nd-title">
+                  {g.label}
+                  {g.key === "approvals" && pendingCount > 0 && (
+                    <span className="nav-badge">{pendingCount}</span>
+                  )}
+                </div>
+                {g.subs.map(([key, label]) => (
+                  <button key={key}
+                          className={"nd-item" + (hoPage === key && !openSite
+                                                  && !docView ? " on" : "")}
+                          onClick={() => { setHoPage(key); setOpenSite(null);
+                                           setDocView(null);
+                                           setMenuOpen(false); }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </nav>
+        </div>
+      )}
+
       {!me.authenticated ? (
         <Login onLogin={setMe} />
       ) : me.must_change_password ? (
@@ -516,9 +580,14 @@ export default function App() {
                        margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
+          {/* On a phone the drawer already lists every page, so this second
+              row is redundant there — and it was one of the two rows making
+              the header unusable (owner 2026-08-12). Its layout lives in CSS,
+              not inline: an inline `display` would outrank the media query
+              that hides it. */}
           {!docView && !openSite && activeGroup &&
             activeGroup.subs.length > 1 && (
-            <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+            <div className="subtabs">
               {activeGroup.subs.map(([key, label]) => (
                 <button key={key} onClick={() => setHoPage(key)}
                         style={{

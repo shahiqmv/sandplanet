@@ -310,3 +310,103 @@ main tbody tr:hover > td {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
+
+/* --- responsive navigation (owner 2026-08-12) ---------------------------
+   The header used to pin a full-width brand and user chip either side of the
+   tab row, so on a phone the tabs were squeezed into a sliver and read "Li".
+   Below 900px the tabs collapse into a drawer that lists every page, so any
+   page is one tap away instead of tab-then-subtab. */
+.navtoggle {
+  display: none;
+  position: relative;
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: #fff;
+  font-size: 17px;
+  line-height: 1;
+  width: 38px;
+  height: 34px;
+  border-radius: 8px;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.navtoggle:hover { background: rgba(255, 255, 255, 0.18); }
+.nav-badge-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  padding: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.navdrawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(11, 32, 51, 0.5);
+  backdrop-filter: blur(2px);
+}
+.navdrawer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: min(310px, 86vw);
+  overflow-y: auto;
+  background: #fff;
+  box-shadow: 4px 0 24px rgba(11, 32, 51, 0.3);
+  padding: 12px 0 28px;
+}
+.nd-group { padding: 6px 0 10px; }
+.nd-group + .nd-group { border-top: 1px solid #eceff3; }
+.nd-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px 4px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #8794a6;
+}
+.nd-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 10px 18px;
+  font-size: 15px;
+  color: var(--sp-navy, #17384f);
+  cursor: pointer;
+}
+.nd-item:hover { background: #f2f6fa; }
+.nd-item.on {
+  background: var(--sp-navy, #17384f);
+  color: #fff;
+  font-weight: 600;
+}
+
+.subtabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 900px) {
+  .topbar { gap: 12px; padding: 0 14px; }
+  .navtabs { display: none; }
+  .navtoggle { display: flex; }
+  .brand-sub { display: none; }
+  .brand-name { font-size: 17px; letter-spacing: 0.1em; }
+  .user-chip { display: none; }        /* name + role: the drawer has room */
+  .topbar-right { gap: 10px; }
+}
+@media (max-width: 560px) {
+  .subtabs { display: none; }          /* the drawer already lists these */
+}
