@@ -3,6 +3,26 @@
 <head>
 <meta charset="utf-8">
 {% include "pdf/_letter_styles.html" %}
+<style>
+  /* The LOA carries three full field tables + the acceptance block and was
+     spilling onto a second page (owner 2026-08-11). Tightened here only —
+     the shared letter styles keep their roomier defaults for the shorter
+     letters. Sized to still fit with the maximum allowance rows. */
+  @page { margin: 9mm 14mm 10mm 14mm; }
+  .section { margin-top: 3pt; }
+  .section-title { font-size: 9.5pt; margin-bottom: 2pt;
+                   padding-bottom: 1pt; }
+  table.fields td { padding: 1.1pt 8pt; }
+  table.fields td.k { font-size: 8pt; }
+  table.fields td.v { font-size: 8.5pt; }
+  .lettertitle { font-size: 12.5pt; margin-top: 4pt; }
+  .body-text { margin-top: 5pt; }
+  .body-text p { font-size: 8pt; margin-bottom: 3pt; }
+  .sigrow { margin-top: 5pt; }
+  .sigline { margin-top: 11pt; padding-top: 3pt; }
+  /* keep the signature block whole if anything ever does overflow */
+  .sigrow, .body-text { page-break-inside: avoid; }
+</style>
 </head>
 <body>
 {% include "pdf/_letterhead_letter.html" %}

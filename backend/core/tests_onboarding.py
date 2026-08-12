@@ -161,7 +161,7 @@ class OnboardingSpineTests(TestCase):
     def test_send_back_clean_in_progress_resets_stage(self):
         from core.models import OnboardingCase
         pk = self._approved()
-        self._adv(pk)                               # begin → WP_APPOINTMENT
+        self._begin(pk)                               # begin → WP_APPOINTMENT
         self.client.force_authenticate(self.director)
         r = self.client.post(f"/api/v1/onboarding/{pk}/action",
                              {"action": "return", "note": "fix salary"},
@@ -171,7 +171,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_send_back_blocked_once_a_letter_is_issued(self):
         pk = self._approved()
-        self._adv(pk)                               # → WP_APPOINTMENT
+        self._begin(pk)                               # → WP_APPOINTMENT
         self._gen_letter(pk, "LOA")                 # a letter now exists
         self.assertFalse(self.client.get(
             f"/api/v1/onboarding/{pk}").data["can_send_back"])
@@ -216,6 +216,27 @@ class OnboardingSpineTests(TestCase):
         return self.client.post(f"/api/v1/onboarding/{pk}/stage", data,
                                 format="json")
 
+    def _sign_off(self, pk):
+        """A signatory signs the case off — the gate every letter and stage
+        advance now sits behind (owner 2026-08-11)."""
+        from .tests import make_user
+        sig = getattr(self, "_signer", None)
+        if sig is None:
+            sig = self._signer = make_user("ob_signer", User.Role.SIGNATORY)
+            self.client.force_authenticate(sig)
+            self.client.post("/api/v1/onboarding/my-stamp",
+                             {"stamp": self._tiny_png()}, format="multipart")
+        self.client.force_authenticate(sig)
+        r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        self.client.force_authenticate(self.hr)
+        return r
+
+    def _begin(self, pk, **data):
+        """Begin processing AND sign off — the normal start of a live case."""
+        r = self._adv(pk, **data)
+        self._sign_off(pk)
+        return r
+
     def _sdata(self, pk, **data):
         self.client.force_authenticate(self.hr)
         return self.client.post(f"/api/v1/onboarding/{pk}/stage-data", data,
@@ -233,7 +254,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_wp_track_walks_to_completion(self):
         pk = self._approved()
-        r = self._adv(pk)                              # begin
+        r = self._begin(pk)                              # begin
         self.assertEqual(r.data["status"], "IN_PROGRESS")
         self.assertEqual(r.data["stage"], "WP_APPOINTMENT")
         self.assertEqual(self._adv(pk).data["stage"], "WP_APPLICATION")
@@ -280,7 +301,7 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
 
     def _to_deposit(self, pk):
-        self._adv(pk)                    # WP_APPOINTMENT
+        self._begin(pk)                  # WP_APPOINTMENT (signed off)
         self._adv(pk)                    # WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk)                    # WP_APPROVED
@@ -390,7 +411,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_loa_generates_at_appointment(self):
         pk = self._approved()                 # WP, Indian
-        self._adv(pk)                          # begin → WP_APPOINTMENT
+        self._begin(pk)                          # begin → WP_APPOINTMENT
         detail = self.client.get(f"/api/v1/onboarding/{pk}").data
         opts = {o["kind"]: o for o in detail["letter_options"]}
         self.assertTrue(opts["LOA"]["available"])
@@ -407,7 +428,7 @@ class OnboardingSpineTests(TestCase):
     def test_spl_only_on_bv_track(self):
         pk = self._approved(route="BV", bv_justification="urgent mobilisation",
                             nationality="Sri Lankan")
-        self._adv(pk)                          # begin → BV_SPONSOR
+        self._begin(pk)                          # begin → BV_SPONSOR
         detail = self.client.get(f"/api/v1/onboarding/{pk}").data
         opts = {o["kind"]: o for o in detail["letter_options"]}
         self.assertTrue(opts["SPL"]["available"])
@@ -423,7 +444,7 @@ class OnboardingSpineTests(TestCase):
         # processing for any recruitment case (owner 2026-08-04), replacing the
         # old advance-LOA. The detailed LOA is NOT available pre-arrival.
         pk = self._approved(route="BV", bv_justification="urgent mobilisation")
-        self._adv(pk)                          # → BV_SPONSOR (pre-arrival)
+        self._begin(pk)                          # → BV_SPONSOR (pre-arrival)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertTrue(opts["AC"]["available"])
@@ -432,7 +453,7 @@ class OnboardingSpineTests(TestCase):
     def test_appointment_confirmation_not_for_subcontract(self):
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT")
-        self._adv(pk)
+        self._begin(pk)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertFalse(opts["AC"]["available"])
@@ -440,14 +461,14 @@ class OnboardingSpineTests(TestCase):
     def test_loa_not_available_for_subcontract_bv(self):
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT")
-        self._adv(pk)
+        self._begin(pk)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertFalse(opts["LOA"]["available"])   # no appointment on subcon
 
     def test_regenerating_a_letter_bumps_version(self):
         pk = self._approved()
-        self._adv(pk)                          # → WP_APPOINTMENT
+        self._begin(pk)                          # → WP_APPOINTMENT
         self._gen_letter(pk, "LOA")
         r = self._gen_letter(pk, "LOA", contract_duration="1 year")
         self.assertEqual(r.status_code, 201, r.data)
@@ -458,7 +479,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_only_hr_generates_letters(self):
         pk = self._approved()
-        self._adv(pk)
+        self._begin(pk)
         self.client.force_authenticate(self.pm)
         r = self.client.post(f"/api/v1/onboarding/{pk}/letter",
                              {"kind": "LOA"}, format="json")
@@ -466,7 +487,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_letter_pdf_downloads(self):
         pk = self._approved()
-        self._adv(pk)
+        self._begin(pk)
         lid = self._gen_letter(pk, "LOA").data["letters"][0]["id"]
         self.client.force_authenticate(self.hr)
         r = self.client.get(f"/api/v1/onboarding/{pk}/letters/{lid}.pdf")
@@ -485,13 +506,13 @@ class OnboardingSpineTests(TestCase):
     def test_im30_available_only_for_sri_lankan_wp(self):
         # Indian WP → no IM30; Sri-Lankan WP → IM30; SL subcontract BV → none.
         pk = self._approved(nationality="Indian")     # WP
-        self._adv(pk)
+        self._begin(pk)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertFalse(opts["IM30"]["available"])
 
         sl = self._approved(nationality="Sri Lankan")  # WP
-        self._adv(sl)
+        self._begin(sl)
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{sl}").data["letter_options"]}
         self.assertTrue(opts["IM30"]["available"])
@@ -509,7 +530,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_im30_generates_pdf(self):
         pk = self._approved(nationality="Sri Lankan")
-        self._adv(pk)
+        self._begin(pk)
         r = self._gen_letter(pk, "IM30", marital_status="Married",
                              old_passport_no="N999")
         self.assertEqual(r.status_code, 201, r.data)
@@ -533,38 +554,51 @@ class OnboardingSpineTests(TestCase):
                          {"stamp": self._tiny_png()}, format="multipart")
         self.assertTrue(ob._signatory_stamp_bytes())
 
-    def test_case_signoff_stamps_all_letters(self):
-        # A signatory signs off the whole case ONCE → every letter is stamped
-        # (owner 2026-08-08). Letters are unsigned drafts until then.
+    def test_nothing_generates_before_signoff(self):
+        # Owner 2026-08-11: staff were generating the LOA and lodging the
+        # work-permit application while the sign-off was still pending. Now
+        # the signatory signs the CASE first — no letter and no stage advance
+        # before that — and every letter comes out stamped.
         from .models import Notification, OnboardingLetter
         sig = make_user("ob_sig", User.Role.SIGNATORY)
         pk = self._approved()                  # WP recruitment
-        self._adv(pk)                          # begin → IN_PROGRESS
+        self._adv(pk)                          # begin → IN_PROGRESS (unsigned)
+        # no letter may be generated yet
         r = self._gen_letter(pk, "AC")
-        self.assertEqual(r.status_code, 201, r.data)
-        ac = next(x for x in r.data["letters"] if x["kind"] == "AC")
-        self.assertEqual(ac["status"], "PENDING")          # unsigned draft
-        self.assertTrue(Notification.objects.filter(
-            recipient=sig, title__icontains="to sign off").exists())
-        # the signatory sees the CASE (not the letter) in their limited queue
+        self.assertEqual(r.status_code, 400, r.data)
+        self.assertFalse(OnboardingLetter.objects.filter(case__document=pk)
+                         .exists())
+        # and the case cannot advance a stage either
+        adv = self._adv(pk)
+        self.assertEqual(adv.status_code, 400)
+        self.assertIn("sign-off", adv.data["detail"])
+        # the signatory sees the case in their queue on its own merits —
+        # no drafted letter is needed to get there
         self.client.force_authenticate(sig)
         q = self.client.get("/api/v1/onboarding/letters/to-sign").data
         self.assertEqual([c["case_id"] for c in q["cases"]], [pk])
+        self.assertEqual(q["cases"][0]["letters"], [])
+        self.assertTrue(q["cases"][0]["terms"]["passport_no"])
         self.assertFalse(q["has_stamp"])
         # can't sign off without a stamp
         self.assertEqual(self.client.post(
             f"/api/v1/onboarding/cases/{pk}/sign-off").status_code, 400)
-        # upload the stamp, then sign off the case
         self.client.post("/api/v1/onboarding/my-stamp",
                          {"stamp": self._tiny_png()}, format="multipart")
         r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["cases"], [])              # queue cleared
-        lt = OnboardingLetter.objects.get(pk=ac["id"])
-        self.assertEqual(lt.status, "SIGNED")
-        self.assertEqual(lt.approved_by_id, sig.id)
         self.assertTrue(Notification.objects.filter(
             recipient=self.hr, title__icontains="signed off").exists())
+        # now HR can generate — and it is stamped from birth
+        r = self._gen_letter(pk, "AC")
+        self.assertEqual(r.status_code, 201, r.data)
+        ac = next(x for x in r.data["letters"] if x["kind"] == "AC")
+        self.assertEqual(ac["status"], "SIGNED")
+        self.assertEqual(OnboardingLetter.objects.get(pk=ac["id"]).approved_by_id,
+                         sig.id)
+        # and the stage moves again
+        self.assertEqual(self._adv(pk).status_code, 200)
 
     def test_letters_generated_after_signoff_are_stamped(self):
         sig = make_user("ob_sig3", User.Role.SIGNATORY)
@@ -572,7 +606,7 @@ class OnboardingSpineTests(TestCase):
         self.client.post("/api/v1/onboarding/my-stamp",
                          {"stamp": self._tiny_png()}, format="multipart")
         pk = self._approved()
-        self._adv(pk)
+        self._begin(pk)
         self._gen_letter(pk, "AC")
         self.client.force_authenticate(sig)
         self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
@@ -583,7 +617,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_only_signatory_can_sign_or_see_queue(self):
         pk = self._approved()
-        self._adv(pk)
+        self._begin(pk)
         self._gen_letter(pk, "AC")
         self.client.force_authenticate(self.pm)
         self.assertEqual(self.client.get(
@@ -676,7 +710,7 @@ class OnboardingSpineTests(TestCase):
     def test_fee_invoice_attaches_to_pyr(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         pk = self._approved()
-        self._adv(pk); self._adv(pk)
+        self._begin(pk); self._adv(pk)
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
         self.client.force_authenticate(self.hr)
@@ -694,7 +728,7 @@ class OnboardingSpineTests(TestCase):
     def test_stage_document_upload_and_download(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         pk = self._approved()
-        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._begin(pk); self._adv(pk)                 # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk)                                  # → WP_APPROVED
         self.client.force_authenticate(self.hr)
@@ -715,7 +749,7 @@ class OnboardingSpineTests(TestCase):
     def test_stage_document_refused_before_stage_reached(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
         pk = self._approved()
-        self._adv(pk)                                  # WP_APPOINTMENT only
+        self._begin(pk)                                  # WP_APPOINTMENT only
         self.client.force_authenticate(self.hr)
         f = SimpleUploadedFile("x.pdf", b"x")
         r = self.client.post(f"/api/v1/onboarding/{pk}/stage-doc",
@@ -727,7 +761,7 @@ class OnboardingSpineTests(TestCase):
         from django.core.files.uploadedfile import SimpleUploadedFile
         from .models import Attachment
         pk = self._approved()
-        self._adv(pk); self._adv(pk)
+        self._begin(pk); self._adv(pk)
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
         self.client.force_authenticate(self.hr)
@@ -754,7 +788,7 @@ class OnboardingSpineTests(TestCase):
         from . import onboarding as ob
         pk = self._approved(route="BV", bv_justification="urgent",
                             nationality="Indian")
-        self._adv(pk)                                  # begin → BV_SPONSOR
+        self._begin(pk)                                  # begin → BV_SPONSOR
         OnboardingCase.objects.filter(pk=pk).update(stage="BV_APPROVED")
         case = OnboardingCase.objects.get(pk=pk)
         slots = {d["slot"] for d in ob.documents_list(case)}
@@ -765,7 +799,7 @@ class OnboardingSpineTests(TestCase):
     def test_arrival_hands_over_to_employee_db(self):
         from .models import Employee, Notification
         pk = self._approved()
-        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._begin(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
         self._pay_fee(pk, "WP_DEPOSIT")
@@ -801,7 +835,7 @@ class OnboardingSpineTests(TestCase):
 
     def test_editing_arrival_date_moves_salary_start(self):
         pk = self._approved()
-        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._begin(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
         self._pay_fee(pk, "WP_DEPOSIT")
@@ -856,7 +890,7 @@ class OnboardingSpineTests(TestCase):
                             subcontractor_id=sub.id, proposed_salary="")
         # walk to arrival: begin → BV_SPONSOR, BV_INSURANCE(fee), BV_APPLICATION
         # (portal), BV_APPROVED, BV_VISA_FEE(fee), BV_TICKET(fee), BV_ARRIVED
-        self._adv(pk)                                  # BV_SPONSOR
+        self._begin(pk)                                  # BV_SPONSOR
         self._adv(pk)                                  # BV_INSURANCE
         self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk)                                  # BV_APPLICATION
@@ -884,7 +918,7 @@ class OnboardingSpineTests(TestCase):
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
                             subcontractor_id=sub.id, proposed_salary="")
-        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
+        self._begin(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk); self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
         self._adv(pk); self._pay_fee(pk, "BV_TICKET")
@@ -905,7 +939,7 @@ class OnboardingSpineTests(TestCase):
         pk = self._approved(route="BV", bv_justification="short job",
                             nationality="Indian", bv_purpose="SUBCONTRACT",
                             subcontractor_id=sub.id, proposed_salary="")
-        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
+        self._begin(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk); self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
         self._adv(pk); self._pay_fee(pk, "BV_TICKET")
@@ -980,7 +1014,7 @@ class OnboardingSpineTests(TestCase):
         from . import onboarding as ob
         from .models import Notification
         pk = self._approved()
-        self._adv(pk)                                  # begin → IN_PROGRESS
+        self._begin(pk)                                  # begin → IN_PROGRESS
         case = OnboardingCase.objects.get(pk=pk)
         today = date(2026, 8, 1)
         case.arrived_date = today - timedelta(days=8)
@@ -1012,7 +1046,7 @@ class OnboardingSpineTests(TestCase):
         from datetime import date, timedelta
         from . import onboarding as ob
         pk = self._approved()
-        self._adv(pk)
+        self._begin(pk)
         case = OnboardingCase.objects.get(pk=pk)
         today = date(2026, 8, 1)
         case.arrived_date = today - timedelta(days=10)
@@ -1028,7 +1062,7 @@ class OnboardingSpineTests(TestCase):
         from .models import Notification
         pk = self._approved(route="BV", bv_justification="urgent",
                             nationality="Indian")
-        self._adv(pk)                                  # begin → BV_SPONSOR
+        self._begin(pk)                                  # begin → BV_SPONSOR
         case = OnboardingCase.objects.get(pk=pk)
         today = date(2026, 8, 1)
         case.bv_expiry = today + timedelta(days=12)    # T-14 band → HR only
@@ -1053,7 +1087,7 @@ class OnboardingSpineTests(TestCase):
         from . import onboarding as ob
         from .models import Notification
         pk = self._approved()
-        self._adv(pk)                                  # pre-arrival, IN_PROGRESS
+        self._begin(pk)                                  # pre-arrival, IN_PROGRESS
         OnboardingCase.objects.filter(pk=pk).update(
             updated_at=timezone.now() - timedelta(days=20))
         res = ob.run_clocks()
@@ -1067,7 +1101,7 @@ class OnboardingSpineTests(TestCase):
     def test_medical_fail_blocks_and_flags_pd(self):
         from .models import Notification
         pk = self._approved()
-        self._adv(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._begin(pk); self._adv(pk)                   # → WP_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk); self._adv(pk)                   # → WP_DEPOSIT
         self._pay_fee(pk, "WP_DEPOSIT")
@@ -1094,7 +1128,7 @@ class OnboardingSpineTests(TestCase):
         pk1 = self._approved(route="BV", bv_justification="short job",
                              nationality="Indian", bv_purpose="SUBCONTRACT",
                              subcontractor_id=sub.id, proposed_salary="")
-        self._adv(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_INSURANCE")
+        self._begin(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_INSURANCE")
         self._adv(pk1); self._sdata(pk1, portal_status="APPROVED")
         self._adv(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_VISA_FEE")
         self._adv(pk1); self._pay_fee(pk1, "BV_TICKET")
@@ -1137,7 +1171,7 @@ class OnboardingSpineTests(TestCase):
         Sri Lankan once the work permit is approved — never for other
         nationalities (owner 2026-08-09)."""
         pk = self._approved(nationality="Sri Lankan")
-        self._adv(pk)                                  # begin → WP_APPOINTMENT
+        self._begin(pk)                                  # begin → WP_APPOINTMENT
         opts = {o["kind"]: o for o in self.client.get(
             f"/api/v1/onboarding/{pk}").data["letter_options"]}
         self.assertFalse(opts["EA"]["available"])      # not yet — WP not approved
@@ -1164,8 +1198,8 @@ class OnboardingSpineTests(TestCase):
 
     def test_employment_agreement_not_for_other_nationalities(self):
         pk = self._approved(nationality="Bangladeshi")
-        self._adv(pk)
-        self._adv(pk)
+        self._begin(pk)
+        self._begin(pk)
         self._sdata(pk, portal_status="APPROVED")
         self._adv(pk)                                  # WP_APPROVED
         opts = {o["kind"]: o for o in self.client.get(
@@ -1200,19 +1234,21 @@ class OnboardingSpineTests(TestCase):
         sig.designation = "Director"          # each signatory's OWN title
         sig.save(update_fields=["full_name", "designation"])
         pk = self._approved()
-        self._adv(pk)
-        self._gen_letter(pk, "AC")
+        self._adv(pk)                          # begin, still unsigned
         self.client.force_authenticate(sig)
         self.client.post("/api/v1/onboarding/my-stamp",
                          {"stamp": self._tiny_png()}, format="multipart")
+        r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        self.assertEqual(r.status_code, 200, r.data)
         rendered = []
         real = __import__("core.pdf", fromlist=["x"]).render_onboarding_letter
         def spy(document, kind, ref, fields, issue_date, **kw):
             rendered.append((kind, dict(fields), kw))
             return real(document, kind, ref, fields, issue_date, **kw)
+        # the letter is produced AFTER the sign-off and carries that signer
         with patch("core.pdf.render_onboarding_letter", side_effect=spy):
-            r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
-        self.assertEqual(r.status_code, 200, r.data)
+            r = self._gen_letter(pk, "AC")
+        self.assertEqual(r.status_code, 201, r.data)
         self.assertTrue(rendered)
         kind, fields, kw = rendered[0]
         self.assertEqual(fields["signatory_name"], "Ibrahim Fikury Hussain")
@@ -1230,17 +1266,18 @@ class OnboardingSpineTests(TestCase):
         self.client.post("/api/v1/onboarding/my-stamp",
                          {"stamp": self._tiny_png()}, format="multipart")
         pk = self._approved()
-        self._adv(pk)
-        self._gen_letter(pk, "AC")
+        self._adv(pk)                          # begin, still unsigned
+        self.client.force_authenticate(admin)
+        r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
+        self.assertEqual(r.status_code, 200, r.data)
         rendered = []
         real = __import__("core.pdf", fromlist=["x"]).render_onboarding_letter
         def spy(document, kind, ref, fields, issue_date, **kw):
             rendered.append(dict(fields))
             return real(document, kind, ref, fields, issue_date, **kw)
-        self.client.force_authenticate(admin)
         with patch("core.pdf.render_onboarding_letter", side_effect=spy):
-            r = self.client.post(f"/api/v1/onboarding/cases/{pk}/sign-off")
-        self.assertEqual(r.status_code, 200, r.data)
+            r = self._gen_letter(pk, "AC")
+        self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(rendered[0]["signatory_name"], admin.full_name)
         self.assertEqual(rendered[0]["signatory_designation"],
                          "Authorised Signatory")

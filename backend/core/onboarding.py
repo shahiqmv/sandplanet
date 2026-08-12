@@ -376,6 +376,13 @@ def sequence(case):
 
 
 def _can_leave(case, stage):
+    # Nothing moves before the signatory signs the case off (owner 2026-08-11):
+    # staff were generating the LOA and lodging the work-permit application
+    # while the sign-off was still pending. The signatory's approval is the
+    # start line for the whole case, not a later formality.
+    if case.signatory_approved_at is None:
+        return ("Awaiting the signatory's sign-off — no letter or application "
+                "can go out before the case is signed.")
     if stage in APPLICATION_STAGES and case.portal_status != "APPROVED":
         return "The government portal must show APPROVED before advancing."
     if stage in MEDICAL_STAGES:
@@ -944,6 +951,13 @@ def letter_available(case, kind):
     meta = LETTER_META.get(kind)
     if not meta or case.document.status != "IN_PROGRESS":
         return False
+    # HARD GATE (owner 2026-08-11): nothing is generated before the signatory
+    # signs the case off. Previously an unsigned letter rendered as a DRAFT
+    # copy — staff issued those to the government portal anyway, so the draft
+    # path is gone: every generated document now carries the signature + seal
+    # by construction.
+    if case.signatory_approved_at is None:
+        return False
     # The Appointment Confirmation is an early, pre-travel offer for recruitment
     # cases — available throughout processing (any route), but NOT for a
     # subcontract worker (no appointment letter, no salary — owner 2026-08-04).
@@ -1175,7 +1189,11 @@ def generate_letter(case, kind, overrides, actor):
         letter = OnboardingLetter.objects.create(
             case=case, kind=kind, ref=ref, attachment=att, fields=fields,
             version=version, created_by=actor,
-            status="SIGNED" if signed else "PENDING")
+            status="SIGNED" if signed else "PENDING",
+            # a letter produced after the sign-off carries that signatory on
+            # its face — record who it was (owner 2026-08-11)
+            approved_by=(case.signatory_approved_by if signed else None),
+            approved_at=(case.signatory_approved_at if signed else None))
     audit("document", case.document_id, "OBR_LETTER", actor=actor,
           detail={"kind": kind, "ref": ref, "version": version})
     if not signed:
@@ -1338,29 +1356,45 @@ def _letter_dict(letter):
 
 
 def cases_to_sign_off(user):
-    """Onboarding cases whose letters are drafted and awaiting a signatory's
-    sign-off — the signatory's limited queue (candidate + position + the draft
-    letters to review, NOT the full case with its sensitive documents)."""
+    """Onboarding cases awaiting a signatory's sign-off — the signatory's
+    limited queue (candidate + the appointment terms they are approving, NOT
+    the full case with its sensitive documents).
+
+    Every in-processing, unsigned case appears (owner 2026-08-11). It used to
+    list only cases that already had DRAFT letters, which no longer works now
+    that generation is gated behind the sign-off — and that ordering was the
+    wrong way round anyway: the signatory approves the appointment, then the
+    letters are produced from it, already stamped."""
     from .models import OnboardingCase
     if user.role not in ("SIGNATORY", "ADMIN"):
         return []
     qs = (OnboardingCase.objects.filter(
             document__status="IN_PROGRESS", signatory_approved_at__isnull=True)
-          .filter(letters__isnull=False).distinct()
-          .select_related("document").order_by("document__doc_date"))
+          .distinct().select_related("document")
+          .order_by("document__doc_date"))
     out = []
     for c in qs:
+        # any letter already drafted under the old rule stays reviewable
         letters = [
             {"id": lt.id, "kind": lt.kind, "ref": lt.ref,
              "title": LETTER_META.get(lt.kind, {}).get("title", lt.kind),
              "draft": f"/onboarding/letters/{lt.id}/draft.pdf"}
             for lt in c.letters.exclude(kind="IM30").order_by("kind")]
-        if not letters:
-            continue
         out.append({
             "case_id": c.document_id, "case_ref": c.document.ref,
             "candidate_name": c.full_name, "position": c.trade_designation,
             "nationality": c.nationality, "letters": letters,
+            # the substance being approved — the LOA is generated from exactly
+            # these fields, so reviewing them IS reviewing the letter
+            "terms": {
+                "route": c.get_route_display(),
+                "site": c.document.site.code,
+                "salary": (f"{c.currency or 'MVR'} {c.proposed_salary}"
+                           if c.proposed_salary is not None else ""),
+                "allowances": [f"{a.get('type')} {a.get('amount')}"
+                               for a in (c.allowances or [])],
+                "passport_no": c.passport_no,
+            },
         })
     return out
 

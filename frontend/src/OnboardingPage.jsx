@@ -973,7 +973,10 @@ function Letters({ c, busy, run }) {
   });
   function begin(o) { setOpenKind(o.kind); setFields({ ...(o.fields || {}) }); }
 
-  if (!opts.length && !done.length) return null;
+  // Nothing is generated before the signatory signs the case off (owner
+  // 2026-08-11) — say so plainly instead of showing an empty panel.
+  const locked = !c.signatory_signed_at;
+  if (!opts.length && !done.length && !locked) return null;
   return (
     <div style={{ marginTop: 12, borderTop: "1px solid var(--line)",
       paddingTop: 10 }}>
@@ -983,8 +986,12 @@ function Letters({ c, busy, run }) {
         {c.signatory_signed_at
           ? <Chip tone="ok">Signed off{c.signatory_signed_by
               ? ` · ${c.signatory_signed_by}` : ""}</Chip>
-          : done.length > 0
-            ? <Chip tone="warn">Awaiting signatory sign-off</Chip> : null}</div>
+          : <Chip tone="warn">Awaiting signatory sign-off</Chip>}</div>
+      {locked && (
+        <div style={{ fontSize: 12, color: "#8a6d00", marginBottom: 8 }}>
+          A signatory must sign this case off before any letter is generated
+          or the case advances a stage. Every document then carries their
+          signature and the company seal.</div>)}
       {done.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 3,
           marginBottom: 8 }}>
@@ -1033,20 +1040,15 @@ function Letters({ c, busy, run }) {
                   </label>
                 ))}
               </div>
-              {o.needs_sign && !c.signatory_signed_at && (
+              {o.needs_sign && (
                 <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
-                  This case goes to the signatory for sign-off — once they
-                  approve, every letter is stamped with the director's signature
-                  and company seal and made available to print.</div>)}
-              {o.needs_sign && c.signatory_signed_at && (
-                <div style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}>
-                  This case is already signed off — the letter will be stamped
-                  and ready to print immediately.</div>)}
+                  This case is signed off — the letter is stamped with the
+                  signatory's signature and the company seal, ready to
+                  print.</div>)}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <Btn variant="primary" disabled={busy}
                      onClick={() => gen(o.kind)}>
-                  {o.needs_sign && !c.signatory_signed_at
-                    ? "Generate & send for sign-off" : "Generate"}
+                  Generate
                 </Btn>
                 <Btn variant="ghost" disabled={busy}
                      onClick={() => setOpenKind(null)}>Cancel</Btn>
