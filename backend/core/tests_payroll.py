@@ -623,3 +623,107 @@ class FridayOtPolicyTests(TestCase):
         line = run.lines.get(employee=self.emp)
         self.assertEqual(float(payroll.compute_line(line)["friday_pay"]),
                          200.0)                                  # 8 × 25
+
+
+class PayrollRefreshTests(TestCase):
+    """A draft run can be re-pulled from attendance / rates / policy until it
+    is locked (owner 2026-08-12: the Friday policy changed after BVR's July
+    run was generated, and sites are re-checking attendance)."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, OvertimeRate)
+        self.hr = make_user("rf_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="RFS", name="Refresh Isle",
+                                        status=Site.Status.ACTIVE)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        OvertimeRate.objects.create(category=self.cat, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-7001", full_name="Worker One", basic_pay=6200,
+            currency="MVR", job_category=self.cat)
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 4), remark="PRESENT",
+                                  ot_approved=Decimal("2"))
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _run(self):
+        from core import payroll
+        return payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                    month=5, working_days=31, actor=self.hr)
+
+    def test_refresh_picks_up_corrected_attendance(self):
+        from core import payroll
+        from .models import Attendance
+        run = self._run()
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(float(line.ot_hours), 2.0)
+        # the site corrects the day and adds a worked Friday
+        Attendance.objects.filter(employee=self.emp,
+                                  day=date(2026, 5, 4)).update(
+            ot_approved=Decimal("5"))
+        Attendance.objects.create(employee=self.emp, site=self.site,
+                                  day=date(2026, 5, 1), remark="PRESENT")
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        line.refresh_from_db()
+        self.assertEqual(float(line.ot_hours), 5.0)
+        self.assertEqual(line.fridays_worked, 1)
+        self.assertIn("EMP-7001", summary["changed"])
+        self.assertEqual(float(payroll.compute_line(line)["friday_pay"]),
+                         300.0)                       # 12h × 25
+
+    def test_refresh_keeps_manual_allowance_and_penalty(self):
+        from core import payroll
+        run = self._run()
+        line = run.lines.get(employee=self.emp)
+        line.allowance, line.penalty = Decimal("1500"), Decimal("200")
+        line.save()
+        payroll.refresh_run(run, self.hr)
+        line.refresh_from_db()
+        self.assertEqual(line.allowance, Decimal("1500.00"))
+        self.assertEqual(line.penalty, Decimal("200.00"))
+
+    def test_refresh_adds_a_newly_eligible_worker(self):
+        from core import payroll
+        from .models import EmployeeSiteAllocation
+        run = self._run()
+        newbie = Employee.objects.create(
+            emp_no="EMP-7002", full_name="Late Joiner", basic_pay=5000,
+            currency="MVR", job_category=self.cat)
+        EmployeeSiteAllocation.objects.create(
+            employee=newbie, site=self.site, from_date=date(2026, 5, 1))
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        self.assertIn("EMP-7002", summary["added"])
+        self.assertTrue(run.lines.filter(employee=newbie).exists())
+
+    def test_refresh_reports_but_keeps_an_ineligible_line(self):
+        from core import payroll
+        run = self._run()
+        self.emp.is_active = False
+        self.emp.save(update_fields=["is_active"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertEqual(summary["no_longer_eligible"], ["EMP-7001"])
+        self.assertTrue(run.lines.filter(employee=self.emp).exists())
+
+    def test_locked_run_refuses_refresh(self):
+        from core import payroll
+        run = self._run()
+        run.status = "LOCKED"
+        run.save(update_fields=["status"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(summary)
+        self.assertIn("locked", err.lower())
+
+    def test_refresh_endpoint(self):
+        run = self._run()
+        r = self.client.post(f"/api/v1/payroll/runs/{run.id}",
+                             {"action": "refresh"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn("refresh", r.data)

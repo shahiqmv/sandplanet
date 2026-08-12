@@ -289,6 +289,14 @@ def payroll_run_detail(request, pk):
         run = PayrollRun.objects.select_related("site").get(pk=pk)
     except PayrollRun.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST" and request.data.get("action") == "refresh":
+        # Re-pull attendance / rates / policy into a draft run (owner
+        # 2026-08-12: the Friday policy changed after a run was generated,
+        # and sites are re-checking July attendance).
+        summary, err = payroll.refresh_run(run, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response({**_run_info(run), "refresh": summary})
     if request.method == "POST":  # lock
         if run.status == "LOCKED":
             return Response({"detail": "Already locked."}, status=400)

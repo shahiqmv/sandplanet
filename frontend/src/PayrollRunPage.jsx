@@ -355,6 +355,27 @@ function RunDetail({ runId, onBack, me }) {
     } catch (e) { setError(e.message); }
   }
 
+  async function refresh() {
+    if (!window.confirm(
+      "Re-pull attendance, rates and pay policy into this run?\n\n"
+      + "Days, OT hours, Fridays, OT rate and basic are recalculated from "
+      + "current data; your allowance and penalty entries are kept. Newly "
+      + "eligible workers are added.")) return;
+    try {
+      const d = await api(`/payroll/runs/${runId}`,
+                          { method: "POST", body: { action: "refresh" } });
+      setRun(d);
+      const r = d.refresh || {};
+      const bits = [`${(r.changed || []).length} line(s) updated`];
+      if ((r.added || []).length) bits.push(`${r.added.length} added`);
+      if ((r.no_longer_eligible || []).length)
+        bits.push(`${r.no_longer_eligible.length} no longer eligible `
+                  + `(${r.no_longer_eligible.join(", ")}) — review these`);
+      setError(null);
+      window.alert("Refreshed — " + bits.join(", ") + ".");
+    } catch (e) { setError(e.message); }
+  }
+
   async function lock() {
     if (!window.confirm("Lock this run? It posts labour cost and can't be "
                         + "edited afterwards.")) return;
@@ -384,6 +405,11 @@ function RunDetail({ runId, onBack, me }) {
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
+          {!locked && (
+            <button onClick={refresh} style={ghostButton}
+              title="Re-pull attendance, OT rates and pay policy — keeps your allowance/penalty entries">
+              ↻ Refresh from attendance</button>
+          )}
           {!locked && canLock && (
             <button onClick={lock} style={buttonStyle}>Lock run</button>
           )}

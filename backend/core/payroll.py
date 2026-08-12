@@ -7,6 +7,7 @@ import calendar
 from datetime import date
 from decimal import ROUND_HALF_UP, Decimal
 
+from .audit import audit
 from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 
 TWO = Decimal("0.01")
@@ -241,6 +242,94 @@ def generate_month(year, month, actor):
         created.append({"site": label, "currency": currency, "run_id": run.id})
     return {"blocked": False, "unlocked": [], "created": created,
             "skipped": skipped, "working_days": working_days}
+
+
+def refresh_run(run, actor):
+    """Re-prefill a DRAFT run from current attendance, rates and policy.
+
+    Needed whenever something the run was built from changes underneath it —
+    a site corrects attendance, an OT rate is fixed, or the Friday policy
+    moves (owner 2026-08-12). Attendance-derived and rate fields are
+    recomputed; HR's own entries (allowance, penalty) are left alone.
+    Newly eligible workers are added; workers who are no longer eligible are
+    reported, never silently dropped, so HR decides."""
+    from django.db import transaction
+
+    from .models import EmployeeSiteAllocation, PayrollLine
+
+    if run.status == "LOCKED":
+        return None, ("This run is locked — reopen it before refreshing.")
+    site, currency = run.site, run.currency
+    if site is not None:
+        emp_ids = EmployeeSiteAllocation.objects.filter(
+            site=site, to_date__isnull=True).values_list("employee_id",
+                                                         flat=True)
+        eligible = Employee.objects.payroll_eligible().filter(
+            id__in=emp_ids, is_active=True, currency=currency)
+    else:
+        from django.db.models import Q
+        eligible = Employee.objects.payroll_eligible().filter(is_active=True)
+        eligible = (eligible.filter(Q(currency="USD")
+                                    | Q(usd_basic_pay__gt=0,
+                                        employment_type="PERMANENT"))
+                    if currency == "USD"
+                    else eligible.filter(currency=currency))
+    eligible = {e.id: e for e in eligible.select_related("job_category")}
+
+    changed, added, stale = [], [], []
+    with transaction.atomic():
+        for line in run.lines.select_related("employee").all():
+            emp = line.employee
+            if emp.id not in eligible:
+                stale.append(emp.emp_no)
+                continue
+            days, ot, fridays = _attendance_prefill(emp, site, run.year,
+                                                    run.month,
+                                                    run.working_days)
+            split = is_split_pay(emp)
+            before = (line.days_worked, line.ot_hours, line.fridays_worked,
+                      line.ot_rate, line.basic_pay)
+            if currency == "USD" and split:
+                line.basic_pay = emp.usd_basic_pay or 0
+                line.ot_rate = Decimal("0")
+                line.days_worked, line.ot_hours, line.fridays_worked = (
+                    days, Decimal("0"), 0)
+            else:
+                line.ot_rate = emp.ot_rate()
+                line.days_worked, line.ot_hours = days, ot
+                if currency != "USD" and split:
+                    line.basic_pay, line.fridays_worked = Decimal("0"), 0
+                else:
+                    line.basic_pay = emp.basic_pay or 0
+                    line.fridays_worked = fridays
+                ded = deductions_for(emp, run.year, run.month)
+                line.advance, line.loan = ded["advance"], ded["loan"]
+            after = (line.days_worked, line.ot_hours, line.fridays_worked,
+                     line.ot_rate, line.basic_pay)
+            if before != after:
+                changed.append(emp.emp_no)
+            line.save()
+        have = set(run.lines.values_list("employee_id", flat=True))
+        for emp in eligible.values():
+            if emp.id in have:
+                continue
+            days, ot, fridays = _attendance_prefill(emp, site, run.year,
+                                                    run.month,
+                                                    run.working_days)
+            ded = deductions_for(emp, run.year, run.month)
+            PayrollLine.objects.create(
+                run=run, employee=emp, site_id=emp.current_site_id(),
+                basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
+                days_worked=days, ot_hours=ot, fridays_worked=fridays,
+                advance=ded["advance"], loan=ded["loan"])
+            added.append(emp.emp_no)
+    summary = {"changed": changed, "added": added, "no_longer_eligible": stale}
+    audit("payroll_run", run.id, "PAYROLL_RUN_REFRESHED", actor=actor,
+          detail={"period": f"{run.year}-{run.month:02d}",
+                  "site": site.code if site else "ALL",
+                  "changed": len(changed), "added": len(added),
+                  "no_longer_eligible": stale})
+    return summary, None
 
 
 def lock_run(run, actor):
