@@ -24,6 +24,15 @@ run_deploy() {
   git pull
   echo "==> Rebuilding and restarting (BuildKit)…"
   docker compose -f docker-compose.prod.yml up -d --build
+  # Caddy's config is a single-file bind mount, and `git pull` REPLACES the
+  # file rather than editing it. Docker binds the old inode, so the running
+  # container keeps serving the config it started with — a `caddy reload`
+  # dutifully re-reads the stale file and reports success. Recreating the
+  # container is the only thing that picks up a Caddyfile change (found the
+  # hard way when the camera relay's routes silently never appeared,
+  # 2026-08-12).
+  echo "==> Recreating caddy so Caddyfile changes take effect…"
+  docker compose -f docker-compose.prod.yml up -d --force-recreate caddy
   echo "==> Status:"
   docker compose -f docker-compose.prod.yml ps
   echo "Done."
