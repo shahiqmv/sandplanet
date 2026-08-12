@@ -15,7 +15,7 @@ from rest_framework.response import Response
 
 from .client_portal import (ClientTokenAuthentication, IsClient,
                             client_site_ids, new_token)
-from .models import ClientSession, ClientUser, Document, Site
+from .models import Camera, ClientSession, ClientUser, Document, Site
 
 
 VIS_FLAGS = ("show_reports", "show_programme", "show_procurement",
@@ -88,11 +88,17 @@ def client_change_password(request):
 @permission_classes([IsClient])
 def client_sites(request):
     """The client's assigned sites — minimal, allowlisted."""
+    sites = list(request.user.sites.all().order_by("code"))
+    with_cams = set()
+    if getattr(request.user, "show_cameras", True):
+        with_cams = set(Camera.objects.filter(
+            site_id__in=[s.id for s in sites], is_active=True,
+            client_visible=True).values_list("site_id", flat=True))
     return Response([
         {"id": s.id, "code": s.code, "name": s.name,
          "status": s.status,
-         "has_cameras": False}          # cameras: Phase-later, always false now
-        for s in request.user.sites.all().order_by("code")])
+         "has_cameras": s.id in with_cams}
+        for s in sites])
 
 
 @api_view(["GET"])
@@ -399,3 +405,51 @@ def client_document_pdf(request, ref):
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'attachment; filename="{doc.ref}.pdf"'
     return resp
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_site_cameras(request, pk):
+    """Cameras this client may watch on this site.
+
+    Two independent gates, both of which must be open: the account-level
+    `show_cameras` flag (HO admin can hide the whole section) and each
+    camera's own `client_visible` (off by default, so a newly registered
+    camera is internal until someone deliberately publishes it)."""
+    if (b := _blocked(request, "show_cameras")):
+        return b
+    if pk not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    from . import cameras as cam_svc
+    status = cam_svc.relay_status()
+    cams = Camera.objects.filter(site_id=pk, is_active=True,
+                                 client_visible=True).select_related("site")
+    return Response({
+        "cameras": [{"id": c.id, "name": c.name,
+                     "location_note": c.location_note,
+                     "online": bool((status.get(c.path) or {}).get("ready"))}
+                    for c in cams],
+        "relay_configured": bool(cam_svc.relay_public_base()),
+    })
+
+
+@api_view(["POST"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
+def client_camera_ticket(request, pk):
+    """A ~90s ticket for one client-visible camera on one of their sites."""
+    if (b := _blocked(request, "show_cameras")):
+        return b
+    from . import cameras as cam_svc
+    cam = Camera.objects.filter(pk=pk, is_active=True,
+                                client_visible=True).first()
+    if not cam or cam.site_id not in client_site_ids(request.user):
+        return Response({"detail": "Not found."}, status=404)
+    if not cam_svc.relay_public_base():
+        return Response({"detail": "Not found."}, status=404)
+    return Response({
+        "whep": cam_svc.whep_url(cam),
+        "ticket": cam_svc.issue_ticket(cam, "client", request.user.id),
+        "expires_in": cam_svc.TICKET_MAX_AGE,
+    })

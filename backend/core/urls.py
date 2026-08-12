@@ -1,7 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_bom as bom_api, views_commercial as commercial, \
+from . import views, views_bom as bom_api, views_cameras as cameras_api, \
+    views_commercial as commercial, \
     views_cost as cost, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
@@ -562,5 +563,10 @@ urlpatterns = [
          name="payroll-line"),
     path("payroll/lines/<int:pk>/payslip.pdf", payroll_api.payslip_pdf,
          name="payroll-payslip-pdf"),
+    # --- site cameras (owner 2026-08-12)
+    path("cameras", cameras_api.camera_list, name="camera-list"),
+    path("cameras/<int:pk>", cameras_api.camera_detail, name="camera-detail"),
+    path("cameras/<int:pk>/ticket", cameras_api.camera_ticket,
+         name="camera-ticket"),
     path("", include(router.urls)),
 ]

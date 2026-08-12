@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { api, downloadFile, getToken, setToken } from "./api.js";
 import ClientGantt from "./ClientGantt.jsx";
+import WhepPlayer from "../WhepPlayer.jsx";
 
 const fmt = (s) => s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -755,18 +756,63 @@ function GalleryView({ site, onBack }) {
   );
 }
 
-function CamerasPage({ onBack }) {
+/* Client-facing live cameras. Only cameras an admin has explicitly published
+ * to the client reach this list — the backend filters on client_visible, so
+ * nothing here decides visibility, it only renders what it was given. */
+function CamerasPage({ site, onBack }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [open, setOpen] = useState(null);
+
+  function load() {
+    api(`/sites/${site.id}/cameras`)
+      .then(setD)
+      .catch((e) => setErr(e.message));
+  }
+  useEffect(load, [site.id]);
+  useEffect(() => {
+    const t = setInterval(load, 30000);   // online/offline comes from the relay
+    return () => clearInterval(t);
+  }, [site.id]);
+
+  const cams = d?.cameras || [];
+
   return (
     <>
       <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>‹ Back to overview</button>
       <div className="card">
         <div className="sec-title"><h2>Live Feeds</h2></div>
-        <div className="soon">
-          <div className="icon">📹</div>
-          <h3>Coming soon</h3>
-          <p>Live site views and daily time-lapse are on the way — you'll see them
-            here once your site's camera is installed.</p>
-        </div>
+        {err && <p className="muted">{err}</p>}
+        {!d && !err && <p className="muted">Loading…</p>}
+        {d && cams.length === 0 && (
+          <div className="soon">
+            <div className="icon">📹</div>
+            <h3>Coming soon</h3>
+            <p>Live site views and daily time-lapse are on the way — you'll see them
+              here once your site's camera is installed.</p>
+          </div>
+        )}
+        {cams.map((c) => (
+          <div key={c.id} className="camrow">
+            <div className="camhead">
+              <strong>{c.name}</strong>
+              {c.location_note && <span className="muted"> · {c.location_note}</span>}
+              <span className={`campill ${c.online ? "on" : ""}`}>
+                {c.online ? "Live now" : "Offline"}
+              </span>
+            </div>
+            {c.online
+              ? (open === c.id
+                  ? <WhepPlayer getTicket={() =>
+                      api(`/cameras/${c.id}/ticket`, { method: "POST" })} />
+                  : <button className="btn primary"
+                            onClick={() => setOpen(c.id)}>▶ Watch live</button>)
+              : <p className="muted" style={{ margin: "6px 0 0" }}>
+                  This camera isn’t reporting in at the moment. It usually comes
+                  back on its own once the site’s connection recovers.
+                </p>}
+          </div>
+        ))}
       </div>
     </>
   );
@@ -827,7 +873,8 @@ function SitePortal({ id, single, onBackToSites }) {
           onBack={() => setView({ name: "overview" })} />}
         {seg === "proc" && <ProcurementPage site={d.site}
           onBack={() => setView({ name: "overview" })} />}
-        {seg === "cameras" && <CamerasPage onBack={() => setView({ name: "overview" })} />}
+        {seg === "cameras" && <CamerasPage site={d.site}
+          onBack={() => setView({ name: "overview" })} />}
       </div>
     </>
   );

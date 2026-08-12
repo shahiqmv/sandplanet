@@ -297,3 +297,51 @@ table.data.proc td.pstg{ color:var(--ink-2); white-space:nowrap; }
   font-size:12px; padding:0; line-height:1; }
 .pthumb{ width:38px; height:38px; object-fit:cover; border-radius:4px;
   border:1px solid var(--line-2); display:block; }
+
+/* --- live camera feeds (owner 2026-08-12) -------------------------------- */
+.camrow { padding: 14px 0; border-top: 1px solid var(--line); }
+.camrow:first-of-type { border-top: 0; }
+.camhead { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.campill {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--chip-bg, rgba(120,132,150,.16));
+  color: var(--muted);
+}
+.campill.on { background: rgba(214, 64, 52, .12); color: #d64034; }
+.whep-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #10141c;
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.whep-frame video {
+  width: 100%; height: 100%; object-fit: contain; background: #10141c;
+}
+.whep-overlay {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; gap: 10px;
+  align-items: center; justify-content: center;
+  color: #c9d2e0; font-size: 13px; text-align: center; padding: 12px;
+}
+.whep-err { color: #ffb4a8; margin: 0; }
+.whep-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 2px 0; font-size: 12px; color: var(--muted);
+}
+.whep-dot {
+  width: 8px; height: 8px; border-radius: 50%; background: #d64034;
+  animation: whep-pulse 1.6s ease-in-out infinite;
+}
+@keyframes whep-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .35; }
+}

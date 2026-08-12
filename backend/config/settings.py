@@ -29,6 +29,14 @@ FOLLOWME_BASE_URL = os.environ.get("FOLLOWME_BASE_URL",
 FOLLOWME_API_KEY = os.environ.get("FOLLOWME_API_KEY", "")
 TRACKING_ETA_SLIP_HOURS = int(os.environ.get("TRACKING_ETA_SLIP_HOURS", "24"))
 TRACKING_CREDIT_FLOOR = int(os.environ.get("TRACKING_CREDIT_FLOOR", "10"))
+
+# --- Site cameras (owner 2026-08-12). CAMERA_RELAY_URL is the PUBLIC origin a
+# browser fetches WebRTC/WHEP from; CAMERA_RELAY_API is the MediaMTX control
+# API, which must stay on loopback. Empty relay URL = cameras disabled, which
+# is the correct state for any deployment without a relay.
+CAMERA_RELAY_URL = os.environ.get(
+    "CAMERA_RELAY_URL", "http://127.0.0.1:8889" if DEBUG else "")
+CAMERA_RELAY_API = os.environ.get("CAMERA_RELAY_API", "http://127.0.0.1:9997")
 # Dev default "*" lets the team-review tunnel (trycloudflare.com) reach the
 # dev server; production always sets DJANGO_ALLOWED_HOSTS explicitly.
 ALLOWED_HOSTS = os.environ.get(

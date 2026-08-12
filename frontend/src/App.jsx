@@ -5,6 +5,7 @@ import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
+import LiveFeedsPage from "./LiveFeedsPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
@@ -69,6 +70,11 @@ const NAV_GROUPS = [
                                      "SIGNATORY", "PA"]]] },
   { key: "sitesGrp", label: "Sites", roles: null,
     subs: [["sites", "Sites", null]] },
+  // Its own page rather than a site tab: the value is seeing every site at
+  // once, and site staff reach their own camera from the same place (owner
+  // 2026-08-12). Backend scopes the list to sites the user can already see.
+  { key: "camerasGrp", label: "Live Feeds", roles: null,
+    subs: [["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
     roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS", "PA"],
     // QS shares the Director's overseas-procurement authority, so it only sees
@@ -811,6 +817,10 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />
+          )}
+          {/* not gated on is_ho — site staff watch their own site's cameras */}
+          {!docView && !openSite && hoPage === "live-feeds" && (
+            <LiveFeedsPage me={me} />
           )}
           {!docView && !openSite &&
             ["HO_PURCHASING", "ADMIN", "PA"].includes(me.role) &&

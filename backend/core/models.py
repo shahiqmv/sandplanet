@@ -4474,3 +4474,37 @@ class MeetingContact(models.Model):
         ordering = ["name", "id"]
 
 
+
+class Camera(models.Model):
+    """A site camera whose stream is relayed to the app (owner 2026-08-12).
+
+    The camera never talks to us directly — it sits on a site LAN behind
+    carrier NAT, so a small always-on box at the site pulls its local RTSP and
+    PUBLISHES it outward to our MediaMTX relay under `path`. Everything the
+    app shows is read back off the relay, which means the app needs no inbound
+    route to the site and the camera is never exposed to the internet.
+
+    `stream_key` is what the site box authenticates its publish with; a
+    viewer never sees it (viewers get a short-lived signed ticket instead).
+    `client_visible` defaults False so registering a camera never silently
+    exposes a site to its client — someone has to turn it on."""
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="cameras")
+    name = models.CharField(max_length=60)
+    # the MediaMTX path this camera publishes to; also the publish username
+    path = models.SlugField(max_length=40, unique=True)
+    stream_key = models.CharField(max_length=40)
+    location_note = models.CharField(max_length=160, blank=True)
+    is_active = models.BooleanField(default=True)
+    client_visible = models.BooleanField(default=False)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["site_id", "name", "id"]
+
+    def __str__(self):
+        return f"{self.site.code} · {self.name}"
