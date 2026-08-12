@@ -34,9 +34,17 @@ TRACKING_CREDIT_FLOOR = int(os.environ.get("TRACKING_CREDIT_FLOOR", "10"))
 # browser fetches WebRTC/WHEP from; CAMERA_RELAY_API is the MediaMTX control
 # API, which must stay on loopback. Empty relay URL = cameras disabled, which
 # is the correct state for any deployment without a relay.
+# In production this is a PATH ("/cams"), not an origin: Caddy proxies it to
+# the relay on whichever host the page was served from, so the staff app and
+# the client portal each fetch their own origin and there is no CORS at all.
 CAMERA_RELAY_URL = os.environ.get(
     "CAMERA_RELAY_URL", "http://127.0.0.1:8889" if DEBUG else "")
 CAMERA_RELAY_API = os.environ.get("CAMERA_RELAY_API", "http://127.0.0.1:9997")
+# Shared secret the relay puts in its auth-hook URL. Empty = the hook is dead,
+# which is the right default: a missing secret must never mean "allow". The
+# DEBUG fallback exists only so a local relay can be pointed at a dev server.
+CAMERA_RELAY_SECRET = os.environ.get(
+    "CAMERA_RELAY_SECRET", "dev-relay-secret" if DEBUG else "")
 # Dev default "*" lets the team-review tunnel (trycloudflare.com) reach the
 # dev server; production always sets DJANGO_ALLOWED_HOSTS explicitly.
 ALLOWED_HOSTS = os.environ.get(

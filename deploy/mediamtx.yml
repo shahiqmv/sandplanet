@@ -1,0 +1,50 @@
+# MediaMTX — the camera relay (owner 2026-08-12).
+#
+# Site cameras sit behind carrier NAT, so nothing can reach them. A small box at
+# each site pulls its camera's local RTSP and PUBLISHES here; every viewer reads
+# back off this relay. Django decides who may publish and who may watch —
+# `authHTTPAddress` is consulted on every single connection.
+#
+# Secrets and the public hostname are NOT written here. MediaMTX overrides any
+# setting from an MTX_-prefixed environment variable, which is how compose
+# injects authHTTPAddress and webrtcAdditionalHosts — see
+# docker-compose.prod.yml. Do not add ${...} interpolation to this file;
+# MediaMTX does not expand it and would take the literal string.
+#
+# Ports:
+#   8554/tcp  site boxes publish here (must be reachable from the internet)
+#   8889/tcp  WebRTC/WHEP — NOT published to the host; Caddy proxies /cams/*
+#   8189/udp  WebRTC ICE media (must be reachable from the internet)
+#   9997/tcp  control API — internal only, used by Django for online/offline
+logLevel: info
+readTimeout: 15s
+writeTimeout: 15s
+
+api: yes
+apiAddress: :9997          # container-internal only; not published to the host
+
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp]      # TCP survives NAT and lossy island uplinks far
+                           # better than UDP
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+
+hls: no                    # WebRTC only: HLS runs ~13s behind, which reads as
+rtmp: no                   # broken for a live site view
+srt: no
+
+authMethod: http           # authHTTPAddress comes from MTX_AUTHHTTPADDRESS
+
+paths:
+  # Cameras are registered in the app, not here — any path is accepted and then
+  # authorised by Django, so adding a camera never needs a relay restart.
+  #
+  # NOTE these are PUBLISHER paths: the site box decides when to stream, so
+  # there is no on-demand teardown to configure here. Whether a camera's uplink
+  # is used continuously or only when someone is watching is a decision for the
+  # site box, not the relay.
+  all_others:
+    source: publisher

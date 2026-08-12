@@ -12,9 +12,10 @@ from .models import Camera, Site, User
 from .tests import make_user
 
 RELAY = "https://cams.example.mv"
+SECRET = "relay-shared-secret"
 
 
-@override_settings(CAMERA_RELAY_URL=RELAY)
+@override_settings(CAMERA_RELAY_URL=RELAY, CAMERA_RELAY_SECRET=SECRET)
 class RelayAuthHookTests(TestCase):
     """MediaMTX asks us on every connection; these are the answers."""
 
@@ -25,9 +26,9 @@ class RelayAuthHookTests(TestCase):
                                          path="vkr-gate", stream_key="s3cret")
         self.api = APIClient()
 
-    def hook(self, **payload):
-        return self.api.post("/api/relay/auth", payload, format="json",
-                             REMOTE_ADDR="127.0.0.1")
+    def hook(self, secret=SECRET, **payload):
+        return self.api.post(f"/api/relay/auth/{secret}", payload,
+                             format="json")
 
     # ---- publishing (the site box) --------------------------------------
     def test_publish_with_correct_key_allowed(self):
@@ -96,13 +97,30 @@ class RelayAuthHookTests(TestCase):
         r = self.hook(action="read", path="vkr-gate", password="s3cret")
         self.assertEqual(r.status_code, 401)
 
-    # ---- the hook is loopback-only --------------------------------------
-    def test_hook_refuses_remote_callers(self):
+    # ---- the relay must prove it is the relay ---------------------------
+    def test_hook_refuses_a_wrong_secret(self):
         t = cam_svc.issue_ticket(self.cam, "staff", 1)
-        r = self.api.post("/api/relay/auth",
-                          {"action": "read", "path": "vkr-gate",
-                           "password": t},
-                          format="json", REMOTE_ADDR="203.0.113.9")
+        r = self.hook(secret="not-the-secret", action="read",
+                      path="vkr-gate", password=t)
+        self.assertEqual(r.status_code, 404)
+
+    @override_settings(CAMERA_RELAY_SECRET="")
+    def test_unset_secret_disables_the_hook_rather_than_opening_it(self):
+        """A missing secret must never be read as 'no check required'."""
+        t = cam_svc.issue_ticket(self.cam, "staff", 1)
+        self.assertEqual(self.hook(secret="", action="read", path="vkr-gate",
+                                   password=t).status_code, 404)
+        self.assertEqual(self.hook(action="read", path="vkr-gate",
+                                   password=t).status_code, 404)
+        # and a publisher with a perfectly good key is refused too
+        self.assertEqual(self.hook(action="publish", path="vkr-gate",
+                                   user="vkr-gate",
+                                   password="s3cret").status_code, 404)
+
+    def test_the_old_secretless_url_is_gone(self):
+        r = self.api.post("/api/relay/auth", {"action": "read",
+                                              "path": "vkr-gate"},
+                          format="json")
         self.assertEqual(r.status_code, 404)
 
 

@@ -15,10 +15,12 @@ urlpatterns = [
     # Public, secret-verified provider webhook (outside the session-auth API).
     path("api/webhooks/tracking/shipsgo/", views_tracking.shipsgo_webhook,
          name="shipsgo-webhook"),
-    # The camera relay's auth hook. Not session-authenticated — MediaMTX is
-    # not a user — and refused unless it arrives from loopback, which is the
-    # only place the relay runs.
-    path("api/relay/auth", views_cameras.relay_auth, name="relay-auth"),
+    # The camera relay's auth hook. Not session-authenticated (MediaMTX is not
+    # a user); the relay proves itself with a shared secret in the path, since
+    # MediaMTX cannot set a header on this call. Caddy refuses to proxy
+    # /api/relay/ from the internet, so this is container-network only.
+    path("api/relay/auth/<str:secret>", views_cameras.relay_auth,
+         name="relay-auth"),
     # Public, token-gated client view of a procurement schedule (no login).
     path("share/procurement/<str:token>",
          views_procurement_public.client_plan_page, name="psc-client-plan"),

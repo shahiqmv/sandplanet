@@ -4,14 +4,31 @@
 #   $DOMAIN         → staff app + mobile PWA (/m/) + API
 #   $PORTAL_DOMAIN  → client portal (the /portal/ SPA on the same app), so
 #                     clients get a clean https://client.sandplanet.mv/ URL.
+#
+# Both front doors also expose the camera relay at /cams/*. Serving it per-host
+# (rather than on one shared origin) means every page fetches WebRTC from the
+# origin it was loaded from, so there is no cross-origin request to get right —
+# and the relay inherits the existing certificate instead of needing its own.
+(relay) {
+	# The relay's auth hook is for the relay, not the world. Django also
+	# requires a shared secret, but there is no reason for this path to be
+	# routable from the internet at all.
+	handle /api/relay/* {
+		respond 404
+	}
+	handle_path /cams/* {
+		reverse_proxy mediamtx:8889
+	}
+}
 
 {$DOMAIN} {
 	encode gzip
+	import relay
 	reverse_proxy web:8000
 }
-
 {$PORTAL_DOMAIN} {
 	encode gzip
+	import relay
 	# Assets, media and the client API are shared with the app and pass straight
 	# through; every other (page) request renders the portal shell, so the URL
 	# in the client's browser stays https://<portal>/ instead of /portal/.

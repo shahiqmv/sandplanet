@@ -13,6 +13,9 @@ Three audiences, one relay:
 not a user and holds no session. It is protected instead by only ever being
 reachable from loopback, which is where the relay runs.
 """
+import secrets
+
+from django.conf import settings
 from rest_framework.decorators import (api_view, authentication_classes,
                                        permission_classes)
 from rest_framework.permissions import AllowAny
@@ -24,7 +27,6 @@ from .models import Camera, Site
 from .permissions import scoped_site_ids
 
 MANAGE_ROLES = ("ADMIN", "DIRECTOR")
-LOCAL_IPS = ("127.0.0.1", "::1")
 
 
 def _visible_cameras(user):
@@ -130,15 +132,24 @@ def camera_ticket(request, pk):
 @api_view(["POST"])
 @authentication_classes([])
 @permission_classes([AllowAny])
-def relay_auth(request):
+def relay_auth(request, secret=""):
     """MediaMTX's authentication hook — one decision per connection.
 
     MediaMTX POSTs {user, password, action, path, ip, protocol}. 200 allows,
     401 denies. Publishers authenticate with the camera's own path + stream
     key; viewers present a short-lived ticket as the password.
+
+    **Authenticating the relay itself** is done with a shared secret carried in
+    the URL, because MediaMTX offers no way to set a request header on this
+    hook. A secret in a URL is normally something to avoid — so it is defended
+    three ways: the call never leaves the container network (MediaMTX and
+    Django are compose services), Caddy refuses to proxy this path from the
+    internet at all, and the secret is useless without also presenting a valid
+    stream key or ticket. An unset secret disables the hook outright rather
+    than defaulting to open.
     """
-    remote = request.META.get("REMOTE_ADDR", "")
-    if remote not in LOCAL_IPS:
+    expected = getattr(settings, "CAMERA_RELAY_SECRET", "")
+    if not expected or not secrets.compare_digest(secret, expected):
         return Response({"detail": "Not found."}, status=404)
 
     d = request.data or {}

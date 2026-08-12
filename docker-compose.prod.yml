@@ -35,6 +35,27 @@ services:
     expose:
       - "8000"                    # reachable by caddy only, not the host
 
+  # Camera relay. Site boxes publish to 8554; browsers get WebRTC through Caddy
+  # at /cams/*, so 8889 is deliberately NOT published to the host. Runs in the
+  # app network so its auth hook reaches Django as web:8000 and never traverses
+  # the public internet.
+  mediamtx:
+    image: bluenviron/mediamtx:1.20.0
+    restart: unless-stopped
+    environment:
+      # Django authorises every publish and every read. The secret proves the
+      # caller is this relay; Django refuses if CAMERA_RELAY_SECRET is unset.
+      MTX_AUTHHTTPADDRESS: http://web:8000/api/relay/auth/${CAMERA_RELAY_SECRET}
+      # ICE must advertise the PUBLIC host, or a browser off-droplet is handed
+      # an unreachable container address and the connection silently fails.
+      MTX_WEBRTCADDITIONALHOSTS: ${CAMERA_PUBLIC_HOST:-}
+    ports:
+      - "8554:8554"               # RTSP publish — site boxes
+      - "8189:8189/udp"           # WebRTC ICE media
+    volumes:
+      - ./deploy/mediamtx.yml:/mediamtx.yml:ro
+    depends_on:
+      - web
   caddy:
     image: caddy:2
     restart: unless-stopped
@@ -53,6 +74,7 @@ services:
       - caddy_config:/config
     depends_on:
       - web
+      - mediamtx
 
 volumes:
   pgdata:
