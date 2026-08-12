@@ -75,9 +75,6 @@ export default function PayrollRunPage({ me, sites }) {
         </label>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      {run.status === "RETURNED" && run.return_reason && (
-        <p style={{ fontSize: 12.5, color: "#c0392b", margin: "6px 0 0" }}>
-          Returned to HR: {run.return_reason}</p>)}
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
 
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
@@ -462,6 +459,9 @@ function RunDetail({ runId, onBack, me }) {
         </div>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {run.status === "RETURNED" && run.return_reason && (
+        <p style={{ fontSize: 12.5, color: "#c0392b", margin: "6px 0 0" }}>
+          Returned to HR: {run.return_reason}</p>)}
 
       <div style={{ overflowX: "auto", marginTop: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 12,
