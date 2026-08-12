@@ -352,7 +352,7 @@ class EmployeeMergeTests(TestCase):
         # the survivor's own row for the clashing day is the one kept
         self.assertEqual(rows.get(day=date(2026, 7, 5)).normal_hours,
                          Decimal("4.00"))
-        self.assertEqual(detail["clashing_days_dropped"], ["2026-07-05"])
+        self.assertEqual(detail["clashing_days_resolved"], ["2026-07-05"])
 
     def test_keep_source_rule_replaces_the_clashing_day(self):
         from .models import Attendance
@@ -380,3 +380,34 @@ class EmployeeMergeTests(TestCase):
         self.assertEqual(pv["moves"]["attendance"], 2)
         self.assertEqual(len(pv["attendance_clashes"]), 1)
         self.assertIn("passport numbers differ", pv["warnings"])
+
+
+    def test_keep_higher_rescues_the_real_hours(self):
+        """The default that nearly cost FAYSAL AHAMMED 154 hours: the
+        surviving record held 0-hour placeholder days while the duplicate
+        carried the real 11-hour markings (owner 2026-08-12)."""
+        from .models import Attendance
+        old = self._emp("Real hours", active=False)
+        new = self._emp("Placeholder")
+        self._att(old, 1, 2, 3)                       # 8h each
+        self._att(new, 1, 2, 3)
+        Attendance.objects.filter(employee=new).update(normal_hours=Decimal("0"))
+        detail, err = self.em.merge(old, new, self.admin, clash="keep_higher")
+        self.assertIsNone(err)
+        rows = Attendance.objects.filter(employee=new)
+        self.assertEqual(rows.count(), 3)
+        self.assertEqual(sum(r.normal_hours for r in rows), Decimal("24.00"))
+        self.assertEqual(detail["hours_rescued"], 24.0)
+
+    def test_keep_higher_leaves_the_fuller_target_alone(self):
+        from .models import Attendance
+        old = self._emp("Thin", active=False)
+        new = self._emp("Full")
+        self._att(old, 1)
+        self._att(new, 1)
+        Attendance.objects.filter(employee=old).update(normal_hours=Decimal("4"))
+        detail, err = self.em.merge(old, new, self.admin, clash="keep_higher")
+        self.assertIsNone(err)
+        self.assertEqual(Attendance.objects.get(employee=new).normal_hours,
+                         Decimal("8.00"))
+        self.assertEqual(detail["hours_rescued"], 0)

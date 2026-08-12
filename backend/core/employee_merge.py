@@ -54,30 +54,41 @@ def _warnings(source, target):
 def merge(source, target, actor, clash="keep_target"):
     """Move source's history onto target, then delete source.
 
-    `clash` decides an attendance day both records hold: keep_target (default,
-    the surviving row wins and the duplicate's is dropped) or keep_source
-    (the duplicate's row replaces it — use when the duplicate is the one that
-    was actually being marked)."""
+    `clash` decides an attendance day both records hold:
+      keep_higher — the row with the greater normal hours wins (RECOMMENDED,
+        owner 2026-08-12: a re-created record often carries 0-hour placeholder
+        days while the real 11-hour marking sits on the duplicate; blindly
+        keeping the survivor destroyed 154 h of FAYSAL AHAMMED's July);
+      keep_target — the surviving record's row wins;
+      keep_source — the duplicate's row wins.
+    Ties keep the survivor's row (identical hours, so nothing is lost)."""
     from .models import Attendance
     if source.pk == target.pk:
         return None, "A record can't be merged into itself."
-    if clash not in ("keep_target", "keep_source"):
+    if clash not in ("keep_target", "keep_source", "keep_higher"):
         return None, "Unknown clash rule."
 
-    tgt_days = dict(Attendance.objects.filter(employee=target)
-                    .values_list("day", "id"))
+    tgt_rows = {a.day: a for a in Attendance.objects.filter(employee=target)}
+    tgt_days = dict((d, a.id) for d, a in tgt_rows.items())
     moved = {}
     dropped = []
-    for day, att_id in list(Attendance.objects.filter(employee=source)
-                            .values_list("day", "id")):
+    hours_rescued = 0
+    for src_row in list(Attendance.objects.filter(employee=source)):
+        day, att_id = src_row.day, src_row.id
         if day in tgt_days:
-            if clash == "keep_target":
-                Attendance.objects.filter(pk=att_id).delete()
-                dropped.append(str(day))
-            else:
+            take_source = clash == "keep_source"
+            if clash == "keep_higher":
+                s_h = src_row.normal_hours or 0
+                t_h = tgt_rows[day].normal_hours or 0
+                take_source = s_h > t_h
+                if take_source:
+                    hours_rescued += float(s_h - t_h)
+            if take_source:
                 Attendance.objects.filter(pk=tgt_days[day]).delete()
                 Attendance.objects.filter(pk=att_id).update(employee=target)
-                dropped.append(str(day))
+            else:
+                Attendance.objects.filter(pk=att_id).delete()
+            dropped.append(str(day))
         else:
             Attendance.objects.filter(pk=att_id).update(employee=target)
     moved["attendance"] = (Attendance.objects.filter(employee=target).count()
@@ -98,7 +109,8 @@ def merge(source, target, actor, clash="keep_target"):
     detail = {"merged": source.emp_no, "into": target.emp_no,
               "name": source.full_name, "passport": source.passport_no or "",
               "moved": moved, "clash_rule": clash,
-              "clashing_days_dropped": dropped}
+              "clashing_days_resolved": dropped,
+              "hours_rescued": round(hours_rescued, 2)}
     src_id = source.id
     source.delete()
     audit("employee", target.id, "EMPLOYEE_MERGED", actor=actor, detail=detail)

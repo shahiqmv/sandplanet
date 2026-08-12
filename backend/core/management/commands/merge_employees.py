@@ -5,7 +5,7 @@
 
 CSV: a `source` (or emp_no) column and a `target` (or "MERGE INTO (emp no)")
 column; blank targets are skipped. Optional `clash` column per row —
-keep_target (default) or keep_source.
+keep_higher (default), keep_target or keep_source.
 """
 import csv
 
@@ -32,6 +32,10 @@ class Command(BaseCommand):
         parser.add_argument("csv_path")
         parser.add_argument("--apply", action="store_true",
                             help="actually merge (default is a dry run)")
+        parser.add_argument("--clash", default="keep_higher",
+                            choices=("keep_higher", "keep_target",
+                                     "keep_source"),
+                            help="default rule for a day both records hold")
         parser.add_argument("--actor", default="",
                             help="username to record as the actor")
 
@@ -53,7 +57,7 @@ class Command(BaseCommand):
                 problems.append(f"{s} -> {t}: "
                                 f"{'source' if not src else 'target'} not found")
                 continue
-            clash = (_pick(r, ("clash",)) or "keep_target").lower()
+            clash = (_pick(r, ("clash",)) or o["clash"]).lower()
             pairs.append((src, tgt, clash))
 
         if problems:
