@@ -132,7 +132,11 @@ export default function WorkerManagementPanel({ site, me }) {
                   <td style={td}>{w.full_name}</td>
                   <td style={td}>{w.job_title || "—"}</td>
                   <td style={td}>{w.nationality || "—"}</td>
-                  <td style={td}>{w.join_date || "—"}</td>
+                  <td style={td}>
+                    {canManage
+                      ? <JoinDateCell worker={w} onSaved={load} />
+                      : (w.join_date || "—")}
+                  </td>
                   <td style={{ ...td, textAlign: "right",
                                fontFamily: "var(--font-mono)" }}>
                     {w.pay_hidden ? <span style={{ color: "var(--muted)" }}
@@ -578,5 +582,56 @@ function RosterPicker({ site, onCancel, onDone }) {
         </>
       )}
     </div>
+  );
+}
+
+/* The start date drives pro-rata pay for a part month, so the site that knows
+   when someone actually walked on has to be able to correct it — the hire flow
+   can only stamp the day the batch was approved (owner 2026-08-13). */
+function JoinDateCell({ worker, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(worker.join_date || "");
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`/workers/${worker.id}/join-date`, {
+        method: "PATCH", body: { join_date: value },
+      });
+      setEditing(false);
+      onSaved();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <a href="#" title="Set the date this worker started"
+         onClick={(e) => { e.preventDefault(); setEditing(true); }}
+         style={{ fontSize: 12.5,
+                  color: worker.join_date ? "inherit" : "#b06000" }}>
+        {worker.join_date || "set date"}
+      </a>
+    );
+  }
+  return (
+    <span style={{ display: "inline-flex", gap: 4, alignItems: "center" }}>
+      <input type="date" value={value} disabled={busy}
+             onChange={(e) => setValue(e.target.value)}
+             style={{ ...inputStyle, padding: "2px 6px", fontSize: 12,
+                      width: 140 }} />
+      <Btn onClick={save} disabled={busy}
+           style={{ padding: "2px 8px", fontSize: 12 }}>Save</Btn>
+      <a href="#" onClick={(e) => { e.preventDefault(); setEditing(false);
+                                    setErr(null); }}
+         style={{ fontSize: 12 }}>cancel</a>
+      {err && <span style={{ color: "#b00", fontSize: 11 }}>{err}</span>}
+    </span>
   );
 }

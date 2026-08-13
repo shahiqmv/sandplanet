@@ -235,3 +235,25 @@ def hire_edit(request, emp_id):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(_emp_json(emp))
+
+
+@api_view(["PATCH"])
+def worker_join_date(request, emp_id):
+    """Set an active worker's start date. Site staff maintain this themselves
+    because payroll pro-rates a part month from it (owner 2026-08-13)."""
+    if request.user.role not in (*wm.SITE_MANAGE_ROLES, "HO_HR"):
+        return Response({"detail": "Site / HR only."}, status=403)
+    try:
+        emp = Employee.objects.get(pk=emp_id,
+                                   engagement_type=Employee.Engagement.DIRECT)
+    except Employee.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    ids = scoped_site_ids(request.user)
+    if ids is not None:
+        site = wm._home_site(emp)
+        if (site.id if site else 0) not in ids:
+            return Response({"detail": "Not one of your sites."}, status=403)
+    msg = wm.set_join_date(emp, request.data.get("join_date"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_emp_json(emp))

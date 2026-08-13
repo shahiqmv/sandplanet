@@ -411,3 +411,65 @@ class EmployeeMergeTests(TestCase):
         self.assertEqual(Attendance.objects.get(employee=new).normal_hours,
                          Decimal("8.00"))
         self.assertEqual(detail["hours_rescued"], 0)
+
+
+class JoinDateTests(TestCase):
+    """Sites maintain start dates themselves — payroll pro-rates from them
+    (owner 2026-08-13)."""
+
+    def setUp(self):
+        from datetime import date
+
+        from .models import EmployeeSiteAllocation
+        self.site = Site.objects.create(code="JDT", name="Join Isle",
+                                        status=Site.Status.ACTIVE)
+        self.other = Site.objects.create(code="JDO", name="Other Isle",
+                                         status=Site.Status.ACTIVE)
+        self.sa = make_user("jd_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.other_sa = make_user("jd_sa2", User.Role.SITE_ADMIN,
+                                  site=self.other)
+        self.hr = make_user("jd_hr", User.Role.HO_HR)
+        self.emp = Employee.objects.create(emp_no="JD-0001", full_name="Ali",
+                                           is_active=True)
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 7, 1))
+        self.client = APIClient()
+
+    def _patch(self, user, value):
+        self.client.force_authenticate(user)
+        return self.client.patch(f"/api/v1/workers/{self.emp.id}/join-date",
+                                 {"join_date": value}, format="json")
+
+    def test_site_admin_sets_the_date(self):
+        from datetime import date
+        r = self._patch(self.sa, "2026-07-16")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.emp.refresh_from_db()
+        self.assertEqual(self.emp.join_date, date(2026, 7, 16))
+
+    def test_hr_may_set_it_too(self):
+        self.assertEqual(self._patch(self.hr, "2026-07-16").status_code, 200)
+
+    def test_another_sites_admin_cannot(self):
+        self.assertEqual(self._patch(self.other_sa, "2026-07-16").status_code,
+                         403)
+
+    def test_future_date_refused(self):
+        from datetime import date, timedelta
+        soon = (date.today() + timedelta(days=3)).isoformat()
+        r = self._patch(self.sa, soon)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("future", r.data["detail"].lower())
+
+    def test_rubbish_date_refused(self):
+        r = self._patch(self.sa, "16/07/2026")
+        self.assertEqual(r.status_code, 400)
+
+    def test_blank_refused(self):
+        self.assertEqual(self._patch(self.sa, "").status_code, 400)
+
+    def test_change_is_audited(self):
+        from .models import AuditLog
+        self._patch(self.sa, "2026-07-16")
+        self.assertTrue(AuditLog.objects.filter(
+            event="WORKER_JOIN_DATE_SET", entity_id=self.emp.id).exists())

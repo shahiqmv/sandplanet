@@ -4,7 +4,7 @@ Kept separate from the HR views so the monthly run and the payslip share one
 source of truth for pay maths. Money is quantised to 2dp at the edges.
 """
 import calendar
-from datetime import date
+from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
 from .audit import audit
@@ -61,16 +61,100 @@ def month_days(year, month):
     return calendar.monthrange(year, month)[1]
 
 
+def paid_window(employee, site, year, month):
+    """The days of `month` this worker is owed pay for AT THIS SITE.
+
+    Bounded by three things, because any of them can start or end mid-month:
+      * the month itself,
+      * the day they joined the company (`join_date`),
+      * the stretch they were allocated to this site.
+
+    Returns (start, end); end < start means they are owed nothing for the
+    month — a worker allocated in August has no July window at all.
+
+    Why the allocation matters as much as the join date: a worker who
+    transfers on the 12th should be paid by their old site to the 11th and the
+    new one from the 12th, and neither should pay a whole month (owner
+    2026-08-13, after sites found full salaries paid to mid-month joiners).
+    """
+    from .models import EmployeeSiteAllocation
+
+    start = date(year, month, 1)
+    end = date(year, month, month_days(year, month))
+
+    jd = employee.join_date
+    if jd and jd > start:
+        start = jd
+
+    if site is not None:
+        # the allocation to THIS site overlapping the month; if there are
+        # several (transferred away and back), take the widest cover
+        allocs = [a for a in EmployeeSiteAllocation.objects.filter(
+            employee=employee, site=site, from_date__lte=end)
+            if a.to_date is None or a.to_date >= date(year, month, 1)]
+        if not allocs:
+            return end + timedelta(days=1), end        # empty window
+        a_start = min(a.from_date for a in allocs)
+        a_ends = [a.to_date for a in allocs]
+        a_end = end if any(e is None for e in a_ends) else max(a_ends)
+        start = max(start, a_start)
+        end = min(end, a_end)
+    return start, end
+
+
+def eligible_workers(site, currency, year, month):
+    """Who belongs on a run for this site/currency/month.
+
+    Membership is decided by the month, not by today. The old rule — everyone
+    *currently* allocated to the site — put an August joiner on the July run
+    and, worse, dropped anyone who left mid-month, who would then have been
+    paid nothing for days they had actually worked (owner 2026-08-13).
+
+    generate_run and refresh_run must agree on this, so it lives here rather
+    than in both: they had already drifted once.
+    """
+    from django.db.models import Q
+
+    from .models import EmployeeSiteAllocation
+
+    m_start = date(year, month, 1)
+    m_end = date(year, month, month_days(year, month))
+    if site is not None:
+        allocs = EmployeeSiteAllocation.objects.filter(
+            site=site, from_date__lte=m_end).filter(
+            Q(to_date__isnull=True) | Q(to_date__gte=m_start))
+        emp_ids = allocs.values_list("employee_id", flat=True)
+        # A leaver gets deactivated, so is_active alone would lose them. Keep
+        # them when their allocation closed during/after the month; still
+        # exclude the long-gone whose allocation was never tidied up.
+        left_ids = allocs.filter(to_date__gte=m_start).values_list(
+            "employee_id", flat=True)
+        qs = Employee.objects.payroll_eligible().filter(
+            id__in=emp_ids, currency=currency).filter(
+            Q(is_active=True) | Q(id__in=left_ids))
+    elif currency == "USD":                 # combined USD run
+        # full-USD workers + split-pay workers (their USD basic only)
+        qs = Employee.objects.payroll_eligible().filter(
+            is_active=True).filter(
+            Q(currency="USD")
+            | Q(usd_basic_pay__gt=0, employment_type="PERMANENT"))
+    else:
+        qs = Employee.objects.payroll_eligible().filter(
+            is_active=True, currency=currency)
+    # Nobody is paid for a month they had not joined yet.
+    return qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end))
+
+
 def _attendance_prefill(employee, site, year, month, working_days):
     """Days worked (expected − absences), approved OT hours, and Fridays
     (rest days) worked for a worker in a month, from attendance. A rest day is
     any weekday not in the site's working week; being PRESENT on one is the
     7th-day work paid as an extra day.
 
-    A mid-month joiner is only expected — and paid — from their join date: the
-    calendar days before it are neither worked nor counted absent (owner
-    2026-07-31). The daily rate divisor stays the full month (run.working_days),
-    so the joiner is paid pro-rata, not penalised."""
+    A worker is only expected — and paid — inside `paid_window`: days outside
+    it are neither worked nor counted absent. The daily rate divisor stays the
+    full month (run.working_days), so a part-month worker is paid pro-rata,
+    not penalised."""
     from .models import Site
 
     qs = Attendance.objects.filter(employee=employee, day__year=year,
@@ -83,20 +167,15 @@ def _attendance_prefill(employee, site, year, month, working_days):
         site_obj = Site.objects.filter(pk=sid).first() if sid else None
     work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
 
-    # The billable window: from the later of the 1st and the join date to
-    # month-end. Expected days shrink for a mid-month joiner.
-    last = date(year, month, month_days(year, month))
-    start = date(year, month, 1)
-    jd = employee.join_date
-    if jd and jd > start:
-        start = jd
+    start, last = paid_window(employee, site, year, month)
     expected = 0 if start > last else (last - start).days + 1
 
     absents = fridays = 0
     ot = Decimal("0")
     for a in qs:
-        if a.day < start:
-            continue                 # before the join date — ignore stray rows
+        if a.day < start or a.day > last:
+            continue      # outside the paid window — a stray row from before
+                          # they joined, or after they left this site
         if a.remark in ABSENT_MARKS:
             absents += 1
         is_friday = a.day.isoweekday() not in work_week
@@ -122,30 +201,18 @@ def generate_run(*, site, currency, year, month, working_days, actor):
     workers (basic in USD) appear in BOTH: a basic-only line on the combined USD
     run and a no-basic line (OT/allowances/deductions) on their site MVR run."""
     from django.db import transaction
-    from django.db.models import Q
 
-    from .models import EmployeeSiteAllocation, PayrollLine, PayrollRun
+    from .models import PayrollLine, PayrollRun
 
     with transaction.atomic():
         run = PayrollRun.objects.create(
             site=site, currency=currency, year=year, month=month,
             working_days=working_days, created_by=actor)
-        if site is not None:                    # a site's MVR run
-            emp_ids = EmployeeSiteAllocation.objects.filter(
-                site=site, to_date__isnull=True).values_list(
-                "employee_id", flat=True)
-            workers = Employee.objects.payroll_eligible().filter(
-                id__in=emp_ids, is_active=True, currency=currency)
-        elif currency == "USD":                 # combined USD run
-            # full-USD workers + split-pay workers (their USD basic only)
-            workers = Employee.objects.payroll_eligible().filter(
-                is_active=True).filter(
-                Q(currency="USD")
-                | Q(usd_basic_pay__gt=0, employment_type="PERMANENT"))
-        else:
-            workers = Employee.objects.payroll_eligible().filter(
-                is_active=True, currency=currency)
+        workers = eligible_workers(site, currency, year, month)
         for emp in workers.select_related("job_category").order_by("emp_no"):
+            w_start, w_end = paid_window(emp, site, year, month)
+            if w_start > w_end:
+                continue        # no days in this month at this site
             days, ot, fridays = _attendance_prefill(emp, site, year, month,
                                                     working_days)
             split = is_split_pay(emp)
@@ -370,26 +437,19 @@ def refresh_run(run, actor):
     reported, never silently dropped, so HR decides."""
     from django.db import transaction
 
-    from .models import EmployeeSiteAllocation, PayrollLine
+    from .models import PayrollLine
 
     if run.status == "LOCKED":
         return None, ("This run is locked — reopen it before refreshing.")
     site, currency = run.site, run.currency
-    if site is not None:
-        emp_ids = EmployeeSiteAllocation.objects.filter(
-            site=site, to_date__isnull=True).values_list("employee_id",
-                                                         flat=True)
-        eligible = Employee.objects.payroll_eligible().filter(
-            id__in=emp_ids, is_active=True, currency=currency)
-    else:
-        from django.db.models import Q
-        eligible = Employee.objects.payroll_eligible().filter(is_active=True)
-        eligible = (eligible.filter(Q(currency="USD")
-                                    | Q(usd_basic_pay__gt=0,
-                                        employment_type="PERMANENT"))
-                    if currency == "USD"
-                    else eligible.filter(currency=currency))
-    eligible = {e.id: e for e in eligible.select_related("job_category")}
+    eligible = {}
+    for e in eligible_workers(site, currency, run.year,
+                              run.month).select_related("job_category"):
+        # An overlapping allocation is not enough: someone who joined after
+        # the month ends has no payable days in it.
+        w_start, w_end = paid_window(e, site, run.year, run.month)
+        if w_start <= w_end:
+            eligible[e.id] = e
 
     changed, added, stale = [], [], []
     with transaction.atomic():

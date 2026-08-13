@@ -277,7 +277,15 @@ def _activate_add(batch, actor):
             emp = item.employee
             emp.is_active = True
             emp.hire_pending = False
-            emp.save(update_fields=["is_active", "hire_pending", "updated_at"])
+            # Stamp when they started, or payroll has nothing to pro-rate a
+            # part month from — this is why 474 of 519 workers had no join
+            # date and mid-month joiners were paid in full (owner 2026-08-13).
+            # Approval day is the best guess available here; the site can
+            # correct it on the workforce screen.
+            if not emp.join_date:
+                emp.join_date = date.today()
+            emp.save(update_fields=["is_active", "hire_pending", "join_date",
+                                    "updated_at"])
             if not emp.site_allocations.filter(to_date__isnull=True).exists():
                 EmployeeSiteAllocation.objects.create(
                     employee=emp, site=batch.site, from_date=date.today())
@@ -333,3 +341,31 @@ def _notify(batch):
         notify.notify_worker_request(batch)
     except Exception:                       # pragma: no cover - defensive
         log.exception("notify_worker_request failed")
+
+
+def set_join_date(employee, value, actor):
+    """Record the day a worker actually started.
+
+    Sites need this themselves: the hire flow stamps the day the batch was
+    approved, which is when the office got round to entering them, not when
+    they walked onto site — and payroll pro-rates a part month from this date,
+    so a wrong one over- or under-pays a real person (owner 2026-08-13).
+    """
+    from datetime import date as _date
+
+    raw = (str(value)[:10] if value else "").strip()
+    if not raw:
+        return "A join date is required."
+    try:
+        jd = _date.fromisoformat(raw)
+    except ValueError:
+        return "Use a date like 2026-07-16."
+    if jd > _date.today():
+        return "A join date can't be in the future."
+    before = employee.join_date
+    employee.join_date = jd
+    employee.save(update_fields=["join_date", "updated_at"])
+    audit("employee", employee.id, "WORKER_JOIN_DATE_SET", actor=actor,
+          detail={"emp_no": employee.emp_no,
+                  "from": str(before) if before else None, "to": str(jd)})
+    return None

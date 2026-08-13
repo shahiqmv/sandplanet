@@ -952,3 +952,104 @@ class PayrollVerificationTests(TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(len({r["ref"] for r in rows}), 1)      # same label…
         self.assertEqual(len({r["run_id"] for r in rows}), 2)   # …distinct ids
+
+
+class PaidWindowTests(TestCase):
+    """Joining, leaving and transferring mid-month (owner 2026-08-13).
+
+    Sites reported full salaries paid to workers who joined mid-July, and to
+    workers who had not joined until August. Membership of a run used to be
+    "whoever is allocated to this site today", which ignored the month
+    entirely in both directions.
+    """
+
+    def setUp(self):
+        from .models import (EmployeeSiteAllocation, ManpowerCategory,
+                             TimesheetMonth)
+        self.hr = make_user("w_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="WIN", name="Window Isle",
+                                        status=Site.Status.ACTIVE)
+        self.other = Site.objects.create(code="WIN2", name="Other Isle",
+                                         status=Site.Status.ACTIVE)
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.alloc = EmployeeSiteAllocation
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _worker(self, emp_no, from_date, to_date=None, join_date=None):
+        emp = Employee.objects.create(
+            emp_no=emp_no, full_name=emp_no, job_category=self.cat,
+            basic_pay=Decimal("3100"), currency="MVR", join_date=join_date)
+        self.alloc.objects.create(employee=emp, site=self.site,
+                                  from_date=from_date, to_date=to_date)
+        return emp
+
+    def _run(self):
+        return payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                    month=7, working_days=31, actor=self.hr)
+
+    def _days(self, run, emp_no):
+        line = run.lines.filter(employee__emp_no=emp_no).first()
+        return None if line is None else float(line.days_worked)
+
+    def test_full_month_worker_gets_the_whole_month(self):
+        self._worker("W-FULL", date(2026, 6, 1))
+        self.assertEqual(self._days(self._run(), "W-FULL"), 31.0)
+
+    def test_mid_month_joiner_is_pro_rated_from_the_allocation(self):
+        """Allocated on the 16th → 16 payable days (16th–31st), not 31."""
+        self._worker("W-MID", date(2026, 7, 16))
+        self.assertEqual(self._days(self._run(), "W-MID"), 16.0)
+
+    def test_join_date_wins_when_it_is_later_than_the_allocation(self):
+        self._worker("W-JD", date(2026, 7, 1), join_date=date(2026, 7, 22))
+        self.assertEqual(self._days(self._run(), "W-JD"), 10.0)
+
+    def test_worker_allocated_next_month_is_not_on_this_run(self):
+        """The August joiner who was paid for July."""
+        self._worker("W-AUG", date(2026, 8, 12))
+        self.assertIsNone(self._days(self._run(), "W-AUG"))
+
+    def test_worker_who_joined_the_company_next_month_is_excluded(self):
+        self._worker("W-AUGJD", date(2026, 7, 1), join_date=date(2026, 8, 3))
+        self.assertIsNone(self._days(self._run(), "W-AUGJD"))
+
+    def test_mid_month_leaver_is_still_paid_for_the_days_worked(self):
+        """Previously dropped from the run entirely — paid nothing."""
+        emp = self._worker("W-LEFT", date(2026, 7, 1),
+                           to_date=date(2026, 7, 10))
+        emp.is_active = False           # leavers get deactivated
+        emp.save()
+        self.assertEqual(self._days(self._run(), "W-LEFT"), 10.0)
+
+    def test_a_transfer_is_split_between_the_two_sites(self):
+        """Neither site pays a whole month for the same person."""
+        emp = self._worker("W-XFER", date(2026, 7, 1),
+                           to_date=date(2026, 7, 11))
+        self.alloc.objects.create(employee=emp, site=self.other,
+                                  from_date=date(2026, 7, 12))
+        here = self._days(self._run(), "W-XFER")
+        there_run = payroll.generate_run(site=self.other, currency="MVR",
+                                         year=2026, month=7, working_days=31,
+                                         actor=self.hr)
+        there = self._days(there_run, "W-XFER")
+        self.assertEqual((here, there), (11.0, 20.0))
+        self.assertEqual(here + there, 31.0)      # exactly one month, once
+
+    def test_long_gone_worker_with_an_untidied_allocation_stays_out(self):
+        emp = self._worker("W-GONE", date(2025, 1, 1))
+        emp.is_active = False
+        emp.save()
+        self.assertIsNone(self._days(self._run(), "W-GONE"))
+
+    def test_refresh_applies_the_same_window_as_generate(self):
+        """The two used to keep their own copy of the rule and drifted."""
+        self._worker("W-MID2", date(2026, 7, 16))
+        run = self._run()
+        run.lines.update(days_worked=Decimal("31"))    # pretend a stale line
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(self._days(run, "W-MID2"), 16.0)
