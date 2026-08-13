@@ -440,6 +440,10 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                     : "."}
             </p>
 
+            <datalist id="permit-months">
+              {[1, 3, 6, 12, 24].map((m) => <option key={m} value={m} />)}
+            </datalist>
+
             {/* toolbar: filter + select-all + bulk apply */}
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
                           alignItems: "center", marginBottom: 8 }}>
@@ -452,14 +456,15 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                              margin: "0 2px" }} />
               <span style={{ fontSize: 12.5, color: "#5a6b78" }}>
                 Set selected to</span>
-              <select value={bulk.months}
-                      onChange={(e) => setBulk({ ...bulk,
-                                                 months: e.target.value })}
-                      style={{ ...inputStyle, width: 80 }}>
-                {[1, 3, 6, 12, 24].map((m) => (
-                  <option key={m} value={m}>{m}m</option>
-                ))}
-              </select>
+              {/* A dropdown of 1/3/6/12/24 blocked every other duration, and
+                  permits are not always renewed for a round number of months
+                  (owner 2026-08-13). Free entry, with the common ones still one
+                  click away in the picker. */}
+              <input type="number" min="1" step="1" list="permit-months"
+                     value={bulk.months}
+                     onChange={(e) => setBulk({ ...bulk,
+                                                months: e.target.value })}
+                     style={{ ...inputStyle, width: 80 }} />
               <button onClick={applyBulk} style={ghostButton}
                       disabled={!chosen.length}>Apply to selected</button>
             </div>
@@ -494,14 +499,11 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                                      ? "#c0392b" : "inherit" }}>
                         {r.expiry || "—"}</td>
                       <td style={td}>
-                        <select value={r.months}
-                                onChange={(e) => setRow(r.id,
-                                  { months: e.target.value })}
-                                style={{ ...inputStyle, width: 80 }}>
-                          {[1, 3, 6, 12, 24].map((m) => (
-                            <option key={m} value={m}>{m}</option>
-                          ))}
-                        </select></td>
+                        <input type="number" min="1" step="1"
+                               list="permit-months" value={r.months}
+                               onChange={(e) => setRow(r.id,
+                                 { months: e.target.value })}
+                               style={{ ...inputStyle, width: 80 }} /></td>
                       <td style={{ ...td, whiteSpace: "nowrap" }}>
                         {rate ? lineFee(r).toLocaleString()
                               : <span style={{ color: "#8a94a0" }}>—</span>}</td>
@@ -537,6 +539,16 @@ function BatchRenewModal({ candidates, onClose, onDone }) {
                   {chosen.length} selected · total {currency}{" "}
                   {total.toLocaleString()}</span>
               </div>
+              {/* Free entry means a slip of the keyboard can bill years, so
+                  say so rather than refusing the number — HR is allowed any
+                  duration (owner 2026-08-13). */}
+              {chosen.some((r) => parseInt(r.months, 10) > 36) && (
+                <p style={{ color: "#b35900", fontSize: 12.5,
+                            margin: "8px 0 0" }}>
+                  Some rows renew for more than 3 years — worth a second look
+                  before you raise the payment.
+                </p>
+              )}
               {error && <p style={{ color: "#c0392b", fontSize: 13,
                                     margin: "8px 0 0" }}>{error}</p>}
               <div style={{ marginTop: 12 }}>
