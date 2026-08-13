@@ -1,4 +1,5 @@
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -844,3 +845,174 @@ class PartialPRTests(ProcBase):
                              format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("approved", r.data["detail"].lower())
+
+
+class PoAmendmentTests(TestCase):
+    """Amending an order the supplier already holds (owner 2026-08-13).
+
+    Stock issues force changes after issue; before this a PO could only go
+    DRAFT -> ISSUED -> CLOSED, so the only fixes were to close and re-raise,
+    or to correct it off the system.
+    """
+
+    def setUp(self):
+        from .models import Document, DocumentLine, DocumentRevision, Supplier
+        self.buyer = make_user("po_buy", User.Role.HO_PURCHASING)
+        self.director = make_user("po_dir", User.Role.DIRECTOR)
+        self.site = Site.objects.create(code="POA", name="PO Isle",
+                                        status=Site.Status.ACTIVE)
+        self.supplier = Supplier.objects.create(name="Acme Trading")
+        self.po = Document.objects.create(
+            doc_type="PO", ref="PO-POA-001", site=self.site,
+            doc_date=date.today(), status="ISSUED", created_by=self.buyer,
+            supplier=self.supplier)
+        rev = DocumentRevision.objects.create(
+            document=self.po, rev_label="R0", created_by=self.buyer,
+            payload={"supplier_name": "Acme Trading"})
+        self.line = DocumentLine.objects.create(
+            revision=rev, line_no=1, free_text_desc="Cement 50kg",
+            unit="bag", qty_required=Decimal("200"), rate=Decimal("100"),
+            amount=Decimal("20000"))
+        self.po.current_revision = rev
+        self.po.save()
+        self.r0 = rev
+        self.client = APIClient()
+
+    def _amend(self, user, **kw):
+        self.client.force_authenticate(user)
+        body = {"reason": "Supplier short on stock",
+                "lines": [{"id": self.line.id, "description": "Cement 50kg",
+                           "unit": "bag", "qty_required": "150",
+                           "rate": "100", "amount": "15000"}]}
+        body.update(kw)
+        return self.client.post(f"/api/v1/documents/{self.po.ref}/amend",
+                                body, format="json")
+
+    def _decide(self, user, approve, note=""):
+        self.client.force_authenticate(user)
+        return self.client.post(
+            f"/api/v1/documents/{self.po.ref}/amend-decision",
+            {"approve": approve, "note": note}, format="json")
+
+    def test_purchasing_proposes_and_the_order_waits_on_the_director(self):
+        r = self._amend(self.buyer)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, "AMENDMENT_PENDING")
+
+    def test_the_supplier_copy_does_not_change_before_approval(self):
+        """The whole point: they hold R0 until the Director says otherwise."""
+        self._amend(self.buyer)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.current_revision_id, self.r0.id)
+        self.assertEqual(
+            float(self.po.current_revision.lines.first().qty_required), 200.0)
+
+    def test_approval_makes_the_new_revision_live(self):
+        self._amend(self.buyer)
+        r = self._decide(self.director, True)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, "ISSUED")
+        self.assertEqual(self.po.current_revision.rev_label, "R1")
+        self.assertEqual(
+            float(self.po.current_revision.lines.first().qty_required), 150.0)
+
+    def test_rejection_leaves_the_issued_order_standing(self):
+        self._amend(self.buyer)
+        self._decide(self.director, False, note="Buy the balance elsewhere")
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, "ISSUED")
+        self.assertEqual(self.po.current_revision_id, self.r0.id)
+        self.assertEqual(self.po.revisions.count(), 1)   # proposal discarded
+
+    def test_a_line_can_be_dropped_entirely(self):
+        self.client.force_authenticate(self.buyer)
+        r = self.client.post(f"/api/v1/documents/{self.po.ref}/amend",
+                             {"reason": "Item discontinued",
+                              "lines": [{"description": "Sand", "unit": "m3",
+                                         "qty_required": "10", "rate": "500",
+                                         "amount": "5000"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self._decide(self.director, True)
+        self.po.refresh_from_db()
+        descs = [ln.free_text_desc for ln in self.po.current_revision.lines.all()]
+        self.assertEqual(descs, ["Sand"])
+
+    def test_the_director_cannot_propose_and_purchasing_cannot_decide(self):
+        self.assertEqual(self._amend(self.director).status_code, 403)
+        self._amend(self.buyer)
+        self.assertEqual(self._decide(self.buyer, True).status_code, 403)
+
+    def test_a_reason_is_required(self):
+        self.assertEqual(self._amend(self.buyer, reason="").status_code, 400)
+
+    def test_only_an_issued_order_can_be_amended(self):
+        self.po.status = "CLOSED"
+        self.po.save(update_fields=["status"])
+        r = self._amend(self.buyer)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("issued", r.data["detail"].lower())
+
+    def test_the_director_sees_it_in_my_tasks(self):
+        self._amend(self.buyer)
+        self.client.force_authenticate(self.director)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        titles = [g["title"] for g in groups]
+        self.assertTrue(any("amendment" in t.lower() for t in titles), titles)
+
+    def test_the_printed_order_shows_the_site_and_flags_a_revision(self):
+        """R2 kept site names off the PO; owner reversed that 2026-08-13. And
+        an amended order must be tellable apart from the one the supplier
+        already holds."""
+        from .pdf import document_html
+        html = document_html(self.po, self.po.current_revision)
+        self.assertIn("POA", html)              # site code
+        self.assertIn("PO Isle", html)          # site name
+        self.assertNotIn("Revision", html)      # R0 is the original
+        self._amend(self.buyer)
+        self._decide(self.director, True)
+        self.po.refresh_from_db()
+        html = document_html(self.po, self.po.current_revision)
+        self.assertIn("Revision 1", html)
+        self.assertIn("Supplier short on stock", html)
+        self.assertIn("replaces the order previously issued", html)
+
+    def test_internal_references_still_stay_off_the_printed_order(self):
+        """Reversing the site rule must not drag the PR ref onto it too."""
+        from .pdf import document_html
+        rev = self.po.current_revision
+        rev.payload = {**(rev.payload or {}), "pr_ref": "PR-SECRET-99"}
+        rev.save(update_fields=["payload"])
+        self.assertNotIn("PR-SECRET-99", document_html(self.po, rev))
+
+    def test_the_diff_says_exactly_what_moved(self):
+        self._amend(self.buyer)
+        self.client.force_authenticate(self.director)
+        d = self.client.get(
+            f"/api/v1/documents/{self.po.ref}/amendment").data
+        self.assertEqual(d["reason"], "Supplier short on stock")
+        self.assertEqual(d["revision"], "R1")
+        self.assertEqual(d["after"][0]["change"], "changed")
+        self.assertEqual(float(d["after"][0]["was_qty"]), 200.0)
+        self.assertEqual(float(d["after"][0]["qty"]), 150.0)
+        self.assertEqual(float(d["delta"]), -5000.0)
+        self.assertTrue(d["can_decide"])
+
+    def test_the_diff_flags_dropped_and_added_lines(self):
+        self.client.force_authenticate(self.buyer)
+        self.client.post(f"/api/v1/documents/{self.po.ref}/amend",
+                         {"reason": "Cement unavailable, sand instead",
+                          "lines": [{"description": "Sand", "unit": "m3",
+                                     "qty_required": "10", "rate": "500",
+                                     "amount": "5000"}]}, format="json")
+        d = self.client.get(
+            f"/api/v1/documents/{self.po.ref}/amendment").data
+        self.assertEqual(d["after"][0]["change"], "added")
+        self.assertEqual([r["description"] for r in d["dropped"]],
+                         ["Cement 50kg"])
+
+    def test_no_amendment_pending_is_a_404_not_an_empty_diff(self):
+        self.client.force_authenticate(self.director)
+        r = self.client.get(f"/api/v1/documents/{self.po.ref}/amendment")
+        self.assertEqual(r.status_code, 404)

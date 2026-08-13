@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import PoAmendPanel from "./PoAmendPanel.jsx";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { VesselPicker, VesselTrack } from "./Vessels.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
@@ -1685,6 +1686,14 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
           ))}
         </>
       )}
+
+      {/* Amending an ISSUED order, and the Director's decision on one.
+          Distinct from the MR "Amend (new revision)" button above: that
+          reopens a site's own request; this proposes a replacement the
+          supplier does not see until the Director approves it. */}
+      <PoAmendPanel doc={doc} me={me}
+                    onChanged={() => api(`/documents/${doc.ref}`)
+                      .then(setDoc).catch(() => onChanged && onChanged())} />
 
       {preview && (
         <div onClick={() => setPreview(null)}

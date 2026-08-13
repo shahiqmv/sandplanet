@@ -565,6 +565,12 @@ urlpatterns = [
          name="payroll-line"),
     path("payroll/lines/<int:pk>/payslip.pdf", payroll_api.payslip_pdf,
          name="payroll-payslip-pdf"),
+    # Amending an issued purchase order (owner 2026-08-13)
+    path("documents/<str:ref>/amend", docs.po_amend, name="po-amend"),
+    path("documents/<str:ref>/amend-decision", docs.po_amend_decision,
+         name="po-amend-decision"),
+    path("documents/<str:ref>/amendment", docs.po_amendment,
+         name="po-amendment"),
     # --- site cameras (owner 2026-08-12)
     path("cameras", cameras_api.camera_list, name="camera-list"),
     path("cameras/<int:pk>", cameras_api.camera_detail, name="camera-detail"),

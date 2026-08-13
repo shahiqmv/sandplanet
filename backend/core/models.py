@@ -431,7 +431,14 @@ class Document(models.Model):
         },
         "PO": {  # generated per awarded supplier on PR approval (R2)
             "DRAFT": {"ISSUED"},
-            "ISSUED": {"CLOSED"},
+            # An issued order often has to change — the supplier is short, an
+            # item is unavailable (owner 2026-08-13). Purchasing proposes a new
+            # revision and the Director approves EVERY amendment; approve and
+            # reject both land back on ISSUED, and which revision is current is
+            # what differs. The supplier is never changed by an amendment —
+            # that is a different award and belongs on its own PO.
+            "ISSUED": {"CLOSED", "AMENDMENT_PENDING"},
+            "AMENDMENT_PENDING": {"ISSUED"},
         },
         # Subcontract Agreement (subcontractor module): the site raises it,
         # the PM approves, the Director activates. Approved = SVCs may value

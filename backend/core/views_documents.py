@@ -767,6 +767,13 @@ def pending_groups(user):
         add("To sign off — procurement schedules",
             rows(scoped(base.filter(doc_type="PSC", status="CONFIRMED")),
                  "Director signs off the schedule baseline"))
+        # An amendment changes an order the supplier already holds, so the
+        # Director sees every one (owner 2026-08-13).
+        add("To approve — purchase order amendments",
+            rows(scoped(base.filter(doc_type="PO",
+                                    status="AMENDMENT_PENDING")),
+                 "Approve the revised order, or reject and the issued one "
+                 "stands"))
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.
@@ -1493,7 +1500,9 @@ OPEN_STATUSES = {
     "MR": ["SENT_TO_HO", "PR_RAISED", "PARTIALLY_ORDERED", "LOADING_PLANNED",
            "PARTIALLY_LOADED"],
     "PR": ["SUBMITTED", "APPROVED", "PAYMENT_PROCESSING", "PAID_PO_ISSUED"],
-    "PO": ["DRAFT", "ISSUED"],
+    # An order mid-amendment is still live work for the chain — the goods are
+    # on order and the supplier holds the previous revision (owner 2026-08-13).
+    "PO": ["DRAFT", "ISSUED", "AMENDMENT_PENDING"],
     "LM": ["DRAFT", "LOADING", "DEPARTED"],
 }
 
@@ -2010,3 +2019,62 @@ def lm_grn_prefill(request, ref):
                      "payload": {"manifest_ref": doc.ref,
                                  "vessel": (doc.current_revision.payload or {})
                                  .get("vessel", "")}})
+
+
+@api_view(["POST"])
+def po_amend(request, ref):
+    """Propose an amendment to an issued PO (HO Purchasing).
+
+    Body: {reason, lines:[{id?, description, unit, qty_required, rate,
+    amount, remarks}]}. Omit a line to drop it from the order.
+    """
+    from . import po_amend as amend_svc
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if request.user.role not in amend_svc.PROPOSE_ROLES:
+        return Response({"detail": "Head-Office Purchasing amends orders."},
+                        status=403)
+    rev, msg = amend_svc.propose_amendment(
+        doc, request.data.get("lines"), request.data.get("reason") or "",
+        request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"detail": "Sent to the Director for approval.",
+                     "revision": rev.rev_label,
+                     **_serialize(doc, request)})
+
+
+@api_view(["POST"])
+def po_amend_decision(request, ref):
+    """Director approves or rejects a proposed amendment."""
+    from . import po_amend as amend_svc
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    if request.user.role not in amend_svc.DECIDE_ROLES:
+        return Response({"detail": "The Director decides amendments."},
+                        status=403)
+    approve = bool(request.data.get("approve"))
+    _, msg = amend_svc.decide_amendment(doc, approve, request.user,
+                                        request.data.get("note") or "")
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"detail": "Amendment approved." if approve
+                     else "Amendment rejected — the issued order stands.",
+                     **_serialize(doc, request)})
+
+
+@api_view(["GET"])
+def po_amendment(request, ref):
+    """The pending amendment, with before/after lines and what moved."""
+    from . import po_amend as amend_svc
+    doc, err = _get_scoped_document(request, ref)
+    if err:
+        return err
+    data = amend_svc.amendment_diff(doc)
+    if data is None:
+        return Response({"detail": "No amendment is waiting on this order."},
+                        status=404)
+    data["can_decide"] = request.user.role in amend_svc.DECIDE_ROLES
+    return Response(data)

@@ -311,7 +311,10 @@ def _render_target(document, revision, filters=None):
     if document.doc_type == "DPR":
         return "dpr.html", _dpr_context(document, revision, filters)
     if document.doc_type == "PO":
-        # External stationery: no site names or internal refs (owner, R2)
+        # R2 said no site names on this document. SUPERSEDED (owner
+        # 2026-08-13): the supplier needs to know which site the goods are
+        # for, so the site code and name now print. Internal references (the
+        # PR ref, project codes) stay off it.
         return "po.html", _po_context(document, revision)
     if document.doc_type in LINE_FORMS:
         return "lines_form.html", _lines_context(document, revision)
@@ -791,6 +794,7 @@ def _po_context(document, revision):
 
     payload = revision.payload or {}
     supplier = document.supplier
+    site = document.site
     lines = []
     untaxed = Decimal("0")
     for line in revision.lines.select_related("item"):
@@ -828,6 +832,15 @@ def _po_context(document, revision):
         "doc": document,
         "payload": payload,
         "supplier": supplier,
+        # Where the goods are going (owner 2026-08-13, superseding R2).
+        "site": {"code": site.code, "name": site.name} if site else None,
+        # An amended order must be distinguishable from the one the supplier
+        # already has in their hands — R0 is the original, so only later
+        # revisions are worth announcing.
+        "revision_label": (revision.rev_label
+                           if revision.rev_label not in ("R0", "", None)
+                           else ""),
+        "amendment_reason": payload.get("amendment_reason", ""),
         "logo_src": logo_src(),
         "lines": lines,
         "currency": currency,

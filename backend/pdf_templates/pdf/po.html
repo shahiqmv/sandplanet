@@ -3,14 +3,19 @@
 <head>
 <meta charset="utf-8">
 <style>
-  /* External Purchase Order — commercial stationery, NO project specifics
-     (supplier does not see site names or internal MR/PR references). */
+  /* External Purchase Order — commercial stationery. The delivery SITE now
+     prints (owner 2026-08-13, superseding the R2 "no site names" rule), but
+     internal references (MR/PR refs, project codes) still do not. */
   @page { size: A4 portrait; margin: 14mm 14mm 30mm 14mm; }
   body { font-family: Helvetica, Arial, sans-serif; font-size: 9.5pt;
          color: #1c2b36; }
   .masthead { text-align: center; margin-bottom: 10mm; }
   .masthead img { height: 16mm; }
   .masthead .legal { color: #5a6b78; font-size: 10pt; margin-top: 2mm; }
+  .deliver { padding-top: 7px !important; }
+  .rev { font-size: 10pt; font-weight: 600; color: #a33; margin-left: 6px; }
+  .amend { border: 1px solid #a33; color: #a33; padding: 4px 7px;
+           font-size: 9pt; margin: 0 0 8px; }
   .supplier { width: 60mm; margin-left: auto; font-size: 9.5pt;
               line-height: 1.45; margin-bottom: 8mm; }
   .supplier .name { font-weight: 700; }
@@ -69,14 +74,21 @@
   {% if supplier.email %}{{ supplier.email }}{% endif %}
 </div>
 
-<h1>Purchase Order <strong># {{ doc.ref }}</strong></h1>
+<h1>Purchase Order <strong># {{ doc.ref }}</strong>{% if revision_label %}
+  <span class="rev">Revision {{ revision_label|slice:"1:" }}</span>{% endif %}</h1>
+{% if revision_label %}
+<div class="amend">This revision replaces the order previously issued under
+  this number{% if amendment_reason %} — {{ amendment_reason }}{% endif %}.</div>
+{% endif %}
 
 <table class="meta"><tr>
   <td><div class="k">Order Date</div>{{ doc.doc_date|date:"d/m/Y" }}</td>
   <td><div class="k">Your Quotation Ref</div>{{ payload.quote_ref|default:"—" }}</td>
   <td><div class="k">Payment Terms</div>{{ payload.payment_terms|default:"—" }}</td>
   <td><div class="k">Expected Delivery</div>{{ payload.expected_delivery|default:"—" }}</td>
-</tr></table>
+</tr>{% if site %}<tr>
+  <td colspan="4" class="deliver"><div class="k">Deliver To</div>{{ site.code }} — {{ site.name }}</td>
+</tr>{% endif %}</table>
 
 <table class="lines">
   <thead><tr>
