@@ -486,3 +486,52 @@ class HrPyrDirectorGateTests(PyrBase):
         self.act(ref, "submit", buyer)
         self.assertEqual(Document.objects.get(ref=ref).status,
                          "DIRECTOR_APPROVED")
+
+
+class UsdRateGuardTests(TestCase):
+    """Finance typed the CONVERTED MVR AMOUNT into the MVR/USD rate box on 18
+    of 24 USD payments — e.g. 462,600 for a $30,000 payment — and the ledger
+    multiplied by it, booking billions of rufiyaa of phantom project cost
+    (owner 2026-08-13). The field now guards magnitude, not just sign."""
+
+    def setUp(self):
+        from .models import CostHead, Site
+        self.finance = make_user("fx_fin", User.Role.FINANCE)
+        self.site = Site.objects.create(code="FXT", name="FX Isle",
+                                        status=Site.Status.ACTIVE)
+        self.head = CostHead.objects.first()
+        self.client = APIClient()
+
+    def _pay(self, rate):
+        """Post a payment on a USD request at `rate`; returns the response."""
+        from .models import Document, PaymentRequest
+        doc = Document.objects.create(
+            doc_type="PYR", ref=f"PYR-FXT-{int(rate)}", site=self.site,
+            doc_date=date.today(), status="AUTHORISED",
+            created_by=self.finance)
+        PaymentRequest.objects.create(
+            document=doc, cost_head=self.head, currency="USD",
+            amount_requested=Decimal("1000"), payment_type="DIRECT",
+            payment_method="TRANSFER")
+        self.client.force_authenticate(self.finance)
+        return self.client.post(
+            f"/api/v1/documents/{doc.ref}/actions/pay",
+            {"amount_paid": "1000", "fx_rate": str(rate),
+             "payment_ref": "TT-1"}, format="json")
+
+    def test_the_converted_amount_is_refused_as_a_rate(self):
+        r = self._pay(Decimal("15420"))          # 1000 x 15.42, the real error
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not an MVR/USD rate", r.data["detail"])
+
+    def test_a_plausible_rate_is_accepted(self):
+        r = self._pay(Decimal("15.42"))
+        self.assertNotEqual(r.status_code, 400)
+
+    def test_a_rate_slightly_off_the_peg_is_still_allowed(self):
+        """A bank's actual rate moves a little; only absurdity is blocked."""
+        r = self._pay(Decimal("17.10"))
+        self.assertNotEqual(r.status_code, 400)
+
+    def test_zero_is_still_refused(self):
+        self.assertEqual(self._pay(Decimal("0")).status_code, 400)

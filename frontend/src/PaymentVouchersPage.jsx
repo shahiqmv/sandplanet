@@ -57,8 +57,17 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [payRef, setPayRef] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [payVariance, setPayVariance] = useState("");
+  // Prefilled with the company MVR/USD rate. It was blank, and Finance kept
+  // typing the CONVERTED MVR AMOUNT here instead of the rate — the ledger then
+  // multiplied by it and booked billions of phantom cost (owner 2026-08-13).
   const [payFx, setPayFx] = useState("");
+  const [companyFx, setCompanyFx] = useState(null);
   const [paySlip, setPaySlip] = useState(null);
+
+  // A rate wildly off the company peg is a mistyped amount, not a rate — the
+  // server refuses it, and this warns before they get there.
+  const fxLooksWrong = companyFx != null && Number(payFx) > 0
+    && (Number(payFx) < companyFx / 3 || Number(payFx) > companyFx * 3);
 
   const VPAGE = 25;
   // Load a page of vouchers, filtered server-side by the status tab + ref
@@ -86,6 +95,13 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   useEffect(reload, []);
   // Refetch from the top whenever the status tab changes.
   useEffect(() => { loadVouchers(true); }, [tab]);   // eslint-disable-line
+  // The company MVR/USD rate: prefills the field and calibrates the warning.
+  useEffect(() => {
+    api("/fx/usd-rate").then((r) => {
+      setCompanyFx(Number(r.rate));
+      setPayFx((v) => v || String(r.rate));
+    }).catch(() => {});
+  }, []);
   useEffect(() => {
     if (isFinance)
       api("/receivables/bank-accounts?active=1")
@@ -235,11 +251,22 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                style={{ ...inputStyle, width: 130 }} />
       )}
       {opts.usd && (
-        <input type="number" value={payFx}
-               onChange={(e) => setPayFx(e.target.value)}
-               placeholder="MVR/USD rate"
-               title="MVR per 1 USD applied to this payment"
-               style={{ ...inputStyle, width: 120 }} />
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <input type="number" value={payFx}
+                 onChange={(e) => setPayFx(e.target.value)}
+                 placeholder="MVR/USD rate"
+                 title="MVR per 1 USD applied to this payment — not the total"
+                 style={{ ...inputStyle, width: 100 }} />
+          {/* Show what the rate actually produces: a rate typed as an amount
+              makes an obviously absurd total right next to the box. */}
+          <span style={{ fontSize: 12, color: fxLooksWrong ? "#b00" : "#667",
+                         whiteSpace: "nowrap" }}>
+            {Number(payAmount) > 0 && Number(payFx) > 0
+              ? `= MVR ${(Number(payAmount) * Number(payFx))
+                  .toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+              : "MVR per 1 USD"}
+          </span>
+        </span>
       )}
       <input value={payRef} onChange={(e) => setPayRef(e.target.value)}
              placeholder="Transfer / cheque ref"
