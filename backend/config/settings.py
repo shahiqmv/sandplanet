@@ -234,6 +234,13 @@ if not DEBUG:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     # Redirect http→https at the app unless the proxy already does it
     SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "1") == "1"
+    # …but never for the camera relay's auth hook. That call is
+    # container-to-container plain HTTP and cannot be upgraded: the only TLS
+    # certificate we hold is for the public domain, and MediaMTX does not
+    # follow the redirect — it just reports "failed to authenticate". The path
+    # is not routable from the internet (Caddy 404s /api/relay/*), so nothing
+    # is exposed by exempting it.
+    SECURE_REDIRECT_EXEMPT = [r"^api/relay/"]
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True

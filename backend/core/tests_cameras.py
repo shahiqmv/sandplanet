@@ -304,3 +304,22 @@ class RelayHookHostTests(TestCase):
         self.assertNotEqual(r.status_code, 400,
                             "ALLOWED_HOSTS is rejecting the relay's Host")
         self.assertEqual(r.status_code, 200)
+
+    @override_settings(CAMERA_RELAY_URL=RELAY, CAMERA_RELAY_SECRET=SECRET,
+                       ALLOWED_HOSTS=["app.sandplanet.mv", "web"],
+                       SECURE_SSL_REDIRECT=True,
+                       SECURE_REDIRECT_EXEMPT=[r"^api/relay/"])
+    def test_hook_is_not_bounced_by_the_https_redirect(self):
+        """The relay talks plain HTTP inside the container network and does
+        not follow redirects — a 301 reads to it as an auth failure."""
+        site = Site.objects.create(code="SSL1", name="Redirect Isle",
+                                   status=Site.Status.ACTIVE)
+        Camera.objects.create(site=site, name="Gate", path="ssl-gate",
+                              stream_key="k3y")
+        r = APIClient().post(f"/api/relay/auth/{SECRET}",
+                             {"action": "publish", "path": "ssl-gate",
+                              "user": "ssl-gate", "password": "k3y"},
+                             format="json", HTTP_HOST="web")
+        self.assertNotEqual(r.status_code, 301,
+                            "the HTTPS redirect is swallowing the hook")
+        self.assertEqual(r.status_code, 200)
