@@ -179,3 +179,56 @@ class PermitBatchRenewTests(TestCase):
             "lines": [{"employee_id": e.id, "months": 12, "fee": 350}]},
             format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class PermitRenewalRoutingTests(TestCase):
+    """A renewal is a statutory fee at a fixed rate — nobody's decision to
+    approve, and there is no bill to attach. HR's batch was landing in DRAFT
+    demanding a supporting document and going nowhere (owner 2026-08-13)."""
+
+    def setUp(self):
+        from .models import CompanyParameter, Site
+        self.hr = make_user("pr_hr", User.Role.HO_HR)
+        Site.objects.update_or_create(
+            code="MLE", defaults={"name": "Head Office", "status": "ACTIVE",
+                                  "is_head_office": True})
+        CompanyParameter.objects.update_or_create(
+            key="wp_monthly_fee", defaults={"value": 350})
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _renew(self, months=12):
+        e = emp("R1", work_permit_expiry=date(2026, 9, 1))
+        return self.client.post("/api/v1/permits/batch-renew", {
+            "payee": "Immigration Maldives",
+            "lines": [{"employee_id": e.id, "months": months}]},
+            format="json")
+
+    def test_the_batch_goes_straight_to_finance(self):
+        from .models import Document
+        r = self._renew()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertIsNone(r.data.get("submit_error"))
+        doc = Document.objects.get(ref=r.data["ref"])
+        # cleared to voucher — not sitting in DRAFT, not waiting on anyone
+        self.assertEqual(doc.status, "DIRECTOR_APPROVED")
+
+    def test_no_supporting_document_is_demanded(self):
+        """There is never a bill: the fee is the company rate x months."""
+        r = self._renew()
+        self.assertIsNone(r.data.get("submit_error"))
+
+    def test_a_large_batch_does_not_trip_the_document_threshold(self):
+        """120 months x 350 clears the PYR document threshold, and a renewal
+        can never satisfy it."""
+        from .models import Document
+        r = self._renew(months=120)
+        self.assertIsNone(r.data.get("submit_error"), r.data)
+        self.assertEqual(Document.objects.get(ref=r.data["ref"]).status,
+                         "DIRECTOR_APPROVED")
+
+    def test_it_reaches_the_finance_voucher_queue(self):
+        from .vouchers import awaiting_voucher
+        r = self._renew()
+        refs = [d.ref for d in awaiting_voucher()]
+        self.assertIn(r.data["ref"], refs)

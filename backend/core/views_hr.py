@@ -478,8 +478,19 @@ def permit_batch_renew(request):
             return Response({"detail": err}, status=400)
     audit("document", doc.id, "DOC_CREATED", actor=request.user,
           to_state="DRAFT", detail={"ref": ref, "kind": "permit_renewal"})
+    # Raising the batch IS the request — leaving it in DRAFT for HR to submit
+    # separately just stranded it (owner 2026-08-13). Renewals need no
+    # approval, so this puts it straight in front of Finance. Goes through the
+    # normal action so the transition, audit trail and notifications are the
+    # same as any other PYR.
+    from .payments import pyr_action
+
+    err = pyr_action(request, doc, "submit")
+    doc.refresh_from_db()
     return Response({"ref": doc.ref, "amount": str(pr.amount_requested),
-                     "currency": pr.currency, "count": len(lines)},
+                     "currency": pr.currency, "count": len(lines),
+                     "status": doc.status,
+                     "submit_error": (err.data.get("detail") if err else None)},
                     status=201)
 
 

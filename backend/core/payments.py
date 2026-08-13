@@ -277,31 +277,40 @@ def pyr_action(request, doc, action_name):
         # Keyed on the presence of advance lines, so a generic "Advance" payment
         # (no worker breakdown) still needs a document like any other PYR.
         is_salary_advance = doc.salary_advances.exists()
+        # A work-permit renewal has no bill to attach and never will: the fee
+        # is the government rate held in Company settings, multiplied by the
+        # months the app itself worked out, and the per-worker breakdown IS
+        # the record. Demanding a document left HR's batch stranded in draft
+        # (owner 2026-08-13).
+        is_permit_renewal = pr.payment_type == "PERMIT_RENEWAL"
+        exempt_doc = is_salary_advance or is_permit_renewal
         has_doc = pr.has_supporting_doc or doc.attachments.filter(
             kind__in=("EVIDENCE", "QUOTATION", "ENCLOSURE")).exists()
-        if not is_salary_advance and not has_doc \
+        if not exempt_doc and not has_doc \
                 and not pr.no_doc_reason.strip():
             return Response({"detail": "Attach a bill/quotation, or give a "
                                        "reason for no supporting document."},
                             status=400)
-        if (not is_salary_advance and pr.amount_requested >= pyr_doc_threshold()
+        if (not exempt_doc and pr.amount_requested >= pyr_doc_threshold()
                 and not has_doc and not pr.override_by_id):
             return Response({
                 "detail": f"Above MVR {pyr_doc_threshold():,.0f} a PYR needs "
                           "a supporting document or a PM override with reason.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin == "HR" and not pr.is_capitalized:
+        if pr.origin == "HR" and not pr.is_capitalized and not is_permit_renewal:
             # HR advances / welfare wait for the Director (PD) — no PM, and kept
             # separate from onboarding (which has no PD layer). It stays at
             # SUBMITTED until the Director approves it onto a voucher.
             pass
-        elif pr.origin != "SITE" or pr.is_capitalized:
+        elif pr.origin != "SITE" or pr.is_capitalized or is_permit_renewal:
             # Everything else except a plain site PYR skips approval and clears
             # straight to a Payment Voucher for signatory approval: CENTRAL (HO
             # Purchasing, QS, Director…), FINANCE (rent, salaries…), ONBOARDING
             # recruitment fees, COMMERCIAL insurance/bond premiums (owner
-            # 2026-08-05 — no PM/Director), and capitalized import charges.
+            # 2026-08-05 — no PM/Director), capitalized import charges, and
+            # work-permit renewals (owner 2026-08-13: a statutory fee at a
+            # fixed rate is nobody's decision to approve).
             _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", user,
                         "No approval step — authorised on a Payment Voucher")
         return None
