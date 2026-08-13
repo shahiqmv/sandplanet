@@ -225,8 +225,18 @@ def _attendance_prefill(employee, site, year, month, working_days):
             forfeited += 1
         day += timedelta(days=1)
 
+    # Unworked rest days still inside the paid figure. The PM may strike
+    # these for a worker who was absent through the week (owner 2026-08-13).
+    rest_paid = 0
+    day = start
+    while day <= last:
+        if day not in marked and day.isoweekday() not in work_week:
+            rest_paid += 1
+        day += timedelta(days=1)
+    rest_paid = max(rest_paid - forfeited, 0)
+
     days = max(expected - absents - forfeited, 0)
-    return Decimal(days), ot, fridays
+    return Decimal(days), ot, fridays, rest_paid
 
 
 def is_split_pay(emp):
@@ -254,8 +264,8 @@ def generate_run(*, site, currency, year, month, working_days, actor):
             w_start, w_end = paid_window(emp, site, year, month)
             if w_start > w_end:
                 continue        # no days in this month at this site
-            days, ot, fridays = _attendance_prefill(emp, site, year, month,
-                                                    working_days)
+            days, ot, fridays, _rest = _attendance_prefill(
+                emp, site, year, month, working_days)
             split = is_split_pay(emp)
             if currency == "USD" and split:
                 # basic-only, attendance-based, in USD — nothing else here
@@ -499,9 +509,10 @@ def refresh_run(run, actor):
             if emp.id not in eligible:
                 stale.append(emp.emp_no)
                 continue
-            days, ot, fridays = _attendance_prefill(emp, site, run.year,
-                                                    run.month,
-                                                    run.working_days)
+            days, ot, fridays, rest_paid = _attendance_prefill(
+                emp, site, run.year, run.month, run.working_days)
+            if line.rest_day_revoked:
+                days = max(days - rest_paid, 0)
             split = is_split_pay(emp)
             before = (line.days_worked, line.ot_hours, line.fridays_worked,
                       line.ot_rate, line.basic_pay)
@@ -529,9 +540,9 @@ def refresh_run(run, actor):
         for emp in eligible.values():
             if emp.id in have:
                 continue
-            days, ot, fridays = _attendance_prefill(emp, site, run.year,
-                                                    run.month,
-                                                    run.working_days)
+            # A worker only just added to the run has no PM decision yet.
+            days, ot, fridays, _rest = _attendance_prefill(
+                emp, site, run.year, run.month, run.working_days)
             ded = deductions_for(emp, run.year, run.month)
             PayrollLine.objects.create(
                 run=run, employee=emp, site_id=emp.current_site_id(),
@@ -603,3 +614,34 @@ def deductions_for(employee, year, month):
             else:
                 advance += installment
     return {"advance": advance, "loan": loan}
+
+
+def set_rest_day_revoked(line, revoked, actor):
+    """Strike (or restore) a worker's unworked rest days on one payroll line.
+
+    The site PM is the person who knows a worker was absent through the week
+    and did not earn the rest day (owner 2026-08-13). Recorded as a decision
+    on the line, not a hand-edited day count, so a later "Refresh from
+    attendance" recomputes the days and reapplies it rather than silently
+    undoing it.
+
+    Deliberately does NOT bounce the run back to HR the way an HR edit does —
+    the PM makes this call *during* their own verification, and resetting to
+    draft would make it impossible to act on.
+    """
+    run = line.run
+    if run.status == "LOCKED":
+        return None, "The run is locked."
+    revoked = bool(revoked)
+    days, ot, fridays, rest_paid = _attendance_prefill(
+        line.employee, run.site, run.year, run.month, run.working_days)
+    if revoked:
+        days = max(days - rest_paid, 0)
+    line.rest_day_revoked = revoked
+    line.days_worked = days
+    line.save(update_fields=["rest_day_revoked", "days_worked"])
+    audit("payroll_line", line.id,
+          "REST_DAY_REVOKED" if revoked else "REST_DAY_RESTORED", actor=actor,
+          detail={"run": run.id, "emp_no": line.employee.emp_no,
+                  "rest_days": rest_paid, "days_now": str(days)})
+    return line, None

@@ -1088,7 +1088,8 @@ class RestDayForfeitTests(TestCase):
                                     normal_hours=8)
 
     def _days(self):
-        d, _, _ = payroll._attendance_prefill(self.emp, self.site, 2026, 7, 31)
+        d, _, _, _ = payroll._attendance_prefill(self.emp, self.site, 2026, 7,
+                                                 31)
         return float(d)
 
     def test_a_good_attender_keeps_the_unworked_rest_day(self):
@@ -1145,3 +1146,54 @@ class RestDayForfeitTests(TestCase):
         CompanyParameter.objects.update_or_create(
             key="rest_day_absence_limit", defaults={"value": "1"})
         self.assertEqual(self._days(), 28.0)          # now 2 > 1, Friday gone
+
+    def test_the_pm_can_strike_the_rest_day_for_one_worker(self):
+        """EMP-0078's case: absent through the week, so no rest day at all —
+        the site PM makes that call, not a global threshold (owner
+        2026-08-13)."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(float(line.days_worked), 31.0)   # 26 marked + 5 rest
+        payroll.set_rest_day_revoked(line, True, self.hr)
+        line.refresh_from_db()
+        self.assertEqual(float(line.days_worked), 26.0)   # the 5 Fridays gone
+        self.assertTrue(line.rest_day_revoked)
+
+    def test_a_refresh_does_not_undo_the_pm_decision(self):
+        """The reason it is a flag and not a hand-edited day count."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        payroll.set_rest_day_revoked(line, True, self.hr)
+        payroll.refresh_run(run, self.hr)
+        line.refresh_from_db()
+        self.assertEqual(float(line.days_worked), 26.0)
+        self.assertTrue(line.rest_day_revoked)
+
+    def test_restoring_puts_the_rest_days_back(self):
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        payroll.set_rest_day_revoked(line, True, self.hr)
+        payroll.set_rest_day_revoked(line, False, self.hr)
+        line.refresh_from_db()
+        self.assertEqual(float(line.days_worked), 31.0)
+        self.assertFalse(line.rest_day_revoked)
+
+    def test_a_locked_run_cannot_be_touched(self):
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        run.status = "LOCKED"
+        run.save(update_fields=["status"])
+        line = run.lines.get(employee=self.emp)
+        _, err = payroll.set_rest_day_revoked(line, True, self.hr)
+        self.assertIsNotNone(err)

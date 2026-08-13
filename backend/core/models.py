@@ -2450,6 +2450,12 @@ class PayrollLine(models.Model):
     days_worked = models.DecimalField(max_digits=5, decimal_places=1,
                                       default=0)
     fridays_worked = models.IntegerField(default=0)
+    # The site PM can strike a worker's unworked rest days off their pay when
+    # they were absent through the week and plainly did not earn them (owner
+    # 2026-08-13, EMP-0078). Kept as a flag rather than a hand-edited day
+    # count so "Refresh from attendance" recomputes the days and then reapplies
+    # the PM's decision, instead of quietly undoing it.
+    rest_day_revoked = models.BooleanField(default=False)
     ot_hours = models.DecimalField(max_digits=7, decimal_places=1, default=0)
     allowance = models.DecimalField(max_digits=12, decimal_places=2,
                                     default=0)  # adhoc allowance / air ticket

@@ -369,6 +369,19 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     } catch (e) { setError(e.message); }
   }
 
+  // The rest-day decision belongs to the site PM, so unlike an HR field edit
+  // it must NOT bounce the run back to draft — the PM is making the call
+  // during their own verification (owner 2026-08-13).
+  async function setRestDay(line, revoked) {
+    if (revoked && !window.confirm(
+      `Strike ${line.emp_no} ${line.full_name}'s unworked rest days off their `
+      + "pay? Use this when they were absent through the week.")) return;
+    try {
+      setRun(await api(`/payroll/lines/${line.id}/rest-day`,
+                       { method: "POST", body: { revoked } }));
+    } catch (e) { setError(e.message); }
+  }
+
   async function act(action) {
     let reason = "";
     if (action === "return") {
@@ -498,7 +511,9 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           <tbody>
             {lines.map((l) => (
               <Row key={l.id} line={l} locked={locked} showSite={run.site_id == null}
-                   onSave={saveField} />
+                   onSave={saveField}
+                   onRestDay={!locked && (isPM || isHR || isPD)
+                     ? setRestDay : null} />
             ))}
           </tbody>
           <tfoot>
@@ -526,7 +541,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
   );
 }
 
-function Row({ line, locked, showSite, onSave }) {
+function Row({ line, locked, showSite, onSave, onRestDay }) {
   const [v, setV] = useState(line);
   useEffect(() => setV(line), [line]);
   const cell = (k, w) => (
@@ -559,6 +574,20 @@ function Row({ line, locked, showSite, onSave }) {
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
            target="_blank" rel="noreferrer" title="Salary slip"
            style={{ textDecoration: "none" }}>🧾</a>
+        {/* The rest day is unmarked in attendance and paid as part of the
+            month. The site PM knows who was absent through the week and
+            plainly did not earn it (owner 2026-08-13). */}
+        {onRestDay && (
+          <a href="#" onClick={(e) => { e.preventDefault();
+                                        onRestDay(line, !line.rest_day_revoked); }}
+             title={line.rest_day_revoked
+               ? "Rest days struck off — click to restore them"
+               : "Strike this worker's unworked rest days off their pay"}
+             style={{ marginLeft: 8, fontSize: 11, textDecoration: "none",
+                      color: line.rest_day_revoked ? "#b00" : "#8a94a0" }}>
+            {line.rest_day_revoked ? "no rest day" : "rest day"}
+          </a>
+        )}
       </td>
     </tr>
   );

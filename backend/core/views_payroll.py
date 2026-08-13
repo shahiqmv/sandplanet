@@ -36,6 +36,7 @@ def _line_info(line):
     m = payroll.compute_line(line)
     return {
         "id": line.id, "emp_no": line.employee.emp_no,
+        "rest_day_revoked": line.rest_day_revoked,
         "full_name": line.employee.full_name,
         "nationality": line.employee.nationality,
         "job_title": line.employee.job_category.name
@@ -488,3 +489,20 @@ def payroll_line(request, pk):
         payroll.reset_to_draft(line.run, request.user,
                                f"line edited ({', '.join(changed)})")
     return Response(_line_info(line))
+
+
+@api_view(["POST"])
+def payroll_line_rest_day(request, pk):
+    """Site PM strikes a worker's unworked rest days (owner 2026-08-13)."""
+    try:
+        line = PayrollLine.objects.select_related(
+            "run", "run__site", "employee").get(pk=pk)
+    except PayrollLine.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, line.run):
+        return Response({"detail": "Not your site's payroll."}, status=403)
+    _, msg = payroll.set_rest_day_revoked(
+        line, request.data.get("revoked"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_run_info(line.run))
