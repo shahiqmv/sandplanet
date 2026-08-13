@@ -13,6 +13,13 @@ from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 TWO = Decimal("0.01")
 ABSENT_MARKS = ("ABSENT", "SICK", "LEAVE")
 FRIDAY_OT_HOURS_DEFAULT = Decimal("12")
+# A rest day is part of the monthly entitlement and is normally paid even
+# though nobody marks it — that is why the register shows a blank there. But a
+# worker who was absent most of the week has not earned it: EMP-0078 was paid
+# 8 days for 5 days of work in July because three unworked Fridays came free
+# (owner 2026-08-13). Above this many ABSENT days in a week, the week's rest
+# days are not paid.
+REST_DAY_ABSENCE_LIMIT_DEFAULT = 3
 
 
 def friday_ot_hours():
@@ -25,6 +32,18 @@ def friday_ot_hours():
         return Decimal(v) if v else FRIDAY_OT_HOURS_DEFAULT
     except (CompanyParameter.DoesNotExist, ArithmeticError, ValueError):
         return FRIDAY_OT_HOURS_DEFAULT
+
+
+def rest_day_absence_limit():
+    """Absences in a week above which that week's unworked rest days are not
+    paid (owner 2026-08-13). Editable via the `rest_day_absence_limit`
+    company parameter, like `friday_ot_hours`."""
+    try:
+        v = (CompanyParameter.objects.get(
+            key="rest_day_absence_limit").value or "").strip()
+        return int(v) if v else REST_DAY_ABSENCE_LIMIT_DEFAULT
+    except (CompanyParameter.DoesNotExist, TypeError, ValueError):
+        return REST_DAY_ABSENCE_LIMIT_DEFAULT
 
 
 def q(v):
@@ -172,19 +191,41 @@ def _attendance_prefill(employee, site, year, month, working_days):
 
     absents = fridays = 0
     ot = Decimal("0")
+    marked = {}                      # day -> remark, for the rest-day test
+    absent_by_week = {}              # ISO (year, week) -> genuine absences
     for a in qs:
         if a.day < start or a.day > last:
             continue      # outside the paid window — a stray row from before
                           # they joined, or after they left this site
+        marked[a.day] = a.remark
         if a.remark in ABSENT_MARKS:
             absents += 1
+        if a.remark == "ABSENT":
+            # Only a genuine absence counts towards forfeiting the rest day —
+            # someone on sanctioned leave or off sick should not lose their
+            # Friday on top of the day itself (owner 2026-08-13).
+            wk = a.day.isocalendar()[:2]
+            absent_by_week[wk] = absent_by_week.get(wk, 0) + 1
         is_friday = a.day.isoweekday() not in work_week
         if a.remark == "PRESENT" and is_friday:
             fridays += 1
             continue        # the flat Friday OT covers the whole day (owner
                             # 2026-08-12) — never add its hours again
         ot += a.ot_approved or 0
-    days = max(expected - absents, 0)
+
+    # A rest day is unmarked and normally paid as part of the month. Drop the
+    # ones in a week the worker was largely absent: EMP-0078 drew 8 days' pay
+    # for 5 days of work in July because three unworked Fridays came free.
+    limit = rest_day_absence_limit()
+    forfeited = 0
+    day = start
+    while day <= last:
+        if (day not in marked and day.isoweekday() not in work_week
+                and absent_by_week.get(day.isocalendar()[:2], 0) > limit):
+            forfeited += 1
+        day += timedelta(days=1)
+
+    days = max(expected - absents - forfeited, 0)
     return Decimal(days), ot, fridays
 
 

@@ -1053,3 +1053,95 @@ class PaidWindowTests(TestCase):
         summary, err = payroll.refresh_run(run, self.hr)
         self.assertIsNone(err)
         self.assertEqual(self._days(run, "W-MID2"), 16.0)
+
+
+class RestDayForfeitTests(TestCase):
+    """A rest day is unmarked and normally paid as part of the month, but a
+    worker absent most of the week has not earned it (owner 2026-08-13:
+    "if worker was absent for more than 3 days during the week then his rest
+    day will not be counted as pay day"). EMP-0078 drew 8 days' pay for 5
+    days of work in July because three unworked Fridays came free."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, TimesheetMonth)
+        self.Att = Attendance
+        self.hr = make_user("rd_hr", User.Role.HO_HR)
+        # Mon-Thu, Sat, Sun — Friday (5) is the rest day, as at SSR.
+        self.site = Site.objects.create(code="RST", name="Rest Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="RD-0001", full_name="Rest Worker", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 7, 1))
+
+    def _mark(self, days, remark):
+        for d in days:
+            self.Att.objects.create(employee=self.emp, site=self.site,
+                                    day=date(2026, 7, d), remark=remark,
+                                    normal_hours=8)
+
+    def _days(self):
+        d, _, _ = payroll._attendance_prefill(self.emp, self.site, 2026, 7, 31)
+        return float(d)
+
+    def test_a_good_attender_keeps_the_unworked_rest_day(self):
+        """The whole month bar the Fridays — all 31 days paid."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self.assertEqual(self._days(), 31.0)
+
+    def test_a_week_with_three_absences_still_keeps_its_rest_day(self):
+        """Three is not 'more than three'."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self.Att.objects.filter(day__in=[date(2026, 7, d)
+                                         for d in (6, 7, 8)]).update(
+            remark="ABSENT")
+        self.assertEqual(self._days(), 28.0)     # 31 − 3 absences, Friday kept
+
+    def test_a_week_with_four_absences_forfeits_its_rest_day(self):
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self.Att.objects.filter(day__in=[date(2026, 7, d)
+                                         for d in (6, 7, 8, 9)]).update(
+            remark="ABSENT")
+        # 31 − 4 absences − the 10th (that week's unworked Friday)
+        self.assertEqual(self._days(), 26.0)
+
+    def test_a_worked_rest_day_is_never_forfeited(self):
+        """If he turned up on the Friday it is his, however the week went."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self._mark([10], "PRESENT")              # worked that Friday
+        self.Att.objects.filter(day__in=[date(2026, 7, d)
+                                         for d in (6, 7, 8, 9)]).update(
+            remark="ABSENT")
+        self.assertEqual(self._days(), 27.0)     # 32 marked − 4 − 1 unworked
+
+    def test_leave_and_sick_do_not_cost_the_rest_day(self):
+        """They already cost the day itself; they are not misconduct."""
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self.Att.objects.filter(day__in=[date(2026, 7, d)
+                                         for d in (6, 7, 8, 9)]).update(
+            remark="LEAVE")
+        self.assertEqual(self._days(), 27.0)     # 31 − 4, Friday kept
+
+    def test_the_limit_is_a_company_parameter(self):
+        from .models import CompanyParameter
+        fridays = {3, 10, 17, 24, 31}
+        self._mark([d for d in range(1, 32) if d not in fridays], "PRESENT")
+        self.Att.objects.filter(day__in=[date(2026, 7, d)
+                                         for d in (6, 7)]).update(
+            remark="ABSENT")
+        self.assertEqual(self._days(), 29.0)          # 2 absences, Friday kept
+        CompanyParameter.objects.update_or_create(
+            key="rest_day_absence_limit", defaults={"value": "1"})
+        self.assertEqual(self._days(), 28.0)          # now 2 > 1, Friday gone
