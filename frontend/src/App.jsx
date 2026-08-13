@@ -1060,7 +1060,7 @@ export default function App() {
           )}
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "company" && (
-            <CompanyPage />
+            <CompanyPage me={me} />
           )}
           {!docView && !openSite && me.role === "ADMIN" &&
             hoPage === "client-portal" && (

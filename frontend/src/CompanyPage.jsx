@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
-import { buttonStyle, card, inputStyle } from "./ui.jsx";
+import { buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
 // Company identity (owner, 2026-07-08): logo image file, tax info,
 // registration no and address managed in one place — every PDF letterhead
@@ -31,10 +31,14 @@ const SETTINGS = [
   // A worked Friday pays this many hours at the worker's OT rate — it does
   // NOT add a day of basic (owner 2026-08-12).
   ["friday_ot_hours", "Friday work — OT hours paid per Friday", "12"],
+  // Above this many absences in a week, that week's unworked rest day is not
+  // paid (owner 2026-08-13).
+  ["rest_day_absence_limit",
+   "Rest day forfeited above this many absences in a week", "3"],
 ];
 const ALL = [...IDENTITY, ...SIGNEE, ...SETTINGS];
 
-export default function CompanyPage() {
+export default function CompanyPage({ me }) {
   const [values, setValues] = useState({});
   const [logo, setLogo] = useState(null);       // {url, uploaded}
   const [logoFile, setLogoFile] = useState(null);
@@ -43,12 +47,21 @@ export default function CompanyPage() {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  // The MVR/USD peg. NOT part of the generic parameter list above: that save
+  // is Admin-only and audits as a bland PARAMETER_UPDATED, which would take
+  // the rate away from Finance and QS and lose the USD_RATE_UPDATED trail.
+  // It keeps its own endpoint (owner 2026-08-13).
+  const [fx, setFx] = useState(null);
+  const [fxDraft, setFxDraft] = useState("");
+  const canSetFx = ["ADMIN", "FINANCE", "QS"].includes(me?.role);
 
   useEffect(() => {
     Promise.all(ALL.map(([key]) =>
       api(`/parameters/${key}`).then((p) => [key, p.value ?? ""])
         .catch(() => [key, ""])
     )).then((pairs) => setValues(Object.fromEntries(pairs)));
+    api("/fx/usd-rate").then((r) => { setFx(r); setFxDraft(String(r.rate)); })
+      .catch(() => {});
     api("/company/logo").then(setLogo).catch(() => {});
     api("/company/stamp").then(setStamp).catch(() => {});
   }, []);
@@ -167,10 +180,11 @@ export default function CompanyPage() {
       <div style={{ borderTop: "1px solid var(--sp-border)", margin: "16px 0",
                     paddingTop: 12 }}>
         <div style={{ fontWeight: 600, color: "var(--sp-navy)", fontSize: 13.5 }}>
-          Work permits</div>
+          Operational rates</div>
         <p style={{ fontSize: 12, color: "#5a6b78", margin: "2px 0 8px" }}>
-          A fixed rate. Batch renewals compute each worker's fee as this rate ×
-          the months chosen — HR just picks the months.</p>
+          Fixed rates applied company-wide. Batch permit renewals compute each
+          worker's fee as the permit rate × the months chosen — HR just picks
+          the months.</p>
         {SETTINGS.map(([key, label, placeholder]) => (
           <label key={key} style={{ display: "block", fontSize: 12.5,
                                     marginBottom: 8 }}>
@@ -182,6 +196,52 @@ export default function CompanyPage() {
                    style={{ ...inputStyle, width: 200, marginTop: 3 }} />
           </label>
         ))}
+      </div>
+
+      {/* Saved on its own, not with the block above: it is the single source
+          of truth for every USD figure in the app, and Finance/QS may set it
+          while the generic settings save is Admin-only (owner 2026-08-13). */}
+      <div style={{ borderTop: "1px solid var(--sp-border)", margin: "16px 0",
+                    paddingTop: 12 }}>
+        <div style={{ fontWeight: 600, color: "var(--sp-navy)", fontSize: 13.5 }}>
+          Exchange rate</div>
+        <p style={{ fontSize: 12, color: "#5a6b78", margin: "2px 0 8px" }}>
+          MVR per 1 USD — the peg. Nobody enters a rate on a payment: this is
+          used for every USD conversion, and it is stored on each payment as it
+          is made. Changing it re-converts every reported USD figure across the
+          whole portfolio, so it is limited to Admin, Finance and QS and every
+          change is recorded.</p>
+        <label style={{ display: "block", fontSize: 12.5 }}>
+          MVR per 1 USD
+          <span style={{ display: "flex", gap: 8, alignItems: "center",
+                         marginTop: 3 }}>
+            <input type="number" step="0.01" min="0" value={fxDraft}
+                   disabled={!canSetFx}
+                   onChange={(e) => setFxDraft(e.target.value)}
+                   style={{ ...inputStyle, width: 140 }} />
+            {canSetFx && (
+              <button disabled={busy || !Number(fxDraft)} style={ghostButton}
+                      onClick={async () => {
+                        setError(null); setNotice(null);
+                        try {
+                          const r = await api("/fx/usd-rate", {
+                            method: "PUT", body: { rate: Number(fxDraft) } });
+                          setFx(r); setFxDraft(String(r.rate));
+                          setNotice("Exchange rate saved.");
+                        } catch (e) { setError(e.message); }
+                      }}>Save rate</button>
+            )}
+            {fx && String(fx.rate) !== fxDraft && (
+              <span style={{ fontSize: 11.5, color: "#b35900" }}>
+                unsaved — currently {fx.rate}
+              </span>
+            )}
+          </span>
+        </label>
+        {!canSetFx && (
+          <p style={{ fontSize: 11.5, color: "#5a6b78", margin: "4px 0 0" }}>
+            Admin, Finance or QS can change this.</p>
+        )}
       </div>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
