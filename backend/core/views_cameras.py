@@ -72,11 +72,15 @@ def camera_list(request):
         stream_key=(d.get("stream_key") or "").strip()
         or cam_svc.new_stream_key(),
         location_note=(d.get("location_note") or "").strip(),
+        source_url=(d.get("source_url") or "").strip(),
         client_visible=bool(d.get("client_visible")),
         created_by=request.user)
+    ok, note = cam_svc.sync_relay_path(cam)
     audit("camera", cam.id, "CAMERA_ADDED", actor=request.user,
-          detail={"site": site.code, "name": cam.name, "path": cam.path})
-    return Response(cam_svc.camera_dict(cam, include_key=True), status=201)
+          detail={"site": site.code, "name": cam.name, "path": cam.path,
+                  "mode": "PULL" if cam.source_url else "PUSH"})
+    return Response({**cam_svc.camera_dict(cam, include_key=True),
+                     "relay": note, "relay_ok": ok}, status=201)
 
 
 @api_view(["PATCH", "DELETE"])
@@ -92,24 +96,28 @@ def camera_detail(request, pk):
     if request.method == "DELETE":
         audit("camera", cam.id, "CAMERA_REMOVED", actor=request.user,
               detail={"site": cam.site.code, "name": cam.name})
+        cam.source_url = ""          # so the relay stops pulling it
+        cam_svc.sync_relay_path(cam)
         cam.delete()
         return Response(status=204)
 
     before = {"name": cam.name, "client_visible": cam.client_visible,
               "is_active": cam.is_active}
-    for field in ("name", "location_note"):
+    for field in ("name", "location_note", "source_url"):
         if field in request.data:
             setattr(cam, field, (request.data.get(field) or "").strip())
     for field in ("is_active", "client_visible"):
         if field in request.data:
             setattr(cam, field, bool(request.data.get(field)))
     cam.save()
+    ok, note = cam_svc.sync_relay_path(cam)
     audit("camera", cam.id, "CAMERA_UPDATED", actor=request.user,
           detail={"before": before, "after": {
               "name": cam.name, "client_visible": cam.client_visible,
               "is_active": cam.is_active}})
-    return Response(cam_svc.camera_dict(cam, cam_svc.relay_status(),
-                                        include_key=True))
+    return Response({**cam_svc.camera_dict(cam, cam_svc.relay_status(),
+                                           include_key=True),
+                     "relay": note, "relay_ok": ok})
 
 
 @api_view(["POST"])

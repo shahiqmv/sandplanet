@@ -715,7 +715,12 @@
       "Bash(.venv/bin/python manage.py test core.tests_commercial)",
       "Bash(.venv/bin/python manage.py test core.tests_commercial.VariationTests.test_approved_edit_reseeds_draft_claims_and_locks_after_claiming)",
       "Bash(ssh -o BatchMode=yes planet-prod 'cd /root/sandplanet && docker compose -f docker-compose.prod.yml exec -T web python -c \" *)",
-      "Bash(grep -Eim6 \".\")"
+      "Bash(grep -Eim6 \".\")",
+      "Bash(ssh planet-prod *)",
+      "Bash(.venv/bin/python -m ruff check core config)",
+      "Bash(grep -Eim5 \".\")",
+      "Bash(.venv/bin/python manage.py test core)",
+      "Bash(grep -Eim6 \"Ran|OK|FAILED\")"
     ]
   }
 }

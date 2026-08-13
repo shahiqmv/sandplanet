@@ -109,10 +109,74 @@ def camera_dict(camera, status=None, include_key=False):
         "location_note": camera.location_note,
         "is_active": camera.is_active,
         "client_visible": camera.client_visible,
+        # A PULL camera is idle until somebody watches, so "ready" being false
+        # means nothing is being viewed — NOT that the camera is down. Saying
+        # "Offline" there would be a lie, so the mode travels with it and the
+        # UI says "On demand" instead.
+        "mode": "PULL" if camera.source_url else "PUSH",
         "online": bool(st.get("ready")),
         "viewers": st.get("readers", 0),
         "last_seen_at": camera.last_seen_at,
     }
     if include_key:
         out["stream_key"] = camera.stream_key
+        out["source_url"] = camera.source_url
     return out
+
+
+# --- pull mode -----------------------------------------------------------
+# A site with a routable address forwards its camera port to the droplet, and
+# the relay fetches the stream itself. Nothing runs at the site, and because
+# the path is on-demand the relay only holds the connection while somebody is
+# watching — an unwatched camera costs the site's uplink nothing.
+
+def _api(method, path, body=None):
+    url = f"{relay_api_base()}{path}"
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=STATUS_TIMEOUT) as r:
+            return r.status, r.read().decode("utf-8", "replace")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", "replace")
+    except (urllib.error.URLError, OSError, TimeoutError) as e:
+        return None, str(e)
+
+
+def sync_relay_path(camera):
+    """Teach the relay how to reach a PULL camera (or forget a PUSH one).
+
+    Returns (ok, message). A relay that is down must not block saving a
+    camera — the row is the source of truth and `resync_all` puts the relay
+    back in step.
+    """
+    name = camera.path
+    if not camera.source_url or not camera.is_active:
+        code, _ = _api("POST", f"/v3/config/paths/delete/{name}")
+        return True, ("stopped pulling" if code == 200 else "not pulling")
+    body = {
+        "source": camera.source_url,
+        "sourceOnDemand": True,
+        # Give a distant camera time to answer over a slow island link before
+        # the relay gives up on the viewer's behalf.
+        "sourceOnDemandStartTimeout": "15s",
+        "sourceOnDemandCloseAfter": "20s",
+    }
+    code, msg = _api("POST", f"/v3/config/paths/add/{name}", body)
+    if code == 400 and "already exists" in msg:
+        code, msg = _api("PATCH", f"/v3/config/paths/patch/{name}", body)
+    if code == 200:
+        return True, "relay will pull this camera on demand"
+    return False, f"relay refused the path ({code}): {msg[:120]}"
+
+
+def resync_all():
+    """Reconcile every pull camera with the relay — after a relay restart, or
+    a deploy that recreated the container."""
+    from .models import Camera
+    done = []
+    for cam in Camera.objects.exclude(source_url=""):
+        ok, msg = sync_relay_path(cam)
+        done.append((cam.path, ok, msg))
+    return done

@@ -798,10 +798,10 @@ function CamerasPage({ site, onBack }) {
               <strong>{c.name}</strong>
               {c.location_note && <span className="muted"> · {c.location_note}</span>}
               <span className={`campill ${c.online ? "on" : ""}`}>
-                {c.online ? "Live now" : "Offline"}
+                {c.online ? "Live now" : c.on_demand ? "Available" : "Offline"}
               </span>
             </div>
-            {c.online
+            {(c.online || c.on_demand)
               ? (open === c.id
                   ? <WhepPlayer getTicket={() =>
                       api(`/cameras/${c.id}/ticket`, { method: "POST" })} />

@@ -323,3 +323,78 @@ class RelayHookHostTests(TestCase):
         self.assertNotEqual(r.status_code, 301,
                             "the HTTPS redirect is swallowing the hook")
         self.assertEqual(r.status_code, 200)
+
+
+@override_settings(CAMERA_RELAY_URL=RELAY, CAMERA_RELAY_SECRET=SECRET)
+class PullModeTests(TestCase):
+    """A site with a routable address forwards its camera port and the relay
+    fetches the stream itself — nothing runs at the site, and an unwatched
+    camera costs its uplink nothing (owner 2026-08-13)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="PUL", name="Pull Isle",
+                                        status=Site.Status.ACTIVE)
+        self.admin = make_user("pull_admin", User.Role.ADMIN)
+        self.pm = make_user("pull_pm", User.Role.PM, site=self.site)
+        self.api = APIClient()
+
+    def _add(self, **extra):
+        self.api.force_authenticate(self.admin)
+        body = {"site": self.site.id, "name": "Gate", "path": "pul-gate"}
+        body.update(extra)
+        return self.api.post("/api/v1/cameras", body, format="json")
+
+    def test_a_pull_camera_is_flagged_as_such(self):
+        url = "rtsp://admin:pw@203.0.113.7:8554/Preview_02_main"
+        r = self._add(source_url=url)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["mode"], "PULL")
+
+    def test_a_camera_without_a_url_still_expects_the_site_to_publish(self):
+        self.assertEqual(self._add().data["mode"], "PUSH")
+
+    def test_the_source_url_never_reaches_a_non_admin(self):
+        """It carries the camera's password."""
+        self._add(source_url="rtsp://admin:pw@203.0.113.7:8554/x")
+        self.api.force_authenticate(self.pm)
+        row = self.api.get("/api/v1/cameras").data["cameras"][0]
+        self.assertNotIn("source_url", row)
+        self.assertNotIn("stream_key", row)
+        self.assertEqual(row["mode"], "PULL")   # mode alone is not a secret
+
+    def test_the_source_url_never_reaches_a_client(self):
+        from .models import Camera, ClientUser
+        self._add(source_url="rtsp://admin:pw@203.0.113.7:8554/x")
+        Camera.objects.filter(path="pul-gate").update(client_visible=True)
+        self.api.force_authenticate(self.admin)
+        temp = self.api.post("/api/v1/client-users", {
+            "org_name": "O", "full_name": "C", "email": "c@x.mv",
+            "site_ids": [self.site.id]}, format="json").data["temp_password"]
+        self.api.force_authenticate(None)
+        tok = self.api.post("/api/client/auth/login",
+                            {"email": "c@x.mv", "password": temp},
+                            format="json").data["token"]
+        self.api.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+        cams = self.api.get(
+            f"/api/client/sites/{self.site.id}/cameras").data["cameras"]
+        self.assertEqual(len(cams), 1)
+        for key in ("source_url", "stream_key", "path", "mode"):
+            self.assertNotIn(key, cams[0])
+        self.assertTrue(cams[0]["on_demand"])
+        self.assertTrue(ClientUser.objects.filter(email="c@x.mv").exists())
+
+    def test_a_pull_camera_still_needs_a_ticket_to_watch(self):
+        """Pull mode changes how the stream ARRIVES, never who may see it."""
+        from .models import Camera
+        self._add(source_url="rtsp://admin:pw@203.0.113.7:8554/x")
+        cam = Camera.objects.get(path="pul-gate")
+        api = APIClient()
+        self.assertEqual(
+            api.post(f"/api/relay/auth/{SECRET}",
+                     {"action": "read", "path": cam.path,
+                      "password": "nope"}, format="json").status_code, 401)
+        t = cam_svc.issue_ticket(cam, "staff", 1)
+        self.assertEqual(
+            api.post(f"/api/relay/auth/{SECRET}",
+                     {"action": "read", "path": cam.path,
+                      "password": t}, format="json").status_code, 200)

@@ -426,8 +426,12 @@ def client_site_cameras(request, pk):
     cams = Camera.objects.filter(site_id=pk, is_active=True,
                                  client_visible=True).select_related("site")
     return Response({
+        # `on_demand` (not the URL, not the mode) so the portal does not tell
+        # a client "Offline" about a camera that is merely idle waiting for a
+        # viewer. No infrastructure detail leaves here.
         "cameras": [{"id": c.id, "name": c.name,
                      "location_note": c.location_note,
+                     "on_demand": bool(c.source_url),
                      "online": bool((status.get(c.path) or {}).get("ready"))}
                     for c in cams],
         "relay_configured": bool(cam_svc.relay_public_base()),

@@ -4495,6 +4495,14 @@ class Camera(models.Model):
     # the MediaMTX path this camera publishes to; also the publish username
     path = models.SlugField(max_length=40, unique=True)
     stream_key = models.CharField(max_length=40)
+    # PULL mode: where the relay fetches this camera itself, e.g.
+    # rtsp://user:pass@site-public-ip:8554/Preview_02_main. Set when the site
+    # has a routable address and forwards the port to us — then NOTHING is
+    # needed at the site, and the relay connects only while someone watches
+    # (owner 2026-08-13: a box per site is not cost-effective). Blank = the
+    # site publishes to us instead. Holds a password: admin-only, never in a
+    # client payload.
+    source_url = models.CharField(max_length=500, blank=True)
     location_note = models.CharField(max_length=160, blank=True)
     is_active = models.BooleanField(default=True)
     client_visible = models.BooleanField(default=False)

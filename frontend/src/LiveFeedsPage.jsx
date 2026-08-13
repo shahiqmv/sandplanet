@@ -124,8 +124,12 @@ function CameraCard({ cam, canManage, isOpen, onOpen, onChanged }) {
       <div style={{ padding: "10px 12px", display: "flex", gap: 8,
                     alignItems: "center" }}>
         <strong style={{ flex: 1 }}>{cam.name}</strong>
-        <Chip tone={cam.online ? "success" : "muted"}>
-          {cam.online ? "Online" : "Offline"}
+        {/* A pull camera sits idle until someone watches it, so "not ready"
+            means nobody is looking — not that it is down. */}
+        <Chip tone={cam.online ? "success"
+                    : cam.mode === "PULL" ? "info" : "muted"}>
+          {cam.online ? "Live now"
+           : cam.mode === "PULL" ? "On demand" : "Offline"}
         </Chip>
       </div>
       {cam.location_note && (
@@ -134,14 +138,15 @@ function CameraCard({ cam, canManage, isOpen, onOpen, onChanged }) {
         </div>
       )}
 
-      {isOpen && cam.online && (
+      {isOpen && (cam.online || cam.mode === "PULL") && (
         <WhepPlayer getTicket={() =>
           api(`/cameras/${cam.id}/ticket`, { method: "POST" })} />
       )}
 
       <div style={{ padding: "8px 12px", display: "flex", gap: 8,
                     alignItems: "center", borderTop: "1px solid #eef0f4" }}>
-        <Btn variant="secondary" disabled={!cam.online} onClick={onOpen}>
+        <Btn variant="secondary"
+             disabled={!cam.online && cam.mode !== "PULL"} onClick={onOpen}>
           {isOpen ? "Close" : "Watch"}
         </Btn>
         <div style={{ flex: 1 }} />
@@ -173,7 +178,7 @@ function CameraCard({ cam, canManage, isOpen, onOpen, onChanged }) {
 
 function AddCamera({ sites, onDone }) {
   const [f, setF] = useState({ site: "", name: "", path: "",
-                               location_note: "" });
+                               location_note: "", source_url: "" });
   const [err, setErr] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
 
@@ -205,10 +210,17 @@ function AddCamera({ sites, onDone }) {
         <input style={inputStyle} placeholder="Where it points (optional)"
                value={f.location_note} onChange={set("location_note")} />
       </div>
+      <input style={{ ...inputStyle, marginTop: 10, width: "100%" }}
+             placeholder="Pull URL (optional) — rtsp://user:pass@site-ip:8554/Preview_02_main"
+             value={f.source_url} onChange={set("source_url")} />
       {err && <p style={{ color: "#b00", marginBottom: 0 }}>{err}</p>}
       <p style={{ color: "#667", fontSize: 12 }}>
-        A stream key is generated on save — the site box uses the path and key
-        to publish. The camera stays internal until you tick “Client”.
+        Two ways in. Leave the pull URL blank and something at the site
+        publishes to us using the generated path and key. Fill it in — when the
+        site has a routable address and forwards the camera’s port to us — and
+        the relay fetches the stream itself, with nothing running at the site
+        and no bandwidth used unless somebody is watching. Either way the
+        camera stays internal until you tick “Client”.
       </p>
       <Btn onClick={save}>Save</Btn>
     </div>
