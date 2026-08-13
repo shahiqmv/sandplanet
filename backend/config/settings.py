@@ -50,6 +50,14 @@ CAMERA_RELAY_SECRET = os.environ.get(
 ALLOWED_HOSTS = os.environ.get(
     "DJANGO_ALLOWED_HOSTS", "*" if DEBUG else "localhost,127.0.0.1"
 ).split(",")
+# The camera relay calls the auth hook container-to-container as
+# http://web:8000/…, so the Host header is the compose service name and Django
+# would answer DisallowedHost (400) — which MediaMTX reports only as "failed to
+# authenticate", sending you looking for a credential bug that isn't there.
+# Nothing outside the compose network can present this Host: Caddy always
+# forwards the real domain.
+if "*" not in ALLOWED_HOSTS and "web" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("web")
 
 # Vite dev server proxies /api same-origin in production builds; in dev the
 # browser origin is the Vite port, so trust it explicitly — plus the

@@ -280,3 +280,27 @@ class ClientCameraTests(TestCase):
         Camera.objects.filter(pk=self.shown.pk).update(client_visible=False)
         r = self.api.get("/api/client/sites")
         self.assertFalse(r.data[0]["has_cameras"])
+
+
+class RelayHookHostTests(TestCase):
+    """The relay reaches Django as http://web:8000/… , so the Host header is
+    the compose service name. If ALLOWED_HOSTS rejects it Django answers 400,
+    and MediaMTX reports only 'failed to authenticate' — which sends you
+    hunting a credential bug that does not exist (cost an hour, 2026-08-13).
+    """
+
+    @override_settings(CAMERA_RELAY_URL=RELAY, CAMERA_RELAY_SECRET=SECRET,
+                       ALLOWED_HOSTS=["app.sandplanet.mv",
+                                      "client.sandplanet.mv", "web"])
+    def test_hook_accepts_the_internal_service_host(self):
+        site = Site.objects.create(code="HST", name="Host Isle",
+                                   status=Site.Status.ACTIVE)
+        cam = Camera.objects.create(site=site, name="Gate", path="hst-gate",
+                                    stream_key="k3y")
+        r = APIClient().post(f"/api/relay/auth/{SECRET}",
+                             {"action": "publish", "path": cam.path,
+                              "user": cam.path, "password": "k3y"},
+                             format="json", HTTP_HOST="web")
+        self.assertNotEqual(r.status_code, 400,
+                            "ALLOWED_HOSTS is rejecting the relay's Host")
+        self.assertEqual(r.status_code, 200)
