@@ -57,17 +57,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [payRef, setPayRef] = useState("");
   const [payAmount, setPayAmount] = useState("");
   const [payVariance, setPayVariance] = useState("");
-  // Prefilled with the company MVR/USD rate. It was blank, and Finance kept
-  // typing the CONVERTED MVR AMOUNT here instead of the rate — the ledger then
-  // multiplied by it and booked billions of phantom cost (owner 2026-08-13).
-  const [payFx, setPayFx] = useState("");
+  // The MVR/USD rate is a peg held in Company settings, shown here but never
+  // entered per payment (owner 2026-08-13).
   const [companyFx, setCompanyFx] = useState(null);
   const [paySlip, setPaySlip] = useState(null);
-
-  // A rate wildly off the company peg is a mistyped amount, not a rate — the
-  // server refuses it, and this warns before they get there.
-  const fxLooksWrong = companyFx != null && Number(payFx) > 0
-    && (Number(payFx) < companyFx / 3 || Number(payFx) > companyFx * 3);
 
   const VPAGE = 25;
   // Load a page of vouchers, filtered server-side by the status tab + ref
@@ -99,7 +92,6 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   useEffect(() => {
     api("/fx/usd-rate").then((r) => {
       setCompanyFx(Number(r.rate));
-      setPayFx((v) => v || String(r.rate));
     }).catch(() => {});
   }, []);
   useEffect(() => {
@@ -209,13 +201,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
 
   const payPyr = (ref, requested, isUsd) => run(async () => {
     if (!payRef.trim()) throw new Error("A payment reference is required.");
-    if (isUsd && !(Number(payFx) > 0))
-      throw new Error("Enter the MVR/USD rate applied to this payment.");
     const fd = new FormData();
     fd.append("amount_paid", payAmount || requested);
     fd.append("payment_ref", payRef);
     fd.append("variance_reason", payVariance);
-    if (isUsd) fd.append("fx_rate", payFx);
     if (paySlip) fd.append("file", paySlip);
     await apiUpload(`/documents/${ref}/actions/pay`, fd);
     cancelPay(); reload();
@@ -250,22 +239,18 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
                placeholder="Amount paid"
                style={{ ...inputStyle, width: 130 }} />
       )}
-      {opts.usd && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-          <input type="number" value={payFx}
-                 onChange={(e) => setPayFx(e.target.value)}
-                 placeholder="MVR/USD rate"
-                 title="MVR per 1 USD applied to this payment — not the total"
-                 style={{ ...inputStyle, width: 100 }} />
-          {/* Show what the rate actually produces: a rate typed as an amount
-              makes an obviously absurd total right next to the box. */}
-          <span style={{ fontSize: 12, color: fxLooksWrong ? "#b00" : "#667",
-                         whiteSpace: "nowrap" }}>
-            {Number(payAmount) > 0 && Number(payFx) > 0
-              ? `= MVR ${(Number(payAmount) * Number(payFx))
-                  .toLocaleString("en-US", { maximumFractionDigits: 2 })}`
-              : "MVR per 1 USD"}
-          </span>
+      {opts.usd && companyFx != null && (
+        /* Not an input: the MVR/USD rate is a peg set once in Company
+           settings, not a per-payment decision (owner 2026-08-13). It was a
+           box, and the converted amount kept getting typed into it. */
+        <span style={{ fontSize: 12.5, color: "#556", whiteSpace: "nowrap" }}
+              title="The company MVR/USD rate, set in Company settings">
+          @ {companyFx} ={" "}
+          <strong>MVR {Number(payAmount) > 0
+            ? (Number(payAmount) * companyFx)
+                .toLocaleString("en-US", { minimumFractionDigits: 2,
+                                           maximumFractionDigits: 2 })
+            : "—"}</strong>
         </span>
       )}
       <input value={payRef} onChange={(e) => setPayRef(e.target.value)}

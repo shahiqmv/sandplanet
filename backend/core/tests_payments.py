@@ -349,7 +349,11 @@ class CentralPaymentTests(PyrBase):
         # Accounts-initiated: no Director step — straight to the voucher queue
         self.assertEqual(r.data["status"], "DIRECTOR_APPROVED")
 
-    def test_usd_pay_posts_mvr_at_rate(self):
+    def test_usd_pay_posts_mvr_at_the_company_rate(self):
+        """The peg governs — an fx_rate sent with the payment is ignored
+        (owner 2026-08-13). It used to be honoured, which is how the converted
+        amount ended up being used as a rate."""
+        from . import fx
         ref = self.raise_by(self.finance, currency="USD",
                             amount_requested=100).data["ref"]
         self.act(ref, "submit", self.finance)          # → DIRECTOR_APPROVED
@@ -358,7 +362,9 @@ class CentralPaymentTests(PyrBase):
                      fx_rate="15", payment_ref="TT-USD-1")
         self.assertEqual(r.status_code, 200, r.data)
         paid = CostPosting.objects.get(document__ref=ref, state="PAID")
-        self.assertEqual(float(paid.amount), 1500.0)   # 100 USD * 15
+        self.assertEqual(paid.amount,
+                         (Decimal("100") * fx.usd_rate()).quantize(
+                             Decimal("0.01")))
         self.assertEqual(paid.currency, "MVR")
 
     def test_voucher_rejects_mixed_currency(self):
@@ -488,50 +494,62 @@ class HrPyrDirectorGateTests(PyrBase):
                          "DIRECTOR_APPROVED")
 
 
-class UsdRateGuardTests(TestCase):
-    """Finance typed the CONVERTED MVR AMOUNT into the MVR/USD rate box on 18
-    of 24 USD payments — e.g. 462,600 for a $30,000 payment — and the ledger
-    multiplied by it, booking billions of rufiyaa of phantom project cost
-    (owner 2026-08-13). The field now guards magnitude, not just sign."""
+class UsdRateIsFixedTests(TestCase):
+    """The MVR/USD peg does not vary by bank or by payment, so it is not a
+    per-payment field at all (owner 2026-08-13). Any rate a client sends is
+    ignored — that box is how 18 payments got the converted amount instead."""
 
     def setUp(self):
         from .models import CostHead, Site
-        self.finance = make_user("fx_fin", User.Role.FINANCE)
-        self.site = Site.objects.create(code="FXT", name="FX Isle",
+        self.finance = make_user("fixfx_fin", User.Role.FINANCE)
+        self.site = Site.objects.create(code="FXF", name="Fixed Isle",
                                         status=Site.Status.ACTIVE)
         self.head = CostHead.objects.first()
         self.client = APIClient()
 
-    def _pay(self, rate):
-        """Post a payment on a USD request at `rate`; returns the response."""
+    def _pay(self, sent_rate=None):
         from .models import Document, PaymentRequest
         doc = Document.objects.create(
-            doc_type="PYR", ref=f"PYR-FXT-{int(rate)}", site=self.site,
-            doc_date=date.today(), status="AUTHORISED",
+            doc_type="PYR", ref=f"PYR-FXF-{sent_rate or 'none'}",
+            site=self.site, doc_date=date.today(), status="AUTHORISED",
             created_by=self.finance)
         PaymentRequest.objects.create(
             document=doc, cost_head=self.head, currency="USD",
             amount_requested=Decimal("1000"), payment_type="DIRECT",
             payment_method="TRANSFER")
+        body = {"amount_paid": "1000", "payment_ref": "TT-9"}
+        if sent_rate is not None:
+            body["fx_rate"] = str(sent_rate)
         self.client.force_authenticate(self.finance)
-        return self.client.post(
-            f"/api/v1/documents/{doc.ref}/actions/pay",
-            {"amount_paid": "1000", "fx_rate": str(rate),
-             "payment_ref": "TT-1"}, format="json")
+        self.client.post(f"/api/v1/documents/{doc.ref}/actions/pay", body,
+                         format="json")
+        doc.refresh_from_db()
+        return doc
 
-    def test_the_converted_amount_is_refused_as_a_rate(self):
-        r = self._pay(Decimal("15420"))          # 1000 x 15.42, the real error
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("not an MVR/USD rate", r.data["detail"])
+    def test_a_rate_sent_by_a_client_is_ignored(self):
+        """Even a plausible one — the company rate is the only rate."""
+        from . import fx
+        from .models import CostPosting
+        doc = self._pay(sent_rate="17.00")
+        doc.payment_request.refresh_from_db()
+        self.assertEqual(Decimal(doc.payment_request.fx_rate), fx.usd_rate())
+        posted = CostPosting.objects.filter(document=doc, state="PAID").first()
+        self.assertEqual(posted.amount,
+                         (Decimal("1000") * fx.usd_rate()).quantize(
+                             Decimal("0.01")))
 
-    def test_a_plausible_rate_is_accepted(self):
-        r = self._pay(Decimal("15.42"))
-        self.assertNotEqual(r.status_code, 400)
+    def test_the_converted_amount_can_no_longer_do_harm(self):
+        """The exact shape of the original error, now inert."""
+        from . import fx
+        from .models import CostPosting
+        doc = self._pay(sent_rate="15420")
+        posted = CostPosting.objects.filter(document=doc, state="PAID").first()
+        self.assertEqual(posted.amount,
+                         (Decimal("1000") * fx.usd_rate()).quantize(
+                             Decimal("0.01")))
 
-    def test_a_rate_slightly_off_the_peg_is_still_allowed(self):
-        """A bank's actual rate moves a little; only absurdity is blocked."""
-        r = self._pay(Decimal("17.10"))
-        self.assertNotEqual(r.status_code, 400)
-
-    def test_zero_is_still_refused(self):
-        self.assertEqual(self._pay(Decimal("0")).status_code, 400)
+    def test_no_rate_sent_is_the_normal_case(self):
+        from . import fx
+        doc = self._pay()
+        doc.payment_request.refresh_from_db()
+        self.assertEqual(Decimal(doc.payment_request.fx_rate), fx.usd_rate())

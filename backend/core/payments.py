@@ -373,25 +373,16 @@ def pyr_action(request, doc, action_name):
         # applied when paying — entered, else the company MVR-per-USD rate.
         if pr.currency == "USD":
             from . import fx
-            try:
-                rate = Decimal(str(data.get("fx_rate") or fx.usd_rate()))
-            except (TypeError, ValueError):
-                return Response({"detail": "The MVR/USD rate is invalid."},
-                                status=400)
-            # Guard the magnitude, not just the sign. Finance repeatedly
-            # typed the CONVERTED MVR AMOUNT into this box instead of the
-            # rate — 18 of 24 USD payments, e.g. 462,600 for a $30,000
-            # payment — and the ledger multiplied by it, putting billions of
-            # rufiyaa of phantom cost against the projects (owner
-            # 2026-08-13). The MVR/USD peg does not move far, so anything
-            # wildly off the company rate is a mistake, not a rate.
-            company = fx.usd_rate()
-            if rate <= 0 or rate < company / 3 or rate > company * 3:
-                return Response(
-                    {"detail": f"{rate} is not an MVR/USD rate — the company "
-                               f"rate is {company} MVR per 1 USD. Enter the "
-                               f"rate applied, not the converted amount."},
-                    status=400)
+            # The MVR/USD rate is a peg — it does not vary by bank or by
+            # payment, so nobody enters it per payment (owner 2026-08-13).
+            # It came from a box on the pay form, and Finance kept typing the
+            # CONVERTED MVR AMOUNT there instead: 18 of 24 USD payments, e.g.
+            # 462,600 for a $30,000 payment, which the ledger then multiplied
+            # by, booking billions of rufiyaa of phantom project cost. Any
+            # fx_rate sent by a client is now ignored outright; the company
+            # rate is stored on the request so the conversion stays auditable
+            # if the peg ever moves.
+            rate = fx.usd_rate()
             pr.fx_rate = rate
             ledger_amount = (amount_paid * rate).quantize(Decimal("0.01"))
         else:
