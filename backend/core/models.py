@@ -3569,6 +3569,14 @@ class PaymentRequest(models.Model):
     document = models.OneToOneField(Document, on_delete=models.CASCADE,
                                     primary_key=True,
                                     related_name="payment_request")
+    # A payment made against a subcontract. Everything paid under an
+    # agreement — an up-front advance, an on-account part payment, anything —
+    # is netted off the next valuation, so an advance needs no special
+    # machinery: it is simply money paid before work was certified (owner
+    # 2026-08-13).
+    subcontract_agreement = models.ForeignKey(
+        "SubcontractAgreement", on_delete=models.PROTECT, null=True,
+        blank=True, related_name="payments")
     payment_type = models.CharField(max_length=24, choices=Type.choices,
                                     default=Type.DIRECT)
     cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,

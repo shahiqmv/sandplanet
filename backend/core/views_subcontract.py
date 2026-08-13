@@ -330,3 +330,30 @@ def valuation_action(request, ref):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(subcontract.svc_payload(doc.subcontract_valuation))
+
+
+@api_view(["GET"])
+def site_agreements(request):
+    """Approved subcontract agreements a payment can be raised against.
+
+    A PYR links to one so that whatever is paid — advance, part payment —
+    nets off that subcontractor's next valuation (owner 2026-08-13).
+    """
+    from .models import SubcontractAgreement
+    from .subcontract import paid_to_date
+    site_id = request.GET.get("site")
+    qs = SubcontractAgreement.objects.filter(
+        document__status="APPROVED", document__is_void=False,
+    ).select_related("document", "subcontractor", "document__site")
+    ids = scoped_site_ids(request.user)
+    if ids is not None:
+        qs = qs.filter(document__site_id__in=ids)
+    if site_id:
+        qs = qs.filter(document__site_id=site_id)
+    return Response([{
+        "id": a.id, "ref": a.document.ref, "title": a.title,
+        "site_code": a.document.site.code,
+        "subcontractor": a.subcontractor.name,
+        "value": a.value, "currency": a.currency,
+        "paid_to_date": paid_to_date(a),
+    } for a in qs.order_by("subcontractor__name")])

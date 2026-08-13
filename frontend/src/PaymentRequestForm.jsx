@@ -54,6 +54,10 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
   const [busy, setBusy] = useState(false);
 
   const isSalary = f.payment_type === "SALARY_ADVANCE";
+  // Paying a subcontractor: link the payment to their agreement so whatever
+  // is paid — an up-front advance, a part payment — nets off their next
+  // valuation (owner 2026-08-13).
+  const [scas, setScas] = useState([]);
   const salaryTotal = salaryLines.reduce(
     (a, l) => a + (Number(l.amount) || 0), 0);
 
@@ -62,6 +66,8 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
     if (activeSite) {
       api(`/employees?site=${activeSite.id}`).then(setEmployees)
         .catch(() => {});
+      api(`/subcontract-agreements?site=${activeSite.id}`)
+        .then(setScas).catch(() => setScas([]));
     }
   }, [activeSite?.id]);
 
@@ -105,6 +111,7 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         no_doc_reason: f.no_doc_reason,
       };
       if (isSalary) {
+        body.subcontract_agreement_id = f.subcontract_agreement_id || null;
         body.salary_lines = salaryLines
           .filter((l) => l.employee_id && Number(l.amount) > 0)
           .map((l) => ({ employee_id: +l.employee_id, kind: l.kind,
@@ -187,6 +194,40 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         <label style={{ fontSize: 13 }}>Payee / vendor
           <input value={f.payee} onChange={(e) => set("payee", e.target.value)}
                  style={inputStyle} />
+        </label>
+        )}
+        {/* Tie the payment to a subcontract and it nets off that
+            subcontractor's next valuation, whether it is an up-front advance
+            or a part payment (owner 2026-08-13). */}
+        {!isSalary && scas.length > 0 && (
+        <label style={{ fontSize: 13 }}>Against a subcontract (optional)
+          <select value={f.subcontract_agreement_id || ""}
+                  onChange={(e) => {
+                    const id = e.target.value;
+                    set("subcontract_agreement_id", id);
+                    const a = scas.find((x) => String(x.id) === id);
+                    if (a && !f.payee) set("payee", a.subcontractor);
+                  }}
+                  style={inputStyle}>
+            <option value="">— not a subcontract payment —</option>
+            {scas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.subcontractor} · {a.ref} · {a.title}
+              </option>
+            ))}
+          </select>
+          {f.subcontract_agreement_id && (() => {
+            const a = scas.find((x) =>
+              String(x.id) === String(f.subcontract_agreement_id));
+            return a ? (
+              <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                Contract {a.currency} {Number(a.value).toLocaleString()} ·
+                already paid {a.currency}{" "}
+                {Number(a.paid_to_date).toLocaleString()}. This payment will be
+                deducted from their next valuation.
+              </span>
+            ) : null;
+          })()}
         </label>
         )}
         <label style={{ fontSize: 13 }}>Payment method

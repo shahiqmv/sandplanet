@@ -479,11 +479,13 @@ class SubcontractValuationTests(TestCase):
         val = subcontract.svc_valuation(v)
         # gross = 40×150 + 100×50 = 11,000
         self.assertEqual(val["gross_cumulative"], Decimal("11000"))
-        # advance 10% of gross = 1,100 (cap = 10% of contract 25,000 = 2,500)
-        self.assertEqual(val["advance_recovered"], Decimal("1100"))
+        # No advance recovery any more: what was actually PAID is netted off
+        # at now_due instead (owner 2026-08-13). Nothing paid here.
         self.assertEqual(val["retention_held"], Decimal("550"))   # 5% of gross
-        self.assertEqual(val["net_cumulative"], Decimal("9350"))
-        self.assertEqual(val["now_due"], Decimal("9350"))         # first SVC
+        self.assertEqual(val["net_cumulative"], Decimal("10450"))
+        self.assertEqual(val["paid_to_date"], Decimal("0"))
+        self.assertEqual(val["now_due"], Decimal("10450"))
+        self.assertEqual(val["now_due"], Decimal("10450"))        # first SVC
 
     def test_second_valuation_chains_and_floors(self):
         from . import subcontract
@@ -564,7 +566,7 @@ class SubcontractValuationTests(TestCase):
                           ("approve", director), ("authorise", signatory)):
             self.assertIsNone(subcontract.svc_action(v, step, who), step)
         p = Payable.objects.get(document=v.document)
-        self.assertEqual(p.amount, Decimal("9350.00"))
+        self.assertEqual(p.amount, Decimal("10450.00"))
         self.assertEqual(p.status, "OUTSTANDING")
         self.assertEqual(p.vendor, "Alif Gang")
         self.assertIn(p.id, [x.id for x in vouchers.awaiting_payables()])
@@ -582,7 +584,7 @@ class SubcontractValuationTests(TestCase):
         paid = CostPosting.objects.filter(document=v.document, state="PAID",
                                           source="SUBCONTRACT")
         self.assertEqual(paid.count(), 1)
-        self.assertEqual(paid.first().amount, Decimal("9350.00"))
+        self.assertEqual(paid.first().amount, Decimal("10450.00"))
 
     def test_svc_in_approval_queues(self):
         from . import subcontract
@@ -634,7 +636,7 @@ class SubcontractValuationTests(TestCase):
         html = render_to_string("pdf/svc_certificate.html",
                                 subcontract.svc_pdf_context(v.document))
         self.assertNotIn("PROVISIONAL", html)
-        self.assertIn("9,350.00", html)             # amount now payable
+        self.assertIn("10,450.00", html)            # amount now payable
         for u in (self.sa, pm, director, signatory):
             self.assertIn(u.full_name, html)        # digital signature blocks
 
@@ -694,3 +696,106 @@ class ReopenClosedSubcontractorTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         self.sub.refresh_from_db()
         self.assertEqual(self.sub.status, Subcontractor.Status.APPROVED)
+
+
+
+class SubcontractPaymentNettingTests(TestCase):
+    """Whatever is paid to a subcontractor — an up-front advance, an
+    on-account part payment, an earlier settled valuation — is netted off the
+    next certificate (owner 2026-08-13). Replaces the old advance_percent
+    recovery, which clawed back a CONTRACTED advance whether or not a rufiyaa
+    had been paid."""
+
+    def setUp(self):
+        from .models import CostHead
+        self.site = Site.objects.create(code="NET", name="Netting Isle",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("net_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.head = CostHead.objects.first()
+        self.agreement = self._approved_sca()
+
+    def _approved_sca(self):
+        from . import subcontract
+        sub = Subcontractor.objects.create(
+            site=self.site, name="Netting Crew",
+            status=Subcontractor.Status.APPROVED)
+        doc, err = subcontract.create_sca(sub, {
+            "title": "Blockwork", "advance_percent": "0",
+            "retention_percent": "0", "rows": [
+                {"item_code": "1", "description": "Blockwork", "unit": "m2",
+                 "qty": "100", "rate": "150"}]}, self.sa)
+        assert err is None, err
+        doc.status = "APPROVED"
+        doc.save(update_fields=["status"])
+        return doc.subcontract_agreement
+
+    def _pay(self, amount, status="PAID"):
+        """A PYR raised against the agreement and taken to `status`."""
+        from .models import Document, PaymentRequest
+        doc = Document.objects.create(
+            doc_type="PYR", ref=f"PYR-NET-{amount}-{status}", site=self.site,
+            doc_date=date.today(), status=status, created_by=self.sa)
+        PaymentRequest.objects.create(
+            document=doc, cost_head=self.head, currency="MVR",
+            amount_requested=Decimal(str(amount)),
+            amount_paid=Decimal(str(amount)),
+            payment_type="ADVANCE", payment_method="BANK",
+            subcontract_agreement=self.agreement)
+        return doc
+
+    def _certify(self, qty):
+        from . import subcontract
+        doc, err = subcontract.create_svc(self.agreement, self.sa)
+        assert err is None, err
+        v = doc.subcontract_valuation
+        it = v.items.first()
+        subcontract.value_svc(v, {"rows": [{"id": it.id,
+                                            "cumulative_qty": str(qty)}]},
+                              self.sa)
+        return subcontract.svc_valuation(v)
+
+    def test_an_advance_paid_first_reduces_the_certificate(self):
+        from . import subcontract
+        self._pay(3000)                       # advance before any work
+        self.assertEqual(subcontract.paid_to_date(self.agreement),
+                         Decimal("3000"))
+        val = self._certify(40)               # 40 x 150 = 6,000 certified
+        self.assertEqual(val["gross_cumulative"], Decimal("6000"))
+        self.assertEqual(val["paid_to_date"], Decimal("3000"))
+        self.assertEqual(val["now_due"], Decimal("3000"))
+
+    def test_nothing_paid_means_the_whole_certificate_is_due(self):
+        """The old rule recovered an advance nobody had paid."""
+        val = self._certify(40)
+        self.assertEqual(val["paid_to_date"], Decimal("0"))
+        self.assertEqual(val["now_due"], Decimal("6000"))
+
+    def test_only_money_actually_out_of_the_door_counts(self):
+        """A PYR sitting in draft or awaiting approval is not a payment."""
+        from . import subcontract
+        self._pay(5000, status="DRAFT")
+        self._pay(4000, status="DIRECTOR_APPROVED")
+        self.assertEqual(subcontract.paid_to_date(self.agreement),
+                         Decimal("0"))
+
+    def test_a_payment_to_another_agreement_does_not_count(self):
+        from . import subcontract
+        from .models import Document, PaymentRequest
+        other = self._approved_sca()
+        doc = Document.objects.create(
+            doc_type="PYR", ref="PYR-NET-OTHER", site=self.site,
+            doc_date=date.today(), status="PAID", created_by=self.sa)
+        PaymentRequest.objects.create(
+            document=doc, cost_head=self.head, currency="MVR",
+            amount_requested=Decimal("9000"), amount_paid=Decimal("9000"),
+            payment_type="ADVANCE", payment_method="BANK",
+            subcontract_agreement=other)
+        self.assertEqual(subcontract.paid_to_date(self.agreement),
+                         Decimal("0"))
+
+    def test_overpaying_leaves_nothing_due_rather_than_going_negative_silently(self):
+        """A 10,000 advance against 6,000 of work: the certificate shows the
+        overpayment plainly instead of hiding it."""
+        self._pay(10000)
+        val = self._certify(40)
+        self.assertEqual(val["now_due"], Decimal("-4000"))

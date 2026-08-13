@@ -127,6 +127,10 @@ def create_payment_request(doc, data, user):
         urgent_reason=data.get("urgent_reason", ""),
         has_supporting_doc=bool(data.get("has_supporting_doc")),
         no_doc_reason=data.get("no_doc_reason", ""),
+        # Tie the payment to a subcontract so it nets off that subcontractor's
+        # next valuation — an advance, a part payment, anything (owner
+        # 2026-08-13).
+        subcontract_agreement_id=data.get("subcontract_agreement_id") or None,
     )
     if salary_lines:
         _create_salary_advances(doc, parsed, data)

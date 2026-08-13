@@ -6,6 +6,7 @@ import logging
 from datetime import date, timedelta
 
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
 from .audit import audit
@@ -275,19 +276,44 @@ def _svc_gross_cumulative(v):
     return total
 
 
+def paid_to_date(agreement):
+    """Everything actually paid to this subcontractor under this agreement.
+
+    Both routes count: a PYR raised against the agreement (an up-front
+    advance, an on-account part payment) and a valuation already settled by
+    Finance. Netting real payments off the certified value is what makes an
+    advance need no machinery of its own — it is money paid before work was
+    certified (owner 2026-08-13). It also cannot drift: the previous approach
+    assumed the contractual advance had been paid in full and recovered it
+    whether or not a rufiyaa had moved.
+    """
+    from .models import Payable, PaymentRequest
+
+    pyrs = PaymentRequest.objects.filter(
+        subcontract_agreement=agreement,
+        document__status__in=("PAID", "CLOSED"),
+        document__is_void=False,
+    ).aggregate(t=Sum("amount_paid"))["t"] or Decimal("0")
+    # A settled valuation reaches the agreement through its SVC document.
+    settled = Payable.objects.filter(
+        document__subcontract_valuation__agreement=agreement,
+        status="SETTLED",
+    ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
+    return Decimal(pyrs) + Decimal(settled)
+
+
 def _svc_net_cumulative(v):
-    """Net certified-to-date = gross − advance recovery − retention − deductions
-    + adjustment. Advance recovers pro-rata (recovery % = advance %), capped at
-    the advance paid; retention is optional (0 = none)."""
+    """Net certified-to-date = gross − retention − deductions + adjustment.
+
+    No advance recovery: what has actually been paid is deducted once, at
+    `now_due`, rather than clawed back pro-rata against an assumed advance
+    (owner 2026-08-13)."""
     if v is None:
         return Decimal("0")
     gross = _svc_gross_cumulative(v)
-    adv_pct = v.advance_percent or Decimal("0")
     ret_pct = v.retention_percent or Decimal("0")
-    adv_total = adv_pct / 100 * (v.agreement.value or Decimal("0"))
-    recovery = min(adv_pct / 100 * gross, adv_total)
     retention = ret_pct / 100 * gross
-    return (gross - recovery - retention
+    return (gross - retention
             - (v.deductions or Decimal("0")) + (v.adjustment or Decimal("0")))
 
 
@@ -315,26 +341,27 @@ def svc_valuation(v):
             "over": bool(contract_qty and cum_qty > contract_qty),
         })
     prev_gross = _svc_gross_cumulative(prev) if prev else Decimal("0")
-    adv_pct = v.advance_percent or Decimal("0")
     ret_pct = v.retention_percent or Decimal("0")
-    adv_total = adv_pct / 100 * (a.value or Decimal("0"))
-    recovery = min(adv_pct / 100 * gross_cum, adv_total)
     retention = ret_pct / 100 * gross_cum
-    net_cum = (gross_cum - recovery - retention
+    net_cum = (gross_cum - retention
                - (v.deductions or Decimal("0")) + (v.adjustment or Decimal("0")))
     prev_net = _svc_net_cumulative(prev) if prev else Decimal("0")
+    # What is due is what has been certified less what has genuinely been
+    # paid — advances, on-account payments and earlier settled valuations
+    # alike. A certificate approved but not yet paid therefore rolls forward
+    # instead of being dropped and chased separately (owner 2026-08-13).
+    paid = paid_to_date(a)
     return {
         "currency": a.currency, "contract_value": a.value,
         "lines": lines,
         "gross_cumulative": gross_cum, "previous_gross": prev_gross,
         "this_gross": gross_cum - prev_gross,
-        "advance_total": adv_total, "advance_recovered": recovery,
-        "advance_pct": adv_pct,
         "retention_pct": ret_pct, "retention_held": retention,
         "deductions": v.deductions or Decimal("0"),
         "adjustment": v.adjustment or Decimal("0"),
         "net_cumulative": net_cum, "previous_net": prev_net,
-        "now_due": net_cum - prev_net,
+        "paid_to_date": paid,
+        "now_due": net_cum - paid,
         "over_warning": any(ln["over"] for ln in lines),
     }
 
@@ -657,9 +684,6 @@ def svc_pdf_context(doc):
                    "cumulative_value": q2(ln["cumulative_value"])}
                   for ln in val["lines"]],
         "gross_cumulative": q2(val["gross_cumulative"]),
-        "advance_recovered": q2(val["advance_recovered"]),
-        "show_advance": nonzero(val["advance_recovered"]),
-        "advance_pct": _pct(val["advance_pct"]),
         "retention_pct": _pct(val["retention_pct"]),
         "retention_held": q2(val["retention_held"]),
         "show_retention": nonzero(val["retention_held"]),
@@ -668,7 +692,8 @@ def svc_pdf_context(doc):
         "adjustment": q2(val["adjustment"]),
         "show_adjustment": nonzero(val["adjustment"]),
         "net_cumulative": q2(val["net_cumulative"]),
-        "previous_net": q2(val["previous_net"]), "now_due": q2(now_due),
+        "previous_net": q2(val["previous_net"]),
+        "paid_to_date": q2(val["paid_to_date"]), "now_due": q2(now_due),
         "amount_words": amount_in_words(now_due, val["currency"]),
         "over_warning": val["over_warning"],
         "sig_prepared": sig("SUBMIT"), "sig_verified": sig("VERIFY"),

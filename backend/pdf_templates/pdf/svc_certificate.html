@@ -97,10 +97,6 @@ as measured, subject to the agreement's variation provisions.</div>
 <table class="wf">
   <tr><td>Gross certified to date</td>
       <td class="amt">{{ gross_cumulative }}</td></tr>
-  {% if show_advance %}
-  <tr><td>Less advance recovered ({{ advance_pct }}%)</td>
-      <td class="amt neg">({{ advance_recovered }})</td></tr>
-  {% endif %}
   {% if show_retention %}
   <tr><td>Less retention held ({{ retention_pct }}%)</td>
       <td class="amt neg">({{ retention_held }})</td></tr>
@@ -114,8 +110,8 @@ as measured, subject to the agreement's variation provisions.</div>
   {% endif %}
   <tr class="sub"><td>Net certified to date</td>
       <td class="amt">{{ net_cumulative }}</td></tr>
-  <tr><td>Less previously certified</td>
-      <td class="amt neg">({{ previous_net }})</td></tr>
+  <tr><td>Less paid to date</td>
+      <td class="amt neg">({{ paid_to_date }})</td></tr>
   <tr class="grand"><td>Amount now payable</td>
       <td class="amt">{{ currency }} {{ now_due }}</td></tr>
 </table>

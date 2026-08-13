@@ -461,16 +461,15 @@ function ValuationView({ vref, me, onBack }) {
                this_value: thisValue,
                over: n(l.contract_qty) > 0 && cum > n(l.contract_qty) };
     });
-    const advTotal = n(v.advance_pct) / 100 * n(v.contract_value);
-    const recovery = Math.min(n(v.advance_pct) / 100 * gross, advTotal);
+    // Mirrors subcontract._svc_net_cumulative: no advance recovery — what has
+    // genuinely been paid is netted off once, at now_due (owner 2026-08-13).
     const retention = n(v.retention_pct) / 100 * gross;
-    const net = gross - recovery - retention - n(hdr.deductions)
-                + n(hdr.adjustment);
+    const net = gross - retention - n(hdr.deductions) + n(hdr.adjustment);
     live = { ...v, lines, gross_cumulative: gross,
-      advance_recovered: recovery, retention_held: retention,
+      retention_held: retention,
       deductions: n(hdr.deductions), adjustment: n(hdr.adjustment),
-      net_cumulative: net, previous_net: n(v.previous_net),
-      now_due: net - n(v.previous_net),
+      net_cumulative: net, paid_to_date: n(v.paid_to_date),
+      now_due: net - n(v.paid_to_date),
       over_warning: lines.some((l) => l.over) };
   }
 
@@ -542,13 +541,13 @@ function ValuationView({ vref, me, onBack }) {
       <table style={{ marginTop: 10, fontSize: 13, borderCollapse: "collapse" }}>
         <tbody>
           {[["Gross certified to date", live.gross_cumulative],
-            [`Less advance recovered`, neg(live.advance_recovered)],
             [`Less retention held (${Number(v.retention_pct) || 0}%)`,
              neg(live.retention_held)],
             ["Less deductions", neg(live.deductions)],
             ["Adjustment", live.adjustment],
             ["Net certified to date", live.net_cumulative],
-            ["Less previously certified", neg(live.previous_net)]].map(
+            ["Less paid to date (advances + settled valuations)",
+             neg(live.paid_to_date)]].map(
             ([k, val], i) => (
             <tr key={i}><td style={{ padding: "2px 16px 2px 0",
               color: "var(--muted)" }}>{k}</td>
