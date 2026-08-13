@@ -571,6 +571,13 @@ export default function App() {
                          ["attendance", "workforce", "dma"].includes(docView?.mode)
                          || (!docView && hoPage === "meetings")
                            ? 1160
+                         // The salary grid is 17 columns wide — at the 900px
+                         // default it hid ~400px of every row behind a
+                         // scrollbar, which is no way to check pay (owner
+                         // 2026-08-13). maxWidth only caps, so a laptop still
+                         // uses its full window.
+                         : (!docView && hoPage === "payroll")
+                           ? 1800
                          : (docView?.mode === "project"
                             || (!docView && hoPage === "procurement-schedule"))
                            ? 1500
