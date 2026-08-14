@@ -124,6 +124,7 @@ def paid_window(employee, site, year, month):
     if jd and jd > start:
         start = jd
 
+    empty = False
     if site is not None:
         # the allocation to THIS site overlapping the month; if there are
         # several (transferred away and back), take the widest cover
@@ -135,6 +136,7 @@ def paid_window(employee, site, year, month):
             # register below is exactly what rescues a worker whose
             # allocation was filed a month late.
             start, end = end + timedelta(days=1), end
+            empty = True
         else:
             a_start = min(a.from_date for a in allocs)
             a_ends = [a.to_date for a in allocs]
@@ -148,10 +150,19 @@ def paid_window(employee, site, year, month):
         marks = marks.filter(site=site)
     span = marks.aggregate(first=Min("day"), last=Max("day"))
     if span["first"]:
-        # min/max, not "or": this also rescues an EMPTY window, which is how a
-        # late-filed allocation erased a month somebody plainly worked.
-        start = min(start, span["first"])
-        end = max(end, span["last"])
+        if empty:
+            # No allocation covers the month at all, so the register is the
+            # ONLY evidence and it bounds the window on both sides. Stretching
+            # to the month end instead would invent the rest of the month:
+            # Rakib Hosen's duplicate record drew 7 days off the 2 marks a
+            # clerk left on it, five of them unworked Fridays (owner
+            # 2026-08-15).
+            start, end = span["first"], span["last"]
+        else:
+            # min/max, not "or": a late-filed allocation must not cut off days
+            # the site plainly marked.
+            start = min(start, span["first"])
+            end = max(end, span["last"])
 
     # ...but never back past the join date. Allocation dates are bulk-entered
     # and unreliable, so the register outranks them; the join date is HR's own

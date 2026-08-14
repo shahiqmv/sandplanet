@@ -415,3 +415,97 @@ class DuplicatePassportTests(HrBase):
         r2 = self.client.patch(f"/api/v1/employees/{eid}",
                                {"full_name": "Renamed"}, format="json")
         self.assertEqual(r2.status_code, 200, r2.data)
+
+
+class MergeEmployeesTests(TestCase):
+    """Merging a duplicate record and re-siting the days (owner 2026-08-15).
+
+    Rakib Hosen moved from BVR to Malé and HR opened a second record instead
+    of transferring him, so his July attendance sat on one record, his August
+    days on another, and he reached a payroll run twice.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from .models import (Attendance, Employee, EmployeeSiteAllocation,
+                             ManpowerCategory, Site, User)
+        from . import merge_employees
+        self.m = merge_employees
+        self.date = date
+        self.Att = Attendance
+        self.Alloc = EmployeeSiteAllocation
+        self.admin = make_user("mg_admin", User.Role.ADMIN)
+        self.bvr = Site.objects.create(code="MBV", name="Bvr",
+                                       status=Site.Status.ACTIVE,
+                                       working_days=[1, 2, 3, 4, 6, 7])
+        self.mle = Site.objects.create(code="MML", name="Male",
+                                       status=Site.Status.ACTIVE,
+                                       working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.keep = Employee.objects.create(
+            emp_no="MG-0001", full_name="Rakib", job_category=cat,
+            basic_pay=Decimal("7000"), currency="MVR", is_active=False,
+            passport_no="EK1", join_date=date(2026, 1, 10))
+        self.dup = Employee.objects.create(
+            emp_no="MG-0002", full_name="RAKIB", job_category=cat,
+            currency="MVR", is_active=True, passport_no="EK1")
+        self.Alloc.objects.create(employee=self.keep, site=self.bvr,
+                                  from_date=date(2026, 7, 1),
+                                  to_date=date(2026, 7, 24))
+        self.Alloc.objects.create(employee=self.dup, site=self.bvr,
+                                  from_date=date(2026, 8, 12))
+        for d in (1, 2, 3):
+            self.Att.objects.create(employee=self.keep, site=self.bvr,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        for d in (12, 13, 14):
+            self.Att.objects.create(employee=self.dup, site=self.bvr,
+                                    day=date(2026, 8, d), remark="PRESENT")
+
+    def test_plan_says_what_would_move_without_writing(self):
+        p = self.m.plan(self.keep, self.dup)
+        self.assertEqual(p["moves"]["Attendance"], 3)
+        self.assertEqual(p["same_day_attendance"], [])
+        self.assertEqual(p["blocked"], [])
+        self.assertEqual(self.Att.objects.filter(employee=self.dup).count(), 3)
+
+    def test_merge_brings_the_history_together(self):
+        res, err = self.m.merge(self.keep, self.dup, self.admin)
+        self.assertIsNone(err)
+        self.keep.refresh_from_db(); self.dup.refresh_from_db()
+        self.assertEqual(self.Att.objects.filter(employee=self.keep).count(), 6)
+        self.assertEqual(self.Att.objects.filter(employee=self.dup).count(), 0)
+        self.assertTrue(self.keep.is_active)
+        self.assertFalse(self.dup.is_active)
+        self.assertEqual(self.dup.passport_no, "")
+        self.assertIn("merged into MG-0001", self.dup.full_name)
+
+    def test_a_day_on_both_records_keeps_the_keepers_row(self):
+        self.Att.objects.create(employee=self.dup, site=self.bvr,
+                                day=self.date(2026, 7, 1), remark="ABSENT")
+        p = self.m.plan(self.keep, self.dup)
+        self.assertEqual(p["same_day_attendance"], ["2026-07-01"])
+        res, err = self.m.merge(self.keep, self.dup, self.admin)
+        self.assertIsNone(err)
+        row = self.Att.objects.get(employee=self.keep, day=self.date(2026, 7, 1))
+        self.assertEqual(row.remark, "PRESENT")      # the keeper's stands
+        self.assertEqual(res["dropped_attendance"], 1)
+
+    def test_transfer_moves_the_days_to_the_new_site(self):
+        self.m.merge(self.keep, self.dup, self.admin)
+        res = self.m.transfer_from(self.keep, self.mle,
+                                   self.date(2026, 8, 12), self.admin)
+        self.assertEqual(res["rows_moved"], 3)
+        self.assertEqual(self.Att.objects.filter(
+            employee=self.keep, site=self.mle).count(), 3)
+        self.assertEqual(self.Att.objects.filter(
+            employee=self.keep, site=self.bvr).count(), 3)   # July untouched
+        self.assertTrue(self.Alloc.objects.filter(
+            employee=self.keep, site=self.mle,
+            from_date=self.date(2026, 8, 12)).exists())
+
+    def test_merging_a_record_into_itself_is_refused(self):
+        _, err = self.m.merge(self.keep, self.keep, self.admin)
+        self.assertIn("same record", err.lower())

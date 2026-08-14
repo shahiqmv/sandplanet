@@ -1796,3 +1796,59 @@ class RefreshDropsEmptyStaleLinesTests(TestCase):
         self.assertEqual(res["removed"], [])
         self.assertEqual(res["no_longer_eligible"], ["RMV-0001"])
         self.assertEqual(self.run.lines.count(), 1)
+
+
+class NoAllocationWindowTests(TestCase):
+    """With no allocation covering the month, the register bounds the window
+    at BOTH ends (owner 2026-08-15).
+
+    Rakib Hosen's duplicate record was allocated in August and carried two
+    stray July marks. Stretching the window to the month end handed him five
+    unworked Fridays on top, so two marked days paid seven.
+    """
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.Att = Attendance
+        self.hr = make_user("nw_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="NWD", name="No Window Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="NWD-0001", full_name="Dup", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 8, 12))
+
+    def _days(self):
+        d, _, _, _ = payroll._attendance_prefill(self.emp, self.site,
+                                                 2026, 7, 31)
+        return float(d)
+
+    def test_two_stray_marks_pay_two_days_not_seven(self):
+        for d in (1, 2):
+            self.Att.objects.create(employee=self.emp, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        self.assertEqual(payroll.paid_window(self.emp, self.site, 2026, 7),
+                         (date(2026, 7, 1), date(2026, 7, 2)))
+        self.assertEqual(self._days(), 2.0)
+
+    def test_a_real_month_of_work_is_still_paid(self):
+        """The rescue still works — the register is believed in full, and the
+        rest days inside it are paid.
+
+        30, not 31: with no allocation to go on, the window ends at the last
+        day the register mentions (the 30th), so the Friday on the 31st has no
+        evidence behind it. A worker whose allocation merely STARTS late is a
+        different case and keeps the whole month — that is BVR's, and it is
+        pinned in RegisterOutranksPaperworkTests.
+        """
+        for d in range(1, 32):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            self.Att.objects.create(employee=self.emp, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        self.assertEqual(self._days(), 30.0)

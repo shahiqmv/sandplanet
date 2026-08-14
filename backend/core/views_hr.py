@@ -1190,3 +1190,83 @@ def site_manpower(request, site_id):
     data["date"] = today
     data["site"] = site.code
     return Response(data)
+
+
+@api_view(["GET", "POST"])
+def employee_merge(request):
+    """Fold a duplicate employee record into the one that keeps the history.
+
+    GET  ?keeper=EMP-0020&duplicate=EMP-0603      -> the plan, writes nothing
+    POST {keeper, duplicate, to_site, from_date}  -> merge, then optionally
+                                                     re-site the days
+
+    Admin only, and a plan first: it moves work history and there is no undo
+    (owner 2026-08-15).
+    """
+    from . import merge_employees
+
+    if request.user.role != User.Role.ADMIN:
+        return Response({"detail": "Admin only."}, status=403)
+    src = request.GET if request.method == "GET" else request.data
+    try:
+        keeper = Employee.objects.get(emp_no=src.get("keeper"))
+        dup = Employee.objects.get(emp_no=src.get("duplicate"))
+    except Employee.DoesNotExist:
+        return Response({"detail": "Give the emp_no of both records."},
+                        status=400)
+    if request.method == "GET":
+        return Response(merge_employees.plan(keeper, dup))
+
+    res, err = merge_employees.merge(keeper, dup, request.user)
+    if err:
+        return Response({"detail": err}, status=400)
+    site_code, from_date = src.get("to_site"), src.get("from_date")
+    if site_code and from_date:
+        site = Site.objects.filter(code=site_code).first()
+        if not site:
+            return Response({"detail": f"No site {site_code}."}, status=400)
+        try:
+            moved_on = date.fromisoformat(from_date)
+        except (TypeError, ValueError):
+            return Response({"detail": "from_date must be YYYY-MM-DD."},
+                            status=400)
+        res["resited"] = merge_employees.transfer_from(
+            keeper, site, moved_on, request.user)
+    return Response(res)
+
+
+@api_view(["GET"])
+def duplicate_passports(request):
+    """Every passport number on more than one employee record.
+
+    38 of them when this was written, about half the same man twice and the
+    rest a mistyped number shared with somebody else entirely — the two need
+    opposite fixes, so the list says which records hold the work history
+    (owner 2026-08-15).
+    """
+    if request.user.role not in (User.Role.ADMIN, User.Role.HO_HR):
+        return Response({"detail": "HR or Admin only."}, status=403)
+    groups = {}
+    for e in Employee.objects.exclude(passport_no="").exclude(
+            passport_no=None).order_by("emp_no"):
+        groups.setdefault(e.passport_no.strip().upper(), []).append(e)
+    out = []
+    for pno, emps in groups.items():
+        if len(emps) < 2:
+            continue
+        out.append({
+            "passport_no": pno,
+            "records": [{
+                "emp_no": e.emp_no, "full_name": e.full_name,
+                "is_active": e.is_active,
+                "join_date": e.join_date.isoformat() if e.join_date else None,
+                "basic_pay": e.basic_pay,
+                "attendance_rows": Attendance.objects.filter(
+                    employee=e).count(),
+                "site": (e.current_site_id() and Site.objects.filter(
+                    pk=e.current_site_id()).values_list("code", flat=True)
+                    .first()) or None,
+            } for e in emps],
+        })
+    out.sort(key=lambda g: -sum(r["attendance_rows"] for r in g["records"]))
+    return Response({"count": len(out), "groups": out})
