@@ -309,20 +309,34 @@ def _attendance_prefill(employee, site, year, month, working_days):
     return days, ot, fridays, rest_paid
 
 
-def has_marks(employee, site, year, month):
-    """Does the register mention this worker at this site in this month?
+def marked_but_unpayable(site, currency, year, month):
+    """Workers the register names for this month who have no payable day.
 
-    Used to keep somebody ON a run even when they have no payable days. A
-    worker the register says was here, paid nothing because his join date
-    contradicts it, must stay visible and flagged — dropping him is how
-    Sahajalal's 28 days of July went unnoticed in the first place
-    (owner 2026-08-15).
+    A man who joined in August has no business on a July run even at zero
+    (owner 2026-08-15) — but he is only ever there because something is wrong,
+    so he is reported instead of dropped in silence. That is the whole lesson
+    of this month: Sahajalal's 28 days of July went unnoticed precisely
+    because a worker could disappear off a run without a word.
+
+    Returns [{"emp_no", "full_name", "marked", "join_date"}].
     """
-    qs = Attendance.objects.filter(employee=employee, day__year=year,
-                                   day__month=month)
-    if site is not None:
-        qs = qs.filter(site=site)
-    return qs.exists()
+    out = []
+    for e in eligible_workers(site, currency, year, month).select_related(
+            "job_category"):
+        w_start, w_end = paid_window(e, site, year, month)
+        if w_start <= w_end:
+            continue
+        qs = Attendance.objects.filter(employee=e, day__year=year,
+                                       day__month=month)
+        if site is not None:
+            qs = qs.filter(site=site)
+        n = qs.count()
+        if n:
+            out.append({"emp_no": e.emp_no, "full_name": e.full_name,
+                        "marked": n,
+                        "join_date": e.join_date.isoformat()
+                        if e.join_date else None})
+    return out
 
 
 def register_summary(run):
@@ -391,9 +405,10 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         workers = eligible_workers(site, currency, year, month)
         for emp in workers.select_related("job_category").order_by("emp_no"):
             w_start, w_end = paid_window(emp, site, year, month)
-            if w_start > w_end and not has_marks(emp, site, year, month):
-                continue        # no days in this month at this site, and
-                                # nothing in the register to say otherwise
+            if w_start > w_end:
+                continue        # no payable day in this month at this site.
+                                # If the register names him anyway the run
+                                # says so — see marked_but_unpayable.
             days, ot, fridays, _rest = _attendance_prefill(
                 emp, site, year, month, working_days)
             split = is_split_pay(emp)
@@ -629,7 +644,7 @@ def refresh_run(run, actor):
         # An overlapping allocation is not enough: someone who joined after
         # the month ends has no payable days in it.
         w_start, w_end = paid_window(e, site, run.year, run.month)
-        if w_start <= w_end or has_marks(e, site, run.year, run.month):
+        if w_start <= w_end:
             eligible[e.id] = e
 
     changed, added, stale = [], [], []

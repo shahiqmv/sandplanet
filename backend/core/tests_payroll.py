@@ -1314,7 +1314,7 @@ class RegisterOutranksPaperworkTests(TestCase):
         self.assertEqual((start, end), (date(2026, 7, 1), date(2026, 7, 31)))
         self.assertEqual(self._days(e), 31.0)
 
-    def test_a_join_date_after_the_month_pays_nothing_but_stays_visible(self):
+    def test_a_join_date_after_the_month_pays_nothing_but_is_reported(self):
         """Sahajalal: join date 1 August, 28 days of July attendance.
 
         The join date is HR's record and wins on the money (owner 2026-08-15),
@@ -1328,11 +1328,11 @@ class RegisterOutranksPaperworkTests(TestCase):
         self.assertEqual(self._days(e), 0.0)
         run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
                                    month=7, working_days=31, actor=self.hr)
-        line = run.lines.filter(employee=e).first()
-        self.assertIsNotNone(line, "a worker the register names must stay on "
-                                   "the run, flagged, not vanish")
-        self.assertEqual(payroll.register_summary(run)[e.id]["joined_after"],
-                         "2026-08-01")
+        self.assertFalse(run.lines.filter(employee=e).exists())
+        flagged = payroll.marked_but_unpayable(self.site, "MVR", 2026, 7)
+        self.assertIn("REG-0002", [w["emp_no"] for w in flagged],
+                      "a worker the register names must be reported, not "
+                      "silently dropped")
 
     def test_an_empty_register_pays_nothing_rather_than_a_full_month(self):
         """EMP-0404 and EMP-0405 drew MVR 16,500 between them on no rows."""
@@ -1525,12 +1525,17 @@ class JoinDateVersusRegisterTests(TestCase):
                                     month=7, working_days=31, actor=self.hr)
 
     def test_a_join_date_after_the_marks_is_reported(self):
-        e = self._worker("JDR-0001", date(2026, 8, 5))
-        for d in (1, 2):
+        """MD RONY MIA's shape: marked from the 19th, joined on the 25th. He
+        is payable from the 25th so he stays on the run, and the six days
+        marked before he joined are flagged rather than paid."""
+        e = self._worker("JDR-0001", date(2026, 7, 25))
+        for d in range(19, 31):
             self.Att.objects.create(employee=e, site=self.site,
                                     day=date(2026, 7, d), remark="PRESENT")
-        summary = payroll.register_summary(self._run())
-        self.assertEqual(summary[e.id]["joined_after"], "2026-08-05")
+        run = self._run()
+        self.assertTrue(run.lines.filter(employee=e).exists())
+        summary = payroll.register_summary(run)
+        self.assertEqual(summary[e.id]["joined_after"], "2026-07-25")
 
     def test_an_agreeing_join_date_is_not_flagged(self):
         e = self._worker("JDR-0002", date(2026, 7, 1))
@@ -1608,14 +1613,26 @@ class JoinDateIsAFloorTests(TestCase):
         self._mark(e, [d for d in range(1, 32) if d not in (3, 10, 17, 24, 31)])
         self.assertEqual(self._days(e), 31.0)
 
-    def test_the_contradiction_is_reported_not_hidden(self):
+    def test_an_august_joiner_is_off_the_run_but_still_reported(self):
+        """He does not belong on a July payroll at all, not even at zero
+        (owner 2026-08-15) — but the stray mark is said out loud."""
         e = self._worker("FLR-0004", date(2026, 8, 5))
         self._mark(e, [1, 2])
         run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
                                    month=7, working_days=31, actor=self.hr)
-        line = run.lines.filter(employee=e).first()
-        if line is not None:                  # no payable days, may be skipped
-            self.assertEqual(float(line.days_worked), 0.0)
+        self.assertFalse(run.lines.filter(employee=e).exists())
+        flagged = payroll.marked_but_unpayable(self.site, "MVR", 2026, 7)
+        self.assertEqual([w["emp_no"] for w in flagged], ["FLR-0004"])
+        self.assertEqual(flagged[0]["marked"], 2)
+        self.assertEqual(flagged[0]["join_date"], "2026-08-05")
+
+    def test_a_payable_worker_is_not_reported(self):
+        e = self._worker("FLR-0005", date(2026, 7, 1))
+        self._mark(e, [1, 2, 4, 5])
+        payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                             month=7, working_days=31, actor=self.hr)
+        self.assertEqual(payroll.marked_but_unpayable(self.site, "MVR",
+                                                      2026, 7), [])
 
 
 class ExcludeALineTests(TestCase):

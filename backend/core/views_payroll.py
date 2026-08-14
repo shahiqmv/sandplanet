@@ -73,6 +73,11 @@ def _run_info(run, lines=True):
         "approved_by": run.approved_by.full_name if run.approved_by_id else None,
         "approved_at": run.approved_at,
         "return_reason": run.return_reason,
+        # Named in the register, but with no payable day — an August joiner
+        # with a stray July mark against him. Off the run, not out of sight
+        # (owner 2026-08-15).
+        "marked_but_unpayable": payroll.marked_but_unpayable(
+            run.site, run.currency, run.year, run.month),
     }
     if lines:
         register = payroll.register_summary(run)

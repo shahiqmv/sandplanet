@@ -534,6 +534,23 @@ function RunDetail({ runId, onBack, me, backLabel }) {
       {run.status === "RETURNED" && run.return_reason && (
         <p style={{ fontSize: 12.5, color: "#c0392b", margin: "6px 0 0" }}>
           Returned to HR: {run.return_reason}</p>)}
+      {/* Named in the register but with no payable day. They are correctly
+          off the run — an August joiner does not belong on a July payroll —
+          but something put a mark against them, so it is said out loud rather
+          than left for the next person to find (owner 2026-08-15). */}
+      {run.marked_but_unpayable?.length > 0 && (
+        <div style={{ marginTop: 8, padding: "7px 10px", fontSize: 12.5,
+                      background: "#fff6e5", border: "1px solid #f0d9a8",
+                      borderRadius: 6, color: "#7a5b12" }}>
+          <strong>Marked in this month but not payable — not on this run:</strong>
+          {" "}
+          {run.marked_but_unpayable.map((w) =>
+            `${w.emp_no} ${w.full_name} (${w.marked} day`
+            + `${w.marked === 1 ? "" : "s"} marked`
+            + `${w.join_date ? `, joined ${w.join_date}` : ""})`).join("; ")}
+          . Either the join date or the attendance is wrong — fix whichever it
+          is and refresh.
+        </div>)}
 
       <div style={{ overflowX: "auto", marginTop: 12 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 12,
