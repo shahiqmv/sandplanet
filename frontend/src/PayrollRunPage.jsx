@@ -335,6 +335,30 @@ function OtBreakdown({ year, month, siteId, label, onClose }) {
   );
 }
 
+// What the register holds, next to what we are paying. A month has four or
+// five unmarked rest days, so a small gap is normal and stays quiet; an empty
+// register or a wide gap is the shape of both July faults — two BVR men paid
+// 31 days with no attendance at all, and a whole site paid eleven days short
+// of what it had marked (owner 2026-08-14).
+function Marked({ line }) {
+  const marked = line.days_marked ?? 0;
+  const gap = Number(line.days_worked) - marked;
+  const bad = marked === 0;
+  const warn = !bad && Math.abs(gap) > 6;
+  const colour = bad ? "#c0392b" : warn ? "#b35900" : "#5a6b78";
+  return (
+    <td style={{ ...td, textAlign: "right", color: colour,
+                 fontWeight: bad || warn ? 700 : 400 }}
+        title={bad
+          ? "Nothing marked for this worker all month — paid days cannot be "
+            + "checked against anything. Fix the register, then refresh."
+          : `${line.days_present ?? 0} present, ${line.days_absent ?? 0} `
+            + `absent, ${marked} days marked in total`}>
+      {bad ? "none" : marked}
+    </td>
+  );
+}
+
 const EDITABLE = [
   ["days_worked", "Days", 55], ["fridays_worked", "Fri", 45],
   ["ot_hours", "OT hrs", 60], ["allowance", "Allow.", 80],
@@ -497,6 +521,10 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             <th style={{ ...th, textAlign: "right" }}>Basic</th>
             {EDITABLE.slice(0, 3).map(([k, l]) =>
               <th key={k} style={{ ...th, textAlign: "right" }}>{l}</th>)}
+            <th style={{ ...th, textAlign: "right" }}
+                title="Days the site actually marked this worker in the
+                       attendance register — the evidence behind Days.">
+              Marked</th>
             <th style={{ ...th, textAlign: "right" }}>Earned</th>
             <th style={{ ...th, textAlign: "right" }}>OT pay</th>
             <th style={{ ...th, textAlign: "right" }}>Allow.</th>
@@ -523,6 +551,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
               <td style={{ ...td, textAlign: "right" }}>{sum("days_worked")}</td>
               <td style={{ ...td, textAlign: "right" }}>{sum("fridays_worked")}</td>
               <td style={{ ...td, textAlign: "right" }}>{sum("ot_hours")}</td>
+              <td style={{ ...td, textAlign: "right" }}>{sum("days_marked")}</td>
               <td style={{ ...td, textAlign: "right" }}>{money(sum("earned_basic"))}</td>
               <td style={{ ...td, textAlign: "right" }}>{money(sum("ot_pay"))}</td>
               <td style={{ ...td, textAlign: "right" }}>{money(sum("allowance"))}</td>
@@ -564,6 +593,7 @@ function Row({ line, locked, showSite, onSave, onRestDay }) {
       {ro(line.basic_pay)}
       {cell("days_worked", 45)}{cell("fridays_worked", 40)}
       {cell("ot_hours", 50)}
+      <Marked line={line} />
       {ro(line.earned_basic)}{ro(line.ot_pay)}
       {cell("allowance", 70)}
       {ro(line.gross)}

@@ -1,5 +1,5 @@
 """Payroll build — overtime rate master + per-worker resolution + advances."""
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.test import TestCase
@@ -166,8 +166,25 @@ class PayrollRunTests(TestCase):
             basic_pay=Decimal("6200"), currency="MVR")
         EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
                                               from_date=date(2026, 1, 1))
+        self._mark_month(2026, 5)
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
+
+    def _mark_month(self, year, month, emp=None, day_from=1, day_to=31):
+        """A full PRESENT register for the month. These cases used to leave
+        attendance empty to mean "no absences"; an empty register now pays
+        nothing (owner 2026-08-14), so the days have to actually be there."""
+        from datetime import date
+
+        from .models import Attendance
+        for d in range(day_from, day_to + 1):
+            day = date(year, month, d)
+            if day.isoweekday() not in self.site.working_days:
+                continue        # a rest day is blank in the register, and
+                                # marking it would pay 7th-day Friday money
+            Attendance.objects.create(employee=emp or self.emp, site=self.site,
+                                      day=day, remark="PRESENT",
+                                      normal_hours=8)
 
     def test_generate_prefills_line(self):
         r = self.client.post("/api/v1/payroll/runs", {
@@ -202,6 +219,11 @@ class PayrollRunTests(TestCase):
         # not the full month; the pre-join days are neither worked nor absent.
         self.emp.join_date = date(2026, 5, 20)
         self.emp.save(update_fields=["join_date"])
+        # He is marked from the day he joined — the register and the join date
+        # agree here, unlike Sahajalal at BVR.
+        from .models import Attendance
+        Attendance.objects.filter(employee=self.emp,
+                                  day__lt=date(2026, 5, 20)).delete()
         r = self.client.post("/api/v1/payroll/runs", {
             "site_id": self.site.id, "currency": "MVR",
             "year": 2026, "month": 5, "working_days": 31}, format="json")
@@ -979,13 +1001,40 @@ class PaidWindowTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
 
-    def _worker(self, emp_no, from_date, to_date=None, join_date=None):
-        emp = Employee.objects.create(
-            emp_no=emp_no, full_name=emp_no, job_category=self.cat,
-            basic_pay=Decimal("3100"), currency="MVR", join_date=join_date)
-        self.alloc.objects.create(employee=emp, site=self.site,
+    def _worker(self, emp_no, from_date, to_date=None, join_date=None,
+                site=None, mark=True):
+        emp = Employee.objects.filter(emp_no=emp_no).first() or (
+            Employee.objects.create(
+                emp_no=emp_no, full_name=emp_no, job_category=self.cat,
+                basic_pay=Decimal("3100"), currency="MVR",
+                join_date=join_date))
+        self.alloc.objects.create(employee=emp, site=site or self.site,
                                   from_date=from_date, to_date=to_date)
+        if mark:
+            self._mark(emp, from_date, to_date, join_date, site or self.site)
         return emp
+
+    def _mark(self, emp, from_date, to_date, join_date, site):
+        """Give the worker the register their scenario implies.
+
+        These cases are about the *window*, and used to lean on "no
+        attendance at all" to mean "no absences". That is no longer the same
+        thing: an empty register now pays nothing, because two BVR men were
+        each paid a full month on one (owner 2026-08-14). Marking the days the
+        scenario says they worked keeps each test testing what it means to.
+        """
+        from .models import Attendance
+
+        start = max(from_date, date(2026, 7, 1))
+        if join_date:
+            start = max(start, join_date)
+        end = min(to_date or date(2026, 7, 31), date(2026, 7, 31))
+        day = start
+        while day <= end:
+            if day.isoweekday() in site.working_days:
+                Attendance.objects.create(employee=emp, site=site, day=day,
+                                          remark="PRESENT", normal_hours=8)
+            day += timedelta(days=1)
 
     def _run(self):
         return payroll.generate_run(site=self.site, currency="MVR", year=2026,
@@ -1027,10 +1076,8 @@ class PaidWindowTests(TestCase):
 
     def test_a_transfer_is_split_between_the_two_sites(self):
         """Neither site pays a whole month for the same person."""
-        emp = self._worker("W-XFER", date(2026, 7, 1),
-                           to_date=date(2026, 7, 11))
-        self.alloc.objects.create(employee=emp, site=self.other,
-                                  from_date=date(2026, 7, 12))
+        self._worker("W-XFER", date(2026, 7, 1), to_date=date(2026, 7, 11))
+        self._worker("W-XFER", date(2026, 7, 12), site=self.other)
         here = self._days(self._run(), "W-XFER")
         there_run = payroll.generate_run(site=self.other, currency="MVR",
                                          year=2026, month=7, working_days=31,
@@ -1197,3 +1244,129 @@ class RestDayForfeitTests(TestCase):
         line = run.lines.get(employee=self.emp)
         _, err = payroll.set_rest_day_revoked(line, True, self.hr)
         self.assertIsNotNone(err)
+
+
+class RegisterOutranksPaperworkTests(TestCase):
+    """The paid window may not throw away a day the site actually marked.
+
+    BVR's July run came back wrong in both directions (owner 2026-08-14):
+    twenty-nine workers carried an allocation `from_date` of 2026-07-12 — the
+    day the site was loaded into the app, not the day anyone started — so
+    eleven worked days vanished off every one of them; and two men with no
+    attendance row at all were each paid a full 31 days.
+    """
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.Att = Attendance
+        self.hr = make_user("reg_hr", User.Role.HO_HR)
+        # Fri (5) is the rest day.
+        self.site = Site.objects.create(code="REG", name="Register Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        self.other = Site.objects.create(code="RG2", name="Register Two",
+                                         status=Site.Status.ACTIVE,
+                                         working_days=[1, 2, 3, 4, 6, 7])
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.Alloc = EmployeeSiteAllocation
+
+    def _emp(self, no, **kw):
+        return Employee.objects.create(
+            emp_no=no, full_name=f"Worker {no}", job_category=self.cat,
+            basic_pay=Decimal("3100"), currency="MVR", **kw)
+
+    def _mark(self, emp, days, remark="PRESENT", site=None):
+        for d in days:
+            self.Att.objects.create(employee=emp, site=site or self.site,
+                                    day=date(2026, 7, d), remark=remark,
+                                    normal_hours=8)
+
+    def _days(self, emp, site=None):
+        d, _, _, _ = payroll._attendance_prefill(
+            emp, self.site if site is None else site, 2026, 7, 31)
+        return float(d)
+
+    def test_a_late_allocation_does_not_erase_days_already_marked(self):
+        """The BVR fault: allocated on the 12th, marked from the 1st."""
+        e = self._emp("REG-0001")
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 12))
+        self._mark(e, [d for d in range(1, 32) if d not in (3, 10, 17, 24, 31)])
+        start, end = payroll.paid_window(e, self.site, 2026, 7)
+        self.assertEqual((start, end), (date(2026, 7, 1), date(2026, 7, 31)))
+        self.assertEqual(self._days(e), 31.0)
+
+    def test_a_join_date_after_the_month_cannot_unpay_a_worked_month(self):
+        """Sahajalal: join date 1 August, 28 days of July attendance."""
+        e = self._emp("REG-0002", join_date=date(2026, 8, 1))
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 12))
+        self._mark(e, [d for d in range(1, 29) if d not in (3, 10, 17, 24)])
+        self.assertGreaterEqual(self._days(e), 28.0)
+
+    def test_an_empty_register_pays_nothing_rather_than_a_full_month(self):
+        """EMP-0404 and EMP-0405 drew MVR 16,500 between them on no rows."""
+        e = self._emp("REG-0003")
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1))
+        days, ot, fridays, rest = payroll._attendance_prefill(
+            e, self.site, 2026, 7, 31)
+        self.assertEqual((float(days), float(ot), fridays, rest), (0.0, 0.0, 0, 0))
+
+    def test_a_genuine_transfer_still_splits_between_the_two_sites(self):
+        """The case the clamp was built for must survive the widening: the
+        register itself stops at the old site and starts at the new one."""
+        e = self._emp("REG-0004")
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1),
+                                  to_date=date(2026, 7, 11))
+        self.Alloc.objects.create(employee=e, site=self.other,
+                                  from_date=date(2026, 7, 12))
+        self._mark(e, [d for d in range(1, 12) if d != 3])
+        self._mark(e, [d for d in range(12, 32) if d not in (17, 24, 31)],
+                   site=self.other)
+        self.assertEqual(payroll.paid_window(e, self.site, 2026, 7),
+                         (date(2026, 7, 1), date(2026, 7, 11)))
+        self.assertEqual(payroll.paid_window(e, self.other, 2026, 7),
+                         (date(2026, 7, 12), date(2026, 7, 31)))
+        self.assertEqual(self._days(e) + self._days(e, self.other), 31.0)
+
+    def test_a_stray_mark_at_the_old_site_does_not_double_pay_the_month(self):
+        """Widening follows the register, so a wrongly-marked day after a
+        transfer is visible as days on both runs — but it is one day, not a
+        second month."""
+        e = self._emp("REG-0005")
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1),
+                                  to_date=date(2026, 7, 11))
+        self._mark(e, list(range(1, 12)) + [20])
+        self.assertEqual(payroll.paid_window(e, self.site, 2026, 7),
+                         (date(2026, 7, 1), date(2026, 7, 20)))
+        self.assertLess(self._days(e), 31.0)
+
+    def test_the_run_reports_what_the_register_holds(self):
+        from .models import PayrollRun
+        e = self._emp("REG-0006")
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1))
+        self._mark(e, [1, 2, 4, 5])
+        self._mark(e, [6, 7], remark="ABSENT")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        summary = payroll.register_summary(run)
+        self.assertEqual(summary[e.id],
+                         {"marked": 6, "present": 4, "absent": 2})
+
+    def test_generate_run_keeps_a_worker_the_paperwork_would_have_dropped(self):
+        """paid_window decides who is skipped at generate time too."""
+        from .models import PayrollRun
+        e = self._emp("REG-0007", join_date=date(2026, 8, 1))
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 8, 1))
+        self._mark(e, [d for d in range(1, 29) if d not in (3, 10, 17, 24)])
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        self.assertEqual(run.lines.count(), 1)
+        self.assertGreaterEqual(float(run.lines.first().days_worked), 28.0)

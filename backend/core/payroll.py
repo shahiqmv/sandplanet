@@ -7,6 +7,8 @@ import calendar
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 
+from django.db.models import Max, Min
+
 from .audit import audit
 from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 
@@ -95,6 +97,16 @@ def paid_window(employee, site, year, month):
     transfers on the 12th should be paid by their old site to the 11th and the
     new one from the 12th, and neither should pay a whole month (owner
     2026-08-13, after sites found full salaries paid to mid-month joiners).
+
+    But the paperwork does not outrank the register. Those two dates are
+    administrative: BVR's whole workforce carries `from_date` 2026-07-12, the
+    day the site was loaded into the app, and Sahajalal carries a join date of
+    1 August with 28 days of July attendance against his name. Clamping to
+    them alone silently cut a third off an entire site's July pay. So a day
+    the site actually marked this worker on is inside the window, whatever the
+    dates say — and a genuine transfer still splits cleanly, because the
+    register itself stops at the old site and starts at the new one
+    (owner 2026-08-14).
     """
     from .models import EmployeeSiteAllocation
 
@@ -112,12 +124,27 @@ def paid_window(employee, site, year, month):
             employee=employee, site=site, from_date__lte=end)
             if a.to_date is None or a.to_date >= date(year, month, 1)]
         if not allocs:
-            return end + timedelta(days=1), end        # empty window
-        a_start = min(a.from_date for a in allocs)
-        a_ends = [a.to_date for a in allocs]
-        a_end = end if any(e is None for e in a_ends) else max(a_ends)
-        start = max(start, a_start)
-        end = min(end, a_end)
+            # An empty window — but fall through, never return here: the
+            # register below is exactly what rescues a worker whose
+            # allocation was filed a month late.
+            start, end = end + timedelta(days=1), end
+        else:
+            a_start = min(a.from_date for a in allocs)
+            a_ends = [a.to_date for a in allocs]
+            a_end = end if any(e is None for e in a_ends) else max(a_ends)
+            start = max(start, a_start)
+            end = min(end, a_end)
+
+    marks = Attendance.objects.filter(employee=employee, day__year=year,
+                                      day__month=month)
+    if site is not None:
+        marks = marks.filter(site=site)
+    span = marks.aggregate(first=Min("day"), last=Max("day"))
+    if span["first"]:
+        # min/max, not "or": this also rescues an EMPTY window, which is how
+        # a wrong join date erased a month somebody plainly worked.
+        start = min(start, span["first"])
+        end = max(end, span["last"])
     return start, end
 
 
@@ -138,11 +165,17 @@ def eligible_workers(site, currency, year, month):
 
     m_start = date(year, month, 1)
     m_end = date(year, month, month_days(year, month))
+    # Anyone the site marked during the month worked there, whatever the
+    # allocation and join dates claim (owner 2026-08-14) — see paid_window.
+    marks = Attendance.objects.filter(day__year=year, day__month=month)
+    if site is not None:
+        marks = marks.filter(site=site)
+    marked_ids = set(marks.values_list("employee_id", flat=True))
     if site is not None:
         allocs = EmployeeSiteAllocation.objects.filter(
             site=site, from_date__lte=m_end).filter(
             Q(to_date__isnull=True) | Q(to_date__gte=m_start))
-        emp_ids = allocs.values_list("employee_id", flat=True)
+        emp_ids = set(allocs.values_list("employee_id", flat=True)) | marked_ids
         # A leaver gets deactivated, so is_active alone would lose them. Keep
         # them when their allocation closed during/after the month; still
         # exclude the long-gone whose allocation was never tidied up.
@@ -160,8 +193,10 @@ def eligible_workers(site, currency, year, month):
     else:
         qs = Employee.objects.payroll_eligible().filter(
             is_active=True, currency=currency)
-    # Nobody is paid for a month they had not joined yet.
-    return qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end))
+    # Nobody is paid for a month they had not joined yet — unless the site
+    # marked them in it, which outranks a join date that says otherwise.
+    return qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end)
+                     | Q(id__in=marked_ids))
 
 
 def _attendance_prefill(employee, site, year, month, working_days):
@@ -235,8 +270,41 @@ def _attendance_prefill(employee, site, year, month, working_days):
         day += timedelta(days=1)
     rest_paid = max(rest_paid - forfeited, 0)
 
+    # "Everyone is paid unless marked absent" quietly pays a full month to
+    # someone the register never mentions: BVR's July run carried two workers
+    # at 31 days and MVR 16,500 between them with not one attendance row to
+    # their name. An empty register is missing data, not a month of work
+    # (owner 2026-08-14). Blank days *within* a register that exists are still
+    # paid — those are the rest days and the odd unmarked day.
+    if not marked:
+        return Decimal(0), Decimal("0"), 0, 0
+
     days = max(expected - absents - forfeited, 0)
     return Decimal(days), ot, fridays, rest_paid
+
+
+def register_summary(run):
+    """Per worker on `run`, what the attendance register actually holds for
+    the month: {employee_id: {"marked": n, "present": n, "absent": n}}.
+
+    The BVR run paid two men a full month each with no attendance row at all,
+    and cut eleven days off everyone else, and nothing on the screen showed
+    either. Days paid is a computed number; this is the evidence behind it, so
+    a PM can see the two disagree (owner 2026-08-14). One query for the run.
+    """
+    from django.db.models import Count, Q
+
+    qs = Attendance.objects.filter(
+        employee_id__in=run.lines.values_list("employee_id", flat=True),
+        day__year=run.year, day__month=run.month)
+    if run.site_id:
+        qs = qs.filter(site_id=run.site_id)
+    rows = qs.values("employee_id").annotate(
+        marked=Count("id"),
+        present=Count("id", filter=Q(remark="PRESENT")),
+        absent=Count("id", filter=Q(remark__in=ABSENT_MARKS)))
+    return {r["employee_id"]: {"marked": r["marked"], "present": r["present"],
+                               "absent": r["absent"]} for r in rows}
 
 
 def is_split_pay(emp):

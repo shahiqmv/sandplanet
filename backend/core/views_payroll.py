@@ -32,9 +32,13 @@ def _can_see_run(request, run):
                 and run.site.is_current_pm(request.user))
 
 
-def _line_info(line):
+def _line_info(line, register=None):
     m = payroll.compute_line(line)
+    reg = (register or {}).get(line.employee_id,
+                               {"marked": 0, "present": 0, "absent": 0})
     return {
+        "days_marked": reg["marked"], "days_present": reg["present"],
+        "days_absent": reg["absent"],
         "id": line.id, "emp_no": line.employee.emp_no,
         "rest_day_revoked": line.rest_day_revoked,
         "full_name": line.employee.full_name,
@@ -68,7 +72,8 @@ def _run_info(run, lines=True):
         "return_reason": run.return_reason,
     }
     if lines:
-        data["lines"] = [_line_info(ln) for ln in
+        register = payroll.register_summary(run)
+        data["lines"] = [_line_info(ln, register) for ln in
                          run.lines.select_related("employee__job_category",
                                                   "site").all()]
     return data
@@ -386,7 +391,8 @@ def payroll_report_pdf(request, pk):
 
     from .pdf import company_info, logo_src
 
-    lines = [_line_info(ln) for ln in
+    register = payroll.register_summary(run)
+    lines = [_line_info(ln, register) for ln in
              run.lines.select_related("employee__job_category", "site").all()]
     # The register has no Friday-money column, so Friday pay rides in the
     # allowance column (owner 2026-08-12) — otherwise the visible columns
@@ -439,7 +445,7 @@ def payslip_pdf(request, pk):
 
     from .pdf import company_info, logo_src
 
-    info = _line_info(line)
+    info = _line_info(line, payroll.register_summary(line.run))
     for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
               "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
               "deductions", "net", "amount_to_site", "amount_to_office"):
@@ -488,7 +494,7 @@ def payroll_line(request, pk):
         # an approval must never outlive the numbers it was given
         payroll.reset_to_draft(line.run, request.user,
                                f"line edited ({', '.join(changed)})")
-    return Response(_line_info(line))
+    return Response(_line_info(line, payroll.register_summary(line.run)))
 
 
 @api_view(["POST"])
