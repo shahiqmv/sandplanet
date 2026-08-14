@@ -2456,6 +2456,14 @@ class PayrollLine(models.Model):
     # count so "Refresh from attendance" recomputes the days and then reapplies
     # the PM's decision, instead of quietly undoing it.
     rest_day_revoked = models.BooleanField(default=False)
+    # A leaver settled in cash on the way out must not be paid a second time
+    # by the monthly run. BVR's July run still carried three men who had been
+    # paid off in full when they left, because the advance-through-PYR route
+    # was not in use yet (owner 2026-08-14). The line is kept and shown, at
+    # zero, with the reason on it — deleting it would hide that the man worked
+    # the month, which is exactly the kind of silence that caused this.
+    excluded = models.BooleanField(default=False)
+    excluded_reason = models.CharField(max_length=200, blank=True)
     ot_hours = models.DecimalField(max_digits=7, decimal_places=1, default=0)
     allowance = models.DecimalField(max_digits=12, decimal_places=2,
                                     default=0)  # adhoc allowance / air ticket

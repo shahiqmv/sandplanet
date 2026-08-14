@@ -35,10 +35,13 @@ def _can_see_run(request, run):
 def _line_info(line, register=None):
     m = payroll.compute_line(line)
     reg = (register or {}).get(line.employee_id,
-                               {"marked": 0, "present": 0, "absent": 0})
+                               {"marked": 0, "present": 0, "absent": 0,
+                                "joined_after": None})
     return {
         "days_marked": reg["marked"], "days_present": reg["present"],
         "days_absent": reg["absent"],
+        "joined_after": reg.get("joined_after"),
+        "excluded": line.excluded, "excluded_reason": line.excluded_reason,
         "id": line.id, "emp_no": line.employee.emp_no,
         "rest_day_revoked": line.rest_day_revoked,
         "full_name": line.employee.full_name,
@@ -495,6 +498,26 @@ def payroll_line(request, pk):
         payroll.reset_to_draft(line.run, request.user,
                                f"line edited ({', '.join(changed)})")
     return Response(_line_info(line, payroll.register_summary(line.run)))
+
+
+@api_view(["POST"])
+def payroll_line_exclude(request, pk):
+    """Leave a worker off the payout — the leaver already settled in cash
+    (owner 2026-08-14). HR's call, like the rest of the line's money."""
+    try:
+        line = PayrollLine.objects.select_related(
+            "run", "run__site", "employee").get(pk=pk)
+    except PayrollLine.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, line.run):
+        return Response({"detail": "Not your site's payroll."}, status=403)
+    if request.user.role not in ("HO_HR", "FINANCE", "ADMIN", "PA"):
+        return Response({"detail": "HR or Finance decide this."}, status=403)
+    _, msg = payroll.set_excluded(line, request.data.get("excluded"),
+                                  request.data.get("reason", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_run_info(line.run))
 
 
 @api_view(["POST"])

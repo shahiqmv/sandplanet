@@ -1314,13 +1314,25 @@ class RegisterOutranksPaperworkTests(TestCase):
         self.assertEqual((start, end), (date(2026, 7, 1), date(2026, 7, 31)))
         self.assertEqual(self._days(e), 31.0)
 
-    def test_a_join_date_after_the_month_cannot_unpay_a_worked_month(self):
-        """Sahajalal: join date 1 August, 28 days of July attendance."""
+    def test_a_join_date_after_the_month_pays_nothing_but_stays_visible(self):
+        """Sahajalal: join date 1 August, 28 days of July attendance.
+
+        The join date is HR's record and wins on the money (owner 2026-08-15),
+        so nothing is paid — but he keeps his place on the run with the clash
+        flagged, because dropping him is how this went unnoticed for a month.
+        """
         e = self._emp("REG-0002", join_date=date(2026, 8, 1))
         self.Alloc.objects.create(employee=e, site=self.site,
                                   from_date=date(2026, 7, 12))
         self._mark(e, [d for d in range(1, 29) if d not in (3, 10, 17, 24)])
-        self.assertGreaterEqual(self._days(e), 28.0)
+        self.assertEqual(self._days(e), 0.0)
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.filter(employee=e).first()
+        self.assertIsNotNone(line, "a worker the register names must stay on "
+                                   "the run, flagged, not vanish")
+        self.assertEqual(payroll.register_summary(run)[e.id]["joined_after"],
+                         "2026-08-01")
 
     def test_an_empty_register_pays_nothing_rather_than_a_full_month(self):
         """EMP-0404 and EMP-0405 drew MVR 16,500 between them on no rows."""
@@ -1373,19 +1385,20 @@ class RegisterOutranksPaperworkTests(TestCase):
                                    month=7, working_days=31, actor=self.hr)
         summary = payroll.register_summary(run)
         self.assertEqual(summary[e.id],
-                         {"marked": 6, "present": 4, "absent": 2})
+                         {"marked": 6, "present": 4, "absent": 2,
+                          "joined_after": None})
 
     def test_generate_run_keeps_a_worker_the_paperwork_would_have_dropped(self):
-        """paid_window decides who is skipped at generate time too."""
-        from .models import PayrollRun
-        e = self._emp("REG-0007", join_date=date(2026, 8, 1))
+        """A late-filed allocation loses to the register, and the worker is
+        both on the run and paid — no join date is in the way here."""
+        e = self._emp("REG-0007")
         self.Alloc.objects.create(employee=e, site=self.site,
                                   from_date=date(2026, 8, 1))
         self._mark(e, [d for d in range(1, 29) if d not in (3, 10, 17, 24)])
         run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
                                    month=7, working_days=31, actor=self.hr)
         self.assertEqual(run.lines.count(), 1)
-        self.assertGreaterEqual(float(run.lines.first().days_worked), 28.0)
+        self.assertGreaterEqual(float(run.lines.first().days_worked), 24.0)
 
 
 class UnmarkedDaysAreNotWorkedTests(TestCase):
@@ -1475,3 +1488,241 @@ class UnmarkedDaysAreNotWorkedTests(TestCase):
     def test_an_empty_register_pays_nothing_at_all(self):
         """Not even the rest days: nothing says the worker was there."""
         self.assertEqual(self._days(), 0.0)
+
+
+class JoinDateVersusRegisterTests(TestCase):
+    """When the join date and the register disagree, say so (owner 2026-08-14).
+
+    Neither is reliably right. Sahajalal is recorded as joining on 1 August
+    with 28 days of July attendance behind him — a bad join date. Hossain
+    sharif joined on 5 August and has two July days marked against him — a bad
+    mark. The engine pays what the register says; the run reports the clash so
+    HR settles it rather than the software guessing.
+    """
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.Att = Attendance
+        self.hr = make_user("jd_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="JDR", name="Join Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.Alloc = EmployeeSiteAllocation
+
+    def _worker(self, no, join_date):
+        e = Employee.objects.create(
+            emp_no=no, full_name=no, job_category=self.cat,
+            basic_pay=Decimal("3100"), currency="MVR", join_date=join_date)
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1))
+        return e
+
+    def _run(self):
+        return payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                    month=7, working_days=31, actor=self.hr)
+
+    def test_a_join_date_after_the_marks_is_reported(self):
+        e = self._worker("JDR-0001", date(2026, 8, 5))
+        for d in (1, 2):
+            self.Att.objects.create(employee=e, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        summary = payroll.register_summary(self._run())
+        self.assertEqual(summary[e.id]["joined_after"], "2026-08-05")
+
+    def test_an_agreeing_join_date_is_not_flagged(self):
+        e = self._worker("JDR-0002", date(2026, 7, 1))
+        for d in range(1, 9):
+            self.Att.objects.create(employee=e, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        summary = payroll.register_summary(self._run())
+        self.assertIsNone(summary[e.id]["joined_after"])
+
+    def test_no_join_date_at_all_is_not_a_clash(self):
+        """Most of BVR has none; that is a gap, not a contradiction."""
+        e = self._worker("JDR-0003", None)
+        for d in range(1, 9):
+            self.Att.objects.create(employee=e, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        summary = payroll.register_summary(self._run())
+        self.assertIsNone(summary[e.id]["joined_after"])
+
+
+class JoinDateIsAFloorTests(TestCase):
+    """Nothing is paid before the day a man joined (owner 2026-08-15).
+
+    A clerk fixing one worker's 1–2 July row marked two men who had not
+    joined until 5 August, because neither had a join date on file at the
+    time. Allocation dates are bulk-entered and the register outranks them;
+    the join date is HR's own record and outranks the register.
+    """
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.Att = Attendance
+        self.hr = make_user("fl_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="FLR", name="Floor Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.cat = cat
+        self.Alloc = EmployeeSiteAllocation
+
+    def _worker(self, no, join_date):
+        e = Employee.objects.create(
+            emp_no=no, full_name=no, job_category=self.cat,
+            basic_pay=Decimal("3100"), currency="MVR", join_date=join_date)
+        self.Alloc.objects.create(employee=e, site=self.site,
+                                  from_date=date(2026, 7, 1))
+        return e
+
+    def _mark(self, e, days, remark="PRESENT"):
+        for d in days:
+            self.Att.objects.create(employee=e, site=self.site,
+                                    day=date(2026, 7, d), remark=remark)
+
+    def _days(self, e):
+        d, _, _, _ = payroll._attendance_prefill(e, self.site, 2026, 7, 31)
+        return float(d)
+
+    def test_marks_before_the_join_date_pay_nothing(self):
+        """Hossain sharif: joined 5 August, two stray July marks."""
+        e = self._worker("FLR-0001", date(2026, 8, 5))
+        self._mark(e, [1, 2])
+        self.assertEqual(self._days(e), 0.0)
+
+    def test_a_mid_month_joiner_is_paid_only_from_the_join_date(self):
+        e = self._worker("FLR-0002", date(2026, 7, 20))
+        self._mark(e, [d for d in range(1, 32) if d not in (3, 10, 17, 24, 31)])
+        # 20–31 July: 10 working days marked + the 24th and 31st as rest days
+        self.assertEqual(self._days(e), 12.0)
+
+    def test_the_allocation_date_is_still_overruled_by_the_register(self):
+        """The BVR fault stays fixed: a late allocation loses to the marks."""
+        e = self._worker("FLR-0003", None)
+        self.Alloc.objects.filter(employee=e).update(from_date=date(2026, 7, 12))
+        self._mark(e, [d for d in range(1, 32) if d not in (3, 10, 17, 24, 31)])
+        self.assertEqual(self._days(e), 31.0)
+
+    def test_the_contradiction_is_reported_not_hidden(self):
+        e = self._worker("FLR-0004", date(2026, 8, 5))
+        self._mark(e, [1, 2])
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.filter(employee=e).first()
+        if line is not None:                  # no payable days, may be skipped
+            self.assertEqual(float(line.days_worked), 0.0)
+
+
+class ExcludeALineTests(TestCase):
+    """A leaver paid off in cash must not be paid twice (owner 2026-08-14)."""
+
+    def setUp(self):
+        from .models import EmployeeSiteAllocation, ManpowerCategory
+        self.hr = make_user("ex_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="EXC", name="Exclude Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="EXC-0001", full_name="Leaver", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 7, 1))
+        from .models import Attendance
+        for d in range(1, 32):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            Attendance.objects.create(employee=self.emp, site=self.site,
+                                      day=date(2026, 7, d), remark="PRESENT")
+        self.run = payroll.generate_run(site=self.site, currency="MVR",
+                                        year=2026, month=7, working_days=31,
+                                        actor=self.hr)
+        self.line = self.run.lines.get(employee=self.emp)
+
+    def test_an_excluded_line_pays_nothing_but_keeps_its_days(self):
+        self.assertGreater(payroll.compute_line(self.line)["net"], 0)
+        line, err = payroll.set_excluded(
+            self.line, True, "paid off in cash on leaving", self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(float(payroll.compute_line(line)["net"]), 0.0)
+        self.assertEqual(float(line.days_worked), 31.0)   # the record stands
+
+    def test_a_reason_is_required(self):
+        _, err = payroll.set_excluded(self.line, True, "  ", self.hr)
+        self.assertIn("why", err.lower())
+
+    def test_exclusion_survives_a_refresh(self):
+        payroll.set_excluded(self.line, True, "final settlement paid", self.hr)
+        payroll.refresh_run(self.run, self.hr)
+        self.line.refresh_from_db()
+        self.assertTrue(self.line.excluded)
+        self.assertEqual(float(payroll.compute_line(self.line)["net"]), 0.0)
+
+    def test_it_can_be_put_back(self):
+        payroll.set_excluded(self.line, True, "paid off", self.hr)
+        line, err = payroll.set_excluded(self.line, False, "", self.hr)
+        self.assertIsNone(err)
+        self.assertFalse(line.excluded)
+        self.assertGreater(payroll.compute_line(line)["net"], 0)
+
+
+class ExcludeEndpointTests(TestCase):
+    """HR takes a settled leaver off the payout through the API."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, TimesheetMonth)
+        self.hr = make_user("exq_hr", User.Role.HO_HR)
+        self.pm_user = make_user("exq_pm", User.Role.PM)
+        self.site = Site.objects.create(code="EXQ", name="Exq Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        emp = Employee.objects.create(
+            emp_no="EXQ-0001", full_name="Leaver", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=emp, site=self.site,
+                                              from_date=date(2026, 7, 1))
+        for d in range(1, 32):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            Attendance.objects.create(employee=emp, site=self.site,
+                                      day=date(2026, 7, d), remark="PRESENT")
+        self.run = payroll.generate_run(site=self.site, currency="MVR",
+                                        year=2026, month=7, working_days=31,
+                                        actor=self.hr)
+        self.line = self.run.lines.get(employee=emp)
+        self.client = APIClient()
+
+    def test_hr_can_exclude_and_the_run_shows_it(self):
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/payroll/lines/{self.line.id}/exclude",
+                             {"excluded": True, "reason": "paid off in cash"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = [x for x in r.data["lines"] if x["id"] == self.line.id][0]
+        self.assertTrue(row["excluded"])
+        self.assertEqual(row["excluded_reason"], "paid off in cash")
+        self.assertEqual(float(row["net"]), 0.0)
+        self.assertEqual(float(row["days_worked"]), 31.0)
+
+    def test_a_reason_is_required(self):
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/payroll/lines/{self.line.id}/exclude",
+                             {"excluded": True}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_a_pm_may_not_exclude(self):
+        self.client.force_authenticate(self.pm_user)
+        r = self.client.post(f"/api/v1/payroll/lines/{self.line.id}/exclude",
+                             {"excluded": True, "reason": "x"}, format="json")
+        self.assertIn(r.status_code, (403,))

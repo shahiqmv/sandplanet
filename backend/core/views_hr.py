@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from django.db import transaction
+from django.db.models import Q
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import serializers, viewsets
@@ -545,10 +546,22 @@ def attendance_grid(request):
     # Friday). Working it is the 7th-day work paid as an extra day, so the grid
     # defaults everyone to OFF and only marks those who actually worked.
     is_rest_day = day.isoweekday() not in site.working_days
+    # The crew as at THIS DAY. Two faults came out of rostering by "today":
+    # a leaver disappeared from days he had worked, and a man who had not
+    # joined yet was offered for marking — which is how Hossain sharif and
+    # Robiul picked up 1 and 2 July while a clerk was fixing somebody else's
+    # row, months before they joined on 5 August (owner 2026-08-14).
+    # Anyone whose allocation covers the day, plus anyone on the site now —
+    # allocation start dates are entered late and in bulk (BVR's whole crew
+    # carries the day the site was loaded), so being strict about them would
+    # block the back-entry the sites actually do. The join date is the one
+    # hard edge, because HR owns it and the owner is explicit: nothing before
+    # a man joined.
+    on_day = EmployeeSiteAllocation.objects.filter(site=site).filter(
+        Q(to_date__isnull=True) | Q(to_date__gte=day, from_date__lte=day))
     roster = Employee.objects.filter(
-        is_active=True, site_allocations__site=site,
-        site_allocations__to_date__isnull=True,
-    ).select_related("job_category", "subcontractor") \
+        id__in=on_day.values_list("employee_id", flat=True)).exclude(
+        join_date__gt=day).select_related("job_category", "subcontractor") \
         .order_by("emp_no").distinct()
     existing = {a.employee_id: a for a in Attendance.objects.filter(
         site=site, day=day)}
@@ -613,9 +626,23 @@ def attendance_register(request):
     today_day = today.day if (today.year == year and today.month == month) \
         else None
 
+    # Who was here THIS MONTH, not who is here today. Rostering by the
+    # current allocation hid every leaver from the month they actually
+    # worked: Asish Rai has 29 days of July at BVR and vanished off the July
+    # register the day his allocation closed, which is how a man with a full
+    # month's attendance looked like someone who was never there
+    # (owner 2026-08-14). Same rule as the payroll run — see
+    # payroll.eligible_workers.
+    m_start, m_end = date(year, month, 1), date(year, month, ndays)
+    here = EmployeeSiteAllocation.objects.filter(
+        site=site, from_date__lte=m_end).filter(
+        Q(to_date__isnull=True) | Q(to_date__gte=m_start))
+    marked_ids = Attendance.objects.filter(
+        site=site, day__year=year, day__month=month).values_list(
+        "employee_id", flat=True)
     roster = Employee.objects.filter(
-        is_active=True, site_allocations__site=site,
-        site_allocations__to_date__isnull=True).select_related(
+        Q(id__in=here.values_list("employee_id", flat=True))
+        | Q(id__in=marked_ids)).select_related(
         "job_category").order_by("emp_no").distinct()
     att = {}
     for a in Attendance.objects.filter(site=site, day__year=year,
@@ -711,6 +738,7 @@ def attendance_bulk(request):
 
     late_edit = day < date.today()
     saved = 0
+    refused = []
     for row in request.data.get("rows", []):
         try:
             employee = Employee.objects.get(pk=row.get("employee_id"),
@@ -718,8 +746,10 @@ def attendance_bulk(request):
         except Employee.DoesNotExist:
             continue
         # A worker's engagement starts on their join date — no attendance
-        # before it (owner 2026-07-31).
+        # before it (owner 2026-07-31). Say so rather than dropping the row in
+        # silence: the clerk needs to know the mark did not take.
         if employee.join_date and day < employee.join_date:
+            refused.append(f"{employee.emp_no} joined {employee.join_date}")
             continue
         remark = row.get("remark") or "PRESENT"
         if remark == "OFF":
@@ -754,7 +784,8 @@ def attendance_bulk(request):
     audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
           detail={"site": site.code, "date": day.isoformat(), "rows": saved,
                   "late_edit": late_edit})
-    return Response({"saved": saved, "late_edit": late_edit})
+    return Response({"saved": saved, "late_edit": late_edit,
+                     "refused": refused})
 
 
 @api_view(["POST"])

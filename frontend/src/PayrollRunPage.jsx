@@ -343,18 +343,23 @@ function OtBreakdown({ year, month, siteId, label, onClose }) {
 function Marked({ line }) {
   const marked = line.days_marked ?? 0;
   const gap = Number(line.days_worked) - marked;
-  const bad = marked === 0;
+  const clash = line.joined_after;
+  const bad = marked === 0 || !!clash;
   const warn = !bad && Math.abs(gap) > 6;
   const colour = bad ? "#c0392b" : warn ? "#b35900" : "#5a6b78";
+  const title = clash
+    ? `Marked here in this month, but recorded as joining on ${clash}. `
+      + "One of the two is wrong — either the join date or the attendance. "
+      + "Days paid follow the register until someone settles it."
+    : marked === 0
+      ? "Nothing marked for this worker all month — paid days cannot be "
+        + "checked against anything. Fix the register, then refresh."
+      : `${line.days_present ?? 0} present, ${line.days_absent ?? 0} absent, `
+        + `${marked} days marked in total`;
   return (
     <td style={{ ...td, textAlign: "right", color: colour,
-                 fontWeight: bad || warn ? 700 : 400 }}
-        title={bad
-          ? "Nothing marked for this worker all month — paid days cannot be "
-            + "checked against anything. Fix the register, then refresh."
-          : `${line.days_present ?? 0} present, ${line.days_absent ?? 0} `
-            + `absent, ${marked} days marked in total`}>
-      {bad ? "none" : marked}
+                 fontWeight: bad || warn ? 700 : 400 }} title={title}>
+      {marked === 0 ? "none" : marked}{clash ? " ⚠" : ""}
     </td>
   );
 }
@@ -403,6 +408,25 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     try {
       setRun(await api(`/payroll/lines/${line.id}/rest-day`,
                        { method: "POST", body: { revoked } }));
+    } catch (e) { setError(e.message); }
+  }
+
+  // A leaver settled in cash on the way out would otherwise be paid twice by
+  // the monthly run (owner 2026-08-14). The line stays, at zero, with the
+  // reason on it — the man did work the month.
+  async function setExcluded(line, excluded) {
+    let reason = "";
+    if (excluded) {
+      reason = window.prompt(
+        `Leave ${line.emp_no} ${line.full_name} off this payout?\n\n`
+        + "Their days and attendance stay on the run for the record, but they "
+        + "will be paid nothing. Why?",
+        "Paid off in full when they left");
+      if (reason === null || !reason.trim()) return;
+    }
+    try {
+      setRun(await api(`/payroll/lines/${line.id}/exclude`,
+                       { method: "POST", body: { excluded, reason } }));
     } catch (e) { setError(e.message); }
   }
 
@@ -541,7 +565,8 @@ function RunDetail({ runId, onBack, me, backLabel }) {
               <Row key={l.id} line={l} locked={locked} showSite={run.site_id == null}
                    onSave={saveField}
                    onRestDay={!locked && (isPM || isHR || isPD)
-                     ? setRestDay : null} />
+                     ? setRestDay : null}
+                   onExclude={!locked && isHR ? setExcluded : null} />
             ))}
           </tbody>
           <tfoot>
@@ -570,7 +595,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
   );
 }
 
-function Row({ line, locked, showSite, onSave, onRestDay }) {
+function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
   const [v, setV] = useState(line);
   useEffect(() => setV(line), [line]);
   const cell = (k, w) => (
@@ -585,7 +610,8 @@ function Row({ line, locked, showSite, onSave, onRestDay }) {
   );
   const ro = (val) => <td style={{ ...td, textAlign: "right" }}>{money(val)}</td>;
   return (
-    <tr>
+    <tr style={line.excluded
+      ? { opacity: 0.55, textDecoration: "line-through" } : undefined}>
       <td style={{ ...td, fontWeight: 600 }}>{line.emp_no}</td>
       <td style={td}>{line.full_name}</td>
       {showSite && <td style={td}>{line.site_code}</td>}
@@ -616,6 +642,18 @@ function Row({ line, locked, showSite, onSave, onRestDay }) {
              style={{ marginLeft: 8, fontSize: 11, textDecoration: "none",
                       color: line.rest_day_revoked ? "#b00" : "#8a94a0" }}>
             {line.rest_day_revoked ? "no rest day" : "rest day"}
+          </a>
+        )}
+        {onExclude && (
+          <a href="#" onClick={(e) => { e.preventDefault();
+                                        onExclude(line, !line.excluded); }}
+             title={line.excluded
+               ? `Left off this payout — ${line.excluded_reason}. `
+                 + "Click to put them back."
+               : "Leave this worker off the payout — already settled in cash"}
+             style={{ marginLeft: 8, fontSize: 11, textDecoration: "none",
+                      color: line.excluded ? "#b00" : "#8a94a0" }}>
+            {line.excluded ? "not paid" : "exclude"}
           </a>
         )}
       </td>

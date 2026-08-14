@@ -567,6 +567,8 @@ urlpatterns = [
          name="payroll-line"),
     path("payroll/lines/<int:pk>/rest-day",
          payroll_api.payroll_line_rest_day, name="payroll-line-rest-day"),
+    path("payroll/lines/<int:pk>/exclude",
+         payroll_api.payroll_line_exclude, name="payroll-line-exclude"),
     path("payroll/lines/<int:pk>/payslip.pdf", payroll_api.payslip_pdf,
          name="payroll-payslip-pdf"),
     # Amending an issued purchase order (owner 2026-08-13)

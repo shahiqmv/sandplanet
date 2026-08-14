@@ -60,6 +60,13 @@ def compute_line(line, fri_hours=None):
     with no OT rate therefore earns nothing extra for a Friday, which is the
     owner's explicit choice. OT hours recorded ON a Friday are excluded from
     `ot_hours` at prefill so the day can't be paid twice."""
+    if line.excluded:
+        # Paid off in cash when he left; the line stays for the record but
+        # pays nothing (owner 2026-08-14).
+        z = Decimal("0.00")
+        return {"daily_rate": z, "earned_basic": z, "friday_pay": z,
+                "ot_pay": z, "allowance": z, "gross": z, "deductions": z,
+                "net": z}
     wd = line.run.working_days or 1
     fri_h = friday_ot_hours() if fri_hours is None else Decimal(fri_hours)
     daily = Decimal(line.basic_pay) / Decimal(wd)
@@ -141,10 +148,20 @@ def paid_window(employee, site, year, month):
         marks = marks.filter(site=site)
     span = marks.aggregate(first=Min("day"), last=Max("day"))
     if span["first"]:
-        # min/max, not "or": this also rescues an EMPTY window, which is how
-        # a wrong join date erased a month somebody plainly worked.
+        # min/max, not "or": this also rescues an EMPTY window, which is how a
+        # late-filed allocation erased a month somebody plainly worked.
         start = min(start, span["first"])
         end = max(end, span["last"])
+
+    # ...but never back past the join date. Allocation dates are bulk-entered
+    # and unreliable, so the register outranks them; the join date is HR's own
+    # record and the owner is explicit that nothing before it counts. Marks
+    # that fall before it — Hossain sharif picked up 1 and 2 July while a
+    # clerk was fixing another man's row, two months before he joined — pay
+    # nothing, and the run flags the contradiction so somebody settles which
+    # of the two is wrong (owner 2026-08-15).
+    if jd and start < jd:
+        start = jd
     return start, end
 
 
@@ -292,6 +309,22 @@ def _attendance_prefill(employee, site, year, month, working_days):
     return days, ot, fridays, rest_paid
 
 
+def has_marks(employee, site, year, month):
+    """Does the register mention this worker at this site in this month?
+
+    Used to keep somebody ON a run even when they have no payable days. A
+    worker the register says was here, paid nothing because his join date
+    contradicts it, must stay visible and flagged — dropping him is how
+    Sahajalal's 28 days of July went unnoticed in the first place
+    (owner 2026-08-15).
+    """
+    qs = Attendance.objects.filter(employee=employee, day__year=year,
+                                   day__month=month)
+    if site is not None:
+        qs = qs.filter(site=site)
+    return qs.exists()
+
+
 def register_summary(run):
     """Per worker on `run`, what the attendance register actually holds for
     the month: {employee_id: {"marked": n, "present": n, "absent": n}}.
@@ -311,9 +344,28 @@ def register_summary(run):
     rows = qs.values("employee_id").annotate(
         marked=Count("id"),
         present=Count("id", filter=Q(remark="PRESENT")),
-        absent=Count("id", filter=Q(remark__in=ABSENT_MARKS)))
-    return {r["employee_id"]: {"marked": r["marked"], "present": r["present"],
-                               "absent": r["absent"]} for r in rows}
+        absent=Count("id", filter=Q(remark__in=ABSENT_MARKS)),
+        first=Min("day"))
+    joined = dict(Employee.objects.filter(
+        id__in=run.lines.values_list("employee_id", flat=True)).values_list(
+        "id", "join_date"))
+    out = {}
+    for r in rows:
+        jd = joined.get(r["employee_id"])
+        # The register and the join date can flatly contradict each other, and
+        # neither is reliably right: Sahajalal is down as joining 1 August
+        # with 28 days of July behind him, while Hossain sharif joined on the
+        # 5th of August and has two July days marked against him. One is a bad
+        # join date, the other a bad mark. The engine pays what the register
+        # says and says so here, rather than quietly picking a winner — HR
+        # fixes the date or the site fixes the mark (owner 2026-08-14).
+        out[r["employee_id"]] = {
+            "marked": r["marked"], "present": r["present"],
+            "absent": r["absent"],
+            "joined_after": (jd.isoformat()
+                             if jd and r["first"] and jd > r["first"] else None),
+        }
+    return out
 
 
 def is_split_pay(emp):
@@ -339,8 +391,9 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         workers = eligible_workers(site, currency, year, month)
         for emp in workers.select_related("job_category").order_by("emp_no"):
             w_start, w_end = paid_window(emp, site, year, month)
-            if w_start > w_end:
-                continue        # no days in this month at this site
+            if w_start > w_end and not has_marks(emp, site, year, month):
+                continue        # no days in this month at this site, and
+                                # nothing in the register to say otherwise
             days, ot, fridays, _rest = _attendance_prefill(
                 emp, site, year, month, working_days)
             split = is_split_pay(emp)
@@ -576,7 +629,7 @@ def refresh_run(run, actor):
         # An overlapping allocation is not enough: someone who joined after
         # the month ends has no payable days in it.
         w_start, w_end = paid_window(e, site, run.year, run.month)
-        if w_start <= w_end:
+        if w_start <= w_end or has_marks(e, site, run.year, run.month):
             eligible[e.id] = e
 
     changed, added, stale = [], [], []
@@ -721,4 +774,31 @@ def set_rest_day_revoked(line, revoked, actor):
           "REST_DAY_REVOKED" if revoked else "REST_DAY_RESTORED", actor=actor,
           detail={"run": run.id, "emp_no": line.employee.emp_no,
                   "rest_days": rest_paid, "days_now": str(days)})
+    return line, None
+
+
+def set_excluded(line, excluded, reason, actor):
+    """Take a worker off a run's payout, or put them back.
+
+    For the man who was paid off in cash when he left and would otherwise be
+    paid a second time by the monthly run (owner 2026-08-14). The line is not
+    deleted: it keeps its days and its attendance, and simply pays nothing, so
+    the record still shows he worked the month and why he was not paid for it.
+
+    Like the rest-day decision, this survives "Refresh from attendance" — it
+    is a judgement about the man, not a number derived from the register.
+    """
+    run = line.run
+    if run.status == "LOCKED":
+        return None, "The run is locked."
+    excluded = bool(excluded)
+    if excluded and not (reason or "").strip():
+        return None, "Say why this worker is being left off the payout."
+    line.excluded = excluded
+    line.excluded_reason = (reason or "").strip()[:200] if excluded else ""
+    line.save(update_fields=["excluded", "excluded_reason"])
+    audit("payroll_line", line.id,
+          "PAYROLL_LINE_EXCLUDED" if excluded else "PAYROLL_LINE_RESTORED",
+          actor=actor, detail={"run": run.id, "emp_no": line.employee.emp_no,
+                               "reason": line.excluded_reason})
     return line, None
