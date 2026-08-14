@@ -509,3 +509,62 @@ class MergeEmployeesTests(TestCase):
     def test_merging_a_record_into_itself_is_refused(self):
         _, err = self.m.merge(self.keep, self.keep, self.admin)
         self.assertIn("same record", err.lower())
+
+
+class TransferAllocationTidyTests(TestCase):
+    """A transfer must not leave an allocation closed before it opens.
+
+    The first live merge produced BVR 12 Aug -> 31 Jul, because the duplicate
+    record's allocation had not started when the man moved (owner 2026-08-15).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from .models import (Employee, EmployeeSiteAllocation,
+                             ManpowerCategory, Site, User)
+        from . import merge_employees
+        self.m = merge_employees
+        self.date = date
+        self.Alloc = EmployeeSiteAllocation
+        self.admin = make_user("tt_admin", User.Role.ADMIN)
+        self.old = Site.objects.create(code="TT1", name="Old",
+                                       status=Site.Status.ACTIVE)
+        self.new = Site.objects.create(code="TT2", name="New",
+                                       status=Site.Status.ACTIVE)
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="TT-0001", full_name="Mover", job_category=cat,
+            basic_pay=Decimal("7000"), currency="MVR")
+
+    def test_an_allocation_that_had_not_started_is_dropped_not_closed(self):
+        self.Alloc.objects.create(employee=self.emp, site=self.old,
+                                  from_date=self.date(2026, 8, 12))
+        res = self.m.transfer_from(self.emp, self.new,
+                                   self.date(2026, 8, 1), self.admin)
+        self.assertEqual(res["voided_allocations"], ["TT1"])
+        self.assertFalse(self.Alloc.objects.filter(
+            employee=self.emp, site=self.old).exists())
+
+    def test_a_running_allocation_is_closed_the_day_before(self):
+        self.Alloc.objects.create(employee=self.emp, site=self.old,
+                                  from_date=self.date(2026, 7, 1))
+        res = self.m.transfer_from(self.emp, self.new,
+                                   self.date(2026, 8, 1), self.admin)
+        self.assertEqual(res["closed_allocations"], ["TT1"])
+        a = self.Alloc.objects.get(employee=self.emp, site=self.old)
+        self.assertEqual(a.to_date, self.date(2026, 7, 31))
+
+    def test_no_allocation_ends_before_it_begins(self):
+        self.Alloc.objects.create(employee=self.emp, site=self.old,
+                                  from_date=self.date(2026, 7, 1))
+        self.Alloc.objects.create(employee=self.emp, site=self.old,
+                                  from_date=self.date(2026, 8, 12))
+        self.m.transfer_from(self.emp, self.new, self.date(2026, 8, 1),
+                             self.admin)
+        for a in self.Alloc.objects.filter(employee=self.emp):
+            if a.to_date:
+                self.assertGreaterEqual(a.to_date, a.from_date,
+                                        f"{a.site.code} ends before it begins")

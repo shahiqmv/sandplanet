@@ -135,10 +135,17 @@ def transfer_from(employee, to_site, from_date, actor):
         sites_before = sorted({a.site.code for a in moved})
         n = moved.update(site=to_site)
 
-        # close anything still open elsewhere, the day before he moved
-        closed = []
+        # Close anything still open elsewhere, the day before he moved. One
+        # that had not started yet is not closed but dropped: closing it would
+        # write a to_date earlier than its own from_date, which is what the
+        # first live merge produced (BVR 12 Aug -> 31 Jul).
+        closed, voided = [], []
         for a in EmployeeSiteAllocation.objects.filter(
                 employee=employee, to_date__isnull=True).exclude(site=to_site):
+            if a.from_date >= from_date:
+                voided.append(a.site.code)
+                a.delete()
+                continue
             a.to_date = from_date - timedelta(days=1)
             a.save(update_fields=["to_date"])
             closed.append(a.site.code)
@@ -156,6 +163,7 @@ def transfer_from(employee, to_site, from_date, actor):
     audit("employee", employee.id, "EMPLOYEE_ATTENDANCE_RESITED", actor=actor,
           detail={"emp_no": employee.emp_no, "to_site": to_site.code,
                   "from_date": from_date.isoformat(), "rows_moved": n,
-                  "was_at": sites_before, "closed_allocations": closed})
+                  "was_at": sites_before, "closed_allocations": closed,
+                  "voided_allocations": voided})
     return {"rows_moved": n, "was_at": sites_before,
-            "closed_allocations": closed}
+            "closed_allocations": closed, "voided_allocations": voided}
