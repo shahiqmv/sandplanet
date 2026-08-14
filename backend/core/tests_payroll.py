@@ -248,6 +248,14 @@ class PayrollRunTests(TestCase):
         Attendance.objects.create(employee=emp, site=self.site,
                                   day=date(2026, 5, 6), remark="PRESENT",
                                   ot_approved=Decimal("2"))
+        # The USD leg is paid on days worked, so he needs the month marked —
+        # an unmarked working day is no longer a paid one (owner 2026-08-14).
+        for d in range(1, 32):
+            day = date(2026, 5, d)
+            if d == 6 or day.isoweekday() not in self.site.working_days:
+                continue
+            Attendance.objects.create(employee=emp, site=self.site, day=day,
+                                      remark="PRESENT")
         # site MVR run: no basic, OT in MVR (2h × 25)
         mvr = payroll.generate_run(site=self.site, currency="MVR", year=2026,
                                    month=5, working_days=31, actor=self.hr)
@@ -438,6 +446,14 @@ class FridayPrefillTests(TestCase):
         # a normal absent day (Sat 2 May)
         Attendance.objects.create(employee=self.emp, site=self.site,
                                   day=date(2026, 5, 2), remark="ABSENT")
+        # ...and the rest of the month worked. Unmarked working days are no
+        # longer paid (owner 2026-08-14), so the register has to say so.
+        for d in range(3, 32):
+            day = date(2026, 5, d)
+            if day.isoweekday() == 5:
+                continue                      # the other Fridays stay blank
+            Attendance.objects.create(employee=self.emp, site=self.site,
+                                      day=day, remark="PRESENT")
         self.client = APIClient()
         self.client.force_authenticate(self.hr)
 
@@ -1370,3 +1386,92 @@ class RegisterOutranksPaperworkTests(TestCase):
                                    month=7, working_days=31, actor=self.hr)
         self.assertEqual(run.lines.count(), 1)
         self.assertGreaterEqual(float(run.lines.first().days_worked), 28.0)
+
+
+class UnmarkedDaysAreNotWorkedTests(TestCase):
+    """Days paid follow the register day by day (owner 2026-08-14).
+
+    "The window minus the days marked absent" paid for days nobody ever
+    recorded: three BVR workers with two marks each were on 31 days, and two
+    with thirteen marks were on thirty. A rest day is still entitlement and
+    is paid blank — that is the one thing a blank day may mean.
+    """
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.Att = Attendance
+        self.hr = make_user("um_hr", User.Role.HO_HR)
+        # Fri (5) is the rest day: July 2026 has five of them (3,10,17,24,31)
+        # and twenty-six working days.
+        self.site = Site.objects.create(code="UNM", name="Unmarked Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="UNM-0001", full_name="Worker", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 7, 1))
+        self.fridays = {3, 10, 17, 24, 31}
+
+    def _mark(self, days, remark="PRESENT"):
+        for d in days:
+            self.Att.objects.create(employee=self.emp, site=self.site,
+                                    day=date(2026, 7, d), remark=remark,
+                                    normal_hours=8)
+
+    def _days(self):
+        d, _, _, _ = payroll._attendance_prefill(self.emp, self.site,
+                                                 2026, 7, 31)
+        return float(d)
+
+    def test_two_marked_days_do_not_pay_a_month(self):
+        """EMP-0404's shape: two marks, and 31 days of pay."""
+        self._mark([1, 2])
+        self.assertEqual(self._days(), 7.0)     # 2 worked + 5 rest days
+
+    def test_half_the_month_unmarked_pays_half_the_month(self):
+        """EMP-0314: thirteen marks, paid thirty days."""
+        self._mark([d for d in range(1, 14) if d not in self.fridays])
+        self.assertEqual(self._days(), 16.0)    # 11 worked + 5 rest days
+
+    def test_a_completely_marked_month_is_unchanged(self):
+        """The reassurance: where a site keeps a full register the figure is
+        exactly what it always was. SSL's 28 lines did not move a day."""
+        self._mark([d for d in range(1, 32) if d not in self.fridays])
+        self.assertEqual(self._days(), 31.0)
+
+    def test_absences_still_come_off_a_full_register(self):
+        self._mark([d for d in range(1, 32) if d not in self.fridays])
+        self.Att.objects.filter(day=date(2026, 7, 6)).update(remark="ABSENT")
+        self.Att.objects.filter(day=date(2026, 7, 7)).update(remark="SICK")
+        self.assertEqual(self._days(), 29.0)
+
+    def test_a_half_day_is_half_a_day(self):
+        """The cost ledger has always weighted it 0.5; payroll paid it whole."""
+        self._mark([d for d in range(1, 32) if d not in self.fridays])
+        self.Att.objects.filter(day=date(2026, 7, 6)).update(remark="HALF_DAY")
+        self.assertEqual(self._days(), 30.5)
+
+    def test_a_blank_rest_day_is_still_paid(self):
+        """The entitlement: nobody marks a Friday, and it is still owed."""
+        self._mark([d for d in range(1, 32) if d not in self.fridays])
+        self.assertEqual(
+            self.Att.objects.filter(employee=self.emp).count(), 26)
+        self.assertEqual(self._days(), 31.0)    # the 5 blank Fridays paid
+
+    def test_a_worked_rest_day_survives_a_bad_week(self):
+        """He turned up on the Friday, so it is his however the week went —
+        the forfeit rule may not take a day he actually worked."""
+        self._mark([1, 2, 3])                       # 3 July is a Friday
+        self._mark([4, 6, 7, 8], "ABSENT")          # four absences that week
+        self.assertGreaterEqual(self._days(), 3.0)
+        marked_friday = payroll._attendance_prefill(
+            self.emp, self.site, 2026, 7, 31)[2]
+        self.assertEqual(marked_friday, 1)
+
+    def test_an_empty_register_pays_nothing_at_all(self):
+        """Not even the rest days: nothing says the worker was there."""
+        self.assertEqual(self._days(), 0.0)

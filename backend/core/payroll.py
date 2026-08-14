@@ -222,19 +222,17 @@ def _attendance_prefill(employee, site, year, month, working_days):
     work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
 
     start, last = paid_window(employee, site, year, month)
-    expected = 0 if start > last else (last - start).days + 1
 
-    absents = fridays = 0
+    fridays = 0
     ot = Decimal("0")
-    marked = {}                      # day -> remark, for the rest-day test
+    marked = {}                      # day -> remark; the day loop below reads
+                                     # this, so a blank day stays blank
     absent_by_week = {}              # ISO (year, week) -> genuine absences
     for a in qs:
         if a.day < start or a.day > last:
             continue      # outside the paid window — a stray row from before
                           # they joined, or after they left this site
         marked[a.day] = a.remark
-        if a.remark in ABSENT_MARKS:
-            absents += 1
         if a.remark == "ABSENT":
             # Only a genuine absence counts towards forfeiting the rest day —
             # someone on sanctioned leave or off sick should not lose their
@@ -248,39 +246,50 @@ def _attendance_prefill(employee, site, year, month, working_days):
                             # 2026-08-12) — never add its hours again
         ot += a.ot_approved or 0
 
-    # A rest day is unmarked and normally paid as part of the month. Drop the
-    # ones in a week the worker was largely absent: EMP-0078 drew 8 days' pay
-    # for 5 days of work in July because three unworked Fridays came free.
-    limit = rest_day_absence_limit()
-    forfeited = 0
-    day = start
-    while day <= last:
-        if (day not in marked and day.isoweekday() not in work_week
-                and absent_by_week.get(day.isocalendar()[:2], 0) > limit):
-            forfeited += 1
-        day += timedelta(days=1)
-
-    # Unworked rest days still inside the paid figure. The PM may strike
-    # these for a worker who was absent through the week (owner 2026-08-13).
-    rest_paid = 0
-    day = start
-    while day <= last:
-        if day not in marked and day.isoweekday() not in work_week:
-            rest_paid += 1
-        day += timedelta(days=1)
-    rest_paid = max(rest_paid - forfeited, 0)
-
-    # "Everyone is paid unless marked absent" quietly pays a full month to
-    # someone the register never mentions: BVR's July run carried two workers
-    # at 31 days and MVR 16,500 between them with not one attendance row to
-    # their name. An empty register is missing data, not a month of work
-    # (owner 2026-08-14). Blank days *within* a register that exists are still
-    # paid — those are the rest days and the odd unmarked day.
+    # Day by day, because "the whole window minus the days marked absent"
+    # pays for days nobody ever recorded. Three BVR workers with two marks
+    # each were being paid 31 days, and two more with thirteen marks were paid
+    # thirty (owner 2026-08-14).
+    #
+    #   working day — paid only if the register says they worked it; a half
+    #                 day is half a day, as it already is in the cost ledger
+    #                 (staff_cost._day_weight), though payroll had been
+    #                 paying it in full;
+    #   rest day    — paid as part of the monthly entitlement whether worked
+    #                 or not, unless it was itself an absence or the week was
+    #                 mostly absence (owner 2026-08-13: EMP-0078 drew 8 days'
+    #                 pay for 5 days of work on three free Fridays).
+    #
+    # Where a site keeps a complete register this lands on exactly the old
+    # figure — SSL's 28 lines did not move by a single day.
+    # Nothing recorded at all is missing data, not a month of work: two BVR
+    # men drew MVR 16,500 between them on an empty register. Not even the rest
+    # days are owed, since nothing says they were here (owner 2026-08-14).
     if not marked:
         return Decimal(0), Decimal("0"), 0, 0
 
-    days = max(expected - absents - forfeited, 0)
-    return Decimal(days), ot, fridays, rest_paid
+    limit = rest_day_absence_limit()
+    days = Decimal(0)
+    rest_paid = 0            # unworked rest days the PM may still strike
+    day = start
+    while day <= last:
+        mark = marked.get(day)
+        if day.isoweekday() not in work_week:
+            if mark == "PRESENT":
+                days += 1        # he turned up on his rest day; it is his
+                                 # however the rest of the week went
+            elif (mark not in ABSENT_MARKS
+                    and absent_by_week.get(day.isocalendar()[:2], 0) <= limit):
+                days += 1
+                if mark is None:
+                    rest_paid += 1
+        elif mark == "PRESENT":
+            days += 1
+        elif mark == "HALF_DAY":
+            days += Decimal("0.5")
+        day += timedelta(days=1)
+
+    return days, ot, fridays, rest_paid
 
 
 def register_summary(run):
