@@ -1743,3 +1743,56 @@ class ExcludeEndpointTests(TestCase):
         r = self.client.post(f"/api/v1/payroll/lines/{self.line.id}/exclude",
                              {"excluded": True, "reason": "x"}, format="json")
         self.assertIn(r.status_code, (403,))
+
+
+class RefreshDropsEmptyStaleLinesTests(TestCase):
+    """A refresh clears out a line for someone with no payable day — unless
+    HR has put money on it (owner 2026-08-15)."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory)
+        self.hr = make_user("rm_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="RMV", name="Remove Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="RMV-0001", full_name="Aug Joiner", job_category=cat,
+            basic_pay=Decimal("3100"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 7, 1))
+        for d in range(1, 20):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            Attendance.objects.create(employee=self.emp, site=self.site,
+                                      day=date(2026, 7, d), remark="PRESENT")
+        self.run = payroll.generate_run(site=self.site, currency="MVR",
+                                        year=2026, month=7, working_days=31,
+                                        actor=self.hr)
+
+    def _make_unpayable(self):
+        """Give him an August join date, as the clerk finally did at BVR."""
+        self.emp.join_date = date(2026, 8, 5)
+        self.emp.save(update_fields=["join_date"])
+
+    def test_an_empty_line_is_removed(self):
+        self.assertEqual(self.run.lines.count(), 1)
+        self._make_unpayable()
+        res, err = payroll.refresh_run(self.run, self.hr)
+        self.assertIsNone(err)
+        self.assertEqual(res["removed"], ["RMV-0001"])
+        self.assertEqual(self.run.lines.count(), 0)
+        flagged = payroll.marked_but_unpayable(self.site, "MVR", 2026, 7)
+        self.assertEqual([w["emp_no"] for w in flagged], ["RMV-0001"])
+
+    def test_a_line_hr_has_touched_is_kept_and_reported(self):
+        line = self.run.lines.first()
+        line.advance = Decimal("500")
+        line.save(update_fields=["advance"])
+        self._make_unpayable()
+        res, _ = payroll.refresh_run(self.run, self.hr)
+        self.assertEqual(res["removed"], [])
+        self.assertEqual(res["no_longer_eligible"], ["RMV-0001"])
+        self.assertEqual(self.run.lines.count(), 1)

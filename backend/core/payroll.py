@@ -647,12 +647,30 @@ def refresh_run(run, actor):
         if w_start <= w_end:
             eligible[e.id] = e
 
-    changed, added, stale = [], [], []
+    changed, added, stale, removed = [], [], [], []
     with transaction.atomic():
         for line in run.lines.select_related("employee").all():
             emp = line.employee
             if emp.id not in eligible:
                 stale.append(emp.emp_no)
+                # An empty line for a worker with no payable day is pure
+                # noise — an August joiner on a July run (owner 2026-08-15).
+                # It goes, and the run still names him in
+                # marked_but_unpayable. A line HR has put money on stays put
+                # and is reported instead: that is their entry to withdraw,
+                # not ours.
+                w_start, w_end = paid_window(emp, site, run.year, run.month)
+                empty_line = not any([line.allowance, line.penalty,
+                                      line.advance, line.loan,
+                                      line.amount_to_site,
+                                      line.amount_to_office])
+                # Only when there is genuinely no payable day in the month.
+                # "Not eligible" alone is too broad: a leaver whose allocation
+                # was never closed is ineligible yet worked the month, and
+                # deleting his line would be the very fault this run exposed.
+                if w_start > w_end and empty_line:
+                    line.delete()
+                    removed.append(emp.emp_no)
                 continue
             days, ot, fridays, rest_paid = _attendance_prefill(
                 emp, site, run.year, run.month, run.working_days)
@@ -697,12 +715,13 @@ def refresh_run(run, actor):
             added.append(emp.emp_no)
     if changed or added:
         reset_to_draft(run, actor, "figures refreshed from attendance")
-    summary = {"changed": changed, "added": added, "no_longer_eligible": stale}
+    summary = {"changed": changed, "added": added, "no_longer_eligible": stale,
+               "removed": removed}
     audit("payroll_run", run.id, "PAYROLL_RUN_REFRESHED", actor=actor,
           detail={"period": f"{run.year}-{run.month:02d}",
                   "site": site.code if site else "ALL",
                   "changed": len(changed), "added": len(added),
-                  "no_longer_eligible": stale})
+                  "no_longer_eligible": stale, "removed": removed})
     return summary, None
 
 
