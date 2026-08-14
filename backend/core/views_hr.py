@@ -67,6 +67,41 @@ class EmployeeSerializer(serializers.ModelSerializer):
     permit_days = serializers.SerializerMethodField()
     permit_pending = serializers.SerializerMethodField()
 
+    def validate_passport_no(self, value):
+        """One passport, one record.
+
+        Rakib Hossain was on BVR's July payroll twice — as EMP-0020 with the
+        23 days he had actually worked, and again as EMP-0603, a second record
+        created for him in August. The site reported his July attendance as
+        "gone missing"; it was on the first record all along. Thirty-eight
+        passports are on more than one record and seventeen of those have two
+        live records (owner 2026-08-15).
+
+        Blocked rather than warned, because the duplicate is invisible
+        afterwards — it looks like a new man with no history. HR can still
+        proceed with `allow_duplicate_passport` when it is the OTHER record
+        that carries the typo, which is about half of them.
+        """
+        pno = (value or "").strip()
+        if not pno:
+            return value
+        clash = Employee.objects.filter(passport_no__iexact=pno)
+        if self.instance is not None:
+            clash = clash.exclude(pk=self.instance.pk)
+        other = clash.first()
+        req = self.context.get("request")
+        override = req and str(
+            req.data.get("allow_duplicate_passport", "")).lower() in (
+            "1", "true", "yes")
+        if other and not override:
+            raise serializers.ValidationError(
+                f"Passport {pno} is already on {other.emp_no} "
+                f"{other.full_name}. If this is the same man, use that record "
+                f"so his history stays with him. If the passport on "
+                f"{other.emp_no} is wrong, correct it there first — or resend "
+                f"with allow_duplicate_passport to proceed anyway.")
+        return value
+
     class Meta:
         model = Employee
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",

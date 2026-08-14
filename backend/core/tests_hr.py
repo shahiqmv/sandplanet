@@ -362,3 +362,56 @@ class HeadOfficeEmployeeTests(HrBase):
         emp = Employee.objects.get(pk=r.data["id"])
         self.assertFalse(emp.site_allocations.filter(to_date__isnull=True)
                          .exists())
+
+
+class DuplicatePassportTests(HrBase):
+    """One passport, one record (owner 2026-08-15).
+
+    Rakib Hossain sat on BVR's July run twice — as EMP-0020 with his 23 worked
+    days, and again as a second record created for him in August with none of
+    his history. The site reported the July attendance as lost; it had never
+    moved.
+    """
+
+    def _payload(self, **kw):
+        data = {"full_name": "Test Worker", "passport_no": "EK0658559",
+                "nationality": "Bangladeshi", "basic_pay": "7000",
+                "currency": "MVR", "employment_type": "CONTRACT"}
+        data.update(kw)
+        return data
+
+    def test_a_second_record_for_the_same_passport_is_refused(self):
+        self.as_user(self.hr)
+        r = self.client.post("/api/v1/employees", self._payload(), format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        first = r.data["emp_no"]
+        r2 = self.client.post("/api/v1/employees",
+                              self._payload(full_name="Test Worker Again"),
+                              format="json")
+        self.assertEqual(r2.status_code, 400)
+        self.assertIn(first, str(r2.data))
+
+    def test_hr_may_override_when_the_other_record_holds_the_typo(self):
+        self.as_user(self.hr)
+        self.client.post("/api/v1/employees", self._payload(), format="json")
+        r = self.client.post(
+            "/api/v1/employees",
+            self._payload(full_name="Genuinely Someone Else",
+                          allow_duplicate_passport=True), format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+
+    def test_a_blank_passport_is_not_a_clash(self):
+        self.as_user(self.hr)
+        for name in ("No Passport One", "No Passport Two"):
+            r = self.client.post("/api/v1/employees",
+                                 self._payload(full_name=name, passport_no=""),
+                                 format="json")
+            self.assertEqual(r.status_code, 201, r.data)
+
+    def test_editing_a_record_does_not_clash_with_itself(self):
+        self.as_user(self.hr)
+        r = self.client.post("/api/v1/employees", self._payload(), format="json")
+        eid = r.data["id"]
+        r2 = self.client.patch(f"/api/v1/employees/{eid}",
+                               {"full_name": "Renamed"}, format="json")
+        self.assertEqual(r2.status_code, 200, r2.data)
