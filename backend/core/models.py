@@ -2420,6 +2420,12 @@ class PayrollRun(models.Model):
                                     blank=True, related_name="+")   # PD
     approved_at = models.DateTimeField(null=True, blank=True)
     return_reason = models.TextField(blank=True)
+    # The PYR raised when the Director approves the run. Payroll posts its own
+    # labour cost at lock, so this PYR is capitalized — it moves the money and
+    # books nothing, or the month would be counted twice (owner 2026-08-15).
+    payment_request = models.ForeignKey("Document", on_delete=models.PROTECT,
+                                        null=True, blank=True,
+                                        related_name="payroll_runs")
     locked_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                   blank=True, related_name="+")
     locked_at = models.DateTimeField(null=True, blank=True)

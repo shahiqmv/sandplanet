@@ -375,7 +375,7 @@ const EDITABLE = [
 function RunDetail({ runId, onBack, me, backLabel }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
-  const canLock = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
+  const canReopen = ["HO_HR", "ADMIN", "FINANCE"].includes(me.role);
   // Draft salary verification (owner 2026-08-12): HR submits → the site PM
   // verifies → the PD approves → HR/Finance locks.
   const isHR = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
@@ -432,6 +432,10 @@ function RunDetail({ runId, onBack, me, backLabel }) {
 
   async function act(action) {
     let reason = "";
+    if (action === "approve" && !window.confirm(
+      "Approve this payroll?\n\nThis is the last step: the run locks, its "
+      + "labour cost is posted, and a payment request goes to Finance for the "
+      + "net. It can only be undone while that request is unpaid.")) return;
     if (action === "return") {
       reason = window.prompt("Why are you returning this salary draft to HR?")
                || "";
@@ -465,9 +469,15 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     } catch (e) { setError(e.message); }
   }
 
-  async function lock() {
-    if (!window.confirm("Lock this run? It posts labour cost and can't be "
-                        + "edited afterwards.")) return;
+  // Locking is no longer a button — the Director's approval does it, and
+  // raises the payment request at the same time (owner 2026-08-15). What is
+  // left is the way back, for a run approved on figures that turn out wrong.
+  async function reopen() {
+    if (!window.confirm(
+      "Reopen this run?\n\nIt goes back to draft for correction, the labour "
+      + "cost it posted is reversed, and its payment request is cancelled. "
+      + "Only possible while nobody has authorised or paid that request."
+    )) return;
     try { setRun(await api(`/payroll/runs/${runId}`, { method: "POST" })); }
     catch (e) { setError(e.message); }
   }
@@ -495,6 +505,9 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             : <b style={{ color: run.status === "APPROVED" ? "#1a7f37"
                           : run.status === "RETURNED" ? "#c0392b"
                           : "#8a6d00" }}>{run.status_label || run.status}</b>}
+          {run.pyr_ref && <span style={{ color: "var(--muted)" }}>
+            {" "}· paid by <b>{run.pyr_ref}</b>{" "}
+            ({(run.pyr_status || "").toLowerCase().replace(/_/g, " ")})</span>}
           {run.verified_by && <span style={{ color: "var(--muted)" }}>
             {" "}· verified by {run.verified_by}</span>}
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
@@ -518,15 +531,17 @@ function RunDetail({ runId, onBack, me, backLabel }) {
               ✓ Verify (PM)</button>
           )}
           {run.status === "PD_REVIEW" && isPD && (
-            <button onClick={() => act("approve")} style={buttonStyle}>
-              ✓ Approve (PD)</button>
+            <button onClick={() => act("approve")} style={buttonStyle}
+              title="Approving locks the run, posts its labour cost and raises
+                     the payment request to Finance">
+              ✓ Approve &amp; release for payment (PD)</button>
           )}
           {["PM_REVIEW", "PD_REVIEW"].includes(run.status) && (isPM || isPD) && (
             <button onClick={() => act("return")} style={ghostButton}>
               Return to HR</button>
           )}
-          {run.status === "APPROVED" && canLock && (
-            <button onClick={lock} style={buttonStyle}>Lock run</button>
+          {locked && canReopen && (
+            <button onClick={reopen} style={ghostButton}>Reopen run</button>
           )}
         </div>
       </div>

@@ -73,6 +73,9 @@ def _run_info(run, lines=True):
         "approved_by": run.approved_by.full_name if run.approved_by_id else None,
         "approved_at": run.approved_at,
         "return_reason": run.return_reason,
+        "pyr_ref": run.payment_request.ref if run.payment_request_id else None,
+        "pyr_status": (run.payment_request.status
+                       if run.payment_request_id else None),
         # Named in the register, but with no payable day — an August joiner
         # with a stray July mark against him. Off the run, not out of sight
         # (owner 2026-08-15).
@@ -344,15 +347,17 @@ def payroll_run_detail(request, pk):
         if err:
             return Response({"detail": err}, status=400)
         return Response(_run_info(run))
-    if request.method == "POST":  # lock
-        if run.status == "LOCKED":
-            return Response({"detail": "Already locked."}, status=400)
-        if not payroll.can_act(run, request.user, "lock"):
-            return Response({"detail": "The run must be approved by the "
-                                       "Director before it can be locked."},
+    if request.method == "POST":  # reopen a locked run
+        if run.status != "LOCKED":
+            return Response({"detail": "Locking is automatic — a run locks "
+                                       "when the Director approves it."},
                             status=400)
-        payroll.lock_run(run, request.user)
-        audit("payroll_run", run.id, "PAYROLL_RUN_LOCKED", actor=request.user)
+        if request.user.role not in ("HO_HR", "FINANCE", "ADMIN"):
+            return Response({"detail": "HR, Finance or Admin reopen a run."},
+                            status=403)
+        _, err = payroll.reopen_run(run, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
         return Response(_run_info(run))
     return Response(_run_info(run))
 

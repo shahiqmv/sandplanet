@@ -550,14 +550,20 @@ def can_act(run, user, action):
     if action == "return":
         return st in ("PM_REVIEW", "PD_REVIEW") and (
             role in ("DIRECTOR", "ADMIN") or user.id in _run_pm_ids(run))
-    if action == "lock":
-        return st == "APPROVED" and role in ("HO_HR", "FINANCE", "ADMIN", "PA")
+    if action == "reopen":
+        return st == "LOCKED" and role in ("HO_HR", "FINANCE", "ADMIN")
     return False
 
 
 def set_run_status(run, action, actor, reason=""):
     """Move a run through the verification chain (owner 2026-08-12).
-    Returns (run, error)."""
+    Returns (run, error).
+
+    Approving also raises the payroll PYR and locks the run, in one
+    transaction: a run left approved with no payment behind it is the gap this
+    was built to close, so a failure anywhere takes the approval with it.
+    """
+    from django.db import transaction
     from django.utils import timezone
 
     from .models import PayrollRun
@@ -592,12 +598,37 @@ def set_run_status(run, action, actor, reason=""):
     if target not in PayrollRun.FLOW.get(run.status, set()):
         return None, f"Cannot move a {run.status} run to {target}."
     run.status = target
-    run.save()
+    with transaction.atomic():
+        run.save()
     audit("payroll_run", run.id, f"PAYROLL_RUN_{action.upper()}", actor=actor,
           to_state=target, detail={"period": f"{run.year}-{run.month:02d}",
                                    "site": run.site.code if run.site_id
                                    else "ALL", "reason": reason})
     _notify_run(run, action, actor)
+
+    if action == "approve":
+        # The Director's approval is the end of the decision-making, so the
+        # run stops being editable there and the money starts moving. Locking
+        # used to be a button somebody had to remember to press, which left
+        # approved runs sitting unposted and unpaid (owner 2026-08-15).
+        #
+        # A run with nothing payable on it still locks — it has a cost to post
+        # of zero and simply needs no payment raising.
+        net = sum((compute_line(l)["net"] for l in run.lines.all()),
+                  Decimal("0"))
+        try:
+            with transaction.atomic():
+                if net > 0:
+                    _, err = raise_payroll_pyr(run, actor)
+                    if err:
+                        raise ValueError(err)
+                lock_run(run, actor)
+        except ValueError as exc:
+            run.status, run.approved_by, run.approved_at = (
+                "PD_REVIEW", None, None)
+            run.save(update_fields=["status", "approved_by", "approved_at"])
+            return None, str(exc)
+        run.refresh_from_db()
     return run, None
 
 
@@ -861,3 +892,136 @@ def set_excluded(line, excluded, reason, actor):
           actor=actor, detail={"run": run.id, "emp_no": line.employee.emp_no,
                                "reason": line.excluded_reason})
     return line, None
+
+
+def raise_payroll_pyr(run, actor):
+    """Raise the payment request that pays a run's workers.
+
+    The Director approving the run IS the approval — a second one on the PYR
+    would be the same person signing off the same money twice — so it clears
+    straight to a Payment Voucher for the Signatory, the route rent and other
+    Finance-initiated payments already take.
+
+    Capitalized on purpose: locking the run posts the labour cost itself, so
+    this PYR must post nothing or July would be counted twice (owner
+    2026-08-15). It moves the money; the run books the cost.
+    """
+    from django.db import transaction
+
+    from .models import CostHead, Document, DocumentRevision, Site
+    from .numbering import next_ref
+    from .payments import _set_status, create_payment_request
+
+    if run.payment_request_id:
+        return run.payment_request, None
+    net = sum((compute_line(l)["net"] for l in run.lines.all()), Decimal("0"))
+    if net <= 0:
+        return None, "There is nothing to pay on this run."
+    head = CostHead.objects.filter(name="Labour & Staff",
+                                   is_active=True).first()
+    if head is None:
+        return None, "No 'Labour & Staff' cost head to charge the payroll to."
+    # The combined USD run spans every site, so it has none of its own; Head
+    # Office pays it.
+    site = run.site or Site.objects.filter(is_head_office=True).first()
+    if site is None:
+        return None, "No site to raise the payment request against."
+
+    to_site = sum((Decimal(l.amount_to_site or 0) for l in run.lines.all()),
+                  Decimal("0"))
+    to_office = sum((Decimal(l.amount_to_office or 0) for l in run.lines.all()),
+                    Decimal("0"))
+    period = f"{run.year}-{run.month:02d}"
+    label = f"{run.site.code if run.site_id else 'All sites'} {period}"
+    purpose = (f"Salaries for {label} — {run.lines.count()} worker(s), "
+               f"net {run.currency} {net:,.2f}.")
+    if to_site or to_office:
+        purpose += (f" Paid at site {run.currency} {to_site:,.2f}; "
+                    f"from office {run.currency} {to_office:,.2f}.")
+
+    with transaction.atomic():
+        ref = next_ref("PYR", site)
+        doc = Document.objects.create(
+            doc_type="PYR", ref=ref, site=site, doc_date=date.today(),
+            status="DRAFT", created_by=actor)
+        rev = DocumentRevision.objects.create(
+            document=doc, rev_label="R0", created_by=actor,
+            payload={"kind": "payroll", "purpose": purpose,
+                     "payroll_run": run.id, "period": period})
+        doc.current_revision = rev
+        doc.save(update_fields=["current_revision"])
+        pr, err = create_payment_request(doc, {
+            "cost_head_id": head.id,
+            "payee": f"Payroll — {label}",
+            "currency": run.currency,
+            "amount_requested": net,
+            "purpose": purpose,
+            "payment_method": "BANK",
+            "payment_type": "DIRECT",
+            "has_supporting_doc": True,   # the run and its report ARE the doc
+        }, actor)
+        if err:
+            transaction.set_rollback(True)
+            return None, err
+        pr.is_capitalized = True          # the run posts the cost, not the PYR
+        pr.origin = "FINANCE"             # salaries — straight to the voucher
+        pr.save(update_fields=["is_capitalized", "origin"])
+        _set_status(doc, "SUBMITTED", "SUBMIT", actor, purpose)
+        _set_status(doc, "DIRECTOR_APPROVED", "CLEAR_TO_VOUCHER", actor,
+                    "Payroll approved by the Director — to Finance for payment")
+        run.payment_request = doc
+        run.save(update_fields=["payment_request"])
+    audit("payroll_run", run.id, "PAYROLL_PYR_RAISED", actor=actor,
+          detail={"ref": doc.ref, "amount": str(net),
+                  "currency": run.currency, "period": period})
+    return doc, None
+
+
+def reopen_run(run, actor):
+    """Unlock a run so its figures can be corrected.
+
+    Locking is automatic now, which makes a way back essential: before, a
+    wrong run could sit locked for ever because nothing in the app could
+    reopen it. Allowed only while nobody has committed to the money — once
+    the Signatory has authorised the PYR or Finance has paid it, the way back
+    is to withdraw that payment, not to quietly rewrite the payroll behind it
+    (owner 2026-08-15).
+
+    Reverses the labour cost the lock posted and cancels the PYR.
+    """
+    from django.db import transaction
+
+    from . import staff_cost
+    from .models import Site
+
+    if run.status != "LOCKED":
+        return None, "This run is not locked."
+    doc = run.payment_request
+    if doc is not None:
+        pr = getattr(doc, "payment_request", None)
+        if pr and pr.paid_date:
+            return None, (f"{doc.ref} has already been paid. Withdraw the "
+                          "payment first.")
+        if pr and pr.authorised_at:
+            return None, (f"{doc.ref} is authorised on a payment voucher. "
+                          "Withdraw the authorisation first.")
+        if doc.status in ("PAID", "CANCELLED"):
+            return None, f"{doc.ref} is {doc.status.lower()}."
+
+    with transaction.atomic():
+        for site_id in {l.site_id for l in run.lines.all() if l.site_id}:
+            staff_cost.reverse_staff_cost(Site.objects.get(pk=site_id),
+                                          run.year, run.month, actor)
+        if doc is not None:
+            doc.status = "CANCELLED"
+            doc.save(update_fields=["status"])
+            run.payment_request = None
+        run.status = "DRAFT"
+        run.locked_by = None
+        run.locked_at = None
+        run.save(update_fields=["status", "locked_by", "locked_at",
+                                "payment_request"])
+    audit("payroll_run", run.id, "PAYROLL_RUN_REOPENED", actor=actor,
+          detail={"period": f"{run.year}-{run.month:02d}",
+                  "cancelled_pyr": doc.ref if doc else None})
+    return run, None
