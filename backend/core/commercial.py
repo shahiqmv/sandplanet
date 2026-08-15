@@ -6,7 +6,7 @@ the client. Slice 1 is the BOQ itself.
 """
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
-from django.db.models import Max, Sum
+from django.db.models import Max, Q, Sum
 
 from .audit import audit
 
@@ -102,10 +102,28 @@ def set_boq_items(project, rows, actor):
     once it's locked (a claim has started). Records whether the schedule prices
     supply and installation separately. Returns (boq, error)."""
     from .models import Boq, BoqItem
+    from .models import ProgressClaimItem
     boq, _ = Boq.objects.get_or_create(
         project=project, defaults={"created_by": actor})
     if boq.is_locked:
         return None, "The BOQ is locked — a claim has already started."
+    # Saving replaces every line, so anything already claimed against would be
+    # destroyed — and was: a re-save of the 17 Pools BOQ took the valued lines
+    # off a PAID and a CERTIFIED claim without a word (owner 2026-08-15).
+    # Once work has been claimed the schedule is the agreed baseline, and it
+    # changes through a variation, not by editing it underneath the claims.
+    claimed = ProgressClaimItem.objects.filter(
+        Q(boq_item__boq=boq) | Q(boq_category__boq=boq)).select_related(
+        "claim").distinct()
+    refs = sorted({ci.claim.ref for ci in claimed})
+    if refs:
+        return None, (
+            "This BOQ has already been claimed against by "
+            + ", ".join(refs)
+            + ". Saving would replace every line and destroy those "
+              "valuations. Raise a variation for the change; or, if the "
+              "claim is only a draft, delete it first and re-create it "
+              "after.")
     items = _row_items(boq, rows)
     split = any(i.rate_install is not None for i in items)
     boq.items.all().delete()
@@ -135,9 +153,27 @@ def import_boq_rows(project, rows, actor):
 
 
 def set_boq_lock(project, locked, actor):
+    """Lock or unlock the BOQ for editing.
+
+    Unlocking is refused once a claim has been submitted: the lock is the only
+    thing standing between a re-save and the valuations, and it was unlocked
+    on a project with a PAID and a CERTIFIED claim against it (owner
+    2026-08-15). A draft claim is nobody's commitment yet, so it does not
+    block — but set_boq_items still will, until that draft is removed.
+    """
+    from .models import ProgressClaim
     boq = getattr(project, "boq", None)
     if boq is None:
         return None, "There's no BOQ to lock yet."
+    if not locked:
+        committed = ProgressClaim.objects.filter(project=project).exclude(
+            status="DRAFT").order_by("seq")
+        refs = [c.ref for c in committed]
+        if refs:
+            return None, (
+                "This BOQ cannot be unlocked — " + ", ".join(refs)
+                + " already value work against it. Changes to a claimed "
+                  "schedule go through a variation.")
     boq.is_locked = bool(locked)
     boq.save(update_fields=["is_locked"])
     audit("project", project.id,

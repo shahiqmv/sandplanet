@@ -1069,3 +1069,87 @@ class UnitClaimTests(TestCase):
         line = self._detail(c["id"])["lines"][0]
         self.assertEqual(line["source"], "BOQ")
         self.assertIsNone(line.get("previous_qty"))
+
+
+class BoqCannotBeRewrittenUnderAClaimTests(TestCase):
+    """A QS unlocked a claimed-against BOQ and re-saved it (owner 2026-08-15).
+
+    Saving replaces every line, and the claim lines pointed at the old ones —
+    so a PAID and a CERTIFIED claim lost all 120 of their valued lines
+    silently. Three things now stand in the way: the unlock, the save, and the
+    database itself.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from .models import (Boq, BoqItem, Project, ProgressClaim,
+                             ProgressClaimItem, Site, User)
+        from . import commercial
+        self.Decimal, self.commercial = Decimal, commercial
+        self.User = User
+        self.Boq, self.BoqItem = Boq, BoqItem
+        self.Claim, self.ClaimItem = ProgressClaim, ProgressClaimItem
+        self.qs = make_user("bq_qs", User.Role.QS)
+        site = Site.objects.create(code="BQP", name="Boq Isle",
+                                   status=Site.Status.ACTIVE)
+        self.project = Project.objects.create(
+            site=site, code="BQ1", title="Pools",
+            contract_value=Decimal("100"))
+        self.boq = Boq.objects.create(project=self.project, created_by=self.qs)
+        self.item = BoqItem.objects.create(
+            boq=self.boq, sort_order=1, item_code="A", description="Mobilise",
+            unit="Item", qty=Decimal("1"), rate_supply=Decimal("100"))
+        self.claim = ProgressClaim.objects.create(
+            project=self.project, seq=1, ref="IPA-01", status="CERTIFIED",
+            basis="PERCENT")
+        self.ClaimItem.objects.create(claim=self.claim, source="BOQ",
+                                      boq_item=self.item,
+                                      cumulative_pct=Decimal("50"))
+
+    def _rows(self):
+        return [{"item_code": "A", "description": "Mobilise", "unit": "Item",
+                 "qty": "1", "rate": "100"}]
+
+    def test_a_claimed_boq_cannot_be_unlocked(self):
+        self.boq.is_locked = True
+        self.boq.save(update_fields=["is_locked"])
+        _, err = self.commercial.set_boq_lock(self.project, False, self.qs)
+        self.assertIsNotNone(err)
+        self.assertIn("IPA-01", err)
+        self.boq.refresh_from_db()
+        self.assertTrue(self.boq.is_locked)
+
+    def test_saving_over_a_claimed_boq_is_refused(self):
+        """Even unlocked — the lock is not the only thing holding this up."""
+        self.boq.is_locked = False
+        self.boq.save(update_fields=["is_locked"])
+        _, err = self.commercial.set_boq_items(self.project, self._rows(), self.qs)
+        self.assertIsNotNone(err)
+        self.assertIn("IPA-01", err)
+        self.assertEqual(self.claim.items.count(), 1)   # the valuation stands
+        self.assertTrue(self.BoqItem.objects.filter(pk=self.item.pk).exists())
+
+    def test_the_database_refuses_to_cascade_a_claimed_item_away(self):
+        """The backstop, for any path that has not thought about claims."""
+        from django.db.models import ProtectedError
+        with self.assertRaises(ProtectedError):
+            self.item.delete()
+        self.assertEqual(self.claim.items.count(), 1)
+
+    def test_a_draft_claim_does_not_block_the_unlock(self):
+        self.claim.status = "DRAFT"
+        self.claim.save(update_fields=["status"])
+        self.boq.is_locked = True
+        self.boq.save(update_fields=["is_locked"])
+        _, err = self.commercial.set_boq_lock(self.project, False, self.qs)
+        self.assertIsNone(err)
+
+    def test_an_unclaimed_boq_still_saves_normally(self):
+        self.claim.items.all().delete()
+        self.boq.is_locked = False
+        self.boq.save(update_fields=["is_locked"])
+        boq, err = self.commercial.set_boq_items(self.project, self._rows(), self.qs)
+        self.assertIsNone(err)
+        self.assertEqual(self.BoqItem.objects.filter(boq=boq).count(), 1)

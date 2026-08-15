@@ -3219,14 +3219,18 @@ class ProgressClaimItem(models.Model):
     claim = models.ForeignKey(ProgressClaim, on_delete=models.CASCADE,
                               related_name="items")
     source = models.CharField(max_length=3, choices=Source.choices)
-    boq_item = models.ForeignKey(BoqItem, on_delete=models.CASCADE, null=True,
+    # PROTECT, not CASCADE: a QS unlocked a claimed-against BOQ and re-saved
+    # it, which replaces every item wholesale — and took the 120 valued lines
+    # of a PAID and a CERTIFIED claim with them, silently. The database now
+    # refuses (owner 2026-08-15).
+    boq_item = models.ForeignKey(BoqItem, on_delete=models.PROTECT, null=True,
                                  blank=True, related_name="+")
     variation_item = models.ForeignKey(VariationItem, on_delete=models.CASCADE,
                                        null=True, blank=True, related_name="+")
     # Unit-mode BOQ: a claim line is one summary category (priced per unit ×
     # quantity, or a lump bill) instead of a flat BOQ item. Null on the
     # conventional path, which is unchanged.
-    boq_category = models.ForeignKey(BoqCategory, on_delete=models.CASCADE,
+    boq_category = models.ForeignKey(BoqCategory, on_delete=models.PROTECT,
                                      null=True, blank=True, related_name="+")
     cumulative_pct = models.DecimalField(max_digits=6, decimal_places=2,
                                          null=True, blank=True)   # 0..100
