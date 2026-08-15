@@ -277,51 +277,61 @@ function Login({ onLogin }) {
 }
 
 // The landing page for most people. A list of codes and names answers "what
-// exists" when the question is "where is everyone", so each site carries its
-// PM and who is on it today — and nothing else. A first cut showed pending
-// paperwork and days-since-DPR too, which made the cards tall enough that you
-// had to scroll to see your own sites (owner 2026-08-15).
+// exists" when the question is "where is everyone", so a site is a tile: the
+// code, who runs it, and how many are stationed there (owner 2026-08-15).
 const SITE_BANDS = [
   ["ACTIVE", "Active"],
   ["AWARDED", "Awarded — not started"],
   ["ON_HOLD", "On hold"],
 ];
+// The accent stripe carries the status, so an active tile spends its room on
+// the number instead of a chip.
+const SITE_ACCENT = { ACTIVE: "#1a7f37", AWARDED: "#2f6f9f",
+                      ON_HOLD: "#b35900" };
 
-function SiteCard({ s, onOpen }) {
+function SiteTile({ s, onOpen }) {
+  const live = s.status === "ACTIVE";
   return (
-    <button onClick={() => onOpen(s)}
+    <button onClick={() => onOpen(s)} title={`${s.code} — ${s.name}`}
       style={{ textAlign: "left", background: "#fff", cursor: "pointer",
-               border: "1px solid var(--sp-border)", borderRadius: 8,
-               padding: "8px 10px", display: "flex", alignItems: "center",
-               gap: 10, font: "inherit", width: "100%" }}>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 7 }}>
-          <span style={{ fontWeight: 700, color: "var(--sp-navy)",
-                         fontSize: 14, letterSpacing: .3 }}>{s.code}</span>
-          <span style={{ fontSize: 12.5, color: "#33404a", overflow: "hidden",
-                         textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {s.name}
-          </span>
-        </div>
-        <div style={{ fontSize: 11, color: "#6b7a86", marginTop: 1,
-                      overflow: "hidden", textOverflow: "ellipsis",
-                      whiteSpace: "nowrap" }}>
-          {s.pms?.length ? `PM · ${s.pms.join(", ")}` : "\u00a0"}
-        </div>
+               border: "1px solid var(--sp-border)", borderRadius: 10,
+               borderTop: `3px solid ${SITE_ACCENT[s.status] || "#8a94a0"}`,
+               padding: "7px 8px 6px", display: "flex",
+               flexDirection: "column", gap: 1, font: "inherit",
+               aspectRatio: "1 / 1", overflow: "hidden", width: "100%" }}>
+      <div style={{ fontWeight: 700, color: "var(--sp-navy)", fontSize: 14,
+                    letterSpacing: .3, lineHeight: 1 }}>{s.code}</div>
+      {/* exactly two lines, so a long resort name ellipsises instead of
+          being sliced in half by the tile's edge */}
+      <div style={{ fontSize: 9.5, color: "#5a6b78", lineHeight: 1.2,
+                    height: "2.4em", flexShrink: 0, display: "-webkit-box",
+                    WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+                    overflow: "hidden", textOverflow: "ellipsis" }}>
+        {s.name}
       </div>
-      {s.status === "ACTIVE" ? (
-        <div style={{ textAlign: "right", lineHeight: 1.05 }}>
-          <div style={{ fontSize: 17, fontWeight: 700,
-                        color: s.manpower_stale ? "#b35900"
-                                                : "var(--sp-navy)" }}>
-            {s.manpower}
-          </div>
-          <div style={{ fontSize: 9.5, color: "#8a94a0",
-                        textTransform: "uppercase", letterSpacing: .3 }}>
-            on site
-          </div>
-        </div>
-      ) : <StatusChip status={s.status} />}
+      <div style={{ marginTop: "auto", lineHeight: 1, flexShrink: 0 }}>
+        {live ? (
+          <>
+            <span style={{ fontSize: 20, fontWeight: 700,
+                           color: "var(--sp-navy)" }}>{s.workforce}</span>
+            <span style={{ fontSize: 9, color: "#8a94a0", marginLeft: 4,
+                           textTransform: "uppercase", letterSpacing: .3 }}>
+              crew
+            </span>
+          </>
+        ) : (
+          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: .3,
+                         color: SITE_ACCENT[s.status] || "#8a94a0",
+                         textTransform: "uppercase" }}>
+            {(s.status || "").replace("_", " ")}
+          </span>
+        )}
+      </div>
+      <div style={{ fontSize: 9, color: "#8a94a0", whiteSpace: "nowrap",
+                    overflow: "hidden", textOverflow: "ellipsis",
+                    flexShrink: 0, marginTop: 2 }}>
+        {s.pms?.length ? s.pms[0] : "\u00a0"}
+      </div>
     </button>
   );
 }
@@ -333,7 +343,7 @@ function SiteList({ sites, onOpen }) {
   }, []);
   // Fall back to the plain list the moment the summary is unavailable — this
   // is the first screen after signing in and it must never be a blank page.
-  const rows = live || sites.map((s) => ({ ...s, manpower: "–", pms: [] }));
+  const rows = live || sites.map((s) => ({ ...s, workforce: "–", pms: [] }));
   const bands = SITE_BANDS
     .map(([status, title]) => [title, rows.filter((s) => s.status === status)])
     .filter(([, list]) => list.length);
@@ -347,17 +357,20 @@ function SiteList({ sites, onOpen }) {
         Sites &amp; projects
       </h2>
       {bands.map(([title, list]) => (
-        <div key={title} style={{ marginBottom: 14 }}>
+        <div key={title} style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7a86",
                         textTransform: "uppercase", letterSpacing: .5,
-                        margin: "0 0 6px" }}>
+                        margin: "0 0 8px" }}>
             {title} <span style={{ fontWeight: 500 }}>({list.length})</span>
           </div>
-          <div style={{ display: "grid", gap: 6,
+          {/* clamp, not a fixed minimum: three to a phone row without
+              scattering a dozen thumbnails across a desktop. */}
+          <div style={{ display: "grid", gap: 7,
                         gridTemplateColumns:
-                          "repeat(auto-fill, minmax(260px, 1fr))" }}>
+                          "repeat(auto-fill, minmax(clamp(88px, 21vw, 150px),"
+                          + " 1fr))" }}>
             {list.map((s) => (
-              <SiteCard key={s.id} s={s} onOpen={onOpen} />
+              <SiteTile key={s.id} s={s} onOpen={onOpen} />
             ))}
           </div>
         </div>

@@ -904,49 +904,42 @@ class ItemViewSet(viewsets.ModelViewSet):
 
 @api_view(["GET"])
 def sites_summary(request):
-    """Who runs each site and who is on it — the landing page's two facts.
+    """Who runs each site and how many are stationed there.
 
-    The list said code, name and status, which answers "what exists" when the
-    question people open it with is "where is everyone" (owner 2026-08-15).
-    Deliberately just this: a first cut also carried pending paperwork and
-    days-since-DPR, and the cards grew tall enough that you had to scroll past
-    your own sites to find them.
+    The count is the ROSTER — open allocations for active employees — which is
+    the same figure the site's own workforce screen shows, so the two agree.
 
-    Two aggregate queries for the whole estate, no per-site loop — this is the
-    first screen after signing in.
+    It was attendance to begin with, counted on "the last day anyone was
+    marked", and that was wrong in three different ways at once (owner
+    2026-08-15): one stray LEAVE row on the 13th made that Head Office's last
+    day and put a 13-person office at zero; SSL had 3 of its 28 marked that
+    day and read as 3; and SJR showed 81 from a register six days old against
+    239 on its roster. Attendance answers who turned up, and no site keeps it
+    complete enough to carry a headcount on the landing page.
     """
-    from django.db.models import Max
+    from django.db.models import Count
 
-    from .models import Attendance, Site
+    from .models import EmployeeSiteAllocation, Site
 
     sites = Site.objects.exclude(status="CLOSED")
     ids = scoped_site_ids(request.user)
     if ids is not None:
         sites = sites.filter(id__in=ids)
     site_ids = list(sites.values_list("id", flat=True))
-    today = timezone.localdate()
 
-    # The last day anyone was marked, per site, and how many were present on
-    # it — "30 on site" from the register beats a headcount on paper.
-    last_day = dict(Attendance.objects.filter(site_id__in=site_ids)
-                    .values("site_id").annotate(d=Max("day"))
-                    .values_list("site_id", "d"))
-    present = {}
-    for sid, day in last_day.items():
-        present[sid] = Attendance.objects.filter(
-            site_id=sid, day=day, remark__in=("PRESENT", "HALF_DAY")).count()
+    # One query for the estate. Distinct because a worker who transferred away
+    # and back has more than one row, and only the open one counts.
+    roster = dict(EmployeeSiteAllocation.objects.filter(
+        site_id__in=site_ids, to_date__isnull=True, employee__is_active=True)
+        .values("site_id").annotate(n=Count("employee_id", distinct=True))
+        .values_list("site_id", "n"))
 
     out = []
     for s in sites.order_by("code"):
-        day = last_day.get(s.id)
         out.append({
             "id": s.id, "code": s.code, "name": s.name,
             "status": s.status, "is_head_office": s.is_head_office,
             "pms": [p.full_name for p in s.current_pms()],
-            "manpower": present.get(s.id, 0),
-            "manpower_day": day.isoformat() if day else None,
-            # amber, not a number nobody can read: the count is real but it is
-            # not today's.
-            "manpower_stale": bool(day and (today - day).days > 1),
+            "workforce": roster.get(s.id, 0),
         })
-    return Response({"sites": out, "as_of": today.isoformat()})
+    return Response({"sites": out, "as_of": timezone.localdate().isoformat()})

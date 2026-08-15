@@ -168,37 +168,40 @@ class AuthTests(BaseCase):
 
 
 class SitesSummaryTests(TestCase):
-    """The landing page carries live signal, not just names (2026-08-15)."""
+    """The landing page counts the roster, not the register (2026-08-15).
+
+    Attendance was the first source and it was wrong three ways: a stray LEAVE
+    row set Head Office's "last marked day" and put a 13-person office at
+    zero; a site with 3 of 28 marked read as 3; and one showed a count six
+    days old. The roster is the same figure the site's own workforce screen
+    shows, so the two now agree.
+    """
 
     def setUp(self):
         from datetime import date, timedelta
-        from .models import (Attendance, Document, Employee,
-                             EmployeeSiteAllocation, ManpowerCategory, Site,
-                             User)
+        from .models import (Attendance, Employee, EmployeeSiteAllocation,
+                             ManpowerCategory, Site, User)
         self.today = date.today()
+        self.Alloc = EmployeeSiteAllocation
         self.admin = make_user("ss_admin", User.Role.ADMIN)
         self.site = Site.objects.create(code="SUM", name="Summary Isle",
                                         status=Site.Status.ACTIVE)
-        self.quiet = Site.objects.create(code="QUI", name="Quiet Isle",
-                                         status=Site.Status.ACTIVE)
         Site.objects.create(code="SHU", name="Shut Isle",
                             status=Site.Status.CLOSED)
         cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
                                               name="Mason", sort_order=1)
-        for i in range(3):
+        self.emps = []
+        for i in range(5):
             e = Employee.objects.create(emp_no=f"SUM-{i}", full_name=f"W{i}",
                                         job_category=cat, currency="MVR")
             EmployeeSiteAllocation.objects.create(
-                employee=e, site=self.site, from_date=self.today)
-            Attendance.objects.create(employee=e, site=self.site,
-                                      day=self.today,
-                                      remark="PRESENT" if i else "ABSENT")
-        Document.objects.create(doc_type="DPR", ref="DPR-SUM-001",
-                                site=self.site, doc_date=self.today,
-                                status="ISSUED", created_by=self.admin)
-        Document.objects.create(doc_type="MR", ref="MR-SUM-001",
-                                site=self.site, doc_date=self.today,
-                                status="SUBMITTED", created_by=self.admin)
+                employee=e, site=self.site,
+                from_date=self.today - timedelta(days=30))
+            self.emps.append(e)
+        # one stray mark, days ago — the shape that put Head Office at zero
+        Attendance.objects.create(employee=self.emps[0], site=self.site,
+                                  day=self.today - timedelta(days=2),
+                                  remark="LEAVE")
         self.client = APIClient()
         self.client.force_authenticate(self.admin)
 
@@ -207,28 +210,39 @@ class SitesSummaryTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         return {s["code"]: s for s in r.data["sites"]}
 
-    def test_it_counts_who_was_actually_present(self):
-        row = self._rows()["SUM"]
-        self.assertEqual(row["manpower"], 2)      # the third was absent
-        self.assertFalse(row["manpower_stale"])
+    def test_it_counts_everyone_stationed_there(self):
+        self.assertEqual(self._rows()["SUM"]["workforce"], 5)
 
-    def test_it_carries_only_what_the_card_shows(self):
-        """Pending paperwork and days-since-DPR were dropped: they made the
-        cards tall enough to scroll past your own sites (owner 2026-08-15)."""
-        row = self._rows()["SUM"]
-        self.assertNotIn("open_docs", row)
-        self.assertNotIn("last_dpr", row)
-        self.assertEqual(set(row) - {"id", "code", "name", "status",
-                                     "is_head_office", "pms", "manpower",
-                                     "manpower_day", "manpower_stale"}, set())
+    def test_a_stray_mark_cannot_drag_the_count_to_zero(self):
+        """The Head Office shape: one LEAVE row and nothing else."""
+        self.assertEqual(self._rows()["SUM"]["workforce"], 5)
+
+    def test_a_worker_who_left_is_not_counted(self):
+        from datetime import timedelta
+        self.Alloc.objects.filter(employee=self.emps[0]).update(
+            to_date=self.today - timedelta(days=1))
+        self.assertEqual(self._rows()["SUM"]["workforce"], 4)
+
+    def test_a_deactivated_worker_is_not_counted(self):
+        self.emps[1].is_active = False
+        self.emps[1].save(update_fields=["is_active"])
+        self.assertEqual(self._rows()["SUM"]["workforce"], 4)
+
+    def test_transferring_away_and_back_counts_once(self):
+        from datetime import timedelta
+        self.Alloc.objects.create(
+            employee=self.emps[2], site=self.site,
+            from_date=self.today - timedelta(days=90),
+            to_date=self.today - timedelta(days=60))
+        self.assertEqual(self._rows()["SUM"]["workforce"], 5)
+
+    def test_it_agrees_with_the_sites_own_workforce_screen(self):
+        from .views_hr import site_manpower_data
+        data = site_manpower_data(self.site)
+        roster = sum(c["roster"] for c in data["categories"]) \
+            if isinstance(data, dict) and "categories" in data \
+            else sum(c["roster"] for c in data)
+        self.assertEqual(self._rows()["SUM"]["workforce"], roster)
 
     def test_a_closed_site_is_left_off(self):
         self.assertNotIn("SHU", self._rows())
-
-    def test_stale_attendance_is_flagged(self):
-        from datetime import timedelta
-        from .models import Attendance
-        Attendance.objects.filter(site=self.site).update(
-            day=self.today - timedelta(days=4))
-        row = self._rows()["SUM"]
-        self.assertTrue(row["manpower_stale"])
