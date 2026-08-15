@@ -815,15 +815,27 @@ def lock_run(run, actor):
         run.save(update_fields=["status", "locked_by", "locked_at"])
 
 
+# Authorisation on a payment voucher is the commitment point — the cash goes
+# out then. Finance's "paid" stamp is bookkeeping that follows, and often
+# late: eleven July advance PYRs worth MVR 75,650 were still sitting
+# AUTHORISED in mid-August, so payroll was paying those men in full while
+# holding an advance it could not see (owner 2026-08-15).
+RECOVERABLE_ADVANCE_STATUSES = ("PAID", "AUTHORISED")
+
+
 def deductions_for(employee, year, month):
-    """Advance + loan installments due for this worker in this payroll period,
-    from salary-advance PYRs that Finance has PAID. An advance falls in one
-    period; a loan spreads equally over its `months`."""
+    """Advance + loan installments due for this worker in this payroll period.
+
+    Counted from the moment the PYR is authorised, not when Finance gets round
+    to marking it paid (owner 2026-08-15). An advance falls in one period; a
+    loan spreads equally over its `months`."""
     period = year * 12 + (month - 1)
     advance = Decimal("0")
     loan = Decimal("0")
     rows = SalaryAdvance.objects.filter(
-        employee=employee, document__status="PAID").select_related("document")
+        employee=employee,
+        document__status__in=RECOVERABLE_ADVANCE_STATUSES).select_related(
+        "document")
     for a in rows:
         start = a.period_year * 12 + (a.period_month - 1)
         n = max(a.months, 1)

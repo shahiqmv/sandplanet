@@ -2001,3 +2001,76 @@ class PayrollReopenTests(TestCase):
         r = self.client.post(f"/api/v1/payroll/runs/{self.run_id}", {},
                              format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class AuthorisedAdvanceIsRecoveredTests(TestCase):
+    """An authorised advance is recovered without waiting for the paid stamp.
+
+    PYR-SSL-001 was authorised on 18 July, in cash, for nine men — and was
+    still not marked paid in mid-August, so July's payroll was about to pay
+    all nine in full while the company held MVR 9,000 of their money. Eleven
+    such PYRs were outstanding, MVR 75,650 in all (owner 2026-08-15).
+    """
+
+    def setUp(self):
+        from .models import (Attendance, Document, EmployeeSiteAllocation,
+                             ManpowerCategory, SalaryAdvance, TimesheetMonth)
+        self.SalaryAdvance, self.Document = SalaryAdvance, Document
+        self.hr = make_user("adv_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="ADV", name="Advance Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="ADV-0001", full_name="Worker", job_category=cat,
+            basic_pay=Decimal("6200"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
+                                              from_date=date(2026, 7, 1))
+        for d in range(1, 32):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            Attendance.objects.create(employee=self.emp, site=self.site,
+                                      day=date(2026, 7, d), remark="PRESENT")
+
+    def _advance(self, status, amount="1000", kind="ADVANCE", months=1):
+        doc = self.Document.objects.create(
+            doc_type="PYR", ref=f"PYR-ADV-{status[:3]}{amount}", site=self.site,
+            doc_date=date(2026, 7, 18), status=status, created_by=self.hr)
+        self.SalaryAdvance.objects.create(
+            employee=self.emp, document=doc, kind=kind,
+            amount=Decimal(amount), months=months,
+            period_year=2026, period_month=7)
+        return doc
+
+    def test_an_authorised_advance_is_recovered(self):
+        self._advance("AUTHORISED")
+        self.assertEqual(payroll.deductions_for(self.emp, 2026, 7)["advance"],
+                         Decimal("1000"))
+
+    def test_a_paid_advance_is_still_recovered(self):
+        self._advance("PAID", amount="500")
+        self.assertEqual(payroll.deductions_for(self.emp, 2026, 7)["advance"],
+                         Decimal("500"))
+
+    def test_one_not_yet_authorised_is_not(self):
+        """Approved onto a voucher is not the same as released."""
+        self._advance("DIRECTOR_APPROVED", amount="700")
+        self.assertEqual(payroll.deductions_for(self.emp, 2026, 7)["advance"],
+                         Decimal("0"))
+
+    def test_a_cancelled_one_is_not(self):
+        self._advance("CANCELLED", amount="800")
+        self.assertEqual(payroll.deductions_for(self.emp, 2026, 7)["advance"],
+                         Decimal("0"))
+
+    def test_it_reaches_the_run_and_comes_off_the_net(self):
+        self._advance("AUTHORISED", amount="1000")
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual(line.advance, Decimal("1000"))
+        m = payroll.compute_line(line)
+        self.assertEqual(m["gross"] - m["net"], Decimal("1000"))
