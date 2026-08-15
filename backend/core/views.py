@@ -904,19 +904,20 @@ class ItemViewSet(viewsets.ModelViewSet):
 
 @api_view(["GET"])
 def sites_summary(request):
-    """Live signal per site for the landing page.
+    """Who runs each site and who is on it — the landing page's two facts.
 
-    The list said code, name and status and nothing else, so it answered "what
-    exists" when the question people actually open it with is "where does my
-    attention go" (owner 2026-08-15). Everything here is one aggregate query
-    across all sites — no per-site loop, because this is the first screen
-    after signing in.
+    The list said code, name and status, which answers "what exists" when the
+    question people open it with is "where is everyone" (owner 2026-08-15).
+    Deliberately just this: a first cut also carried pending paperwork and
+    days-since-DPR, and the cards grew tall enough that you had to scroll past
+    your own sites to find them.
+
+    Two aggregate queries for the whole estate, no per-site loop — this is the
+    first screen after signing in.
     """
-    from datetime import timedelta
+    from django.db.models import Max
 
-    from django.db.models import Count, Max, Q
-
-    from .models import Attendance, Document, Site
+    from .models import Attendance, Site
 
     sites = Site.objects.exclude(status="CLOSED")
     ids = scoped_site_ids(request.user)
@@ -925,8 +926,8 @@ def sites_summary(request):
     site_ids = list(sites.values_list("id", flat=True))
     today = timezone.localdate()
 
-    # Manpower: the last day anyone was marked, per site, and how many were
-    # present on it — "28 on site" means more than a headcount on paper.
+    # The last day anyone was marked, per site, and how many were present on
+    # it — "30 on site" from the register beats a headcount on paper.
     last_day = dict(Attendance.objects.filter(site_id__in=site_ids)
                     .values("site_id").annotate(d=Max("day"))
                     .values_list("site_id", "d"))
@@ -935,32 +936,17 @@ def sites_summary(request):
         present[sid] = Attendance.objects.filter(
             site_id=sid, day=day, remark__in=("PRESENT", "HALF_DAY")).count()
 
-    last_dpr = dict(Document.objects.filter(
-        site_id__in=site_ids, doc_type="DPR", is_void=False)
-        .values("site_id").annotate(d=Max("doc_date"))
-        .values_list("site_id", "d"))
-
-    # Anything sitting in a decision state — what the site is waiting on.
-    WAITING = ("SUBMITTED", "PM_APPROVED", "DIRECTOR_APPROVED", "ISSUED",
-               "PM_VERIFIED", "AMENDMENT_PENDING")
-    open_docs = dict(Document.objects.filter(
-        site_id__in=site_ids, is_void=False, status__in=WAITING)
-        .values("site_id").annotate(n=Count("id"))
-        .values_list("site_id", "n"))
-
     out = []
     for s in sites.order_by("code"):
         day = last_day.get(s.id)
-        dpr = last_dpr.get(s.id)
         out.append({
             "id": s.id, "code": s.code, "name": s.name,
             "status": s.status, "is_head_office": s.is_head_office,
             "pms": [p.full_name for p in s.current_pms()],
             "manpower": present.get(s.id, 0),
             "manpower_day": day.isoformat() if day else None,
+            # amber, not a number nobody can read: the count is real but it is
+            # not today's.
             "manpower_stale": bool(day and (today - day).days > 1),
-            "last_dpr": dpr.isoformat() if dpr else None,
-            "dpr_days_ago": (today - dpr).days if dpr else None,
-            "open_docs": open_docs.get(s.id, 0),
         })
     return Response({"sites": out, "as_of": today.isoformat()})

@@ -212,14 +212,15 @@ class SitesSummaryTests(TestCase):
         self.assertEqual(row["manpower"], 2)      # the third was absent
         self.assertFalse(row["manpower_stale"])
 
-    def test_it_reports_how_long_since_the_last_dpr(self):
+    def test_it_carries_only_what_the_card_shows(self):
+        """Pending paperwork and days-since-DPR were dropped: they made the
+        cards tall enough to scroll past your own sites (owner 2026-08-15)."""
         row = self._rows()["SUM"]
-        self.assertEqual(row["dpr_days_ago"], 0)
-        self.assertEqual(self._rows()["QUI"]["last_dpr"], None)
-
-    def test_it_counts_what_the_site_is_waiting_on(self):
-        self.assertEqual(self._rows()["SUM"]["open_docs"], 2)  # DPR + MR
-        self.assertEqual(self._rows()["QUI"]["open_docs"], 0)
+        self.assertNotIn("open_docs", row)
+        self.assertNotIn("last_dpr", row)
+        self.assertEqual(set(row) - {"id", "code", "name", "status",
+                                     "is_head_office", "pms", "manpower",
+                                     "manpower_day", "manpower_stale"}, set())
 
     def test_a_closed_site_is_left_off(self):
         self.assertNotIn("SHU", self._rows())
