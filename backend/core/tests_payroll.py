@@ -1839,27 +1839,36 @@ class NoAllocationWindowTests(TestCase):
                                                  2026, 7, 31)
         return float(d)
 
-    def test_two_stray_marks_pay_two_days_not_seven(self):
+    def test_two_stray_marks_do_not_pay_a_month(self):
+        """1 and 2 July worked, then nothing. The window runs to the 3rd —
+        that week's rest day belongs to the days he did work — and stops
+        there, nowhere near the 7 days the month-end stretch used to give."""
         for d in (1, 2):
             self.Att.objects.create(employee=self.emp, site=self.site,
                                     day=date(2026, 7, d), remark="PRESENT")
         self.assertEqual(payroll.paid_window(self.emp, self.site, 2026, 7),
-                         (date(2026, 7, 1), date(2026, 7, 2)))
-        self.assertEqual(self._days(), 2.0)
+                         (date(2026, 7, 1), date(2026, 7, 3)))
+        self.assertEqual(self._days(), 3.0)
 
-    def test_a_real_month_of_work_is_still_paid(self):
-        """The rescue still works — the register is believed in full, and the
-        rest days inside it are paid.
-
-        30, not 31: with no allocation to go on, the window ends at the last
-        day the register mentions (the 30th), so the Friday on the 31st has no
-        evidence behind it. A worker whose allocation merely STARTS late is a
-        different case and keeps the whole month — that is BVR's, and it is
-        pinned in RegisterOutranksPaperworkTests.
-        """
+    def test_a_month_worked_to_the_last_working_day_keeps_its_rest_day(self):
+        """MD TAQIR AHAMMED: worked every working day of July and was paid 30,
+        because the 31st was a Friday and nobody marks a Friday. The register
+        cannot bound the window at a day it never records."""
         for d in range(1, 32):
             if date(2026, 7, d).isoweekday() == 5:
                 continue
             self.Att.objects.create(employee=self.emp, site=self.site,
                                     day=date(2026, 7, d), remark="PRESENT")
-        self.assertEqual(self._days(), 30.0)
+        self.assertEqual(payroll.paid_window(self.emp, self.site, 2026, 7),
+                         (date(2026, 7, 1), date(2026, 7, 31)))
+        self.assertEqual(self._days(), 31.0)
+
+    def test_a_real_month_of_work_is_paid_in_full(self):
+        """The rescue still works — the register is believed in full, and the
+        trailing Friday is his even though no one marks a Friday."""
+        for d in range(1, 32):
+            if date(2026, 7, d).isoweekday() == 5:
+                continue
+            self.Att.objects.create(employee=self.emp, site=self.site,
+                                    day=date(2026, 7, d), remark="PRESENT")
+        self.assertEqual(self._days(), 31.0)

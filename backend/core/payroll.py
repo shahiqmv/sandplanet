@@ -144,6 +144,7 @@ def paid_window(employee, site, year, month):
             start = max(start, a_start)
             end = min(end, a_end)
 
+    work_week = set(site.working_days) if site is not None else {6, 7, 1, 2, 3, 4}
     marks = Attendance.objects.filter(employee=employee, day__year=year,
                                       day__month=month)
     if site is not None:
@@ -152,12 +153,20 @@ def paid_window(employee, site, year, month):
     if span["first"]:
         if empty:
             # No allocation covers the month at all, so the register is the
-            # ONLY evidence and it bounds the window on both sides. Stretching
-            # to the month end instead would invent the rest of the month:
-            # Rakib Hosen's duplicate record drew 7 days off the 2 marks a
-            # clerk left on it, five of them unworked Fridays (owner
-            # 2026-08-15).
+            # ONLY evidence and it bounds the window. Stretching to the month
+            # end instead would invent the rest of the month: Rakib Hosen's
+            # duplicate record drew 7 days off the 2 marks a clerk left on it,
+            # five of them unworked Fridays (owner 2026-08-15).
+            #
+            # But it cannot bound at a REST day, because nobody ever marks
+            # one. MD TAQIR AHAMMED worked every day of July and was paid 30,
+            # purely because the 31st was a Friday and so the last mark was
+            # the 30th. Walk past the trailing rest days.
             start, end = span["first"], span["last"]
+            month_end = date(year, month, month_days(year, month))
+            while (end < month_end
+                   and (end + timedelta(days=1)).isoweekday() not in work_week):
+                end += timedelta(days=1)
         else:
             # min/max, not "or": a late-filed allocation must not cut off days
             # the site plainly marked.
