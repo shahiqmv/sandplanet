@@ -165,3 +165,69 @@ class AuthTests(BaseCase):
         r = self.client.post("/api/v1/auth/login",
                              {"username": "se1", "password": "pw-test-123"})
         self.assertEqual(r.status_code, 400)
+
+
+class SitesSummaryTests(TestCase):
+    """The landing page carries live signal, not just names (2026-08-15)."""
+
+    def setUp(self):
+        from datetime import date, timedelta
+        from .models import (Attendance, Document, Employee,
+                             EmployeeSiteAllocation, ManpowerCategory, Site,
+                             User)
+        self.today = date.today()
+        self.admin = make_user("ss_admin", User.Role.ADMIN)
+        self.site = Site.objects.create(code="SUM", name="Summary Isle",
+                                        status=Site.Status.ACTIVE)
+        self.quiet = Site.objects.create(code="QUI", name="Quiet Isle",
+                                         status=Site.Status.ACTIVE)
+        Site.objects.create(code="SHU", name="Shut Isle",
+                            status=Site.Status.CLOSED)
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=1)
+        for i in range(3):
+            e = Employee.objects.create(emp_no=f"SUM-{i}", full_name=f"W{i}",
+                                        job_category=cat, currency="MVR")
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=self.today)
+            Attendance.objects.create(employee=e, site=self.site,
+                                      day=self.today,
+                                      remark="PRESENT" if i else "ABSENT")
+        Document.objects.create(doc_type="DPR", ref="DPR-SUM-001",
+                                site=self.site, doc_date=self.today,
+                                status="ISSUED", created_by=self.admin)
+        Document.objects.create(doc_type="MR", ref="MR-SUM-001",
+                                site=self.site, doc_date=self.today,
+                                status="SUBMITTED", created_by=self.admin)
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def _rows(self):
+        r = self.client.get("/api/v1/sites/summary")
+        self.assertEqual(r.status_code, 200, r.data)
+        return {s["code"]: s for s in r.data["sites"]}
+
+    def test_it_counts_who_was_actually_present(self):
+        row = self._rows()["SUM"]
+        self.assertEqual(row["manpower"], 2)      # the third was absent
+        self.assertFalse(row["manpower_stale"])
+
+    def test_it_reports_how_long_since_the_last_dpr(self):
+        row = self._rows()["SUM"]
+        self.assertEqual(row["dpr_days_ago"], 0)
+        self.assertEqual(self._rows()["QUI"]["last_dpr"], None)
+
+    def test_it_counts_what_the_site_is_waiting_on(self):
+        self.assertEqual(self._rows()["SUM"]["open_docs"], 2)  # DPR + MR
+        self.assertEqual(self._rows()["QUI"]["open_docs"], 0)
+
+    def test_a_closed_site_is_left_off(self):
+        self.assertNotIn("SHU", self._rows())
+
+    def test_stale_attendance_is_flagged(self):
+        from datetime import timedelta
+        from .models import Attendance
+        Attendance.objects.filter(site=self.site).update(
+            day=self.today - timedelta(days=4))
+        row = self._rows()["SUM"]
+        self.assertTrue(row["manpower_stale"])

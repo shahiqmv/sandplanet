@@ -276,30 +276,114 @@ function Login({ onLogin }) {
   );
 }
 
+// The landing page for most people. It used to be a three-column table —
+// code, name, status — which answers "what exists" when the question anyone
+// opens it with is "where does my attention go" (owner 2026-08-15). Each site
+// is now a card carrying what it is doing today: who is on it, what it is
+// waiting on, and whether it is still reporting.
+const SITE_BANDS = [
+  ["ACTIVE", "Active"],
+  ["AWARDED", "Awarded — not started"],
+  ["ON_HOLD", "On hold"],
+];
+
+function Metric({ value, label, tone }) {
+  const colour = tone === "warn" ? "#b35900"
+    : tone === "bad" ? "#c0392b" : "var(--sp-navy)";
+  return (
+    <div style={{ textAlign: "center", flex: 1, minWidth: 62 }}>
+      <div style={{ fontSize: 19, fontWeight: 700, color: colour,
+                    lineHeight: 1.1 }}>{value}</div>
+      <div style={{ fontSize: 10.5, color: "#6b7a86", marginTop: 2,
+                    textTransform: "uppercase", letterSpacing: .3 }}>
+        {label}</div>
+    </div>
+  );
+}
+
+function SiteCard({ s, onOpen }) {
+  // "Reporting" is the one that earns its place: a site that has stopped
+  // sending DPRs looks identical to a busy one on a list. Only ACTIVE sites
+  // are judged on it — an awarded job that has not started has no DPRs to
+  // send, and colouring that red would cry wolf on every card.
+  // Head Office is attendance-only, not a project — it files no DPRs and
+  // never should, so it is not judged on them either.
+  const live = s.status === "ACTIVE" && !s.is_head_office;
+  const dprTone = !live ? null
+    : s.dpr_days_ago == null ? "bad"
+    : s.dpr_days_ago > 3 ? "warn" : null;
+  const dprLabel = s.last_dpr == null ? (live ? "no DPR" : "—")
+    : s.dpr_days_ago === 0 ? "today"
+    : s.dpr_days_ago === 1 ? "yesterday" : `${s.dpr_days_ago}d ago`;
+  return (
+    <button onClick={() => onOpen(s)}
+      style={{ textAlign: "left", background: "#fff", cursor: "pointer",
+               border: "1px solid var(--sp-border)", borderRadius: 10,
+               padding: "12px 14px", display: "flex", flexDirection: "column",
+               gap: 10, font: "inherit", width: "100%" }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <span style={{ fontWeight: 700, color: "var(--sp-navy)",
+                       fontSize: 15, letterSpacing: .4 }}>{s.code}</span>
+        <span style={{ flex: 1, fontSize: 13, color: "#33404a",
+                       lineHeight: 1.25 }}>
+          {s.name}{s.is_head_office ? " · Head Office" : ""}
+        </span>
+        <StatusChip status={s.status} />
+      </div>
+      {s.pms?.length > 0 && (
+        <div style={{ fontSize: 11.5, color: "#6b7a86" }}>
+          PM · {s.pms.join(", ")}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 6, borderTop: "1px solid #eef1f4",
+                    paddingTop: 9, marginTop: "auto" }}>
+        <Metric value={s.manpower} label="on site"
+                tone={live && s.manpower_stale ? "warn" : null} />
+        <Metric value={s.open_docs} label="waiting"
+                tone={s.open_docs > 9 ? "warn" : null} />
+        <Metric value={dprLabel} label="last DPR" tone={dprTone} />
+      </div>
+    </button>
+  );
+}
+
 function SiteList({ sites, onOpen }) {
+  const [live, setLive] = useState(null);
+  useEffect(() => {
+    api("/sites/summary").then((d) => setLive(d.sites)).catch(() => {});
+  }, []);
+  // Fall back to the plain list the moment the summary is unavailable — this
+  // is the first screen after signing in and it must never be a blank page.
+  const rows = live || sites.map((s) => ({ ...s, manpower: "–",
+                                           open_docs: "–", pms: [] }));
+  const bands = SITE_BANDS
+    .map(([status, title]) => [title, rows.filter((s) => s.status === status)])
+    .filter(([, list]) => list.length);
+  const rest = rows.filter(
+    (s) => !SITE_BANDS.some(([status]) => status === s.status));
+  if (rest.length) bands.push(["Other", rest]);
+
   return (
     <section style={card}>
       <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
         Sites &amp; projects
       </h2>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <tbody>
-          {sites.map((s) => (
-            <tr key={s.id} onClick={() => onOpen(s)}
-                style={{ borderTop: "1px solid var(--sp-border)",
-                         cursor: "pointer" }}>
-              <td style={{ padding: "10px 8px 10px 0", fontWeight: 600,
-                           color: "var(--sp-navy)", width: 56 }}>{s.code}</td>
-              <td style={{ padding: 10 }}>
-                {s.name}{s.is_head_office ? " (Head Office)" : ""}
-              </td>
-              <td style={{ padding: 10, textAlign: "right" }}>
-                <StatusChip status={s.status} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {bands.map(([title, list]) => (
+        <div key={title} style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 11.5, fontWeight: 700, color: "#6b7a86",
+                        textTransform: "uppercase", letterSpacing: .5,
+                        margin: "0 0 8px" }}>
+            {title} <span style={{ fontWeight: 500 }}>({list.length})</span>
+          </div>
+          <div style={{ display: "grid", gap: 10,
+                        gridTemplateColumns:
+                          "repeat(auto-fill, minmax(248px, 1fr))" }}>
+            {list.map((s) => (
+              <SiteCard key={s.id} s={s} onOpen={onOpen} />
+            ))}
+          </div>
+        </div>
+      ))}
     </section>
   );
 }

@@ -234,6 +234,7 @@ urlpatterns = [
          name="permit-batch-renew"),
     path("dashboards/portfolio", projects.dashboard_portfolio,
          name="dashboard-portfolio"),
+    path("sites/summary", views.sites_summary, name="sites-summary"),
     path("sites/<int:site_id>/projects", projects.site_projects,
          name="site-projects"),
     path("assignable/qs", projects.assignable_qs, name="assignable-qs"),
