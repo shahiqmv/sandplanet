@@ -483,6 +483,15 @@ export default function App() {
       setDocView({ mode: "ipr-view", doc: { ref: item.ref } });
       return;
     }
+    // An appointment sign-off is not done in the document viewer either — the
+    // signatory has their own limited screen for it, which My Tasks never
+    // pointed at (owner 2026-08-15).
+    if (item.doc_type === "OBR" && item.status === "IN_PROGRESS") {
+      setDocView(null);
+      setOpenSite(null);
+      setHoPage("appointment-signoff");
+      return;
+    }
     openDoc(item.ref);
   }
 

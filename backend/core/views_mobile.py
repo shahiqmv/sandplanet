@@ -91,6 +91,7 @@ APPROVABLE = {
     # actionable from the phone (owner 2026-08-15).
     ("IPR", "PENDING_DIRECTOR"), ("IPR", "PENDING_SIGNATORY"),
     ("OBR", "SUBMITTED"),   # Director approves expat mobilisation on mobile
+    ("OBR", "IN_PROGRESS"),  # signatory signs the appointment off on mobile
     ("PSC", "CONFIRMED"),   # Director signs off a procurement schedule on mobile
     # Subcontract valuation: PM verifies, Director approves, Signatory authorises
     ("SVC", "SUBMITTED"), ("SVC", "PM_VERIFIED"), ("SVC", "DIRECTOR_APPROVED"),
@@ -542,6 +543,17 @@ def _act(request, ref, kind):
             request, doc, comment)
         if isinstance(result, Response) and result.status_code >= 400:
             return result
+    elif doc.doc_type == "OBR" and doc.status == "IN_PROGRESS":
+        # The signatory's appointment sign-off — one action, not a decision
+        # with two sides: signing stamps every letter the case will carry.
+        from . import onboarding
+        if kind == "return":
+            return Response({"detail": "A sign-off is not returned — either "
+                                       "sign it, or leave it and take it up "
+                                       "with HR."}, status=400)
+        _, msg = onboarding.sign_off_case(doc.onboarding, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
     elif doc.doc_type == "OBR":
         # Director approves / returns an expat mobilisation request
         from . import onboarding

@@ -826,6 +826,17 @@ def pending_groups(user):
         add("To authorise — import order charge corrections",
             correction_rows("PENDING_SIGNATORY"))
     if user.role in ("SIGNATORY", "ADMIN"):
+        # The appointment sign-off had a queue of its own inside the
+        # onboarding module, so it reached neither My Tasks nor the phone and
+        # the signatory had to go looking for it (owner 2026-08-15).
+        from .onboarding import cases_to_sign_off
+        add("To sign off — onboarding appointments",
+            [{"ref": c["case_ref"], "doc_type": "OBR", "site_code": "—",
+              "project_code": None, "doc_date": None,
+              "status": "IN_PROGRESS",
+              "hint": f"{c['candidate_name']} — {c['position'] or 'appointment'}"
+                      " · signing stamps the letters"}
+             for c in cases_to_sign_off(user)[:50]])
         # Signatory approves whole Payment Vouchers (M6d), not each doc
         add("To approve — payment vouchers",
             [{"ref": pv.ref, "doc_type": "PV", "site_code": "—",
@@ -1185,9 +1196,15 @@ def _do_return(request, doc, comment):
         return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
                       comment=comment)
     if doc.doc_type == "IPR":
-        # Director/QS returns a submitted order for rework (no commitment yet)
-        return _apply(request, doc, "DRAFT", "RETURN",
-                      roles={"DIRECTOR", "QS", "HO_PURCHASING"}, comment=comment)
+        # Director/QS returns a submitted order for rework; and a signatory
+        # holding an AWARDED one may decline to authorise it and send it back
+        # — the counterpart of authorising, which they had no way to do
+        # (owner 2026-08-15). Nothing is committed until authorisation, so
+        # either way there is nothing to unwind.
+        roles = ({"SIGNATORY", "DIRECTOR", "QS"} if doc.status == "APPROVED"
+                 else {"DIRECTOR", "QS", "HO_PURCHASING"})
+        return _apply(request, doc, "DRAFT", "RETURN", roles=roles,
+                      comment=comment)
     if doc.doc_type == "SCA":
         # PM returns a submitted agreement; Director returns a PM-approved one.
         roles = {"SUBMITTED": {"PM"},

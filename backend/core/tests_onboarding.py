@@ -1281,3 +1281,50 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(rendered[0]["signatory_name"], admin.full_name)
         self.assertEqual(rendered[0]["signatory_designation"],
                          "Authorised Signatory")
+
+
+class SignOffReachesTheQueueTests(TestCase):
+    """The appointment sign-off belongs in the approvals queue.
+
+    It had a queue of its own inside the onboarding module, so it reached
+    neither My Tasks nor the phone, and a signatory had to go looking for it
+    (owner 2026-08-15).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        self.sig = make_user("so_sig", User.Role.SIGNATORY)
+        site = Site.objects.create(code="SOB", name="Sob Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(doc_type="OBR", ref="OBR-SOB-001",
+                                      site=site, doc_date=date(2026, 8, 1),
+                                      status="IN_PROGRESS",
+                                      created_by=self.sig)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="A Candidate",
+            trade_designation="Carpenter")
+
+    def test_it_appears_in_the_signatorys_pending_queue(self):
+        from .views_documents import pending_groups
+        titles = {g["title"]: g for g in pending_groups(self.sig)}
+        self.assertIn("To sign off — onboarding appointments", titles)
+        row = titles["To sign off — onboarding appointments"]["items"][0]
+        self.assertEqual(row["ref"], "OBR-SOB-001")
+        self.assertEqual(row["doc_type"], "OBR")
+        self.assertIn("A Candidate", row["hint"])
+
+    def test_the_phone_treats_it_as_actionable(self):
+        from .views_mobile import APPROVABLE
+        self.assertIn(("OBR", "IN_PROGRESS"), APPROVABLE)
+
+    def test_a_signed_case_leaves_the_queue(self):
+        from django.utils import timezone
+        from .views_documents import pending_groups
+        self.case.signatory_approved_at = timezone.now()
+        self.case.signatory_approved_by = self.sig
+        self.case.save(update_fields=["signatory_approved_at",
+                                      "signatory_approved_by"])
+        titles = {g["title"] for g in pending_groups(self.sig)}
+        self.assertNotIn("To sign off — onboarding appointments", titles)

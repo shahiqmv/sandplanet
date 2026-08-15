@@ -481,3 +481,40 @@ class ApprovalQueueOrderTests(TestCase):
         sig = make_user("q_sig", User.Role.SIGNATORY)
         bands = [queue_band(g["title"]) for g in pending_groups(sig)]
         self.assertEqual(bands, sorted(bands))
+
+
+class SignatoryCanReturnAnAwardedOrderTests(TestCase):
+    """A signatory holding an awarded import order may send it back.
+
+    Return listed Director, QS and HO Purchasing but not the signatory, so the
+    one person the order is actually waiting on could authorise it and nothing
+    else — on the phone the Return button simply failed (owner 2026-08-15).
+    Nothing commits until authorisation, so there is nothing to unwind.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from .models import Document, Site, User
+        from .tests import make_user
+        self.sig = make_user("ir_sig", User.Role.SIGNATORY)
+        self.site = Site.objects.create(code="IRR", name="Irr Isle",
+                                        status=Site.Status.ACTIVE)
+        self.doc = Document.objects.create(
+            doc_type="IPR", ref="IPR-900", site=self.site,
+            doc_date=date(2026, 8, 1), status="APPROVED", created_by=self.sig)
+        self.client = APIClient()
+        self.client.force_authenticate(self.sig)
+
+    def test_the_signatory_may_return_it(self):
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/return",
+            {"comment": "supplier terms wrong"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "DRAFT")
+
+    def test_a_reason_is_still_required(self):
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/return", {},
+            format="json")
+        self.assertEqual(r.status_code, 400)
