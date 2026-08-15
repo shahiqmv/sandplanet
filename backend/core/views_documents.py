@@ -652,6 +652,30 @@ def _do_issue(request, doc, comment):
                     status=400)
 
 
+# Order the queue by the kind of decision rather than by the order the code
+# happens to add things. A signatory opened My Tasks to find vouchers, import
+# orders and valuations interleaved with everything else their role touched,
+# so the decisions holding people up were not the ones at the top (owner
+# 2026-08-15). Money first; then the goods chain; then the rest. Within a band
+# the existing order stands, so nothing else moves.
+QUEUE_BANDS = (
+    ("payment voucher", "payment request", "salary", "payroll", "valuation",
+     "advance", "welfare", "payments pending", "authorised payment",
+     "awaiting a payment"),
+    ("import", "purchase order", "procurement", "supplier", "store",
+     "mrs at head office"),
+)
+
+
+def queue_band(title):
+    """Which band a queue group belongs to — lower sorts first."""
+    low = title.lower()
+    for i, words in enumerate(QUEUE_BANDS):
+        if any(w in low for w in words):
+            return i
+    return len(QUEUE_BANDS)
+
+
 def pending_groups(user):
     """The per-role 'waiting on you' queue (owner, 2026-07-08): each approver's
     landing page lists exactly the documents blocked on them. Plain helper so
@@ -783,10 +807,15 @@ def pending_groups(user):
     from .models import ImportChargeCorrection
 
     def correction_rows(status):
+        # `status` is the CORRECTION's, not the order's. Carrying the order's
+        # status here made the row look like an ordinary authorised IPR — it
+        # matched nothing actionable, so the phone dropped it and the desktop
+        # opened a screen with no correction on it (owner 2026-08-15).
         return [{"ref": c.order.document.ref, "doc_type": "IPR",
                  "site_code": c.order.document.site.code, "project_code": None,
                  "doc_date": c.order.document.doc_date,
-                 "status": c.order.document.status,
+                 "status": status,
+                 "correction_id": c.id,
                  "hint": f"Charge correction: {c.reason}"[:120]}
                 for c in ImportChargeCorrection.objects.filter(status=status)
                 .select_related("order__document__site")[:50]]
@@ -878,7 +907,7 @@ def pending_groups(user):
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
                  "Execute payment and record the reference"))
-    return groups
+    return sorted(groups, key=lambda g: queue_band(g["title"]))
 
 
 @api_view(["GET"])

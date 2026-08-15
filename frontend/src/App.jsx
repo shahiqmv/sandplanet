@@ -474,6 +474,15 @@ export default function App() {
       setHoPage("payroll");
       return;
     }
+    // An import order is authorised on its own screen, not in the document
+    // viewer — so tapping it in My Tasks used to land the signatory somewhere
+    // with no Authorise button, and they had to go and find the order
+    // themselves (owner 2026-08-15).
+    if (item.doc_type === "IPR") {
+      setOpenSite(null);
+      setDocView({ mode: "ipr-view", doc: { ref: item.ref } });
+      return;
+    }
     openDoc(item.ref);
   }
 

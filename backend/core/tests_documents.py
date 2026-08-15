@@ -436,3 +436,48 @@ class DashboardTwsTests(DocBase):
             f"/api/v1/dashboards/site/{self.site.id}").data["tws_by_date"]
         self.assertIn(tomorrow.isoformat(), byd)
         self.assertEqual(byd[tomorrow.isoformat()]["status"], "DRAFT")
+
+
+class ApprovalQueueOrderTests(TestCase):
+    """The queue leads with money (owner 2026-08-15).
+
+    A signatory opened My Tasks to find vouchers, import orders and
+    valuations interleaved with everything else their role touched, so the
+    decisions that hold people up were not the ones at the top.
+    """
+
+    def test_money_sorts_before_goods_and_goods_before_the_rest(self):
+        from .views_documents import queue_band
+        money = queue_band("To approve — payment vouchers")
+        goods = queue_band("To authorise — approved import orders (IPR)")
+        other = queue_band("To verify — issued DPRs")
+        self.assertLess(money, goods)
+        self.assertLess(goods, other)
+
+    def test_every_money_title_lands_in_the_money_band(self):
+        from .views_documents import queue_band
+        for title in ("To approve — payment vouchers",
+                      "To approve — submitted payment requests",
+                      "To approve — salary drafts",
+                      "To authorise — approved subcontract valuations",
+                      "To approve — HR payment requests (advances / welfare)",
+                      "To pay — authorised payment requests"):
+            self.assertEqual(queue_band(title), 0, title)
+
+    def test_the_order_within_a_band_is_left_alone(self):
+        """Only the band moves things; same-band groups keep their order."""
+        from .views_documents import queue_band
+        titles = ["To approve — payment vouchers",
+                  "To approve — salary drafts",
+                  "To authorise — approved import orders (IPR)",
+                  "To verify — issued DPRs"]
+        ordered = sorted(titles, key=queue_band)
+        self.assertEqual(ordered, titles)   # already in band order
+
+    def test_a_signatorys_queue_comes_back_money_first(self):
+        from .views_documents import pending_groups, queue_band
+        from .models import User
+        from .tests import make_user
+        sig = make_user("q_sig", User.Role.SIGNATORY)
+        bands = [queue_band(g["title"]) for g in pending_groups(sig)]
+        self.assertEqual(bands, sorted(bands))

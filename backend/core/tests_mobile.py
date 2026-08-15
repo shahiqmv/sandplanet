@@ -244,3 +244,75 @@ class MobilePwaShellTests(TestCase):
             return
         self.assertEqual(r.status_code, 200)
         self.assertIn(b"<div id=\"root\">", r.content)
+
+
+class MobileVoucherReturnTests(TestCase):
+    """A signatory can send a whole voucher back from the phone.
+
+    Returning was refused on mobile — "query voucher lines on the desktop for
+    now" — so a signatory away from a desk could approve a batch but never
+    reject one (owner 2026-08-15). Return now queries every line, which is
+    what returning a voucher means on the desktop too: each requisition goes
+    back to whoever raised it, with the reason.
+    """
+
+    def setUp(self):
+        from .models import User
+        from .tests import make_user
+        self.sig = make_user("mv_sig", User.Role.SIGNATORY)
+        self.pv, self.line_count = self._voucher()
+        self.client = APIClient()
+        self.token = self._token(self.sig)
+
+    def _token(self, user):
+        r = self.client.post("/api/mobile/v1/auth/login",
+                             {"username": user.username,
+                              "password": "pw-test-123"}, format="json")
+        return r.data.get("token") if r.status_code in (200, 201) else None
+
+    def _voucher(self):
+        """Build a submitted voucher with one PYR line on it."""
+        from datetime import date
+        from decimal import Decimal
+        from .models import (CostHead, Document, PaymentRequest,
+                             PaymentVoucherLine, Site, User)
+        from .tests import make_user
+        site = Site.objects.create(code="MVS", name="Mv Isle",
+                                   status=Site.Status.ACTIVE)
+        fin = make_user("mv_fin", User.Role.FINANCE)
+        head = CostHead.objects.filter(name="Labour & Staff").first()
+        pyr = Document.objects.create(doc_type="PYR", ref="PYR-MVS-001",
+                                      site=site, doc_date=date(2026, 8, 1),
+                                      status="DIRECTOR_APPROVED",
+                                      created_by=fin)
+        PaymentRequest.objects.create(
+            document=pyr, cost_head=head, payee="Someone",
+            amount_requested=Decimal("100"), purpose="test", origin="FINANCE")
+        pv = Document.objects.create(doc_type="PV", ref="PV-900", site=site,
+                                     doc_date=date(2026, 8, 1),
+                                     status="SUBMITTED", created_by=fin)
+        PaymentVoucherLine.objects.create(voucher=pv, source_document=pyr,
+                                          status="INCLUDED",
+                                          amount=Decimal("100"))
+        return pv, 1
+
+    def test_return_queries_every_line_and_sends_the_source_back(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        r = self.client.post(
+            f"/api/mobile/v1/documents/{self.pv.ref}/return",
+            {"comment": "wrong bank details"}, format="json",
+            HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.pv.refresh_from_db()
+        self.assertEqual(
+            self.pv.voucher_lines.filter(status="QUERIED").count(),
+            self.line_count)
+
+    def test_a_reason_is_required(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        r = self.client.post(
+            f"/api/mobile/v1/documents/{self.pv.ref}/return", {},
+            format="json", HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.assertEqual(r.status_code, 400)

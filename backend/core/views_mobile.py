@@ -86,6 +86,10 @@ APPROVABLE = {
     ("PV", "SUBMITTED"),
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
+    # A charge correction on an already-authorised order: the row carries the
+    # CORRECTION's status, so it no longer looks like a finished IPR and is
+    # actionable from the phone (owner 2026-08-15).
+    ("IPR", "PENDING_DIRECTOR"), ("IPR", "PENDING_SIGNATORY"),
     ("OBR", "SUBMITTED"),   # Director approves expat mobilisation on mobile
     ("PSC", "CONFIRMED"),   # Director signs off a procurement schedule on mobile
     # Subcontract valuation: PM verifies, Director approves, Signatory authorises
@@ -480,8 +484,16 @@ def _act(request, ref, kind):
     if kind == "return" and not comment:
         return Response({"detail": "A reason is required to return."},
                         status=400)
+    # A charge correction rides on an order that is itself AUTHORISED — the
+    # queue row carries the correction's status, the document carries the
+    # order's, so the pair is allowed here while a correction is pending.
+    if doc.doc_type == "IPR" and doc.status == "AUTHORISED":
+        from .imports import pending_charge_correction
+        if pending_charge_correction(doc.import_order) is None:
+            return Response({"detail": f"Already actioned — {doc.ref} is now "
+                             f"{doc.status}."}, status=409)
     # 409 if it's no longer in a mobile-actionable state (someone beat us to it)
-    if (doc.doc_type, doc.status) not in APPROVABLE:
+    elif (doc.doc_type, doc.status) not in APPROVABLE:
         return Response({"detail": f"Already actioned — {doc.ref} is now "
                         f"{doc.status}."}, status=409)
 
@@ -491,17 +503,38 @@ def _act(request, ref, kind):
             return Response({"detail": "Only a signatory approves a voucher."},
                             status=403)
         if kind == "return":
-            return Response({"detail": "Query voucher lines on the desktop for "
-                             "now."}, status=400)
-        err = vouchers.approve_voucher(doc, request.user)
-        if err:
-            return Response({"detail": err}, status=400)
+            # Returning a voucher on the desktop means querying its lines:
+            # each one goes back to whoever raised it with the reason. A
+            # signatory on the road wants the whole batch back, so Return
+            # queries every line rather than refusing (owner 2026-08-15).
+            line_ids = list(doc.voucher_lines.filter(
+                status="INCLUDED").values_list("id", flat=True))
+            if not line_ids:
+                return Response({"detail": "This voucher has no lines to "
+                                           "return."}, status=400)
+            err = vouchers.approve_voucher(doc, request.user,
+                                           queried_ids=line_ids,
+                                           note=comment)
+            if err:
+                return Response({"detail": err}, status=400)
+        else:
+            err = vouchers.approve_voucher(doc, request.user)
+            if err:
+                return Response({"detail": err}, status=400)
     elif doc.doc_type == "PYR":
         from .payments import pyr_action
         result = pyr_action(request, doc, "approve" if kind == "approve"
                             else "return")
         if isinstance(result, Response) and result.status_code >= 400:
             return result
+    elif doc.doc_type == "IPR" and doc.status == "AUTHORISED":
+        # the pending charge correction on this order, not the order itself
+        from . import imports
+        msg = imports.decide_charge_correction(
+            doc, "approve" if kind == "approve" else "reject",
+            request.user, comment)
+        if msg:
+            return Response({"detail": msg}, status=400)
     elif doc.doc_type == "IPR" and doc.status == "APPROVED":
         # signatory authorises the overseas order — commits it and raises the PO
         from .views_documents import _do_authorise, _do_return
