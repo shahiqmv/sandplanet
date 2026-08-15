@@ -1787,10 +1787,21 @@ class RefreshDropsEmptyStaleLinesTests(TestCase):
         flagged = payroll.marked_but_unpayable(self.site, "MVR", 2026, 7)
         self.assertEqual([w["emp_no"] for w in flagged], ["RMV-0001"])
 
+    def test_an_outstanding_advance_does_not_keep_the_line(self):
+        """`advance` is derived from paid advance PYRs, not typed, and it is
+        recovered on the run for the site the man actually worked at."""
+        line = self.run.lines.first()
+        line.advance = Decimal("2000")
+        line.save(update_fields=["advance"])
+        self._make_unpayable()
+        res, _ = payroll.refresh_run(self.run, self.hr)
+        self.assertEqual(res["removed"], ["RMV-0001"])
+        self.assertEqual(self.run.lines.count(), 0)
+
     def test_a_line_hr_has_touched_is_kept_and_reported(self):
         line = self.run.lines.first()
-        line.advance = Decimal("500")
-        line.save(update_fields=["advance"])
+        line.allowance = Decimal("500")
+        line.save(update_fields=["allowance"])
         self._make_unpayable()
         res, _ = payroll.refresh_run(self.run, self.hr)
         self.assertEqual(res["removed"], [])

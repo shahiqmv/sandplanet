@@ -671,8 +671,13 @@ def refresh_run(run, actor):
                 # and is reported instead: that is their entry to withdraw,
                 # not ours.
                 w_start, w_end = paid_window(emp, site, run.year, run.month)
+                # Only what a person typed counts as a reason to keep the
+                # line. `advance` and `loan` are derived from paid advance
+                # PYRs and recomputed on every refresh, so counting them kept
+                # KABIR and MD RUBEL on SSL's run at minus 2,000 apiece for a
+                # site they never worked at (owner 2026-08-15). Their advance
+                # is recovered on the run for the site where they did work.
                 empty_line = not any([line.allowance, line.penalty,
-                                      line.advance, line.loan,
                                       line.amount_to_site,
                                       line.amount_to_office])
                 # Only when there is genuinely no payable day in the month.
