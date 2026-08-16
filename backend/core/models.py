@@ -2241,6 +2241,11 @@ class OnboardingCase(models.Model):
     # --- processing (set once approved; the HR track stage machine) ---
     stage = models.CharField(max_length=30, blank=True)
     portal_status = models.CharField(max_length=20, blank=True)  # govt portal
+    # The reference the government portal issues when the application is
+    # lodged — GSR/2026/27757 and the like. Required to enter an application
+    # stage: without it nobody can find the application again on the portal,
+    # and HR was tracking these on paper (owner 2026-08-16).
+    portal_ref = models.CharField(max_length=60, blank=True)
     # Payment stages HR marked "not applicable" so they advance without a fee
     # (e.g. Indian nationals pay no business-visa fee).
     waived_stages = models.JSONField(default=list, blank=True)

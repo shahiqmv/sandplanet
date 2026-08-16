@@ -409,6 +409,15 @@ def _can_leave(case, stage):
 
 def _on_enter(case, stage, data):
     from datetime import date, timedelta
+    if stage in APPLICATION_STAGES:
+        # The portal issues a reference the moment the application is lodged.
+        # Without it the application cannot be found again, and HR was keeping
+        # them on paper (owner 2026-08-16).
+        ref = (data.get("portal_ref") or case.portal_ref or "").strip()
+        if not ref:
+            return ("Enter the government portal reference for this "
+                    "application (e.g. GSR/2026/27757).")
+        case.portal_ref = ref
     if stage in ARRIVAL_STAGES:
         d = data.get("arrived_date")
         if not d:
@@ -501,6 +510,12 @@ def set_stage_data(case, data, actor):
     if case.document.status != "IN_PROGRESS":
         return "The case is not in processing."
     changed = []
+    if "portal_ref" in data and case.stage in APPLICATION_STAGES:
+        ref = (data.get("portal_ref") or "").strip()
+        if not ref:
+            return "The portal reference cannot be blanked out."
+        case.portal_ref = ref
+        changed.append("portal_ref")
     if "portal_status" in data and case.stage in APPLICATION_STAGES:
         ps = (data.get("portal_status") or "").upper()
         if ps not in ("SUBMITTED", "ADDITIONAL_INFO", "APPROVED", "REJECTED"):
@@ -1766,6 +1781,8 @@ def stage_view(case):
         needs = "arrival"
     elif nxt == "BV_ARRIVED":
         needs = "arrival_bv"
+    elif nxt in APPLICATION_STAGES:
+        needs = "portal_ref"
     fee = None
     if case.stage in PAYMENT_STAGES:
         f = active_fee_for(case, case.stage)
@@ -1832,6 +1849,7 @@ def case_dict(case):
         "pending_label": PENDING_LABEL.get(case.stage, ""),
         "waived_stages": list(case.waived_stages or []),
         "portal_status": case.portal_status,
+        "portal_ref": case.portal_ref,
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
         "bv_expiry": case.bv_expiry, **sv,

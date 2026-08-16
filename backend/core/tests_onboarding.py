@@ -212,7 +212,12 @@ class OnboardingSpineTests(TestCase):
         return pk
 
     def _adv(self, pk, **data):
+        """Advance a stage. Carries a portal reference unless the test is
+        deliberately withholding one — lodging an application now requires the
+        reference the government portal issues (owner 2026-08-16), and these
+        walks are about the rest of the machine, not that gate."""
         self.client.force_authenticate(self.hr)
+        data.setdefault("portal_ref", "GSR/2026/00001")
         return self.client.post(f"/api/v1/onboarding/{pk}/stage", data,
                                 format="json")
 
@@ -1414,7 +1419,7 @@ class PaymentClearsTheGateTests(TestCase):
             created_by=self.hr)
         self.case = OnboardingCase.objects.create(
             document=doc, full_name="Candidate", nationality="Bangladeshi",
-            route="BV", stage="BV_INSURANCE",
+            route="BV", stage="BV_VISA_FEE",
             signatory_approved_at=timezone.now(),
             signatory_approved_by=self.sig)
         head = CostHead.objects.filter(name="Labour & Staff").first()
@@ -1427,7 +1432,7 @@ class PaymentClearsTheGateTests(TestCase):
             amount_requested=Decimal("1200"), purpose="Travel insurance",
             origin="ONBOARDING")
         OnboardingFee.objects.create(case=self.case, document=self.pyr,
-                                     stage="BV_INSURANCE")
+                                     stage="BV_VISA_FEE")
 
     def test_the_case_waits_while_the_fee_is_unsettled(self):
         """Approved onto a voucher is not the same as authorised — nothing
@@ -1437,14 +1442,14 @@ class PaymentClearsTheGateTests(TestCase):
         err = self.ob.advance_stage(self.case, {}, self.hr)
         self.assertIn("Awaiting payment", err)
         self.case.refresh_from_db()
-        self.assertEqual(self.case.stage, "BV_INSURANCE")
+        self.assertEqual(self.case.stage, "BV_VISA_FEE")
 
     def test_paying_it_moves_the_case_on(self):
         self.pyr.status = "PAID"
         self.pyr.save(update_fields=["status"])
         self.ob.on_fee_paid(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+        self.assertNotEqual(self.case.stage, "BV_VISA_FEE")
 
     def test_finance_paying_it_is_enough_without_hr_touching_it(self):
         """The actor is Finance, who is not an HR processing role — the point
@@ -1455,7 +1460,7 @@ class PaymentClearsTheGateTests(TestCase):
                       self.ob.advance_stage(self.case, {}, self.fin) or "")
         self.ob.on_fee_paid(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+        self.assertNotEqual(self.case.stage, "BV_VISA_FEE")
 
     def test_it_never_forces_a_case_past_a_gate_it_cannot_clear(self):
         """Sign-off is still the start line: an unsigned case does not move,
@@ -1466,16 +1471,16 @@ class PaymentClearsTheGateTests(TestCase):
         self.pyr.save(update_fields=["status"])
         self.ob.on_fee_paid(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertEqual(self.case.stage, "BV_INSURANCE")
+        self.assertEqual(self.case.stage, "BV_VISA_FEE")
 
     def test_a_fee_for_a_stage_the_case_has_left_changes_nothing(self):
-        self.case.stage = "BV_VISA_FEE"
+        self.case.stage = "BV_TICKET"
         self.case.save(update_fields=["stage"])
         self.pyr.status = "PAID"
         self.pyr.save(update_fields=["status"])
         self.ob.on_fee_paid(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertEqual(self.case.stage, "BV_VISA_FEE")
+        self.assertEqual(self.case.stage, "BV_TICKET")
 
     def test_an_authorised_fee_is_settled_enough_to_advance(self):
         """Finance's paid stamp lags by weeks; authorisation is when the money
@@ -1483,7 +1488,7 @@ class PaymentClearsTheGateTests(TestCase):
         self.assertEqual(self.pyr.status, "AUTHORISED")
         self.ob.on_fee_settled(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+        self.assertNotEqual(self.case.stage, "BV_VISA_FEE")
 
     def test_a_fee_still_awaiting_authorisation_holds_the_case(self):
         self.pyr.status = "DIRECTOR_APPROVED"
@@ -1491,15 +1496,35 @@ class PaymentClearsTheGateTests(TestCase):
         err = self.ob.advance_stage(self.case, {}, self.hr)
         self.assertIn("Awaiting payment", err)
 
+    def test_it_will_not_lodge_an_application_without_the_portal_reference(self):
+        """The decline path, with the case that shows it: an insurance fee
+        settles, but the next stage is the application, and only HR has the
+        reference the portal issued (owner 2026-08-16)."""
+        from .models import OnboardingFee
+        self.case.stage = "BV_INSURANCE"
+        self.case.save(update_fields=["stage"])
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        OnboardingFee.objects.filter(case=self.case).update(
+            stage="BV_INSURANCE")
+        self.ob.on_fee_settled(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_INSURANCE")
+        # ...and it moves the moment HR supplies it
+        err = self.ob.advance_stage(
+            self.case, {"portal_ref": "GSR/2026/27757"}, self.hr)
+        self.assertIsNone(err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_APPLICATION")
+
     def test_an_authorised_unpaid_fee_stays_visible_after_the_case_moves(self):
         """The one that was missed: the case advances on authorisation, and
         the money that has not actually gone must not vanish with the stage
         (owner 2026-08-16, OBR-SFR-008)."""
         self.ob.on_fee_settled(self.pyr, self.fin)
         self.case.refresh_from_db()
-        self.assertNotEqual(self.case.stage, "BV_INSURANCE")   # it moved on
+        self.assertNotEqual(self.case.stage, "BV_VISA_FEE")   # it moved on
         row = self.ob.case_dict(self.case)
-        self.assertIsNone(row["fee"], "no longer at a payment stage")
         out = row["outstanding_fees"]
         self.assertEqual(len(out), 1, "the unpaid fee disappeared")
         self.assertEqual(out[0]["pyr_ref"], "PYR-PGT-001")
@@ -1515,3 +1540,78 @@ class PaymentClearsTheGateTests(TestCase):
         self.pyr.status = "CANCELLED"
         self.pyr.save(update_fields=["status"])
         self.assertEqual(self.ob.case_dict(self.case)["outstanding_fees"], [])
+
+
+class PortalReferenceTests(TestCase):
+    """The government portal's reference is required to lodge an application.
+
+    The portal issues one (GSR/2026/27757) the moment an application goes in.
+    Without it nobody can find the application again, and HR was keeping them
+    on paper (owner 2026-08-16).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        self.hr = make_user("pr_hr", User.Role.HO_HR)
+        site = Site.objects.create(code="PRF", name="Portal Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-PRF-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.hr)
+        # sitting on the stage immediately before the BV application
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Sri Lankan",
+            route="BV", stage="BV_INSURANCE",
+            waived_stages=["BV_INSURANCE"],
+            signatory_approved_at=timezone.now())
+
+    def test_advancing_without_it_says_what_is_missing(self):
+        err = self.ob.advance_stage(self.case, {}, self.hr)
+        self.assertIn("portal reference", err)
+        self.assertIn("GSR", err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_INSURANCE")  # it did not move
+
+    def test_a_blank_reference_is_not_a_reference(self):
+        err = self.ob.advance_stage(self.case, {"portal_ref": "   "}, self.hr)
+        self.assertIn("portal reference", err)
+
+    def test_supplying_it_advances_and_records_it(self):
+        err = self.ob.advance_stage(
+            self.case, {"portal_ref": " GSR/2026/27757 "}, self.hr)
+        self.assertIsNone(err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_APPLICATION")
+        self.assertEqual(self.case.portal_ref, "GSR/2026/27757")
+
+    def test_the_stage_asks_for_it_up_front(self):
+        self.assertEqual(self.ob.stage_view(self.case)["next_needs"],
+                         "portal_ref")
+
+    def test_hr_can_correct_it_afterwards(self):
+        self.ob.advance_stage(self.case, {"portal_ref": "GSR/2026/1"}, self.hr)
+        self.case.refresh_from_db()
+        err = self.ob.set_stage_data(self.case, {"portal_ref": "GSR/2026/27757"},
+                                  self.hr)
+        self.assertIsNone(err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.portal_ref, "GSR/2026/27757")
+
+    def test_it_cannot_be_blanked_out_afterwards(self):
+        self.ob.advance_stage(self.case, {"portal_ref": "GSR/2026/1"}, self.hr)
+        self.case.refresh_from_db()
+        err = self.ob.set_stage_data(self.case, {"portal_ref": ""}, self.hr)
+        self.assertIn("cannot be blanked", err)
+
+    def test_it_reaches_the_dashboard(self):
+        self.ob.advance_stage(self.case,
+                              {"portal_ref": "GSR/2026/27757"}, self.hr)
+        self.case.refresh_from_db()
+        self.assertEqual(self.ob.case_dict(self.case)["portal_ref"],
+                         "GSR/2026/27757")

@@ -721,6 +721,19 @@ function Processing({ c, me, onReload }) {
   const [error, setError] = useState(null);
   const [arrived, setArrived] = useState("");
   const [bvExp, setBvExp] = useState("");
+  const [portalRef, setPortalRef] = useState("");
+
+  // What an advance carries depends on the stage being entered. Keeping it in
+  // one place stopped the waive-fee path and the normal path drifting apart.
+  const advancePayload = () => {
+    if (c.next_needs === "portal_ref") {
+      return { portal_ref: portalRef.trim() || c.portal_ref || "" };
+    }
+    if (["arrival", "arrival_bv"].includes(c.next_needs)) {
+      return { arrived_date: arrived, bv_expiry: bvExp };
+    }
+    return {};
+  };
   const [portal, setPortal] = useState(c.portal_status || "SUBMITTED");
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
@@ -887,8 +900,7 @@ function Processing({ c, me, onReload }) {
                        onClick={raiseFee}>Raise fee PYR</Btn>
                   <button type="button" disabled={busy}
                     onClick={() => advance({ waive_fee: true,
-                      ...(c.next_needs ? { arrived_date: arrived,
-                                           bv_expiry: bvExp } : {}) })}
+                                             ...advancePayload() })}
                     title="No fee for this case (e.g. Indian nationals pay no
 visa fee) — advance without a payment"
                     style={{ border: "none", background: "none", cursor: "pointer",
@@ -906,7 +918,19 @@ visa fee) — advance without a payment"
               )}
             </div>
           )}
-          {c.next_needs && (
+          {c.next_needs === "portal_ref" && (
+            <div style={ctl}>
+              <span>Portal reference</span>
+              <input style={{ ...inputStyle, width: 220 }} value={portalRef}
+                     placeholder="e.g. GSR/2026/27757"
+                     onChange={(e) => setPortalRef(e.target.value)} />
+              <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                the reference the government portal gives when the application
+                is lodged — without it nobody can find it again
+              </span>
+            </div>
+          )}
+          {["arrival", "arrival_bv"].includes(c.next_needs) && (
             <div style={ctl}>
               <span>Arrival date</span>
               <input type="date" style={inputStyle} value={arrived}
@@ -920,9 +944,10 @@ visa fee) — advance without a payment"
           {c.next_stage && (
             <div>
               <Btn variant="primary"
-                   disabled={busy || (c.at_payment && !c.fee?.paid)}
-                   onClick={() => advance(c.next_needs
-                     ? { arrived_date: arrived, bv_expiry: bvExp } : {})}>
+                   disabled={busy || (c.at_payment && !c.fee?.paid)
+                             || (c.next_needs === "portal_ref"
+                                 && !portalRef.trim() && !c.portal_ref)}
+                   onClick={() => advance(advancePayload())}>
                 Advance → {c.next_label}</Btn>
             </div>
           )}
