@@ -290,50 +290,30 @@ const SITE_ACCENT = { ACTIVE: "#1a7f37", AWARDED: "#2f6f9f",
                       ON_HOLD: "#b35900" };
 
 function SiteTile({ s, onOpen }) {
-  const live = s.status === "ACTIVE";
   return (
     <button onClick={() => onOpen(s)} title={`${s.code} — ${s.name}`}
       style={{ background: "#fff", cursor: "pointer", textAlign: "center",
                border: "1px solid var(--sp-border)", borderRadius: 10,
                borderTop: `3px solid ${SITE_ACCENT[s.status] || "#8a94a0"}`,
-               padding: "7px 6px 6px", display: "flex",
-               flexDirection: "column", alignItems: "center",
-               justifyContent: "center", gap: 2,
+               padding: "6px 5px", display: "flex", flexDirection: "column",
+               alignItems: "center", justifyContent: "center", gap: 2,
                font: "inherit", aspectRatio: "1 / 1", overflow: "hidden",
                width: "100%" }}>
-      <div style={{ fontWeight: 700, color: "var(--sp-navy)", fontSize: 18,
-                    letterSpacing: .5, lineHeight: 1.05, flexShrink: 0 }}>
-        {s.code}
-      </div>
-      {/* exactly two lines, so a long resort name ellipsises instead of
+      {/* exactly two lines, so a long resort name ellipsises rather than
           being sliced in half by the tile's edge */}
-      <div style={{ fontSize: 9, color: "#5a6b78", lineHeight: 1.2,
+      <div style={{ fontSize: 8.5, color: "#6b7a86", lineHeight: 1.2,
                     height: "2.4em", flexShrink: 0, width: "100%",
                     display: "-webkit-box", WebkitLineClamp: 2,
                     WebkitBoxOrient: "vertical", overflow: "hidden" }}>
         {s.name}
       </div>
-      <div style={{ lineHeight: 1, flexShrink: 0, marginTop: 3 }}>
-        {live ? (
-          <>
-            <span style={{ fontSize: 18, fontWeight: 700,
-                           color: "var(--sp-navy)" }}>{s.workforce}</span>
-            <span style={{ fontSize: 8.5, color: "#8a94a0", marginLeft: 3,
-                           textTransform: "uppercase", letterSpacing: .3 }}>
-              crew
-            </span>
-          </>
-        ) : (
-          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: .3,
-                         color: SITE_ACCENT[s.status] || "#8a94a0",
-                         textTransform: "uppercase" }}>
-            {(s.status || "").replace("_", " ")}
-          </span>
-        )}
+      <div style={{ fontWeight: 700, color: "var(--sp-navy)", fontSize: 19,
+                    letterSpacing: .5, lineHeight: 1.05, flexShrink: 0 }}>
+        {s.code}
       </div>
       <div style={{ fontSize: 8.5, color: "#8a94a0", whiteSpace: "nowrap",
                     overflow: "hidden", textOverflow: "ellipsis",
-                    flexShrink: 0, width: "100%", marginTop: 2 }}>
+                    flexShrink: 0, width: "100%" }}>
         {s.pms?.length ? s.pms[0] : "\u00a0"}
       </div>
     </button>
@@ -371,7 +351,7 @@ function SiteList({ sites, onOpen }) {
               scattering a dozen thumbnails across a desktop. */}
           <div style={{ display: "grid", gap: 7,
                         gridTemplateColumns:
-                          "repeat(auto-fill, minmax(clamp(88px, 21vw, 150px),"
+                          "repeat(auto-fill, minmax(clamp(76px, 19vw, 124px),"
                           + " 1fr))" }}>
             {list.map((s) => (
               <SiteTile key={s.id} s={s} onOpen={onOpen} />
