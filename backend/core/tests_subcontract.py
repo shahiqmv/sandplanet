@@ -876,3 +876,16 @@ class SvcActionsFromTheDocumentViewerTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         self.doc.refresh_from_db()
         self.assertEqual(self.doc.status, "DRAFT")
+
+    def test_the_document_payload_shows_what_is_being_authorised(self):
+        """Without this the viewer had a header, an Authorise button and
+        nothing in between (owner 2026-08-16)."""
+        self.client.force_authenticate(self.sig)
+        r = self.client.get(f"/api/v1/documents/{self.doc.ref}")
+        self.assertEqual(r.status_code, 200, r.data)
+        v = r.data.get("valuation")
+        self.assertIsNotNone(v, "the SVC payload carries no valuation")
+        self.assertEqual(v["subcontractor"], "Gang")
+        self.assertEqual(float(v["now_due"]), 47 * 50)
+        self.assertEqual(len(v["items"]), 1)
+        self.assertEqual(v["items"][0]["description"], "Blockwork")

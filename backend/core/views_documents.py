@@ -92,6 +92,34 @@ def _serialize(doc, request):
             data["loadable_store_count"] = len(loadable_store_lines(doc))
         else:
             data["loadable_store_count"] = 0
+    if doc.doc_type == "SVC" and hasattr(doc, "subcontract_valuation"):
+        # A valuation has no document lines — its content is the priced scope
+        # — so the viewer drew a header and nothing else, and the signatory
+        # was asked to authorise a blank page (owner 2026-08-16).
+        from . import subcontract
+
+        v = doc.subcontract_valuation
+        m = subcontract.svc_valuation(v)
+        data["valuation"] = {
+            "agreement": v.agreement.document.ref,
+            "subcontractor": v.agreement.subcontractor.name,
+            "seq": v.seq, "work_done_upto": v.work_done_upto,
+            "currency": m["currency"],
+            "contract_value": m["contract_value"],
+            "gross_cumulative": m["gross_cumulative"],
+            "previous_gross": m["previous_gross"],
+            "retention_held": m["retention_held"],
+            "deductions": m["deductions"],
+            "paid_to_date": m["paid_to_date"],
+            "now_due": m["now_due"],
+            "items": [{
+                "description": i.scope_item.description,
+                "unit": i.scope_item.unit,
+                "rate": i.scope_item.rate,
+                "contract_qty": i.scope_item.qty,
+                "cumulative_qty": i.cumulative_qty,
+            } for i in v.items.select_related("scope_item")],
+        }
     return data
 
 

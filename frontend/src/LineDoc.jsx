@@ -37,6 +37,66 @@ const HEADER_FIELDS = {
   ],
 };
 
+// A subcontract valuation has no document lines — its content is the priced
+// scope and what it is worth — so without this the signatory was asked to
+// authorise a page with nothing on it (owner 2026-08-16).
+function ValuationBlock({ v }) {
+  if (!v) return null;
+  const m = (x) => Number(x || 0).toLocaleString("en-US",
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const Row = ({ label, value, strong }) => (
+    <div style={{ display: "flex", justifyContent: "space-between",
+                  padding: "3px 0", fontWeight: strong ? 700 : 400 }}>
+      <span style={{ color: strong ? "var(--sp-navy)" : "#5a6b78" }}>
+        {label}</span>
+      <span>{v.currency} {m(value)}</span>
+    </div>
+  );
+  return (
+    <section style={{ ...card, marginTop: 12 }}>
+      <h3 style={{ margin: "0 0 2px", fontSize: 15, color: "var(--sp-navy)" }}>
+        Valuation {v.seq} — {v.subcontractor}
+      </h3>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 10px" }}>
+        {v.agreement} · work done up to {v.work_done_upto}
+      </p>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+                      fontSize: 12.5, marginBottom: 10 }}>
+        <thead><tr>
+          <th style={th}>Scope</th>
+          <th style={{ ...th, textAlign: "right" }}>Rate</th>
+          <th style={{ ...th, textAlign: "right" }}>Contract</th>
+          <th style={{ ...th, textAlign: "right" }}>Done to date</th>
+        </tr></thead>
+        <tbody>
+          {(v.items || []).map((it, n) => (
+            <tr key={n} style={{ borderTop: "1px solid var(--sp-border)" }}>
+              <td style={td}>{it.description}</td>
+              <td style={{ ...td, textAlign: "right" }}>{m(it.rate)}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {Number(it.contract_qty)} {it.unit}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                {Number(it.cumulative_qty)} {it.unit}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div style={{ maxWidth: 380, marginLeft: "auto", fontSize: 12.5 }}>
+        <Row label="Contract value" value={v.contract_value} />
+        <Row label="Valued to date" value={v.gross_cumulative} />
+        <Row label="Previously valued" value={v.previous_gross} />
+        {Number(v.retention_held) > 0 &&
+          <Row label="Retention held" value={v.retention_held} />}
+        {Number(v.deductions) > 0 &&
+          <Row label="Deductions" value={v.deductions} />}
+        {Number(v.paid_to_date) > 0 &&
+          <Row label="Paid to date" value={v.paid_to_date} />}
+        <Row label="Now due" value={v.now_due} strong />
+      </div>
+    </section>
+  );
+}
+
 // Which actions the UI offers; the server is the authority.
 const ACTIONS = {
   MR: [
@@ -1685,6 +1745,8 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
             r.is_current ? `${r.rev_label} (current)` : r.rev_label).join(" · ")}
         </p>
       )}
+
+      <ValuationBlock v={doc.valuation} />
 
       {doc.approvals?.length > 0 && (
         <>

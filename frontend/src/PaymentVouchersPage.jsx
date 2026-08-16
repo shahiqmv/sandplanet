@@ -33,7 +33,7 @@ function lineDetail(l) {
 const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
   : d.kind === "PAYABLE" ? `P:${d.payable_id}` : d.ref;
 
-export default function PaymentVouchersPage({ me, onOpenDoc }) {
+export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
   const isSignatory = ["SIGNATORY", "ADMIN"].includes(me.role);
 
@@ -43,7 +43,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc }) {
   const [vHasMore, setVHasMore] = useState(false);
   const [vq, setVq] = useState("");              // voucher search box (ref)
   const [picked, setPicked] = useState({});     // source ref -> bool
-  const [open, setOpen] = useState(null);        // expanded voucher ref
+  // Opened straight from My Tasks: expand that voucher rather than dropping
+  // the signatory on the list to hunt for it (owner 2026-08-16).
+  const [open, setOpen] = useState(openRef || null);
   const [tab, setTab] = useState("all");
   const [queries, setQueries] = useState({});    // line_id -> bool
   const [note, setNote] = useState("");

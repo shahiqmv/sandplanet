@@ -380,6 +380,9 @@ export default function App() {
   // Payroll nav entry and can't list runs, but they must be able to reach the
   // one run that is waiting on them (owner 2026-08-12).
   const [payrollRunId, setPayrollRunId] = useState(null);
+  // Set when a voucher is opened straight from My Tasks, so the vouchers page
+  // expands it instead of showing the list.
+  const [voucherRef, setVoucherRef] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [docView, setDocView] = useState(null);
   const [refresh, setRefresh] = useState(0);
@@ -532,6 +535,16 @@ export default function App() {
       setOpenSite(null);
       setPayrollRunId(item.run_id);
       setHoPage("payroll");
+      return;
+    }
+    // A payment voucher has no document lines at all — the batch lives in
+    // voucher lines — so the document viewer drew a header and nothing else.
+    // The signatory tapped Open PV and got a blank page (owner 2026-08-16).
+    if (item.doc_type === "PV") {
+      setDocView(null);
+      setOpenSite(null);
+      setVoucherRef(item.ref);
+      setHoPage("vouchers");
       return;
     }
     // An import order is authorised on its own screen, not in the document
@@ -971,7 +984,8 @@ export default function App() {
               onNewPayment={() => setDocView({ mode: "central-pyr-form" })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
-            <PaymentVouchersPage me={me} onOpenDoc={openDoc} />
+            <PaymentVouchersPage me={me} onOpenDoc={openDoc}
+                                 openRef={voucherRef} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "payables" && (
             <PayablesPage me={me} onOpenDoc={openDoc} />
