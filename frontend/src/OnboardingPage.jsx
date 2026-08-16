@@ -78,6 +78,24 @@ function UnpaidFees({ fees }) {
   );
 }
 
+// How long a case has been at this stage. `updated_at` moves on any edit, so
+// it could not answer the question actually being asked — a business visa
+// does not take six days, and a case that has sat that long at the
+// application stage needs chasing (owner 2026-08-16).
+function StageAge({ c }) {
+  const n = c.days_at_stage;
+  if (n == null || !["APPROVED", "IN_PROGRESS"].includes(c.status)) return null;
+  const slow = n >= 6;
+  return (
+    <div style={{ fontSize: 11, marginTop: 1,
+                  color: slow ? "#b35900" : "var(--muted)",
+                  fontWeight: slow ? 700 : 400 }}>
+      {n === 0 ? "since today" : `${n} day${n === 1 ? "" : "s"} at this stage`}
+      {slow ? " — chase it" : ""}
+    </div>
+  );
+}
+
 // Where a payment stage has actually got to.
 function FeeState({ fee }) {
   if (!fee) return null;
@@ -190,7 +208,18 @@ export default function OnboardingPage({ me, sites }) {
                   <td style={td}>{c.trade_designation || "—"}</td>
                   <td style={td}>{c.site_code}</td>
                   <td style={td}>
-                    {["APPROVED", "IN_PROGRESS"].includes(c.status)
+                    {c.hold_reason ? (
+                      <>
+                        <div style={{ fontWeight: 700, color: "#c0392b" }}>
+                          ON HOLD</div>
+                        <div style={{ fontSize: 11.5, color: "#c0392b" }}>
+                          {c.hold_reason}</div>
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          at {c.stage_label}
+                          {c.hold_since ? ` · since ${c.hold_since}` : ""}
+                        </div>
+                      </>
+                    ) : ["APPROVED", "IN_PROGRESS"].includes(c.status)
                      && (c.pending_label || c.stage_label) ? (
                       <>
                         <div style={{ fontWeight: 600,
@@ -201,6 +230,7 @@ export default function OnboardingPage({ me, sites }) {
                             or it is paid and simply needs advancing — three
                             very different waits (owner 2026-08-16). */}
                         {c.at_payment && <FeeState fee={c.fee} />}
+                        <StageAge c={c} />
                         <UnpaidFees fees={c.outstanding_fees} />
                         <div style={{ display: "flex", gap: 10,
                                       flexWrap: "wrap", fontSize: 11,
@@ -736,6 +766,7 @@ function Processing({ c, me, onReload }) {
   };
   const [portal, setPortal] = useState(c.portal_status || "SUBMITTED");
   const [portalEdit, setPortalEdit] = useState(c.portal_ref || "");
+  const [holdWhy, setHoldWhy] = useState("");
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
@@ -833,10 +864,49 @@ function Processing({ c, me, onReload }) {
             <Countdown d={c.bv_expiry} warnAt={14} />}</span>}
       </div>
 
+      {/* A hold is the loudest thing on the case — it is why nothing is
+          happening, and everyone opening the case needs it first. */}
+      {c.hold_reason && (
+        <div style={{ marginTop: 12, border: "1px solid #f0c4bd",
+                      background: "#fdf2f0", borderRadius: 8, padding: 12 }}>
+          <div style={{ fontWeight: 700, color: "#c0392b", fontSize: 13 }}>
+            On hold — nothing advances until this is resolved</div>
+          <div style={{ fontSize: 12.5, margin: "4px 0" }}>{c.hold_reason}</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+            held{c.hold_by ? ` by ${c.hold_by}` : ""}
+            {c.hold_since ? ` on ${c.hold_since}` : ""} · at {c.stage_label}
+          </div>
+          {canProcess && (
+            <Btn variant="secondary" style={{ marginTop: 8 }} disabled={busy}
+                 onClick={() => run(() => api(
+                   `/onboarding/${c.id}/hold`,
+                   { method: "POST", body: { release: true } }))}>
+              Resolved — release the hold</Btn>
+          )}
+        </div>
+      )}
+
       {/* HR controls */}
       {canProcess && c.status === "IN_PROGRESS" && (
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column",
           gap: 8 }}>
+          {!c.hold_reason && (
+            <div style={ctl}>
+              <span>Put on hold</span>
+              <input style={{ ...inputStyle, width: 320 }} value={holdWhy}
+                     placeholder="e.g. active visa pending cancellation"
+                     onChange={(e) => setHoldWhy(e.target.value)} />
+              <Btn variant="secondary" disabled={busy || !holdWhy.trim()}
+                   onClick={() => run(() => api(
+                     `/onboarding/${c.id}/hold`,
+                     { method: "POST", body: { reason: holdWhy.trim() } }))}>
+                Hold</Btn>
+              <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                for something the process cannot clear — the portal reporting
+                an existing visa, a document with the embassy
+              </span>
+            </div>
+          )}
           {c.at_application && (
             <div style={ctl}>
               {/* Cases that reached this stage before the reference was

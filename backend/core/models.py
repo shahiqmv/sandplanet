@@ -2246,6 +2246,19 @@ class OnboardingCase(models.Model):
     # stage: without it nobody can find the application again on the portal,
     # and HR was tracking these on paper (owner 2026-08-16).
     portal_ref = models.CharField(max_length=60, blank=True)
+    # A case can be blocked by something outside the process — the portal
+    # answering that the candidate already holds an active visa pending
+    # cancellation, say. It must stop, visibly and with the reason on it,
+    # rather than sitting at an application stage looking merely slow (owner
+    # 2026-08-16).
+    hold_reason = models.TextField(blank=True)
+    hold_since = models.DateField(null=True, blank=True)
+    hold_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    # When the case entered its current stage. `updated_at` moves on any edit,
+    # so it could not answer "how long has this been at the application stage"
+    # — the question asked of every case that looks stuck.
+    stage_since = models.DateField(null=True, blank=True)
     # Payment stages HR marked "not applicable" so they advance without a fee
     # (e.g. Indian nationals pay no business-visa fee).
     waived_stages = models.JSONField(default=list, blank=True)

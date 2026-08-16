@@ -126,6 +126,25 @@ def onboarding_cases(request):
     return Response([ob.case_dict(c) for c in qs[:200]])
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def onboarding_hold(request, pk):
+    """Hold a case that is blocked by something outside the process, or
+    release it once resolved (owner 2026-08-16)."""
+    case = OnboardingCase.objects.filter(pk=pk).first()
+    if case is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.data.get("release"):
+        msg = ob.clear_hold(case, request.user,
+                            note=request.data.get("note", ""))
+    else:
+        msg = ob.set_hold(case, request.data.get("reason", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    case.refresh_from_db()
+    return Response(ob.case_dict(case))
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def onboarding_bv_register(request):

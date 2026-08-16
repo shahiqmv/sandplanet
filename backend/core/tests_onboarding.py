@@ -1615,3 +1615,80 @@ class PortalReferenceTests(TestCase):
         self.case.refresh_from_db()
         self.assertEqual(self.ob.case_dict(self.case)["portal_ref"],
                          "GSR/2026/27757")
+
+
+class HoldACaseTests(TestCase):
+    """A case blocked by something outside the process stops, and says why.
+
+    The portal answers an application with things like "the candidate already
+    holds an active visa pending cancellation". Nothing in the onboarding
+    machine can clear that, so the case must wait — but with no way to record
+    it, the case just sat at the application stage looking slow and only the
+    person who read the portal knew why (owner 2026-08-16).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        self.hr = make_user("hd_hr", User.Role.HO_HR)
+        self.pm = make_user("hd_pm", User.Role.PM)
+        site = Site.objects.create(code="HLD", name="Hold Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-HLD-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.hr)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Sri Lankan",
+            route="BV", stage="BV_APPLICATION", portal_ref="GSR/2026/1",
+            portal_status="APPROVED", signatory_approved_at=timezone.now())
+
+    def test_a_held_case_does_not_advance_and_says_why(self):
+        self.assertIsNone(self.ob.set_hold(
+            self.case, "active visa pending cancellation", self.hr))
+        err = self.ob.advance_stage(self.case, {}, self.hr)
+        self.assertIn("On hold", err)
+        self.assertIn("pending cancellation", err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_APPLICATION")
+
+    def test_a_hold_needs_a_reason(self):
+        self.assertIn("waiting on", self.ob.set_hold(self.case, "  ", self.hr))
+
+    def test_releasing_it_lets_the_case_move_again(self):
+        self.ob.set_hold(self.case, "visa pending cancellation", self.hr)
+        self.assertIsNone(self.ob.clear_hold(self.case, self.hr))
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.hold_reason, "")
+        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
+
+    def test_only_hr_holds_or_releases(self):
+        self.assertIn("Only HR", self.ob.set_hold(self.case, "x", self.pm))
+        self.ob.set_hold(self.case, "x", self.hr)
+        self.assertIn("Only HR", self.ob.clear_hold(self.case, self.pm))
+
+    def test_the_hold_shows_on_the_case_with_who_and_when(self):
+        self.ob.set_hold(self.case, "embassy holding the passport", self.hr)
+        self.case.refresh_from_db()
+        row = self.ob.case_dict(self.case)
+        self.assertEqual(row["hold_reason"], "embassy holding the passport")
+        self.assertEqual(row["hold_by"], self.hr.full_name)
+        self.assertIsNotNone(row["hold_since"])
+
+    def test_it_counts_days_at_the_current_stage(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        self.case.stage_since = timezone.localdate() - timedelta(days=6)
+        self.case.save(update_fields=["stage_since"])
+        self.assertEqual(self.ob.case_dict(self.case)["days_at_stage"], 6)
+
+    def test_advancing_stamps_when_the_new_stage_began(self):
+        from django.utils import timezone
+        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage_since, timezone.localdate())
+        self.assertEqual(self.ob.case_dict(self.case)["days_at_stage"], 0)

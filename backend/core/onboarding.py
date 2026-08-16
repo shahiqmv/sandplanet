@@ -382,7 +382,76 @@ def sequence(case):
     return list(_BV) + list(_BV_CONVERSION)   # recruitment BV converts to WP
 
 
+def set_hold(case, reason, actor):
+    """Stop a case until something outside the process is resolved.
+
+    The portal answers an application with things like "the candidate already
+    holds an active visa pending cancellation" — nothing in the onboarding
+    machine can clear that, and the case must wait. Without somewhere to say
+    so it just sat at the application stage looking slow, and only the person
+    who read the portal knew why (owner 2026-08-16).
+    """
+    from django.utils import timezone
+
+    if actor.role not in PROCESS_ROLES:
+        return "Only HR holds a case."
+    reason = (reason or "").strip()
+    if not reason:
+        return "Say what the case is waiting on."
+    if case.document.status != "IN_PROGRESS":
+        return "Only a case in processing can be held."
+    case.hold_reason = reason
+    case.hold_since = case.hold_since or timezone.localdate()
+    case.hold_by = actor
+    case.save(update_fields=["hold_reason", "hold_since", "hold_by",
+                             "updated_at"])
+    audit("document", case.document_id, "OBR_HELD", actor=actor,
+          detail={"ref": case.document.ref, "stage": case.stage,
+                  "reason": reason})
+    _notify_hold(case, held=True)
+    return None
+
+
+def clear_hold(case, actor, note=""):
+    """The blockage is resolved — the case rejoins the process."""
+    if actor.role not in PROCESS_ROLES:
+        return "Only HR releases a case."
+    if not case.hold_reason:
+        return "This case is not on hold."
+    was = case.hold_reason
+    case.hold_reason = ""
+    case.hold_since = None
+    case.hold_by = None
+    case.save(update_fields=["hold_reason", "hold_since", "hold_by",
+                             "updated_at"])
+    audit("document", case.document_id, "OBR_HOLD_CLEARED", actor=actor,
+          detail={"ref": case.document.ref, "was": was, "note": note})
+    _notify_hold(case, held=False)
+    return None
+
+
+def _notify_hold(case, held):
+    """Everyone with a stake hears it: HR, and the site expecting the man."""
+    from . import notify
+
+    doc = case.document
+    title = (f"Onboarding {doc.ref} — on hold" if held
+             else f"Onboarding {doc.ref} — hold lifted")
+    body = (f"{case.full_name} · {doc.site.code} — "
+            + (case.hold_reason if held else "back in process"))
+    seen = set()
+    for u in list(notify._role_users("HO_HR")) + list(
+            doc.site.current_pms() if hasattr(doc.site, "current_pms") else []):
+        if u.id in seen:
+            continue
+        seen.add(u.id)
+        notify.notify_user(u, title, body=body,
+                           category="alert" if held else "info")
+
+
 def _can_leave(case, stage):
+    if case.hold_reason:
+        return f"On hold — {case.hold_reason}"
     # Nothing moves before the signatory signs the case off (owner 2026-08-11):
     # staff were generating the LOA and lodging the work-permit application
     # while the sign-off was still pending. The signatory's approval is the
@@ -449,7 +518,8 @@ def advance_stage(case, data, actor, system=False):
     seq = sequence(case)
     if doc.status == "APPROVED":                     # begin processing
         case.stage = seq[0]
-        case.save(update_fields=["stage", "updated_at"])
+        case.stage_since = timezone.localdate()
+        case.save(update_fields=["stage", "stage_since", "updated_at"])
         _set_status(doc, "IN_PROGRESS", "BEGIN", actor,
                     comment=STAGE_LABEL.get(seq[0], seq[0]))
         _stage_notify(case, seq[0])
@@ -490,6 +560,7 @@ def advance_stage(case, data, actor, system=False):
     if err:
         return err
     case.stage = nxt
+    case.stage_since = timezone.localdate()
     case.save()
     audit("document", doc.id, "OBR_STAGE", actor=actor,
           detail={"ref": doc.ref, "stage": nxt})
@@ -1850,6 +1921,12 @@ def case_dict(case):
         "waived_stages": list(case.waived_stages or []),
         "portal_status": case.portal_status,
         "portal_ref": case.portal_ref,
+        "hold_reason": case.hold_reason,
+        "hold_since": case.hold_since,
+        "hold_by": case.hold_by.full_name if case.hold_by_id else None,
+        "stage_since": case.stage_since,
+        "days_at_stage": ((timezone.localdate() - case.stage_since).days
+                          if case.stage_since else None),
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
         "bv_expiry": case.bv_expiry, **sv,
