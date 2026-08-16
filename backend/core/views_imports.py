@@ -892,7 +892,7 @@ def ipr_milestone_pay(request, ref, pk):
 
 @api_view(["GET"])
 def ipr_payments_due(request):
-    if request.user.role not in PAY_ROLES:
+    if request.user.role not in PAY_ROLES + ("SIGNATORY",):
         return Response({"detail": "Finance view."}, status=403)
     rows = []
     for m in ipr_svc.payments_due():

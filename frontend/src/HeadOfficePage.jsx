@@ -10,7 +10,8 @@ export default function HeadOfficePage({ me, sites }) {
   const ho = (sites || []).find((s) => s.is_head_office);
   const [staff, setStaff] = useState([]);
   const [showAtt, setShowAtt] = useState(false);
-  const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
+  const seesPay = ["HO_HR", "FINANCE", "ADMIN",
+                  "SIGNATORY"].includes(me.role);
 
   useEffect(() => {
     if (ho) api(`/employees?site=${ho.id}`).then(setStaff).catch(() => {});

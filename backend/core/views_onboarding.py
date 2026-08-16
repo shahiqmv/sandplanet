@@ -14,7 +14,9 @@ from . import onboarding as ob
 from .models import Attachment, OnboardingCase, Site
 from .permissions import scoped_site_ids
 
-VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN", "PA")   # see all cases
+# SIGNATORY reads every case: they sign the appointment at the end of it
+# and authorise each fee along the way (owner 2026-08-16).
+VIEW_ROLES = ("HO_HR", "DIRECTOR", "ADMIN", "PA", "SIGNATORY")
 DOC_KINDS = {k for k, _, _ in ob.CHECKLIST_DOCS}
 
 

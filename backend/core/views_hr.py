@@ -30,7 +30,10 @@ from .permissions import scoped_site_ids
 
 # PA (Director's office) has full HR access alongside HR/Admin (owner 2026-08-03)
 HR_ROLES = ("HO_HR", "ADMIN", "PA")
-PAYROLL_ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # R3 addendum
+# The authorised signatory signs every payroll PYR out of the company, so
+# they read pay everywhere. Read only — every write below still asks _is_hr
+# (owner 2026-08-16).
+PAYROLL_ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA", "SIGNATORY")  # R3 addendum
 # passport/permit/contact: HR+Admin only; basic_pay also visible to Finance
 SENSITIVE_FIELDS = ("passport_no", "passport_expiry", "work_permit_no",
                     "work_visa_number", "medical_expiry", "insurance_expiry",

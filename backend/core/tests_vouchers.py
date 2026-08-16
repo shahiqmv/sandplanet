@@ -400,7 +400,12 @@ class VoucherListPerfTests(VoucherBase):
         self.assertEqual(r.status_code, 200)
         for k in ("payables", "total", "count", "overdue"):
             self.assertIn(k, r.data)
-        # signatory (not finance) is not allowed on this Finance-only page
+        # the signatory READS payables — they authorise what gets paid off it
+        # (owner 2026-08-16) — but still cannot build a voucher
         self.client.force_authenticate(self.signatory)
         self.assertEqual(
-            self.client.get("/api/v1/finance/payables").status_code, 403)
+            self.client.get("/api/v1/finance/payables").status_code, 200)
+        self.assertEqual(
+            self.client.post("/api/v1/payment-vouchers",
+                             {"source_refs": []}, format="json").status_code,
+            403)

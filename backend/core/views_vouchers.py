@@ -156,7 +156,7 @@ def _voucher_info(pv):
 def awaiting_voucher(request):
     """Director-approved PR/PYR/IPR and due overseas TT milestones awaiting
     authorisation on a voucher."""
-    if request.user.role not in ("FINANCE", "ADMIN"):
+    if request.user.role not in ("FINANCE", "ADMIN", "SIGNATORY"):
         return Response({"detail": "Finance builds vouchers."}, status=403)
     out = []
     for doc in vouchers.awaiting_voucher():
@@ -200,7 +200,7 @@ def awaiting_voucher(request):
 def payables(request):
     """Outstanding credit payables on their own — the payables page (moved off
     the voucher builder, owner 2026-08-08). Optional ?q search on vendor / ref."""
-    if request.user.role not in ("FINANCE", "ADMIN"):
+    if request.user.role not in ("FINANCE", "ADMIN", "SIGNATORY"):
         return Response({"detail": "Finance only."}, status=403)
     today = date.today()
     q = (request.GET.get("q") or "").strip().lower()
@@ -319,7 +319,7 @@ def finance_dashboard(request):
     """Money in motion for Finance (M6f, operational): what needs a voucher,
     vouchers in flight, what is waiting to be paid, outstanding payables, and
     petty-cash floats below their replenishment trigger."""
-    if request.user.role not in ("FINANCE", "ADMIN"):
+    if request.user.role not in ("FINANCE", "ADMIN", "SIGNATORY"):
         return Response({"detail": "Finance only."}, status=403)
     from .models import Payable, PettyCashFloat
     from .petty_cash import cash_in_hand

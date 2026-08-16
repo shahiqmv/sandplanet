@@ -63,7 +63,13 @@ const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING", "PA"];
 // Who could reach the overseas import chain before Procurement absorbed the
 // Planning tab. Spelled out so widening the GROUP never widens these pages.
 const IMPORT_CHAIN = ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS",
-                      "PA"];
+                      "PA", "SIGNATORY"];
+// The authorised signatory signs every rufiyaa out of the company, so they
+// READ every module — HR, payroll, procurement, finance, onboarding — and were
+// being stopped at half of them (owner 2026-08-16). Read only: each page still
+// gates its own buttons, and the backend gates the writes. Deliberately NOT
+// widened: Users / Settings / Login & Audit and the master-data editors
+// (item + worker categories, OT rates), which are Admin's configuration.
 const NAV_GROUPS = [
   // Not everything in the queue is an approval (DMA issues, MRs to
   // action, payments) — "My Tasks", not "Approvals" (owner, 2026-07-08)
@@ -89,19 +95,21 @@ const NAV_GROUPS = [
     subs: [["sites", "Sites", null],
            ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
-    // PM and SIGNATORY are here ONLY for the Procurement Schedule, which used
-    // to be its own "Planning" tab. Every other page below therefore names its
-    // roles explicitly — leaving them null would silently hand PMs the whole
-    // import chain, which they have never been able to see.
+    // PM is here ONLY for the Procurement Schedule, which used to be its own
+    // "Planning" tab. Every page below therefore names its roles explicitly —
+    // leaving them null would silently hand PMs the whole import chain, which
+    // they have never been able to see. SIGNATORY reads all of it (see above).
     roles: ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS", "PA",
             "PM", "SIGNATORY"],
     // QS shares the Director's overseas-procurement authority, so it only sees
     // the import chain (Requests / Orders / Tracker / Store), not domestic
     // purchasing pages (owner 2026-07-14). PA views everything (read-only).
     subs: [["dashboard", "Purchasing Dashboard",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA",
+             "SIGNATORY"]],
            ["items", "Items",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA",
+             "SIGNATORY"]],
            ["item-categories", "Item Categories",
             ["HO_PURCHASING", "ADMIN", "PA"]],
            ["pmr-register", "Import Requests", IMPORT_CHAIN],
@@ -109,7 +117,8 @@ const NAV_GROUPS = [
            ["import-tracker", "Import Tracker", IMPORT_CHAIN],
            ["store", "HO Store", IMPORT_CHAIN],
            ["suppliers", "Suppliers",
-            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA"]],
+            ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA",
+             "SIGNATORY"]],
            ["procurement-schedule", "Procurement Schedule",
             ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN",
              "PA"]]] },
@@ -119,31 +128,34 @@ const NAV_GROUPS = [
     subs: [["meetings", "Meetings", null]] },
   { key: "finance", label: "Finance",
     roles: ["FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR", "QS", "PA"],
-    subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN"]],
+    subs: [["finance-dash", "Dashboard", ["FINANCE", "ADMIN", "SIGNATORY"]],
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
-           ["payables", "Payables", ["FINANCE", "ADMIN"]],
-           ["import-payments", "Import Payments", ["FINANCE", "ADMIN"]],
+           ["payables", "Payables", ["FINANCE", "ADMIN", "SIGNATORY"]],
+           ["import-payments", "Import Payments", ["FINANCE", "ADMIN",
+                                                   "SIGNATORY"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
-                                           "QS", "PA"]]] },
+                                           "QS", "PA", "SIGNATORY"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA", "SIGNATORY"],
-    subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
+    subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA",
+                                   "SIGNATORY"]],
            ["onboarding", "Onboarding", ["HO_HR", "DIRECTOR", "ADMIN", "PM",
-                                         "PA"]],
+                                         "PA", "SIGNATORY"]],
            ["bv-register", "Business Visas", ["HO_HR", "DIRECTOR", "ADMIN",
-                                              "PA"]],
+                                              "PA", "SIGNATORY"]],
            ["appointment-signoff", "Appointment Sign-off",
             ["SIGNATORY", "ADMIN"]],
            ["employees", "Employees", null],
            ["ho-staff", "Head Office", ["HO_HR", "FINANCE", "DIRECTOR",
-                                        "ADMIN", "PA"]],
+                                        "ADMIN", "PA", "SIGNATORY"]],
            ["worker-categories", "Worker Categories", ["ADMIN", "PA"]],
            ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN", "PA"]],
-           ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN", "PA"]],
+           ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN", "PA",
+                                   "SIGNATORY"]],
            ["staff-cost", "Staff Cost",
-            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"]],
-           ["pms", "PMs", ["DIRECTOR", "ADMIN"]]] },
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"]],
+           ["pms", "PMs", ["DIRECTOR", "ADMIN", "SIGNATORY"]]] },
   // "Company", not "Admin": Company Profile folds in here, and MARKETING is a
   // minimal role that sees ONLY that page — labelling their whole app "Admin"
   // would be plainly wrong. Every page below still names its own roles, so
@@ -719,10 +731,11 @@ export default function App() {
                              mode: "project", projectId: id })} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "ADMIN", "PA", "SIGNATORY"].includes(me.role) &&
             hoPage === "hr" && (
             <HRDashboard me={me} refresh={refresh}
-              onNewPayment={() => setDocView({ mode: "central-pyr-form" })} />
+              onNewPayment={["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role)
+                ? () => setDocView({ mode: "central-pyr-form" }) : null} />
           )}
 
           {docView?.mode === "dpr-form" && (
@@ -981,7 +994,8 @@ export default function App() {
           {!docView && !openSite && me.is_ho && hoPage === "finance-dash" && (
             <FinanceDashboard me={me}
               onVouchers={() => setHoPage("vouchers")}
-              onNewPayment={() => setDocView({ mode: "central-pyr-form" })} />
+              onNewPayment={["FINANCE", "ADMIN"].includes(me.role)
+                ? () => setDocView({ mode: "central-pyr-form" }) : null} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "vouchers" && (
             <PaymentVouchersPage me={me} onOpenDoc={openDoc}
@@ -1027,7 +1041,8 @@ export default function App() {
               setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite &&
-            ["FINANCE", "DIRECTOR", "ADMIN", "QS", "PA"].includes(me.role) &&
+            ["FINANCE", "DIRECTOR", "ADMIN", "QS", "PA",
+             "SIGNATORY"].includes(me.role) &&
             hoPage === "receivables" && (
             <ReceivablesPage me={me} />
           )}
@@ -1042,7 +1057,8 @@ export default function App() {
             <EmployeesPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA",
+             "SIGNATORY"].includes(me.role) &&
             hoPage === "ho-staff" && (
             <HeadOfficePage me={me} sites={sites} />
           )}
@@ -1061,29 +1077,32 @@ export default function App() {
             <UsersPage me={me} sites={sites} />
           )}
           {!docView && !openSite && hoPage === "payroll" &&
-            (["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role)
+            (["HO_HR", "FINANCE", "ADMIN", "PA", "SIGNATORY"].includes(me.role)
              || payrollRunId) && (
             <PayrollRunPage me={me} sites={sites} initialRunId={payrollRunId}
               onLeaveRun={() => {
                 setPayrollRunId(null);
                 bump();                     // the run may have just been acted on
-                if (!["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role)) {
+                if (!["HO_HR", "FINANCE", "ADMIN", "PA",
+                      "SIGNATORY"].includes(me.role)) {
                   setHoPage("approvals");   // PMs have nowhere else to land
                 }
               }} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA",
+             "SIGNATORY"].includes(me.role) &&
             hoPage === "staff-cost" && (
             <StaffCostPage />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA"].includes(me.role) &&
+            ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA",
+             "SIGNATORY"].includes(me.role) &&
             hoPage === "onboarding" && (
             <OnboardingPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "DIRECTOR", "ADMIN", "PA"].includes(me.role) &&
+            ["HO_HR", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"].includes(me.role) &&
             hoPage === "bv-register" && (
             <BvRegisterPage me={me} />
           )}
@@ -1156,7 +1175,7 @@ export default function App() {
             <ToolsPage site={openSite} me={me} onClose={closeDoc} />
           )}
           {!docView && !openSite &&
-            ["DIRECTOR", "ADMIN"].includes(me.role) && hoPage === "pms" && (
+            ["DIRECTOR", "ADMIN", "SIGNATORY"].includes(me.role) && hoPage === "pms" && (
             <PmsPage me={me} sites={sites} />
           )}
           {!docView && !openSite && me.role === "ADMIN" &&

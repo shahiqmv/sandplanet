@@ -10,6 +10,9 @@ from .audit import audit
 from .models import PayrollLine, PayrollRun, Site
 
 ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # PA = full HR (owner 2026-08-03)
+# Who may LOOK at payroll without running it: the signatory authorises the PYR
+# that pays a run, and could not open the run behind it (owner 2026-08-16).
+READ_ROLES = ROLES + ("SIGNATORY",)
 
 # HR-editable inputs on a draft line
 LINE_FIELDS = ("days_worked", "fridays_worked", "ot_hours", "allowance",
@@ -21,12 +24,16 @@ def _guard(request):
     return request.user.role in ROLES
 
 
+def _read(request):
+    return request.user.role in READ_ROLES
+
+
 def _can_see_run(request, run):
     """Who may open a run: HR/Finance/Admin/PA always; the Director (they
     approve every run); and a PM of the run's own site — they verify their
     site's draft salary (owner 2026-08-12)."""
     role = request.user.role
-    if role in ROLES or role == "DIRECTOR":
+    if role in READ_ROLES or role == "DIRECTOR":
         return True
     return bool(role == "PM" and run.site_id
                 and run.site.is_current_pm(request.user))
@@ -92,7 +99,7 @@ def _run_info(run, lines=True):
 
 @api_view(["GET", "POST"])
 def payroll_runs(request):
-    if not _guard(request):
+    if not (_guard(request) if request.method == "POST" else _read(request)):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     if request.method == "POST":
         currency = request.data.get("currency", "MVR")
@@ -170,7 +177,7 @@ def payroll_generate(request):
 def payroll_readiness(request):
     """Per-site attendance-lock status for a month, so HR sees what's ready to
     run and what still needs its month locked."""
-    if not _guard(request):
+    if not _read(request):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     from .models import (Employee, EmployeeSiteAllocation, TimesheetMonth)
     year = int(request.GET.get("year") or 0)
@@ -253,7 +260,7 @@ def payroll_attendance_summary(request):
     """A pre-run review: per-site attendance + OT totals for the month plus a
     company-wide roll-up, so HR checks the figures feeding payroll before
     generating a run (owner 2026-08-05)."""
-    if not _guard(request):
+    if not _read(request):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     from .models import TimesheetMonth
     year = int(request.GET.get("year") or 0)
@@ -283,7 +290,7 @@ def payroll_ot_breakdown(request):
     """The approved-OT detail for a month — who worked overtime, on which days,
     how many hours and who approved it — company-wide or for one site. The
     dedicated OT view HR wanted before running payroll (owner 2026-08-05)."""
-    if not _guard(request):
+    if not _read(request):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     from collections import OrderedDict
 
@@ -324,6 +331,10 @@ def payroll_run_detail(request, pk):
     if not _can_see_run(request, run):
         return Response({"detail": "Not permitted."}, status=403)
     if request.method == "POST" and request.data.get("action") == "refresh":
+        # The signatory reads a run to see what the PYR pays for; re-pulling it
+        # stays with HR / the site PM / the Director (owner 2026-08-16).
+        if request.user.role == "SIGNATORY":
+            return Response({"detail": "View only."}, status=403)
         # Re-pull attendance / rates / policy into a draft run (owner
         # 2026-08-12: the Friday policy changed after a run was generated,
         # and sites are re-checking July attendance).
@@ -447,7 +458,7 @@ def payroll_report_pdf(request, pk):
 @api_view(["GET"])
 def payslip_pdf(request, pk):
     """One worker's salary slip for a run. HR / Finance / Admin."""
-    if not _guard(request):
+    if not _read(request):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     try:
         line = PayrollLine.objects.select_related(
