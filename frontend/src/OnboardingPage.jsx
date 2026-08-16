@@ -53,6 +53,31 @@ function IdleFor({ since, live }) {
   );
 }
 
+// Money on the case that has not actually gone. A fee only shows in the stage
+// block while the case sits at that stage, so once an authorised-but-unpaid
+// fee let the case move on, the outstanding amount disappeared from the
+// screen (owner 2026-08-16). Authorised is enough to keep the case moving; it
+// is not enough to stop showing what is owed.
+function UnpaidFees({ fees }) {
+  if (!fees?.length) return null;
+  return (
+    <>
+      {fees.map((f) => (
+        <div key={f.pyr_ref} style={{ fontSize: 11, marginTop: 1,
+                                      color: f.authorised ? "#b35900"
+                                                          : "#8a6d00" }}>
+          {f.label}: {f.pyr_ref}
+          {f.amount != null && ` · ${f.currency} ${Number(f.amount)
+            .toLocaleString("en-US", { minimumFractionDigits: 2 })}`}
+          {f.authorised ? " — authorised, not paid"
+                        : ` — ${(f.pyr_status || "").toLowerCase()
+                            .replace(/_/g, " ")}`}
+        </div>
+      ))}
+    </>
+  );
+}
+
 // Where a payment stage has actually got to.
 function FeeState({ fee }) {
   if (!fee) return null;
@@ -176,6 +201,7 @@ export default function OnboardingPage({ me, sites }) {
                             or it is paid and simply needs advancing — three
                             very different waits (owner 2026-08-16). */}
                         {c.at_payment && <FeeState fee={c.fee} />}
+                        <UnpaidFees fees={c.outstanding_fees} />
                         <div style={{ display: "flex", gap: 10,
                                       flexWrap: "wrap", fontSize: 11,
                                       color: "var(--muted)", marginTop: 1 }}>
@@ -188,8 +214,11 @@ export default function OnboardingPage({ me, sites }) {
                         </div>
                       </>
                     ) : (
-                      <Chip tone={STATUS_TONE[c.status]}>
-                        {c.status.replace(/_/g, " ")}</Chip>
+                      <>
+                        <Chip tone={STATUS_TONE[c.status]}>
+                          {c.status.replace(/_/g, " ")}</Chip>
+                        <UnpaidFees fees={c.outstanding_fees} />
+                      </>
                     )}
                   </td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>

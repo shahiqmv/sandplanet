@@ -1784,6 +1784,36 @@ def stage_view(case):
             "at_last": idx == len(seq) - 1}
 
 
+def outstanding_fees(case):
+    """Every fee on the case whose money has not actually gone yet.
+
+    The stage's own fee block only exists while the case is sitting AT that
+    stage. Once a settled-but-unpaid fee let the case move on, the unpaid
+    obligation vanished off the screen entirely — DILKUSHSINGH HEER SINGH's
+    insurance was authorised, never paid, and by then the case had advanced
+    past it (owner 2026-08-16). Authorised is enough to keep the case moving;
+    it is not enough to stop showing the money.
+    """
+    out = []
+    for f in case.fees.select_related("document").order_by("created_at"):
+        d = f.document
+        if d.status in ("PAID", "CANCELLED") or d.is_void:
+            continue
+        pr = getattr(d, "payment_request", None)
+        out.append({
+            "stage": f.stage,
+            "label": FEE_META.get(f.stage, (f.stage, False))[0],
+            "pyr_ref": d.ref,
+            "pyr_status": d.status,
+            "amount": pr.amount_requested if pr else None,
+            "currency": pr.currency if pr else "MVR",
+            # authorised = committed and gone, just not stamped; anything
+            # earlier is still working its way to Finance.
+            "authorised": d.status == "AUTHORISED",
+        })
+    return out
+
+
 def case_dict(case):
     doc = case.document
     sv = stage_view(case)
@@ -1797,6 +1827,7 @@ def case_dict(case):
         # how long it has been since anything happened to it.
         "created_at": case.created_at,
         "updated_at": case.updated_at,
+        "outstanding_fees": outstanding_fees(case),
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
         "pending_label": PENDING_LABEL.get(case.stage, ""),
         "waived_stages": list(case.waived_stages or []),

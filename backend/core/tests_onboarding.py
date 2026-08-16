@@ -1490,3 +1490,28 @@ class PaymentClearsTheGateTests(TestCase):
         self.pyr.save(update_fields=["status"])
         err = self.ob.advance_stage(self.case, {}, self.hr)
         self.assertIn("Awaiting payment", err)
+
+    def test_an_authorised_unpaid_fee_stays_visible_after_the_case_moves(self):
+        """The one that was missed: the case advances on authorisation, and
+        the money that has not actually gone must not vanish with the stage
+        (owner 2026-08-16, OBR-SFR-008)."""
+        self.ob.on_fee_settled(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertNotEqual(self.case.stage, "BV_INSURANCE")   # it moved on
+        row = self.ob.case_dict(self.case)
+        self.assertIsNone(row["fee"], "no longer at a payment stage")
+        out = row["outstanding_fees"]
+        self.assertEqual(len(out), 1, "the unpaid fee disappeared")
+        self.assertEqual(out[0]["pyr_ref"], "PYR-PGT-001")
+        self.assertTrue(out[0]["authorised"])
+        self.assertEqual(float(out[0]["amount"]), 1200.0)
+
+    def test_a_paid_fee_is_not_listed_as_outstanding(self):
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        self.assertEqual(self.ob.case_dict(self.case)["outstanding_fees"], [])
+
+    def test_a_cancelled_fee_is_not_listed_either(self):
+        self.pyr.status = "CANCELLED"
+        self.pyr.save(update_fields=["status"])
+        self.assertEqual(self.ob.case_dict(self.case)["outstanding_fees"], [])
