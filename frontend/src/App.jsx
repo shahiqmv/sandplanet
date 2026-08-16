@@ -293,43 +293,47 @@ function SiteTile({ s, onOpen }) {
   const live = s.status === "ACTIVE";
   return (
     <button onClick={() => onOpen(s)} title={`${s.code} — ${s.name}`}
-      style={{ textAlign: "left", background: "#fff", cursor: "pointer",
+      style={{ background: "#fff", cursor: "pointer", textAlign: "center",
                border: "1px solid var(--sp-border)", borderRadius: 10,
                borderTop: `3px solid ${SITE_ACCENT[s.status] || "#8a94a0"}`,
-               padding: "7px 8px 6px", display: "flex",
-               flexDirection: "column", gap: 1, font: "inherit",
-               aspectRatio: "1 / 1", overflow: "hidden", width: "100%" }}>
-      <div style={{ fontWeight: 700, color: "var(--sp-navy)", fontSize: 14,
-                    letterSpacing: .3, lineHeight: 1 }}>{s.code}</div>
+               padding: "7px 6px 6px", display: "flex",
+               flexDirection: "column", alignItems: "center",
+               justifyContent: "center", gap: 2,
+               font: "inherit", aspectRatio: "1 / 1", overflow: "hidden",
+               width: "100%" }}>
+      <div style={{ fontWeight: 700, color: "var(--sp-navy)", fontSize: 18,
+                    letterSpacing: .5, lineHeight: 1.05, flexShrink: 0 }}>
+        {s.code}
+      </div>
       {/* exactly two lines, so a long resort name ellipsises instead of
           being sliced in half by the tile's edge */}
-      <div style={{ fontSize: 9.5, color: "#5a6b78", lineHeight: 1.2,
-                    height: "2.4em", flexShrink: 0, display: "-webkit-box",
-                    WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
-                    overflow: "hidden", textOverflow: "ellipsis" }}>
+      <div style={{ fontSize: 9, color: "#5a6b78", lineHeight: 1.2,
+                    height: "2.4em", flexShrink: 0, width: "100%",
+                    display: "-webkit-box", WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical", overflow: "hidden" }}>
         {s.name}
       </div>
-      <div style={{ marginTop: "auto", lineHeight: 1, flexShrink: 0 }}>
+      <div style={{ lineHeight: 1, flexShrink: 0, marginTop: 3 }}>
         {live ? (
           <>
-            <span style={{ fontSize: 20, fontWeight: 700,
+            <span style={{ fontSize: 18, fontWeight: 700,
                            color: "var(--sp-navy)" }}>{s.workforce}</span>
-            <span style={{ fontSize: 9, color: "#8a94a0", marginLeft: 4,
+            <span style={{ fontSize: 8.5, color: "#8a94a0", marginLeft: 3,
                            textTransform: "uppercase", letterSpacing: .3 }}>
               crew
             </span>
           </>
         ) : (
-          <span style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: .3,
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: .3,
                          color: SITE_ACCENT[s.status] || "#8a94a0",
                          textTransform: "uppercase" }}>
             {(s.status || "").replace("_", " ")}
           </span>
         )}
       </div>
-      <div style={{ fontSize: 9, color: "#8a94a0", whiteSpace: "nowrap",
+      <div style={{ fontSize: 8.5, color: "#8a94a0", whiteSpace: "nowrap",
                     overflow: "hidden", textOverflow: "ellipsis",
-                    flexShrink: 0, marginTop: 2 }}>
+                    flexShrink: 0, width: "100%", marginTop: 2 }}>
         {s.pms?.length ? s.pms[0] : "\u00a0"}
       </div>
     </button>
