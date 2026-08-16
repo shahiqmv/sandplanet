@@ -353,6 +353,13 @@ MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
 PAYMENT_STAGES = {"WP_DEPOSIT", "WP_TICKET", "BV_INSURANCE", "BV_VISA_FEE",
                   "BV_TICKET"}
 
+# Authorisation on a payment voucher is the commitment point — the money goes
+# out there, and Finance's PAID stamp is bookkeeping that follows it, often by
+# weeks. Waiting for the stamp left seven of the eight live cases parked at an
+# insurance or visa-fee stage that had already been settled (owner 2026-08-16,
+# the same rule already applied to salary-advance recovery).
+FEE_SETTLED = ("PAID", "AUTHORISED")
+
 
 def _is_sri_lankan(case):
     return "sri lank" in (case.nationality or "").lower()
@@ -394,7 +401,7 @@ def _can_leave(case, stage):
         fee = active_fee_for(case, stage)
         if fee is None:
             return "Raise the fee PYR for this stage first."
-        if fee.document.status != "PAID":
+        if fee.document.status not in FEE_SETTLED:
             return (f"Awaiting payment of {fee.document.ref} before "
                     "advancing.")
     return None
@@ -422,8 +429,12 @@ def _on_enter(case, stage, data):
     return None
 
 
-def advance_stage(case, data, actor):
-    if actor.role not in PROCESS_ROLES:
+def advance_stage(case, data, actor, system=False):
+    """Move a case on a stage. `system=True` is the app itself acting — used
+    when a fee payment clears the gate the case was waiting on, where the
+    actor is Finance rather than HR (owner 2026-08-16). Every other gate
+    still applies."""
+    if not system and actor.role not in PROCESS_ROLES:
         return "Only HR processes onboarding stages."
     doc = case.document
     seq = sequence(case)
@@ -906,9 +917,24 @@ def _stage_notify_text(case, msg):
                            doc=doc, category="alert")
 
 
+def on_fee_settled(pyr_doc, actor):
+    """The money for this stage is committed — authorised or paid."""
+    return on_fee_paid(pyr_doc, actor)
+
+
 def on_fee_paid(pyr_doc, actor):
-    """Called from the PYR pay action when an onboarding fee is paid — tells HR
-    the case's payment gate is now clear."""
+    """A fee PYR has been paid — clear the gate it was holding.
+
+    It used to only notify HR, so a paid case sat at "insurance pending" or
+    "visa fee pending" until somebody read the message and pressed Advance.
+    Cases were getting stuck at payment for weeks with the money long gone
+    (owner 2026-08-16).
+
+    Leaving a payment stage requires nothing but the payment, so the case is
+    moved on here. If the NEXT stage needs something from HR — an arrival
+    date, for instance — the advance declines and the case waits, exactly as
+    before; it is never forced past a gate.
+    """
     fee = getattr(pyr_doc, "onboarding_fee", None)
     if fee is None:
         return
@@ -916,10 +942,27 @@ def on_fee_paid(pyr_doc, actor):
     case = fee.case
     doc = case.document
     label = FEE_META.get(fee.stage, (fee.stage,))[0]
+
+    moved = False
+    if doc.status == "IN_PROGRESS" and case.stage == fee.stage:
+        err = advance_stage(case, {}, actor, system=True)
+        if err is None:
+            moved = True
+            case.refresh_from_db()
+            audit("document", doc.id, "OBR_ADVANCED_ON_PAYMENT", actor=actor,
+                  detail={"ref": doc.ref, "paid": pyr_doc.ref,
+                          "stage": fee.stage, "now": case.stage})
+        else:
+            audit("document", doc.id, "OBR_PAYMENT_GATE_CLEAR", actor=actor,
+                  detail={"ref": doc.ref, "paid": pyr_doc.ref,
+                          "stage": fee.stage, "waiting_on": err})
+
+    body = (f"{case.full_name} · {doc.site.code} — "
+            + (f"now at {STAGE_LABEL.get(case.stage, case.stage)}" if moved
+               else "the case can now advance"))
     for u in notify._role_users("HO_HR"):
         notify.notify_user(u, f"Onboarding {doc.ref} — {label} paid",
-                           body=f"{case.full_name} · {doc.site.code} — "
-                                "the case can now advance", category="alert")
+                           body=body, category="alert")
 
 
 # ---- official letters (Phase 4) ------------------------------------------

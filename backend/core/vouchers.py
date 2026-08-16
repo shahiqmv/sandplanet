@@ -325,6 +325,12 @@ def authorise_source(doc, actor):
                          currency="MVR", document=doc, actor=actor)
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
+        # An onboarding fee is settled at authorisation — that is when the
+        # money leaves — so the stage it was holding clears here rather than
+        # waiting on Finance's paid stamp (owner 2026-08-16).
+        if hasattr(doc, "onboarding_fee"):
+            from . import onboarding
+            onboarding.on_fee_settled(doc, actor)
     Approval.objects.create(document=doc, revision=doc.current_revision,
                             action="AUTHORISE", actor=actor,
                             actor_role=actor.role,

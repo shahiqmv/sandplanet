@@ -53,6 +53,19 @@ function IdleFor({ since, live }) {
   );
 }
 
+// Where a payment stage has actually got to.
+function FeeState({ fee }) {
+  if (!fee) return null;
+  const line = (text, tone) => (
+    <div style={{ fontSize: 11, color: tone, marginTop: 1 }}>{text}</div>
+  );
+  if (!fee.raised) return line("fee not raised yet", "#b35900");
+  if (fee.paid) return line(`${fee.pyr_ref} paid — ready to advance`,
+                            "#1a7f37");
+  return line(`${fee.pyr_ref} · ${(fee.pyr_status || "")
+    .toLowerCase().replace(/_/g, " ")} — with Finance`, "#b35900");
+}
+
 function SortHeader({ col, label, sort, setSort }) {
   const on = sort.key === col;
   return (
@@ -158,6 +171,11 @@ export default function OnboardingPage({ me, sites }) {
                         <div style={{ fontWeight: 600,
                                       color: "var(--sp-navy)" }}>
                           {(c.pending_label || c.stage_label)} pending</div>
+                        {/* A payment stage reads "pending" whether HR still
+                            has to raise the fee, Finance still has to pay it,
+                            or it is paid and simply needs advancing — three
+                            very different waits (owner 2026-08-16). */}
+                        {c.at_payment && <FeeState fee={c.fee} />}
                         <div style={{ display: "flex", gap: 10,
                                       flexWrap: "wrap", fontSize: 11,
                                       color: "var(--muted)", marginTop: 1 }}>

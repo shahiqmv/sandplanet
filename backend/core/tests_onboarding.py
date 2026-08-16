@@ -1384,3 +1384,109 @@ class CaseListDatesAndOrderTests(TestCase):
                     if str(r["doc_date"]) == "2026-08-09"]
         self.assertEqual([r["ref"] for r in same_day],
                          ["OBR-OCD-003", "OBR-OCD-002"])
+
+
+class PaymentClearsTheGateTests(TestCase):
+    """A paid fee moves the case on (owner 2026-08-16).
+
+    Paying only notified HR, so a case sat at "insurance pending" or "visa fee
+    pending" until somebody read the message and pressed Advance — cases were
+    stuck at payment for weeks with the money long gone.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+        from django.utils import timezone
+        from .models import (CostHead, Document, OnboardingCase,
+                             OnboardingFee, PaymentRequest, Site, User)
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        self.hr = make_user("pg_hr", User.Role.HO_HR)
+        self.fin = make_user("pg_fin", User.Role.FINANCE)
+        self.sig = make_user("pg_sig", User.Role.SIGNATORY)
+        site = Site.objects.create(code="PGT", name="Gate Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-PGT-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.hr)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Bangladeshi",
+            route="BV", stage="BV_INSURANCE",
+            signatory_approved_at=timezone.now(),
+            signatory_approved_by=self.sig)
+        head = CostHead.objects.filter(name="Labour & Staff").first()
+        self.pyr = Document.objects.create(
+            doc_type="PYR", ref="PYR-PGT-001", site=site,
+            doc_date=date(2026, 8, 2), status="AUTHORISED",
+            created_by=self.hr)
+        PaymentRequest.objects.create(
+            document=self.pyr, cost_head=head, payee="Insurer",
+            amount_requested=Decimal("1200"), purpose="Travel insurance",
+            origin="ONBOARDING")
+        OnboardingFee.objects.create(case=self.case, document=self.pyr,
+                                     stage="BV_INSURANCE")
+
+    def test_the_case_waits_while_the_fee_is_unsettled(self):
+        """Approved onto a voucher is not the same as authorised — nothing
+        has left the bank yet."""
+        self.pyr.status = "DIRECTOR_APPROVED"
+        self.pyr.save(update_fields=["status"])
+        err = self.ob.advance_stage(self.case, {}, self.hr)
+        self.assertIn("Awaiting payment", err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_INSURANCE")
+
+    def test_paying_it_moves_the_case_on(self):
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        self.ob.on_fee_paid(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+
+    def test_finance_paying_it_is_enough_without_hr_touching_it(self):
+        """The actor is Finance, who is not an HR processing role — the point
+        of the system advance."""
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        self.assertIn("Only HR",
+                      self.ob.advance_stage(self.case, {}, self.fin) or "")
+        self.ob.on_fee_paid(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+
+    def test_it_never_forces_a_case_past_a_gate_it_cannot_clear(self):
+        """Sign-off is still the start line: an unsigned case does not move,
+        however much has been paid."""
+        self.case.signatory_approved_at = None
+        self.case.save(update_fields=["signatory_approved_at"])
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        self.ob.on_fee_paid(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_INSURANCE")
+
+    def test_a_fee_for_a_stage_the_case_has_left_changes_nothing(self):
+        self.case.stage = "BV_VISA_FEE"
+        self.case.save(update_fields=["stage"])
+        self.pyr.status = "PAID"
+        self.pyr.save(update_fields=["status"])
+        self.ob.on_fee_paid(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "BV_VISA_FEE")
+
+    def test_an_authorised_fee_is_settled_enough_to_advance(self):
+        """Finance's paid stamp lags by weeks; authorisation is when the money
+        goes (owner 2026-08-16) — the same rule as salary-advance recovery."""
+        self.assertEqual(self.pyr.status, "AUTHORISED")
+        self.ob.on_fee_settled(self.pyr, self.fin)
+        self.case.refresh_from_db()
+        self.assertNotEqual(self.case.stage, "BV_INSURANCE")
+
+    def test_a_fee_still_awaiting_authorisation_holds_the_case(self):
+        self.pyr.status = "DIRECTOR_APPROVED"
+        self.pyr.save(update_fields=["status"])
+        err = self.ob.advance_stage(self.case, {}, self.hr)
+        self.assertIn("Awaiting payment", err)
