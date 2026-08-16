@@ -98,29 +98,7 @@ APPROVABLE = {
 }
 
 
-def _card_amount(ref, doc_type):
-    from .models import Document, PaymentVoucherLine
-    try:
-        d = Document.objects.get(ref=ref)
-    except Document.DoesNotExist:
-        return None
-    if doc_type == "PR":
-        from .procurement import pr_grand_total
-        return float(pr_grand_total(d))
-    if doc_type == "PYR" and hasattr(d, "payment_request"):
-        return float(d.payment_request.amount_requested or 0)
-    if doc_type == "PV":
-        return float(sum(
-            (ln.amount or 0) for ln in
-            PaymentVoucherLine.objects.filter(voucher=d)))
-    if doc_type == "IPR" and hasattr(d, "import_order"):
-        from .imports import ipr_order_total
-        return float(ipr_order_total(d.import_order))
-    if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
-        from . import subcontract
-        return float(subcontract.svc_valuation(d.subcontract_valuation)
-                     ["now_due"])
-    return None
+from .views_documents import queue_amount as _card_amount
 
 
 @api_view(["GET"])

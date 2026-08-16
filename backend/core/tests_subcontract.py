@@ -799,3 +799,80 @@ class SubcontractPaymentNettingTests(TestCase):
         self._pay(10000)
         val = self._certify(40)
         self.assertEqual(val["now_due"], Decimal("-4000"))
+
+
+class SvcActionsFromTheDocumentViewerTests(TestCase):
+    """A valuation can be actioned from where it is queued.
+
+    Its actions lived only on /subcontract-valuations/<ref>/action, which the
+    document viewer does not use — so a signatory opening SVC-CNR-001 from My
+    Tasks got a page with nothing to authorise on it, while MVR 197,000 sat
+    waiting three levels down in the subcontractor panel (owner 2026-08-16).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+        from .models import (Document, Site, SubcontractAgreement,
+                             Subcontractor, SubcontractScopeItem,
+                             SubcontractValuation, SubcontractValuationItem,
+                             User)
+        from .tests import make_user
+        self.sig = make_user("svcv_sig", User.Role.SIGNATORY)
+        self.site = Site.objects.create(code="SVV", name="Svc Isle",
+                                        status=Site.Status.ACTIVE)
+        # allocated to the site, so a 403/400 here is the SVC rule talking
+        # and not site scoping
+        self.pm = make_user("svcv_pm", User.Role.PM, site=self.site)
+        sub = Subcontractor.objects.create(site=self.site, name="Gang",
+                                           status="ACTIVE")
+        sca_doc = Document.objects.create(
+            doc_type="SCA", ref="SCA-SVV-001", site=self.site,
+            doc_date=date(2026, 8, 1), status="ACTIVE", created_by=self.pm)
+        sca = SubcontractAgreement.objects.create(
+            document=sca_doc, subcontractor=sub, title="Works")
+        item = SubcontractScopeItem.objects.create(
+            agreement=sca, description="Blockwork", unit="m2",
+            qty=Decimal("100"), rate=Decimal("50"))
+        self.doc = Document.objects.create(
+            doc_type="SVC", ref="SVC-SVV-001", site=self.site,
+            doc_date=date(2026, 8, 8), status="DIRECTOR_APPROVED",
+            created_by=self.pm)
+        val = SubcontractValuation.objects.create(
+            document=self.doc, agreement=sca, seq=1,
+            work_done_upto=date(2026, 8, 8))
+        SubcontractValuationItem.objects.create(
+            valuation=val, scope_item=item, cumulative_qty=Decimal("47"))
+        self.val = val
+        self.client = APIClient()
+
+    def test_the_signatory_can_authorise_it_from_the_document(self):
+        self.client.force_authenticate(self.sig)
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/authorise", {},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "AUTHORISED")
+
+    def test_a_pm_cannot_authorise_it(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/authorise", {},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "DIRECTOR_APPROVED")
+
+    def test_returning_it_needs_a_reason(self):
+        self.client.force_authenticate(self.sig)
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/return", {},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(
+            f"/api/v1/documents/{self.doc.ref}/actions/return",
+            {"comment": "quantities look high"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.doc.refresh_from_db()
+        self.assertEqual(self.doc.status, "DRAFT")

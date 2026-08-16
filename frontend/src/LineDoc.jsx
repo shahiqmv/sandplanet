@@ -66,6 +66,19 @@ const ACTIONS = {
   ],
   LM: [["depart", "Depart (issue manifest)", ["DRAFT", "LOADING"],
         ["HO_PURCHASING", "ADMIN"]]],
+  // A subcontract valuation is worked on in the subcontractor panel, but it
+  // is also queued to the PM, the Director and the signatory in turn — and
+  // opening it from there landed on a page with no action on it at all
+  // (owner 2026-08-16).
+  SVC: [
+    ["verify", "Verify quantities (PM)", ["SUBMITTED"], ["PM", "ADMIN"]],
+    ["approve", "Approve (Director)", ["PM_VERIFIED"], ["DIRECTOR", "ADMIN"]],
+    ["authorise", "Authorise (Signatory)", ["DIRECTOR_APPROVED"],
+     ["SIGNATORY", "ADMIN"]],
+    ["return", "Return with comment",
+     ["SUBMITTED", "PM_VERIFIED", "DIRECTOR_APPROVED"],
+     ["PM", "DIRECTOR", "SIGNATORY", "ADMIN"], "comment"],
+  ],
   PO: [
     ["issue", "Issue to supplier", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],

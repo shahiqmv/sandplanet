@@ -594,6 +594,20 @@ def document_action(request, ref, action_name):
         return err
     if doc.is_void:
         return Response({"detail": "Document is void."}, status=400)
+    if doc.doc_type == "SVC":
+        # A valuation's actions live on its own endpoint, which the document
+        # viewer does not use — so opening one from My Tasks showed a page
+        # with nothing to authorise on it, and the signatory had to go and
+        # find it three levels down inside the subcontractor panel (owner
+        # 2026-08-16). Delegate rather than duplicate the rules.
+        from .subcontract import svc_action
+
+        msg = svc_action(doc.subcontract_valuation, action_name, request.user,
+                         note=request.data.get("comment", ""))
+        if msg:
+            return Response({"detail": msg}, status=400)
+        doc.refresh_from_db()
+        return Response(_serialize(doc, request))
     if doc.doc_type == "PYR":  # dedicated payment-request workflow (§5.9)
         from .payments import pyr_action
 
@@ -674,6 +688,40 @@ def queue_band(title):
         if any(w in low for w in words):
             return i
     return len(QUEUE_BANDS)
+
+
+def queue_amount(ref, doc_type):
+    """What a queued document is worth, for the approver reading the list.
+
+    A signatory's queue said "— — Approve the batch or query lines" three
+    times over and nothing else: no amount, no payee, nothing to tell one
+    voucher from another without opening all three (owner 2026-08-16). The
+    phone had this from the start; the desktop did not.
+    """
+    from .models import Document, PaymentVoucherLine
+    try:
+        d = Document.objects.get(ref=ref)
+    except Document.DoesNotExist:
+        return None
+    if doc_type == "PR":
+        from .procurement import pr_grand_total
+        return float(pr_grand_total(d))
+    if doc_type == "PYR" and hasattr(d, "payment_request"):
+        return float(d.payment_request.amount_requested or 0)
+    if doc_type == "PV":
+        return float(sum((ln.amount or 0) for ln in
+                         PaymentVoucherLine.objects.filter(voucher=d)))
+    if doc_type == "IPR" and hasattr(d, "import_order"):
+        from .imports import ipr_order_total
+        return float(ipr_order_total(d.import_order))
+    if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
+        from . import subcontract
+        return float(subcontract.svc_valuation(d.subcontract_valuation)
+                     ["now_due"])
+    return None
+
+
+MONEY_TYPES = ("PR", "PYR", "PV", "IPR", "SVC")
 
 
 def pending_groups(user):
@@ -918,6 +966,10 @@ def pending_groups(user):
         add("To pay — authorised payment requests",
             rows(scoped(base.filter(doc_type="PYR", status="AUTHORISED")),
                  "Execute payment and record the reference"))
+    for g in groups:
+        for it in g["items"]:
+            if it.get("doc_type") in MONEY_TYPES and "amount" not in it:
+                it["amount"] = queue_amount(it["ref"], it["doc_type"])
     return sorted(groups, key=lambda g: queue_band(g["title"]))
 
 

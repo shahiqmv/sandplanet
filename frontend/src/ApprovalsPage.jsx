@@ -21,6 +21,38 @@ function ageLine(docDate) {
   return `${days} day${days === 1 ? "" : "s"} old`;
 }
 
+const money = (v) => Number(v).toLocaleString("en-US",
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// What the row actually says. It used to be
+// `${site} · ${project} — ${hint}`, which for a payment voucher (no site, no
+// project) rendered "— — Approve the batch or query lines" three times over,
+// telling a signatory nothing about what they were approving (owner
+// 2026-08-16). Lead with the money where there is money, and drop the
+// placeholders where a document has no site.
+function RowText({ item }) {
+  const where = [item.site_code, item.project_code]
+    .filter((x) => x && x !== "—").join(" · ");
+  return (
+    <>
+      {item.amount != null && (
+        <b style={{ color: "var(--sp-navy)" }}>
+          MVR {money(item.amount)}
+        </b>
+      )}
+      {item.amount != null && (where || item.hint) && " · "}
+      {where && <span>{where}</span>}
+      {where && item.hint && " — "}
+      {item.hint && (
+        <span style={{ color: item.amount != null ? "var(--muted)"
+                                                  : undefined }}>
+          {item.hint}
+        </span>
+      )}
+    </>
+  );
+}
+
 export default function ApprovalsPage({ me, refresh, onOpen }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -54,8 +86,7 @@ export default function ApprovalsPage({ me, refresh, onOpen }) {
             <ActionCard key={`${item.doc_type}-${item.run_id ?? item.ref}`}
               severity={severityFor(g.title)}
               refText={item.ref}
-              text={`${item.site_code}${item.project_code
-                ? ` · ${item.project_code}` : ""} — ${item.hint}`}
+              text={<RowText item={item} />}
               meta={`${item.doc_date} · ${ageLine(item.doc_date)}`}
               chip={<StatusChip status={item.status} />}
               button={
