@@ -735,6 +735,7 @@ function Processing({ c, me, onReload }) {
     return {};
   };
   const [portal, setPortal] = useState(c.portal_status || "SUBMITTED");
+  const [portalEdit, setPortalEdit] = useState(c.portal_ref || "");
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
   const [payee, setPayee] = useState("");
@@ -822,6 +823,7 @@ function Processing({ c, me, onReload }) {
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12,
         color: "var(--muted)" }}>
         {c.portal_status && <span>Portal: <b>{c.portal_status}</b></span>}
+        {c.portal_ref && <span>Ref: <b>{c.portal_ref}</b></span>}
         {c.arrived_date && <span>Arrived: <b>{fmtDate(c.arrived_date)}</b></span>}
         {c.medical_due && <span>Medical by: <b>{fmtDate(c.medical_due)}</b>
           {!c.medical_result && <Countdown d={c.medical_due} warnAt={7} />}</span>}
@@ -835,6 +837,28 @@ function Processing({ c, me, onReload }) {
       {canProcess && c.status === "IN_PROGRESS" && (
         <div style={{ marginTop: 12, display: "flex", flexDirection: "column",
           gap: 8 }}>
+          {c.at_application && (
+            <div style={ctl}>
+              {/* Cases that reached this stage before the reference was
+                  required have none on file, and there was no way to add one
+                  — the field existed but nothing on screen offered it
+                  (owner 2026-08-16). */}
+              <span>Portal reference</span>
+              <input style={{ ...inputStyle, width: 220 }} value={portalEdit}
+                     placeholder="e.g. GSR/2026/27757"
+                     onChange={(e) => setPortalEdit(e.target.value)} />
+              <Btn variant="secondary"
+                   disabled={busy || !portalEdit.trim()
+                             || portalEdit.trim() === (c.portal_ref || "")}
+                   onClick={() => setData({ portal_ref: portalEdit.trim() })}>
+                {c.portal_ref ? "Update" : "Save"}</Btn>
+              {!c.portal_ref && (
+                <span style={{ fontSize: 11.5, color: "#b35900" }}>
+                  not recorded — the application cannot be traced without it
+                </span>
+              )}
+            </div>
+          )}
           {c.at_application && (
             <div style={ctl}>
               <span>Portal status</span>
