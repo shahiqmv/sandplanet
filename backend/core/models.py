@@ -330,6 +330,7 @@ class Document(models.Model):
         SVC = "SVC"  # subcontract valuation certificate (subcontractor module)
         OBR = "OBR"  # onboarding request — expat recruitment/mobilisation
         PSC = "PSC"  # procurement schedule — per-project planning layer
+        MTN = "MTN"  # material transfer note — stock/tools moving site to site
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -3909,6 +3910,11 @@ class StockMovement(models.Model):
         RECEIPT = "RECEIPT", "GRN receipt"
         ISSUE = "ISSUE", "Issue to project"
         ADJUST = "ADJUST", "Reconciliation"
+        # Site to site (owner 2026-08-16). Two halves of one move, a day or a
+        # boat apart: the stock leaves on despatch and lands when the far site
+        # has counted it, so it is never on both ledgers at once.
+        TRANSFER_OUT = "XFER_OUT", "Transferred out"
+        TRANSFER_IN = "XFER_IN", "Transferred in"
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="stock_movements")
@@ -3931,6 +3937,90 @@ class StockMovement(models.Model):
     class Meta:
         ordering = ["-movement_date", "-id"]
         indexes = [models.Index(fields=["site", "item"])]
+
+
+class SiteTransfer(models.Model):
+    """MTN — material and tools moving from one site to another.
+
+    Sites used to have no way to hand anything over: stock could only arrive
+    from a GRN or the Head Office store, and a tool belonged to whichever site
+    it was first recorded at. Splitting a project onto its own site made that
+    impossible to work around (owner 2026-08-16).
+
+    The two halves are deliberately separate. Despatch takes the stock off the
+    sending site; it lands on the receiving site only when someone there has
+    counted it. Between the two it belongs to neither ledger, which is the
+    honest position for something on a boat.
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        APPROVED = "APPROVED", "Approved to send"
+        DESPATCHED = "DESPATCHED", "In transit"
+        RECEIVED = "RECEIVED", "Received"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    # document.site is the sending site; the ref carries its code.
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="site_transfer")
+    to_site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                                related_name="transfers_in")
+    to_project = models.ForeignKey("Project", on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="+")
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.DRAFT)
+    reason = models.TextField(blank=True)
+    approved_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    despatched_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    despatched_at = models.DateTimeField(null=True, blank=True)
+    received_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    received_at = models.DateTimeField(null=True, blank=True)
+    receipt_note = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    @property
+    def from_site(self):
+        return self.document.site
+
+    def __str__(self):
+        return f"MTN {self.document.ref} → {self.to_site.code}"
+
+
+class SiteTransferLine(models.Model):
+    """One material quantity or one tool on a transfer.
+
+    A tool is a single physical thing, so it moves as itself rather than as a
+    quantity — the asset is re-sited on receipt and keeps its history, serial
+    number and condition.
+    """
+
+    transfer = models.ForeignKey(SiteTransfer, on_delete=models.CASCADE,
+                                 related_name="lines")
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    tool = models.ForeignKey("ToolAsset", on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="transfer_lines")
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=1)
+    # What the far end actually counted. Null until they have; a shortfall
+    # stays visible rather than being quietly written off either side.
+    received_qty = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    note = models.TextField(blank=True)
+
+    @property
+    def shortage(self):
+        if self.received_qty is None:
+            return None
+        return (self.qty or 0) - self.received_qty
+
+    def __str__(self):
+        what = self.tool.name if self.tool_id else (
+            self.item.description if self.item_id else "?")
+        return f"{what} × {self.qty}"
 
 
 class SiteMajorMaterial(models.Model):

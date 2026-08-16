@@ -9,7 +9,7 @@ from . import views, views_bom as bom_api, views_cameras as cameras_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_stock as stock, views_subcontract as subcontract_api, \
-    views_tools as tools_api, \
+    views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
     views_vouchers as vouchers, \
     views_receivables as receivables_api, \
@@ -235,6 +235,11 @@ urlpatterns = [
     path("dashboards/portfolio", projects.dashboard_portfolio,
          name="dashboard-portfolio"),
     path("sites/summary", views.sites_summary, name="sites-summary"),
+    path("transfers", transfers_api.transfer_list, name="transfer-list"),
+    path("transfers/<int:pk>", transfers_api.transfer_action,
+         name="transfer-action"),
+    path("sites/<int:site_id>/transferable", transfers_api.transferable,
+         name="transferable"),
     path("sites/<int:site_id>/projects", projects.site_projects,
          name="site-projects"),
     path("assignable/qs", projects.assignable_qs, name="assignable-qs"),
