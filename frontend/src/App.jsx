@@ -43,6 +43,7 @@ import PayablesPage from "./PayablesPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
 import StockPage from "./StockPage.jsx";
+import TransfersPanel from "./TransfersPanel.jsx";
 import ToolsPage from "./ToolsPage.jsx";
 import PmsPage from "./PmsPage.jsx";
 import CompanyPage from "./CompanyPage.jsx";
@@ -1126,7 +1127,16 @@ export default function App() {
               onClose={closeDoc} />
           )}
           {docView?.mode === "stock" && openSite && (
-            <StockPage site={openSite} me={me} onClose={closeDoc} />
+            <>
+              <StockPage key={`stock-${refresh}`} site={openSite} me={me}
+                         onClose={closeDoc} />
+              {/* Transfers sit under the ledger they move: a storeman looking
+                  at what is on site is the person sending it elsewhere. The
+                  ledger is remounted when one lands, so the on-hand above
+                  never contradicts the transfer just actioned below. */}
+              <TransfersPanel site={openSite} me={me} sites={sites}
+                              onStockMoved={() => setRefresh((n) => n + 1)} />
+            </>
           )}
           {docView?.mode === "tools" && openSite && (
             <ToolsPage site={openSite} me={me} onClose={closeDoc} />

@@ -236,6 +236,23 @@ class TransferApiTests(TransferBase):
         self.assertEqual([i["code"] for i in r.data["items"]], ["ITM-1"])
         self.assertEqual([t["name"] for t in r.data["tools"]], ["Hilti drill"])
 
+    def test_the_ids_offered_are_the_ids_a_transfer_accepts(self):
+        """The screen builds its lines straight from /transferable, so the
+        two must speak the same language. They did not: the stock ledger keys
+        its rows `item_id` and the form read `id`, so every material line came
+        back "Unknown item" (owner 2026-08-16). Service-level tests passed
+        throughout, because they were handed the right ids by hand."""
+        self.client.force_authenticate(self.storeman)
+        avail = self.client.get(
+            f"/api/v1/sites/{self.a.id}/transferable").data
+        lines = [{"item_id": i["item_id"], "qty": "1"} for i in avail["items"]]
+        lines += [{"tool_id": t["id"]} for t in avail["tools"]]
+        r = self.client.post("/api/v1/transfers", {
+            "from_site_id": self.a.id, "to_site_id": self.b.id,
+            "lines": lines}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(len(r.data["lines"]), len(lines))
+
     def test_a_retired_tool_is_not_offered(self):
         self.drill.state = ToolAsset.State.RETIRED
         self.drill.save(update_fields=["state"])
