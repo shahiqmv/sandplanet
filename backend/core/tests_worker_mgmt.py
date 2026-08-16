@@ -310,10 +310,15 @@ class EmployeeMergeTests(TestCase):
         self.admin = make_user("mrg_adm", User.Role.ADMIN)
 
     def _emp(self, name, active=True, pp="P1"):
-        e = Employee.objects.create(
+        # These fixtures build the duplicate pair the merge tool exists to
+        # clean up, so they say so explicitly — a passport already on file is
+        # refused everywhere else now (owner 2026-08-16).
+        e = Employee(
             emp_no=f"EMP-{Employee.objects.count() + 700:04d}", full_name=name,
             job_category=self.mason, basic_pay=Decimal("6000"),
             passport_no=pp, is_active=active)
+        e._allow_duplicate_passport = True
+        e.save()
         EmployeeSiteAllocation.objects.create(
             employee=e, site=self.site, from_date=date(2026, 1, 1))
         return e

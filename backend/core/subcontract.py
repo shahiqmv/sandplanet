@@ -102,6 +102,11 @@ def add_worker(sub, data, actor):
         return None, "Workers can only be added under an approved subcontractor."
     if not (data.get("full_name") or "").strip():
         return None, "The worker's name is required."
+    from .models import passport_holder
+    held = passport_holder(data.get("passport_no"))
+    if held is not None:
+        return None, (f"Passport {data.get('passport_no').strip()} is already "
+                      f"on {held.emp_no} {held.full_name}.")
     with transaction.atomic():
         n = int(next_ref("EMP", None).split("-")[1])
         emp = Employee.objects.create(

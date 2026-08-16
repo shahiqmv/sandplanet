@@ -93,6 +93,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         override = req and str(
             req.data.get("allow_duplicate_passport", "")).lower() in (
             "1", "true", "yes")
+        if override and self.instance is not None:
+            self.instance._allow_duplicate_passport = True
         if other and not override:
             raise serializers.ValidationError(
                 f"Passport {pno} is already on {other.emp_no} "
@@ -101,6 +103,21 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 f"{other.emp_no} is wrong, correct it there first — or resend "
                 f"with allow_duplicate_passport to proceed anyway.")
         return value
+
+    def create(self, validated_data):
+        """Carry the override onto the new record.
+
+        On an edit the flag can be set on `self.instance`, but a create has no
+        instance until here — without this the model guard would refuse the
+        very case the override exists for (owner 2026-08-16).
+        """
+        obj = Employee(**validated_data)
+        req = self.context.get("request")
+        if req and str(req.data.get("allow_duplicate_passport", "")).lower() \
+                in ("1", "true", "yes"):
+            obj._allow_duplicate_passport = True
+        obj.save()
+        return obj
 
     class Meta:
         model = Employee

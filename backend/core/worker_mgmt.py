@@ -38,11 +38,19 @@ def _is_site_pm(actor, site):
     return actor.role == "PM" and site.is_current_pm(actor)
 
 
-def _validate_add(data):
+def _validate_add(data, exclude_pk=None):
     if not (data.get("full_name") or "").strip():
         return "Full name is required."
     if not (data.get("passport_no") or "").strip():
         return "Passport number is required."
+    # Named here as well as guarded on save, so the site sees which of their
+    # rows is the problem instead of one error for the whole batch.
+    from .models import passport_holder
+    held = passport_holder(data.get("passport_no"), exclude_pk=exclude_pk)
+    if held is not None:
+        return (f"passport {data['passport_no'].strip()} is already on "
+                f"{held.emp_no} {held.full_name}. If this is the same man, "
+                "ask HR to transfer him rather than hiring him again.")
     if not (data.get("nationality") or "").strip():
         return "Nationality is required."
     if not data.get("job_category_id"):
@@ -257,7 +265,7 @@ def update_hire(employee, data, actor):
                                     employee.job_category_id),
         "basic_pay": data.get("basic_pay", employee.basic_pay),
     }
-    err = _validate_add(merged)
+    err = _validate_add(merged, exclude_pk=employee.pk)
     if err:
         return err
     _apply_add_fields(employee, data)

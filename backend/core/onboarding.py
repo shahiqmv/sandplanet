@@ -1607,6 +1607,20 @@ def _handover_employee(case, actor):
     from .models import Employee, EmployeeSiteAllocation
     if case.employee_id:
         return case.employee
+    # Already on file: the man is coming back, or the case duplicates an
+    # existing record. Either way, hand the case the record that already
+    # holds his history rather than minting a second one (owner 2026-08-16).
+    from .models import passport_holder
+    held = passport_holder(case.passport_no)
+    if held is not None:
+        case.employee = held
+        case.save(update_fields=["employee"])
+        audit("employee", held.id, "ONBOARDING_LINKED_EXISTING", actor=actor,
+              detail={"case": case.document.ref, "emp_no": held.emp_no,
+                      "passport": (case.passport_no or "").strip(),
+                      "why": "passport already on file — linked instead of "
+                             "creating a second record"})
+        return held
     join = case.arrived_date or timezone.localdate()
     sub = _is_subcontract(case)
     with transaction.atomic():

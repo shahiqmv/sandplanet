@@ -1716,6 +1716,23 @@ class EmployeeQuerySet(models.QuerySet):
         return self.filter(engagement_type="DIRECT")
 
 
+def passport_holder(passport_no, exclude_pk=None):
+    """The employee already holding this passport, if any.
+
+    One passport, one record. The check lives here rather than in a form
+    because four different paths create employees — the HR screen, the site's
+    own hire batch, subcontractor workers and the onboarding handover — and
+    only the first of them was ever checking (owner 2026-08-16).
+    """
+    pno = (passport_no or "").strip()
+    if not pno:
+        return None
+    qs = Employee.objects.filter(passport_no__iexact=pno)
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    return qs.first()
+
+
 class Employee(models.Model):
     """Employee database, maintained by HO HR/Payroll (+Admin). Employees
     are NOT app users (spec §6A.1). passport_no and basic_pay are sensitive:
@@ -1792,6 +1809,36 @@ class Employee(models.Model):
     hire_pending = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    def save(self, *args, **kwargs):
+        """Refuse a passport already on somebody else's record.
+
+        The last place every path meets. Sites hire their own crews, HR
+        onboards expats, subcontractors bring workers and HR keys people in
+        directly — and a duplicate is invisible afterwards: it reads as a new
+        man with no history, which is how one worker ended up on a payroll run
+        twice (owner 2026-08-16).
+
+        Only fires when the number is being set or changed, so the duplicates
+        already on file can still be edited and merged. Set
+        `_allow_duplicate_passport` on the instance when it is the OTHER
+        record that carries the bad number.
+        """
+        from django.core.exceptions import ValidationError
+
+        pno = (self.passport_no or "").strip()
+        if pno and not getattr(self, "_allow_duplicate_passport", False):
+            was = (Employee.objects.filter(pk=self.pk)
+                   .values_list("passport_no", flat=True).first()
+                   if self.pk else None)
+            if (was or "").strip().upper() != pno.upper():
+                other = passport_holder(pno, exclude_pk=self.pk)
+                if other is not None:
+                    raise ValidationError(
+                        f"Passport {pno} is already on {other.emp_no} "
+                        f"{other.full_name}. If this is the same person, use "
+                        f"that record so their history stays with them.")
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.emp_no} — {self.full_name}"

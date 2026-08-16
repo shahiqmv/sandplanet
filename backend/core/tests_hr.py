@@ -449,9 +449,12 @@ class MergeEmployeesTests(TestCase):
             emp_no="MG-0001", full_name="Rakib", job_category=cat,
             basic_pay=Decimal("7000"), currency="MVR", is_active=False,
             passport_no="EK1", join_date=date(2026, 1, 10))
-        self.dup = Employee.objects.create(
+        # deliberately the same passport — this is the mess being merged
+        self.dup = Employee(
             emp_no="MG-0002", full_name="RAKIB", job_category=cat,
             currency="MVR", is_active=True, passport_no="EK1")
+        self.dup._allow_duplicate_passport = True
+        self.dup.save()
         self.Alloc.objects.create(employee=self.keep, site=self.bvr,
                                   from_date=date(2026, 7, 1),
                                   to_date=date(2026, 7, 24))
@@ -568,3 +571,101 @@ class TransferAllocationTidyTests(TestCase):
             if a.to_date:
                 self.assertGreaterEqual(a.to_date, a.from_date,
                                         f"{a.site.code} ends before it begins")
+
+
+class OnePassportOneRecordTests(TestCase):
+    """A passport already on file is refused, whichever door it comes through.
+
+    Four paths create employees — the HR screen, a site's own hire batch,
+    subcontractor workers, and the onboarding handover — and only the HR
+    screen was ever checking (owner 2026-08-16). A duplicate is invisible
+    afterwards: it reads as a new man with no history, which is how one worker
+    reached a payroll run twice.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from decimal import Decimal
+        from .models import (Employee, ManpowerCategory, Site, Subcontractor,
+                             User)
+        self.User = User
+        self.Employee = Employee
+        self.admin = make_user("pp_admin", User.Role.ADMIN)
+        self.sa = make_user("pp_sa", User.Role.SITE_ADMIN)
+        self.site = Site.objects.create(code="PPT", name="Passport Isle",
+                                        status=Site.Status.ACTIVE)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=1)
+        self.existing = Employee.objects.create(
+            emp_no="PP-0001", full_name="Already Here",
+            passport_no="AB123456", job_category=self.cat,
+            basic_pay=Decimal("7000"), currency="MVR")
+
+    def test_the_model_itself_refuses_a_passport_on_file(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError) as cm:
+            self.Employee.objects.create(
+                emp_no="PP-0002", full_name="Someone Else",
+                passport_no="AB123456")
+        self.assertIn("PP-0001", str(cm.exception))
+
+    def test_case_and_spacing_do_not_slip_past_it(self):
+        from django.core.exceptions import ValidationError
+        with self.assertRaises(ValidationError):
+            self.Employee.objects.create(emp_no="PP-0003", full_name="X",
+                                         passport_no="  ab123456 ")
+
+    def test_an_existing_duplicate_can_still_be_edited(self):
+        """The ones already on file must stay fixable — the guard fires on a
+        change to the number, not on every save."""
+        twin = self.Employee(emp_no="PP-0004", full_name="Twin",
+                             passport_no="AB123456")
+        twin._allow_duplicate_passport = True
+        twin.save()
+        twin.full_name = "Twin Renamed"
+        twin.save()                      # no passport change → allowed
+        twin.refresh_from_db()
+        self.assertEqual(twin.full_name, "Twin Renamed")
+
+    def test_a_site_hire_batch_names_the_record_that_holds_it(self):
+        from . import worker_mgmt
+        batch, err = worker_mgmt.create_add_batch(self.site, [{
+            "full_name": "New Hire", "passport_no": "AB123456",
+            "nationality": "Bangladeshi", "job_category_id": self.cat.id,
+            "basic_pay": "7000"}], self.sa)
+        self.assertIsNone(batch)
+        self.assertIn("PP-0001", err)
+        self.assertIn("Already Here", err)
+
+    def test_a_site_hire_with_a_fresh_passport_still_works(self):
+        from . import worker_mgmt
+        batch, err = worker_mgmt.create_add_batch(self.site, [{
+            "full_name": "Genuinely New", "passport_no": "ZZ999999",
+            "nationality": "Bangladeshi", "job_category_id": self.cat.id,
+            "basic_pay": "7000"}], self.sa)
+        self.assertIsNone(err, err)
+        self.assertIsNotNone(batch)
+
+    def test_a_blank_passport_never_clashes(self):
+        a = self.Employee.objects.create(emp_no="PP-0010", full_name="No Doc A")
+        b = self.Employee.objects.create(emp_no="PP-0011", full_name="No Doc B")
+        self.assertNotEqual(a.pk, b.pk)
+
+    def test_the_onboarding_handover_links_instead_of_duplicating(self):
+        """A returning man keeps the record that holds his history."""
+        from datetime import date
+        from . import onboarding
+        from .models import Document, OnboardingCase
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-PPT-001", site=self.site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.admin)
+        case = OnboardingCase.objects.create(
+            document=doc, full_name="Already Here", passport_no="AB123456",
+            nationality="Bangladeshi")
+        emp = onboarding._handover_employee(case, self.admin)
+        self.assertEqual(emp.pk, self.existing.pk)
+        case.refresh_from_db()
+        self.assertEqual(case.employee_id, self.existing.pk)
+        self.assertEqual(self.Employee.objects.filter(
+            passport_no__iexact="AB123456").count(), 1)
