@@ -21,6 +21,7 @@ const fmtDate = (s) => s ? new Date(s).toLocaleDateString("en-GB",
 const COLUMNS = [
   ["ref", "Ref"], ["full_name", "Candidate"], ["route", "Route"],
   ["trade_designation", "Trade"], ["site_code", "Site"],
+  ["portal_ref", "Application ref"],
   ["status", "Status"], ["doc_date", "Raised"], ["updated_at", "Idle"],
 ];
 
@@ -207,6 +208,18 @@ export default function OnboardingPage({ me, sites }) {
                   <td style={td}>{ROUTE_LABEL[c.route] || c.route}</td>
                   <td style={td}>{c.trade_designation || "—"}</td>
                   <td style={td}>{c.site_code}</td>
+                  <td style={{ ...td, fontFamily: "var(--font-mono)",
+                               fontSize: 12, whiteSpace: "nowrap" }}>
+                    {c.portal_ref ? c.portal_ref : (
+                      /* Missing is only worth flagging once the application
+                         has actually been lodged (owner 2026-08-16). */
+                      <span style={{ color: c.at_application ? "#b35900"
+                                                             : "var(--muted)",
+                                     fontFamily: "inherit" }}>
+                        {c.at_application ? "not recorded" : "—"}
+                      </span>
+                    )}
+                  </td>
                   <td style={td}>
                     {c.hold_reason ? (
                       <>
