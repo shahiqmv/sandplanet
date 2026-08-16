@@ -1748,6 +1748,12 @@ def case_dict(case):
         "id": doc.id, "ref": doc.ref, "status": doc.status,
         "site_code": doc.site.code, "site_id": doc.site_id,
         "doc_date": doc.doc_date,
+        # The list showed no date at all, so there was no telling a case
+        # raised this morning from one that had been sitting for six weeks
+        # (owner 2026-08-16). `updated_at` carries the second half of that:
+        # how long it has been since anything happened to it.
+        "created_at": case.created_at,
+        "updated_at": case.updated_at,
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
         "pending_label": PENDING_LABEL.get(case.stage, ""),
         "waived_stages": list(case.waived_stages or []),

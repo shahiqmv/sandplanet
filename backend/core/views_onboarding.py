@@ -106,8 +106,13 @@ def onboarding_close(request, pk):
 def onboarding_cases(request):
     if request.user.role not in (*VIEW_ROLES, "PM"):
         return Response({"detail": "Not permitted."}, status=403)
+    # Newest first, and `-id` behind it so cases raised on the same day come
+    # back in a stable order — without a tiebreak the list reshuffled itself
+    # between loads (owner 2026-08-16). Sorting itself is done on the client,
+    # over the whole set it has.
     qs = OnboardingCase.objects.select_related(
-        "document__site", "document__created_by").order_by("-document__doc_date")
+        "document__site", "document__created_by").order_by(
+        "-document__doc_date", "-document_id")
     if request.user.role == "PM":
         ids = scoped_site_ids(request.user)
         if ids is not None:

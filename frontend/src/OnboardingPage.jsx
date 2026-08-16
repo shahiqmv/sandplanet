@@ -18,11 +18,64 @@ const fmtDate = (s) => s ? new Date(s).toLocaleDateString("en-GB",
 
 // Onboarding — expat recruitment / visa / mobilisation cases. PM/HR raise,
 // the Director (PD) approves, HR processes the visa stages.
+const COLUMNS = [
+  ["ref", "Ref"], ["full_name", "Candidate"], ["route", "Route"],
+  ["trade_designation", "Trade"], ["site_code", "Site"],
+  ["status", "Status"], ["doc_date", "Raised"], ["updated_at", "Idle"],
+];
+
+const DAY = 864e5;
+
+function days(from) {
+  if (!from) return null;
+  return Math.floor((Date.now() - new Date(from).getTime()) / DAY);
+}
+
+function ageText(d) {
+  const n = days(d);
+  if (n == null) return "";
+  if (n <= 0) return "today";
+  if (n === 1) return "yesterday";
+  if (n < 31) return `${n} days ago`;
+  const m = Math.floor(n / 30);
+  return `${m} month${m === 1 ? "" : "s"} ago`;
+}
+
+// Only a live case can be idle — a closed one is not waiting on anybody.
+function IdleFor({ since, live }) {
+  const n = days(since);
+  if (!live || n == null) return <span style={{ color: "var(--muted)" }}>—</span>;
+  const tone = n >= 30 ? "#c0392b" : n >= 14 ? "#b35900" : "var(--muted)";
+  return (
+    <span style={{ color: tone, fontWeight: n >= 14 ? 700 : 400 }}>
+      {n <= 0 ? "today" : `${n}d`}
+    </span>
+  );
+}
+
+function SortHeader({ col, label, sort, setSort }) {
+  const on = sort.key === col;
+  return (
+    <th style={{ ...th, textAlign: "left", cursor: "pointer",
+                 whiteSpace: "nowrap", userSelect: "none" }}
+        onClick={() => setSort(
+          on ? { key: col, dir: sort.dir === "asc" ? "desc" : "asc" }
+             : { key: col, dir: col === "doc_date" ? "desc" : "asc" })}>
+      {label}
+      <span style={{ opacity: on ? 1 : .25, marginLeft: 4 }}>
+        {on && sort.dir === "asc" ? "▲" : "▼"}
+      </span>
+    </th>
+  );
+}
+
 export default function OnboardingPage({ me, sites }) {
   const [cases, setCases] = useState(null);
   const [view, setView] = useState("list");     // 'list' | 'new'
   const [openId, setOpenId] = useState(null);    // case detail id
   const [filter, setFilter] = useState("open");  // open | mine | all
+  // Newest first by default — the list had no order anyone could rely on.
+  const [sort, setSort] = useState({ key: "doc_date", dir: "desc" });
   const [error, setError] = useState(null);
   const canRaise = RAISE.includes(me.role);
 
@@ -40,8 +93,22 @@ export default function OnboardingPage({ me, sites }) {
     return <CaseDetail id={openId} me={me}
              onBack={() => { setOpenId(null); load(); }} />;
 
+  // Sorted on the client, over everything the server returned, so the order
+  // does not change under you as pages load.
+  const sorted = [...(cases || [])].sort((a, b) => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const x = a[sort.key], y = b[sort.key];
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;            // blanks last, whichever way we sort
+    if (y == null) return -1;
+    const cmp = typeof x === "string" && typeof y === "string"
+      ? x.localeCompare(y, undefined, { numeric: true })
+      : (x > y ? 1 : x < y ? -1 : 0);
+    return cmp * dir || (a.id > b.id ? -1 : 1);
+  });
+
   return (
-    <div style={{ maxWidth: 1000 }}>
+    <div style={{ maxWidth: 1180 }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
         <h1 style={{ margin: 0 }}>Onboarding</h1>
         <span style={{ color: "var(--muted)", fontSize: 13 }}>
@@ -68,15 +135,13 @@ export default function OnboardingPage({ me, sites }) {
           <table style={{ width: "100%", borderCollapse: "collapse",
                           fontSize: 13 }}>
             <thead><tr>
-              <th style={{ ...th, textAlign: "left" }}>Ref</th>
-              <th style={{ ...th, textAlign: "left" }}>Candidate</th>
-              <th style={{ ...th, textAlign: "left" }}>Route</th>
-              <th style={{ ...th, textAlign: "left" }}>Trade</th>
-              <th style={{ ...th, textAlign: "left" }}>Site</th>
-              <th style={{ ...th, textAlign: "left" }}>Status</th>
+              {COLUMNS.map(([key, label]) => (
+                <SortHeader key={key} col={key} label={label}
+                            sort={sort} setSort={setSort} />
+              ))}
             </tr></thead>
             <tbody>
-              {cases.map((c) => (
+              {sorted.map((c) => (
                 <tr key={c.id} style={{ cursor: "pointer" }}
                     onClick={() => setOpenId(c.id)}>
                   <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{c.ref}</td>
@@ -108,6 +173,19 @@ export default function OnboardingPage({ me, sites }) {
                       <Chip tone={STATUS_TONE[c.status]}>
                         {c.status.replace(/_/g, " ")}</Chip>
                     )}
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    {c.doc_date}
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      {ageText(c.doc_date)}
+                    </div>
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    {/* How long since anything happened to it. A case that
+                        has not moved in a month is the one to chase, and the
+                        list gave no way to see that. */}
+                    <IdleFor since={c.updated_at} live={
+                      ["APPROVED", "IN_PROGRESS"].includes(c.status)} />
                   </td>
                 </tr>
               ))}

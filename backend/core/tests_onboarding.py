@@ -1328,3 +1328,59 @@ class SignOffReachesTheQueueTests(TestCase):
                                       "signatory_approved_by"])
         titles = {g["title"] for g in pending_groups(self.sig)}
         self.assertNotIn("To sign off — onboarding appointments", titles)
+
+
+class CaseListDatesAndOrderTests(TestCase):
+    """The dashboard carried no date and no dependable order (2026-08-16).
+
+    There was no telling a case raised this morning from one that had been
+    sitting six weeks, and same-day cases came back in whatever order the
+    database felt like, so the list reshuffled between loads.
+    """
+
+    def setUp(self):
+        from datetime import date
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        self.hr = make_user("ocd_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="OCD", name="Ocd Isle",
+                                        status=Site.Status.ACTIVE)
+        self.refs = []
+        for n, day in ((1, date(2026, 8, 1)), (2, date(2026, 8, 9)),
+                       (3, date(2026, 8, 9))):
+            doc = Document.objects.create(
+                doc_type="OBR", ref=f"OBR-OCD-00{n}", site=self.site,
+                doc_date=day, status="IN_PROGRESS", created_by=self.hr)
+            OnboardingCase.objects.create(document=doc, full_name=f"Cand {n}",
+                                          nationality="Nepali")
+            self.refs.append(doc.ref)
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _rows(self):
+        r = self.client.get("/api/v1/onboarding")
+        self.assertEqual(r.status_code, 200, r.data)
+        return r.data
+
+    def test_a_case_carries_the_date_it_was_raised(self):
+        row = self._rows()[0]
+        self.assertIn("doc_date", row)
+        self.assertIn("created_at", row)
+        self.assertIsNotNone(row["created_at"])
+
+    def test_it_carries_when_it_last_moved(self):
+        self.assertIsNotNone(self._rows()[0]["updated_at"])
+
+    def test_newest_first(self):
+        dates = [str(r["doc_date"]) for r in self._rows()]
+        self.assertEqual(dates, sorted(dates, reverse=True))
+
+    def test_same_day_cases_come_back_in_a_stable_order(self):
+        first = [r["ref"] for r in self._rows()]
+        for _ in range(3):
+            self.assertEqual([r["ref"] for r in self._rows()], first)
+        # and the tiebreak is the newer case first, not chance
+        same_day = [r for r in self._rows()
+                    if str(r["doc_date"]) == "2026-08-09"]
+        self.assertEqual([r["ref"] for r in same_day],
+                         ["OBR-OCD-003", "OBR-OCD-002"])
