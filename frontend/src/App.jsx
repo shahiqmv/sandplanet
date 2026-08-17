@@ -338,6 +338,12 @@ function SiteList({ sites, onOpen }) {
   useEffect(() => {
     api("/sites/summary").then((d) => setLive(d.sites)).catch(() => {});
   }, []);
+  // The TILES are drawn from /sites/summary, which carries the live workforce
+  // count and little else. Everything BEHIND a tile reads the full site record
+  // — working hours, client, contract — so open the full one and keep the
+  // summary row only as a fallback. Handing the summary row through is what
+  // blanked the DPR form on site.working_hours_from (owner 2026-08-17).
+  const open = (row) => onOpen(sites.find((s) => s.id === row.id) || row);
   // Fall back to the plain list the moment the summary is unavailable — this
   // is the first screen after signing in and it must never be a blank page.
   const rows = live || sites.map((s) => ({ ...s, workforce: "–", pms: [] }));
@@ -367,7 +373,7 @@ function SiteList({ sites, onOpen }) {
                           "repeat(auto-fill, minmax(clamp(76px, 19vw, 124px),"
                           + " 1fr))" }}>
             {list.map((s) => (
-              <SiteTile key={s.id} s={s} onOpen={onOpen} />
+              <SiteTile key={s.id} s={s} onOpen={open} />
             ))}
           </div>
         </div>

@@ -79,10 +79,15 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   const [docDate, setDocDate] = useState(
     existing?.doc_date || new Date().toISOString().slice(0, 10)
   );
-  const [workingHours, setWorkingHours] = useState(
-    p.working_hours ||
-      `${site.working_hours_from.slice(0, 5)} – ${site.working_hours_to.slice(0, 5)}`
-  );
+  // Working hours are only a DEFAULT for a free-text field, so a site record
+  // that arrives without them must not take the whole form down — reading
+  // .slice() off an absent field blanked the page for a PM (owner 2026-08-17).
+  const hhmm = (t) => (typeof t === "string" ? t.slice(0, 5) : "");
+  const [workingHours, setWorkingHours] = useState(() => {
+    const from = hhmm(site.working_hours_from);
+    const to = hhmm(site.working_hours_to);
+    return p.working_hours || (from && to ? `${from} – ${to}` : "");
+  });
   const [weatherAm, setWeatherAm] = useState(p.weather_am || "Sunny");
   const [weatherPm, setWeatherPm] = useState(p.weather_pm || "Sunny");
   const [rainFrom, setRainFrom] = useState(p.rain_from || "");
