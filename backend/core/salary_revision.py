@@ -17,6 +17,7 @@ from django.utils import timezone
 
 from .audit import audit
 from .models import Employee, ManpowerCategory, SalaryRevision
+from .permissions import is_staff_grade, sees_staff_pay
 from .worker_mgmt import SITE_MANAGE_ROLES, _is_site_pm
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,12 @@ def create_revision(site, data, actor):
         engagement_type=Employee.Engagement.DIRECT, is_active=True).first()
     if emp is None or emp.current_site_id() != site.id:
         return None, "Choose an active direct worker at this site."
+    # A site role cannot see a management salary, so it cannot revise one
+    # either — otherwise the form asked them to change a number shown as "—"
+    # (owner 2026-08-16). Management re-grading is HR's.
+    grp = emp.job_category.grp if emp.job_category_id else ""
+    if is_staff_grade(grp=grp) and not sees_staff_pay(actor):
+        return None, ("Management salaries are revised by HR, not on site.")
     if emp.salary_revisions.filter(status__in=OPEN).exists():
         return None, f"{emp.full_name} already has a revision in progress."
     to_pay = _dec(data.get("to_basic_pay"))
@@ -155,7 +162,15 @@ def _stamp(rev, actor):
     rev.save()
 
 
-def revision_dict(rev):
+def revision_dict(rev, viewer=None):
+    """`viewer` redacts the figures on a MANAGEMENT worker's revision — the
+    revision list sits on the same site page as the roster, so leaving the pay
+    on it would have re-opened what the roster just closed (owner 2026-08-16).
+    Called with no viewer for notifications and audit, which are not a screen.
+    """
+    grp = rev.employee.job_category.grp if rev.employee.job_category_id else ""
+    hide = (viewer is not None and is_staff_grade(grp=grp)
+            and not sees_staff_pay(viewer))
     return {
         "id": rev.id, "status": rev.status,
         "status_label": rev.get_status_display(),
@@ -164,8 +179,9 @@ def revision_dict(rev):
         "site_id": rev.site_id, "site_code": rev.site.code,
         "from_category": rev.from_category.name if rev.from_category else "",
         "to_category": rev.to_category.name if rev.to_category else "",
-        "from_basic_pay": rev.from_basic_pay, "to_basic_pay": rev.to_basic_pay,
-        "currency": rev.currency,
+        "from_basic_pay": None if hide else rev.from_basic_pay,
+        "to_basic_pay": None if hide else rev.to_basic_pay,
+        "currency": rev.currency, "pay_hidden": hide,
         "effective_month": rev.effective_month,
         "reason": rev.reason, "decision_note": rev.decision_note,
         "requested_by": (rev.requested_by.full_name

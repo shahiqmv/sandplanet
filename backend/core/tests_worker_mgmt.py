@@ -202,11 +202,21 @@ class RosterSalaryVisibilityTests(TestCase):
         self.assertIsNone(r["Site Engineer"]["basic_pay"])   # staff hidden
         self.assertTrue(r["Site Engineer"]["pay_hidden"])
 
-    def test_engineer_and_pm_see_all_pay(self):
+    def test_engineer_and_pm_cannot_see_staff_pay_either(self):
+        """Widened from the Site Admin to the whole site team: a PM reading the
+        site engineer's salary, and a fellow PM's staff, was "causing some
+        trouble" (owner 2026-08-16). Their WORKERS' pay is untouched."""
         for role in (User.Role.SITE_ENGINEER, User.Role.PM):
-            r = self._roster(make_user(f"u{role}", role, site=self.site))
-            self.assertIsNotNone(r["Site Engineer"]["basic_pay"])
-            self.assertFalse(r["Site Engineer"]["pay_hidden"])
+            with self.subTest(role=role):
+                r = self._roster(make_user(f"u{role}", role, site=self.site))
+                self.assertIsNone(r["Site Engineer"]["basic_pay"])
+                self.assertTrue(r["Site Engineer"]["pay_hidden"])
+                self.assertIsNotNone(r["Mason"]["basic_pay"])
+
+    def test_hr_sees_staff_pay(self):
+        r = self._roster(make_user("hrx", User.Role.HO_HR))
+        self.assertIsNotNone(r["Site Engineer"]["basic_pay"])
+        self.assertFalse(r["Site Engineer"]["pay_hidden"])
 
 
 class SiteHiresContractOnlyTests(WorkerBatchTests):

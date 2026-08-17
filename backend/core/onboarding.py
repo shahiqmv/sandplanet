@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .audit import audit
+from .permissions import is_staff_grade, sees_staff_pay
 from .models import (Approval, Document, DocumentRevision, OnboardingCase)
 from .numbering import next_ref
 
@@ -22,6 +23,10 @@ log = logging.getLogger(__name__)
 # The Director and his PA both log onboarding cases (owner 2026-08-02); HR/PM
 # too. Approval is a separate gate below.
 RAISE_ROLES = ("PM", "HO_HR", "ADMIN", "PA", "DIRECTOR")   # who logs a case
+# A MANAGEMENT hire is head office's to raise, not a site's — the PM had no
+# business setting a management salary, and now cannot see one either (owner
+# 2026-08-16). Sites still raise their own skilled/unskilled workers.
+STAFF_RAISE_ROLES = ("HO_HR", "ADMIN", "PA", "DIRECTOR")
 APPROVE_ROLES = ("DIRECTOR", "ADMIN")            # the PD gate
 OPEN = ("DRAFT", "SUBMITTED", "RETURNED")        # editable / pre-approval
 TERMINAL = ("COMPLETED", "REJECTED", "CANCELLED")  # closed
@@ -168,6 +173,15 @@ def _validate(case):
     return None
 
 
+def _staff_gate(case, actor):
+    """A management case is head office's. Checked on create, on edit and again
+    on submit, because the category can be changed after the case is open."""
+    if case.category == "STAFF" and actor.role not in STAFF_RAISE_ROLES:
+        return ("A management (Staff) hire is raised by HR, not by a site. "
+                "Choose Skilled or Unskilled, or ask HR to log this one.")
+    return None
+
+
 def create_case(site, data, actor):
     if actor.role not in RAISE_ROLES:
         return None, "Only a PM or HR can raise an onboarding request."
@@ -181,6 +195,10 @@ def create_case(site, data, actor):
         doc.save(update_fields=["current_revision"])
         case = OnboardingCase(document=doc)
         _apply_fields(case, data)
+        err = _staff_gate(case, actor)
+        if err:
+            transaction.set_rollback(True)
+            return None, err
         case.save()
     audit("document", doc.id, "OBR_CREATED", actor=actor,
           detail={"ref": doc.ref, "candidate": case.full_name})
@@ -190,7 +208,17 @@ def create_case(site, data, actor):
 def update_case(case, data, actor):
     if case.document.status not in ("DRAFT", "RETURNED"):
         return "This case can no longer be edited."
+    # An editor who cannot SEE the salary cannot overwrite it: their form was
+    # seeded from a redacted payload, so echoing those keys back would blank
+    # the real figure. The Director is exactly this case — they raise a
+    # management hire but do not see pay (owner 2026-08-16).
+    if is_staff_grade(category=case.category) and not sees_staff_pay(actor):
+        data = {k: v for k, v in data.items()
+                if k not in ("proposed_salary", "allowances")}
     _apply_fields(case, data)
+    err = _staff_gate(case, actor)
+    if err:
+        return err
     case.save()
     audit("document", case.document_id, "OBR_EDITED", actor=actor)
     return None
@@ -209,7 +237,7 @@ def submit_case(case, actor):
         return "Only a draft / returned case can be submitted."
     if actor.role not in RAISE_ROLES:
         return "Only the site team / HR can submit this case."
-    err = _validate(case)
+    err = _staff_gate(case, actor) or _validate(case)
     if err:
         return err
     missing = missing_documents(case)
@@ -1072,6 +1100,8 @@ LETTER_META = {
            "title": "Employment Agreement (Embassy Attestation)", "sign": True},
 }
 _QUOTA_LABEL = {"SKILLED": "Skilled", "UNSKILLED": "Unskilled", "STAFF": "Staff"}
+# Letters that print the salary in the body — see `_salary_str` below.
+PAY_BEARING_LETTERS = ("LOA", "AC", "EA")
 
 
 def letter_available(case, kind):
@@ -1900,6 +1930,22 @@ def outstanding_fees(case):
             "authorised": d.status == "AUTHORISED",
         })
     return out
+
+
+def redact_pay(row, viewer, case):
+    """Strip the salary off a MANAGEMENT case for a viewer who may not see pay.
+
+    A PM was reading the proposed salary of another PM's site engineer straight
+    off the onboarding list (owner 2026-08-16). Applied at the API boundary, not
+    inside `case_dict`, so the letters and the payroll hand-off — which need the
+    real figure — are unaffected. Every onboarding endpoint goes through it.
+    """
+    if sees_staff_pay(viewer) or not is_staff_grade(
+            category=case.category,
+            grp=(case.job_category.grp if case.job_category_id else "")):
+        return row
+    return {**row, "proposed_salary": None, "allowances": [],
+            "pay_hidden": True}
 
 
 def case_dict(case):

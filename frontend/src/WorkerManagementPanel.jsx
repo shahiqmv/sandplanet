@@ -360,9 +360,15 @@ function RevisionCard({ rev, me, onChanged }) {
                     flexWrap: "wrap" }}>
         <b style={{ color: "var(--navy)" }}>{rev.employee}</b>
         <Chip tone={STATUS_TONE[s]}>{rev.status_label}</Chip>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
-          {rev.currency} {money(rev.from_basic_pay)} →{" "}
-          <b>{money(rev.to_basic_pay)}</b></span>
+        {rev.pay_hidden ? (
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}
+                title="Management pay is not shown on site">
+            management pay — HR only</span>
+        ) : (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 12.5 }}>
+            {rev.currency} {money(rev.from_basic_pay)} →{" "}
+            <b>{money(rev.to_basic_pay)}</b></span>
+        )}
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
         {cat ? `${cat} · ` : ""}by {rev.requested_by}

@@ -45,3 +45,32 @@ def scoped_site_ids(user):
     if user.is_ho:
         return None
     return user.allocated_site_ids()
+
+
+# Who may see what an individual is paid: HR/Payroll, Finance, the Director's
+# office (PA), Admin, and the signatory who signs the payment.
+PAY_ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA", "SIGNATORY")
+
+
+def sees_pay(user):
+    return user.role in PAY_ROLES
+
+
+def sees_staff_pay(user):
+    """A MANAGEMENT salary is head-office business, never site business.
+
+    A PM was reading the pay of the site engineer beside them, and of another
+    PM's staff on an onboarding case — "causing some trouble" (owner
+    2026-08-16). Site roles still see their WORKERS' pay: they hire them,
+    revise them and verify the payroll days. It is the STAFF grade that is
+    closed, to everyone outside `PAY_ROLES` — the Director included, at the
+    owner's word.
+    """
+    return sees_pay(user)
+
+
+def is_staff_grade(category=None, grp=None):
+    """Management, not trades. `category` is the onboarding quota class
+    (SKILLED / UNSKILLED / STAFF); `grp` is ManpowerCategory.grp
+    (STAFF / LABOUR). Either saying STAFF is enough."""
+    return "STAFF" in (category or "", grp or "")

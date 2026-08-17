@@ -11,6 +11,10 @@ const STATUS_TONE = {
 const ROUTE_LABEL = { WP: "Work permit", BV: "Business visa" };
 const CATEGORIES = [["SKILLED", "Skilled"], ["UNSKILLED", "Unskilled"],
                     ["STAFF", "Staff"]];
+// A management hire is raised by head office, not by a site (owner
+// 2026-08-16) — the backend refuses it either way, this keeps the option off
+// the site's screen instead of failing them on save.
+const STAFF_RAISE = ["HO_HR", "ADMIN", "PA", "DIRECTOR"];
 const money = (v) => v == null ? "—"
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2 });
 const fmtDate = (s) => s ? new Date(s).toLocaleDateString("en-GB",
@@ -144,7 +148,7 @@ export default function OnboardingPage({ me, sites }) {
   useEffect(() => { load(); }, [filter]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (view === "new")
-    return <NewCase sites={sites} onCancel={() => setView("list")}
+    return <NewCase sites={sites} me={me} onCancel={() => setView("list")}
              onDone={(c) => { setView("list"); setOpenId(c.id); load(); }} />;
   if (openId)
     return <CaseDetail id={openId} me={me}
@@ -363,8 +367,10 @@ function AllowancesEditor({ list, currency, onChange }) {
   );
 }
 
-function CaseForm({ value, onChange, subs = [] }) {
+function CaseForm({ value, onChange, subs = [], me }) {
   const set = (k) => (e) => onChange({ ...value, [k]: e.target.value });
+  const canStaff = !me || STAFF_RAISE.includes(me.role);
+  const payHidden = !!value.pay_hidden;
   // A subcontractor's BV worker is never on payroll and never gets a work
   // permit, so salary + quota pool don't apply to them.
   const isSub = value.route === "BV" && value.bv_purpose === "SUBCONTRACT";
@@ -392,10 +398,11 @@ function CaseForm({ value, onChange, subs = [] }) {
           <select style={inputStyle} value={value.category}
                   onChange={set("category")}>
             <option value="">—</option>
-            {CATEGORIES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            {CATEGORIES.filter(([v]) => canStaff || v !== "STAFF" || value.category === v)
+              .map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select></label>
         {F({ label: "Trade / designation", k: "trade_designation", req: true })}
-        {!isSub && (
+        {!isSub && !payHidden && (
           <label style={fld}>Proposed salary
             <span style={{ color: "var(--red-fg)" }}> *</span>
             <div style={{ display: "flex", gap: 4 }}>
@@ -406,6 +413,11 @@ function CaseForm({ value, onChange, subs = [] }) {
                       onChange={set("currency")}>
                 <option>MVR</option><option>USD</option></select>
             </div></label>
+        )}
+        {!isSub && payHidden && (
+          <label style={fld}>Proposed salary
+            <span style={{ ...inputStyle, color: "var(--muted)",
+                           display: "block" }}>Set by HR</span></label>
         )}
         <label style={fld}>Route <span style={{ color: "var(--red-fg)" }}>*</span>
           <select style={inputStyle} value={value.route} onChange={set("route")}>
@@ -422,7 +434,7 @@ function CaseForm({ value, onChange, subs = [] }) {
         {F({ label: "Expected mobilisation", k: "mobilisation_date",
              type: "date" })}
       </div>
-      {!isSub && (
+      {!isSub && !payHidden && (
         <AllowancesEditor list={value.allowances} currency={value.currency}
           onChange={(a) => onChange({ ...value, allowances: a })} />
       )}
@@ -474,7 +486,7 @@ function CaseForm({ value, onChange, subs = [] }) {
   );
 }
 
-function NewCase({ sites, onCancel, onDone }) {
+function NewCase({ sites, me, onCancel, onDone }) {
   const [siteId, setSiteId] = useState(sites?.[0]?.id || "");
   const [form, setForm] = useState({ ...BLANK });
   const [busy, setBusy] = useState(false);
@@ -563,7 +575,7 @@ function NewCase({ sites, onCancel, onDone }) {
             || "Upload the passport photo page — details are read in and kept "
                + "as the passport copy."}</span>
       </div>
-      <CaseForm value={form} onChange={setForm} subs={subs} />
+      <CaseForm value={form} onChange={setForm} subs={subs} me={me} />
       <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
         <Btn variant="primary" disabled={busy}>Create case</Btn>
         <span style={{ fontSize: 12, color: "var(--muted)",
@@ -616,7 +628,14 @@ export function CaseDetail({ id, me, onBack }) {
       { method: "POST", body: { action, note } });
   });
   async function saveEdit() {
-    await act(() => api(`/onboarding/${id}`, { method: "PATCH", body: form }));
+    // The form was seeded from a payload with the salary redacted out, so
+    // posting those keys back would BLANK the real figure. Send neither.
+    const body = { ...form };
+    if (form.pay_hidden) {
+      delete body.proposed_salary;
+      delete body.allowances;
+    }
+    await act(() => api(`/onboarding/${id}`, { method: "PATCH", body }));
     setEditing(false);
   }
 
@@ -641,7 +660,7 @@ export function CaseDetail({ id, me, onBack }) {
 
         {editing ? (
           <div style={{ marginTop: 10 }}>
-            <CaseForm value={form} onChange={setForm} subs={subs} />
+            <CaseForm value={form} onChange={setForm} subs={subs} me={me} />
             <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
               <Btn variant="primary" disabled={busy} onClick={saveEdit}>Save</Btn>
               <button style={linkBtn} onClick={() => { setEditing(false);
@@ -656,8 +675,10 @@ export function CaseDetail({ id, me, onBack }) {
               ? " · exp " + fmtDate(c.passport_expiry) : ""}`} />
             <Row k="Trade / category" v={`${c.trade_designation} · ${c.category}`} />
             <Row k="Quota pool" v={c.quota_pool_label || "Sand Planet"} />
-            <Row k="Proposed salary" v={`${c.currency} ${money(c.proposed_salary)}`} />
-            {(c.allowances || []).length > 0 && (
+            <Row k="Proposed salary" v={c.pay_hidden
+              ? "— (management pay, HR only)"
+              : `${c.currency} ${money(c.proposed_salary)}`} />
+            {!c.pay_hidden && (c.allowances || []).length > 0 && (
               <Row k="Allowances" v={c.allowances.map((a) =>
                 `${a.type} ${a.currency || c.currency} ${money(a.amount)}`)
                 .join(" · ")} />

@@ -9,7 +9,7 @@ from . import salary_revision as sr
 from . import worker_mgmt as wm
 from .models import Employee, SalaryRevision, Site
 from .models import WorkerChangeRequest as WCR
-from .permissions import scoped_site_ids
+from .permissions import is_staff_grade, scoped_site_ids, sees_staff_pay
 
 VIEW_ALL = ("PM", "DIRECTOR", "ADMIN")          # see batches across all sites
 
@@ -29,13 +29,17 @@ def _site_for(request, site_id):
     return site, None
 
 
-def _emp_json(emp):
+def _emp_json(emp, viewer=None):
+    grp = emp.job_category.grp if emp.job_category_id else ""
+    hide = (viewer is not None and is_staff_grade(grp=grp)
+            and not sees_staff_pay(viewer))
     return {
         "id": emp.id, "emp_no": emp.emp_no, "full_name": emp.full_name,
         "nationality": emp.nationality, "passport_no": emp.passport_no,
         "job_title": emp.job_category.name if emp.job_category_id else "",
         "job_category_id": emp.job_category_id,
-        "basic_pay": emp.basic_pay, "currency": emp.currency,
+        "basic_pay": None if hide else emp.basic_pay,
+        "currency": emp.currency, "pay_hidden": hide,
         "employment_type": emp.employment_type,
         "work_permit_no": emp.work_permit_no,
         "work_permit_expiry": emp.work_permit_expiry,
@@ -43,7 +47,7 @@ def _emp_json(emp):
     }
 
 
-def _batch_json(batch):
+def _batch_json(batch, viewer=None):
     return {
         "id": batch.id, "kind": batch.kind, "status": batch.status,
         "status_label": batch.get_status_display(),
@@ -53,7 +57,7 @@ def _batch_json(batch):
         "requested_by": batch.requested_by.full_name
         if batch.requested_by_id else "",
         "created_at": batch.created_at, "worker_count": batch.worker_count,
-        "workers": [_emp_json(i.employee) for i in
+        "workers": [_emp_json(i.employee, viewer) for i in
                     batch.items.select_related("employee__job_category").all()],
     }
 
@@ -70,14 +74,16 @@ def worker_batches(request):
         qs = qs.filter(site_id=request.GET["site_id"])
     if request.GET.get("open") == "1":
         qs = qs.filter(status__in=wm.OPEN)
-    return Response([_batch_json(b) for b in qs[:200]])
+    return Response([_batch_json(b, request.user) for b in qs[:200]])
 
 
 @api_view(["GET"])
 def site_direct_workers(request, site_id):
     """Active DIRECT workers at a site — the roster the SA/SE/PM see, and the
-    pick-list for remove / transfer. Salary is shown, except a Site Admin does
-    not see the pay of STAFF-grade (senior) workers (owner 2026-07-23)."""
+    pick-list for remove / transfer. Worker pay is shown; MANAGEMENT
+    (STAFF-grade) pay is not, to anyone outside PAY_ROLES. This started as a
+    Site Admin rule (owner 2026-07-23) and now covers the PM and the site
+    engineer too, who were reading each other's salaries (owner 2026-08-16)."""
     site, err = _site_for(request, site_id)
     if err:
         return err
@@ -88,11 +94,11 @@ def site_direct_workers(request, site_id):
         site_allocations__site=site,
         site_allocations__to_date__isnull=True,
     ).select_related("job_category").order_by("emp_no").distinct()
-    is_admin_staff = request.user.role == "SITE_ADMIN"
+    hides_staff_pay = not sees_staff_pay(request.user)
     out = []
     for e in qs:
         grp = e.job_category.grp if e.job_category_id else ""
-        hide_pay = is_admin_staff and grp == "STAFF"   # senior staff pay
+        hide_pay = hides_staff_pay and is_staff_grade(grp=grp)
         out.append({
             "id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
             "nationality": e.nationality,
@@ -132,7 +138,7 @@ def create_batch(request, site_id):
                         status=400)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_batch_json(batch), status=201)
+    return Response(_batch_json(batch, request.user), status=201)
 
 
 def _get_batch(request, pk):
@@ -170,7 +176,7 @@ def batch_action(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     batch.refresh_from_db()
-    return Response(_batch_json(batch))
+    return Response(_batch_json(batch, request.user))
 
 
 # ---- Salary revisions (site PM → Director) ------------------------------
@@ -184,7 +190,7 @@ def salary_revisions(request):
         rev, msg = sr.create_revision(site, request.data, request.user)
         if msg:
             return Response({"detail": msg}, status=400)
-        return Response(sr.revision_dict(rev), status=201)
+        return Response(sr.revision_dict(rev, request.user), status=201)
     if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", *VIEW_ALL):
         return Response({"detail": "Not permitted."}, status=403)
     qs = SalaryRevision.objects.select_related(
@@ -196,7 +202,8 @@ def salary_revisions(request):
         qs = qs.filter(site_id=request.GET["site_id"])
     if request.GET.get("open") == "1":
         qs = qs.filter(status__in=sr.OPEN)
-    return Response([sr.revision_dict(r) for r in qs[:200]])
+    return Response([sr.revision_dict(r, request.user)
+                 for r in qs[:200]])
 
 
 @api_view(["POST"])
@@ -214,7 +221,7 @@ def salary_revision_action(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     rev.refresh_from_db()
-    return Response(sr.revision_dict(rev))
+    return Response(sr.revision_dict(rev, request.user))
 
 
 @api_view(["PATCH"])
@@ -234,7 +241,7 @@ def hire_edit(request, emp_id):
     msg = wm.update_hire(emp, request.data, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_emp_json(emp))
+    return Response(_emp_json(emp, request.user))
 
 
 @api_view(["PATCH"])
@@ -256,4 +263,4 @@ def worker_join_date(request, emp_id):
     msg = wm.set_join_date(emp, request.data.get("join_date"), request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_emp_json(emp))
+    return Response(_emp_json(emp, request.user))

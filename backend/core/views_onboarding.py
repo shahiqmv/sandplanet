@@ -29,6 +29,12 @@ def _can_see(user, doc):
     return False
 
 
+def _case(request, case):
+    """Every case payload leaves through here, so a management salary cannot
+    reach a site role by way of an endpoint somebody forgot (owner 2026-08-16)."""
+    return ob.redact_pay(ob.case_dict(case), request.user, case)
+
+
 def _get_case(request, pk):
     try:
         case = OnboardingCase.objects.select_related(
@@ -86,7 +92,7 @@ def onboarding_extend(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
 
 
 @api_view(["POST"])
@@ -100,7 +106,7 @@ def onboarding_close(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["GET"])
@@ -125,7 +131,7 @@ def onboarding_cases(request):
         qs = qs.exclude(document__status__in=ob.TERMINAL)
     if request.GET.get("mine") == "1":
         qs = qs.filter(document__created_by=request.user)
-    return Response([ob.case_dict(c) for c in qs[:200]])
+    return Response([_case(request, c) for c in qs[:200]])
 
 
 @api_view(["POST"])
@@ -144,7 +150,7 @@ def onboarding_hold(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["GET"])
@@ -186,7 +192,7 @@ def onboarding_create(request, site_id):
     case, msg = ob.create_case(site, request.data, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
 
 
 @api_view(["GET", "PATCH"])
@@ -202,7 +208,7 @@ def onboarding_detail(request, pk):
         if msg:
             return Response({"detail": msg}, status=400)
         case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["POST"])
@@ -215,7 +221,7 @@ def onboarding_submit(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["POST"])
@@ -229,7 +235,7 @@ def onboarding_action(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["POST"])
@@ -243,7 +249,7 @@ def onboarding_stage(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["POST"])
@@ -260,7 +266,7 @@ def onboarding_fee(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
 
 
 @api_view(["POST"])
@@ -277,7 +283,7 @@ def onboarding_stage_doc(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
 
 
 @api_view(["GET"])
@@ -311,7 +317,7 @@ def onboarding_letter(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
 
 
 @api_view(["GET"])
@@ -325,6 +331,13 @@ def onboarding_letter_download(request, pk, letter_id):
         "attachment").first()
     if letter is None or not letter.attachment_id or not letter.attachment.file:
         return Response({"detail": "Not found."}, status=404)
+    # The appointment letter and the employment agreement print the salary, so
+    # on a management case they are shut to the same roles the figure is
+    # (owner 2026-08-16) — otherwise hiding it on screen was theatre.
+    if letter.kind in ob.PAY_BEARING_LETTERS and ob.redact_pay(
+            {}, request.user, case).get("pay_hidden"):
+        return Response({"detail": "This letter carries the salary — HR only."},
+                        status=403)
     from django.http import FileResponse
     return FileResponse(letter.attachment.file.open("rb"),
                         content_type="application/pdf",
@@ -412,7 +425,7 @@ def onboarding_stage_data(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     case.refresh_from_db()
-    return Response(ob.case_dict(case))
+    return Response(_case(request, case))
 
 
 @api_view(["POST"])
@@ -441,4 +454,4 @@ def onboarding_document(request, pk):
         file_name=up.name, content_type=up.content_type or "",
         size_bytes=up.size, uploaded_by=request.user)
     case.refresh_from_db()
-    return Response(ob.case_dict(case), status=201)
+    return Response(_case(request, case), status=201)
