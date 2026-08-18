@@ -1644,8 +1644,13 @@ class HoldACaseTests(TestCase):
             created_by=self.hr)
         self.case = OnboardingCase.objects.create(
             document=doc, full_name="Candidate", nationality="Sri Lankan",
-            route="BV", stage="BV_APPLICATION", portal_ref="GSR/2026/1",
-            portal_status="APPROVED", signatory_approved_at=timezone.now())
+            route="BV", stage="BV_APPLICATION",
+            # the BV application is lodged and approved — this fixture is
+            # about holds, not about the portal
+            portal_by_stage={"BV_APPLICATION": {"ref": "GSR/2026/1",
+                                                "status": "APPROVED"}},
+            portal_ref="GSR/2026/1", portal_status="APPROVED",
+            signatory_approved_at=timezone.now())
 
     def test_a_held_case_does_not_advance_and_says_why(self):
         self.assertIsNone(self.ob.set_hold(
@@ -1721,9 +1726,9 @@ class ApplicationStateTests(TestCase):
             route="BV", stage="BV_APPLICATION",
             signatory_approved_at=timezone.now())
 
-    def state(self, **kw):
-        for k, v in kw.items():
-            setattr(self.case, k, v)
+    def state(self, portal_ref="", portal_status=""):
+        self.ob.set_portal(self.case, self.case.stage,
+                           ref=portal_ref, status=portal_status)
         return self.ob.application_state(self.case)
 
     def test_nothing_lodged_is_ours_to_move(self):
@@ -1764,9 +1769,96 @@ class ApplicationStateTests(TestCase):
         self.assertIsNone(self.ob.application_state(self.case))
 
     def test_the_case_payload_carries_it(self):
-        self.case.portal_ref = "GSR/2026/27789"
-        self.case.portal_status = "SUBMITTED"
+        self.ob.set_portal(self.case, "BV_APPLICATION",
+                           ref="GSR/2026/27789", status="SUBMITTED")
         self.case.save()
         row = self.ob.case_dict(self.case)
         self.assertEqual(row["application"]["state"], "WAIT_PORTAL")
         self.assertEqual(row["application"]["ref"], "GSR/2026/27789")
+
+
+class BvThenWorkPermitTests(TestCase):
+    """A candidate flies in on a business visa and converts to a work permit
+    here, so the case lodges TWO applications.
+
+    OBR-SJR-006 did exactly that: BV approved 10 Aug, arrived 11 Aug, onto
+    WP_APPLICATION 17 Aug — still carrying the BV's reference GSR/2026/26767
+    and its APPROVED status. The work-permit application had not been lodged at
+    all, but read as approved and could be advanced past (owner 2026-08-18).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        self.hr = make_user("bw_hr", User.Role.HO_HR)
+        site = Site.objects.create(code="BWP", name="Convert Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-BWP-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.hr)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Sri Lankan",
+            route="BV", stage="BV_APPLICATION",
+            signatory_approved_at=timezone.now())
+        # the business visa: lodged and approved
+        self.ob.set_portal(self.case, "BV_APPLICATION",
+                           ref="GSR/2026/26767", status="APPROVED")
+        self.case.save()
+
+    def test_the_bv_approval_does_not_cover_the_wp_application(self):
+        self.case.stage = "WP_APPLICATION"
+        self.ob._load_portal_for_stage(self.case)
+        self.case.save()
+        state = self.ob.application_state(self.case)
+        self.assertEqual(state["state"], "WAIT_US")
+        self.assertIn("not lodged", state["note"])
+        self.assertEqual(state["ref"], "")
+
+    def test_the_case_cannot_be_advanced_on_the_bv_approval(self):
+        self.case.stage = "WP_APPLICATION"
+        self.ob._load_portal_for_stage(self.case)
+        self.case.save()
+        err = self.ob.advance_stage(self.case, {}, self.hr)
+        self.assertIsNotNone(err)
+        self.assertIn("portal reference", err)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.stage, "WP_APPLICATION")   # held
+
+    def test_the_bv_reference_stays_on_record(self):
+        """He flew in on it and his BV expiry counts from it — losing it would
+        be worse than showing it in the wrong place."""
+        self.case.stage = "WP_APPLICATION"
+        self.ob._load_portal_for_stage(self.case)
+        self.case.save()
+        hist = self.ob.case_dict(self.case)["portal_history"]
+        self.assertEqual(len(hist), 1)
+        self.assertEqual(hist[0]["stage"], "BV_APPLICATION")
+        self.assertEqual(hist[0]["ref"], "GSR/2026/26767")
+        self.assertEqual(hist[0]["status"], "APPROVED")
+
+    def test_each_application_keeps_its_own_reference(self):
+        self.case.stage = "WP_APPLICATION"
+        self.ob._load_portal_for_stage(self.case)
+        self.case.save()
+        self.ob.set_stage_data(self.case, {"portal_ref": "WR1/2026/73059"},
+                               self.hr)
+        self.case.refresh_from_db()
+        self.assertEqual(self.ob.portal_for(self.case, "WP_APPLICATION")["ref"],
+                         "WR1/2026/73059")
+        self.assertEqual(self.ob.portal_for(self.case, "BV_APPLICATION")["ref"],
+                         "GSR/2026/26767")
+        # and the flat column tracks the stage in hand
+        self.assertEqual(self.case.portal_ref, "WR1/2026/73059")
+
+    def test_an_outcome_cannot_be_set_before_the_application_exists(self):
+        self.case.stage = "WP_APPLICATION"
+        self.ob._load_portal_for_stage(self.case)
+        self.case.save()
+        err = self.ob.set_stage_data(self.case, {"portal_status": "APPROVED"},
+                                     self.hr)
+        self.assertIn("reference", err)

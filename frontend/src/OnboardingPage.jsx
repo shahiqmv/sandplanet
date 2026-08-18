@@ -913,8 +913,14 @@ function Processing({ c, me, onReload }) {
       {/* captured data */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", fontSize: 12,
         color: "var(--muted)" }}>
-        {c.portal_status && <span>Portal: <b>{c.portal_status}</b></span>}
-        {c.portal_ref && <span>Ref: <b>{c.portal_ref}</b></span>}
+        {/* Every application this case has lodged, each with its own
+            reference — a candidate who flew in on a business visa and is now
+            on the work-permit track has two (owner 2026-08-18). */}
+        {(c.portal_history || []).map((h) => (
+          <span key={h.stage}>{h.stage_label}: <b>{h.ref || "no ref"}</b>
+            {h.status ? ` · ${h.status.toLowerCase().replace(/_/g, " ")}` : ""}
+          </span>
+        ))}
         {c.arrived_date && <span>Arrived: <b>{fmtDate(c.arrived_date)}</b></span>}
         {c.medical_due && <span>Medical by: <b>{fmtDate(c.medical_due)}</b>
           {!c.medical_result && <Countdown d={c.medical_due} warnAt={7} />}</span>}

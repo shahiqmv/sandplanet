@@ -2246,6 +2246,17 @@ class OnboardingCase(models.Model):
     # stage: without it nobody can find the application again on the portal,
     # and HR was tracking these on paper (owner 2026-08-16).
     portal_ref = models.CharField(max_length=60, blank=True)
+    # A case can pass through BOTH application stages: a candidate flies in on
+    # a business visa and converts to a work permit here, so BV_APPLICATION and
+    # WP_APPLICATION are two separate applications with two separate portal
+    # references and two separate outcomes. The single pair above described
+    # only one of them, so the BV's reference and its APPROVED status followed
+    # the case into the WP stage — making an unlodged work-permit application
+    # read as approved, and satisfying the gate that is supposed to hold the
+    # case there (owner 2026-08-18, on OBR-SJR-006).
+    #   {"BV_APPLICATION": {"ref": "GSR/2026/26767", "status": "APPROVED"}, …}
+    # portal_ref / portal_status above stay as the CURRENT stage's values.
+    portal_by_stage = models.JSONField(default=dict, blank=True)
     # A case can be blocked by something outside the process — the portal
     # answering that the candidate already holds an active visa pending
     # cancellation, say. It must stop, visibly and with the reason on it,

@@ -377,6 +377,45 @@ PENDING_LABEL = {
 APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
 
 
+def portal_for(case, stage=None):
+    """The portal reference + status for ONE application stage.
+
+    A BV→WP case lodges two applications, so asking the case for "the" portal
+    reference is the wrong question — it has to be asked per stage.
+    """
+    stage = stage or case.stage
+    row = (case.portal_by_stage or {}).get(stage) or {}
+    return {"ref": row.get("ref") or "", "status": row.get("status") or ""}
+
+
+def set_portal(case, stage, ref=None, status=None):
+    """Record a reference / status against a stage. Mirrors into the flat
+    columns while `stage` is the case's current one, so everything reading
+    case.portal_ref keeps seeing the application actually in hand."""
+    by = dict(case.portal_by_stage or {})
+    row = dict(by.get(stage) or {})
+    if ref is not None:
+        row["ref"] = ref
+    if status is not None:
+        row["status"] = status
+    by[stage] = row
+    case.portal_by_stage = by
+    fields = ["portal_by_stage"]
+    if stage == case.stage:
+        case.portal_ref = row.get("ref") or ""
+        case.portal_status = row.get("status") or ""
+        fields += ["portal_ref", "portal_status"]
+    return fields
+
+
+def _load_portal_for_stage(case):
+    """Point the flat columns at the stage the case has just entered. A fresh
+    application stage starts blank even though an earlier one was approved."""
+    cur = portal_for(case, case.stage)
+    case.portal_ref, case.portal_status = cur["ref"], cur["status"]
+    return ["portal_ref", "portal_status"]
+
+
 def application_state(case):
     """What is ACTUALLY being waited for at an application stage.
 
@@ -391,7 +430,8 @@ def application_state(case):
     """
     if case.stage not in APPLICATION_STAGES:
         return None
-    ref, status = case.portal_ref or "", case.portal_status or ""
+    cur = portal_for(case, case.stage)
+    ref, status = cur["ref"], cur["status"]
     if status == "APPROVED":
         return {"state": "READY", "note": "approved — ready to advance",
                 "ref": ref, "portal_status": status}
@@ -523,8 +563,16 @@ def _can_leave(case, stage):
     if case.signatory_approved_at is None:
         return ("Awaiting the signatory's sign-off — no letter or application "
                 "can go out before the case is signed.")
-    if stage in APPLICATION_STAGES and case.portal_status != "APPROVED":
-        return "The government portal must show APPROVED before advancing."
+    if stage in APPLICATION_STAGES:
+        # THIS stage's application, not whichever one was approved last. A
+        # business visa approved in July was letting the work-permit stage be
+        # walked straight past without an application (owner 2026-08-18).
+        cur = portal_for(case, stage)
+        if not cur["ref"]:
+            return ("Record the portal reference for this application before "
+                    "advancing.")
+        if cur["status"] != "APPROVED":
+            return "The government portal must show APPROVED before advancing."
     if stage in MEDICAL_STAGES:
         if case.medical_result == "FAIL":
             return "Medical failed — the case is with the Director to decide."
@@ -546,11 +594,16 @@ def _on_enter(case, stage, data):
         # The portal issues a reference the moment the application is lodged.
         # Without it the application cannot be found again, and HR was keeping
         # them on paper (owner 2026-08-16).
-        ref = (data.get("portal_ref") or case.portal_ref or "").strip()
+        # Fall back to THIS stage's own reference (so re-entering it is fine),
+        # never to case.portal_ref — on a BV→WP case that holds the business
+        # visa's number, which was quietly accepted as the work permit's
+        # (owner 2026-08-18).
+        ref = (data.get("portal_ref")
+               or portal_for(case, stage)["ref"] or "").strip()
         if not ref:
             return ("Enter the government portal reference for this "
                     "application (e.g. GSR/2026/27757).")
-        case.portal_ref = ref
+        set_portal(case, stage, ref=ref)
     if stage in ARRIVAL_STAGES:
         d = data.get("arrived_date")
         if not d:
@@ -625,6 +678,10 @@ def advance_stage(case, data, actor, system=False):
         return err
     case.stage = nxt
     case.stage_since = timezone.localdate()
+    # A new application stage is a NEW application: point the flat portal
+    # columns at this stage's own (usually empty) reference and status, so an
+    # earlier route's approval cannot stand in for one nobody has lodged.
+    _load_portal_for_stage(case)
     case.save()
     audit("document", doc.id, "OBR_STAGE", actor=actor,
           detail={"ref": doc.ref, "stage": nxt})
@@ -645,17 +702,23 @@ def set_stage_data(case, data, actor):
     if case.document.status != "IN_PROGRESS":
         return "The case is not in processing."
     changed = []
+    # Both are recorded against the CURRENT application stage — a work permit
+    # applied for after a business visa is its own application with its own
+    # reference (owner 2026-08-18).
     if "portal_ref" in data and case.stage in APPLICATION_STAGES:
         ref = (data.get("portal_ref") or "").strip()
         if not ref:
             return "The portal reference cannot be blanked out."
-        case.portal_ref = ref
+        set_portal(case, case.stage, ref=ref)
         changed.append("portal_ref")
     if "portal_status" in data and case.stage in APPLICATION_STAGES:
         ps = (data.get("portal_status") or "").upper()
         if ps not in ("SUBMITTED", "ADDITIONAL_INFO", "APPROVED", "REJECTED"):
             return "Invalid portal status."
-        case.portal_status = ps
+        if ps != "SUBMITTED" and not portal_for(case, case.stage)["ref"]:
+            return ("Record the portal reference for this application before "
+                    "setting its outcome.")
+        set_portal(case, case.stage, status=ps)
         changed.append("portal_status")
     if "medical_result" in data and case.stage in MEDICAL_STAGES:
         mr = (data.get("medical_result") or "").upper()
@@ -2002,8 +2065,18 @@ def case_dict(case):
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
         "pending_label": PENDING_LABEL.get(case.stage, ""),
         "waived_stages": list(case.waived_stages or []),
-        "portal_status": case.portal_status,
-        "portal_ref": case.portal_ref,
+        # The CURRENT stage's application …
+        "portal_status": portal_for(case, case.stage)["status"],
+        "portal_ref": portal_for(case, case.stage)["ref"],
+        # … and every application this case has lodged, so a candidate now on
+        # the work-permit track still shows the business visa he flew in on
+        # (owner 2026-08-18).
+        "portal_history": [
+            {"stage": st, "stage_label": STAGE_LABEL.get(st, st),
+             "ref": (row or {}).get("ref") or "",
+             "status": (row or {}).get("status") or ""}
+            for st, row in sorted((case.portal_by_stage or {}).items())
+            if (row or {}).get("ref") or (row or {}).get("status")],
         "hold_reason": case.hold_reason,
         "hold_since": case.hold_since,
         "hold_by": case.hold_by.full_name if case.hold_by_id else None,
