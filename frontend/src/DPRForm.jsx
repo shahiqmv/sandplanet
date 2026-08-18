@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import { SectionTitle, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
 
 const WEATHER = ["Sunny", "Cloudy", "Rainy"];
@@ -298,7 +299,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   async function uploadPhoto() {
     if (!file || !doc) return;
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("file", await shrinkPhoto(file));
     fd.append("kind", "PHOTO");
     fd.append("caption", caption);
     fd.append("project", photoProject);

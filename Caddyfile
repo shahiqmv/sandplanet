@@ -9,6 +9,23 @@
 # (rather than on one shared origin) means every page fetches WebRTC from the
 # origin it was loaded from, so there is no cross-origin request to get right —
 # and the relay inherits the existing certificate instead of needing its own.
+# gunicorn runs SYNC workers, which sit blocked for the WHOLE of a request
+# body — not just the processing, the transfer. Streaming a slow client's
+# upload straight through therefore occupies a worker for as long as that
+# phone takes to send. On 2026-08-18 three site photos did exactly that: all
+# three workers held on POST .../attachments until they hit the 120s timeout,
+# and the app was unreachable for everyone for eight minutes.
+#
+# Buffering here reads the body to completion at Caddy's pace, then hands it
+# to gunicorn in one fast burst — a slow link can no longer cost a worker.
+# 16MB covers the largest real upload (phone photos peak around 7MB); anything
+# larger falls back to streaming rather than being refused.
+(app) {
+	reverse_proxy web:8000 {
+		request_buffers 16MB
+	}
+}
+
 (relay) {
 	# The relay's auth hook is for the relay, not the world. Django also
 	# requires a shared secret, but there is no reason for this path to be
@@ -24,7 +41,7 @@
 {$DOMAIN} {
 	encode gzip
 	import relay
-	reverse_proxy web:8000
+	import app
 }
 {$PORTAL_DOMAIN} {
 	encode gzip
@@ -34,10 +51,10 @@
 	# in the client's browser stays https://<portal>/ instead of /portal/.
 	@passthrough path /assets/* /static/* /media/* /api/* /portal/* /favicon.ico /robots.txt /manifest.webmanifest
 	handle @passthrough {
-		reverse_proxy web:8000
+		import app
 	}
 	handle {
 		rewrite * /portal/
-		reverse_proxy web:8000
+		import app
 	}
 }

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import { NATIONALITIES } from "./constants.js";
 import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -673,7 +674,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
       }
       if (photo) {
         const fd = new FormData();
-        fd.append("photo", photo);
+        fd.append("photo", await shrinkPhoto(photo));
         await apiUpload(`/employees/${id}`, fd, "PATCH");
       }
       onSaved();

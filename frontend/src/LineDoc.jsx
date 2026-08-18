@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import PoAmendPanel from "./PoAmendPanel.jsx";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { VesselPicker, VesselTrack } from "./Vessels.jsx";
@@ -1162,7 +1163,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
     setError(null);
     try {
       const fd = new FormData();
-      fd.append("file", file);
+      fd.append("file", await shrinkPhoto(file));
       fd.append("kind", "PHOTO");
       fd.append("line_id", line.id);
       await apiUpload(`/documents/${doc.ref}/attachments`, fd);

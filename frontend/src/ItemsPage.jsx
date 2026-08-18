@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import { UNITS } from "./constants.js";
 import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -46,7 +47,7 @@ function ItemDialog({ item, categories, onClose, onSaved, onError }) {
     setErr(null);
     try {
       const fd = new FormData();
-      fd.append("photo", file);
+      fd.append("photo", await shrinkPhoto(file));
       const saved = await apiUpload(`/items/${item.id}`, fd, "PATCH");
       setPhotoUrl(saved.photo_url);
       onSaved();                       // the row behind picks the photo up too

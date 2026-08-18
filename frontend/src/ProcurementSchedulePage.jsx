@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
 const STATUS_TONE = {
@@ -1170,7 +1171,8 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
           { method: "PATCH", body: f });
       }
       if (lineId && imgFile) {
-        const fd = new FormData(); fd.append("image", imgFile);
+        const fd = new FormData();
+        fd.append("image", await shrinkPhoto(imgFile));
         await apiUpload(`/procurement-schedule-lines/${lineId}/image`, fd);
       } else if (lineId && removeImg && line?.reference_image) {
         await api(`/procurement-schedule-lines/${lineId}/image`,
