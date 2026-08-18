@@ -23,6 +23,12 @@ Idempotent: a case that already has `portal_by_stage` is skipped.
 from django.core.management.base import BaseCommand
 
 APPLICATION_STAGES = ("WP_APPLICATION", "BV_APPLICATION")
+# The two portals number their applications differently: business visas come
+# back GSR/2026/27757, work permits WR1/2026/73059. Every reference in the live
+# data follows it. Used ONLY here, to tell a genuine work-permit reference from
+# a business-visa number that was re-typed into the work-permit stage because
+# the form demanded one — never as a validation rule.
+WP_REF_PREFIXES = ("WR",)
 
 
 class Command(BaseCommand):
@@ -78,8 +84,22 @@ class Command(BaseCommand):
                     f"trail — left alone (ref={case.portal_ref!r})")
                 continue
 
-            row = {"ref": case.portal_ref or "",
-                   "status": case.portal_status or ""}
+            ref = case.portal_ref or ""
+            # A business-visa number sitting on the work-permit stage is the
+            # carry-over this whole change is about: HR re-typed the BV's
+            # reference because entering the stage demanded one. It belongs to
+            # the business visa, and the work permit has not been lodged.
+            if (owner == "WP_APPLICATION" and ref
+                    and not ref.upper().startswith(WP_REF_PREFIXES)
+                    and any((e.detail or {}).get("stage") == "BV_APPLICATION"
+                            for e in events if e.event == "OBR_STAGE")):
+                self.stdout.write(
+                    f"  ! {case.document.ref:16} {ref} is a business-visa "
+                    "reference on the work-permit stage — filing it under the "
+                    "BV application; the WP application is NOT lodged")
+                owner = "BV_APPLICATION"
+
+            row = {"ref": ref, "status": case.portal_status or ""}
             stale = owner != case.stage and case.stage in APPLICATION_STAGES
             self.stdout.write(
                 f"    {case.document.ref:16}{owner:16}"
