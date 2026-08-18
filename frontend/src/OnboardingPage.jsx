@@ -292,6 +292,11 @@ export default function OnboardingPage({ me, sites }) {
                             has to raise the fee, Finance still has to pay it,
                             or it is paid and simply needs advancing — three
                             very different waits (owner 2026-08-16). */}
+                        {c.pending_note && (
+                          <div style={{ fontSize: 11, color: "#b35900",
+                                        fontWeight: 700, marginTop: 1 }}>
+                            {c.pending_note}</div>
+                        )}
                         {c.at_payment && <FeeState fee={c.fee} />}
                         <ApplicationState app={c.application} />
                         <StageAge c={c} />
@@ -899,6 +904,10 @@ function Processing({ c, me, onReload }) {
               {c.pending_label
                 ? <><b>{c.pending_label}</b> pending</>
                 : c.stage_label}</span>}
+        {c.pending_note && (
+          <span style={{ fontSize: 12, color: "#b35900", fontWeight: 700 }}>
+            — {c.pending_note}</span>
+        )}
         {c.application && (
           <span style={{ fontSize: 12,
             fontWeight: c.application.state === "WAIT_US" ? 700 : 400,

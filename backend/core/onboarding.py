@@ -377,6 +377,26 @@ PENDING_LABEL = {
 APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
 
 
+def pending_summary(case):
+    """What is pending, and — where the label alone misleads — a note saying
+    what it really means.
+
+    A recruitment business visa converts to a work permit in-country, and the
+    conversion opens at WP_APPOINTMENT. "Appointment letter pending" is the
+    true next action, but it reads like a piece of filing and hides the fact
+    that the work-permit process has not started at all — on a visa that is
+    already counting down (owner 2026-08-18, on OBR-SJR-004). On a straight WP
+    case the same stage genuinely is just the letter, so the note is not shown
+    there.
+    """
+    label = PENDING_LABEL.get(case.stage, "")
+    note = ""
+    if case.stage == "WP_APPOINTMENT" and case.route == "BV":
+        label = "Work-permit conversion"
+        note = "not started — the appointment letter begins it"
+    return label, note
+
+
 def portal_for(case, stage=None):
     """The portal reference + status for ONE application stage.
 
@@ -2063,7 +2083,8 @@ def case_dict(case):
         "updated_at": case.updated_at,
         "outstanding_fees": outstanding_fees(case),
         "stage": case.stage, "stage_label": STAGE_LABEL.get(case.stage, ""),
-        "pending_label": PENDING_LABEL.get(case.stage, ""),
+        "pending_label": pending_summary(case)[0],
+        "pending_note": pending_summary(case)[1],
         "waived_stages": list(case.waived_stages or []),
         # The CURRENT stage's application …
         "portal_status": portal_for(case, case.stage)["status"],

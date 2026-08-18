@@ -1862,3 +1862,61 @@ class BvThenWorkPermitTests(TestCase):
         err = self.ob.set_stage_data(self.case, {"portal_status": "APPROVED"},
                                      self.hr)
         self.assertIn("reference", err)
+
+
+class ConversionPendingLabelTests(TestCase):
+    """The work-permit conversion opens at WP_APPOINTMENT, where the pending
+    label named a piece of paperwork.
+
+    OBR-SJR-004 arrived on a business visa with 24 days left and read
+    "Appointment letter pending" — true, but it hides that the work-permit
+    process has not started (owner 2026-08-18).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        hr = make_user("cv_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="CNV", name="Convert Isle",
+                                        status=Site.Status.ACTIVE)
+        self.hr, self.now = hr, timezone.now()
+        self.day = date(2026, 8, 1)
+
+    def _case(self, route, bv_purpose="", stage="WP_APPOINTMENT", ref="X"):
+        from .models import Document, OnboardingCase
+        doc = Document.objects.create(
+            doc_type="OBR", ref=f"OBR-CNV-{ref}", site=self.site,
+            doc_date=self.day, status="IN_PROGRESS", created_by=self.hr)
+        return OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Sri Lankan",
+            route=route, bv_purpose=bv_purpose, stage=stage,
+            signatory_approved_at=self.now)
+
+    def test_a_converting_bv_case_says_the_wp_has_not_started(self):
+        case = self._case("BV", "RECRUITMENT", ref="1")
+        label, note = self.ob.pending_summary(case)
+        self.assertEqual(label, "Work-permit conversion")
+        self.assertIn("not started", note)
+
+    def test_a_straight_wp_case_still_just_needs_the_letter(self):
+        """Nothing is hidden there — the letter really is the whole of it."""
+        case = self._case("WP", ref="2")
+        label, note = self.ob.pending_summary(case)
+        self.assertEqual(label, "Appointment letter")
+        self.assertEqual(note, "")
+
+    def test_later_conversion_stages_are_unchanged(self):
+        case = self._case("BV", "RECRUITMENT", stage="WP_APPLICATION", ref="3")
+        label, note = self.ob.pending_summary(case)
+        self.assertEqual(label, "WP application")
+        self.assertEqual(note, "")
+
+    def test_the_case_payload_carries_the_note(self):
+        case = self._case("BV", "RECRUITMENT", ref="4")
+        row = self.ob.case_dict(case)
+        self.assertEqual(row["pending_label"], "Work-permit conversion")
+        self.assertIn("not started", row["pending_note"])

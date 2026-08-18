@@ -692,6 +692,13 @@ export default function App() {
                            ? 1500
                          : (!docView && hoPage === "employees")
                            ? 1300
+                         // Nine columns since the application reference and
+                         // the BV clock joined them — at 900px the status,
+                         // the one people read, sat under the scrollbar
+                         // (owner 2026-08-18).
+                         : (!docView && ["onboarding",
+                                         "bv-register"].includes(hoPage))
+                           ? 1500
                          : 900,
                        margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
