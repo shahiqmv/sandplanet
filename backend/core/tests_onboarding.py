@@ -1692,3 +1692,81 @@ class HoldACaseTests(TestCase):
         self.case.refresh_from_db()
         self.assertEqual(self.case.stage_since, timezone.localdate())
         self.assertEqual(self.ob.case_dict(self.case)["days_at_stage"], 0)
+
+
+class ApplicationStateTests(TestCase):
+    """An application stage is three different waits wearing one label.
+
+    OBR-SFR-008 was lodged on the portal, its reference recorded, and the list
+    still read "BV application pending" with nothing else — indistinguishable
+    from five cases nobody had lodged yet, and from one the portal had come
+    back on asking for more information (owner 2026-08-17).
+    """
+
+    def setUp(self):
+        from datetime import date
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        hr = make_user("as_hr", User.Role.HO_HR)
+        site = Site.objects.create(code="APP", name="Application Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-APP-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS", created_by=hr)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Candidate", nationality="Sri Lankan",
+            route="BV", stage="BV_APPLICATION",
+            signatory_approved_at=timezone.now())
+
+    def state(self, **kw):
+        for k, v in kw.items():
+            setattr(self.case, k, v)
+        return self.ob.application_state(self.case)
+
+    def test_nothing_lodged_is_ours_to_move(self):
+        s = self.state(portal_ref="", portal_status="")
+        self.assertEqual(s["state"], "WAIT_US")
+        self.assertIn("not lodged", s["note"])
+
+    def test_lodged_and_submitted_is_with_the_portal(self):
+        """The OBR-SFR-008 case itself."""
+        s = self.state(portal_ref="GSR/2026/27789", portal_status="SUBMITTED")
+        self.assertEqual(s["state"], "WAIT_PORTAL")
+        self.assertEqual(s["ref"], "GSR/2026/27789")
+        self.assertIn("awaiting the portal", s["note"])
+
+    def test_a_reference_with_no_status_still_reads_as_lodged(self):
+        """One live case had the reference but no status — it is with them,
+        and the note says the status is missing rather than inventing one."""
+        s = self.state(portal_ref="GSR/2026/27785", portal_status="")
+        self.assertEqual(s["state"], "WAIT_PORTAL")
+        self.assertIn("not recorded", s["note"])
+
+    def test_additional_info_comes_back_to_us(self):
+        s = self.state(portal_ref="GSR/2026/26385",
+                       portal_status="ADDITIONAL_INFO")
+        self.assertEqual(s["state"], "WAIT_US")
+        self.assertIn("more information", s["note"])
+
+    def test_rejected_comes_back_to_us(self):
+        s = self.state(portal_ref="GSR/2026/26385", portal_status="REJECTED")
+        self.assertEqual(s["state"], "WAIT_US")
+
+    def test_approved_is_ready_to_advance(self):
+        s = self.state(portal_ref="GSR/2026/26385", portal_status="APPROVED")
+        self.assertEqual(s["state"], "READY")
+
+    def test_no_state_off_an_application_stage(self):
+        self.case.stage = "BV_TICKET"
+        self.assertIsNone(self.ob.application_state(self.case))
+
+    def test_the_case_payload_carries_it(self):
+        self.case.portal_ref = "GSR/2026/27789"
+        self.case.portal_status = "SUBMITTED"
+        self.case.save()
+        row = self.ob.case_dict(self.case)
+        self.assertEqual(row["application"]["state"], "WAIT_PORTAL")
+        self.assertEqual(row["application"]["ref"], "GSR/2026/27789")

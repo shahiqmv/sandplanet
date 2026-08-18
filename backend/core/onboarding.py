@@ -375,6 +375,42 @@ PENDING_LABEL = {
     "BV_VISA_FEE": "Visa fee", "BV_TICKET": "Ticketing", "BV_ARRIVED": "Arrival",
 }
 APPLICATION_STAGES = {"WP_APPLICATION", "BV_APPLICATION"}
+
+
+def application_state(case):
+    """What is ACTUALLY being waited for at an application stage.
+
+    "BV application pending" covered two opposite situations — we still have to
+    lodge it, and we lodged it days ago and the portal has not answered — and
+    hid a third that needs us back at the keyboard, the portal asking for more
+    information. Fourteen live cases sat at an application stage reading
+    identically (owner 2026-08-17, on OBR-SFR-008).
+
+    `state` is what the screen colours on: WAIT_US = ours to move, WAIT_PORTAL =
+    theirs, READY = clear to advance.
+    """
+    if case.stage not in APPLICATION_STAGES:
+        return None
+    ref, status = case.portal_ref or "", case.portal_status or ""
+    if status == "APPROVED":
+        return {"state": "READY", "note": "approved — ready to advance",
+                "ref": ref, "portal_status": status}
+    if status == "ADDITIONAL_INFO":
+        return {"state": "WAIT_US",
+                "note": "the portal asked for more information",
+                "ref": ref, "portal_status": status}
+    if status == "REJECTED":
+        return {"state": "WAIT_US", "note": "the portal rejected it",
+                "ref": ref, "portal_status": status}
+    if not ref:
+        return {"state": "WAIT_US", "note": "not lodged on the portal yet",
+                "ref": "", "portal_status": status}
+    # Lodged. A reference with no status recorded is still with them, but say
+    # so rather than implying we know more than we do.
+    return {"state": "WAIT_PORTAL",
+            "note": ("awaiting the portal" if status else
+                     "awaiting the portal — portal status not recorded"),
+            "ref": ref, "portal_status": status}
 ARRIVAL_STAGES = {"WP_ARRIVED", "BV_ARRIVED"}
 MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
 # Payment-gated stages — Phase 3 will require a PAID PYR to leave these.
@@ -1897,6 +1933,7 @@ def stage_view(case):
             "next_label": STAGE_LABEL.get(nxt) if nxt else None,
             "next_needs": needs,
             "at_application": case.stage in APPLICATION_STAGES,
+            "application": application_state(case),
             "at_medical": case.stage in MEDICAL_STAGES,
             "at_payment": case.stage in PAYMENT_STAGES, "fee": fee,
             "at_last": idx == len(seq) - 1}

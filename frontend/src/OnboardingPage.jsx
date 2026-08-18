@@ -114,6 +114,23 @@ function FeeState({ fee }) {
     .toLowerCase().replace(/_/g, " ")} — with Finance`, "#b35900");
 }
 
+// Where an application stage has actually got to. "BV application pending"
+// said nothing about whether we still had to lodge it, whether it was with the
+// government portal, or whether the portal had come back asking for something
+// (owner 2026-08-17, on OBR-SFR-008 — lodged, referenced, and still reading
+// like nobody had touched it).
+function ApplicationState({ app }) {
+  if (!app) return null;
+  const tone = app.state === "READY" ? "#1a7f37"
+             : app.state === "WAIT_US" ? "#b35900" : "var(--muted)";
+  return (
+    <div style={{ fontSize: 11, color: tone, marginTop: 1,
+                  fontWeight: app.state === "WAIT_US" ? 700 : 400 }}>
+      {app.ref ? `${app.ref} · ` : ""}{app.note}
+    </div>
+  );
+}
+
 function SortHeader({ col, label, sort, setSort }) {
   const on = sort.key === col;
   return (
@@ -247,6 +264,7 @@ export default function OnboardingPage({ me, sites }) {
                             or it is paid and simply needs advancing — three
                             very different waits (owner 2026-08-16). */}
                         {c.at_payment && <FeeState fee={c.fee} />}
+                        <ApplicationState app={c.application} />
                         <StageAge c={c} />
                         <UnpaidFees fees={c.outstanding_fees} />
                         <div style={{ display: "flex", gap: 10,
@@ -852,6 +870,14 @@ function Processing({ c, me, onReload }) {
               {c.pending_label
                 ? <><b>{c.pending_label}</b> pending</>
                 : c.stage_label}</span>}
+        {c.application && (
+          <span style={{ fontSize: 12,
+            fontWeight: c.application.state === "WAIT_US" ? 700 : 400,
+            color: c.application.state === "READY" ? "#1a7f37"
+                 : c.application.state === "WAIT_US" ? "#b35900"
+                 : "var(--muted)" }}>
+            — {c.application.note}</span>
+        )}
       </div>
       {err}
       {c.employee_no && (
