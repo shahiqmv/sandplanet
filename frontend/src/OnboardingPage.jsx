@@ -26,7 +26,11 @@ const COLUMNS = [
   ["ref", "Ref"], ["full_name", "Candidate"], ["route", "Route"],
   ["trade_designation", "Trade"], ["site_code", "Site"],
   ["portal_ref", "Application ref"],
-  ["status", "Status"], ["doc_date", "Raised"], ["updated_at", "Idle"],
+  ["status", "Status"],
+  // A business visa is a countdown that starts the day he lands and has to
+  // outlast the work-permit process (owner 2026-08-18).
+  ["bv_days_left", "Arrived · BV left"],
+  ["doc_date", "Raised"], ["updated_at", "Idle"],
 ];
 
 const DAY = 864e5;
@@ -128,6 +132,31 @@ function ApplicationState({ app }) {
                   fontWeight: app.state === "WAIT_US" ? 700 : 400 }}>
       {app.ref ? `${app.ref} · ` : ""}{app.note}
     </div>
+  );
+}
+
+// Arrival, and what is left of the business visa he arrived on. Amber inside a
+// fortnight, red once it has run out — the work permit has to be through
+// before this reaches zero.
+function BvClock({ c }) {
+  if (!c.arrived_date && c.bv_days_left == null) {
+    return <span style={{ color: "var(--muted)" }}>—</span>;
+  }
+  const n = c.bv_days_left;
+  const tone = n == null ? "var(--muted)"
+             : n < 0 ? "var(--red-fg)" : n <= 14 ? "#b35900" : "var(--ink)";
+  return (
+    <>
+      <div>{c.arrived_date ? fmtDate(c.arrived_date) : "not arrived"}</div>
+      {n != null && (
+        <div style={{ fontSize: 11, color: tone,
+                      fontWeight: n <= 14 ? 700 : 400 }}>
+          {n < 0 ? `BV expired ${-n} day${n === -1 ? "" : "s"} ago`
+                 : n === 0 ? "BV expires today"
+                 : `${n} day${n === 1 ? "" : "s"} of BV left`}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -273,9 +302,6 @@ export default function OnboardingPage({ me, sites }) {
                           {c.medical_due && !c.medical_result && (
                             <span>Medical<Countdown d={c.medical_due}
                                                     warnAt={7} /></span>)}
-                          {c.bv_expiry && c.stage !== "WP_ISSUED" && (
-                            <span>BV exp<Countdown d={c.bv_expiry}
-                                                   warnAt={14} /></span>)}
                         </div>
                       </>
                     ) : (
@@ -285,6 +311,9 @@ export default function OnboardingPage({ me, sites }) {
                         <UnpaidFees fees={c.outstanding_fees} />
                       </>
                     )}
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    <BvClock c={c} />
                   </td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>
                     {c.doc_date}

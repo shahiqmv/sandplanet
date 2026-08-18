@@ -2085,7 +2085,13 @@ def case_dict(case):
                           if case.stage_since else None),
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
-        "bv_expiry": case.bv_expiry, **sv,
+        "bv_expiry": case.bv_expiry,
+        # A business visa is a clock that starts on arrival, and the work
+        # permit has to be through before it runs out. The list showed neither
+        # the arrival nor how much of the visa is left (owner 2026-08-18).
+        "bv_days_left": ((case.bv_expiry - timezone.localdate()).days
+                         if case.bv_expiry else None),
+        **sv,
         "route": case.route, "category": case.category,
         "quota_pool": case.quota_pool,
         "quota_pool_label": case.get_quota_pool_display(),
