@@ -231,6 +231,40 @@ def resubmit_batch(batch, actor):
     return None
 
 
+CANCELLED_HIRE_TAG = "(cancelled hire)"
+
+
+def release_cancelled_hire(emp):
+    """Retire a placeholder whose ADD batch was cancelled, and RELEASE its
+    passport.
+
+    A pending hire is created inactive, so cancelling used to leave a record
+    that was invisible everywhere — off every roster, not a pending hire — while
+    still holding the passport number. The site then could not re-add the same
+    man: the duplicate-passport guard pointed at a record they had no way to
+    see. AMILA CHINTHANA SUNIL KARUNATHILAKALAGE was reported "added but
+    missing, and it says he already exists" (owner 2026-08-18); 21 records were
+    stuck this way.
+
+    Following the merge tool: the record is never deleted, so its emp_no still
+    resolves and the batch still shows whom the site asked for. It is the
+    passport that has to come free, because that is what identifies the person
+    on the next attempt. A placeholder that somehow went live is left alone.
+    """
+    if emp.is_active or emp.site_allocations.exists():
+        return False
+    fields = ["hire_pending", "updated_at"]
+    emp.hire_pending = False
+    if emp.passport_no:
+        emp.passport_no = ""
+        fields.append("passport_no")
+    if CANCELLED_HIRE_TAG not in emp.full_name:
+        emp.full_name = f"{emp.full_name} {CANCELLED_HIRE_TAG}"
+        fields.append("full_name")
+    emp.save(update_fields=fields)
+    return True
+
+
 def cancel_batch(batch, actor):
     if not batch.is_open:
         return "This batch is not open."
@@ -240,11 +274,8 @@ def cancel_batch(batch, actor):
         batch.status = WCR.Status.CANCELLED
         _stamp(batch, actor)
         if batch.kind == WCR.Kind.ADD:
-            # the pending hires never went live — retire the placeholders
             for item in batch.items.select_related("employee"):
-                emp = item.employee
-                emp.hire_pending = False
-                emp.save(update_fields=["hire_pending", "updated_at"])
+                release_cancelled_hire(item.employee)
     audit("worker_batch", batch.id, "WORKER_BATCH_CANCELLED", actor=actor)
     return None
 

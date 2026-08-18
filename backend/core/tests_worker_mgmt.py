@@ -488,3 +488,75 @@ class JoinDateTests(TestCase):
         self._patch(self.sa, "2026-07-16")
         self.assertTrue(AuditLog.objects.filter(
             event="WORKER_JOIN_DATE_SET", entity_id=self.emp.id).exists())
+
+
+class CancelledHireReleasesPassportTests(WorkerBatchTests):
+    """Cancelling an ADD batch must not strand the man it was for.
+
+    A pending hire is an INACTIVE placeholder until the batch is approved.
+    Cancelling used to clear `hire_pending` and leave everything else, so the
+    record fell off every screen — no roster, not a pending hire — while still
+    holding the passport. The site could not re-add him: the guard named a
+    record they had no way to see. Reported on AMILA CHINTHANA SUNIL
+    KARUNATHILAKALAGE, one of 21 stuck this way (owner 2026-08-18).
+    """
+
+    def _cancel(self, batch_id, user=None):
+        self._auth(user or self.sa)
+        return self.client.post(f"/api/v1/worker-batches/{batch_id}/action",
+                                {"action": "cancel"}, format="json")
+
+    def test_the_same_man_can_be_added_again_after_a_cancel(self):
+        r = self._add_batch([self._worker("AMILA")])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(self._cancel(r.data["id"]).status_code, 200)
+        # the point of the whole change: re-adding him now works
+        again = self._add_batch([self._worker("AMILA")])
+        self.assertEqual(again.status_code, 201, again.data)
+
+    def test_the_placeholder_is_kept_but_marked_and_freed(self):
+        r = self._add_batch([self._worker("AMILA")])
+        emp_id = r.data["workers"][0]["id"]
+        self._cancel(r.data["id"])
+        emp = Employee.objects.get(pk=emp_id)          # never deleted
+        self.assertEqual(emp.passport_no, "")           # passport released
+        self.assertIn("cancelled hire", emp.full_name)  # and says why
+        self.assertFalse(emp.is_active)
+        self.assertFalse(emp.hire_pending)
+
+    def test_the_batch_still_shows_who_was_asked_for(self):
+        r = self._add_batch([self._worker("AMILA")])
+        batch_id = r.data["id"]
+        self._cancel(batch_id)
+        self._auth(self.pm)
+        got = self.client.get(f"/api/v1/worker-batches?site_id={self.site.id}")
+        row = next(b for b in got.data if b["id"] == batch_id)
+        self.assertEqual(row["status"], "CANCELLED")
+        self.assertEqual(len(row["workers"]), 1)
+        self.assertIn("AMILA", row["workers"][0]["full_name"])
+
+    def test_a_live_worker_is_never_touched(self):
+        """The guard that matters: if a placeholder somehow went live, its
+        passport stays with it."""
+        from core import worker_mgmt as wm
+        live = self._direct(self.site, 1)[0]
+        live.passport_no = "KEEPME"
+        live.save()
+        self.assertFalse(wm.release_cancelled_hire(live))
+        live.refresh_from_db()
+        self.assertEqual(live.passport_no, "KEEPME")
+        self.assertTrue(live.is_active)
+
+    def test_an_approved_batch_still_hires_normally(self):
+        """Cancel is the only path that releases — approval must be unaffected."""
+        r = self._add_batch([self._worker("REALHIRE")])
+        self._auth(self.pm)
+        self.client.post(f"/api/v1/worker-batches/{r.data['id']}/action",
+                         {"action": "approve"}, format="json")
+        self._auth(self.director)
+        self.client.post(f"/api/v1/worker-batches/{r.data['id']}/action",
+                         {"action": "approve"}, format="json")
+        emp = Employee.objects.get(pk=r.data["workers"][0]["id"])
+        self.assertTrue(emp.is_active)
+        self.assertEqual(emp.passport_no, "P-REALHIRE")
+        self.assertNotIn("cancelled", emp.full_name.lower())
