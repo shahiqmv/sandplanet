@@ -6,6 +6,187 @@ import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
 
 const EMPTY = { description: "", unit: "", category: "", brand: "" };
 
+
+// Clicking an item used to open inputs INSIDE the table row — a description
+// box a couple of hundred pixels wide for what is often a full specification,
+// and no way at all to reach `notes` (owner 2026-08-18). The whole record
+// opens in a dialog instead, with room to write.
+function ItemDialog({ item, categories, onClose, onSaved, onError }) {
+  const [draft, setDraft] = useState({
+    description: item.description || "", unit: item.unit || "",
+    category: item.category || "", brand: item.brand || "",
+    spec_ref: item.spec_ref || "", notes: item.notes || "",
+    is_major: !!item.is_major, is_active: !!item.is_active,
+  });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const photoRef = useRef();
+  const [photoUrl, setPhotoUrl] = useState(item.photo_url);
+
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const set = (k) => (e) => setDraft({ ...draft, [k]: e.target.value });
+
+  async function save() {
+    setErr(null);
+    setBusy(true);
+    try {
+      await api(`/items/${item.id}`, { method: "PATCH", body: draft });
+      onSaved();
+      onClose();
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+
+  async function photo(file) {
+    if (!file) return;
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("photo", file);
+      const saved = await apiUpload(`/items/${item.id}`, fd, "PATCH");
+      setPhotoUrl(saved.photo_url);
+      onSaved();                       // the row behind picks the photo up too
+    } catch (e) { setErr(e.message); }
+  }
+
+  const label = { fontSize: 11.5, fontWeight: 700, color: "var(--sp-navy)",
+                  display: "block", marginBottom: 3 };
+  const field = { marginBottom: 12 };
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)",
+                  display: "flex", alignItems: "center",
+                  justifyContent: "center", zIndex: 60, padding: 20 }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ ...card, maxWidth: 680, width: "100%", maxHeight: "90vh",
+                    overflow: "auto" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                      marginBottom: 14 }}>
+          <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16,
+                       fontFamily: "var(--font-mono)" }}>{item.code}</h2>
+          {item.is_provisional && (
+            <span style={{ background: "#fdf1d6", color: "#8a5a00",
+                           fontSize: 10.5, padding: "1px 6px",
+                           borderRadius: 5 }}>provisional</span>
+          )}
+          <button onClick={onClose}
+                  style={{ ...ghostButton, marginLeft: "auto" }}>Close</button>
+        </div>
+
+        {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
+
+        <div style={{ display: "flex", gap: 18, alignItems: "flex-start",
+                      flexWrap: "wrap" }}>
+          <div style={{ width: 150 }}>
+            <span style={label}>Photo</span>
+            <input type="file" accept="image/*" ref={photoRef}
+                   style={{ display: "none" }}
+                   onChange={(e) => photo(e.target.files[0])} />
+            {photoUrl ? (
+              <img src={photoUrl} alt="" onClick={() => photoRef.current?.click()}
+                   style={{ width: 150, height: 150, objectFit: "cover",
+                            borderRadius: 8, cursor: "pointer",
+                            border: "1px solid var(--sp-border)" }} />
+            ) : (
+              <button onClick={() => photoRef.current?.click()}
+                      style={{ width: 150, height: 150, borderRadius: 8,
+                               border: "1px dashed var(--sp-border)",
+                               background: "#fafbfc", cursor: "pointer",
+                               color: "#8a94a0", fontSize: 12 }}>
+                + Add photo</button>
+            )}
+            {photoUrl && (
+              <button onClick={() => photoRef.current?.click()}
+                      style={{ ...ghostButton, padding: "2px 10px",
+                               fontSize: 12, marginTop: 6, width: 150 }}>
+                Replace photo</button>
+            )}
+          </div>
+
+          <div style={{ flex: 1, minWidth: 300 }}>
+            <div style={field}>
+              <span style={label}>Description</span>
+              <textarea value={draft.description} rows={4}
+                        onChange={set("description")}
+                        placeholder="Size, grade, spec, standard — write it in full"
+                        style={{ ...inputStyle, width: "100%",
+                                 resize: "vertical", lineHeight: 1.45 }} />
+            </div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ ...field, width: 100 }}>
+                <span style={label}>Unit</span>
+                <SelectOrOther value={draft.unit} options={UNITS} width={100}
+                               placeholder="Unit…"
+                               onChange={(v) => setDraft({ ...draft, unit: v })} />
+              </div>
+              <div style={{ ...field, flex: 1, minWidth: 150 }}>
+                <span style={label}>Category</span>
+                <select value={draft.category} onChange={set("category")}
+                        style={{ ...inputStyle, width: "100%" }}>
+                  <option value="">—</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.name}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ ...field, flex: 1, minWidth: 130 }}>
+                <span style={label}>Brand</span>
+                <input value={draft.brand} onChange={set("brand")}
+                       style={{ ...inputStyle, width: "100%" }} />
+              </div>
+            </div>
+            <div style={field}>
+              <span style={label}>Spec reference</span>
+              <input value={draft.spec_ref} onChange={set("spec_ref")}
+                     placeholder="BS / ASTM / drawing reference (optional)"
+                     style={{ ...inputStyle, width: "100%" }} />
+            </div>
+            <div style={field}>
+              <span style={label}>Notes</span>
+              <textarea value={draft.notes} rows={3} onChange={set("notes")}
+                        placeholder="Anything procurement should know — approved suppliers, handling, substitutes"
+                        style={{ ...inputStyle, width: "100%",
+                                 resize: "vertical", lineHeight: 1.45 }} />
+            </div>
+            <div style={{ display: "flex", gap: 18, flexWrap: "wrap",
+                          fontSize: 13 }}>
+              <label style={{ display: "flex", gap: 6, alignItems: "center",
+                              cursor: "pointer" }}>
+                <input type="checkbox" checked={draft.is_major}
+                       onChange={(e) => setDraft({ ...draft,
+                                          is_major: e.target.checked })} />
+                ★ Major material <span style={{ color: "var(--muted)",
+                  fontSize: 11.5 }}>(loads into a DPR)</span>
+              </label>
+              <label style={{ display: "flex", gap: 6, alignItems: "center",
+                              cursor: "pointer" }}>
+                <input type="checkbox" checked={draft.is_active}
+                       onChange={(e) => setDraft({ ...draft,
+                                          is_active: e.target.checked })} />
+                In use
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginTop: 16,
+                      borderTop: "1px solid var(--sp-border)",
+                      paddingTop: 14 }}>
+          <button onClick={save} style={buttonStyle}
+                  disabled={busy || !draft.description.trim() || !draft.unit}>
+            {busy ? "Saving…" : "Save"}</button>
+          <button onClick={onClose} style={ghostButton}>Cancel</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ItemsPage({ me }) {
   const [items, setItems] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -13,11 +194,9 @@ export default function ItemsPage({ me }) {
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
   const [preview, setPreview] = useState(null);   // photo lightbox url
-  const [editId, setEditId] = useState(null);      // item being edited inline
-  const [editDraft, setEditDraft] = useState({});
+  const [openItem, setOpenItem] = useState(null);  // item open in the dialog
   const [importResult, setImportResult] = useState(null);
   const [importing, setImporting] = useState(false);
-  const fileRefs = useRef({});                     // per-item hidden inputs
   const importRef = useRef();
 
   const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role);
@@ -46,23 +225,6 @@ export default function ItemsPage({ me }) {
     setError(null);
     try {
       await api(`/items/${item.id}`, { method: "PATCH", body });
-      load();
-    } catch (e) { setError(e.message); }
-  }
-
-  function startEdit(item) {
-    setError(null);
-    setEditId(item.id);
-    setEditDraft({ description: item.description, unit: item.unit,
-                   category: item.category || "", brand: item.brand || "",
-                   spec_ref: item.spec_ref || "" });
-  }
-
-  async function saveEdit(item) {
-    setError(null);
-    try {
-      await api(`/items/${item.id}`, { method: "PATCH", body: editDraft });
-      setEditId(null);
       load();
     } catch (e) { setError(e.message); }
   }
@@ -96,16 +258,6 @@ export default function ItemsPage({ me }) {
     }
   }
 
-  async function uploadPhoto(item, file) {
-    if (!file) return;
-    setError(null);
-    try {
-      const fd = new FormData();
-      fd.append("photo", file);
-      await apiUpload(`/items/${item.id}`, fd, "PATCH");
-      load();
-    } catch (e) { setError(e.message); }
-  }
 
   return (
     <section style={card}>
@@ -232,67 +384,29 @@ export default function ItemsPage({ me }) {
                 )}
               </td>
               <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)" }}>
-                {canEdit && editId !== item.id ? (
-                  <button onClick={() => startEdit(item)} title="Edit details"
+                {canEdit ? (
+                  <button onClick={() => setOpenItem(item)} title="Open item"
                           style={{ background: "none", border: "none", padding: 0,
                                    font: "inherit", color: "var(--sp-navy)",
                                    fontWeight: 600, cursor: "pointer",
                                    textDecoration: "underline" }}>
-                    {item.code}</button>
+                    {item.code || "(no code)"}</button>
                 ) : item.code}</td>
-              {editId === item.id ? (
-                <>
-                  <td style={td}>
-                    <input value={editDraft.description}
-                           onChange={(e) => setEditDraft({ ...editDraft,
-                                             description: e.target.value })}
-                           style={{ ...inputStyle, width: "100%", minWidth: 200 }} />
-                    <input placeholder="Spec ref (optional)"
-                           value={editDraft.spec_ref}
-                           onChange={(e) => setEditDraft({ ...editDraft,
-                                             spec_ref: e.target.value })}
-                           style={{ ...inputStyle, width: "100%", minWidth: 200,
-                                    marginTop: 4, fontSize: 12 }} />
-                  </td>
-                  <td style={td}>
-                    <input value={editDraft.unit}
-                           onChange={(e) => setEditDraft({ ...editDraft,
-                                             unit: e.target.value })}
-                           style={{ ...inputStyle, width: 70 }} />
-                  </td>
-                  <td style={td}>
-                    <select value={editDraft.category}
-                            onChange={(e) => setEditDraft({ ...editDraft,
-                                              category: e.target.value })}
-                            style={{ ...inputStyle, width: 130 }}>
-                      <option value="">—</option>
-                      {categories.map((c) => (
-                        <option key={c.id} value={c.name}>{c.name}</option>
-                      ))}
-                    </select>
-                  </td>
-                  <td style={td}>
-                    <input value={editDraft.brand}
-                           onChange={(e) => setEditDraft({ ...editDraft,
-                                             brand: e.target.value })}
-                           style={{ ...inputStyle, width: 100 }} />
-                  </td>
-                </>
-              ) : (
-                <>
-                  <td style={td}>{item.description}
-                    {item.is_provisional && (
-                      <span style={{ marginLeft: 6, background: "#fdf1d6",
-                                     color: "#8a5a00", fontSize: 10.5,
-                                     padding: "1px 6px", borderRadius: 5 }}>
-                        provisional</span>
-                    )}
-                  </td>
-                  <td style={td}>{item.unit}</td>
-                  <td style={td}>{item.category}</td>
-                  <td style={td}>{item.brand}</td>
-                </>
-              )}
+              <td style={td}>{item.description}
+                {item.is_provisional && (
+                  <span style={{ marginLeft: 6, background: "#fdf1d6",
+                                 color: "#8a5a00", fontSize: 10.5,
+                                 padding: "1px 6px", borderRadius: 5 }}>
+                    provisional</span>
+                )}
+                {item.spec_ref && (
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {item.spec_ref}</div>
+                )}
+              </td>
+              <td style={td}>{item.unit}</td>
+              <td style={td}>{item.category}</td>
+              <td style={td}>{item.brand}</td>
               <td style={{ ...td, textAlign: "center" }}>
                 {canEdit ? (
                   <button title={item.is_major ? "Major material"
@@ -308,32 +422,11 @@ export default function ItemsPage({ me }) {
                   </button>
                 ) : (item.is_major ? "★" : "")}
               </td>
-              {canEdit && editId === item.id && (
+              {canEdit && (
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
-                  <button onClick={() => saveEdit(item)}
-                          disabled={!editDraft.description || !editDraft.unit}
-                          style={{ ...buttonStyle, padding: "2px 12px",
-                                   fontSize: 12 }}>Save</button>
-                  <button onClick={() => setEditId(null)}
+                  <button onClick={() => setOpenItem(item)}
                           style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12, marginLeft: 6 }}>Cancel</button>
-                </td>
-              )}
-              {canEdit && editId !== item.id && (
-                <td style={{ ...td, whiteSpace: "nowrap" }}>
-                  <input type="file" accept="image/*"
-                         ref={(el) => (fileRefs.current[item.id] = el)}
-                         style={{ display: "none" }}
-                         onChange={(e) => uploadPhoto(item,
-                                                      e.target.files[0])} />
-                  <button onClick={() => startEdit(item)}
-                          style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12 }}>Edit</button>
-                  <button onClick={() => fileRefs.current[item.id]?.click()}
-                          style={{ ...ghostButton, padding: "2px 10px",
-                                   fontSize: 12, marginLeft: 6 }}>
-                    {item.photo_url ? "Replace photo" : "Add photo"}
-                  </button>
+                                   fontSize: 12 }}>Open</button>
                   {item.is_provisional && (
                     <button onClick={() => approve(item)}
                             style={{ ...ghostButton, padding: "2px 10px",
@@ -356,6 +449,12 @@ export default function ItemsPage({ me }) {
         <p style={{ color: "#5a6b78", fontSize: 13 }}>
           No items{search ? " match the search" : " yet"}.
         </p>
+      )}
+
+      {openItem && (
+        <ItemDialog item={openItem} categories={categories}
+                    onClose={() => setOpenItem(null)}
+                    onSaved={load} onError={setError} />
       )}
 
       {preview && (
