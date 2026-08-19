@@ -67,3 +67,36 @@ export async function api(path, { method = "GET", body } = {}) {
   }
   return data;
 }
+
+
+// Download a binary response (the ESC/POS slip job) and hand it to the browser
+// as a file, WITHOUT navigating.
+//
+// A plain <a href> could not do this job: on any error the browser left the app
+// and displayed raw JSON, and on success it downloaded in silence, so the
+// button looked broken either way (owner 2026-08-19). Returns a short summary
+// to show the user; throws a readable Error otherwise.
+export async function apiDownload(path) {
+  const res = await fetch(`/api/v1${path}`, { credentials: "same-origin" });
+  if (!res.ok) {
+    let data = null;
+    try { data = await res.json(); } catch { /* not JSON — fall through */ }
+    throw new Error(readError(data, res.status));
+  }
+  const blob = await res.blob();
+  // Prefer the server's filename; it names the site and period.
+  const disp = res.headers.get("content-disposition") || "";
+  const match = disp.match(/filename="?([^"]+)"?/);
+  const name = match ? match[1] : path.split("/").pop();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Revoke late: Safari aborts the save if the URL dies too soon.
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+  return { name, bytes: blob.size,
+           count: Number(res.headers.get("x-slip-count")) || null };
+}

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiDownload } from "./api.js";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 // Monthly payroll runs (owner's salary sheet). MVR runs are per site; the USD
@@ -375,6 +375,25 @@ const EDITABLE = [
 function RunDetail({ runId, onBack, me, backLabel }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
+  const [slipBusy, setSlipBusy] = useState(false);
+  const [slipNote, setSlipNote] = useState(null);
+
+  // Rendering 28 slips server-side takes a moment and lands ~1.8MB, so the
+  // button has to say something while it works and something after.
+  async function getSlips() {
+    setError(null); setSlipNote(null); setSlipBusy(true);
+    try {
+      const { count, name } = await apiDownload(
+        `/payroll/runs/${runId}/slips.escpos`);
+      setSlipNote(`${count ?? ""} slip(s) downloaded as ${name}. `
+                  + "Now click \u201cPrint salary slips\u201d on the Desktop.");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSlipBusy(false);
+    }
+  }
+
   const canReopen = ["HO_HR", "ADMIN", "FINANCE"].includes(me.role);
   // Draft salary verification (owner 2026-08-12): HR submits → the site PM
   // verifies → the PD approves → HR/Finance locks.
@@ -513,14 +532,14 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
             {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {/* HR/Finance print from Windows PCs with no driver for this
-              printer, so the server sends ESC/POS and the download prints
-              itself when opened (owner 2026-08-19). The PDF beside it is for
-              checking on screen and for the file. */}
-          <a href={`/api/v1/payroll/runs/${runId}/slips.escpos`}
-             title="Download and open to print every slip on the thermal printer"
-             style={{ ...buttonStyle, textDecoration: "none" }}>
-            🖨️ Print slips (thermal)</a>
+          {/* A real button, not a link: as an <a href> this navigated the app
+              away to raw JSON whenever the run had nothing to print, and
+              downloaded in complete silence when it worked — so it looked
+              broken either way (owner 2026-08-19). */}
+          <button onClick={getSlips} disabled={slipBusy}
+                  title="Download the slips, then click Print salary slips on the Desktop"
+                  style={buttonStyle}>
+            {slipBusy ? "Preparing…" : "🖨️ Print slips (thermal)"}</button>
           <a href={`/api/v1/payroll/runs/${runId}/slips-thermal.pdf`}
              target="_blank" rel="noreferrer"
              title="The same slips as a PDF, to check on screen"
@@ -559,6 +578,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
         </div>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {slipNote && <p style={{ color: "#1a7f37", fontSize: 13 }}>{slipNote}</p>}
       {run.status === "RETURNED" && run.return_reason && (
         <p style={{ fontSize: 12.5, color: "#c0392b", margin: "6px 0 0" }}>
           Returned to HR: {run.return_reason}</p>)}
