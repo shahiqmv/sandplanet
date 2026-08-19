@@ -1,0 +1,43 @@
+SAND PLANET - PRINTING SALARY SLIPS
+===================================
+
+There is ONE file to use:      Print salary slips.cmd
+
+Put it on the Desktop. Nothing to install, nothing else to keep with it.
+
+
+TO PRINT A PAYROLL RUN
+----------------------
+1. In Sand Planet, open the payroll run and click "Print slips".
+
+   A file downloads. IGNORE IT. Leave it in Downloads - do not move it,
+   do not try to open it. It is printer code, not a document, so Windows
+   has nothing to open it with. That is normal and expected.
+
+2. Double-click            Print salary slips.cmd
+
+   A black window opens, says how many slips it is sending, and closes.
+   That window is the program working - not an error.
+
+The first time, it asks for the printer's IP address. Press Enter to
+accept 192.168.100.79. It remembers from then on.
+
+
+IF SOMETHING IS WRONG
+---------------------
+The window stays open and tells you what happened.
+
+  "No slip file found"       Do step 1 first. The window lists every
+                             folder it looked in.
+
+  "Printer did not answer"   Printer is off, out of paper, or on a
+                             different WiFi.
+
+  "Not a slip file"          You clicked Preview (a PDF) instead of
+                             Print slips.
+
+To print an OLDER run instead of the newest: drag that .escpos file
+onto Print salary slips.cmd.
+
+Printer moved to a new address? Delete this file and print again:
+  %LOCALAPPDATA%\SandPlanet\printer.json

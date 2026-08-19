@@ -2386,7 +2386,7 @@ class PrinterToolDownloadTests(PayrollRunTests):
         # An empty zip is still 22 bytes of footer, so assert on the CONTENTS —
         # it shipped once serving nothing because tools/ was not in the image.
         self.assertIn("Print salary slips.cmd", names)
-        self.assertIn("Print-Slips.ps1", names)
+        self.assertIn("READ ME FIRST.txt", names)
         for n in names:
             self.assertGreater(
                 zipfile.ZipFile(io.BytesIO(r.content)).getinfo(n).file_size, 0,
@@ -2396,3 +2396,20 @@ class PrinterToolDownloadTests(PayrollRunTests):
         self.client.force_authenticate(self.pm)
         r = self.client.get("/api/v1/payroll/printer-tool.zip")
         self.assertEqual(r.status_code, 403)
+
+    def test_the_cmd_carries_its_own_powershell(self):
+        """One file, not two. A .cmd that needed a .ps1 beside it got copied to
+        a Desktop on its own and could not run (owner 2026-08-19)."""
+        import io
+        import zipfile
+        r = self.client.get("/api/v1/payroll/printer-tool.zip")
+        z = zipfile.ZipFile(io.BytesIO(r.content))
+        cmd = z.read("Print salary slips.cmd").decode("utf-8", "replace")
+        marker = chr(35) + ":POWERSHELL"
+        self.assertIn(marker, cmd)
+        # the bootstrap must not match its own marker, or it would slice itself
+        self.assertLess(cmd.index("powershell -NoProfile"), cmd.index(marker))
+        body = cmd[cmd.index(marker) + len(marker):]
+        self.assertEqual(body.count("{"), body.count("}"))
+        for needed in ("TcpClient", "374DE290", "$env:SLIPFILE"):
+            self.assertIn(needed, body)

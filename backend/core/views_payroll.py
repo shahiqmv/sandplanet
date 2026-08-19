@@ -583,7 +583,10 @@ def printer_tool_zip(request):
     if not _read(request):
         return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
     folder = Path(settings.BASE_DIR).parent / "tools" / "windows"
-    wanted = ["Print salary slips.cmd", "Print-Slips.ps1", "README.md"]
+    # One program file and one page of instructions. It was two files that had
+    # to stay together, and the .cmd got copied to a Desktop without its script
+    # — so the PowerShell now lives inside the .cmd (owner 2026-08-19).
+    wanted = ["READ ME FIRST.txt", "Print salary slips.cmd"]
     buf = io.BytesIO()
     added = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
