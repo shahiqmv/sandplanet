@@ -58,7 +58,7 @@
                <span class="v">{{ i.site_code }}</span></div>
 <div style="font-weight:700">{{ line.employee.full_name }}</div>
 <div class="sm">{{ i.job_title }}{% if line.employee.nationality %}
-  · {{ line.employee.nationality }}{% endif %}</div>
+  - {{ line.employee.nationality }}{% endif %}</div>
 
 <div class="sep"></div>
 
@@ -70,12 +70,12 @@
                <span class="v">{{ i.f_earned_basic }}</span></div>
 {% if line.fridays_worked %}
 <div class="r"><span class="l">Friday {{ line.fridays_worked|floatformat:"-1" }}d
-  × {{ friday_ot_hours }}h</span>
+  x {{ friday_ot_hours }}h</span>
                <span class="v">{{ i.f_friday_pay }}</span></div>
 {% endif %}
 {% if line.ot_hours %}
 <div class="r"><span class="l">Overtime {{ line.ot_hours|floatformat:"-1" }}h
-  × {{ line.ot_rate|floatformat:"-2" }}</span>
+  x {{ line.ot_rate|floatformat:"-2" }}</span>
                <span class="v">{{ i.f_ot_pay }}</span></div>
 {% endif %}
 {% if line.allowance %}
@@ -128,7 +128,7 @@
 </div>
 
 <div class="foot">
-  {{ run_ref }} · printed {{ printed_at }}<br>
+  {{ run_ref }} - printed {{ printed_at }}<br>
   This slip is computer generated.
 </div>
 <div class="feed"></div>
