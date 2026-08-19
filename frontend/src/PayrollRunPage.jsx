@@ -532,17 +532,24 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
             {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {/* One button, and it opens a PDF you print with Ctrl-P like
-              anything else. The ESC/POS download it replaced needed a script
-              on every PC and was not worth the trouble it caused (owner
-              2026-08-19): Windows drives this printer perfectly well through
-              its own driver on a raw 9100 port. The pages are already 72mm
-              and cut to length, so "Actual size" prints them correctly. */}
+          {/* Back to ESC/POS. The Windows driver renders a PDF by pulling the
+              text out and re-typing it, which collapsed the amount column and
+              merged the figures, and its graphics mode did not fix it (owner
+              2026-08-19). Sending the printer its own language is the only way
+              the layout survives. The setup tool is downloaded from here so
+              nobody has to carry files to the PC. */}
+          <button onClick={getSlips} disabled={slipBusy} style={buttonStyle}
+                  title="Download the slips, then open Print salary slips on the PC">
+            {slipBusy ? "Preparing…" : "🖨️ Print slips"}</button>
           <a href={`/api/v1/payroll/runs/${runId}/slips-thermal.pdf`}
              target="_blank" rel="noreferrer"
-             title="Opens the slips — print with Ctrl-P on the thermal printer"
-             style={{ ...buttonStyle, textDecoration: "none" }}>
-            🖨️ Print slips</a>
+             title="The same slips as a PDF, to read on screen or file"
+             style={{ ...ghostButton, textDecoration: "none" }}>
+            Preview</a>
+          <a href="/api/v1/payroll/printer-tool.zip"
+             title="One-time setup for a PC that will print slips"
+             style={{ ...ghostButton, textDecoration: "none", fontSize: 12 }}>
+            ⚙ Printer setup</a>
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
@@ -693,8 +700,7 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
            target="_blank" rel="noreferrer" title="Salary slip (A5)"
            style={{ textDecoration: "none" }}>🧾</a>
-        <a href={`/api/v1/payroll/lines/${line.id}/slip-thermal.pdf`}
-           target="_blank" rel="noreferrer"
+        <a href={`/api/v1/payroll/lines/${line.id}/slip.escpos`}
            title="Reprint this slip on the thermal printer"
            style={{ textDecoration: "none", marginLeft: 4 }}>🖨️</a>
         {/* The rest day is unmarked in attendance and paid as part of the

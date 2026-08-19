@@ -590,6 +590,8 @@ urlpatterns = [
     # Ready-to-send ESC/POS — the office PCs need nothing installed to print it
     path("payroll/runs/<int:pk>/slips.escpos", payroll_api.run_slips_escpos,
          name="payroll-run-slips-escpos"),
+    path("payroll/printer-tool.zip", payroll_api.printer_tool_zip,
+         name="payroll-printer-tool"),
     path("payroll/lines/<int:pk>/slip.escpos", payroll_api.payslip_escpos,
          name="payroll-payslip-escpos"),
     # Amending an issued purchase order (owner 2026-08-13)

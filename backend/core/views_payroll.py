@@ -523,7 +523,10 @@ def _thermal_response(lines, filename):
     htmls = [render_to_string("pdf/payslip_thermal.html",
                               _slip_context(ln, register)) for ln in lines]
     try:
-        pdf = thermal.render_slips(htmls)
+        # Flattened to images: a POS driver renders a PDF by extracting its text
+        # and re-typing it, which collapses the amount column and merges
+        # figures. With no text there is nothing to extract (owner 2026-08-19).
+        pdf = thermal.flatten_to_images(thermal.render_slips(htmls))
     except Exception:
         log.exception("thermal slip render failed")
         return R({"detail": "PDF engine unavailable on this server."},
@@ -558,6 +561,40 @@ def _escpos_response(lines, filename):
     # a browser should try to display
     resp["Content-Disposition"] = f'attachment; filename="{filename}"'
     resp["X-Slip-Count"] = str(count)
+    return resp
+
+
+@api_view(["GET"])
+def printer_tool_zip(request):
+    """The two files an office PC needs, served from the app itself.
+
+    Getting them onto the HR machine any other way turned into a saga — the
+    owner's external drive is NTFS and macOS cannot write to it, and mail
+    clients strip .cmd attachments. Downloading them from the same page as the
+    slips removes the whole problem (owner 2026-08-19).
+    """
+    import io
+    import zipfile
+    from pathlib import Path
+
+    from django.conf import settings
+    from django.http import HttpResponse
+
+    if not _read(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    folder = Path(settings.BASE_DIR).parent / "tools" / "windows"
+    wanted = ["Print salary slips.cmd", "Print-Slips.ps1", "README.md"]
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name in wanted:
+            f = folder / name
+            if f.exists():
+                z.write(f, name)
+    if not buf.getvalue():
+        return Response({"detail": "Printer tool files are missing on the "
+                                   "server."}, status=503)
+    resp = HttpResponse(buf.getvalue(), content_type="application/zip")
+    resp["Content-Disposition"] = 'attachment; filename="slip-printer-setup.zip"'
     return resp
 
 

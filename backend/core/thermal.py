@@ -128,3 +128,41 @@ def escpos_bytes(pdf_bytes, limit=None):
         job += GS + b"V\x42\x00"                    # feed to cutter, partial cut
     doc.close()
     return bytes(job), len(pages)
+
+
+def flatten_to_images(pdf_bytes, dpi=203):
+    """Replace every page with a PICTURE of itself.
+
+    A Windows POS driver renders a PDF by pulling the text out and re-typing it
+    in the printer's own font. That destroys this layout: the right-hand amount
+    column collapses ("Gross pay6,221.77"), adjacent figures merge, and any
+    character outside the printer's codepage is substituted. Switching the
+    driver to graphics mode is supposed to fix it and did not (owner
+    2026-08-19).
+
+    So there is nothing left to extract. Each page becomes a single 1-bit image
+    at the head's own 203dpi, which the driver can only draw. Same page size, so
+    it still prints at Actual size with one worker per page for the cutter.
+    """
+    import fitz
+
+    import io
+
+    from PIL import Image
+
+    src = fitz.open("pdf", pdf_bytes)
+    out = fitz.open()
+    for page in src:
+        rect = page.rect                       # keep the exact 72mm x length
+        pix = page.get_pixmap(dpi=dpi, colorspace=fitz.csGRAY, alpha=False)
+        img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+        # 1-bit, because that is all the head can print anyway — and a mostly
+        # white receipt compresses to a fraction of the greyscale version. A
+        # 28-worker run is ~12MB in grey and well under 1MB like this.
+        buf = io.BytesIO()
+        img.convert("1").save(buf, format="PNG", optimize=True)
+        new = out.new_page(width=rect.width, height=rect.height)
+        new.insert_image(rect, stream=buf.getvalue())
+    data = out.tobytes(deflate=True, garbage=3)
+    src.close(); out.close()
+    return data
