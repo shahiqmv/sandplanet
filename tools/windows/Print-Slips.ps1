@@ -46,10 +46,23 @@ if (-not $Printer) {
     if (Test-Path $configPath) {
         $Printer = (Get-Content $configPath -Raw | ConvertFrom-Json).Printer
     }
-    if (-not $Printer) {
-        Fail 'No printer is set up on this PC.' `
-             'Run Install-SlipPrinter.ps1 once, then try again.'
+}
+# Ask once and remember, rather than sending people to an installer that may
+# never have run — the installer is now a convenience, not a prerequisite
+# (owner 2026-08-19).
+if (-not $Printer) {
+    Write-Host ''
+    Say 'First time on this PC — which printer?' 'White'
+    $Printer = (Read-Host '  Printer IP address [192.168.100.79]').Trim()
+    if (-not $Printer) { $Printer = '192.168.100.79' }
+    if ($Printer -notmatch '^\d{1,3}(\.\d{1,3}){3}$') {
+        Fail "'$Printer' is not an IP address." `
+             'It looks like 192.168.100.79 — check the printer''s self-test slip.'
     }
+    New-Item -ItemType Directory -Force -Path (Split-Path $configPath) | Out-Null
+    @{ Printer = $Printer; Port = $Port } | ConvertTo-Json |
+        Set-Content -Path $configPath -Encoding UTF8
+    Say "Saved. This PC will use $Printer from now on." 'Green'
 }
 
 # ---- which file ------------------------------------------------------------

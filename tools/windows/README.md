@@ -1,22 +1,28 @@
-# Printing salary slips — setup for HR / Finance (Windows)
-
-One-time setup, then printing a payroll run is two clicks.
+# Printing salary slips — HR / Finance (Windows)
 
 ## Set up (once per PC)
 
-1. Copy this whole `windows` folder to the PC (Desktop is fine).
-2. Right-click **`Install-SlipPrinter.ps1`** → **Run with PowerShell**.
-3. It asks for the printer's IP address. Press Enter to accept
-   `192.168.100.79`, or type the current one.
-4. It checks the printer answers, sets everything up, and offers a test print.
-   Say yes — if the test slip comes out, you are done.
+Copy these **two files** to the Desktop, keeping them together:
 
-No administrator rights needed. Nothing is changed for other users of the PC.
+- `Print salary slips.cmd`
+- `Print-Slips.ps1`
+
+That is the whole setup. The first time you use it, it asks for the printer's IP
+address (press Enter to accept `192.168.100.79`) and remembers it.
+
+> If Windows shows a blue "Windows protected your PC" box, click **More info**
+> then **Run anyway**. That appears because the file came from another PC.
+
+There is an `Install-SlipPrinter.ps1` as well, which adds a Desktop shortcut and
+a Start Menu entry. It is **optional** — everything works without it, and if
+Windows blocks it from running, ignore it and use the two files above.
 
 ## Print a payroll run
 
 1. Open the payroll run in Sand Planet.
-2. Click **Print slips (thermal)** — a file downloads. **Ignore it.**
+2. Click **Print slips (thermal)**. It says how many slips downloaded.
+   **Do not try to open that file** — it is printer code, not a document, and
+   Windows has nothing to open it with. That is normal.
 3. Double-click **Print salary slips** on the Desktop.
 
 The slips print, one per worker, cut between each.
@@ -42,7 +48,9 @@ To reprint one worker, click the 🖨️ on their row.
 | "The printer did not answer" | Printer off, or on a different WiFi. Check it, then retry. |
 | "Does not look like a slip file" | You opened the PDF instead of the `.escpos` file. |
 | "No slip file found" | Click **Print slips (thermal)** in Sand Planet first. |
-| Windows asks which app to open the file with | You double-clicked the download. Use the **Print salary slips** Desktop icon instead — you never need to open that file. |
+| Windows asks which app to open the .escpos file with | You double-clicked the download. You never need to open it — use **Print salary slips** instead. |
+| Nothing on the Desktop after running the installer | Windows blocked it. Use the two files at the top of this page; the installer is optional. |
+| A window flashes and vanishes | Double-click `Print salary slips.cmd`, not the `.ps1`. The `.cmd` keeps the window open. |
 | Nothing at all, no message | The printer may be in STAR mode. Open `http://<printer-ip>/` in a browser, set emulation to ESC/POS, and power the printer off and on. |
 
 **The printer's address changed?** Run `Install-SlipPrinter.ps1` again and enter
