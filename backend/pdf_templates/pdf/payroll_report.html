@@ -98,11 +98,31 @@
   </tr>
 </table>
 
+<!-- The three steps the run actually passes through. Each carries the name
+     and moment the system recorded, so the sheet is self-evidencing; a step
+     not yet taken prints a rule to sign by hand (owner 2026-08-19). -->
+<style>
+  .sig .who { font-weight: 700; font-size: 8pt; }
+  .sig .ts { font-size: 7pt; color: #3a4750; }
+  .sig .pend { border-bottom: 0.6px solid #A9B6C0; display: block;
+               height: 15px; margin-bottom: 2px; }
+  .sig .pendlbl { font-size: 6.5pt; color: #8a949c; }
+</style>
 <table class="sig" style="margin-top:24px">
-  <tr><td class="t">PREPARED BY (HR / PAYROLL)</td>
-      <td class="t">CHECKED BY (FINANCE)</td>
-      <td class="t">APPROVED BY</td></tr>
-  <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+  <tr>{% for s in signoffs %}<td class="t">{{ s.label }}</td>{% endfor %}</tr>
+  <tr>
+    {% for s in signoffs %}
+    <td>
+      {% if s.by %}
+        <div class="who">{{ s.by.full_name }}</div>
+        <div class="ts">{{ s.at|date:"d M Y · H:i" }}</div>
+      {% else %}
+        <span class="pend"></span>
+        <span class="pendlbl">{{ s.pending }}</span>
+      {% endif %}
+    </td>
+    {% endfor %}
+  </tr>
 </table>
 </body>
 </html>

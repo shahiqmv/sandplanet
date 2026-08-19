@@ -402,6 +402,30 @@ def _month_name(m):
     return calendar.month_name[m]
 
 
+def _signoffs(run):
+    """Who prepared, verified and approved the run — the three steps the sheet
+    is actually signed off by, each with the name and moment already recorded.
+
+    The sheet carried three EMPTY boxes, one of them "CHECKED BY (FINANCE)",
+    which is not a step in this flow at all: HR prepares, the site PM verifies
+    the days, the Director approves (owner 2026-08-19). Finance pays the PYR
+    that follows; it does not check the sheet.
+
+    A step not yet taken returns no name, so the box prints as a blank rule and
+    a draft can still be signed by hand.
+    """
+    return [
+        {"label": "PREPARED BY (HR / PAYROLL)", "pending": "not yet prepared",
+         # falls back to whoever generated it, for a run not yet submitted
+         "by": run.submitted_by or run.created_by,
+         "at": run.submitted_at or run.created_at},
+        {"label": "VERIFIED BY (SITE PM)", "pending": "not yet verified",
+         "by": run.verified_by, "at": run.verified_at},
+        {"label": "APPROVED BY (DIRECTOR)", "pending": "not yet approved",
+         "by": run.approved_by, "at": run.approved_at},
+    ]
+
+
 @api_view(["GET"])
 def payroll_report_pdf(request, pk):
     """The salary sheet for a run — grouped site-wise (a USD run spans sites)
@@ -449,7 +473,7 @@ def payroll_report_pdf(request, pk):
         group_list.append({"site_code": site_code, "rows": rows,
                            "totals": totals(rows)})
     html = render_to_string("pdf/payroll_report.html", {
-        "run": run, "currency": run.currency,
+        "run": run, "currency": run.currency, "signoffs": _signoffs(run),
         "period": f"{_month_name(run.month)} {run.year}",
         "groups": group_list, "grand": totals(lines),
         "multi_site": run.site_id is None,

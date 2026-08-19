@@ -2170,3 +2170,68 @@ class ThermalSlipTests(PayrollRunTests):
             f"/api/v1/payroll/lines/{run['lines'][0]['id']}/payslip.pdf")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
+
+
+class SalarySheetSignoffTests(PayrollRunTests):
+    """The sheet must show who prepared, verified and approved it.
+
+    It carried three EMPTY boxes, one of them "CHECKED BY (FINANCE)" — a step
+    that is not in this flow at all. HR prepares, the site PM verifies the days,
+    the Director approves; Finance pays the PYR that follows and never checks
+    the sheet (owner 2026-08-19). Every name and moment was already recorded on
+    the run and simply was not printed.
+    """
+
+    def _run(self):
+        from .models import PayrollRun
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"site_id": self.site.id, "year": 2026,
+                              "month": 5, "currency": "MVR"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return PayrollRun.objects.get(pk=r.data["id"])
+
+    def test_a_draft_names_its_preparer_and_leaves_the_rest_to_sign(self):
+        from .views_payroll import _signoffs
+        rows = _signoffs(self._run())
+        self.assertEqual([r["label"][:8] for r in rows],
+                         ["PREPARED", "VERIFIED", "APPROVED"])
+        self.assertEqual(rows[0]["by"], self.hr)      # who generated it
+        self.assertIsNotNone(rows[0]["at"])
+        self.assertIsNone(rows[1]["by"])
+        self.assertIsNone(rows[2]["by"])
+
+    def test_each_step_lands_in_its_own_box(self):
+        from .views_payroll import _signoffs
+        run = self._run()
+        for actor, action in ((self.hr, "submit"), (self.pm, "verify"),
+                              (self.director, "approve")):
+            self.client.force_authenticate(actor)
+            r = self.client.post(f"/api/v1/payroll/runs/{run.id}",
+                                 {"action": action}, format="json")
+            self.assertEqual(r.status_code, 200, (action, r.data))
+        run.refresh_from_db()
+        rows = _signoffs(run)
+        self.assertEqual(rows[0]["by"], self.hr)
+        self.assertEqual(rows[1]["by"], self.pm)
+        self.assertEqual(rows[2]["by"], self.director)
+        for row in rows:
+            self.assertIsNotNone(row["at"], row["label"])
+
+    def test_the_sheet_prints_the_names_and_drops_finance(self):
+        import fitz
+        run = self._run()
+        for actor, action in ((self.hr, "submit"), (self.pm, "verify"),
+                              (self.director, "approve")):
+            self.client.force_authenticate(actor)
+            self.client.post(f"/api/v1/payroll/runs/{run.id}",
+                             {"action": action}, format="json")
+        self.client.force_authenticate(self.hr)
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/report.pdf")
+        self.assertEqual(r.status_code, 200)
+        doc = fitz.open("pdf", r.content)
+        text = "".join(p.get_text() for p in doc)
+        doc.close()
+        self.assertIn("VERIFIED BY", text)
+        self.assertIn(self.pm.full_name, text)
+        self.assertIn(self.director.full_name, text)
+        self.assertNotIn("FINANCE", text.upper())
