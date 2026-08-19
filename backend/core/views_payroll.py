@@ -533,6 +533,69 @@ def _thermal_response(lines, filename):
     return resp
 
 
+def _escpos_response(lines, filename):
+    """Ready-to-send ESC/POS. HR and Finance print from Windows PCs, so the
+    rasterising happens here rather than asking them to install PyMuPDF and
+    Pillow — their end only has to open a socket (owner 2026-08-19)."""
+    from django.http import HttpResponse
+    from django.template.loader import render_to_string
+    from rest_framework.response import Response as R
+
+    if not lines:
+        return R({"detail": "No payable lines on this run."}, status=400)
+    register = payroll.register_summary(lines[0].run)
+    htmls = [render_to_string("pdf/payslip_thermal.html",
+                              _slip_context(ln, register)) for ln in lines]
+    try:
+        pdf = thermal.render_slips(htmls)
+        job, count = thermal.escpos_bytes(pdf)
+    except Exception:
+        log.exception("escpos render failed")
+        return R({"detail": "PDF engine unavailable on this server."},
+                 status=503)
+    resp = HttpResponse(job, content_type="application/octet-stream")
+    # attachment, always: this is a byte stream for the printer, not something
+    # a browser should try to display
+    resp["Content-Disposition"] = f'attachment; filename="{filename}"'
+    resp["X-Slip-Count"] = str(count)
+    return resp
+
+
+@api_view(["GET"])
+def run_slips_escpos(request, pk):
+    """Every payable worker on a run, as ESC/POS for an 80mm printer."""
+    try:
+        run = PayrollRun.objects.select_related("site").get(pk=pk)
+    except PayrollRun.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, run):
+        return Response({"detail": "Not permitted."}, status=403)
+    lines = list(run.lines.select_related("employee__job_category", "site",
+                                          "run__site")
+                 .filter(excluded=False)
+                 .order_by("employee__emp_no"))
+    site = run.site.code if run.site_id else "USD"
+    return _escpos_response(
+        lines, f"slips-{site}-{run.year}-{run.month:02d}.escpos")
+
+
+@api_view(["GET"])
+def payslip_escpos(request, pk):
+    """One worker's slip as ESC/POS — for a reprint."""
+    if not _read(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    try:
+        line = PayrollLine.objects.select_related(
+            "run__site", "employee__job_category", "site").get(pk=pk)
+    except PayrollLine.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, line.run):
+        return Response({"detail": "Not permitted."}, status=403)
+    return _escpos_response(
+        [line], f"slip-{line.employee.emp_no}-"
+                f"{line.run.year}-{line.run.month:02d}.escpos")
+
+
 @api_view(["GET"])
 def payslip_thermal_pdf(request, pk):
     """One worker's slip at 80mm receipt width."""

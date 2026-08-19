@@ -18,6 +18,11 @@ a cut after it.
 
 Needs pymupdf and pillow (both already in the backend venv):
     backend/.venv/bin/python tools/thermal_print.py …
+
+NOTE: HR and Finance do NOT use this — they are on Windows and the SERVER now
+renders the ESC/POS for them (core/thermal.escpos_bytes, served as
+/payroll/runs/<id>/slips.escpos). See tools/windows/. This stays as the
+admin-side tool for printing a PDF that is already on disk.
 """
 import argparse
 import io

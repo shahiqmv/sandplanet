@@ -70,3 +70,61 @@ def render_slips(htmls):
     data = out.tobytes()
     out.close()
     return data
+
+
+# ---- ESC/POS ----------------------------------------------------------------
+# The printers these slips go to speak raw ESC/POS on port 9100 and nothing
+# else — no IPP, no AirPrint, no PDF interpreter. HR and Finance print from
+# Windows PCs, so the rasterising happens HERE, where PyMuPDF and Pillow already
+# live: the office end then needs nothing installed but a socket.
+
+ESC, GS = b"\x1b", b"\x1d"
+DOTS = 576              # 80mm head at 203dpi — the slip is generated to match
+BAND_ROWS = 128         # rows per GS v 0 command
+
+
+def _page_raster(page):
+    """One page -> ESC/POS raster bands."""
+    import fitz
+    from PIL import Image
+
+    # Scale from the page's own width to the head's, so a slip cropped to any
+    # length still lands 1:1 across.
+    scale = DOTS / page.rect.width
+    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale),
+                          colorspace=fitz.csGRAY, alpha=False)
+    img = Image.frombytes("L", (pix.width, pix.height), pix.samples)
+    if img.width != DOTS:                 # pad, never stretch
+        canvas = Image.new("L", (DOTS, img.height), 255)
+        canvas.paste(img, (0, 0))
+        img = canvas
+    # Dither, not a hard threshold: 1-bit output would otherwise drop the thin
+    # separator rules and break up the small type.
+    raw = img.convert("1").tobytes()
+    row_bytes = (DOTS + 7) // 8
+    out = bytearray()
+    for top in range(0, img.height, BAND_ROWS):
+        rows = min(BAND_ROWS, img.height - top)
+        band = bytearray(raw[top * row_bytes:(top + rows) * row_bytes])
+        for i, b in enumerate(band):
+            band[i] = b ^ 0xFF            # Pillow: 1 = white; ESC/POS: 1 = burn
+        out += GS + b"v0\x00"
+        out += bytes([row_bytes & 0xFF, row_bytes >> 8,
+                      rows & 0xFF, rows >> 8])
+        out += bytes(band)
+    return bytes(out)
+
+
+def escpos_bytes(pdf_bytes, limit=None):
+    """A slips PDF -> a ready-to-send ESC/POS job, one cut per slip."""
+    import fitz
+
+    doc = fitz.open("pdf", pdf_bytes)
+    job = bytearray(ESC + b"@")                     # initialise once
+    pages = list(doc)[:limit] if limit else list(doc)
+    for page in pages:
+        job += _page_raster(page)
+        job += b"\n" * 2
+        job += GS + b"V\x42\x00"                    # feed to cutter, partial cut
+    doc.close()
+    return bytes(job), len(pages)

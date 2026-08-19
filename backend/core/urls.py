@@ -587,6 +587,11 @@ urlpatterns = [
          payroll_api.payslip_thermal_pdf, name="payroll-payslip-thermal"),
     path("payroll/runs/<int:pk>/slips-thermal.pdf",
          payroll_api.run_slips_thermal_pdf, name="payroll-run-slips-thermal"),
+    # Ready-to-send ESC/POS — the office PCs need nothing installed to print it
+    path("payroll/runs/<int:pk>/slips.escpos", payroll_api.run_slips_escpos,
+         name="payroll-run-slips-escpos"),
+    path("payroll/lines/<int:pk>/slip.escpos", payroll_api.payslip_escpos,
+         name="payroll-payslip-escpos"),
     # Amending an issued purchase order (owner 2026-08-13)
     path("documents/<str:ref>/amend", docs.po_amend, name="po-amend"),
     path("documents/<str:ref>/amend-decision", docs.po_amend_decision,

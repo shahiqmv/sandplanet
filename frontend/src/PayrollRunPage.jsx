@@ -513,13 +513,19 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
             {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {/* One page per worker, cut to length — the point of putting slips
-              on a receipt printer is doing a whole run at once. */}
+          {/* HR/Finance print from Windows PCs with no driver for this
+              printer, so the server sends ESC/POS and the download prints
+              itself when opened (owner 2026-08-19). The PDF beside it is for
+              checking on screen and for the file. */}
+          <a href={`/api/v1/payroll/runs/${runId}/slips.escpos`}
+             title="Download and open to print every slip on the thermal printer"
+             style={{ ...buttonStyle, textDecoration: "none" }}>
+            🖨️ Print slips (thermal)</a>
           <a href={`/api/v1/payroll/runs/${runId}/slips-thermal.pdf`}
              target="_blank" rel="noreferrer"
-             title="Every worker's slip, 80mm thermal, one per cut"
+             title="The same slips as a PDF, to check on screen"
              style={{ ...ghostButton, textDecoration: "none" }}>
-            🖨️ Slips (thermal)</a>
+            Slips preview</a>
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
@@ -669,9 +675,8 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
            target="_blank" rel="noreferrer" title="Salary slip (A5)"
            style={{ textDecoration: "none" }}>🧾</a>
-        <a href={`/api/v1/payroll/lines/${line.id}/slip-thermal.pdf`}
-           target="_blank" rel="noreferrer"
-           title="Salary slip — 80mm thermal receipt"
+        <a href={`/api/v1/payroll/lines/${line.id}/slip.escpos`}
+           title="Reprint this slip on the thermal printer"
            style={{ textDecoration: "none", marginLeft: 4 }}>🖨️</a>
         {/* The rest day is unmarked in attendance and paid as part of the
             month. The site PM knows who was absent through the week and

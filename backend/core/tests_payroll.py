@@ -2235,3 +2235,74 @@ class SalarySheetSignoffTests(PayrollRunTests):
         self.assertIn(self.pm.full_name, text)
         self.assertIn(self.director.full_name, text)
         self.assertNotIn("FINANCE", text.upper())
+
+
+class EscposEndpointTests(PayrollRunTests):
+    """The office PCs are Windows with no driver for this printer, so the
+    SERVER renders ESC/POS and their end only opens a socket (owner 2026-08-19).
+    """
+
+    def _run(self):
+        from .models import PayrollRun
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"site_id": self.site.id, "year": 2026,
+                              "month": 5, "currency": "MVR"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return PayrollRun.objects.get(pk=r.data["id"])
+
+    def test_a_run_downloads_as_a_printable_escpos_job(self):
+        run = self._run()
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/slips.escpos")
+        self.assertEqual(r.status_code, 200)
+        # a byte stream for a printer — never something a browser should render
+        self.assertEqual(r["Content-Type"], "application/octet-stream")
+        self.assertIn("attachment", r["Content-Disposition"])
+        self.assertIn(".escpos", r["Content-Disposition"])
+        job = r.content
+        # ESC @ — the Windows sender refuses anything not starting here, which
+        # is what stops somebody printing the PDF by mistake
+        self.assertEqual(job[:2], b"\x1b@")
+        self.assertIn(b"\x1dv0", job)               # GS v 0 — raster image
+        self.assertEqual(job.count(b"\x1dV"), 1)    # GS V — one cut per slip
+        self.assertEqual(r["X-Slip-Count"], "1")
+
+    def test_one_cut_per_worker(self):
+        from datetime import date
+        from .models import Employee, EmployeeSiteAllocation
+        e = Employee.objects.create(emp_no="EMP-0002", full_name="Nuwan",
+                                    job_category=self.mason,
+                                    basic_pay=Decimal("5000"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=e, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        self._mark_month(2026, 5, emp=e)
+        run = self._run()
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/slips.escpos")
+        self.assertEqual(r["X-Slip-Count"], "2")
+        self.assertEqual(r.content.count(b"\x1dV"), 2)
+
+    def test_a_single_worker_can_be_reprinted(self):
+        run = self._run()
+        line_id = run.lines.first().id
+        r = self.client.get(f"/api/v1/payroll/lines/{line_id}/slip.escpos")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content[:2], b"\x1b@")
+        self.assertEqual(r["X-Slip-Count"], "1")
+
+    def test_the_raster_is_the_printer_native_width(self):
+        """576 dots = 72 bytes per row. Wrong here and every slip is skewed."""
+        run = self._run()
+        job = self.client.get(
+            f"/api/v1/payroll/runs/{run.id}/slips.escpos").content
+        i = job.index(b"\x1dv0")
+        row_bytes = job[i + 4] | (job[i + 5] << 8)
+        self.assertEqual(row_bytes, 72)
+        self.assertEqual(row_bytes * 8, 576)
+
+    def test_a_site_pm_cannot_pull_another_sites_slips(self):
+        from .models import User
+        from .tests import make_user
+        run = self._run()
+        other = make_user("other_pm", User.Role.PM)
+        self.client.force_authenticate(other)
+        r = self.client.get(f"/api/v1/payroll/runs/{run.id}/slips.escpos")
+        self.assertEqual(r.status_code, 403)
