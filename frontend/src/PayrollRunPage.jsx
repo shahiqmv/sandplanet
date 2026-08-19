@@ -532,19 +532,17 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
             {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-          {/* A real button, not a link: as an <a href> this navigated the app
-              away to raw JSON whenever the run had nothing to print, and
-              downloaded in complete silence when it worked — so it looked
-              broken either way (owner 2026-08-19). */}
-          <button onClick={getSlips} disabled={slipBusy}
-                  title="Download the slips, then click Print salary slips on the Desktop"
-                  style={buttonStyle}>
-            {slipBusy ? "Preparing…" : "🖨️ Print slips (thermal)"}</button>
+          {/* One button, and it opens a PDF you print with Ctrl-P like
+              anything else. The ESC/POS download it replaced needed a script
+              on every PC and was not worth the trouble it caused (owner
+              2026-08-19): Windows drives this printer perfectly well through
+              its own driver on a raw 9100 port. The pages are already 72mm
+              and cut to length, so "Actual size" prints them correctly. */}
           <a href={`/api/v1/payroll/runs/${runId}/slips-thermal.pdf`}
              target="_blank" rel="noreferrer"
-             title="The same slips as a PDF, to check on screen"
-             style={{ ...ghostButton, textDecoration: "none" }}>
-            Slips preview</a>
+             title="Opens the slips — print with Ctrl-P on the thermal printer"
+             style={{ ...buttonStyle, textDecoration: "none" }}>
+            🖨️ Print slips</a>
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
@@ -695,7 +693,8 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
            target="_blank" rel="noreferrer" title="Salary slip (A5)"
            style={{ textDecoration: "none" }}>🧾</a>
-        <a href={`/api/v1/payroll/lines/${line.id}/slip.escpos`}
+        <a href={`/api/v1/payroll/lines/${line.id}/slip-thermal.pdf`}
+           target="_blank" rel="noreferrer"
            title="Reprint this slip on the thermal printer"
            style={{ textDecoration: "none", marginLeft: 4 }}>🖨️</a>
         {/* The rest day is unmarked in attendance and paid as part of the

@@ -1,43 +1,45 @@
-# Printing salary slips — HR / Finance (Windows)
+# Adding the salary-slip printer (Windows)
 
-## Set up (once per PC)
+The thermal printer is added to Windows like any other network printer. Once
+that is done, printing slips is Ctrl-P — there is nothing to install from here.
 
-Copy these **two files** to the Desktop, keeping them together:
+## Add the printer (once per PC)
 
-- `Print salary slips.cmd`
-- `Print-Slips.ps1`
+1. **Install the printer's own Windows driver.** It is on the CD/USB that came
+   with it, or on the maker's site — the model is on the label underneath
+   (these are usually sold as *XPrinter*, *POS-80*, *Gprinter* or similar).
+   Install this first; Windows' built-in drivers cannot render to it.
 
-That is the whole setup. The first time you use it, it asks for the printer's IP
-address (press Enter to accept `192.168.100.79`) and remembers it.
+2. **Settings → Bluetooth & devices → Printers & scanners → Add device**
+   → *The printer that I want isn't listed*
+   → **Add a printer using a TCP/IP address or hostname**
 
-> If Windows shows a blue "Windows protected your PC" box, click **More info**
-> then **Run anyway**. That appears because the file came from another PC.
+3. Fill in:
 
-There is an `Install-SlipPrinter.ps1` as well, which adds a Desktop shortcut and
-a Start Menu entry. It is **optional** — everything works without it, and if
-Windows blocks it from running, ignore it and use the two files above.
+   | | |
+   |---|---|
+   | Device type | **TCP/IP Device** |
+   | Hostname or IP address | **192.168.100.79** |
+   | Port name | anything, e.g. `Slip printer` |
+   | Query the printer… | **untick** |
+
+4. When asked for the driver, choose the one you installed in step 1.
+
+5. Finish, then **Printer properties → Print Test Page**. If a slip comes out,
+   you are done.
 
 ## Print a payroll run
 
 1. Open the payroll run in Sand Planet.
-2. Click **Print slips (thermal)**. It says how many slips downloaded.
-   **Do not try to open that file** — it is printer code, not a document, and
-   Windows has nothing to open it with. That is normal.
-3. Double-click **Print salary slips** on the Desktop.
+2. Click **Print slips** — the slips open as a PDF, one worker per page.
+3. Ctrl-P, choose the thermal printer, and set:
+   - **Paper size:** the 80mm roll size (often listed as `80 x 297mm` or
+     `72.1 x 297mm`)
+   - **Scale / Page sizing:** **Actual size** — *not* "Fit to page"
+4. Print. Each worker is a separate page, so the cutter separates them.
 
-The slips print, one per worker, cut between each.
-
-You do not need to find or open the downloaded file, and you should not be
-asked to choose an app to open it with. The Desktop icon finds the newest slip
-file on its own — in Downloads, on the Desktop, or in OneDrive Downloads.
-
-If you have downloaded several and want an **older** one, drag that file onto
-the Desktop icon instead.
-
-**Slips preview** next to it gives the same slips as a PDF — for checking on
-screen or keeping on file. Don't try to print the PDF on the thermal printer; it
-will come out as pages of rubbish. The printer only understands the `.escpos`
-file.
+The pages are already 72mm wide and trimmed to each slip's own length, so at
+Actual size they come out right with no blank paper between slips.
 
 To reprint one worker, click the 🖨️ on their row.
 
@@ -45,34 +47,11 @@ To reprint one worker, click the 🖨️ on their row.
 
 | What you see | What it means |
 |---|---|
-| "The printer did not answer" | Printer off, or on a different WiFi. Check it, then retry. |
-| "Does not look like a slip file" | You opened the PDF instead of the `.escpos` file. |
-| "No slip file found" | Click **Print slips (thermal)** in Sand Planet first. |
-| Windows asks which app to open the .escpos file with | You double-clicked the download. You never need to open it — use **Print salary slips** instead. |
-| Nothing on the Desktop after running the installer | Windows blocked it. Use the two files at the top of this page; the installer is optional. |
-| A window flashes and vanishes | Double-click `Print salary slips.cmd`, not the `.ps1`. The `.cmd` keeps the window open. |
-| Nothing at all, no message | The printer may be in STAR mode. Open `http://<printer-ip>/` in a browser, set emulation to ESC/POS, and power the printer off and on. |
+| Test page fails | Wrong IP, printer off, or on a different WiFi. Ping `192.168.100.79` from a Command Prompt. |
+| Prints tiny, or with wide margins | Scale is on "Fit to page". Set **Actual size**. |
+| Pages of garbage characters | You picked a text-only driver. Install the maker's driver and change the printer's driver to it. |
+| Prints but never cuts | Turn on auto-cut in the driver's preferences (often *Device Settings → Cutter → Cut after each page*). |
+| Nothing at all, no error | The printer may be in STAR emulation. Open `http://192.168.100.79/`, set it to ESC/POS, and power-cycle the printer. |
 
-**The printer's address changed?** Run `Install-SlipPrinter.ps1` again and enter
-the new one. Nothing else needs touching.
-
-## For whoever maintains this
-
-The printer speaks raw ESC/POS on port 9100 and has no PDF interpreter, so
-Windows' *Add Printer* cannot usefully drive it — that is why setup works this
-way instead. The **server** renders the slips (it has PyMuPDF and Pillow
-already), and the PC only opens a socket and posts the bytes, so these PCs need
-nothing installed.
-
-- `Install-SlipPrinter.ps1` — writes `%LOCALAPPDATA%\SandPlanet\printer.json`,
-  copies the sender there, associates `.escpos` (HKCU only), adds a Start Menu
-  entry.
-- `Print-Slips.ps1` — the sender. **With no argument it finds the newest
-  `.escpos` in Downloads / Desktop / OneDrive Downloads**, which is what the
-  Desktop shortcut relies on: the first version of this depended on a Windows
-  file association, which Windows frequently ignores, and HR was left facing an
-  "open with" dialog. Reads the IP from `printer.json` unless `-Printer` is
-  given. Refuses any file that does not begin `ESC @`, so the PDF cannot be sent
-  by mistake.
-- Endpoints: `GET /api/v1/payroll/runs/<id>/slips.escpos` and
-  `GET /api/v1/payroll/lines/<id>/slip.escpos`.
+**The printer's address changed?** Printer properties → Ports → Configure Port
+→ enter the new IP. A static/reserved address on the router avoids this.
