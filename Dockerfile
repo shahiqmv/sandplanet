@@ -30,6 +30,9 @@ COPY backend/ /app/backend/
 # Import templates (CSV masters for import_items / import_employees / etc.)
 # so `python manage.py import_items /app/import-templates/<file>` works.
 COPY import-templates/ /app/import-templates/
+# The office PCs download their printer setup from the app itself, so
+# these two files have to be IN the image (owner 2026-08-19).
+COPY tools/windows/ /app/tools/windows/
 # The built SPA lands at /app/frontend/dist so BASE_DIR.parent/frontend/dist
 # resolves (see settings.py TEMPLATES / STATICFILES_DIRS)
 COPY --from=frontend /build/dist /app/frontend/dist

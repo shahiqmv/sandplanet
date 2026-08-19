@@ -585,14 +585,21 @@ def printer_tool_zip(request):
     folder = Path(settings.BASE_DIR).parent / "tools" / "windows"
     wanted = ["Print salary slips.cmd", "Print-Slips.ps1", "README.md"]
     buf = io.BytesIO()
+    added = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name in wanted:
             f = folder / name
             if f.exists():
                 z.write(f, name)
-    if not buf.getvalue():
-        return Response({"detail": "Printer tool files are missing on the "
-                                   "server."}, status=503)
+                added += 1
+    # An EMPTY zip is still 22 bytes of end-of-directory record, so the
+    # buffer being non-empty proves nothing — count the files. This shipped
+    # once serving a 22-byte nothing because tools/ was not in the image.
+    if added == 0:
+        log.error("printer tool files not found at %s", folder)
+        return Response({"detail": "Printer setup files are missing on the "
+                                   "server — tell whoever maintains it."},
+                        status=503)
     resp = HttpResponse(buf.getvalue(), content_type="application/zip")
     resp["Content-Disposition"] = 'attachment; filename="slip-printer-setup.zip"'
     return resp

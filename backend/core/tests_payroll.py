@@ -2365,3 +2365,34 @@ class FinanceRunsPayrollTests(PayrollRunTests):
         self.assertEqual(r.status_code, 403)
         self.emp.refresh_from_db()
         self.assertEqual(self.emp.basic_pay, Decimal("6200"))
+
+
+class PrinterToolDownloadTests(PayrollRunTests):
+    """The office PC gets its printer setup from the app.
+
+    Carrying the files there by hand was the worst part of this: the owner's
+    external drive is NTFS (macOS cannot write to it) and mail clients strip
+    .cmd attachments (owner 2026-08-19).
+    """
+
+    def test_it_serves_a_zip_with_the_files_a_pc_needs(self):
+        import io
+        import zipfile
+        r = self.client.get("/api/v1/payroll/printer-tool.zip")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/zip")
+        self.assertIn("attachment", r["Content-Disposition"])
+        names = zipfile.ZipFile(io.BytesIO(r.content)).namelist()
+        # An empty zip is still 22 bytes of footer, so assert on the CONTENTS —
+        # it shipped once serving nothing because tools/ was not in the image.
+        self.assertIn("Print salary slips.cmd", names)
+        self.assertIn("Print-Slips.ps1", names)
+        for n in names:
+            self.assertGreater(
+                zipfile.ZipFile(io.BytesIO(r.content)).getinfo(n).file_size, 0,
+                f"{n} is empty")
+
+    def test_a_site_role_cannot_take_it(self):
+        self.client.force_authenticate(self.pm)
+        r = self.client.get("/api/v1/payroll/printer-tool.zip")
+        self.assertEqual(r.status_code, 403)
