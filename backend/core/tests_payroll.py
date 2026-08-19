@@ -2306,3 +2306,59 @@ class EscposEndpointTests(PayrollRunTests):
         self.client.force_authenticate(other)
         r = self.client.get(f"/api/v1/payroll/runs/{run.id}/slips.escpos")
         self.assertEqual(r.status_code, 403)
+
+
+class FinanceRunsPayrollTests(PayrollRunTests):
+    """Finance runs payroll alongside HR (owner 2026-08-19).
+
+    They already had the run itself — generate, edit every figure, exclude,
+    reopen, lock. What they did not have was the OT RATE table, which is a
+    payroll input: every overtime figure on every run comes off it.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from .models import User
+        from .tests import make_user
+        self.fin = make_user("fin_pay", User.Role.FINANCE)
+
+    def test_finance_can_run_and_edit_payroll(self):
+        self.client.force_authenticate(self.fin)
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"site_id": self.site.id, "year": 2026,
+                              "month": 5, "currency": "MVR"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        line_id = r.data["lines"][0]["id"]
+        p = self.client.patch(f"/api/v1/payroll/lines/{line_id}",
+                              {"allowance": "250"}, format="json")
+        self.assertEqual(p.status_code, 200, p.data)
+
+    def test_finance_can_set_an_overtime_rate(self):
+        self.client.force_authenticate(self.fin)
+        r = self.client.post("/api/v1/overtime-rates",
+                             {"category_id": self.mason.id, "currency": "MVR",
+                              "rate_per_hour": "30"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        from .models import OvertimeRate
+        self.assertEqual(
+            OvertimeRate.objects.get(category=self.mason,
+                                     currency="MVR").rate_per_hour,
+            Decimal("30"))
+
+    def test_a_site_role_still_cannot_touch_ot_rates(self):
+        """Widening to Finance must not widen to everybody."""
+        self.client.force_authenticate(self.pm)
+        r = self.client.post("/api/v1/overtime-rates",
+                             {"category_id": self.mason.id, "currency": "MVR",
+                              "rate_per_hour": "99"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_finance_still_cannot_change_an_employees_salary(self):
+        """Separation of duties: the people who pay do not set the amount.
+        Left deliberately with HR (owner to decide otherwise)."""
+        self.client.force_authenticate(self.fin)
+        r = self.client.patch(f"/api/v1/employees/{self.emp.id}",
+                              {"basic_pay": "99999"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.emp.refresh_from_db()
+        self.assertEqual(self.emp.basic_pay, Decimal("6200"))

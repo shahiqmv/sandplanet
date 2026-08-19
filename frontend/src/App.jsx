@@ -150,7 +150,10 @@ const NAV_GROUPS = [
            ["ho-staff", "Head Office", ["HO_HR", "FINANCE", "DIRECTOR",
                                         "ADMIN", "PA", "SIGNATORY"]],
            ["worker-categories", "Worker Categories", ["ADMIN", "PA"]],
-           ["overtime-rates", "Overtime Rates", ["HO_HR", "ADMIN", "PA"]],
+           // The OT rate feeds every overtime figure on a payroll run, and
+           // Finance runs payroll (owner 2026-08-19).
+           ["overtime-rates", "Overtime Rates", ["HO_HR", "FINANCE", "ADMIN",
+                                                 "PA"]],
            ["payroll", "Payroll", ["HO_HR", "FINANCE", "ADMIN", "PA",
                                    "SIGNATORY"]],
            ["staff-cost", "Staff Cost",
@@ -1081,7 +1084,7 @@ export default function App() {
             <WorkerCategoriesPage me={me} />
           )}
           {!docView && !openSite &&
-            ["HO_HR", "ADMIN", "PA"].includes(me.role) &&
+            ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role) &&
             hoPage === "overtime-rates" && (
             <OvertimeRatesPage me={me} />
           )}

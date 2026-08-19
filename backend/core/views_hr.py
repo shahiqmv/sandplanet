@@ -879,10 +879,11 @@ def ot_approve(request):
 def overtime_rates(request):
     """GET: every DPR job category with its MVR/USD OT rate (if set) so the
     management page can show and fill them. POST: upsert one category+currency
-    rate. HR/Admin only."""
+    rate. HR, Finance and Admin — the OT rate is a payroll input, and Finance
+    runs payroll alongside HR (owner 2026-08-19)."""
     if request.method == "POST":
-        if not _is_hr(request.user):
-            return Response({"detail": "HO HR/Admin manage OT rates."},
+        if request.user.role not in (*HR_ROLES, "FINANCE"):
+            return Response({"detail": "HR, Finance or Admin manage OT rates."},
                             status=403)
         try:
             cat = ManpowerCategory.objects.get(pk=request.data.get("category_id"))
