@@ -221,13 +221,20 @@ def save_settings(data, actor):
     return st, None
 
 
+# The cover photo fills the band above the title: the FULL 210mm page width by
+# 176mm tall, i.e. slightly wider than it is tall. Getting this wrong crops the
+# picture twice — once on upload and again by object-fit — and throws away the
+# sides of a landscape shot (owner 2026-08-19, on the pool project photo).
+COVER = (210, 176, 2000)
+
+
 def set_cover(uploaded, actor):
-    """The profile's cover photo. Portrait-ish 3:4 — it fills the top of the
-    cover above the title band."""
+    """The profile's cover photo, cropped to the exact shape of the cover
+    band so nothing is lost to a second crop at render time."""
     from .models import ProfileSettings
 
     st = ProfileSettings.get()
-    st.cover_image.save("cover.jpg", _process(uploaded, 3, 4, 1600), save=True)
+    st.cover_image.save("cover.jpg", _process(uploaded, *COVER), save=True)
     audit("profile_settings", 1, "PROFILE_COVER_SET", actor=actor)
     return None
 

@@ -105,15 +105,26 @@ function CoverPanel() {
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
+  const [crop, setCrop] = useState(null);
   const load = () => api("/profile/settings").then(setSt).catch(() => {});
   useEffect(() => { load(); }, []);
 
-  async function upload(f) {
-    if (!f) return;
+  // Crop it by hand rather than centring blindly: on a good cover shot the
+  // subject is rarely dead centre — the pool and its decking sit in one corner
+  // of the frame, and a centre crop clips the furniture off (owner 2026-08-19).
+  function chosen(e) {
+    const f = e.target.files[0];
+    if (f) setCrop(f);
+    e.target.value = "";
+  }
+
+  async function upload(blob) {
+    setCrop(null);
+    if (!blob) return;
     setErr(null); setBusy(true);
     try {
       const fd = new FormData();
-      fd.append("file", f);
+      fd.append("file", blob, "cover.jpg");
       setSt(await apiUpload("/profile/cover", fd));
     } catch (e) { setErr(e.message); } finally { setBusy(false); }
   }
@@ -136,8 +147,7 @@ function CoverPanel() {
       {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <input type="file" accept="image/*" ref={fileRef}
-               style={{ display: "none" }}
-               onChange={(e) => upload(e.target.files[0])} />
+               style={{ display: "none" }} onChange={chosen} />
         {st.cover_url ? (
           <img src={st.cover_url} alt=""
                onClick={() => fileRef.current?.click()}
@@ -162,10 +172,17 @@ function CoverPanel() {
               Use the first project instead</Btn>
           )}
           <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>
-            Cropped to 3:4 (portrait). A wide photo loses its sides.
+            You choose the crop. The cover band is slightly wider than it is
+            tall (210&times;176mm), so a landscape photo needs only its edges
+            trimmed.
           </div>
         </div>
       </div>
+      {crop && (
+        <ImageCropper file={crop} aspect={210 / 176} outW={2000}
+                      label="Position the cover photo"
+                      onCancel={() => setCrop(null)} onDone={upload} />
+      )}
     </section>
   );
 }
