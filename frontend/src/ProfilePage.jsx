@@ -88,7 +88,312 @@ export default function ProfilePage() {
               Select a project, or add one.</div>}
       </div>
 
+      <CoverPanel />
+      <ManagementPanel />
+      <CorporatePanel />
       <RefereesPanel />
+    </div>
+  );
+}
+
+// ---- cover photo ----------------------------------------------------------
+// The cover used to be whichever ongoing project sorted first, so reordering
+// the projects silently changed the front page (owner 2026-08-19).
+
+function CoverPanel() {
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef();
+  const load = () => api("/profile/settings").then(setSt).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function upload(f) {
+    if (!f) return;
+    setErr(null); setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      setSt(await apiUpload("/profile/cover", fd));
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+  async function clear() {
+    setErr(null);
+    try { setSt(await api("/profile/cover", { method: "DELETE" })); }
+    catch (e) { setErr(e.message); }
+  }
+  if (!st) return null;
+
+  return (
+    <section style={{ ...card, marginTop: 16 }}>
+      <h3 style={{ margin: "0 0 4px", color: NAVY, fontSize: 15 }}>
+        Cover photo</h3>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 12px" }}>
+        The picture on the front page. Without one it falls back to whichever
+        ongoing project is first in the list — which changes when you reorder
+        them.
+      </p>
+      {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        <input type="file" accept="image/*" ref={fileRef}
+               style={{ display: "none" }}
+               onChange={(e) => upload(e.target.files[0])} />
+        {st.cover_url ? (
+          <img src={st.cover_url} alt=""
+               onClick={() => fileRef.current?.click()}
+               style={{ width: 120, height: 160, objectFit: "cover",
+                        borderRadius: 6, cursor: "pointer",
+                        border: "1px solid var(--sp-border)" }} />
+        ) : (
+          <button onClick={() => fileRef.current?.click()}
+                  style={{ width: 120, height: 160, borderRadius: 6,
+                           border: "1px dashed var(--sp-border)",
+                           background: "#fafbfc", cursor: "pointer",
+                           color: "#8a94a0", fontSize: 12 }}>
+            + Choose a cover photo</button>
+        )}
+        <div>
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => fileRef.current?.click()}>
+            {busy ? "Uploading…" : st.cover_url ? "Replace" : "Choose photo"}
+          </Btn>
+          {st.cover_url && (
+            <Btn variant="secondary" style={{ marginLeft: 8 }} onClick={clear}>
+              Use the first project instead</Btn>
+          )}
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginTop: 8 }}>
+            Cropped to 3:4 (portrait). A wide photo loses its sides.
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ---- key management personnel ---------------------------------------------
+// Was four hardcoded people in the renderer; adding a director meant a deploy.
+
+function ManagementPanel() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => api("/profile/management").then(setRows).catch(() => {});
+  useEffect(() => { load(); }, []);
+
+  async function add() {
+    setErr(null);
+    try {
+      await api("/profile/management",
+                { method: "POST", body: { name: "New person", role: "" } });
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  async function save(r) {
+    setErr(null);
+    try {
+      await api(`/profile/management/${r.id}`, { method: "PATCH", body: {
+        name: r.name, role: r.role, intro: r.intro, is_active: r.is_active } });
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  async function del(id) {
+    if (!window.confirm("Remove this person from the profile?")) return;
+    try { await api(`/profile/management/${id}`, { method: "DELETE" }); load(); }
+    catch (e) { setErr(e.message); }
+  }
+  async function photo(id, f) {
+    if (!f) return;
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", f);
+      await apiUpload(`/profile/management/${id}/photo`, fd);
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  if (!rows) return null;
+
+  return (
+    <section style={{ ...card, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <h3 style={{ margin: 0, color: NAVY, fontSize: 15 }}>
+          Key management personnel</h3>
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>
+          {rows.filter((r) => r.is_active).length} on the profile</span>
+        <Btn variant="secondary" style={{ marginLeft: "auto" }}
+             onClick={add}>+ Add a person</Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
+        Six fit the page comfortably; beyond that the cards tighten up.
+        Without a photo the profile shows their initials.
+      </p>
+      {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
+      {rows.map((r) => (
+        <MgmtRow key={r.id} row={r} onSave={save} onDel={del}
+                 onPhoto={photo} />
+      ))}
+    </section>
+  );
+}
+
+function MgmtRow({ row, onSave, onDel, onPhoto }) {
+  const [r, setR] = useState(row);
+  const fileRef = useRef();
+  const dirty = JSON.stringify(r) !== JSON.stringify(row);
+  const set = (k) => (e) => setR({ ...r, [k]: e.target.value });
+  return (
+    <div style={{ display: "flex", gap: 12, padding: "10px 0",
+                  borderTop: "1px solid var(--sp-border)",
+                  alignItems: "flex-start" }}>
+      <input type="file" accept="image/*" ref={fileRef}
+             style={{ display: "none" }}
+             onChange={(e) => onPhoto(row.id, e.target.files[0])} />
+      {r.photo_url ? (
+        <img src={r.photo_url} alt="" onClick={() => fileRef.current?.click()}
+             style={{ width: 54, height: 54, borderRadius: "50%",
+                      objectFit: "cover", cursor: "pointer" }} />
+      ) : (
+        <button onClick={() => fileRef.current?.click()} title="Add a photo"
+                style={{ width: 54, height: 54, borderRadius: "50%",
+                         border: "1px dashed var(--sp-border)",
+                         background: "#fafbfc", cursor: "pointer",
+                         color: "#8a94a0", fontSize: 11 }}>photo</button>
+      )}
+      <div style={{ flex: 1, display: "grid", gap: 6 }}>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={r.name} onChange={set("name")} placeholder="Full name"
+                 style={{ ...inputStyle, flex: 1, fontWeight: 600 }} />
+          <input value={r.role} onChange={set("role")}
+                 placeholder="Role, e.g. Director of Projects"
+                 style={{ ...inputStyle, flex: 1 }} />
+        </div>
+        <textarea value={r.intro} onChange={set("intro")} rows={2}
+                  placeholder="A sentence or two for the profile"
+                  style={{ ...inputStyle, width: "100%", resize: "vertical" }} />
+      </div>
+      <div style={{ display: "grid", gap: 6, minWidth: 90 }}>
+        <Btn variant={dirty ? "primary" : "secondary"} disabled={!dirty}
+             onClick={() => onSave(r)}>Save</Btn>
+        <label style={{ fontSize: 11.5, display: "flex", gap: 5,
+                        alignItems: "center", cursor: "pointer" }}>
+          <input type="checkbox" checked={r.is_active}
+                 onChange={(e) => setR({ ...r, is_active: e.target.checked })} />
+          Show
+        </label>
+        <button onClick={() => onDel(row.id)}
+                style={{ background: "none", border: "none", cursor: "pointer",
+                         color: "var(--red-fg)", fontSize: 11.5,
+                         padding: 0 }}>Remove</button>
+      </div>
+    </div>
+  );
+}
+
+// ---- corporate information -------------------------------------------------
+// The "company at a glance" table. Total staff especially moves.
+
+function CorporatePanel() {
+  const [rows, setRows] = useState(null);
+  const [st, setSt] = useState(null);
+  const [err, setErr] = useState(null);
+  const load = () => {
+    api("/profile/corporate").then(setRows).catch(() => {});
+    api("/profile/settings").then(setSt).catch(() => {});
+  };
+  useEffect(() => { load(); }, []);
+
+  async function add() {
+    try {
+      await api("/profile/corporate",
+                { method: "POST", body: { label: "New row", value: "" } });
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  async function save(r) {
+    try {
+      await api(`/profile/corporate/${r.id}`, { method: "PATCH",
+        body: { label: r.label, value: r.value, is_active: r.is_active } });
+      load();
+    } catch (e) { setErr(e.message); }
+  }
+  async function del(id) {
+    if (!window.confirm("Remove this row?")) return;
+    try { await api(`/profile/corporate/${id}`, { method: "DELETE" }); load(); }
+    catch (e) { setErr(e.message); }
+  }
+  async function saveText(next) {
+    try { setSt(await api("/profile/settings",
+                          { method: "PATCH", body: next })); }
+    catch (e) { setErr(e.message); }
+  }
+  if (!rows || !st) return null;
+
+  return (
+    <section style={{ ...card, marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+        <h3 style={{ margin: 0, color: NAVY, fontSize: 15 }}>
+          Corporate information</h3>
+        <Btn variant="secondary" style={{ marginLeft: "auto" }}
+             onClick={add}>+ Add a row</Btn>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
+        The "company at a glance" table. Use &lt;br&gt; in a value to break the
+        line — that is how the senior-management row lists four people.
+      </p>
+      {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
+      {rows.map((r) => (
+        <CorpRow key={r.id} row={r} onSave={save} onDel={del} />
+      ))}
+      <VisionMission st={st} onSave={saveText} />
+    </section>
+  );
+}
+
+function CorpRow({ row, onSave, onDel }) {
+  const [r, setR] = useState(row);
+  const dirty = JSON.stringify(r) !== JSON.stringify(row);
+  return (
+    <div style={{ display: "flex", gap: 8, padding: "7px 0",
+                  borderTop: "1px solid var(--sp-border)",
+                  alignItems: "flex-start" }}>
+      <input value={r.label} onChange={(e) => setR({ ...r, label: e.target.value })}
+             style={{ ...inputStyle, width: 190, fontWeight: 600 }} />
+      <textarea value={r.value} rows={1}
+                onChange={(e) => setR({ ...r, value: e.target.value })}
+                style={{ ...inputStyle, flex: 1, resize: "vertical" }} />
+      <Btn variant={dirty ? "primary" : "secondary"} disabled={!dirty}
+           onClick={() => onSave(r)}>Save</Btn>
+      <button onClick={() => onDel(row.id)}
+              style={{ background: "none", border: "none", cursor: "pointer",
+                       color: "var(--red-fg)", fontSize: 11.5 }}>×</button>
+    </div>
+  );
+}
+
+function VisionMission({ st, onSave }) {
+  const [v, setV] = useState(st.vision);
+  const [m, setM] = useState(st.mission);
+  const dirty = v !== st.vision || m !== st.mission;
+  return (
+    <div style={{ marginTop: 14, borderTop: "1px solid var(--sp-border)",
+                  paddingTop: 12 }}>
+      <div style={{ display: "flex", gap: 12 }}>
+        <label style={{ flex: 1, fontSize: 12, fontWeight: 700, color: NAVY }}>
+          Our Vision
+          <textarea value={v} rows={4} onChange={(e) => setV(e.target.value)}
+                    style={{ ...inputStyle, width: "100%", marginTop: 4,
+                             fontWeight: 400, resize: "vertical" }} />
+        </label>
+        <label style={{ flex: 1, fontSize: 12, fontWeight: 700, color: NAVY }}>
+          Our Mission
+          <textarea value={m} rows={4} onChange={(e) => setM(e.target.value)}
+                    style={{ ...inputStyle, width: "100%", marginTop: 4,
+                             fontWeight: 400, resize: "vertical" }} />
+        </label>
+      </div>
+      <Btn variant={dirty ? "primary" : "secondary"} disabled={!dirty}
+           style={{ marginTop: 8 }}
+           onClick={() => onSave({ vision: v, mission: m })}>
+        Save vision &amp; mission</Btn>
     </div>
   );
 }

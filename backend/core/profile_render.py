@@ -52,13 +52,20 @@ _RING = None
 
 
 def logo(cls):
-    """The official ring emblem (sp-ring.png — the owner's exact rings, never
-    redrawn) beside the horizontal SAND PLANET wordmark."""
+    """The official ring emblem beside the horizontal SAND PLANET wordmark.
+
+    VECTOR (sp-mark.svg), not the PNG it used to be: the final PDF is passed
+    through Ghostscript at 110dpi to keep it emailable, and that downsampled
+    the logo along with the photographs — at 14mm on the cover it came out
+    about 60 pixels wide and visibly pixelated (owner 2026-08-19). Vector art
+    is not resampled, so it stays sharp at any size and costs less than the
+    bitmap did.
+    """
     global _RING
     if _RING is None:
         from django.conf import settings
-        p = (settings.BASE_DIR / "pdf_templates" / "assets" / "sp-ring.png")
-        _RING = "data:image/png;base64," + base64.b64encode(
+        p = (settings.BASE_DIR / "pdf_templates" / "assets" / "sp-mark.svg")
+        _RING = "data:image/svg+xml;base64," + base64.b64encode(
             p.read_bytes()).decode()
     return (f'<span class="lock {cls}"><img class="lr" src="{_RING}">'
             f'<span class="lt"><span class="s">SAND</span>PLANET</span></span>')
@@ -138,81 +145,67 @@ def _story():
 
 
 def _corporate():
-    rows = [
-        ("Legal form", "Private Limited Company"),
-        ("Shareholders", "Ahmed Shahiq · Ibrahim Fikury Hussain"),
-        ("Senior management",
-         "Ahmed Shahiq — Managing Director<br>"
-         "Ibrahim Fikury Hussain — Director, Business Development<br>"
-         "Muditha Samanthilaka — Director of Projects<br>"
-         "Waseem Ali — Director of Marine Projects"),
-        ("Registered office", "Ma. Maaraadha Aage', Dhanburuh Magu, Malé"),
-        ("Registration", "C-0059/2015 · TIN 1052866GST501"),
-        ("Bankers", "Bank of Maldives Public Ltd"),
-        ("Auditors", "AH Associates"),
-        ("Total staff", "106 personnel"),
-    ]
-    irs = "".join(f'<div class="ir"><span class="ik">{k}</span>'
+    """The "company at a glance" table — rows and the vision/mission text now
+    come from the database, because the figures move (total staff most of all)
+    and a redeploy to change a headcount is absurd (owner 2026-08-19)."""
+    from .models import ProfileCorporateRow, ProfileSettings
+
+    st = ProfileSettings.get()
+    rows = [(r.label, r.value) for r in
+            ProfileCorporateRow.objects.filter(is_active=True)]
+    irs = "".join(f'<div class="ir"><span class="ik">{escape(k)}</span>'
+                  # value may legitimately carry <br> between people
                   f'<span class="iv">{v}</span></div>' for k, v in rows)
     return (f'<div class="page">{_bar("Corporate Information")}'
             '<div class="txtpage"><div class="eyebrow">Corporate Information'
             '</div><h2 class="bigtitle2">The company at a glance</h2>'
             f'<div class="inforows">{irs}</div><div class="vm">'
-            '<div class="vmbox"><div class="vmh">Our Vision</div><p>To become a '
-            'competitive leader in the Maldivian construction industry and in '
-            'resort supplies, delivering projects that precisely meet our '
-            "clients' requirements while upholding international standards.</p>"
-            '</div><div class="vmbox amberbox"><div class="vmh">Our Mission'
-            '</div><p>To undertake construction with a focus on becoming a '
-            'competitive leader in product costing, building excellence in '
-            'every aspect to meet stringent requirements for quality, on-time '
-            'delivery, safety and environmental care.</p></div></div>'
+            '<div class="vmbox"><div class="vmh">Our Vision</div>'
+            f'<p>{escape(st.vision)}</p></div>'
+            '<div class="vmbox amberbox"><div class="vmh">Our Mission</div>'
+            f'<p>{escape(st.mission)}</p></div></div>'
             f'</div>{_foot()}</div>')
 
 
-MANAGEMENT = [
-    ("Ahmed Shahiq", "Managing Director",
-     "Co-founder and Managing Director of Sand Planet, leading the company's "
-     "strategy, growth and delivery across construction, resort supplies and "
-     "marine works since 2015."),
-    ("Ibrahim Fikury Hussain", "Director, Business Development",
-     "Co-founder and Director of Business Development, building the client "
-     "relationships and new opportunities that drive the company's work across "
-     "the resort sector."),
-    ("Muditha Samanthilaka", "Director of Projects",
-     "Director of Projects, overseeing planning, execution and quality across "
-     "the company's building and fit-out portfolio."),
-    ("Waseem Ali", "Director of Marine Projects",
-     "Director of Marine Projects, leading the company's marine and coastal "
-     "works, including breakwaters, revetments, piling and jetties."),
-]
-
-
-def _avatar(name):
-    """A management portrait — a committed photo (core/profile_seed/mgmt/
-    <initials-slug>.jpg) if present, else a navy initials placeholder."""
+def _avatar(person):
+    """A management portrait: the uploaded photo, else a committed file, else
+    a navy initials placeholder."""
     from django.conf import settings
-    slug = "".join(c.lower() for c in name if c.isalnum())
+
+    if person.photo:
+        uri = _uri(person.photo)
+        if uri:
+            return f'<div class="mavatar"><img src="{uri}"></div>'
+    slug = "".join(c.lower() for c in person.name if c.isalnum())
     p = settings.BASE_DIR / "core" / "profile_seed" / "mgmt" / f"{slug}.jpg"
     if p.exists():
         uri = "data:image/jpeg;base64," + base64.b64encode(
             p.read_bytes()).decode()
         return f'<div class="mavatar"><img src="{uri}"></div>'
-    initials = "".join(w[0] for w in name.split()[:2]).upper()
+    initials = "".join(w[0] for w in person.name.split()[:2]).upper()
     return f'<div class="mavatar mph">{initials}</div>'
 
 
 def _management():
+    """Key management personnel — a database list, not four hardcoded tuples,
+    so a director can be added without a deploy (owner 2026-08-19)."""
+    from .models import ProfileManagement
+
+    people = list(ProfileManagement.objects.filter(is_active=True))
     cards = ""
-    for name, role, intro in MANAGEMENT:
-        cards += (f'<div class="mcard">{_avatar(name)}<div class="minfo">'
-                  f'<div class="mname">{escape(name)}</div>'
-                  f'<div class="mrole">{escape(role)}</div>'
-                  f'<div class="mintro">{escape(intro)}</div></div></div>')
+    for person in people:
+        cards += (f'<div class="mcard">{_avatar(person)}<div class="minfo">'
+                  f'<div class="mname">{escape(person.name)}</div>'
+                  f'<div class="mrole">{escape(person.role)}</div>'
+                  f'<div class="mintro">{escape(person.intro)}</div>'
+                  '</div></div>')
+    # Two columns at full size hold six without crowding — measured, not
+    # guessed. Only past that do the cards have to give up room.
+    tight = " mgrid-tight" if len(people) > 6 else ""
     return (f'<div class="page">{_bar("Management")}<div class="txtpage">'
             '<div class="eyebrow">Leadership</div>'
             '<h2 class="bigtitle2">Key management personnel</h2></div>'
-            f'<div class="mgrid">{cards}</div>{_foot()}</div>')
+            f'<div class="mgrid{tight}">{cards}</div>{_foot()}</div>')
 
 
 def _divider(hero, num="01", title="ONGOING<br>PROJECTS",
@@ -301,7 +294,14 @@ def build_html():
                    .prefetch_related("gallery").order_by("sort_order"))
     completed = list(ProfileEntry.objects.filter(status="COMPLETED")
                      .order_by("sort_order", "-completed_at"))
-    hero = _uri(ongoing[0].featured_image) if ongoing else ""
+    # The cover used to be whichever ongoing project sorted first, so
+    # reordering the projects silently changed the cover (owner 2026-08-19).
+    # A chosen image wins; the old behaviour is the fallback.
+    from .models import ProfileSettings
+    st = ProfileSettings.get()
+    hero = _uri(st.cover_image) if st.cover_image else ""
+    if not hero:
+        hero = _uri(ongoing[0].featured_image) if ongoing else ""
     parts = [_cover(hero), _story(), _corporate(), _management(),
              _divider(hero)]
     parts += [_project_page(e) for e in ongoing]
@@ -447,6 +447,14 @@ body { font-family:"Carlito","DejaVu Sans",sans-serif; color:#22303B; }
 .vmbox p{font-size:10pt;line-height:1.6;color:#47535D;margin:0;}
 /* key management */
 .mgrid{padding:9mm 18mm 0 18mm;display:grid;grid-template-columns:1fr 1fr;gap:7mm;}
+/* Five or more people: the cards have to give up some room or the page
+   overflows. Photo, name and role stay legible; the bio tightens. */
+.mgrid-tight{padding:6mm 14mm 0 14mm;gap:4.5mm;}
+.mgrid-tight .mcard{padding:4mm;gap:3.5mm;}
+.mgrid-tight .mavatar{flex:0 0 19mm;width:19mm;height:19mm;}
+.mgrid-tight .mph{font-size:14pt;}
+.mgrid-tight .mname{font-size:12pt;}
+.mgrid-tight .mintro{font-size:7.4pt;line-height:1.35;}
 .mcard{display:flex;gap:5mm;background:#F6F4F0;border:0.6pt solid #E5EAEE;border-radius:2mm;padding:6mm;}
 .mavatar{flex:0 0 26mm;width:26mm;height:26mm;border-radius:50%;overflow:hidden;background:#0E3A5C;}
 .mavatar img{width:100%;height:100%;object-fit:cover;}

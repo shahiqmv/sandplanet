@@ -139,3 +139,111 @@ def remove_gallery(img, actor):
     img.delete()
     audit("profile_entry", eid, "PROFILE_GALLERY_REMOVED", actor=actor)
     return None
+
+
+# ---- management, corporate info and settings -----------------------------
+# All three were literals in profile_render.py: adding a director or correcting
+# the headcount meant a code change and a deploy. Management and manpower move
+# far more often than the code does (owner 2026-08-19).
+
+def mgmt_dict(m):
+    return {"id": m.id, "name": m.name, "role": m.role, "intro": m.intro,
+            "photo_url": m.photo.url if m.photo else "",
+            "sort_order": m.sort_order, "is_active": m.is_active}
+
+
+def row_dict(r):
+    return {"id": r.id, "label": r.label, "value": r.value,
+            "sort_order": r.sort_order, "is_active": r.is_active}
+
+
+def settings_dict(st):
+    return {"cover_url": st.cover_image.url if st.cover_image else "",
+            "vision": st.vision, "mission": st.mission}
+
+
+def save_management(data, actor, person=None):
+    from .models import ProfileManagement
+
+    name = (data.get("name") or "").strip()
+    if not name:
+        return None, "A name is required."
+    if person is None:
+        order = (ProfileManagement.objects.count() + 1) * 10
+        person = ProfileManagement(sort_order=order)
+    person.name = name
+    person.role = (data.get("role") or "").strip()
+    person.intro = (data.get("intro") or "").strip()
+    if "is_active" in data:
+        person.is_active = bool(data["is_active"])
+    person.save()
+    audit("profile_mgmt", person.id, "PROFILE_MGMT_SAVED", actor=actor,
+          detail={"name": person.name})
+    return person, None
+
+
+def set_mgmt_photo(person, uploaded, actor):
+    """Square, like the placeholder circle it replaces — a portrait cropped to
+    anything else would sit oddly in the round frame."""
+    person.photo.save("m.jpg", _process(uploaded, 1, 1, 600), save=True)
+    audit("profile_mgmt", person.id, "PROFILE_MGMT_PHOTO", actor=actor)
+    return None
+
+
+def save_corporate_row(data, actor, row=None):
+    from .models import ProfileCorporateRow
+
+    label = (data.get("label") or "").strip()
+    if not label:
+        return None, "A label is required."
+    if row is None:
+        order = (ProfileCorporateRow.objects.count() + 1) * 10
+        row = ProfileCorporateRow(sort_order=order)
+    row.label = label
+    row.value = (data.get("value") or "").strip()
+    if "is_active" in data:
+        row.is_active = bool(data["is_active"])
+    row.save()
+    audit("profile_corporate", row.id, "PROFILE_CORPORATE_SAVED", actor=actor,
+          detail={"label": row.label})
+    return row, None
+
+
+def save_settings(data, actor):
+    from .models import ProfileSettings
+
+    st = ProfileSettings.get()
+    for f in ("vision", "mission"):
+        if f in data:
+            setattr(st, f, (data.get(f) or "").strip())
+    st.save()
+    audit("profile_settings", 1, "PROFILE_SETTINGS_SAVED", actor=actor)
+    return st, None
+
+
+def set_cover(uploaded, actor):
+    """The profile's cover photo. Portrait-ish 3:4 — it fills the top of the
+    cover above the title band."""
+    from .models import ProfileSettings
+
+    st = ProfileSettings.get()
+    st.cover_image.save("cover.jpg", _process(uploaded, 3, 4, 1600), save=True)
+    audit("profile_settings", 1, "PROFILE_COVER_SET", actor=actor)
+    return None
+
+
+def clear_cover(actor):
+    """Back to the old behaviour — the first ongoing project's photo."""
+    from .models import ProfileSettings
+
+    st = ProfileSettings.get()
+    st.cover_image.delete(save=True)
+    audit("profile_settings", 1, "PROFILE_COVER_CLEARED", actor=actor)
+    return None
+
+
+def reorder_generic(model, order_ids, actor, event):
+    for i, oid in enumerate([int(i) for i in order_ids], start=1):
+        model.objects.filter(pk=oid).update(sort_order=i * 10)
+    audit("profile", 0, event, actor=actor)
+    return None

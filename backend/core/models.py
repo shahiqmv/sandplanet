@@ -4449,6 +4449,71 @@ class ProfileReferee(models.Model):
         ordering = ["sort_order", "id"]
 
 
+def profile_mgmt_path(instance, filename):
+    return f"profile/mgmt/{instance.pk or 'new'}-{filename}"
+
+
+class ProfileManagement(models.Model):
+    """A person on the profile's "Key management personnel" page.
+
+    Was a hardcoded list of four in profile_render.py, so adding a director
+    meant a code change and a deploy (owner 2026-08-19). Management changes
+    more often than the code does.
+    """
+    name = models.CharField(max_length=120)
+    role = models.CharField(max_length=160, blank=True)
+    intro = models.TextField(blank=True)
+    photo = models.ImageField(upload_to=profile_mgmt_path, null=True,
+                              blank=True)
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.name} — {self.role}"
+
+
+class ProfileCorporateRow(models.Model):
+    """One line of the "company at a glance" table.
+
+    Also hardcoded, and it carries figures that move — total staff most of all
+    (owner 2026-08-19).
+    """
+    label = models.CharField(max_length=80)
+    value = models.TextField(blank=True)      # may contain <br> between lines
+    sort_order = models.IntegerField(default=0)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return self.label
+
+
+class ProfileSettings(models.Model):
+    """Single row (pk=1) — the profile's own settings.
+
+    The cover photo used to be whichever ongoing project happened to sort
+    first, so it changed whenever the project order did (owner 2026-08-19).
+    """
+    cover_image = models.ImageField(upload_to="profile/cover/", null=True,
+                                    blank=True)
+    vision = models.TextField(blank=True)
+    mission = models.TextField(blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name_plural = "profile settings"
+
+    @classmethod
+    def get(cls):
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+
 # ===== Meetings (client/site/BD meeting log + minutes + follow-up) =====
 
 

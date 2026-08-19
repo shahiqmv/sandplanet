@@ -210,3 +210,150 @@ def profile_gallery_delete(request, gid):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(status=204)
+
+
+# ---- management -----------------------------------------------------------
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def profile_management(request):
+    from .models import ProfileManagement
+    err = _guard(request)
+    if err:
+        return err
+    if request.method == "POST":
+        person, msg = pf.save_management(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(pf.mgmt_dict(person), status=201)
+    return Response([pf.mgmt_dict(m) for m in ProfileManagement.objects.all()])
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def profile_management_detail(request, pk):
+    from .models import ProfileManagement
+    err = _guard(request)
+    if err:
+        return err
+    person = ProfileManagement.objects.filter(pk=pk).first()
+    if person is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        person.delete()
+        return Response(status=204)
+    person, msg = pf.save_management(request.data, request.user, person)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(pf.mgmt_dict(person))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def profile_management_photo(request, pk):
+    from .models import ProfileManagement
+    err = _guard(request)
+    if err:
+        return err
+    person = ProfileManagement.objects.filter(pk=pk).first()
+    if person is None:
+        return Response({"detail": "Not found."}, status=404)
+    f = request.FILES.get("file") or request.FILES.get("photo")
+    if not f:
+        return Response({"detail": "No image supplied."}, status=400)
+    pf.set_mgmt_photo(person, f, request.user)
+    return Response(pf.mgmt_dict(person))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def profile_management_reorder(request):
+    from .models import ProfileManagement
+    err = _guard(request)
+    if err:
+        return err
+    pf.reorder_generic(ProfileManagement, request.data.get("order") or [],
+                       request.user, "PROFILE_MGMT_REORDERED")
+    return Response([pf.mgmt_dict(m) for m in ProfileManagement.objects.all()])
+
+
+# ---- corporate information -------------------------------------------------
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def profile_corporate(request):
+    from .models import ProfileCorporateRow
+    err = _guard(request)
+    if err:
+        return err
+    if request.method == "POST":
+        row, msg = pf.save_corporate_row(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(pf.row_dict(row), status=201)
+    return Response([pf.row_dict(r) for r in ProfileCorporateRow.objects.all()])
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsAuthenticated])
+def profile_corporate_detail(request, pk):
+    from .models import ProfileCorporateRow
+    err = _guard(request)
+    if err:
+        return err
+    row = ProfileCorporateRow.objects.filter(pk=pk).first()
+    if row is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        row.delete()
+        return Response(status=204)
+    row, msg = pf.save_corporate_row(request.data, request.user, row)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(pf.row_dict(row))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def profile_corporate_reorder(request):
+    from .models import ProfileCorporateRow
+    err = _guard(request)
+    if err:
+        return err
+    pf.reorder_generic(ProfileCorporateRow, request.data.get("order") or [],
+                       request.user, "PROFILE_CORPORATE_REORDERED")
+    return Response([pf.row_dict(r) for r in ProfileCorporateRow.objects.all()])
+
+
+# ---- settings: the cover photo, vision and mission -------------------------
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsAuthenticated])
+def profile_settings(request):
+    from .models import ProfileSettings
+    err = _guard(request)
+    if err:
+        return err
+    if request.method == "PATCH":
+        st, _ = pf.save_settings(request.data, request.user)
+        return Response(pf.settings_dict(st))
+    return Response(pf.settings_dict(ProfileSettings.get()))
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def profile_cover(request):
+    from .models import ProfileSettings
+    err = _guard(request)
+    if err:
+        return err
+    if request.method == "DELETE":
+        pf.clear_cover(request.user)
+        return Response(pf.settings_dict(ProfileSettings.get()))
+    f = request.FILES.get("file") or request.FILES.get("cover")
+    if not f:
+        return Response({"detail": "No image supplied."}, status=400)
+    pf.set_cover(f, request.user)
+    return Response(pf.settings_dict(ProfileSettings.get()))

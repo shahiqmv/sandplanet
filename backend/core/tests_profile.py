@@ -129,3 +129,122 @@ class ProfileEntryTests(TestCase):
             format="json").status_code, 400)
         self.assertEqual(self.client.delete(
             f"/api/v1/profile/entries/{e.id}").status_code, 400)
+
+
+class ProfileEditableContentTests(TestCase):
+    """Management, corporate info and the cover photo were hardcoded in the
+    renderer — a director or a headcount change meant editing code and
+    deploying (owner 2026-08-19). These assert the edit reaches the PDF, which
+    is the only thing that actually matters.
+    """
+
+    def setUp(self):
+        self.mkt = make_user("pf_mkt2", User.Role.MARKETING)
+        self.eng = make_user("pf_eng2", User.Role.SITE_ENGINEER)
+        self.client = APIClient()
+        self.client.force_authenticate(self.mkt)
+
+    def test_the_seed_reproduces_the_old_hardcoded_content(self):
+        """The PDF must not change the day this lands."""
+        from .models import ProfileCorporateRow, ProfileManagement
+        self.assertEqual(ProfileManagement.objects.count(), 4)
+        self.assertEqual(ProfileCorporateRow.objects.count(), 8)
+        names = list(ProfileManagement.objects.values_list("name", flat=True))
+        self.assertIn("Ahmed Shahiq", names)
+        self.assertIn("Waseem Ali", names)
+
+    def test_a_fifth_person_reaches_the_pdf(self):
+        from . import profile_render as pr
+        r = self.client.post("/api/v1/profile/management", {
+            "name": "Aishath Nasheed", "role": "Director, Finance",
+            "intro": "Leads the finance function."}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        html = pr.build_html()
+        self.assertIn("Aishath Nasheed", html)
+        self.assertIn("Director, Finance", html)
+
+    def test_hiding_a_person_takes_them_off_the_leadership_page(self):
+        """Scoped to the Management page on purpose: the same four names are
+        ALSO typed into the corporate table's "Senior management" row, so the
+        two lists are maintained separately."""
+        from . import profile_render as pr
+        from .models import ProfileManagement
+        p = ProfileManagement.objects.get(name="Waseem Ali")
+        self.assertIn("Waseem Ali", pr._management())
+        r = self.client.patch(f"/api/v1/profile/management/{p.id}", {
+            "name": p.name, "role": p.role, "intro": p.intro,
+            "is_active": False}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Waseem Ali", pr._management())
+
+    def test_the_leadership_page_and_the_corporate_row_are_separate_lists(self):
+        """Worth pinning: adding a director means editing BOTH, and nothing in
+        the code makes that obvious."""
+        from . import profile_render as pr
+        self.client.post("/api/v1/profile/management", {
+            "name": "Aishath Nasheed", "role": "Director, Finance"},
+            format="json")
+        self.assertIn("Aishath Nasheed", pr._management())
+        self.assertNotIn("Aishath Nasheed", pr._corporate())
+
+    def test_the_headcount_can_be_corrected(self):
+        from . import profile_render as pr
+        from .models import ProfileCorporateRow
+        row = ProfileCorporateRow.objects.get(label="Total staff")
+        self.assertIn("106 personnel", pr.build_html())
+        r = self.client.patch(f"/api/v1/profile/corporate/{row.id}",
+                              {"label": "Total staff",
+                               "value": "118 personnel"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        html = pr.build_html()
+        self.assertIn("118 personnel", html)
+        self.assertNotIn("106 personnel", html)
+
+    def test_vision_and_mission_are_editable(self):
+        from . import profile_render as pr
+        r = self.client.patch("/api/v1/profile/settings",
+                              {"vision": "A brand new vision statement.",
+                               "mission": "A brand new mission statement."},
+                              format="json")
+        self.assertEqual(r.status_code, 200)
+        html = pr.build_html()
+        self.assertIn("A brand new vision statement.", html)
+        self.assertIn("A brand new mission statement.", html)
+
+    def test_the_cover_photo_is_chosen_not_inherited(self):
+        """Without one it falls back to the first ongoing project — which is
+        the behaviour that made the cover change on reorder."""
+        from . import profile_render as pr
+        from .models import ProfileSettings
+        entry = self.client.post("/api/v1/profile/entries",
+                                 {"project_name": "Vakkaru"},
+                                 format="json").data
+        self.client.post(f"/api/v1/profile/entries/{entry['id']}/featured",
+                         {"file": _img(900, 900)}, format="multipart")
+        st = ProfileSettings.get()
+        self.assertFalse(bool(st.cover_image))       # falls back today
+        r = self.client.post("/api/v1/profile/cover",
+                             {"file": _img(1200, 1600, "cover.jpg")},
+                             format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["cover_url"])
+        st.refresh_from_db()
+        self.assertTrue(bool(st.cover_image))
+        # and it can be put back
+        d = self.client.delete("/api/v1/profile/cover")
+        self.assertEqual(d.status_code, 200)
+        self.assertEqual(d.data["cover_url"], "")
+
+    def test_the_logo_is_vector_so_compression_cannot_pixelate_it(self):
+        """The final PDF is Ghostscripted to 110dpi to stay emailable, which
+        downsampled the logo with the photographs (owner 2026-08-19)."""
+        from . import profile_render as pr
+        html = pr.build_html()
+        self.assertIn("data:image/svg+xml", html)
+        self.assertNotIn("data:image/png", html)
+
+    def test_a_site_role_cannot_edit_any_of_it(self):
+        self.client.force_authenticate(self.eng)
+        for path in ("/api/v1/profile/management", "/api/v1/profile/corporate",
+                     "/api/v1/profile/settings"):
+            self.assertEqual(self.client.get(path).status_code, 403, path)
