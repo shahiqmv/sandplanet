@@ -513,6 +513,13 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {run.approved_by && <span style={{ color: "var(--muted)" }}>
             {" "}· approved by {run.approved_by}</span>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {/* One page per worker, cut to length — the point of putting slips
+              on a receipt printer is doing a whole run at once. */}
+          <a href={`/api/v1/payroll/runs/${runId}/slips-thermal.pdf`}
+             target="_blank" rel="noreferrer"
+             title="Every worker's slip, 80mm thermal, one per cut"
+             style={{ ...ghostButton, textDecoration: "none" }}>
+            🖨️ Slips (thermal)</a>
           <a href={`/api/v1/payroll/runs/${runId}/report.pdf`} target="_blank"
              rel="noreferrer" style={{ ...ghostButton, textDecoration: "none" }}>
             📄 Report PDF</a>
@@ -660,8 +667,12 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
       {cell("amount_to_site", 75)}{cell("amount_to_office", 75)}
       <td style={{ ...td, whiteSpace: "nowrap" }}>
         <a href={`/api/v1/payroll/lines/${line.id}/payslip.pdf`}
-           target="_blank" rel="noreferrer" title="Salary slip"
+           target="_blank" rel="noreferrer" title="Salary slip (A5)"
            style={{ textDecoration: "none" }}>🧾</a>
+        <a href={`/api/v1/payroll/lines/${line.id}/slip-thermal.pdf`}
+           target="_blank" rel="noreferrer"
+           title="Salary slip — 80mm thermal receipt"
+           style={{ textDecoration: "none", marginLeft: 4 }}>🖨️</a>
         {/* The rest day is unmarked in attendance and paid as part of the
             month. The site PM knows who was absent through the week and
             plainly did not earn it (owner 2026-08-13). */}

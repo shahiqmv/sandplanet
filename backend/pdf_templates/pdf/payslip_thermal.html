@@ -1,0 +1,137 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* 80mm roll = 72mm printable. The page is rendered tall and then CROPPED to
+     the slip's real length (core/thermal.py), so the autocut fires at the end
+     of the text instead of feeding a fixed page of blank paper.
+
+     Thermal heads print ONE colour by burning the paper: no greys, no fills,
+     no reversed text — a shaded box comes out as a solid black smear and eats
+     head life. Rules and weight carry the structure instead. */
+  @page { size: 72mm {{ page_height }}mm; margin: 0; }
+  body { margin: 0; padding: 3mm 3.5mm 0;
+         font-family: "DejaVu Sans", Arial, sans-serif;
+         font-size: 8.2pt; line-height: 1.32; color: #000; }
+
+  .c { text-align: center; }
+  .co { font-size: 10pt; font-weight: 700; letter-spacing: .2px; }
+  .doc { font-size: 9pt; font-weight: 700; margin-top: 1mm; }
+  .sub { font-size: 8pt; }
+
+  /* A dashed rule reads as a tear line and survives a worn head better than
+     a hairline. */
+  .sep { border-top: 1px dashed #000; margin: 1.6mm 0; }
+  .sep.solid { border-top: 1px solid #000; }
+
+  .r { display: flex; justify-content: space-between; align-items: baseline;
+       gap: 2mm; }
+  .r .l { flex: 1; }
+  /* Tabular figures so the decimal points line up down the column. */
+  .r .v { font-family: "DejaVu Sans Mono", "Courier New", monospace;
+          font-size: 8pt; white-space: nowrap; }
+  .h { font-weight: 700; font-size: 8pt; margin: 1.2mm 0 .6mm; }
+  .tot { font-weight: 700; }
+  .net { font-size: 11pt; font-weight: 700; margin: .8mm 0; }
+  .net .v { font-size: 11pt; font-weight: 700; }
+  .sm { font-size: 7pt; }
+  .note { font-size: 7pt; margin-top: .6mm; }
+  .sig { margin-top: 4mm; }
+  .sigline { border-bottom: 1px solid #000; height: 6mm; }
+  .foot { margin-top: 2.5mm; font-size: 6.6pt; text-align: center; }
+  /* Feed past the cutter so the last line clears the blade. */
+  .feed { height: 10mm; }
+</style>
+</head>
+<body>
+
+<div class="c">
+  <div class="co">{{ co.legal_name|default:"SAND PLANET" }}</div>
+  <div class="doc">SALARY SLIP</div>
+  <div class="sub">{{ period }}</div>
+</div>
+
+<div class="sep"></div>
+
+<div class="r"><span class="l">{{ line.employee.emp_no }}</span>
+               <span class="v">{{ i.site_code }}</span></div>
+<div style="font-weight:700">{{ line.employee.full_name }}</div>
+<div class="sm">{{ i.job_title }}{% if line.employee.nationality %}
+  · {{ line.employee.nationality }}{% endif %}</div>
+
+<div class="sep"></div>
+
+<div class="h">EARNINGS</div>
+<div class="r"><span class="l">Basic salary (monthly)</span>
+               <span class="v">{{ i.f_basic_pay }}</span></div>
+<div class="r"><span class="l">Days {{ i.days_worked|floatformat:"-1" }}/{{ run.working_days }}
+  @ {{ i.f_daily_rate }}</span>
+               <span class="v">{{ i.f_earned_basic }}</span></div>
+{% if line.fridays_worked %}
+<div class="r"><span class="l">Friday {{ line.fridays_worked|floatformat:"-1" }}d
+  × {{ friday_ot_hours }}h</span>
+               <span class="v">{{ i.f_friday_pay }}</span></div>
+{% endif %}
+{% if line.ot_hours %}
+<div class="r"><span class="l">Overtime {{ line.ot_hours|floatformat:"-1" }}h
+  × {{ line.ot_rate|floatformat:"-2" }}</span>
+               <span class="v">{{ i.f_ot_pay }}</span></div>
+{% endif %}
+{% if line.allowance %}
+<div class="r"><span class="l">Allowance</span>
+               <span class="v">{{ i.f_allowance }}</span></div>
+{% endif %}
+<div class="sep"></div>
+<div class="r tot"><span class="l">Gross pay</span>
+                   <span class="v">{{ i.f_gross }}</span></div>
+
+{% if line.advance or line.loan or line.penalty %}
+<div class="h">DEDUCTIONS</div>
+{% if line.advance %}
+<div class="r"><span class="l">Salary advance</span>
+               <span class="v">{{ i.f_advance }}</span></div>
+{% endif %}
+{% if line.loan %}
+<div class="r"><span class="l">Loan installment</span>
+               <span class="v">{{ i.f_loan }}</span></div>
+{% endif %}
+{% if line.penalty %}
+<div class="r"><span class="l">Penalty</span>
+               <span class="v">{{ i.f_penalty }}</span></div>
+{% endif %}
+<div class="sep"></div>
+<div class="r tot"><span class="l">Total deductions</span>
+                   <span class="v">{{ i.f_deductions }}</span></div>
+{% endif %}
+
+<div class="sep solid"></div>
+<div class="r net"><span class="l">NET PAY {{ currency }}</span>
+                   <span class="v">{{ i.f_net }}</span></div>
+<div class="sep solid"></div>
+
+{% if line.amount_to_site or line.amount_to_office %}
+<div class="h">PAID</div>
+{% if line.amount_to_site %}
+<div class="r"><span class="l">At site</span>
+               <span class="v">{{ i.f_amount_to_site }}</span></div>
+{% endif %}
+{% if line.amount_to_office %}
+<div class="r"><span class="l">At office</span>
+               <span class="v">{{ i.f_amount_to_office }}</span></div>
+{% endif %}
+{% endif %}
+
+<div class="sig">
+  <div class="sigline"></div>
+  <div class="sm c">Employee signature</div>
+</div>
+
+<div class="foot">
+  {{ run_ref }} · printed {{ printed_at }}<br>
+  This slip is computer generated.
+</div>
+<div class="feed"></div>
+
+</body>
+</html>

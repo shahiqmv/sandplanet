@@ -2074,3 +2074,99 @@ class AuthorisedAdvanceIsRecoveredTests(TestCase):
         self.assertEqual(line.advance, Decimal("1000"))
         m = payroll.compute_line(line)
         self.assertEqual(m["gross"] - m["net"], Decimal("1000"))
+
+
+class ThermalSlipTests(PayrollRunTests):
+    """80mm receipt slips for an autocut printer (owner 2026-08-18).
+
+    A thermal printer feeds and cuts at the END OF THE PAGE, so a fixed page
+    height would trail blank roll off every slip, for every worker, on every
+    run. Each slip is therefore rendered tall and cropped to what was actually
+    drawn — these tests pin the width, the fit, and the one-page-per-worker rule
+    the autocut depends on.
+    """
+
+    def _run(self):
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"site_id": self.site.id, "year": 2026,
+                              "month": 5, "currency": "MVR"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    @staticmethod
+    def _pages(pdf_bytes):
+        import fitz
+        d = fitz.open("pdf", pdf_bytes)
+        out = [(p.cropbox.width, p.cropbox.height, p.mediabox.height)
+               for p in d]
+        d.close()
+        return out
+
+    def test_one_worker_slip_is_receipt_width_and_cut_to_fit(self):
+        from core import thermal
+        run = self._run()
+        line_id = run["lines"][0]["id"]
+        r = self.client.get(
+            f"/api/v1/payroll/lines/{line_id}/slip-thermal.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        pages = self._pages(b"".join(r.streaming_content)
+                            if r.streaming else r.content)
+        self.assertEqual(len(pages), 1)
+        w, h, rendered = pages[0]
+        self.assertAlmostEqual(w / thermal.MM, 72, delta=0.5)   # 80mm roll
+        # cropped well down from the render height, and not absurdly short
+        self.assertLess(h, rendered / 2)
+        self.assertGreater(h / thermal.MM, thermal.MIN_H_MM - 1)
+
+    def test_a_whole_run_is_one_page_per_worker(self):
+        """What makes the autocut usable: the slips come off separated."""
+        from datetime import date
+        from .models import Employee, EmployeeSiteAllocation
+        second = Employee.objects.create(
+            emp_no="EMP-0002", full_name="Nuwan", job_category=self.mason,
+            basic_pay=Decimal("5000"), currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=second, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        self._mark_month(2026, 5, emp=second)
+        run = self._run()
+        r = self.client.get(
+            f"/api/v1/payroll/runs/{run['id']}/slips-thermal.pdf")
+        self.assertEqual(r.status_code, 200)
+        pages = self._pages(r.content)
+        self.assertEqual(len(pages), 2)
+        for w, _h, _r in pages:
+            self.assertAlmostEqual(w / 2.834645, 72, delta=0.5)
+
+    def test_a_longer_slip_gets_a_longer_cut(self):
+        """The crop must track content, or it is just a fixed page again."""
+        run = self._run()
+        line_id = run["lines"][0]["id"]
+        short = self._pages(self.client.get(
+            f"/api/v1/payroll/lines/{line_id}/slip-thermal.pdf").content)[0][1]
+        self.client.patch(f"/api/v1/payroll/lines/{line_id}",
+                          {"advance": "500", "loan": "250", "penalty": "100",
+                           "amount_to_site": "1000"}, format="json")
+        long_ = self._pages(self.client.get(
+            f"/api/v1/payroll/lines/{line_id}/slip-thermal.pdf").content)[0][1]
+        self.assertGreater(long_, short)
+
+    def test_an_excluded_worker_is_not_slipped(self):
+        """A leaver settled in cash is off the payout — and off the roll."""
+        run = self._run()
+        line_id = run["lines"][0]["id"]
+        self.client.post(f"/api/v1/payroll/lines/{line_id}/exclude",
+                         {"excluded": True, "reason": "settled in cash"},
+                         format="json")
+        r = self.client.get(
+            f"/api/v1/payroll/runs/{run['id']}/slips-thermal.pdf")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("No payable lines", r.data["detail"])
+
+    def test_the_a5_slip_still_works(self):
+        """Thermal is a second format, not a replacement (owner 2026-08-18)."""
+        run = self._run()
+        r = self.client.get(
+            f"/api/v1/payroll/lines/{run['lines'][0]['id']}/payslip.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")

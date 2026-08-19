@@ -1,13 +1,17 @@
 """Monthly payroll runs (owner's salary sheet). MVR runs are per site; the USD
 run is a single combined run across all sites. HO HR / Finance / Admin only."""
+import logging
 from decimal import Decimal
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import payroll
+from . import thermal
 from .audit import audit
 from .models import PayrollLine, PayrollRun, Site
+
+log = logging.getLogger(__name__)
 
 ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # PA = full HR (owner 2026-08-03)
 # Who may LOOK at payroll without running it: the signatory authorises the PYR
@@ -455,6 +459,96 @@ def payroll_report_pdf(request, pk):
                                f"{run.month:02d}.pdf")
 
 
+def _slip_context(line, register=None):
+    """Everything a salary slip needs, in either format. `register` is passed in
+    when slipping a whole run so the summary is computed once, not per worker."""
+    from django.utils import timezone
+
+    from .pdf import company_info, logo_src
+    from .payroll import friday_ot_hours
+
+    info = _line_info(line, register if register is not None
+                      else payroll.register_summary(line.run))
+    for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
+              "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
+              "deductions", "net", "amount_to_site", "amount_to_office"):
+        info["f_" + k] = _money(info[k] or 0) if info.get(k) not in (None, "") \
+            else "0.00"
+    run = line.run
+    return {
+        "line": line, "run": run, "i": info, "currency": run.currency,
+        "period": f"{_month_name(run.month)} {run.year}",
+        "friday_ot_hours": friday_ot_hours().normalize(),
+        "logo_src": logo_src(), "co": company_info(),
+        "run_ref": (f"{run.site.code if run.site_id else 'USD'} "
+                    f"{run.year}-{run.month:02d}"),
+        "printed_at": timezone.localtime().strftime("%d %b %Y %H:%M"),
+        "page_height": thermal.RENDER_H_MM,
+    }
+
+
+def _thermal_response(lines, filename):
+    """Receipt-width slips, one page each so the autocut separates them."""
+    from django.http import HttpResponse
+    from django.template.loader import render_to_string
+    from rest_framework.response import Response as R
+
+    if not lines:
+        return R({"detail": "No payable lines on this run."}, status=400)
+    register = payroll.register_summary(lines[0].run)
+    htmls = [render_to_string("pdf/payslip_thermal.html",
+                              _slip_context(ln, register)) for ln in lines]
+    try:
+        pdf = thermal.render_slips(htmls)
+    except Exception:
+        log.exception("thermal slip render failed")
+        return R({"detail": "PDF engine unavailable on this server."},
+                 status=503)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{filename}"'
+    return resp
+
+
+@api_view(["GET"])
+def payslip_thermal_pdf(request, pk):
+    """One worker's slip at 80mm receipt width."""
+    if not _read(request):
+        return Response({"detail": "HO HR / Finance / Admin only."}, status=403)
+    try:
+        line = PayrollLine.objects.select_related(
+            "run__site", "employee__job_category", "site").get(pk=pk)
+    except PayrollLine.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, line.run):
+        return Response({"detail": "Not your site\'s payroll."}, status=403)
+    return _thermal_response(
+        [line], f"slip-{line.employee.emp_no}-"
+                f"{line.run.year}-{line.run.month:02d}.pdf")
+
+
+@api_view(["GET"])
+def run_slips_thermal_pdf(request, pk):
+    """Every payable worker on a run, one slip per page.
+
+    Printing a run one worker at a time is not a workflow — this is the whole
+    point of putting slips on a receipt printer (owner 2026-08-18). Excluded
+    lines are left out: they are the leavers already settled in cash.
+    """
+    try:
+        run = PayrollRun.objects.select_related("site").get(pk=pk)
+    except PayrollRun.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _can_see_run(request, run):
+        return Response({"detail": "Not permitted."}, status=403)
+    lines = list(run.lines.select_related("employee__job_category", "site",
+                                          "run__site")
+                 .filter(excluded=False)
+                 .order_by("employee__emp_no"))
+    site = run.site.code if run.site_id else "USD"
+    return _thermal_response(
+        lines, f"slips-{site}-{run.year}-{run.month:02d}.pdf")
+
+
 @api_view(["GET"])
 def payslip_pdf(request, pk):
     """One worker's salary slip for a run. HR / Finance / Admin."""
@@ -467,21 +561,8 @@ def payslip_pdf(request, pk):
         return Response({"detail": "Not found."}, status=404)
     from django.template.loader import render_to_string
 
-    from .pdf import company_info, logo_src
-
-    info = _line_info(line, payroll.register_summary(line.run))
-    for k in ("basic_pay", "daily_rate", "earned_basic", "friday_pay",
-              "ot_pay", "allowance", "gross", "advance", "penalty", "loan",
-              "deductions", "net", "amount_to_site", "amount_to_office"):
-        info["f_" + k] = _money(info[k] or 0) if info.get(k) not in (None, "") \
-            else "0.00"
-    from .payroll import friday_ot_hours
-    html = render_to_string("pdf/payslip.html", {
-        "line": line, "run": line.run, "i": info, "currency": line.run.currency,
-        "period": f"{_month_name(line.run.month)} {line.run.year}",
-        "friday_ot_hours": friday_ot_hours().normalize(),
-        "logo_src": logo_src(), "co": company_info(),
-    })
+    html = render_to_string("pdf/payslip.html",
+                            _slip_context(line, register=None))
     return _pdf_response(html, f"payslip-{line.employee.emp_no}-"
                                f"{line.run.year}-{line.run.month:02d}.pdf")
 

@@ -582,6 +582,11 @@ urlpatterns = [
          payroll_api.payroll_line_exclude, name="payroll-line-exclude"),
     path("payroll/lines/<int:pk>/payslip.pdf", payroll_api.payslip_pdf,
          name="payroll-payslip-pdf"),
+    # 80mm thermal receipt slips — one worker, or a whole run one page each
+    path("payroll/lines/<int:pk>/slip-thermal.pdf",
+         payroll_api.payslip_thermal_pdf, name="payroll-payslip-thermal"),
+    path("payroll/runs/<int:pk>/slips-thermal.pdf",
+         payroll_api.run_slips_thermal_pdf, name="payroll-run-slips-thermal"),
     # Amending an issued purchase order (owner 2026-08-13)
     path("documents/<str:ref>/amend", docs.po_amend, name="po-amend"),
     path("documents/<str:ref>/amend-decision", docs.po_amend_decision,
