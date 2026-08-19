@@ -16,10 +16,17 @@ No administrator rights needed. Nothing is changed for other users of the PC.
 ## Print a payroll run
 
 1. Open the payroll run in Sand Planet.
-2. Click **Print slips (thermal)** — a `.escpos` file downloads.
-3. Open the downloaded file (click it in the browser's downloads bar).
+2. Click **Print slips (thermal)** — a file downloads. **Ignore it.**
+3. Double-click **Print salary slips** on the Desktop.
 
 The slips print, one per worker, cut between each.
+
+You do not need to find or open the downloaded file, and you should not be
+asked to choose an app to open it with. The Desktop icon finds the newest slip
+file on its own — in Downloads, on the Desktop, or in OneDrive Downloads.
+
+If you have downloaded several and want an **older** one, drag that file onto
+the Desktop icon instead.
 
 **Slips preview** next to it gives the same slips as a PDF — for checking on
 screen or keeping on file. Don't try to print the PDF on the thermal printer; it
@@ -34,7 +41,8 @@ To reprint one worker, click the 🖨️ on their row.
 |---|---|
 | "The printer did not answer" | Printer off, or on a different WiFi. Check it, then retry. |
 | "Does not look like a slip file" | You opened the PDF instead of the `.escpos` file. |
-| The download opens in Notepad | Setup did not finish — run `Install-SlipPrinter.ps1` again. |
+| "No slip file found" | Click **Print slips (thermal)** in Sand Planet first. |
+| Windows asks which app to open the file with | You double-clicked the download. Use the **Print salary slips** Desktop icon instead — you never need to open that file. |
 | Nothing at all, no message | The printer may be in STAR mode. Open `http://<printer-ip>/` in a browser, set emulation to ESC/POS, and power the printer off and on. |
 
 **The printer's address changed?** Run `Install-SlipPrinter.ps1` again and enter
@@ -51,8 +59,12 @@ nothing installed.
 - `Install-SlipPrinter.ps1` — writes `%LOCALAPPDATA%\SandPlanet\printer.json`,
   copies the sender there, associates `.escpos` (HKCU only), adds a Start Menu
   entry.
-- `Print-Slips.ps1` — the sender. Reads the IP from `printer.json` unless
-  `-Printer` is given. Refuses a file that does not begin `ESC @`, so a PDF
-  cannot be sent by mistake.
+- `Print-Slips.ps1` — the sender. **With no argument it finds the newest
+  `.escpos` in Downloads / Desktop / OneDrive Downloads**, which is what the
+  Desktop shortcut relies on: the first version of this depended on a Windows
+  file association, which Windows frequently ignores, and HR was left facing an
+  "open with" dialog. Reads the IP from `printer.json` unless `-Printer` is
+  given. Refuses any file that does not begin `ESC @`, so the PDF cannot be sent
+  by mistake.
 - Endpoints: `GET /api/v1/payroll/runs/<id>/slips.escpos` and
   `GET /api/v1/payroll/lines/<id>/slip.escpos`.

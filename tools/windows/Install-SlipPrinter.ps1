@@ -10,8 +10,11 @@
       * asks for the printer's IP and actually tests port 9100, so a wrong
         address is caught here rather than on payroll day;
       * stores the address in one file, so a printer that moves is one edit;
-      * associates .escpos files with Print-Slips.ps1, so printing a run is
-        "click Print slips in the app, then open the download";
+      * puts a "Print salary slips" icon on the Desktop — that is the whole
+        interface: click it and the newest downloaded slip file prints;
+      * also associates .escpos as a convenience, but nothing DEPENDS on that:
+        Windows often ignores programmatic associations, and the first attempt
+        at this left HR staring at an "open with" dialog (owner 2026-08-19);
       * offers a test print.
 
     The printer speaks raw ESC/POS on port 9100 and has no PDF interpreter, so
@@ -94,22 +97,32 @@ Set-ItemProperty -Path "$cls\SandPlanet.Slips" -Name '(default)' `
 Set-ItemProperty -Path "$cls\SandPlanet.Slips\shell\open\command" `
                  -Name '(default)' -Value "`"$launchPath`" `"%1`""
 
-$startMenu = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
-$sc = (New-Object -ComObject WScript.Shell).CreateShortcut(
-        (Join-Path $startMenu 'Print salary slips.lnk'))
-$sc.TargetPath = $launchPath
-$sc.WorkingDirectory = $appDir
-$sc.Description = 'Send a downloaded .escpos slip file to the thermal printer'
-$sc.Save()
+# The Desktop icon IS the interface. Print-Slips.ps1 with no argument finds the
+# newest downloaded slip file itself, so there is nothing to locate and no
+# "open with" prompt to get wrong.
+$shell = New-Object -ComObject WScript.Shell
+foreach ($dir in @([Environment]::GetFolderPath('Desktop'),
+                   (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'))) {
+    if (-not (Test-Path $dir)) { continue }
+    $sc = $shell.CreateShortcut((Join-Path $dir 'Print salary slips.lnk'))
+    $sc.TargetPath = $launchPath
+    $sc.WorkingDirectory = $appDir
+    $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,16"   # printer
+    $sc.Description = 'Print the salary slips you downloaded from Sand Planet'
+    $sc.Save()
+}
 
 Head 'Done'
 Say "Printer   $Printer`:$Port"
 Say "Settings  $configPath"
 Say ''
 Say 'To print a payroll run:' 'White'
-Say '  1. Open the payroll run in Sand Planet'
-Say '  2. Click "Print slips (thermal)" — a .escpos file downloads'
-Say '  3. Open the downloaded file. The slips print and cut.'
+Say '  1. In Sand Planet, open the payroll run'
+Say '  2. Click "Print slips (thermal)" — a file downloads'
+Say '  3. Double-click "Print salary slips" on the Desktop'
+Say ''
+Say 'There is no need to find or open the downloaded file. The Desktop' 'White'
+Say 'icon picks up the newest one by itself.' 'White'
 Say ''
 
 # ---- 5. offer to prove the whole path --------------------------------------
