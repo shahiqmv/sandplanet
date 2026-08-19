@@ -2113,10 +2113,13 @@ class ThermalSlipTests(PayrollRunTests):
         pages = self._pages(b"".join(r.streaming_content)
                             if r.streaming else r.content)
         self.assertEqual(len(pages), 1)
-        w, h, rendered = pages[0]
+        w, h, _rendered = pages[0]
         self.assertAlmostEqual(w / thermal.MM, 72, delta=0.5)   # 80mm roll
-        # cropped well down from the render height, and not absurdly short
-        self.assertLess(h, rendered / 2)
+        # Cut to the slip's own length: far shorter than the tall page it is
+        # rendered onto, and not absurdly short. (The page is flattened to an
+        # image afterwards, so its mediabox IS the trimmed size — comparing the
+        # two boxes no longer tells us anything.)
+        self.assertLess(h / thermal.MM, thermal.RENDER_H_MM / 2)
         self.assertGreater(h / thermal.MM, thermal.MIN_H_MM - 1)
 
     def test_a_whole_run_is_one_page_per_worker(self):
