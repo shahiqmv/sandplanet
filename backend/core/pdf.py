@@ -398,6 +398,37 @@ def _shrink_images(doc):
                 continue
 
 
+# Above this, the thorough compression pass is not attempted. It is a structural
+# sanitiser whose cost scales with how complex the content is, not how big the
+# file is, and it has no time limit: on MAR-STN-022 — a 56-page vector-heavy
+# enclosure — it took 455 SECONDS against a 120-second worker timeout. The
+# worker was killed mid-write, so the document was marked ISSUED with no PDF at
+# all and nobody was told (owner 2026-08-20).
+_CLEAN_MAX_BYTES = 3 * 1024 * 1024
+
+
+def _compress_merged(doc):
+    """Compress the merged submittal, spending time only where it pays.
+
+    The cheap pass took 3.8s and produced 14.0MB; the thorough one took 455s
+    for 9.9MB. Four megabytes is not worth a document that never exists, so the
+    thorough pass runs only on files small enough for it to finish quickly.
+    `_shrink_images` above is the real size lever anyway, and that costs 3s.
+    """
+    cheap = doc.tobytes(garbage=1, deflate=True, deflate_images=True,
+                        deflate_fonts=True)
+    if len(cheap) > _CLEAN_MAX_BYTES:
+        logger.info("submittal PDF %.1fMB — skipping the deep clean pass",
+                    len(cheap) / 1048576)
+        return cheap
+    try:
+        return doc.tobytes(garbage=4, deflate=True, deflate_images=True,
+                           deflate_fonts=True, clean=True)
+    except Exception:                            # pragma: no cover - defensive
+        logger.exception("deep clean failed; keeping the cheap compression")
+        return cheap
+
+
 def compile_enclosures(document, pdf_bytes):
     """Append a submittal's uploaded enclosure files after the form pages — each
     behind a labelled divider — then compress the result (oversized images are
@@ -443,8 +474,7 @@ def compile_enclosures(document, pdf_bytes):
                 out.insert_pdf(note)
                 note.close()
         _shrink_images(out)                                    # downsample images
-        merged = out.tobytes(garbage=4, deflate=True, deflate_images=True,
-                             deflate_fonts=True, clean=True)   # compress
+        merged = _compress_merged(out)
         out.close()
         return merged
     except Exception:

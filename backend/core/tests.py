@@ -246,3 +246,66 @@ class SitesSummaryTests(TestCase):
 
     def test_a_closed_site_is_left_off(self):
         self.assertNotIn("SHU", self._rows())
+
+
+class SubmittalCompressionTests(TestCase):
+    """Compiling a MAR's enclosures must finish inside a request.
+
+    MAR-STN-022 carried a 56-page vector-heavy enclosure. The thorough
+    compression pass took 455 SECONDS against a 120-second worker timeout, so
+    the worker was killed mid-write: the document was marked ISSUED with no PDF
+    and nothing reported it (owner 2026-08-20). The cheap pass took 3.8s for
+    4MB more — a trade worth making every time.
+    """
+
+    def test_a_large_merge_skips_the_slow_pass(self):
+        import fitz
+
+        from core import pdf as pdf_mod
+
+        class FakeDoc:
+            """Reports a size over the threshold on the cheap call, and records
+            whether the expensive one was attempted."""
+            def __init__(self):
+                self.clean_attempted = False
+
+            def tobytes(self, **kw):
+                if kw.get("clean"):
+                    self.clean_attempted = True
+                    return b"%PDF-clean"
+                return b"x" * (pdf_mod._CLEAN_MAX_BYTES + 1)
+
+        doc = FakeDoc()
+        out = pdf_mod._compress_merged(doc)
+        self.assertFalse(doc.clean_attempted,
+                         "the 455-second pass must not run on a big merge")
+        self.assertEqual(len(out), pdf_mod._CLEAN_MAX_BYTES + 1)
+
+    def test_a_small_merge_still_gets_the_thorough_pass(self):
+        from core import pdf as pdf_mod
+
+        class FakeDoc:
+            def __init__(self):
+                self.clean_attempted = False
+
+            def tobytes(self, **kw):
+                if kw.get("clean"):
+                    self.clean_attempted = True
+                    return b"%PDF-small-clean"
+                return b"x" * 1024
+
+        doc = FakeDoc()
+        out = pdf_mod._compress_merged(doc)
+        self.assertTrue(doc.clean_attempted)
+        self.assertEqual(out, b"%PDF-small-clean")
+
+    def test_a_failing_clean_falls_back_rather_than_losing_the_pdf(self):
+        from core import pdf as pdf_mod
+
+        class FakeDoc:
+            def tobytes(self, **kw):
+                if kw.get("clean"):
+                    raise RuntimeError("mupdf said no")
+                return b"cheap-but-real"
+
+        self.assertEqual(pdf_mod._compress_merged(FakeDoc()), b"cheap-but-real")
