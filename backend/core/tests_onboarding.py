@@ -1920,3 +1920,71 @@ class ConversionPendingLabelTests(TestCase):
         row = self.ob.case_dict(case)
         self.assertEqual(row["pending_label"], "Work-permit conversion")
         self.assertIn("not started", row["pending_note"])
+
+
+class IM30GenerationTests(TestCase):
+    """The Maldives Immigration IM30 form could never be generated.
+
+    `OnboardingLetter.kind` was CharField(max_length=3) — sized for LOA / SPL /
+    AC / EA — and "IM30" is four characters, so every attempt died on save with
+    "value too long for type character varying(3)" (owner 2026-08-20). Postgres
+    refuses it; SQLite would not, which is why no test caught it.
+    """
+
+    def setUp(self):
+        from datetime import date
+
+        from django.utils import timezone
+        from .models import Document, OnboardingCase, Site, User
+        from .tests import make_user
+        from . import onboarding as ob
+        self.ob = ob
+        self.hr = make_user("im_hr", User.Role.HO_HR)
+        site = Site.objects.create(code="IMM", name="Immigration Isle",
+                                   status=Site.Status.ACTIVE)
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-IMM-001", site=site,
+            doc_date=date(2026, 8, 1), status="IN_PROGRESS",
+            created_by=self.hr)
+        self.case = OnboardingCase.objects.create(
+            document=doc, full_name="Test Candidate",
+            nationality="Sri Lankan", route="WP", stage="WP_APPLICATION",
+            passport_no="N1234567", gender="Male", marital_status="Single",
+            date_of_birth=date(1990, 1, 1),
+            signatory_approved_at=timezone.now())
+
+    def test_the_kind_field_is_wide_enough_for_im30(self):
+        """The whole bug in one assertion."""
+        from .models import OnboardingLetter
+        field = OnboardingLetter._meta.get_field("kind")
+        self.assertGreaterEqual(field.max_length, len("IM30"))
+
+    def test_im30_generates_and_is_saved(self):
+        self.assertTrue(self.ob.letter_available(self.case, "IM30"))
+        fields = self.ob.letter_defaults(self.case, "IM30")
+        letter, msg = self.ob.generate_letter(self.case, "IM30", fields,
+                                              self.hr)
+        self.assertIsNone(msg)
+        self.assertIsNotNone(letter)
+        self.assertEqual(letter.kind, "IM30")
+        self.assertTrue(letter.ref.startswith("IM30-"))
+
+    def test_the_form_carries_the_candidate_details(self):
+        import fitz
+        fields = self.ob.letter_defaults(self.case, "IM30")
+        letter, _ = self.ob.generate_letter(self.case, "IM30", fields, self.hr)
+        with letter.attachment.file.open("rb") as f:
+            doc = fitz.open("pdf", f.read())
+        text = doc[0].get_text().upper()   # the form is filled in capitals
+        doc.close()
+        for probe in ("TEST CANDIDATE", "N1234567", "SRI LANKAN",
+                      "EMPLOYMENT", "VELANA"):
+            self.assertIn(probe, text, probe)
+
+    def test_every_letter_kind_fits_the_column(self):
+        """Guards the next one added, not just IM30."""
+        from .models import OnboardingLetter
+        from . import onboarding as ob
+        width = OnboardingLetter._meta.get_field("kind").max_length
+        for kind in ob.LETTER_META:
+            self.assertLessEqual(len(kind), width, kind)

@@ -2352,7 +2352,11 @@ class OnboardingLetter(models.Model):
 
     case = models.ForeignKey(OnboardingCase, on_delete=models.CASCADE,
                              related_name="letters")
-    kind = models.CharField(max_length=3)         # LOA | SPL | AC
+    # 3 was enough for LOA/SPL/AC/EA and then IM30 was added at four
+    # characters, so every IM30 failed on save with "value too long for type
+    # character varying(3)" — the form could never be generated at all (owner
+    # 2026-08-20). Room now for a longer kind without another migration.
+    kind = models.CharField(max_length=12)        # LOA | SPL | AC | EA | IM30
     ref = models.CharField(max_length=20)         # global sequence, e.g. LOA-001
     attachment = models.ForeignKey(Attachment, on_delete=models.SET_NULL,
                                    null=True, blank=True, related_name="+")
