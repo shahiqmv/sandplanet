@@ -509,6 +509,24 @@ def sequence(case):
     return list(_BV) + list(_BV_CONVERSION)   # recruitment BV converts to WP
 
 
+def past_bv_approval(case):
+    """Has this case's business visa been approved yet?
+
+    Taken from the case's OWN sequence rather than a fixed list of stages. The
+    first version hardcoded the BV stages, which quietly excluded every
+    recruitment case that had arrived and moved on to the work-permit
+    conversion — the men in the country on a running visa, racing to convert
+    before it lapses, i.e. exactly the ones whose dates matter most (owner
+    2026-08-21).
+    """
+    if case.route != "BV":
+        return False
+    seq = sequence(case)
+    if "BV_APPROVED" not in seq or case.stage not in seq:
+        return False
+    return seq.index(case.stage) >= seq.index("BV_APPROVED")
+
+
 def set_hold(case, reason, actor):
     """Stop a case until something outside the process is resolved.
 
@@ -782,7 +800,7 @@ def set_stage_data(case, data, actor):
     # without walking the case backwards (owner 2026-08-21).
     if ("bv_expiry" in data or "bv_approved_date" in data) and case.route == "BV":
         from datetime import date
-        if case.stage not in _BV_POST_APPROVAL:
+        if not past_bv_approval(case):
             return "The visa has not been approved yet."
         appd, exp = case.bv_approved_date, case.bv_expiry
         if data.get("bv_approved_date"):
@@ -1874,12 +1892,6 @@ def run_clocks(today=None):
 
 # ---- business-visa register (owner 2026-08-09) ---------------------------
 
-# Stages a BV case can only be at once the visa has been approved — so an
-# empty expiry on one of these is a gap in the register, not a case too early
-# to have a visa.
-_BV_POST_APPROVAL = ("BV_APPROVED", "BV_VISA_FEE", "BV_TICKET", "BV_ARRIVED")
-
-
 def bv_register():
     """Every business-visa person on one schedule, so HR watches the visa
     clocks without digging through onboarding cases. Three buckets:
@@ -1919,8 +1931,11 @@ def bv_register():
             # A case past the approval stage with no expiry on it has a visa
             # burning down that nobody can see. Say so instead of showing a
             # blank countdown.
-            "expiry_missing": (c.bv_expiry is None
-                               and c.stage in _BV_POST_APPROVAL),
+            # A gap worth chasing only while the case is live — on a closed
+            # or converted case it is history, not a task.
+            "expiry_missing": (c.bv_expiry is None and past_bv_approval(c)
+                               and doc.status not in TERMINAL
+                               and c.stage != "WP_ISSUED"),
             "renewals": c.bv_renewals, "stage": c.stage,
             "doc_status": doc.status,
             "converted": c.stage == "WP_ISSUED",
@@ -2190,8 +2205,7 @@ def case_dict(case):
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
         "bv_approved_date": case.bv_approved_date,
-        "can_set_visa_dates": (case.route == "BV"
-                               and case.stage in _BV_POST_APPROVAL),
+        "can_set_visa_dates": past_bv_approval(case),
         "bv_expiry": case.bv_expiry,
         # A business visa is a clock that starts on arrival, and the work
         # permit has to be through before it runs out. The list showed neither

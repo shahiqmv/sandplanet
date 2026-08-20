@@ -1275,6 +1275,52 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("since it was approved", r.data["detail"])
 
+    def test_visa_dates_stay_editable_after_arrival_and_into_conversion(self):
+        """The men already in the country on a running visa are the ones whose
+        dates matter most — they are racing to convert before it lapses. The
+        first cut hardcoded the BV stages, so the field vanished the moment a
+        case moved on to the work-permit conversion (owner 2026-08-21)."""
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        today = tz.localdate()
+        # A recruitment BV — it converts, so it has the WP tail.
+        pk = self._approved(route="BV", bv_justification="urgent",
+                            nationality="Indian")
+        self._begin(pk)
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertIn("WP_APPOINTMENT", ob.sequence(case))
+        for stage in ("BV_ARRIVED", "WP_APPOINTMENT", "WP_APPLICATION",
+                      "WP_MEDICAL"):
+            OnboardingCase.objects.filter(pk=pk).update(stage=stage)
+            case.refresh_from_db()
+            self.assertTrue(ob.case_dict(case)["can_set_visa_dates"],
+                            f"visa dates not editable at {stage}")
+        # ...and they can actually be recorded there.
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(
+            f"/api/v1/onboarding/{pk}/stage-data",
+            {"bv_approved_date": str(today - timedelta(days=25)),
+             "bv_expiry": str(today + timedelta(days=5))}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        case.refresh_from_db()
+        self.assertEqual(case.bv_approved_date, today - timedelta(days=25))
+
+    def test_visa_dates_are_not_editable_before_approval(self):
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        pk = self._approved(route="BV", bv_justification="urgent",
+                            nationality="Indian")
+        case = OnboardingCase.objects.get(pk=pk)
+        for stage in ("BV_SPONSOR", "BV_INSURANCE", "BV_APPLICATION"):
+            OnboardingCase.objects.filter(pk=pk).update(stage=stage)
+            case.refresh_from_db()
+            self.assertFalse(ob.case_dict(case)["can_set_visa_dates"],
+                             f"visa dates offered at {stage}, before approval")
+
     def test_bv_register_buckets_and_countdown(self):
         """The BV register splits in-country (soonest expiry first, with a
         countdown level), pipeline (not arrived) and closed (converted or
