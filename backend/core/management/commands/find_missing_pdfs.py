@@ -28,6 +28,9 @@ class Command(BaseCommand):
                             help="Generate the missing PDFs.")
         parser.add_argument("--type", default=None,
                             help="Limit to one document type, e.g. MAR.")
+        parser.add_argument("--all", action="store_true",
+                            help="Include documents not yet issued, which "
+                                 "normally have no PDF yet.")
 
     def handle(self, *args, **opts):
         from django.db.models import Count, Q
@@ -52,6 +55,12 @@ class Command(BaseCommand):
             # Only types with a template — a PYR has no rendered form, so its
             # having no PDF is normal and not a fault.
             if not pdf_mod._render_target(doc, rev):
+                continue
+            # And only documents that have actually been ISSUED. A PDF is
+            # written at a milestone (issue / approved / sent / departed), so a
+            # document still at SUBMITTED or PM_APPROVED has none YET and is
+            # not damaged. Reporting those trains people to ignore the report.
+            if not opts["all"] and rev.issued_at is None:
                 continue
             missing.append((doc, rev))
 
