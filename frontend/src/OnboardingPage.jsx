@@ -29,7 +29,7 @@ const COLUMNS = [
   ["status", "Status"],
   // A business visa is a countdown that starts the day he lands and has to
   // outlast the work-permit process (owner 2026-08-18).
-  ["bv_days_left", "Arrived · BV left"],
+  ["bv_days_left", "Arrival · BV left"],
   ["doc_date", "Raised"], ["updated_at", "Idle"],
 ];
 
@@ -135,9 +135,10 @@ function ApplicationState({ app }) {
   );
 }
 
-// Arrival, and what is left of the business visa he arrived on. Amber inside a
-// fortnight, red once it has run out — the work permit has to be through
-// before this reaches zero.
+// Arrival, and what is left of the business visa. The clock runs from the day
+// the visa was APPROVED, so it can already be counting down while he is still
+// overseas (owner 2026-08-21). Amber inside a fortnight, red once it has run
+// out — the work permit has to be through before this reaches zero.
 function BvClock({ c }) {
   if (!c.arrived_date && c.bv_days_left == null) {
     return <span style={{ color: "var(--muted)" }}>—</span>;
@@ -743,6 +744,8 @@ export function CaseDetail({ id, me, onBack }) {
               v={c.bv_purpose_label || "—"} />}
             {c.is_subcontract && <Row k="Subcontractor"
               v={c.subcontractor_name || "—"} />}
+            {c.bv_approved_date && <Row k="Visa approved"
+              v={fmtDate(c.bv_approved_date)} />}
             {c.bv_expiry && <Row k="Visa expiry"
               v={`${fmtDate(c.bv_expiry)}${c.bv_renewals
                 ? ` · ${c.bv_renewals} extension${c.bv_renewals > 1 ? "s" : ""}`
@@ -837,6 +840,7 @@ function Processing({ c, me, onReload }) {
   const [error, setError] = useState(null);
   const [arrived, setArrived] = useState("");
   const [bvExp, setBvExp] = useState("");
+  const [bvApp, setBvApp] = useState("");
   const [portalRef, setPortalRef] = useState("");
 
   // What an advance carries depends on the stage being entered. Keeping it in
@@ -847,6 +851,9 @@ function Processing({ c, me, onReload }) {
     }
     if (["arrival", "arrival_bv"].includes(c.next_needs)) {
       return { arrived_date: arrived, bv_expiry: bvExp };
+    }
+    if (c.next_needs === "bv_approval") {
+      return { bv_approved_date: bvApp, bv_expiry: bvExp };
     }
     return {};
   };
@@ -1057,6 +1064,28 @@ function Processing({ c, me, onReload }) {
                 Record</Btn>
             </div>
           )}
+          {/* The visa's dates, recordable or correctable any time after
+              approval — cases already past that stage when the clock moved
+              there have a visa running with nothing entered against it. */}
+          {c.can_set_visa_dates && (
+            <div style={ctl}>
+              <span>Visa approved on</span>
+              <input type="date" style={inputStyle}
+                     value={bvApp || c.bv_approved_date || ""}
+                     onChange={(e) => setBvApp(e.target.value)} />
+              <span>Visa expiry</span>
+              <input type="date" style={inputStyle}
+                     value={bvExp || c.bv_expiry || ""}
+                     onChange={(e) => setBvExp(e.target.value)} />
+              <Btn variant="secondary" disabled={busy}
+                   onClick={() => setData({
+                     bv_approved_date: bvApp || c.bv_approved_date || "",
+                     bv_expiry: bvExp || c.bv_expiry || "" })}>
+                {c.bv_expiry ? "Update" : "Record"}</Btn>
+              <span style={{ fontSize: 11, color: "var(--muted)" }}>
+                the visa counts from the approval date</span>
+            </div>
+          )}
           {c.arrived_date && (
             <div style={ctl}>
               <span>Arrival date</span>
@@ -1128,6 +1157,24 @@ visa fee) — advance without a payment"
               </span>
             </div>
           )}
+          {/* The visa's own dates, taken off the approval. The clock runs
+              from the approval date, not from the day he lands — a man
+              approved three weeks before he flies has already spent three
+              weeks of his visa (owner 2026-08-21). */}
+          {c.next_needs === "bv_approval" && (
+            <div style={ctl}>
+              <span>Visa approved on</span>
+              <input type="date" style={inputStyle} value={bvApp}
+                     onChange={(e) => setBvApp(e.target.value)} />
+              <span>Visa expiry</span>
+              <input type="date" style={inputStyle} value={bvExp}
+                     onChange={(e) => setBvExp(e.target.value)} />
+              <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                the visa is running from the approval date — the countdown
+                starts now, not when he arrives
+              </span>
+            </div>
+          )}
           {["arrival", "arrival_bv"].includes(c.next_needs) && (
             <div style={ctl}>
               <span>Arrival date</span>
@@ -1144,7 +1191,9 @@ visa fee) — advance without a payment"
               <Btn variant="primary"
                    disabled={busy || (c.at_payment && !c.fee?.paid)
                              || (c.next_needs === "portal_ref"
-                                 && !portalRef.trim() && !c.portal_ref)}
+                                 && !portalRef.trim() && !c.portal_ref)
+                             || (c.next_needs === "bv_approval"
+                                 && !(bvApp && bvExp))}
                    onClick={() => advance(advancePayload())}>
                 Advance → {c.next_label}</Btn>
             </div>

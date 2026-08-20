@@ -900,7 +900,9 @@ class OnboardingSpineTests(TestCase):
         self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk)                                  # BV_APPLICATION
         self._sdata(pk, portal_status="APPROVED")
-        self._adv(pk)                                  # BV_APPROVED
+        # The visa's dates are captured the moment it is approved — the
+        # clock starts there, not on arrival (owner 2026-08-21).
+        self._adv(pk, bv_approved_date="2026-07-15", bv_expiry="2026-10-30")   # BV_APPROVED
         self._adv(pk)                                  # BV_VISA_FEE
         self._pay_fee(pk, "BV_VISA_FEE")
         self._adv(pk)                                  # BV_TICKET
@@ -925,7 +927,8 @@ class OnboardingSpineTests(TestCase):
                             subcontractor_id=sub.id, proposed_salary="")
         self._begin(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk); self._sdata(pk, portal_status="APPROVED")
-        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk, bv_approved_date="2026-07-15", bv_expiry="2026-10-30")
+        self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
         self._adv(pk); self._pay_fee(pk, "BV_TICKET")
         self._adv(pk, arrived_date="2026-08-01", bv_expiry="2026-10-30")
         self.client.force_authenticate(self.hr)
@@ -946,7 +949,8 @@ class OnboardingSpineTests(TestCase):
                             subcontractor_id=sub.id, proposed_salary="")
         self._begin(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
         self._adv(pk); self._sdata(pk, portal_status="APPROVED")
-        self._adv(pk); self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk, bv_approved_date="2026-07-15", bv_expiry="2026-10-30")
+        self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
         self._adv(pk); self._pay_fee(pk, "BV_TICKET")
         self._adv(pk, arrived_date="2026-08-01", bv_expiry="2026-10-30")
         self.client.force_authenticate(self.hr)
@@ -1119,6 +1123,135 @@ class OnboardingSpineTests(TestCase):
         self.assertTrue(Notification.objects.filter(
             recipient=self.director, title__icontains="medical").exists())
 
+    def _bv_to_approval(self):
+        """Walk a subcontract BV case up to the point the visa is approved."""
+        sub = self._subcontractor()
+        pk = self._approved(route="BV", bv_justification="short job",
+                            nationality="Indian", bv_purpose="SUBCONTRACT",
+                            subcontractor_id=sub.id, proposed_salary="")
+        self._begin(pk); self._adv(pk); self._pay_fee(pk, "BV_INSURANCE")
+        self._adv(pk); self._sdata(pk, portal_status="APPROVED")
+        return pk
+
+    def test_the_visa_clock_starts_at_approval_not_arrival(self):
+        """A visa runs from the day it is approved. A man approved three weeks
+        before he flies has already spent three weeks of it, and the register
+        used to show him with no clock at all until he landed (owner
+        2026-08-21)."""
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        today = tz.localdate()
+        pk = self._bv_to_approval()
+        r = self._adv(pk, bv_approved_date=str(today - timedelta(days=20)),
+                      bv_expiry=str(today + timedelta(days=10)))
+        self.assertEqual(r.status_code, 200, r.data)
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual(case.stage, "BV_APPROVED")
+        self.assertEqual(case.bv_approved_date, today - timedelta(days=20))
+        self.assertIsNone(case.arrived_date)         # not flown yet
+        # ...and the countdown is already running against him.
+        reg = ob.bv_register()
+        row = next(r for r in reg["pipeline"] if r["case_id"] == pk)
+        self.assertEqual(row["days_left"], 10)
+        self.assertEqual(row["level"], "T14")
+        self.assertEqual(row["approved_on"], today - timedelta(days=20))
+        # He counts as expiring even though he is still overseas.
+        self.assertEqual(reg["counts"]["expiring"], 1)
+
+    def test_approval_stage_demands_the_visa_dates(self):
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+        today = tz.localdate()
+        pk = self._bv_to_approval()
+        r = self._adv(pk)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("approved", r.data["detail"].lower())
+        r = self._adv(pk, bv_approved_date=str(today))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("expiry", r.data["detail"].lower())
+        # An expiry on or before the approval date is not a visa.
+        r = self._adv(pk, bv_approved_date=str(today),
+                      bv_expiry=str(today - timedelta(days=1)))
+        self.assertEqual(r.status_code, 400)
+
+    def test_arrival_does_not_re_ask_for_an_expiry_it_already_has(self):
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        today = tz.localdate()
+        pk = self._bv_to_approval()
+        self._adv(pk, bv_approved_date=str(today - timedelta(days=20)),
+                  bv_expiry=str(today + timedelta(days=10)))
+        self._adv(pk); self._pay_fee(pk, "BV_VISA_FEE")
+        self._adv(pk); self._pay_fee(pk, "BV_TICKET")
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual(ob.case_dict(case)["next_needs"], "arrival")
+        r = self._adv(pk, arrived_date=str(today))     # no expiry re-entered
+        self.assertEqual(r.status_code, 200, r.data)
+        case.refresh_from_db()
+        # The expiry captured at approval is still the one on the case — it did
+        # not silently reset to a fresh count from the arrival date.
+        self.assertEqual(case.bv_expiry, today + timedelta(days=10))
+
+    def test_a_case_past_approval_with_no_expiry_is_flagged(self):
+        """The cases that were mid-flight when this changed have a visa running
+        and no date recorded — the register has to say so rather than show a
+        blank countdown."""
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        pk = self._bv_to_approval()
+        OnboardingCase.objects.filter(pk=pk).update(stage="BV_TICKET")
+        reg = ob.bv_register()
+        row = next(r for r in reg["pipeline"] if r["case_id"] == pk)
+        self.assertTrue(row["expiry_missing"])
+        self.assertEqual(reg["counts"]["awaiting_expiry"], 1)
+
+    def test_visa_dates_can_be_recorded_after_the_approval_stage(self):
+        """The cases already past approval when the clock moved there have a
+        visa running and nothing entered — HR must be able to record it without
+        walking the case backwards (owner 2026-08-21)."""
+        from datetime import timedelta
+
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        today = tz.localdate()
+        pk = self._bv_to_approval()
+        OnboardingCase.objects.filter(pk=pk).update(stage="BV_TICKET")
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertTrue(ob.case_dict(case)["can_set_visa_dates"])
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(
+            f"/api/v1/onboarding/{pk}/stage-data",
+            {"bv_approved_date": str(today - timedelta(days=15)),
+             "bv_expiry": str(today + timedelta(days=5))}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        case.refresh_from_db()
+        self.assertEqual(case.bv_expiry, today + timedelta(days=5))
+        row = next(x for x in ob.bv_register()["pipeline"]
+                   if x["case_id"] == pk)
+        self.assertEqual(row["days_left"], 5)
+        self.assertFalse(row["expiry_missing"])
+
+    def test_visa_dates_are_refused_before_the_visa_is_approved(self):
+        from django.utils import timezone as tz
+        today = tz.localdate()
+        pk = self._bv_to_approval()          # still at BV_APPLICATION
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/stage-data",
+                             {"bv_expiry": str(today)}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not been approved", r.data["detail"])
+
     def test_bv_register_buckets_and_countdown(self):
         """The BV register splits in-country (soonest expiry first, with a
         countdown level), pipeline (not arrived) and closed (converted or
@@ -1133,13 +1266,14 @@ class OnboardingSpineTests(TestCase):
         pk1 = self._approved(route="BV", bv_justification="short job",
                              nationality="Indian", bv_purpose="SUBCONTRACT",
                              subcontractor_id=sub.id, proposed_salary="")
+        today = tz.localdate()
         self._begin(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_INSURANCE")
         self._adv(pk1); self._sdata(pk1, portal_status="APPROVED")
-        self._adv(pk1); self._adv(pk1); self._pay_fee(pk1, "BV_VISA_FEE")
-        self._adv(pk1); self._pay_fee(pk1, "BV_TICKET")
-        today = tz.localdate()
-        self._adv(pk1, arrived_date=str(today),
+        self._adv(pk1, bv_approved_date=str(today - timedelta(days=20)),
                   bv_expiry=str(today + timedelta(days=10)))
+        self._adv(pk1); self._pay_fee(pk1, "BV_VISA_FEE")
+        self._adv(pk1); self._pay_fee(pk1, "BV_TICKET")
+        self._adv(pk1, arrived_date=str(today))
         # pipeline: a BV case still before arrival
         pk2 = self._approved(route="BV", bv_justification="urgent",
                              nationality="Indian")
@@ -1669,7 +1803,10 @@ class HoldACaseTests(TestCase):
         self.assertIsNone(self.ob.clear_hold(self.case, self.hr))
         self.case.refresh_from_db()
         self.assertEqual(self.case.hold_reason, "")
-        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
+        # BV_APPROVED is next, and it now wants the visa's own dates.
+        self.assertIsNone(self.ob.advance_stage(
+            self.case, {"bv_approved_date": "2026-08-05",
+                        "bv_expiry": "2026-11-03"}, self.hr))
 
     def test_only_hr_holds_or_releases(self):
         self.assertIn("Only HR", self.ob.set_hold(self.case, "x", self.pm))
@@ -1693,7 +1830,10 @@ class HoldACaseTests(TestCase):
 
     def test_advancing_stamps_when_the_new_stage_began(self):
         from django.utils import timezone
-        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
+        # BV_APPROVED is next, and it now wants the visa's own dates.
+        self.assertIsNone(self.ob.advance_stage(
+            self.case, {"bv_approved_date": "2026-08-05",
+                        "bv_expiry": "2026-11-03"}, self.hr))
         self.case.refresh_from_db()
         self.assertEqual(self.case.stage_since, timezone.localdate())
         self.assertEqual(self.ob.case_dict(self.case)["days_at_stage"], 0)

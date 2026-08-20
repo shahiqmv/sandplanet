@@ -2279,6 +2279,10 @@ class OnboardingCase(models.Model):
     arrived_date = models.DateField(null=True, blank=True)     # starts medical
     medical_due = models.DateField(null=True, blank=True)      # arrival + 14d
     medical_result = models.CharField(max_length=10, blank=True)  # PASS / FAIL
+    # The business visa runs from the day it is APPROVED, not the day the man
+    # lands — he may not travel for weeks, and those weeks are already gone
+    # (owner 2026-08-21). Both are captured at the BV_APPROVED stage.
+    bv_approved_date = models.DateField(null=True, blank=True)
     bv_expiry = models.DateField(null=True, blank=True)        # the BV clock
     bv_renewals = models.PositiveIntegerField(default=0)       # capped at 2
     # Most-urgent countdown level already alerted, so daily clock runs don't

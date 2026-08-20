@@ -356,10 +356,10 @@ STAGE_LABEL = {
     "BV_SPONSOR": "Sponsor letter issued",
     "BV_INSURANCE": "Insurance policy",
     "BV_APPLICATION": "BV application (portal)",
-    "BV_APPROVED": "BV approved",
+    "BV_APPROVED": "BV approved (clock starts)",
     "BV_VISA_FEE": "Visa fee paid",
     "BV_TICKET": "Ticketed",
-    "BV_ARRIVED": "Arrived (BV clock starts)",
+    "BV_ARRIVED": "Arrived in country",
 }
 
 # What is actually PENDING while a case sits at a stage — the stage labels above
@@ -472,6 +472,9 @@ def application_state(case):
                      "awaiting the portal — portal status not recorded"),
             "ref": ref, "portal_status": status}
 ARRIVAL_STAGES = {"WP_ARRIVED", "BV_ARRIVED"}
+# The stage where the business visa itself comes into existence, and therefore
+# where its clock starts (owner 2026-08-21).
+BV_APPROVAL_STAGES = {"BV_APPROVED"}
 MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
 # Payment-gated stages — Phase 3 will require a PAID PYR to leave these.
 PAYMENT_STAGES = {"WP_DEPOSIT", "WP_TICKET", "BV_INSURANCE", "BV_VISA_FEE",
@@ -624,6 +627,25 @@ def _on_enter(case, stage, data):
             return ("Enter the government portal reference for this "
                     "application (e.g. GSR/2026/27757).")
         set_portal(case, stage, ref=ref)
+    if stage in BV_APPROVAL_STAGES:
+        # The visa's own dates, taken off the approved visa. Captured HERE
+        # rather than on arrival because that is when the clock starts running:
+        # a man approved on the 1st who flies in on the 20th has already spent
+        # three weeks of his visa, and the register used to show him as having
+        # no clock at all until he landed (owner 2026-08-21).
+        try:
+            appd = date.fromisoformat(str(data.get("bv_approved_date")))
+        except (TypeError, ValueError):
+            return "Enter the date the visa was approved."
+        try:
+            exp = date.fromisoformat(str(data.get("bv_expiry")))
+        except (TypeError, ValueError):
+            return "Enter the visa expiry date shown on the approval."
+        if exp <= appd:
+            return "The expiry must be after the approval date."
+        case.bv_approved_date = appd
+        case.bv_expiry = exp
+        case.bv_alert = ""                  # a fresh clock may alert again
     if stage in ARRIVAL_STAGES:
         d = data.get("arrived_date")
         if not d:
@@ -638,9 +660,14 @@ def _on_enter(case, stage, data):
         if "WP_MEDICAL" in sequence(case):
             case.medical_due = ad + timedelta(days=14)   # company 14-day rule
         if stage == "BV_ARRIVED":
-            if not data.get("bv_expiry"):
+            # The expiry is already on the case from BV_APPROVED. It is only
+            # re-asked if it was never captured (a case that predates that
+            # stage collecting it), and a correction is still accepted — what
+            # immigration stamped can differ from what was approved.
+            if data.get("bv_expiry"):
+                case.bv_expiry = data["bv_expiry"]
+            elif not case.bv_expiry:
                 return "Enter the BV expiry date shown on the visa."
-            case.bv_expiry = data["bv_expiry"]
     return None
 
 
@@ -748,6 +775,32 @@ def set_stage_data(case, data, actor):
         changed.append("medical_result")
         if mr == "FAIL":
             _notify_medical_fail(case)
+    # Record or correct the visa's own dates at any point after approval. The
+    # cases that were already past BV_APPROVED when the clock moved there have
+    # a visa running and nothing recorded, and HR needs a way to enter it
+    # without walking the case backwards (owner 2026-08-21).
+    if ("bv_expiry" in data or "bv_approved_date" in data) and case.route == "BV":
+        from datetime import date
+        if case.stage not in _BV_POST_APPROVAL:
+            return "The visa has not been approved yet."
+        appd, exp = case.bv_approved_date, case.bv_expiry
+        if data.get("bv_approved_date"):
+            try:
+                appd = date.fromisoformat(str(data["bv_approved_date"]))
+            except (ValueError, TypeError):
+                return "Invalid visa approval date."
+        if data.get("bv_expiry"):
+            try:
+                exp = date.fromisoformat(str(data["bv_expiry"]))
+            except (ValueError, TypeError):
+                return "Invalid visa expiry date."
+        if exp is None:
+            return "Enter the visa expiry date."
+        if appd and exp <= appd:
+            return "The expiry must be after the approval date."
+        case.bv_approved_date, case.bv_expiry = appd, exp
+        case.bv_alert = ""              # a corrected clock may alert again
+        changed += ["bv_approved_date", "bv_expiry", "bv_alert"]
     # Correct the arrival date after the fact — HR often records the arrival a
     # few days late, but salary counts from the day the worker actually landed,
     # so the original date must be enterable and editable. Moving it realigns
@@ -1820,13 +1873,24 @@ def run_clocks(today=None):
 
 # ---- business-visa register (owner 2026-08-09) ---------------------------
 
+# Stages a BV case can only be at once the visa has been approved — so an
+# empty expiry on one of these is a gap in the register, not a case too early
+# to have a visa.
+_BV_POST_APPROVAL = ("BV_APPROVED", "BV_VISA_FEE", "BV_TICKET", "BV_ARRIVED")
+
+
 def bv_register():
     """Every business-visa person on one schedule, so HR watches the visa
     clocks without digging through onboarding cases. Three buckets:
     - in_country: arrived, on the BV clock — soonest expiry first
-    - pipeline:   case open but not arrived yet (no clock running)
+    - pipeline:   case open, not arrived yet — but the clock may already be
+                  running: a visa counts from the day it is APPROVED, so a man
+                  who has not flown yet is still spending it (owner
+                  2026-08-21). Approved rows sort by expiry, the rest by ref.
     - closed:     converted to a work permit, or the case ended
     """
+    from datetime import date
+
     from .models import OnboardingCase
     today = timezone.localdate()
     rows = {"in_country": [], "pipeline": [], "closed": []}
@@ -1849,7 +1913,13 @@ def bv_register():
             "subcontractor": (c.subcontractor.name
                               if c.subcontractor_id else ""),
             "arrived": c.arrived_date, "expiry": c.bv_expiry,
+            "approved_on": c.bv_approved_date,
             "days_left": days, "level": level,
+            # A case past the approval stage with no expiry on it has a visa
+            # burning down that nobody can see. Say so instead of showing a
+            # blank countdown.
+            "expiry_missing": (c.bv_expiry is None
+                               and c.stage in _BV_POST_APPROVAL),
             "renewals": c.bv_renewals, "stage": c.stage,
             "doc_status": doc.status,
             "converted": c.stage == "WP_ISSUED",
@@ -1861,16 +1931,23 @@ def bv_register():
         else:
             rows["pipeline"].append(row)
     rows["in_country"].sort(key=lambda r: (r["expiry"], r["ref"]))
-    rows["pipeline"].sort(key=lambda r: r["ref"])
+    # A running visa is the urgent thing whether or not the man has landed, so
+    # approved rows come first, soonest expiry at the top.
+    rows["pipeline"].sort(key=lambda r: (r["expiry"] is None, r["expiry"]
+                                         or date.max, r["ref"]))
     rows["closed"].sort(key=lambda r: r["ref"], reverse=True)
     rows["closed"] = rows["closed"][:50]
+    running = rows["in_country"] + [r for r in rows["pipeline"] if r["expiry"]]
     rows["counts"] = {
         "in_country": len(rows["in_country"]),
-        "expiring": sum(1 for r in rows["in_country"]
+        # Counted across every running visa — a man still overseas on a visa
+        # with four days left is exactly the case HR needs to catch.
+        "expiring": sum(1 for r in running
                         if r["level"] in ("T14", "T7", "T3")),
-        "expired": sum(1 for r in rows["in_country"]
-                       if r["level"] == "EXPIRED"),
+        "expired": sum(1 for r in running if r["level"] == "EXPIRED"),
         "pipeline": len(rows["pipeline"]),
+        "awaiting_expiry": sum(1 for r in rows["pipeline"]
+                               if r["expiry_missing"]),
     }
     return rows
 
@@ -2000,7 +2077,11 @@ def stage_view(case):
     if nxt == "WP_ARRIVED":
         needs = "arrival"
     elif nxt == "BV_ARRIVED":
-        needs = "arrival_bv"
+        # Only re-ask for the expiry on a case that never captured it at
+        # approval; otherwise the arrival stage just wants the arrival date.
+        needs = "arrival" if case.bv_expiry else "arrival_bv"
+    elif nxt in BV_APPROVAL_STAGES:
+        needs = "bv_approval"
     elif nxt in APPLICATION_STAGES:
         needs = "portal_ref"
     fee = None
@@ -2106,6 +2187,9 @@ def case_dict(case):
                           if case.stage_since else None),
         "medical_result": case.medical_result,
         "arrived_date": case.arrived_date, "medical_due": case.medical_due,
+        "bv_approved_date": case.bv_approved_date,
+        "can_set_visa_dates": (case.route == "BV"
+                               and case.stage in _BV_POST_APPROVAL),
         "bv_expiry": case.bv_expiry,
         # A business visa is a clock that starts on arrival, and the work
         # permit has to be through before it runs out. The list showed neither
