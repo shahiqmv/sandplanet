@@ -133,17 +133,44 @@ function CoverPanel() {
     try { setSt(await api("/profile/cover", { method: "DELETE" })); }
     catch (e) { setErr(e.message); }
   }
+  async function setStyle(v) {
+    setErr(null);
+    try {
+      setSt(await api("/profile/settings",
+                      { method: "PATCH", body: { cover_style: v } }));
+    } catch (e) { setErr(e.message); }
+  }
   if (!st) return null;
 
   return (
     <section style={{ ...card, marginTop: 16 }}>
       <h3 style={{ margin: "0 0 4px", color: NAVY, fontSize: 15 }}>
         Cover photo</h3>
-      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 12px" }}>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 10px" }}>
         The picture on the front page. Without one it falls back to whichever
         ongoing project is first in the list — which changes when you reorder
         them.
       </p>
+      {/* Where the title sits depends on the photo: on an aerial the subject
+          is low in the frame, so type at the bottom covers it. */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap",
+                    marginBottom: 12, fontSize: 12.5 }}>
+        {[["TOP", "Title in the sky", "for aerials — subject low in frame"],
+          ["FULL", "Title at the foot", "when the subject is high or central"],
+          ["BAND", "Photo band, title below", "the original, plainer layout"]]
+          .map(([v, label, why]) => (
+          <label key={v} style={{ display: "flex", gap: 6, alignItems: "start",
+                                  cursor: "pointer" }}>
+            <input type="radio" name="coverstyle" checked={st.cover_style === v}
+                   onChange={() => setStyle(v)} style={{ marginTop: 2 }} />
+            <span>
+              <span style={{ fontWeight: 600 }}>{label}</span>
+              <span style={{ display: "block", fontSize: 11,
+                             color: "var(--muted)" }}>{why}</span>
+            </span>
+          </label>
+        ))}
+      </div>
       {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <input type="file" accept="image/*" ref={fileRef}
@@ -151,7 +178,9 @@ function CoverPanel() {
         {st.cover_url ? (
           <img src={st.cover_url} alt=""
                onClick={() => fileRef.current?.click()}
-               style={{ width: 120, height: 160, objectFit: "cover",
+               style={{ width: 120,
+                        height: Math.round(120 / (st.cover_aspect || 0.707)),
+                        objectFit: "cover",
                         borderRadius: 6, cursor: "pointer",
                         border: "1px solid var(--sp-border)" }} />
         ) : (
@@ -179,7 +208,8 @@ function CoverPanel() {
         </div>
       </div>
       {crop && (
-        <ImageCropper file={crop} aspect={210 / 176} outW={2000}
+        <ImageCropper file={crop} aspect={st.cover_aspect || 210 / 297}
+                      outW={2200}
                       label="Position the cover photo"
                       onCancel={() => setCrop(null)} onDone={upload} />
       )}

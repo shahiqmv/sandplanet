@@ -103,16 +103,51 @@ def _project_page(entry):
             f'</div><div class="pbody">{summary}{grid}</div>{_foot()}</div>')
 
 
-def _cover(hero):
-    img = f'<img class="cov-img" src="{hero}">' if hero else ""
-    return (f'<div class="page cover">{img}<div class="cov-imgtint"></div>'
-            f'<div class="cov-band">{logo("cov-logo")}'
-            f'<div class="cov-rule"></div>'
-            f'<div class="cov-title">Company<br>Profile</div>'
-            f'<div class="cov-sub">Construction · Resort Supplies · Marine '
-            f'Works</div>'
-            f'<div class="cov-foot"><span>Malé · Republic of Maldives</span>'
-            f'<span>2026</span></div></div></div>')
+def _cover(hero, style="FULL"):
+    """The front page.
+
+    Three treatments, because the original — photo band on top, white title
+    block below — is the same rhythm as every project page, and a cover that
+    looks like the inside pages is not a cover (owner 2026-08-19).
+    """
+    if style == "BAND":
+        img = f'<img class="cov-img" src="{hero}">' if hero else ""
+        return (f'<div class="page cover">{img}<div class="cov-imgtint"></div>'
+                f'<div class="cov-band">{logo("cov-logo")}'
+                f'<div class="cov-rule"></div>'
+                f'<div class="cov-title">Company<br>Profile</div>'
+                f'<div class="cov-sub">Construction · Resort Supplies · Marine '
+                f'Works</div>'
+                f'<div class="cov-foot"><span>Malé · Republic of Maldives</span>'
+                f'<span>2026</span></div></div></div>')
+
+    img = f'<img class="fc-img" src="{hero}">' if hero else ""
+    # A photograph this good should carry the page. The scrim is what makes
+    # white type legible over it without dulling the water.
+    if style == "TOP":
+        # Title in the SKY. On an aerial the subject sits low in the frame, so
+        # putting the type at the bottom covers the very thing being shown —
+        # the pool and its decking disappeared behind it (owner 2026-08-19).
+        return (f'<div class="page fullcover">{img}'
+                '<div class="fc-scrim-top"></div>'
+                f'<div class="fc-head">{logo("fc-logo")}'
+                '<div class="fc-rule"></div>'
+                '<div class="fc-title">Company<br>Profile</div>'
+                '<div class="fc-sub">Construction · Resort Supplies · '
+                'Marine Works</div></div>'
+                '<div class="fc-foot-b"><span>Malé · Republic of Maldives'
+                '</span><span>2026</span></div></div>')
+
+    return (f'<div class="page fullcover">{img}'
+            '<div class="fc-scrim"></div>'
+            f'<div class="fc-top">{logo("fc-logo")}</div>'
+            '<div class="fc-body">'
+            '<div class="fc-rule"></div>'
+            '<div class="fc-title">Company<br>Profile</div>'
+            '<div class="fc-sub">Construction · Resort Supplies · Marine Works'
+            '</div>'
+            '<div class="fc-foot"><span>Malé · Republic of Maldives</span>'
+            '<span>2026</span></div></div></div>')
 
 
 def _story():
@@ -302,7 +337,8 @@ def build_html():
     hero = _uri(st.cover_image) if st.cover_image else ""
     if not hero:
         hero = _uri(ongoing[0].featured_image) if ongoing else ""
-    parts = [_cover(hero), _story(), _corporate(), _management(),
+    parts = [_cover(hero, st.cover_style), _story(), _corporate(),
+             _management(),
              _divider(hero)]
     parts += [_project_page(e) for e in ongoing]
     if completed:
@@ -384,6 +420,32 @@ body { font-family:"Carlito","DejaVu Sans",sans-serif; color:#22303B; }
 .bc-logo .lr{height:16mm;} .bc-logo .lt{font-size:21pt;letter-spacing:5pt;}
 /* cover: image top, white title band */
 .cover{background:#FFFFFF;}
+/* Full-bleed cover: the photograph IS the page. White type sits on a scrim
+   that darkens only the lower third, so the water keeps its colour. */
+.fullcover{background:#0E3A5C;position:relative;overflow:hidden;}
+.fc-img{position:absolute;top:0;left:0;width:100%;height:297mm;object-fit:cover;}
+.fc-scrim{position:absolute;left:0;right:0;top:0;height:297mm;
+  background:linear-gradient(to bottom,rgba(14,58,92,.42) 0%,rgba(14,58,92,.10) 26%,rgba(14,58,92,.30) 55%,rgba(9,38,60,.88) 100%);}
+.fc-top{position:absolute;top:16mm;left:18mm;}
+.fc-logo .lr{height:13mm;} .fc-logo .lt{font-size:17pt;letter-spacing:4pt;color:#fff;}
+.fc-logo .s{color:#fff;}
+.fc-body{position:absolute;left:18mm;right:18mm;bottom:16mm;}
+.fc-rule{width:30mm;height:2mm;background:#E38A2E;margin-bottom:7mm;}
+.fc-title{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:52pt;
+  line-height:0.95;letter-spacing:.5pt;color:#FFFFFF;}
+.fc-sub{margin-top:6mm;font-size:12pt;letter-spacing:1pt;color:#DCE6ED;}
+.fc-foot{margin-top:9mm;display:flex;justify-content:space-between;
+  color:#AFC2CF;font-size:9pt;letter-spacing:.5pt;
+  border-top:0.6pt solid rgba(255,255,255,.28);padding-top:4mm;}
+/* Title-in-the-sky variant: the scrim darkens the TOP instead, so the work in
+   the lower half of the photograph is left completely clear. */
+.fc-scrim-top{position:absolute;left:0;right:0;top:0;height:297mm;
+  background:linear-gradient(to bottom,rgba(9,38,60,.78) 0%,rgba(14,58,92,.44) 34%,rgba(14,58,92,.06) 56%,rgba(14,58,92,.22) 100%);}
+.fc-head{position:absolute;top:20mm;left:18mm;right:18mm;}
+.fc-head .fc-rule{margin-top:9mm;}
+.fc-foot-b{position:absolute;left:18mm;right:18mm;bottom:14mm;display:flex;
+  justify-content:space-between;color:#E4EDF3;font-size:9pt;letter-spacing:.5pt;
+  border-top:0.6pt solid rgba(255,255,255,.30);padding-top:4mm;}
 .cov-img{position:absolute;top:0;left:0;width:100%;height:176mm;object-fit:cover;}
 .cov-imgtint{position:absolute;top:0;left:0;right:0;height:176mm;background:linear-gradient(to bottom,rgba(14,58,92,.06),rgba(14,58,92,.30));}
 .cov-top{position:absolute;top:15mm;left:18mm;display:flex;align-items:center;gap:4mm;}

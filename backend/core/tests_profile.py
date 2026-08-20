@@ -248,3 +248,53 @@ class ProfileEditableContentTests(TestCase):
         for path in ("/api/v1/profile/management", "/api/v1/profile/corporate",
                      "/api/v1/profile/settings"):
             self.assertEqual(self.client.get(path).status_code, 403, path)
+
+
+class CoverStyleTests(TestCase):
+    """The cover looked like every inside page — photo on top, text block
+    below — which is not a cover (owner 2026-08-19). Three treatments now, and
+    the crop shape follows the one chosen.
+    """
+
+    def setUp(self):
+        self.mkt = make_user("cv_mkt", User.Role.MARKETING)
+        self.client = APIClient()
+        self.client.force_authenticate(self.mkt)
+
+    def test_full_bleed_is_the_default(self):
+        from .models import ProfileSettings
+        self.assertEqual(ProfileSettings.get().cover_style, "TOP")
+
+    def test_each_style_renders_its_own_layout(self):
+        from . import profile_render as pr
+        from .models import ProfileSettings
+        st = ProfileSettings.get()
+        for style, marker in (("TOP", "fc-scrim-top"), ("FULL", "fc-scrim"),
+                              ("BAND", "cov-band")):
+            st.cover_style = style
+            st.save()
+            html = pr.build_html()
+            self.assertIn(marker, html, style)
+
+    def test_the_crop_shape_follows_the_style(self):
+        """Full-bleed needs the whole page; the band needs a wide strip.
+        Cropping to the wrong one throws away the sides of the photo."""
+        from .profile import cover_aspect
+        self.assertEqual(cover_aspect("TOP")[:2], (210, 297))
+        self.assertEqual(cover_aspect("FULL")[:2], (210, 297))
+        self.assertEqual(cover_aspect("BAND")[:2], (210, 176))
+
+    def test_the_api_reports_the_aspect_for_the_cropper(self):
+        r = self.client.get("/api/v1/profile/settings")
+        self.assertEqual(r.status_code, 200)
+        self.assertAlmostEqual(r.data["cover_aspect"], 210 / 297, places=3)
+        r2 = self.client.patch("/api/v1/profile/settings",
+                               {"cover_style": "BAND"}, format="json")
+        self.assertAlmostEqual(r2.data["cover_aspect"], 210 / 176, places=3)
+
+    def test_a_bad_style_is_ignored_rather_than_stored(self):
+        from .models import ProfileSettings
+        r = self.client.patch("/api/v1/profile/settings",
+                              {"cover_style": "NONSENSE"}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(ProfileSettings.get().cover_style, "TOP")

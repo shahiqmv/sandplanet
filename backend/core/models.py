@@ -4501,6 +4501,23 @@ class ProfileSettings(models.Model):
     """
     cover_image = models.ImageField(upload_to="profile/cover/", null=True,
                                     blank=True)
+
+    class CoverStyle(models.TextChoices):
+        # Photo band on top, white title block below — the original. It reads
+        # like the project pages, which is exactly the complaint (owner
+        # 2026-08-19): every page in the document has that same rhythm.
+        BAND = "BAND", "Photo band with title below"
+        # Photo across the whole page, title reversed out of a dark scrim.
+        FULL = "FULL", "Full-bleed photo, title over it"
+        # Photo across the whole page, title in the sky at the top. For an
+        # aerial, where the subject sits low and type at the bottom would
+        # cover it.
+        TOP = "TOP", "Full-bleed photo, title at the top"
+
+    # TOP by default: the cover photo is an aerial, where the subject sits low
+    # in the frame and type at the bottom sits on top of it.
+    cover_style = models.CharField(max_length=6, choices=CoverStyle.choices,
+                                   default=CoverStyle.TOP)
     vision = models.TextField(blank=True)
     mission = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)

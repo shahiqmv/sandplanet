@@ -158,8 +158,12 @@ def row_dict(r):
 
 
 def settings_dict(st):
+    aw, ah, _ = cover_aspect(st.cover_style)
     return {"cover_url": st.cover_image.url if st.cover_image else "",
-            "vision": st.vision, "mission": st.mission}
+            "vision": st.vision, "mission": st.mission,
+            "cover_style": st.cover_style,
+            # so the cropper frames the photo the way the cover will use it
+            "cover_aspect": aw / ah}
 
 
 def save_management(data, actor, person=None):
@@ -216,6 +220,8 @@ def save_settings(data, actor):
     for f in ("vision", "mission"):
         if f in data:
             setattr(st, f, (data.get(f) or "").strip())
+    if data.get("cover_style") in dict(ProfileSettings.CoverStyle.choices):
+        st.cover_style = data["cover_style"]
     st.save()
     audit("profile_settings", 1, "PROFILE_SETTINGS_SAVED", actor=actor)
     return st, None
@@ -225,16 +231,24 @@ def save_settings(data, actor):
 # 176mm tall, i.e. slightly wider than it is tall. Getting this wrong crops the
 # picture twice — once on upload and again by object-fit — and throws away the
 # sides of a landscape shot (owner 2026-08-19, on the pool project photo).
-COVER = (210, 176, 2000)
+COVER = (210, 176, 2000)          # the old band style
+COVER_FULL = (210, 297, 2200)     # full-bleed: the whole page
+
+
+def cover_aspect(style):
+    """The shape the cover photo has to be, which depends on the treatment."""
+    return COVER if style == "BAND" else COVER_FULL
 
 
 def set_cover(uploaded, actor):
-    """The profile's cover photo, cropped to the exact shape of the cover
-    band so nothing is lost to a second crop at render time."""
+    """The profile's cover photo, cropped to the exact shape the chosen
+    treatment needs, so nothing is lost to a second crop at render time."""
     from .models import ProfileSettings
 
     st = ProfileSettings.get()
-    st.cover_image.save("cover.jpg", _process(uploaded, *COVER), save=True)
+    st.cover_image.save("cover.jpg",
+                        _process(uploaded, *cover_aspect(st.cover_style)),
+                        save=True)
     audit("profile_settings", 1, "PROFILE_COVER_SET", actor=actor)
     return None
 
