@@ -1252,6 +1252,29 @@ class OnboardingSpineTests(TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("not been approved", r.data["detail"])
 
+    def test_arrival_asks_for_the_arrival_date_only(self):
+        """One date, one field. Arrival used to ask for the BV expiry as well,
+        which after the clock moved to approval put two inputs for the same
+        date on one panel (owner 2026-08-21)."""
+        from django.utils import timezone as tz
+
+        from . import onboarding as ob
+        from .models import OnboardingCase
+        pk = self._bv_to_approval()
+        OnboardingCase.objects.filter(pk=pk).update(stage="BV_TICKET")
+        case = OnboardingCase.objects.get(pk=pk)
+        # Even with NO expiry recorded, arrival asks only for the arrival date
+        # — the visa dates are entered on their own row.
+        self.assertIsNone(case.bv_expiry)
+        self.assertEqual(ob.case_dict(case)["next_needs"], "arrival")
+        self.assertTrue(ob.case_dict(case)["can_set_visa_dates"])
+        # ...and it refuses to mark him arrived until they are recorded, rather
+        # than silently starting a clock from the arrival date.
+        self._pay_fee(pk, "BV_TICKET")
+        r = self._adv(pk, arrived_date=str(tz.localdate()))
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("since it was approved", r.data["detail"])
+
     def test_bv_register_buckets_and_countdown(self):
         """The BV register splits in-country (soonest expiry first, with a
         countdown level), pipeline (not arrived) and closed (converted or

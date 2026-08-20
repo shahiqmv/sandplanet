@@ -849,8 +849,8 @@ function Processing({ c, me, onReload }) {
     if (c.next_needs === "portal_ref") {
       return { portal_ref: portalRef.trim() || c.portal_ref || "" };
     }
-    if (["arrival", "arrival_bv"].includes(c.next_needs)) {
-      return { arrived_date: arrived, bv_expiry: bvExp };
+    if (c.next_needs === "arrival") {
+      return { arrived_date: arrived };
     }
     if (c.next_needs === "bv_approval") {
       return { bv_approved_date: bvApp, bv_expiry: bvExp };
@@ -1175,15 +1175,15 @@ visa fee) — advance without a payment"
               </span>
             </div>
           )}
-          {["arrival", "arrival_bv"].includes(c.next_needs) && (
+          {/* Arrival asks for the arrival date and nothing else. The visa's
+              expiry belongs to the visa-dates row above — asking for it here
+              too put two inputs for one date on the same panel (owner
+              2026-08-21). */}
+          {c.next_needs === "arrival" && (
             <div style={ctl}>
               <span>Arrival date</span>
               <input type="date" style={inputStyle} value={arrived}
                      onChange={(e) => setArrived(e.target.value)} />
-              {c.next_needs === "arrival_bv" && (<>
-                <span>BV expiry</span>
-                <input type="date" style={inputStyle} value={bvExp}
-                       onChange={(e) => setBvExp(e.target.value)} /></>)}
             </div>
           )}
           {c.next_stage && (

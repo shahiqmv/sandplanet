@@ -660,14 +660,15 @@ def _on_enter(case, stage, data):
         if "WP_MEDICAL" in sequence(case):
             case.medical_due = ad + timedelta(days=14)   # company 14-day rule
         if stage == "BV_ARRIVED":
-            # The expiry is already on the case from BV_APPROVED. It is only
-            # re-asked if it was never captured (a case that predates that
-            # stage collecting it), and a correction is still accepted — what
-            # immigration stamped can differ from what was approved.
+            # The expiry came from BV_APPROVED. A correction is still accepted
+            # — what immigration stamped can differ from what was approved —
+            # but it is entered on the visa-dates row, not here.
             if data.get("bv_expiry"):
                 case.bv_expiry = data["bv_expiry"]
             elif not case.bv_expiry:
-                return "Enter the BV expiry date shown on the visa."
+                return ("Record the visa's approval and expiry dates before "
+                        "marking him arrived — the visa has been running "
+                        "since it was approved.")
     return None
 
 
@@ -2077,9 +2078,10 @@ def stage_view(case):
     if nxt == "WP_ARRIVED":
         needs = "arrival"
     elif nxt == "BV_ARRIVED":
-        # Only re-ask for the expiry on a case that never captured it at
-        # approval; otherwise the arrival stage just wants the arrival date.
-        needs = "arrival" if case.bv_expiry else "arrival_bv"
+        # Just the arrival date. The visa's expiry is entered once, on the
+        # visa-dates row, from BV_APPROVED onwards — asking for it here as well
+        # showed two inputs for one date (owner 2026-08-21).
+        needs = "arrival"
     elif nxt in BV_APPROVAL_STAGES:
         needs = "bv_approval"
     elif nxt in APPLICATION_STAGES:
