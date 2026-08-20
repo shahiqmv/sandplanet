@@ -275,7 +275,10 @@ class Notification(models.Model):
     title = models.CharField(max_length=140)
     body = models.CharField(max_length=300, blank=True)
     doc_ref = models.CharField(max_length=20, blank=True)
-    doc_type = models.CharField(max_length=3, blank=True)
+    # 3 was sized for PR/LM/PO/GRN. IM30 is four, and a counter row could
+    # not even be created for it — the form was unreachable (owner
+    # 2026-08-20).
+    doc_type = models.CharField(max_length=12, blank=True)
     # the document status this alert was raised for — dedupes re-fires
     doc_status = models.CharField(max_length=30, blank=True)
     category = models.CharField(max_length=20, default="approval")
@@ -294,7 +297,7 @@ class Notification(models.Model):
 class DocCounter(models.Model):
     """Gap-free numbering: row-locked (SELECT FOR UPDATE) at ref issue."""
 
-    doc_type = models.CharField(max_length=3)
+    doc_type = models.CharField(max_length=12)
     site = models.ForeignKey(  # NULL for global PR/LM
         Site, on_delete=models.PROTECT, null=True, blank=True
     )

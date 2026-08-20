@@ -1988,3 +1988,22 @@ class IM30GenerationTests(TestCase):
         width = OnboardingLetter._meta.get_field("kind").max_length
         for kind in ob.LETTER_META:
             self.assertLessEqual(len(kind), width, kind)
+
+    def test_every_ref_type_fits_the_counter_column(self):
+        """The narrow column that actually blocked IM30 was DocCounter's, not
+        the letter's: next_ref() could not even create a counter row, so it
+        failed before a letter existed. Two columns, one bug, and fixing only
+        the obvious one left it still broken (owner 2026-08-20)."""
+        from .models import DocCounter, Document
+        from .numbering import GLOBAL_TYPES
+        width = DocCounter._meta.get_field("doc_type").max_length
+        for t in GLOBAL_TYPES:
+            self.assertLessEqual(len(t), width, t)
+        for t, _label in Document.Type.choices:
+            self.assertLessEqual(len(t), width, t)
+
+    def test_a_counter_row_can_be_issued_for_im30(self):
+        """Exercises the path that failed, rather than trusting the width."""
+        from .numbering import next_ref
+        ref = next_ref("IM30", None)
+        self.assertTrue(ref.startswith("IM30-"), ref)
