@@ -133,6 +133,14 @@ function CoverPanel() {
     try { setSt(await api("/profile/cover", { method: "DELETE" })); }
     catch (e) { setErr(e.message); }
   }
+  async function setFocus(v) {
+    setErr(null);
+    try {
+      setSt(await api("/profile/settings",
+                      { method: "PATCH", body: { divider_focus: v } }));
+    } catch (e) { setErr(e.message); }
+  }
+
   async function setStyle(v) {
     setErr(null);
     try {
@@ -172,6 +180,25 @@ function CoverPanel() {
         ))}
       </div>
       {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
+      {/* The section dividers show a tall narrow slice of this same photo.
+          A centred slice cut through the pool and landed on empty beach
+          (owner 2026-08-20). */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginBottom: 12, fontSize: 12.5 }}>
+        <span style={{ color: "var(--muted)" }}>
+          Section dividers show a narrow strip of this photo — take it from the:
+        </span>
+        {[["LEFT", "left"], ["CENTER", "middle"], ["RIGHT", "right"]]
+          .map(([v, label]) => (
+          <label key={v} style={{ display: "flex", gap: 4, alignItems: "center",
+                                  cursor: "pointer" }}>
+            <input type="radio" name="divfocus"
+                   checked={(st.divider_focus || "CENTER") === v}
+                   onChange={() => setFocus(v)} />
+            {label}
+          </label>
+        ))}
+      </div>
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
         <input type="file" accept="image/*" ref={fileRef}
                style={{ display: "none" }} onChange={chosen} />

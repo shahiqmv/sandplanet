@@ -22,7 +22,7 @@ from django.core.files.storage import default_storage
 log = logging.getLogger(__name__)
 
 # ---- brand facts (baked into the static pages) ---------------------------
-TAGLINE = "We go above and beyond on every job."
+TAGLINE = "We go above and beyond on every job. PERIOD"
 SUMMARY_FALLBACK = ""
 REFEREES = [
     ("Soundarajah R", "Director", "V I C M Consultants (Pvt) Ltd"),
@@ -116,8 +116,8 @@ def _cover(hero, style="FULL"):
                 f'<div class="cov-band">{logo("cov-logo")}'
                 f'<div class="cov-rule"></div>'
                 f'<div class="cov-title">Company<br>Profile</div>'
-                f'<div class="cov-sub">Construction · Resort Supplies · Marine '
-                f'Works</div>'
+                f'<div class="cov-sub">Construction · Design &amp; Build · '
+                f'Marine Works</div>'
                 f'<div class="cov-foot"><span>Malé · Republic of Maldives</span>'
                 f'<span>2026</span></div></div></div>')
 
@@ -133,7 +133,7 @@ def _cover(hero, style="FULL"):
                 f'<div class="fc-head">{logo("fc-logo")}'
                 '<div class="fc-rule"></div>'
                 '<div class="fc-title">Company<br>Profile</div>'
-                '<div class="fc-sub">Construction · Resort Supplies · '
+                '<div class="fc-sub">Construction · Design &amp; Build · '
                 'Marine Works</div></div>'
                 '<div class="fc-foot-b"><span>Malé · Republic of Maldives'
                 '</span><span>2026</span></div></div>')
@@ -144,7 +144,7 @@ def _cover(hero, style="FULL"):
             '<div class="fc-body">'
             '<div class="fc-rule"></div>'
             '<div class="fc-title">Company<br>Profile</div>'
-            '<div class="fc-sub">Construction · Resort Supplies · Marine Works'
+            '<div class="fc-sub">Construction · Design &amp; Build · Marine Works'
             '</div>'
             '<div class="fc-foot"><span>Malé · Republic of Maldives</span>'
             '<span>2026</span></div></div></div>')
@@ -156,7 +156,7 @@ def _story():
             '<h1 class="bigtitle">Built by two <span class="amber">childhood '
             'friends</span><br>from Fuvahmulah.</h1>'
             '<div class="lead">Sand Planet Pvt Ltd was established in 2015 with '
-            'a strong will to climb the ladder — founded by two childhood '
+            'a strong will to climb the ladder, founded by two childhood '
             'friends who had filled key positions across both the corporate '
             'world and the public sector.</div><div class="cols">'
             '<p>Determined to make the construction fraternity more dynamic, '
@@ -164,11 +164,11 @@ def _story():
             'roles to building a premier player in the industry.</p>'
             '<p>Our mission is to encourage shared performance and '
             'responsibility, and to ensure a higher degree of professionalism '
-            'in every venture — an approach that delivered an outstanding '
+            'in every venture. That approach delivered an outstanding '
             'result on the very first project we carried out.</p>'
             '<p>We provide professional, client-focused construction solutions '
             'across general contracting, construction management, design-build '
-            'and pre-construction planning — for projects of every scale, from '
+            'and pre-construction planning, for projects of every scale, from '
             'a single office fit-up to major resort development.</p>'
             '<p>We are a 100% team-driven company. Our people hail from every '
             'craft and discipline in the field, letting us combine innovative '
@@ -245,7 +245,14 @@ def _management():
 
 def _divider(hero, num="01", title="ONGOING<br>PROJECTS",
              sub="Live works across the Maldivian atolls"):
-    strip = f'<div class="div-strip"><img src="{hero}"></div>' if hero else ""
+    # object-position decides WHICH vertical slice of the photo the strip
+    # shows. Centred cut straight through the pool (owner 2026-08-20).
+    from .models import ProfileSettings
+    pos = {"LEFT": "left", "RIGHT": "right"}.get(
+        ProfileSettings.get().divider_focus, "center")
+    strip = (f'<div class="div-strip">'
+             f'<img src="{hero}" style="object-position:{pos} center;"></div>'
+             if hero else "")
     return (f'<div class="page divider">{strip}{_bar("")}'
             f'<div class="div-center"><div class="div-num">{num}</div>'
             f'<div class="div-title">{title}</div><div class="div-line"></div>'

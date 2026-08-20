@@ -4518,6 +4518,18 @@ class ProfileSettings(models.Model):
     # in the frame and type at the bottom sits on top of it.
     cover_style = models.CharField(max_length=6, choices=CoverStyle.choices,
                                    default=CoverStyle.TOP)
+
+    class Focus(models.TextChoices):
+        LEFT = "LEFT", "Left of the photo"
+        CENTER = "CENTER", "Middle of the photo"
+        RIGHT = "RIGHT", "Right of the photo"
+
+    # The section dividers show a tall narrow slice of the cover photo, and a
+    # centred slice cut through the pool and landed on empty beach. Which part
+    # matters is a property of the picture, so it is a setting rather than a
+    # guess (owner 2026-08-20).
+    divider_focus = models.CharField(max_length=6, choices=Focus.choices,
+                                     default=Focus.CENTER)
     vision = models.TextField(blank=True)
     mission = models.TextField(blank=True)
     updated_at = models.DateTimeField(auto_now=True)

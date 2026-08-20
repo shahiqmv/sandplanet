@@ -397,3 +397,52 @@ class ProfileLegibilityTests(TestCase):
         css = pr._CSS_TEXT
         i = css.index(".div-strip{")
         self.assertIn("width:92mm", css[i:i + 120])
+
+
+class ProfileCopyTests(TestCase):
+    """Copy the owner corrected on reading the printed profile."""
+
+    def test_the_tagline_is_exact(self):
+        from . import profile_render as pr
+        self.assertEqual(pr.TAGLINE,
+                         "We go above and beyond on every job. PERIOD")
+        self.assertIn("every job. PERIOD", pr.build_html())
+
+    def test_resort_supplies_is_gone_from_the_whole_profile(self):
+        """It "dilutes my construction portfolio" (owner 2026-08-20). It was in
+        three cover subtitles, the vision statement and one biography."""
+        from . import profile_render as pr
+        html = pr.build_html().lower()
+        for term in ("resort suppl", "hotel suppl"):
+            self.assertNotIn(term, html)
+
+    def test_no_em_dashes_in_the_printed_text(self):
+        """Comments are full of them and do not print; this checks what a
+        reader actually sees."""
+        import re
+        from . import profile_render as pr
+        html = pr.build_html()
+        html = re.sub(r'src="data:[^"]+"', "", html)     # drop base64 blobs
+        text = re.sub(r"<[^>]+>", " ", html)
+        found = re.findall(r".{0,40}—.{0,40}", text)
+        self.assertEqual(found, [], f"em dash in printed copy: {found[:3]}")
+
+    def test_the_divider_focus_is_settable_and_reaches_the_page(self):
+        from . import profile_render as pr
+        from .models import ProfileEntry, ProfileSettings
+        e = ProfileEntry.objects.create(project_name="P", status="ONGOING")
+        from io import BytesIO
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from PIL import Image
+        buf = BytesIO()
+        Image.new("RGB", (600, 600), "#123456").save(buf, format="JPEG")
+        e.featured_image.save("f.jpg", SimpleUploadedFile(
+            "f.jpg", buf.getvalue(), content_type="image/jpeg"), save=True)
+        st = ProfileSettings.get()
+        st.divider_focus = "LEFT"
+        st.save()
+        self.assertIn("object-position:left", pr.build_html())
+        st.divider_focus = "CENTER"
+        st.save()
+        self.assertIn("object-position:center", pr.build_html())

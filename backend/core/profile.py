@@ -211,6 +211,7 @@ def settings_dict(st):
     return {"cover_url": st.cover_image.url if st.cover_image else "",
             "vision": st.vision, "mission": st.mission,
             "cover_style": st.cover_style,
+            "divider_focus": st.divider_focus,
             # so the cropper frames the photo the way the cover will use it
             "cover_aspect": aw / ah}
 
@@ -271,6 +272,8 @@ def save_settings(data, actor):
             setattr(st, f, (data.get(f) or "").strip())
     if data.get("cover_style") in dict(ProfileSettings.CoverStyle.choices):
         st.cover_style = data["cover_style"]
+    if data.get("divider_focus") in dict(ProfileSettings.Focus.choices):
+        st.divider_focus = data["divider_focus"]
     st.save()
     audit("profile_settings", 1, "PROFILE_SETTINGS_SAVED", actor=actor)
     return st, None
