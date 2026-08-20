@@ -31,33 +31,125 @@ function readError(data, status) {
   return parts.filter(Boolean).join(" · ") || `Request failed (${status})`;
 }
 
-export async function apiUpload(path, formData, method = "POST") {
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers: { "X-CSRFToken": getCookie("csrftoken") },
-    credentials: "same-origin",
-    body: formData,
+// ---- "something is happening" -----------------------------------------------
+// Every request in the app goes through api / apiUpload / apiDownload, so
+// tracking them here covers the whole app at once.
+//
+// This exists because work that takes real time looked identical to work that
+// had failed: issuing a MAR with a large enclosure ran for minutes with nothing
+// on screen, and people closed the tab or navigated away mid-request, killing
+// it (owner 2026-08-20). A write that is abandoned half-way can leave a
+// document issued with no PDF, which is exactly what happened.
+
+let _seq = 0;
+const _inflight = new Map();          // id -> {label, write, progress}
+const _listeners = new Set();
+
+function _emit() {
+  const jobs = [..._inflight.values()];
+  _listeners.forEach((fn) => fn(jobs));
+}
+
+/** Subscribe to in-flight requests. Returns an unsubscribe function. */
+export function onBusy(fn) {
+  _listeners.add(fn);
+  fn([..._inflight.values()]);
+  return () => _listeners.delete(fn);
+}
+
+function _start(label, write) {
+  const id = ++_seq;
+  _inflight.set(id, { id, label, write, progress: null });
+  _emit();
+  return id;
+}
+
+function _progress(id, fraction) {
+  const job = _inflight.get(id);
+  if (!job) return;
+  job.progress = fraction;
+  _emit();
+}
+
+function _end(id) {
+  _inflight.delete(id);
+  _emit();
+}
+
+// Losing a GET costs nothing; losing a write can leave a half-finished
+// document. Only writes are worth interrupting someone over.
+window.addEventListener("beforeunload", (e) => {
+  if (![..._inflight.values()].some((j) => j.write)) return;
+  e.preventDefault();
+  e.returnValue = "";                 // browsers show their own wording
+  return "";
+});
+
+function _label(method, path) {
+  if (method === "GET") return "Loading";
+  if (method === "DELETE") return "Removing";
+  if (path.includes("/actions/issue")) return "Issuing — this can take a minute";
+  if (path.includes("/actions/")) return "Submitting";
+  return "Saving";
+}
+
+
+export function apiUpload(path, formData, method = "POST") {
+  // XMLHttpRequest, not fetch: fetch cannot report how much of a body has been
+  // sent, and a 15MB enclosure over a site connection needs a real percentage
+  // rather than a spinner that might mean anything (owner 2026-08-20).
+  return new Promise((resolve, reject) => {
+    const id = _start("Uploading", true);
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, `/api/v1${path}`, true);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-CSRFToken", getCookie("csrftoken"));
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) _progress(id, e.loaded / e.total);
+    };
+    // Once the bytes are up, the server still has work to do — rendering a
+    // PDF, merging enclosures. Switch the message rather than sitting at 100%.
+    xhr.upload.onload = () => {
+      const job = _inflight.get(id);
+      if (job) { job.label = "Processing"; job.progress = null; _emit(); }
+    };
+    xhr.onload = () => {
+      _end(id);
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) return resolve(data);
+      const err = new Error(readError(data, xhr.status));
+      err.data = data;
+      err.status = xhr.status;
+      reject(err);
+    };
+    xhr.onerror = () => {
+      _end(id);
+      reject(new Error("The upload did not reach the server — check the "
+                       + "connection and try again."));
+    };
+    xhr.onabort = () => { _end(id); reject(new Error("Upload cancelled.")); };
+    xhr.send(formData);
   });
-  const data = await res.json().catch(() => null);
-  if (!res.ok) {
-    const err = new Error(readError(data, res.status));
-    err.data = data;
-    err.status = res.status;
-    throw err;
-  }
-  return data;
 }
 
 export async function api(path, { method = "GET", body } = {}) {
   const headers = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (method !== "GET") headers["X-CSRFToken"] = getCookie("csrftoken");
-  const res = await fetch(`/api/v1${path}`, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const id = _start(_label(method, path), method !== "GET");
+  let res;
+  try {
+    res = await fetch(`/api/v1${path}`, {
+      method,
+      headers,
+      credentials: "same-origin",
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+  } finally {
+    _end(id);
+  }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
     const err = new Error(readError(data, res.status));
@@ -77,7 +169,13 @@ export async function api(path, { method = "GET", body } = {}) {
 // button looked broken either way (owner 2026-08-19). Returns a short summary
 // to show the user; throws a readable Error otherwise.
 export async function apiDownload(path) {
-  const res = await fetch(`/api/v1${path}`, { credentials: "same-origin" });
+  const id = _start("Preparing the download", false);
+  let res;
+  try {
+    res = await fetch(`/api/v1${path}`, { credentials: "same-origin" });
+  } finally {
+    _end(id);
+  }
   if (!res.ok) {
     let data = null;
     try { data = await res.json(); } catch { /* not JSON — fall through */ }

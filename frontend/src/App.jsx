@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import BusyBar from "./BusyBar.jsx";
 import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
@@ -591,6 +592,9 @@ export default function App() {
 
   return (
     <div>
+      {/* Mounted once, above everything: it reports any request the app makes,
+          wherever it was started from. */}
+      <BusyBar />
       <header className="topbar">
         {showHoNav && (
           <button className="navtoggle" aria-label="Menu"
