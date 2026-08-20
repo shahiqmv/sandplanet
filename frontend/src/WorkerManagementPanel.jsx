@@ -506,7 +506,10 @@ function RosterPicker({ site, onCancel, onDone }) {
   useEffect(() => {
     api(`/sites/${site.id}/direct-workers`).then(setRoster)
       .catch((e) => setError(e.message));
-    api("/sites").then((s) => setSites(s.filter((x) => x.id !== site.id)))
+    // NOT /sites — that returns only the sites the user is allocated to, so a
+    // PM could send men to the other sites he runs and nobody else, and a Site
+    // Admin had no destination at all (owner 2026-08-20).
+    api(`/sites/${site.id}/transfer-destinations`).then(setSites)
       .catch(() => setSites([]));
   }, [site.id]);
 
@@ -576,11 +579,13 @@ function RosterPicker({ site, onCancel, onDone }) {
             <Btn variant="danger" disabled={busy}
                  onClick={() => submit("REMOVE")}>Remove selected</Btn>
             <span style={{ marginLeft: 8 }}>Transfer to</span>
-            <select style={{ ...inputStyle, width: 130 }} value={dest}
+            <select style={{ ...inputStyle, width: 190 }} value={dest}
                     onChange={(e) => setDest(e.target.value)}>
               <option value="">Site…</option>
               {sites.map((s) => (
-                <option key={s.id} value={s.id}>{s.code}</option>))}
+                <option key={s.id} value={s.id}>
+                  {s.code} — {s.name}
+                  {s.status === "AWARDED" ? " (mobilising)" : ""}</option>))}
             </select>
             <Btn variant="secondary" disabled={busy}
                  onClick={() => submit("TRANSFER")}>Transfer selected</Btn>

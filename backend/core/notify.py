@@ -278,6 +278,14 @@ def notify_worker_request(batch):
         for user in _role_users("DIRECTOR"):
             notify_user(user, f"New hires ({n}) — activate",
                         body=body, category="approval")
+    elif (batch.status == WCR.Status.APPROVED
+          and batch.kind == WCR.Kind.TRANSFER and batch.to_site_id):
+        # A transfer is approved by the SENDING site's PM, so the receiving
+        # site learns nothing until men appear on its roster. Tell them — it is
+        # news, not an approval (owner 2026-08-20).
+        for pm in batch.to_site.current_pms():
+            notify_user(pm, f"{n} worker(s) transferred to {batch.to_site.code}",
+                        body=f"From {site.code}", category="info")
 
 
 def notify_salary_revision(rev):

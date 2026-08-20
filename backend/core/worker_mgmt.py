@@ -351,18 +351,23 @@ def _apply_remove(batch, actor):
 
 
 def _apply_transfer(batch, actor):
+    from . import merge_employees
     with transaction.atomic():
         for item in batch.items.select_related("employee"):
-            emp = item.employee
-            emp.site_allocations.filter(to_date__isnull=True).update(
-                to_date=date.today())
-            EmployeeSiteAllocation.objects.create(
-                employee=emp, site=batch.to_site, from_date=date.today())
+            # The old allocation used to be closed on the same day the new one
+            # opened, so on the day of the move the man stood on two rosters
+            # and both sites could mark him — two days' pay for one. This is
+            # the tidy-up the merge tool already does: close the day before,
+            # drop an allocation that had not started, and re-tag his
+            # attendance so the cost follows him.
+            merge_employees.transfer_from(item.employee, batch.to_site,
+                                          date.today(), actor)
         batch.status = WCR.Status.APPROVED
         _stamp(batch, actor)
     audit("worker_batch", batch.id, "WORKER_TRANSFER_APPROVED", actor=actor,
           detail={"from": batch.site.code, "to": batch.to_site.code,
                   "workers": batch.items.count()})
+    _notify(batch)
     return None
 
 

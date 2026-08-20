@@ -149,6 +149,86 @@ class WorkerBatchTests(TestCase):
             e.refresh_from_db()
             self.assertEqual(e.current_site_id(), self.dest.id)
 
+    def test_transfer_day_belongs_to_one_site_only(self):
+        """He used to stand on both rosters on the day he moved, so both sites
+        could mark him — two days' pay for one (owner 2026-08-20)."""
+        emp = self._direct(self.site, 1)[0]
+        bid = self.client.post(
+            f"/api/v1/sites/{self.site.id}/worker-batches",
+            {"kind": "TRANSFER", "employee_ids": [emp.id],
+             "to_site_id": self.dest.id}, format="json").data["id"]
+        self._auth(self.pm)
+        self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                         {"action": "approve"}, format="json")
+        rows = list(emp.site_allocations.order_by("from_date"))
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].to_date, rows[1].from_date -
+                         __import__("datetime").timedelta(days=1))
+        for a in rows:
+            if a.to_date:
+                self.assertGreaterEqual(a.to_date, a.from_date)
+
+    def test_destinations_are_every_site_not_just_the_users_own(self):
+        """A PM could only send men to the sites he himself runs, and a Site
+        Admin — who has exactly one site — had nowhere to send them at all
+        (owner 2026-08-20)."""
+        far = Site.objects.create(code="BVR", name="Bvlgari",
+                                  status=Site.Status.ACTIVE)
+        mob = Site.objects.create(code="KNH", name="Kanuhura",
+                                  status=Site.Status.AWARDED)
+        Site.objects.create(code="OLD", name="Finished",
+                            status=Site.Status.CLOSED)
+        Site.objects.create(code="MLE", name="Head Office",
+                            status=Site.Status.ACTIVE, is_head_office=True)
+        for user in (self.sa, self.pm):
+            self._auth(user)
+            r = self.client.get(
+                f"/api/v1/sites/{self.site.id}/transfer-destinations")
+            self.assertEqual(r.status_code, 200, r.data)
+            codes = [s["code"] for s in r.data]
+            self.assertIn(self.dest.code, codes)
+            self.assertIn(far.code, codes)
+            # A site being mobilised is exactly where men are sent.
+            self.assertIn(mob.code, codes)
+            # Nowhere to receive him at a closed site, and never his own.
+            self.assertNotIn("OLD", codes)
+            self.assertNotIn(self.site.code, codes)
+            # Head Office is HR's — a man goes there as staff or on leave, not
+            # parked there by a site.
+            self.assertNotIn("MLE", codes)
+
+    def test_transfer_to_a_site_the_requester_does_not_run_goes_through(self):
+        far = Site.objects.create(code="BVR", name="Bvlgari",
+                                  status=Site.Status.ACTIVE)
+        emp = self._direct(self.site, 1)[0]
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "TRANSFER", "employee_ids": [emp.id],
+                              "to_site_id": far.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self._auth(self.pm)          # the SENDING site's PM still approves
+        self.client.post(f"/api/v1/worker-batches/{r.data['id']}/action",
+                         {"action": "approve"}, format="json")
+        emp.refresh_from_db()
+        self.assertEqual(emp.current_site_id(), far.id)
+
+    def test_receiving_pm_is_told_men_are_coming(self):
+        from .models import Notification
+        other = make_user("pm3", User.Role.PM, site=self.dest)
+        SitePmHistory.objects.create(site=self.dest, pm_user=other,
+                                     from_date=date(2026, 1, 1))
+        emp = self._direct(self.site, 1)[0]
+        bid = self.client.post(
+            f"/api/v1/sites/{self.site.id}/worker-batches",
+            {"kind": "TRANSFER", "employee_ids": [emp.id],
+             "to_site_id": self.dest.id}, format="json").data["id"]
+        self._auth(self.pm)
+        self.client.post(f"/api/v1/worker-batches/{bid}/action",
+                         {"action": "approve"}, format="json")
+        # The sending site's PM approves, so the receiving site would otherwise
+        # find out when men appeared on its roster.
+        self.assertTrue(Notification.objects.filter(
+            recipient=other, title__icontains="transferred").exists())
+
     def test_worker_cannot_be_in_two_open_batches(self):
         emp = self._direct(self.site, 1)[0]
         self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",

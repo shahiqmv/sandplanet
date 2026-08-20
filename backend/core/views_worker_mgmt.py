@@ -110,6 +110,37 @@ def site_direct_workers(request, site_id):
     return Response(out)
 
 
+@api_view(["GET"])
+def transfer_destinations(request, site_id):
+    """Where a site may send its workers.
+
+    Deliberately NOT scoped to the requester's own sites. The destination list
+    used to come from /sites, which returns only what the user is allocated to
+    — so a PM could move men between the sites they run and nowhere else, and a
+    Site Admin, who has exactly one site, had no destination at all (owner
+    2026-08-20). Moving a man to another project is ordinary work; the gate
+    that matters is the source site's PM approving the batch, and that is
+    unchanged.
+
+    Closed and on-hold sites are left out: there is nobody there to receive
+    him. A site still AWARDED is in, because mobilising one is precisely when
+    men get moved to it. Head Office is not a destination here — a man goes
+    there as office staff (the Employees page) or on leave (the leave screen),
+    both HR's business; parking a worker there from a site would leave him
+    unmarked and unpaid with no record of why.
+    """
+    site, err = _site_for(request, site_id)
+    if err:
+        return err
+    if request.user.role not in (*wm.SITE_MANAGE_ROLES, "HO_HR"):
+        return Response({"detail": "Not permitted."}, status=403)
+    rows = Site.objects.filter(
+        status__in=(Site.Status.ACTIVE, Site.Status.AWARDED)
+    ).exclude(pk=site.id).exclude(is_head_office=True).order_by("code")
+    return Response([{"id": s.id, "code": s.code, "name": s.name,
+                      "status": s.status} for s in rows])
+
+
 @api_view(["POST"])
 def create_batch(request, site_id):
     if request.user.role not in wm.SITE_MANAGE_ROLES:
