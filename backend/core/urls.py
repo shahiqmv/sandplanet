@@ -5,7 +5,8 @@ from . import views, views_bom as bom_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_documents as docs, \
-    views_hr as hr, views_imports as imports_api, views_notify as notify_api, \
+    views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
+    views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_stock as stock, views_subcontract as subcontract_api, \
@@ -585,6 +586,12 @@ urlpatterns = [
          psched_api.schedule_line_award, name="psched-line-award"),
     path("procurement-schedule-quotes/<int:quote_id>",
          psched_api.schedule_line_quote, name="psched-quote"),
+    # Worker leave — HR grants, the worker sits at Head Office, HR marks the
+    # return (owner 2026-08-20)
+    path("leaves", leave_api.leaves, name="leaves"),
+    path("leaves/overdue", leave_api.leaves_overdue, name="leaves-overdue"),
+    path("leaves/<int:pk>/return", leave_api.leave_return, name="leave-return"),
+    path("leaves/<int:pk>/cancel", leave_api.leave_cancel, name="leave-cancel"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),

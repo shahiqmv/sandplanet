@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import AttendancePage from "./AttendancePage.jsx";
-import { buttonStyle, card, td, th } from "./ui.jsx";
+import { Chip, buttonStyle, card, td, th } from "./ui.jsx";
 
 // Head Office is an attendance/payroll home for office staff — NOT a project.
 // This page is HR's entry: the HO staff roster + a way to record their
@@ -9,12 +9,18 @@ import { buttonStyle, card, td, th } from "./ui.jsx";
 export default function HeadOfficePage({ me, sites }) {
   const ho = (sites || []).find((s) => s.is_head_office);
   const [staff, setStaff] = useState([]);
+  // Men on leave sit here until they are back, so the roster would otherwise
+  // read as if they were office staff (owner 2026-08-20).
+  const [away, setAway] = useState({});
   const [showAtt, setShowAtt] = useState(false);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN",
                   "SIGNATORY"].includes(me.role);
 
   useEffect(() => {
     if (ho) api(`/employees?site=${ho.id}`).then(setStaff).catch(() => {});
+    api("/leaves?open=1").then((rows) => setAway(Object.fromEntries(
+      rows.filter((r) => r.on_leave_today).map((r) => [r.employee_id, r]))))
+      .catch(() => {});
   }, [ho?.id]);
 
   if (!ho) return <div style={card}>
@@ -47,7 +53,11 @@ export default function HeadOfficePage({ me, sites }) {
           {staff.map((e) => (
             <tr key={e.id}>
               <td style={td}>{e.emp_no}</td>
-              <td style={td}>{e.full_name}</td>
+              <td style={td}>{e.full_name}{away[e.id] && <>
+                {" "}<Chip tone={away[e.id].kind === "PAID" ? "info" : "warn"}>
+                  On leave to {away[e.id].to_date}
+                  {away[e.id].kind === "PAID" ? "" : " (no pay)"}</Chip></>}
+              </td>
               <td style={td}>{e.job_category_name || "—"}</td>
               <td style={td}>{e.permit_state === "EXPIRED"
                 ? <span style={{ color: "#c0392b" }}>⚠ Expired</span>

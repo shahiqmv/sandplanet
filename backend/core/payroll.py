@@ -13,7 +13,10 @@ from .audit import audit
 from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 
 TWO = Decimal("0.01")
+# LEAVE means leave WITHOUT pay and always has; PAID_LEAVE is the other kind
+# and is paid like a worked day (owner 2026-08-20).
 ABSENT_MARKS = ("ABSENT", "SICK", "LEAVE")
+PAID_MARKS = ("PRESENT", "PAID_LEAVE")
 FRIDAY_OT_HOURS_DEFAULT = Decimal("12")
 # A rest day is part of the monthly entitlement and is normally paid even
 # though nobody marks it — that is why the register shows a blank there. But a
@@ -320,8 +323,8 @@ def _attendance_prefill(employee, site, year, month, working_days):
                 days += 1
                 if mark is None:
                     rest_paid += 1
-        elif mark == "PRESENT":
-            days += 1
+        elif mark in PAID_MARKS:
+            days += 1            # worked, or away on PAID leave
         elif mark == "HALF_DAY":
             days += Decimal("0.5")
         day += timedelta(days=1)

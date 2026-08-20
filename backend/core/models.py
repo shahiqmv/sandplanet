@@ -2610,8 +2610,13 @@ class TimesheetMonth(models.Model):
 class Attendance(models.Model):
     """One row per employee per day at their allocated site (spec §6A.2)."""
 
+    # LEAVE has always meant UNPAID leave — payroll counts it with ABSENT and
+    # SICK. PAID_LEAVE is the other kind: a day away that is still owed
+    # (owner 2026-08-20). Keeping them as separate marks means the register
+    # itself says which was granted, rather than the answer living elsewhere.
     REMARKS = [("PRESENT", "Present"), ("ABSENT", "Absent"), ("SICK", "Sick"),
-               ("LEAVE", "Leave"), ("HALF_DAY", "Half day")]
+               ("LEAVE", "Leave (no pay)"), ("PAID_LEAVE", "Leave (paid)"),
+               ("HALF_DAY", "Half day")]
 
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
                                  related_name="attendance")
@@ -4548,6 +4553,64 @@ class ProfileSettings(models.Model):
     def get(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+
+class WorkerLeave(models.Model):
+    """A worker away on leave, held at Head Office until they are back.
+
+    A man on leave is not at his site, and leaving him on the site register
+    meant the site either marked him present (paying for days not worked) or
+    absent (which reads as a discipline problem). So leave MOVES him to MLE for
+    its duration and returns him afterwards (owner 2026-08-20).
+
+    Paid or unpaid is the whole difference:
+      * PAID   — his MLE days are pre-marked PAID_LEAVE, so payroll pays them
+                 without anybody having to remember to mark him.
+      * UNPAID — nothing is marked and the site cannot mark him either; the
+                 days are blocked so they cannot be paid by accident.
+
+    HR grants it directly and HR marks the return; there is no approval step
+    and no entitlement balance — a record of what was granted, nothing more.
+    """
+
+    class Kind(models.TextChoices):
+        PAID = "PAID", "Paid leave"
+        UNPAID = "UNPAID", "Leave without pay"
+
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="leaves")
+    kind = models.CharField(max_length=6, choices=Kind.choices)
+    from_date = models.DateField()
+    to_date = models.DateField()
+    reason = models.TextField(blank=True)
+    # Where he was, so he can be put back there. Null when he was unallocated.
+    from_site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="leaves_from")
+    granted_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    granted_at = models.DateTimeField(auto_now_add=True)
+    returned_on = models.DateField(null=True, blank=True)
+    returned_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-from_date", "-id"]
+        indexes = [models.Index(fields=["employee", "from_date"])]
+
+    def __str__(self):
+        return f"{self.employee.emp_no} {self.from_date}..{self.to_date}"
+
+    @property
+    def is_open(self):
+        return self.returned_on is None and self.cancelled_at is None
+
+    @property
+    def days(self):
+        return (self.to_date - self.from_date).days + 1
+
+    def covers(self, day):
+        return self.from_date <= day <= self.to_date
 
 
 # ===== Meetings (client/site/BD meeting log + minutes + follow-up) =====

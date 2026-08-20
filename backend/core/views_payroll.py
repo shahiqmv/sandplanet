@@ -247,8 +247,10 @@ def _site_attendance_totals(site, year, month):
     for a in Attendance.objects.filter(site=site, day__year=year,
                                        day__month=month, employee_id__in=ids):
         t["ot_hours"] += a.ot_approved or 0
-        if a.remark == "PRESENT":
-            if a.day.day in rest:
+        if a.remark in ("PRESENT", "PAID_LEAVE"):
+            # Paid leave pays, so it counts here — otherwise the pre-run review
+            # shows a hole where the payroll run will show days.
+            if a.day.day in rest and a.remark == "PRESENT":
                 t["rest_day_work"] += 1
             else:
                 t["days_worked"] += 1

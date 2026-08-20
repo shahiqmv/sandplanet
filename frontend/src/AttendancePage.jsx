@@ -41,9 +41,18 @@ export default function AttendancePage({ site, me, onClose }) {
         method: "PUT",
         body: { site: site.id, date: day, rows },
       });
+      // load() clears the notice, so say it AFTER reloading or the
+      // confirmation never reaches the screen.
+      load();
       setNotice(`Saved ${result.saved} row(s)` +
                 (result.late_edit ? " (late edit — audited)." : "."));
-      load();
+      // The server refuses individual rows it cannot accept — a day before the
+      // man joined, or a day of leave without pay. It was saying so and the
+      // screen was throwing it away, which is how a mark silently fails to
+      // take (owner 2026-08-20).
+      if (result.refused?.length) {
+        setError("Not recorded: " + result.refused.join("; ") + ".");
+      }
     } catch (e) {
       setError(e.message);
     } finally {
@@ -218,7 +227,14 @@ export default function AttendancePage({ site, me, onClose }) {
                 <select value={row.remark} disabled={grid?.locked || !canEnter}
                         onChange={(e) => setRow(i, { remark: e.target.value })}
                         style={{ ...inputStyle, width: 110 }}>
-                  {remarkOptions.map((r) => <option key={r}>{r}</option>)}
+                  {/* PAID_LEAVE is never offered — leave is granted on the
+                      Worker Leave screen, which also moves the man to Head
+                      Office. It is listed only when the day already carries
+                      it, so a pre-marked leave day reads correctly instead of
+                      showing blank (owner 2026-08-20). */}
+                  {(row.remark === "PAID_LEAVE"
+                    ? ["PAID_LEAVE", ...remarkOptions]
+                    : remarkOptions).map((r) => <option key={r}>{r}</option>)}
                 </select>
               </td>
               {sub ? (
@@ -334,8 +350,8 @@ function Register({ site, canEnter, onOpenDay }) {
         {data?.locked && <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
           🔒 Locked</span>}
         <span style={{ fontSize: 11.5, color: "var(--muted)", marginLeft: 8 }}>
-          P present · F Friday/rest worked · A absent · L leave · S sick ·
-          ½ half
+          P present · F Friday/rest worked · A absent · L leave (no pay) ·
+          PL leave (paid) · S sick · ½ half
         </span>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}

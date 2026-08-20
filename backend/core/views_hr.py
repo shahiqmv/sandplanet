@@ -26,6 +26,7 @@ from .models import (
     Site,
     TimesheetMonth,
 )
+from . import leave as _leave
 from .permissions import PAY_ROLES, scoped_site_ids
 
 # PA (Director's office) has full HR access alongside HR/Admin (owner 2026-08-03)
@@ -709,7 +710,9 @@ def attendance_register(request):
             return ""
         if a.remark == "PRESENT":
             return "F" if is_rest else "P"
-        return {"ABSENT": "A", "SICK": "S", "LEAVE": "L",
+        # PL = away on PAID leave. Only ever seen on the Head Office register:
+        # granting leave moves the man there, and the days are pre-marked.
+        return {"ABSENT": "A", "SICK": "S", "LEAVE": "L", "PAID_LEAVE": "PL",
                 "HALF_DAY": "½"}.get(a.remark, "")
 
     rest_days = {d["day"] for d in days if d["rest"]}
@@ -735,8 +738,10 @@ def attendance_register(request):
             if a is None:
                 continue
             t["ot_hours"] += a.ot_approved or 0
-            if a.remark == "PRESENT":
-                if d in rest_days:
+            if a.remark in ("PRESENT", "PAID_LEAVE"):
+                # A paid leave day is a paid day — it belongs with the days
+                # payroll pays, not with the absences it deducts.
+                if d in rest_days and a.remark == "PRESENT":
                     t["fridays"] += 1
                 else:
                     t["present"] += 1
@@ -805,6 +810,14 @@ def attendance_bulk(request):
         # silence: the clerk needs to know the mark did not take.
         if employee.join_date and day < employee.join_date:
             refused.append(f"{employee.emp_no} joined {employee.join_date}")
+            continue
+        # Leave WITHOUT pay is a decision to withhold these days, so a stray
+        # PRESENT would quietly undo it. Refused out loud, like a pre-join
+        # date, so the clerk knows the mark did not take (owner 2026-08-20).
+        unpaid = _leave.open_leave_for(employee, day)
+        if unpaid and unpaid.kind == "UNPAID":
+            refused.append(f"{employee.emp_no} is on leave without pay "
+                           f"({unpaid.from_date} to {unpaid.to_date})")
             continue
         remark = row.get("remark") or "PRESENT"
         if remark == "OFF":
