@@ -76,6 +76,55 @@ def delete_entry(entry, actor):
     return None
 
 
+def complete_entry(entry, data, actor):
+    """Move a live project into the references section and FREEZE it.
+
+    The model has carried `status`, `completed_at` and `snapshot_locked` since
+    it was built, and the renderer reads them — but nothing ever set them, so
+    there was no way to retire a finished project (owner 2026-08-20).
+
+    Freezing is the point of the section: a reference page is a record of what
+    was delivered, and it must not drift when someone edits copy years later.
+    Reopening is possible, deliberately, because the first thing anyone does
+    after completing something is spot a typo in it.
+    """
+    from datetime import date
+
+    if entry.status == "COMPLETED":
+        return "This project is already in references."
+    when = (data or {}).get("completed_at")
+    if when:
+        try:
+            when = date.fromisoformat(str(when))
+        except ValueError:
+            return "Invalid completion date."
+    else:
+        when = date.today()
+    order = (ProfileEntry.objects.filter(status="COMPLETED").count() + 1) * 10
+    entry.status = "COMPLETED"
+    entry.completed_at = when
+    entry.snapshot_locked = True
+    entry.sort_order = order
+    entry.save()
+    audit("profile_entry", entry.id, "PROFILE_ENTRY_COMPLETED", actor=actor,
+          detail={"name": entry.project_name, "completed_at": str(when)})
+    return None
+
+
+def reopen_entry(entry, actor):
+    """Unfreeze a completed project and put it back among the live ones."""
+    if entry.status != "COMPLETED":
+        return "This project is not in references."
+    order = (ProfileEntry.objects.filter(status="ONGOING").count() + 1) * 10
+    entry.status = "ONGOING"
+    entry.snapshot_locked = False
+    entry.sort_order = order
+    entry.save()
+    audit("profile_entry", entry.id, "PROFILE_ENTRY_REOPENED", actor=actor,
+          detail={"name": entry.project_name})
+    return None
+
+
 def reorder(order_ids, actor):
     """Set sort_order to match the given list of ongoing-entry ids."""
     ids = [int(i) for i in order_ids]

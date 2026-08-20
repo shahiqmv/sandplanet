@@ -298,3 +298,102 @@ class CoverStyleTests(TestCase):
                               {"cover_style": "NONSENSE"}, format="json")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(ProfileSettings.get().cover_style, "TOP")
+
+
+class CompleteAndReopenTests(TestCase):
+    """Retiring a finished project into the references section.
+
+    The model has carried status / completed_at / snapshot_locked since it was
+    built and the renderer reads them, but NOTHING ever set them — there was no
+    way to move a project to references at all (owner 2026-08-20).
+    """
+
+    def setUp(self):
+        self.mkt = make_user("cm_mkt", User.Role.MARKETING)
+        self.client = APIClient()
+        self.client.force_authenticate(self.mkt)
+        self.entry = self.client.post(
+            "/api/v1/profile/entries",
+            {"project_name": "Kids Pool", "summary": "Design and build."},
+            format="json").data
+
+    def _complete(self, when="2026-06-30"):
+        return self.client.post(
+            f"/api/v1/profile/entries/{self.entry['id']}/complete",
+            {"completed_at": when}, format="json")
+
+    def test_completing_moves_it_to_references_and_freezes_it(self):
+        r = self._complete()
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "COMPLETED")
+        self.assertEqual(str(r.data["completed_at"]), "2026-06-30")
+        self.assertTrue(r.data["locked"])
+
+    def test_a_frozen_reference_cannot_be_edited(self):
+        """The point of freezing: a delivered project must not drift when
+        somebody edits copy years later."""
+        self._complete()
+        r = self.client.patch(f"/api/v1/profile/entries/{self.entry['id']}",
+                              {"project_name": "Something else"},
+                              format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("locked", r.data["detail"])
+
+    def test_it_can_be_reopened_and_edited_again(self):
+        """Because the first thing anyone does after completing something is
+        spot a typo in it."""
+        self._complete()
+        r = self.client.post(
+            f"/api/v1/profile/entries/{self.entry['id']}/reopen")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["status"], "ONGOING")
+        self.assertFalse(r.data["locked"])
+        e = self.client.patch(f"/api/v1/profile/entries/{self.entry['id']}",
+                              {"project_name": "Kids Pool Phase 2"},
+                              format="json")
+        self.assertEqual(e.status_code, 200)
+
+    def test_completing_twice_is_refused(self):
+        self._complete()
+        self.assertEqual(self._complete().status_code, 400)
+
+    def test_an_invalid_date_is_refused(self):
+        r = self._complete("not-a-date")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Invalid", r.data["detail"])
+
+    def test_no_date_given_means_today(self):
+        from datetime import date
+        r = self.client.post(
+            f"/api/v1/profile/entries/{self.entry['id']}/complete",
+            {}, format="json")
+        self.assertEqual(str(r.data["completed_at"]), str(date.today()))
+
+    def test_it_appears_under_references_in_the_pdf(self):
+        from . import profile_render as pr
+        self._complete()
+        html = pr.build_html()
+        self.assertIn("PROJECT<br>REFERENCES", html)
+
+
+class ProfileLegibilityTests(TestCase):
+    """Two things that were simply unreadable or invisible on the page."""
+
+    def test_the_mission_text_is_light_on_the_navy_panel(self):
+        """.vmbox p and .amberbox p have EQUAL specificity, so whichever is
+        declared later wins. With the order reversed the dark body colour
+        landed on the navy panel and the mission could not be read (owner
+        2026-08-20)."""
+        from . import profile_render as pr
+        css = pr._CSS_TEXT
+        self.assertLess(css.index(".vmbox p{"), css.index(".amberbox p{"))
+        amber = css[css.index(".amberbox p{"):]
+        self.assertIn("#F2ECE0", amber[:60])
+
+    def test_the_divider_shows_a_meaningful_slice_of_the_photo(self):
+        """74mm of a 210mm page is a quarter of the picture — on the pool
+        aerial that was water and nothing else."""
+        from . import profile_render as pr
+        css = pr._CSS_TEXT
+        i = css.index(".div-strip{")
+        self.assertIn("width:92mm", css[i:i + 120])

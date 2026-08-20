@@ -357,3 +357,39 @@ def profile_cover(request):
         return Response({"detail": "No image supplied."}, status=400)
     pf.set_cover(f, request.user)
     return Response(pf.settings_dict(ProfileSettings.get()))
+
+
+# ---- completing a project --------------------------------------------------
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def profile_entry_complete(request, pk):
+    """Retire a live project into the references section, frozen."""
+    err = _guard(request)
+    if err:
+        return err
+    entry = _entry(pk)
+    if entry is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = pf.complete_entry(entry, request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    entry.refresh_from_db()
+    return Response(pf.entry_dict(entry))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def profile_entry_reopen(request, pk):
+    """Put a completed project back among the live ones and unfreeze it."""
+    err = _guard(request)
+    if err:
+        return err
+    entry = _entry(pk)
+    if entry is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = pf.reopen_entry(entry, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    entry.refresh_from_db()
+    return Response(pf.entry_dict(entry))

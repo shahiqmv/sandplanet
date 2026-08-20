@@ -465,11 +465,13 @@ body { font-family:"Carlito","DejaVu Sans",sans-serif; color:#22303B; }
 .pullquote{margin-top:9mm;border-left:3pt solid #E38A2E;padding:2mm 0 2mm 7mm;font-family:"DejaVu Sans Condensed";font-size:17pt;font-weight:bold;color:#0E3A5C;line-height:1.3;}
 /* divider: light, image strip on the right */
 .divider{background:#F6F4F0;}
-.div-strip{position:absolute;top:0;right:0;width:74mm;height:100%;overflow:hidden;}
+/* Was 74mm — a quarter of the photograph, which on the pool aerial showed
+   the water and nothing else around it (owner 2026-08-20). */
+.div-strip{position:absolute;top:0;right:0;width:92mm;height:100%;overflow:hidden;}
 .div-strip img{width:100%;height:100%;object-fit:cover;}
-.div-center{position:absolute;left:18mm;top:112mm;max-width:118mm;}
+.div-center{position:absolute;left:18mm;top:112mm;max-width:96mm;}
 .div-num{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:20pt;color:#E38A2E;letter-spacing:2pt;}
-.div-title{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:42pt;line-height:1.0;color:#0E3A5C;margin-top:2mm;}
+.div-title{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:35pt;line-height:1.0;color:#0E3A5C;margin-top:2mm;}
 .div-line{width:36mm;height:2mm;background:#E38A2E;margin:7mm 0;}
 .div-sub{color:#5E6D78;font-size:12pt;}
 /* project page: hero then title BELOW on white */
@@ -502,11 +504,15 @@ body { font-family:"Carlito","DejaVu Sans",sans-serif; color:#22303B; }
 .iv{font-size:10.5pt;color:#3C4954;line-height:1.4;}
 .vm{display:flex;gap:6mm;margin-top:9mm;}
 .vmbox{flex:1;background:#F6F4F0;border:0.6pt solid #E5EAEE;border-radius:2mm;padding:6mm;}
-.amberbox{background:#0E3A5C;border-color:#0E3A5C;}
-.amberbox .vmh{color:#E9B96E;}
-.amberbox p{color:#EBE1CE;}
 .vmh{font-family:"DejaVu Sans Condensed";font-weight:bold;font-size:12pt;letter-spacing:1.5pt;text-transform:uppercase;color:#0E3A5C;margin-bottom:3mm;}
 .vmbox p{font-size:10pt;line-height:1.6;color:#47535D;margin:0;}
+/* The navy Mission box comes LAST on purpose. ".vmbox p" and ".amberbox p"
+   have equal specificity, so whichever is declared later wins — with the
+   order reversed, the dark body colour was landing on the navy panel and the
+   mission statement could not be read (owner 2026-08-20). */
+.amberbox{background:#0E3A5C;border-color:#0E3A5C;}
+.amberbox .vmh{color:#E9B96E;}
+.amberbox p{color:#F2ECE0;}
 /* key management */
 .mgrid{padding:9mm 18mm 0 18mm;display:grid;grid-template-columns:1fr 1fr;gap:7mm;}
 /* Five or more people: the cards have to give up some room or the page

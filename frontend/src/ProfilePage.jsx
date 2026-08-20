@@ -620,6 +620,28 @@ function Editor({ entry, onSaved, onDeleted }) {
     } catch (e) { setErr(e.message); }
     setBusy(false);
   }
+  async function complete() {
+    const when = window.prompt(
+      "Completion date (YYYY-MM-DD). This moves the project into Project "
+      + "References and freezes the page.",
+      new Date().toISOString().slice(0, 10));
+    if (when === null) return;
+    setErr(null);
+    try {
+      await api(`/profile/entries/${entry.id}/complete`,
+                { method: "POST", body: { completed_at: when } });
+      onSaved();
+    } catch (e) { setErr(e.message); }
+  }
+
+  async function reopen() {
+    setErr(null);
+    try {
+      await api(`/profile/entries/${entry.id}/reopen`, { method: "POST" });
+      onSaved();
+    } catch (e) { setErr(e.message); }
+  }
+
   async function del() {
     if (!window.confirm(`Remove "${entry.project_name}"?`)) return;
     try { await api(`/profile/entries/${entry.id}`, { method: "DELETE" });
@@ -663,13 +685,30 @@ function Editor({ entry, onSaved, onDeleted }) {
       <div style={{ ...card, flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", justifyContent: "space-between" }}>
           <b style={{ color: NAVY }}>{locked ? "Completed (locked)" : "Edit project"}</b>
-          {!locked && <button onClick={del} style={{ border: "none",
-            background: "none", color: "var(--red-fg)", cursor: "pointer",
-            fontSize: 12.5 }}>Remove</button>}
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {/* Finishing a project had no button at all — the model could
+                retire one but nothing set it (owner 2026-08-20). */}
+            {!locked && (
+              <button onClick={complete} style={{ border: "none",
+                background: "none", color: NAVY, cursor: "pointer",
+                fontSize: 12.5, fontWeight: 600 }}>
+                ✓ Mark completed</button>
+            )}
+            {locked && (
+              <button onClick={reopen} style={{ border: "none",
+                background: "none", color: NAVY, cursor: "pointer",
+                fontSize: 12.5, fontWeight: 600 }}>
+                ↩ Reopen to edit</button>
+            )}
+            {!locked && <button onClick={del} style={{ border: "none",
+              background: "none", color: "var(--red-fg)", cursor: "pointer",
+              fontSize: 12.5 }}>Remove</button>}
+          </div>
         </div>
         {err && <p style={{ color: "var(--red-fg)" }}>{err}</p>}
         {locked && <p style={{ fontSize: 12, color: "var(--muted)" }}>
-          This project is a frozen reference. Reopen it (admin) to edit.</p>}
+          Completed {entry.completed_at || ""} — this is a frozen reference, so
+          the page cannot drift after the fact. Reopen it to edit.</p>}
 
         <fieldset disabled={locked} style={{ border: "none", padding: 0,
           margin: 0 }}>

@@ -501,6 +501,11 @@ urlpatterns = [
     # --- procurement schedule (PSC) ---
     # Management, corporate info and the cover photo — all three used to be
     # hardcoded in the renderer (owner 2026-08-19)
+    # Retiring a finished project into the references section, and back
+    path("profile/entries/<int:pk>/complete", profile_api.profile_entry_complete,
+         name="profile-entry-complete"),
+    path("profile/entries/<int:pk>/reopen", profile_api.profile_entry_reopen,
+         name="profile-entry-reopen"),
     path("profile/management", profile_api.profile_management,
          name="profile-management"),
     path("profile/management/<int:pk>", profile_api.profile_management_detail,
