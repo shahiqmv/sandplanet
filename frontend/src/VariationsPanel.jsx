@@ -108,6 +108,20 @@ export default function VariationsPanel({ projectId, me }) {
                       {signed(v.signed_total)}</td>
                     <td style={{ ...td, textAlign: "right",
                                  whiteSpace: "nowrap" }}>
+                      {/* A variation changes what the client owes, so it goes
+                          to them as a document they can file and sign. Not on
+                          a draft — that price is not one we stand behind yet
+                          (owner 2026-08-22). */}
+                      {v.status !== "DRAFT" && (
+                        <a href={`/api/v1/variations/${v.id}/vo.pdf`}
+                           target="_blank" rel="noreferrer"
+                           title="Variation order to send to the client"
+                           style={{ ...ghostButton, padding: "2px 7px",
+                                    fontSize: 12, color: "var(--navy)",
+                                    textDecoration: "none",
+                                    display: "inline-block" }}>
+                          ⬇ VO PDF</a>
+                      )}
                       {canEdit && v.status === "DRAFT" && (<>
                         <A onClick={() => setEditId(
                           editId === v.id ? null : v.id)}>edit</A>

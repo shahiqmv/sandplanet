@@ -1228,6 +1228,82 @@ def claim_pdf_context(claim):
     }
 
 
+def variation_pdf_context(v):
+    """Context for the client-facing Variation Order PDF.
+
+    A variation changes what the client owes, so it has to leave the building
+    as a document they can file and sign — not a row on our screen (owner
+    2026-08-22). The commercial question they are being asked is always the
+    same one: what does the contract sum become if I approve this? So the
+    contract block runs original → variations already approved → this one →
+    the resulting sum.
+    """
+    from decimal import Decimal
+
+    from .pdf import company_info, logo_src
+    project = v.project
+    boq = getattr(project, "boq", None)
+    ccy = boq.currency if boq else "USD"
+    original = Decimal(str(project.contract_value or 0))
+    prior = sum((x.signed_total for x in project.variations.filter(
+        status="APPROVED").exclude(pk=v.pk)), Decimal("0"))
+    before = original + prior
+    this_vo = v.signed_total
+    after = before + this_vo
+    approved = v.status == v.Status.APPROVED
+    items = list(v.items.all())
+    # Show the supply/labour split when the variation is priced that way — the
+    # client's QS checks a variation rate against the contract BOQ, and this
+    # contract's BOQ carries material and labour separately.
+    split = any(i.rate_install for i in items)
+    # Sections keep the QS's own grouping; a heading row carries no money.
+    sections, current = [], None
+    for it in items:
+        if current is None or it.section != current["section"]:
+            current = {"section": it.section, "lines": [],
+                       "total": Decimal("0")}
+            sections.append(current)
+        current["lines"].append({
+            "item": it, "is_heading": it.is_heading,
+            "qty": ("" if it.is_heading or it.qty is None
+                    else f"{it.qty:,.2f}"),
+            "rate_supply": _fmt_money(it.rate_supply, 2),
+            "rate_install": _fmt_money(it.rate_install, 2),
+            "rate_total": _fmt_money(it.rate_total, 2),
+            "amount": _fmt_money(it.amount, 2),
+        })
+        current["total"] += it.amount
+    for sec in sections:
+        sec["total_f"] = _fmt_money(sec["total"], 2)
+    return {
+        "split": split,
+        "cols": 7 if split else 6,
+        "gross_f": _fmt_money(v.gross, 2),
+        "signed_total_f": _fmt_money(this_vo, 2),
+        "original_f": _fmt_money(original, 2),
+        "prior_approved_f": _fmt_money(prior, 2),
+        "sum_before_f": _fmt_money(before, 2),
+        "sum_after_f": _fmt_money(after, 2),
+        "logo_src": logo_src(), "co": company_info(),
+        "v": v, "project": project, "employer": _employer(project),
+        "currency": ccy, "sections": sections,
+        "is_omission": v.kind == v.Kind.OMISSION,
+        "kind_label": v.get_kind_display(),
+        "gross": v.gross, "signed_total": this_vo,
+        "original": original, "prior_approved": prior,
+        "sum_before": before, "sum_after": after,
+        "amount_words": amount_in_words(abs(this_vo), ccy),
+        "is_approved": approved,
+        "doc_title": "VARIATION ORDER",
+        "subline": f"{v.ref}  ·  {project.code}",
+        "status_note": ("Approved — this variation forms part of the contract"
+                        if approved
+                        else "Submitted for the Employer's approval"),
+        "loa_ref": project.loa_ref,
+        "prepared_by": v.created_by.full_name if v.created_by_id else "",
+    }
+
+
 def invoice_pdf_context(claim):
     """Context for the client tax invoice PDF (the GST bill for this claim)."""
     from .pdf import company_info, logo_src

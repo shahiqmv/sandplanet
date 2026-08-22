@@ -299,6 +299,9 @@ urlpatterns = [
          name="variation-meta"),
     path("variations/<int:pk>/status", commercial.variation_status,
          name="variation-status"),
+    # The client-facing variation order (P5-style PDF)
+    path("variations/<int:pk>/vo.pdf", commercial.variation_pdf,
+         name="variation-pdf"),
     path("variations/<int:pk>", commercial.variation_delete,
          name="variation-delete"),
     # Progress claims (interim payment applications / IPCs)

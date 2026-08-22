@@ -168,6 +168,103 @@ class VariationTests(TestCase):
         self.assertEqual(float(c["revised"]), 501400.0)
         self.assertEqual(float(c["pending_net"]), 0.0)
 
+    def test_variation_order_pdf_shows_the_effect_on_the_contract_sum(self):
+        """A variation changes what the client owes, so it leaves the building
+        as an official document — and the question it answers is what the
+        contract sum becomes if they approve it (owner 2026-08-22)."""
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import Variation
+        v = self._create("ADDITION")
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        obj = Variation.objects.get(pk=v["id"])
+        html = render_to_string("pdf/variation_order.html",
+                                commercial.variation_pdf_context(obj))
+        self.assertIn("VARIATION ORDER", html)
+        self.assertIn("VO-01", html)
+        self.assertIn("Coping stone", html)
+        self.assertIn("Extra pool coping", html)          # the brief
+        # Money reads the way the tax invoice does — thousands separated.
+        self.assertIn("500,000.00", html)                 # original sum
+        self.assertIn("1,400.00", html)                   # this variation
+        self.assertIn("501,400.00", html)                 # sum if approved
+        self.assertNotIn(">501400.00<", html)
+        # Priced with a material/labour split, so the client's QS can check the
+        # rates against the contract BOQ.
+        self.assertIn("Material", html)
+        self.assertIn("Labour", html)
+        # Not yet approved — it must not read as agreed.
+        self.assertIn("Contract sum if this variation is approved", html)
+        self.assertIn("Submitted for the Employer&#x27;s approval", html)
+        self.assertNotIn("Revised contract sum", html)
+
+    def test_an_approved_variation_order_reads_as_agreed(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import Variation
+        v = self._create("ADDITION")
+        self._approve(v["id"])
+        obj = Variation.objects.get(pk=v["id"])
+        html = render_to_string("pdf/variation_order.html",
+                                commercial.variation_pdf_context(obj))
+        self.assertIn("Revised contract sum", html)
+        self.assertIn("APPROVED", html)
+        # Its own value must not be double-counted into "approved to date".
+        ctx = commercial.variation_pdf_context(obj)
+        self.assertEqual(float(ctx["prior_approved"]), 0.0)
+        self.assertEqual(float(ctx["sum_before"]), 500000.0)
+        self.assertEqual(float(ctx["sum_after"]), 501400.0)
+
+    def test_the_second_variation_counts_the_first_as_already_approved(self):
+        from core import commercial
+        from core.models import Variation
+        first = self._create("ADDITION")
+        self._approve(first["id"])
+        second = self._create("ADDITION")
+        self.client.post(f"/api/v1/variations/{second['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        ctx = commercial.variation_pdf_context(
+            Variation.objects.get(pk=second["id"]))
+        self.assertEqual(float(ctx["prior_approved"]), 1400.0)
+        self.assertEqual(float(ctx["sum_before"]), 501400.0)
+        self.assertEqual(float(ctx["sum_after"]), 502800.0)
+
+    def test_an_omission_reads_as_a_deduction(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import Variation
+        v = self._create("OMISSION")
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        ctx = commercial.variation_pdf_context(
+            Variation.objects.get(pk=v["id"]))
+        self.assertEqual(float(ctx["signed_total"]), -1400.0)
+        self.assertEqual(float(ctx["sum_after"]), 498600.0)
+        html = render_to_string("pdf/variation_order.html", ctx)
+        # An omission reads as a deduction in the accounting convention the
+        # rest of the client-facing money uses.
+        self.assertIn("(1,400.00)", html)
+        self.assertIn("498,600.00", html)
+        self.assertIn("omitted from the contract", html)
+
+    def test_a_draft_variation_is_not_issued_to_the_client(self):
+        v = self._create("ADDITION")
+        r = self.client.get(f"/api/v1/variations/{v['id']}/vo.pdf")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Submit the variation", r.data["detail"])
+
+    def test_a_site_role_cannot_pull_a_variation_order(self):
+        v = self._create("ADDITION")
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "SUBMITTED"}, format="json")
+        self.client.force_authenticate(self.se)
+        r = self.client.get(f"/api/v1/variations/{v['id']}/vo.pdf")
+        self.assertEqual(r.status_code, 403)
+
     def test_omission_subtracts(self):
         v = self._create("OMISSION")
         self.assertEqual(float(v["signed_total"]), -1400.0)

@@ -846,6 +846,28 @@ def claim_ipa_pdf(request, pk):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def variation_pdf(request, pk):
+    """The variation as an official document to send to the client.
+
+    Refused while it is a draft — a variation goes out once it is the price we
+    stand behind, the same rule the payment application follows.
+    """
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if v.status == "DRAFT":
+        return Response({"detail": "Submit the variation before issuing it to "
+                                   "the client."}, status=400)
+    if not v.items.exists():
+        return Response({"detail": "This variation has no priced items."},
+                        status=400)
+    return _render_pdf("pdf/variation_order.html",
+                       commercial.variation_pdf_context(v),
+                       f"{v.project.code}-{v.ref}")
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def claim_invoice_pdf(request, pk):
     c, err = _get_claim(request, pk)
     if err:
