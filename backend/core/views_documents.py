@@ -31,6 +31,7 @@ from .procurement import (
     on_grn_verified,
     on_lm_departed,
     on_pr_approved,
+    is_local_credit_po,
     issue_po,
     po_commitment,
     po_lm_prefill_lines,
@@ -683,14 +684,15 @@ def _do_issue(request, doc, comment):
         return _apply(request, doc, "ISSUED", "ISSUE", pm_gate=True,
                       lock_revision=True, pdf_milestone="issue",
                       comment=comment)
-    if doc.doc_type == "PO":
-        # An order is issued by the Signatory authorising it, not by
-        # Purchasing pushing it out — that signature is the commitment (owner
-        # 2026-08-22).
+    if doc.doc_type == "PO" and is_local_credit_po(doc):
+        # A local credit order is issued by the Signatory authorising it, not
+        # by Purchasing pushing it out — that signature is the commitment. An
+        # IMPORT order's PO is not affected: its commitment was authorised on
+        # the IPR, so Purchasing still issues it (owner 2026-08-22).
         return Response({"detail": "Send the order for the signatory's "
                                    "approval; approving it issues it."},
                         status=400)
-    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS"):
+    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS", "PO"):
         # DPR/TWS issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         err = _apply(request, doc, "ISSUED", "ISSUE",
                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
@@ -777,6 +779,14 @@ def pending_groups(user):
                  d.project.code if d.project else None,
                  "doc_date": d.doc_date, "status": d.status, "hint": hint}
                 for d in qs.select_related("site", "project")[:50]]
+
+    def rows_of(docs, hint):
+        """Same shape as rows(), for an already-materialised list."""
+        return [{"ref": d.ref, "doc_type": d.doc_type,
+                 "site_code": d.site.code, "project_code":
+                 d.project.code if d.project else None,
+                 "doc_date": d.doc_date, "status": d.status, "hint": hint}
+                for d in docs[:50]]
 
     def add(title, items):
         if items:
@@ -955,9 +965,16 @@ def pending_groups(user):
         # Purchasing tracks its own orders end to end: what it still has to
         # send for signature, and what is sitting with the signatory (owner
         # 2026-08-22).
+        # Local credit orders go for signature; an import order's PO was
+        # already authorised on its IPR, so Purchasing just issues it.
+        draft_pos = list(scoped(base.filter(doc_type="PO", status="DRAFT"))
+                         .select_related("site", "project"))
+        local = [d for d in draft_pos if is_local_credit_po(d)]
+        imported = [d for d in draft_pos if d not in local]
         add("To send for approval — draft POs",
-            rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
-                 "Check the order, then send it to the signatory"))
+            rows_of(local, "Check the order, then send it to the signatory"))
+        add("To issue — import purchase orders",
+            rows_of(imported, "Issue to the overseas supplier"))
         add("With the signatory — POs awaiting approval",
             rows(scoped(base.filter(doc_type="PO", status="SUBMITTED")),
                  "Approved orders issue to the supplier"))
@@ -1158,6 +1175,10 @@ def _do_submit(request, doc, comment):
     if roles is None:
         return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/SCA/"
                                    "PO/IPR."}, status=400)
+    if doc.doc_type == "PO" and not is_local_credit_po(doc):
+        return Response({"detail": "This order came from an import request — "
+                                   "issue it to the supplier directly."},
+                        status=400)
     if doc.doc_type == "SCA" and not doc.subcontract_agreement.items.exists():
         return Response({"detail": "Add at least one scope line before "
                                    "submitting."}, status=400)
@@ -1235,6 +1256,10 @@ def _do_authorise(request, doc, comment):
     that one really is a payment.
     """
     if doc.doc_type == "PO":
+        if not is_local_credit_po(doc):
+            return Response({"detail": "This order came from an import "
+                                       "request — it is authorised on the "
+                                       "IPR, not here."}, status=400)
         if doc.status != "SUBMITTED":
             return Response({"detail": "Only an order sent for approval can "
                                        "be authorised."}, status=400)

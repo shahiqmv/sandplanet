@@ -324,6 +324,43 @@ class PoGenerationTests(QuoteBase):
         self.assertIn({"type": "PO_LM", "ref": po.ref, "direction": "to"},
                       lm["links"])
 
+    def test_an_import_order_po_is_untouched_by_the_local_signature_loop(self):
+        """An IPR's purchase order was already authorised by a signatory on
+        the IPR. It must keep issuing straight from Purchasing, not get sent
+        round the local loop where it has no PR to commit (owner
+        2026-08-22)."""
+        from .models import Document, DocumentRevision
+        from .procurement import link_documents
+        ipr = Document.objects.create(
+            doc_type="IPR", ref="IPR-900", site=self.site,
+            doc_date=date.today(), status="AUTHORISED",
+            created_by=self.purchasing)
+        po = Document.objects.create(
+            doc_type="PO", ref="PO-900", site=self.site, doc_date=date.today(),
+            status="DRAFT", created_by=self.purchasing, supplier=self.steel)
+        po.current_revision = DocumentRevision.objects.create(
+            document=po, rev_label="R0", created_by=self.purchasing,
+            payload={})
+        po.save(update_fields=["current_revision"])
+        link_documents(ipr, po, "IPR_PO")
+        self.as_user(self.purchasing)
+        # Purchasing still issues it directly...
+        r = self.act(po.ref, "issue")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "ISSUED")
+        # ...and the local signature loop refuses it.
+        po2 = Document.objects.create(
+            doc_type="PO", ref="PO-901", site=self.site, doc_date=date.today(),
+            status="DRAFT", created_by=self.purchasing, supplier=self.steel)
+        po2.current_revision = DocumentRevision.objects.create(
+            document=po2, rev_label="R0", created_by=self.purchasing,
+            payload={})
+        po2.save(update_fields=["current_revision"])
+        link_documents(ipr, po2, "IPR_PO")
+        r2 = self.act(po2.ref, "submit")
+        self.assertEqual(r2.status_code, 400)
+        self.assertIn("import request", r2.data["detail"])
+
     def test_quotes_locked_after_approval(self):
         mr, pr = self.full_award()
         self.as_user(self.purchasing)

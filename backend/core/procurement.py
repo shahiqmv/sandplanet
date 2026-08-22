@@ -821,6 +821,16 @@ def _already_committed(pr, ln):
     return total
 
 
+def is_local_credit_po(po):
+    """Is this a local credit order raised off a PR?
+
+    An import order's PO comes from an IPR instead, and its commitment was
+    already authorised by a signatory on the IPR itself — it must not be sent
+    round the local signature loop a second time (owner 2026-08-22).
+    """
+    return po.doc_type == "PO" and po_source_pr(po) is not None
+
+
 def po_commitment(po):
     """(pr, vendor row, error) for an order about to be signed. Resolved
     before the status moves, so a broken link cannot leave an order issued

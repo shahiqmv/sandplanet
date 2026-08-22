@@ -442,7 +442,10 @@ class Document(models.Model):
             # Director awards the PR, Purchasing sends the drafted order for
             # signature, and the Signatory's approval issues it. Finance sees
             # it afterwards, as a payable to settle (owner 2026-08-22).
-            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            # DRAFT→ISSUED is still open for an IMPORT order's PO, whose
+            # commitment was authorised on the IPR; a local credit order goes
+            # DRAFT→SUBMITTED→ISSUED and the handlers enforce which is which.
+            "DRAFT": {"SUBMITTED", "ISSUED", "CANCELLED"},
             "SUBMITTED": {"ISSUED", "DRAFT", "REJECTED"},
             # An issued order often has to change — the supplier is short, an
             # item is unavailable (owner 2026-08-13). Purchasing proposes a new

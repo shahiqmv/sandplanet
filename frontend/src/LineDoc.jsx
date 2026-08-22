@@ -145,7 +145,12 @@ const ACTIONS = {
   // order, the signatory's approval places it, and Finance sees it afterwards
   // as a payable to settle (owner 2026-08-22).
   PO: [
+    // Both are offered on a draft: the local one is sent for signature, an
+    // import order's PO is issued straight out (its commitment was signed on
+    // the IPR). The server refuses whichever does not apply.
     ["submit", "Send for approval (Signatory)", ["DRAFT"],
+     ["HO_PURCHASING", "ADMIN"]],
+    ["issue", "Issue to supplier (import order)", ["DRAFT"],
      ["HO_PURCHASING", "ADMIN"]],
     ["authorise", "Approve & place order (Signatory)", ["SUBMITTED"],
      ["SIGNATORY", "ADMIN"]],
