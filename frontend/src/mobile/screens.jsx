@@ -113,7 +113,9 @@ export function ActionedList({ onOpen }) {
 // ---- Approver: Document detail -----------------------------------------
 // Only the signatory's Payment Voucher is an "authorisation"; PM/Director steps
 // on a PYR (and everything else) read as "approve".
-const AUTHORISE_TYPES = new Set(["PV"]);
+// The signatory's step reads "Authorise": a payment voucher, or a local
+// purchase order the signatory now places (owner 2026-08-22).
+const AUTHORISE_TYPES = new Set(["PV", "PO"]);
 
 export function DocumentDetail({ docRef, online, onActioned, onToast, onOpen }) {
   const { data, error, loading } = useAsync(() => api.document(docRef), [docRef]);

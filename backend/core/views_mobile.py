@@ -86,6 +86,10 @@ APPROVABLE = {
     ("PV", "SUBMITTED"),
     ("IPR", "SUBMITTED"),   # Director/QS award the overseas order on mobile
     ("IPR", "APPROVED"),    # signatory authorises the order (raises the PO)
+    # A local credit purchase order is signed by the signatory on the order
+    # itself — not inside a payment voucher — so it must be on the phone the
+    # way an import order is (owner 2026-08-22).
+    ("PO", "SUBMITTED"),
     # A charge correction on an already-authorised order: the row carries the
     # CORRECTION's status, so it no longer looks like a finished IPR and is
     # actionable from the phone (owner 2026-08-15).
@@ -402,12 +406,50 @@ def _psc_mobile_payload(doc, request):
     return base
 
 
+def _po_mobile_payload(doc, request):
+    """What the signatory is being asked to place: the supplier, the lines,
+    what it commits, and the terms the payable will fall due on."""
+    from .procurement import (credit_period_for, po_commitment,
+                              po_credit_total)
+    base = _base_header(doc, request)
+    rev = doc.current_revision
+    payload = (rev.payload or {}) if rev else {}
+    lines = []
+    for ln in (rev.lines.select_related("item") if rev else []):
+        qty = float(ln.qty_required or 0)
+        rate = float(ln.rate or 0)
+        amount = float(ln.amount if ln.amount is not None else qty * rate)
+        lines.append({
+            "ref": "", "kind": "",
+            "title": (ln.item.name if ln.item_id else ln.free_text_desc)
+                     or "Item",
+            "subtitle": f"{qty:g} {ln.unit or ''} × {rate:,.2f}".strip(),
+            "amount": amount, "currency": "MVR", "site_code": ""})
+    pr, row, _err = po_commitment(doc)
+    summary = [{"k": "Supplier", "v": (doc.supplier.name if doc.supplier_id
+                                       else payload.get("supplier_name", ""))},
+               {"k": "Payment terms", "v": payload.get("payment_terms") or "—"}]
+    if pr is not None and row is not None:
+        days, terms = credit_period_for(row)
+        summary += [{"k": "Credit period", "v": f"{days} days"},
+                    {"k": "Commits (incl. GST)",
+                     "v": _money(po_credit_total(doc))},
+                    {"k": "From", "v": pr.ref}]
+    base.update({"supplier_name": summary[0]["v"],
+                 "line_label": "Order lines",
+                 "amount": float(po_credit_total(doc)) if pr else None,
+                 "lines": lines, "summary": summary})
+    return base
+
+
 def _document_payload(doc, request):
     """Read-only render for the approver detail screen."""
     from .models import PaymentVoucherLine
     from .serializers_documents import DocumentSerializer
     if doc.doc_type == "PR":
         return _pr_mobile_payload(doc, request)
+    if doc.doc_type == "PO":
+        return _po_mobile_payload(doc, request)
     if doc.doc_type == "IPR":
         return _ipr_mobile_payload(doc, request)
     if doc.doc_type == "OBR":
@@ -516,6 +558,14 @@ def _act(request, ref, kind):
             return Response({"detail": msg}, status=400)
     elif doc.doc_type == "IPR" and doc.status == "APPROVED":
         # signatory authorises the overseas order — commits it and raises the PO
+        from .views_documents import _do_authorise, _do_return
+        result = (_do_return if kind == "return" else _do_authorise)(
+            request, doc, comment)
+        if isinstance(result, Response) and result.status_code >= 400:
+            return result
+    elif doc.doc_type == "PO":
+        # signatory signs a local credit order — places it, commits the cost,
+        # raises the payable; Return sends it back to Purchasing
         from .views_documents import _do_authorise, _do_return
         result = (_do_return if kind == "return" else _do_authorise)(
             request, doc, comment)

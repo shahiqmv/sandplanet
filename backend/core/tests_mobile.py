@@ -316,3 +316,107 @@ class MobileVoucherReturnTests(TestCase):
             f"/api/mobile/v1/documents/{self.pv.ref}/return", {},
             format="json", HTTP_AUTHORIZATION=f"Bearer {self.token}")
         self.assertEqual(r.status_code, 400)
+
+
+
+class MobilePurchaseOrderTests(TestCase):
+    """A local credit purchase order is signed by the signatory on the order —
+    and a signatory on the road must see it on the phone the way an import
+    order is (owner 2026-08-22)."""
+
+    def setUp(self):
+        from datetime import date
+        from .models import Site, SitePmHistory, User
+        from .tests import make_user
+        self.site = Site.objects.create(code="MPO", name="Mpo Isle",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("mpo_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("mpo_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.purchasing = make_user("mpo_hop", User.Role.HO_PURCHASING)
+        self.director = make_user("mpo_dir", User.Role.DIRECTOR)
+        self.sig = make_user("mpo_sig", User.Role.SIGNATORY)
+        self.web = APIClient()
+        self.m = APIClient()
+        r = self.m.post("/api/mobile/v1/auth/login",
+                        {"username": self.sig.username,
+                         "password": "pw-test-123"}, format="json")
+        self.token = r.data.get("token") if r.status_code in (200, 201) \
+            else None
+        if self.token:
+            self.m.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+
+    def _act(self, ref, action, user, **body):
+        self.web.force_authenticate(user)
+        return self.web.post(f"/api/v1/documents/{ref}/actions/{action}",
+                             body, format="json")
+
+    def _submitted_po(self):
+        """MR → PR with one credit vendor → Director award → PO drafted →
+        Purchasing sends it for signature."""
+        from .models import Document
+        self.web.force_authenticate(self.sa)
+        mr = self.web.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
+            "payload": {}, "lines": [{"free_text_desc": "Cement",
+                                      "unit": "bag", "qty_required": 100,
+                                      "qty_to_order": 100}]},
+            format="json").data
+        self._act(mr["ref"], "submit", self.sa)
+        self._act(mr["ref"], "approve", self.pm)
+        self._act(mr["ref"], "send", self.sa)
+        self.web.force_authenticate(self.purchasing)
+        pr = self.web.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr["ref"]],
+            "lines": [{"free_text_desc": "Credit Vendor",
+                       "vendor": "Credit Vendor", "amount_credit": 7000,
+                       "payment_terms": "30 days credit"}]},
+            format="json").data
+        self._act(pr["ref"], "submit", self.purchasing)
+        self._act(pr["ref"], "approve", self.director)
+        po = Document.objects.get(doc_type="PO",
+                                  links_from__to_document__ref=pr["ref"])
+        self._act(po.ref, "submit", self.purchasing)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "SUBMITTED")
+        return pr, po
+
+    def test_the_signatory_sees_and_signs_the_order_on_the_phone(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        from .models import Payable
+        pr, po = self._submitted_po()
+        # It is in the phone queue, with an amount on the card.
+        q = self.m.get("/api/mobile/v1/queue").data
+        card = next((c for c in q["items"] if c["ref"] == po.ref), None)
+        self.assertIsNotNone(card, q)
+        self.assertEqual(card["doc_type"], "PO")
+        self.assertGreater(card["amount"], 0)
+        # The detail screen shows what is being placed.
+        d = self.m.get(f"/api/mobile/v1/documents/{po.ref}").data
+        self.assertEqual(d["supplier_name"], "Credit Vendor")
+        self.assertEqual(d["line_label"], "Order lines")
+        self.assertTrue(any(x["k"] == "Credit period" for x in d["summary"]))
+        # One tap signs it: the order issues and the payable is booked.
+        r = self.m.post(f"/api/mobile/v1/documents/{po.ref}/approve", {},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "ISSUED")
+        self.assertTrue(Payable.objects.filter(
+            document__ref=pr["ref"], status="OUTSTANDING").exists())
+        # ...and it has left the queue.
+        q2 = self.m.get("/api/mobile/v1/queue").data
+        self.assertNotIn(po.ref, [c["ref"] for c in q2["items"]])
+
+    def test_return_hands_the_order_back_to_purchasing(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        pr, po = self._submitted_po()
+        r = self.m.post(f"/api/mobile/v1/documents/{po.ref}/return",
+                        {"comment": "wrong quantity on line 1"},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        po.refresh_from_db()
+        self.assertEqual(po.status, "DRAFT")

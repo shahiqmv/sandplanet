@@ -753,6 +753,12 @@ def queue_amount(ref, doc_type):
     if doc_type == "IPR" and hasattr(d, "import_order"):
         from .imports import ipr_order_total
         return float(ipr_order_total(d.import_order))
+    if doc_type == "PO":
+        from .procurement import po_credit_total
+        total = po_credit_total(d)
+        if not total and d.current_revision_id:
+            total = sum((ln.amount or 0) for ln in d.current_revision.lines.all())
+        return float(total)
     if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
         from . import subcontract
         return float(subcontract.svc_valuation(d.subcontract_valuation)
@@ -1335,6 +1341,16 @@ def _do_withdraw(request, doc, comment):
 
 def _do_return(request, doc, comment):
     """Return with comment → back to Draft (spec §7.2 / §7.5a)."""
+    if doc.doc_type == "PO":
+        # A signatory hands a local order back to Purchasing (owner 2026-08-22).
+        if not comment.strip():
+            return Response({"detail": "A comment is required to return."},
+                            status=400)
+        if doc.status != "SUBMITTED":
+            return Response({"detail": "Only an order sent for approval can "
+                                       "be returned."}, status=400)
+        return _apply(request, doc, "DRAFT", "RETURN",
+                      roles={"SIGNATORY", "ADMIN"}, comment=comment)
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
     if doc.doc_type in ("MR", "IR", "MAR", "SD", "MS"):
