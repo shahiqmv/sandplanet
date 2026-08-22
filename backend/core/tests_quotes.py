@@ -229,10 +229,24 @@ class PoGenerationTests(QuoteBase):
         self.as_user(self.director)
         r = self.act(pr["ref"], "approve")
         assert r.status_code == 200, r.data
-        # Authorisation now runs on a payment voucher (M6d): Finance batches
-        # the approved PR, a signatory approves it → POs + payables + COMMITTED
+        # The award drafts the credit order. Finance's voucher covers only the
+        # CASH vendor; the credit order is signed by the signatory on its own
+        # (owner 2026-08-22).
         self.authorise_via_voucher(pr["ref"])
         return mr, pr
+
+    def sign_orders(self, pr_ref):
+        """Purchasing sends each drafted order, the signatory signs it."""
+        pos = list(Document.objects.filter(doc_type="PO",
+                                           links_from__to_document__ref=pr_ref,
+                                           status="DRAFT").distinct())
+        for po in pos:
+            self.as_user(self.purchasing)
+            self.act(po.ref, "submit")
+            self.as_user(self.signatory)
+            self.act(po.ref, "authorise")
+            po.refresh_from_db()
+        return pos
 
     def authorise_via_voucher(self, pr_ref):
         self.as_user(self.finance)
@@ -260,12 +274,18 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(lines[0].item_id, self.rebar.id)
         self.assertEqual(float(lines[0].rate), 18.50)
         self.assertEqual(po.current_revision.payload["pr_ref"], pr["ref"])
-        # PO ref lands in the credit vendor's row; the cash vendor has none,
-        # so the PR sits in PAYMENT_PROCESSING awaiting the cash slip
+        # The order is drafted, not yet placed — it goes to the signatory.
+        self.assertEqual(po.status, "DRAFT")
+        # PO ref lands in the credit vendor's row; the cash vendor has none.
         fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
         po_refs = {row["vendor"]: row["po_ref"] for row in fresh["lines"]}
         self.assertEqual(po_refs["Maldives Steel Traders"], po.ref)
         self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], "")
+        # The voucher authorised the CASH vendor; the drafted order settles
+        # nothing until the signatory has actually signed it.
+        self.assertEqual(fresh["status"], "AUTHORISED")
+        self.sign_orders(pr["ref"])
+        fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
         self.assertEqual(fresh["status"], "PAYMENT_PROCESSING")
         # recording the cash vendor's slip settles the PR (Finance's role)
         self.as_user(self.finance)
@@ -277,14 +297,21 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
 
     def test_po_issue_generates_pdf_and_lm_prefill(self):
-        self.full_award()
+        mr, pr = self.full_award()
         po = Document.objects.filter(doc_type="PO",
                                      supplier=self.steel).first()
+        # Purchasing cannot push an order out on its own any more — the
+        # signatory's approval is what issues it (owner 2026-08-22).
         self.as_user(self.purchasing)
-        r = self.act(po.ref, "issue")
+        blocked = self.act(po.ref, "issue")
+        self.assertEqual(blocked.status_code, 400)
+        self.act(po.ref, "submit")
+        self.as_user(self.signatory)
+        r = self.act(po.ref, "authorise")
         self.assertEqual(r.data["status"], "ISSUED")
         self.assertTrue(any(a["kind"] == "GENERATED_PDF"
                             for a in r.data["attachments"]))
+        self.as_user(self.purchasing)
         # LM prefill from the PO
         r = self.client.get(f"/api/v1/po/{po.ref}/lm-prefill")
         self.assertEqual(r.data["lines"][0]["qty_loaded"], 500.0)
@@ -428,6 +455,16 @@ class GstTests(PoGenerationTests):
         self.assertEqual(float(pr_grand_total(prdoc)), 29430.0)  # gross
 
         gst_head = CostHead.objects.get(name=INPUT_GST_HEAD)
+
+        def incurred_net():
+            return float(sum(p.amount for p in CostPosting.objects.filter(
+                document=prdoc, state="INCURRED").exclude(
+                cost_head=gst_head)))
+
+        # Each side commits where it is signed: the cash vendor on Finance's
+        # voucher, the credit vendor on its own order (owner 2026-08-22).
+        self.assertEqual(incurred_net(), 18000.0)          # cash only so far
+        self.sign_orders(pr["ref"])
         mat = CostPosting.objects.filter(
             document=prdoc, state="INCURRED").exclude(cost_head=gst_head)
         self.assertEqual(float(sum(p.amount for p in mat)), 27250.0)  # net

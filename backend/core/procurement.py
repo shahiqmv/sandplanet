@@ -271,12 +271,20 @@ def release_pr_lines(pr, line_ids, actor):
 def on_pr_approved(pr, actor):
     """Issuing a PR against an MR marks the MR PR-raised (spec §4.3). When the
     PR only covered some of a long MR, the MR goes to Partially Ordered and
-    stays open for further PRs (owner 2026-07-15)."""
+    stays open for further PRs (owner 2026-07-15).
+
+    The Director's approval is the award, so this is where the credit orders
+    are drafted. They used to be generated only once a Finance payment voucher
+    was signed, which held every order behind a payment run (owner
+    2026-08-22); Purchasing now sends each drafted order for the Signatory's
+    approval itself.
+    """
     claimed = active_pr_claimed_line_ids()
     for mr in linked_docs(pr, "MR_PR", "from"):  # link rows: PR → MR
         target = "PR_RAISED" if not remaining_mr_lines(mr, claimed) \
             else "PARTIALLY_ORDERED"
         set_status(mr, target, actor, "MR_PR_RAISED")
+    generate_pos_for_pr(pr, actor)
 
 
 def on_lm_departed(lm, actor):
@@ -481,6 +489,24 @@ def generate_pos_for_pr(pr, actor):
             continue  # cash purchase — settled by slip, no PO
         by_supplier.setdefault(ql.quotation.supplier, []).append(ql)
 
+    # Orders are drafted at award now, so this can be reached twice — a PR
+    # returned to draft and approved again. One order per awarded vendor:
+    # anything already cut for that vendor stands.
+    rev = pr.current_revision
+    rows = list(rev.lines.all()) if rev else []
+    already = {ln.vendor for ln in rows if ln.po_ref.strip()}
+    by_supplier = {sup: qls for sup, qls in by_supplier.items()
+                   if sup.name not in already}
+    # A credit row entered straight on the PR, with no quotation behind it,
+    # still commits money to a vendor. It gets an order of its own so that
+    # every credit commitment is one a signatory has signed — under the old
+    # voucher route these rows were committed with no order at all.
+    quoted = {sup.name for sup in by_supplier}
+    bare = [ln for ln in rows
+            if (ln.amount_credit or 0) > 0 and not ln.po_ref.strip()
+            and (ln.vendor or "").strip()
+            and ln.vendor not in quoted and ln.vendor not in already]
+
     created = []
     for supplier, quote_lines in by_supplier.items():
         with transaction.atomic():
@@ -526,8 +552,42 @@ def generate_pos_for_pr(pr, actor):
         audit("document", po.id, "PO_GENERATED", actor=actor,
               detail={"ref": po.ref, "pr": pr.ref, "supplier": supplier.name})
         created.append(po)
+    for ln in bare:
+        created.append(_po_from_pr_row(pr, ln, actor))
     advance_pr_settlement(pr, actor)
     return created
+
+
+def _po_from_pr_row(pr, ln, actor):
+    """An order cut straight from a PR vendor row (no quotation behind it)."""
+    from django.db import transaction
+
+    from .models import DocumentRevision
+    from .numbering import next_ref
+
+    with transaction.atomic():
+        po = Document.objects.create(
+            doc_type="PO", ref=next_ref("PO", pr.site), site=pr.site,
+            doc_date=date.today(), status="DRAFT", created_by=actor)
+        revision = DocumentRevision.objects.create(
+            document=po, rev_label="R0", created_by=actor,
+            payload={"pr_ref": pr.ref,        # internal only — not on the PDF
+                     "supplier_name": ln.vendor,
+                     "payment_terms": ln.payment_terms or "Credit"})
+        po.current_revision = revision
+        po.save(update_fields=["current_revision"])
+        DocumentLine.objects.create(
+            revision=revision, line_no=1, item=ln.item,
+            free_text_desc=ln.free_text_desc or ln.vendor,
+            unit=ln.unit, qty_required=ln.qty_required,
+            rate=ln.rate, amount=ln.amount_credit, remarks=ln.remarks)
+        link_documents(po, pr, "PR_PO")
+        ln.po_ref = po.ref
+        ln.save(update_fields=["po_ref"])
+    audit("document", po.id, "PO_GENERATED", actor=actor,
+          detail={"ref": po.ref, "pr": pr.ref, "supplier": ln.vendor,
+                  "from_row": True})
+    return po
 
 
 def advance_pr_settlement(pr, actor):
@@ -545,8 +605,19 @@ def advance_pr_settlement(pr, actor):
     def _net(ln):
         return (ln.amount_cash or 0) + (ln.amount_credit or 0)
 
+    issued_pos = set(Document.objects.filter(
+        doc_type="PO", ref__in=[ln.po_ref.strip() for ln in lines
+                                if ln.po_ref.strip()],
+        status__in=("ISSUED", "AMENDMENT_PENDING", "CLOSED")
+    ).values_list("ref", flat=True))
+
     def _acted(ln):
-        return bool(ln.action_taken.strip() or ln.po_ref.strip())
+        # A drafted PO is not an order yet — it settles the row once the
+        # Signatory has approved it and it has issued. Counting the draft
+        # marked the PR settled the moment the Director approved it (owner
+        # 2026-08-22).
+        return bool(ln.action_taken.strip()
+                    or (ln.po_ref.strip() in issued_pos))
 
     settled = [ln for ln in lines if _acted(ln) or _net(ln) <= 0]
     if len(settled) == len(lines):
@@ -639,65 +710,153 @@ def pr_grand_total(pr):
     return pr_net_total(pr) + pr_gst_total(pr)
 
 
+def _gst_share(ln, portion):
+    """The GST belonging to one side of a part-cash / part-credit vendor row.
+
+    A row's GST is stated once for the whole line, so splitting the row across
+    two authorisation routes has to split the tax with it — otherwise the cash
+    voucher and the credit order each claim the full input tax.
+    """
+    net = (ln.amount_cash or 0) + (ln.amount_credit or 0)
+    gst = ln.gst_amount or 0
+    if gst <= 0 or net <= 0:
+        return Decimal("0")
+    return (Decimal(str(gst)) * Decimal(str(portion))
+            / Decimal(str(net))).quantize(Decimal("0.01"))
+
+
 def pr_cash_total(pr):
     """The CASH portion of a PR (gross) — what is actually paid on a payment
     voucher. Credit lines are committed as payables and settled separately, so
     they never appear on the voucher (owner 2026-07-16)."""
     total = Decimal("0")
     for ln in pr.current_revision.lines.all():
-        if (ln.amount_cash or 0) > 0:
-            total += (ln.amount_cash or 0) + (ln.gst_amount or 0)
+        cash = ln.amount_cash or 0
+        if cash > 0:
+            # On a row that is part cash and part credit the stated GST covers
+            # both, so only the cash share is paid here — the rest rides with
+            # the credit order (owner 2026-08-22).
+            total += cash + _gst_share(ln, cash)
     return total
 
 
-def authorise_pr(pr, actor):
-    """Signatory authorisation of a PR on a Payment Voucher (§6C.2 — the
-    commitment point): post COMMITTED and INCURRED per vendor line (cost
-    head from the line, default Materials), create payables for credit
-    vendors, and generate the credit POs.
+def _post_pr_line(pr, ln, amount, gst, actor):
+    """Post COMMITTED + INCURRED for one side of a vendor row.
 
-    Owner decision (M7): materials are Incurred at PV authorisation, not at
-    GRN receipt. The spec (§6C.3.1) puts the Incurred trigger at the GRN,
-    but that requires a landed-cost/inventory valuation the business does
-    not yet run; until an inventory system exists, ordering a material on an
-    authorised voucher is treated as consuming it. The GRN stays a delivery/
-    QA record with no cost event. Paid still posts at vendor payment."""
+    Owner decision (M7): materials are Incurred at authorisation, not at GRN
+    receipt. The spec (§6C.3.1) puts the Incurred trigger at the GRN, but that
+    needs a landed-cost/inventory valuation the business does not yet run;
+    until then, ordering a material is treated as consuming it. The GRN stays
+    a delivery/QA record with no cost event. Paid posts at vendor payment.
+    """
+    from . import costing
+    from .models import CostHead
+
+    if amount <= 0:
+        return
+    head = ln.cost_head or CostHead.objects.get(name="Materials")
+    gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
+    # Net is the project cost; GST is recoverable input tax (not a project
+    # cost) — posted to the Input GST account at HO (owner 2026-07-13).
+    for state in ("COMMITTED", "INCURRED"):
+        costing.post(site=pr.site, cost_head=head, state=state,
+                     source="PR", amount=amount, document=pr,
+                     document_line=ln, actor=actor)
+        if gst > 0 and gst_head is not None:
+            costing.post(site=_ho_site(), cost_head=gst_head, state=state,
+                         source="PR", amount=gst, document=pr,
+                         document_line=ln, is_stock_pool=True, actor=actor)
+
+
+def authorise_pr(pr, actor):
+    """Signatory approval of the PR's CASH side on a Payment Voucher.
+
+    Only cash reaches a voucher now. A credit purchase is a commitment, not a
+    payment: its order is signed on the PO itself and its cost posts there
+    (owner 2026-08-22). A PR with no cash never goes to Finance at all until
+    the payable falls due.
+    """
+    for ln in pr.current_revision.lines.all():
+        cash = ln.amount_cash or 0
+        if cash > 0:
+            _post_pr_line(pr, ln, cash, _gst_share(ln, cash), actor)
+
+
+def po_source_pr(po):
+    """The PR a generated PO came from."""
+    # link_documents(po, pr, "PR_PO") stores from=PO, to=PR, so the PR is
+    # reached in the "from" direction.
+    found = linked_docs(po, "PR_PO", "from")
+    return found[0] if found else None
+
+
+def po_pr_line(po, pr=None):
+    """The PR's vendor row this PO was cut from (matched by the stamped ref)."""
+    pr = pr or po_source_pr(po)
+    if pr is None or pr.current_revision is None:
+        return None
+    return pr.current_revision.lines.filter(po_ref=po.ref).first()
+
+
+def po_credit_total(po):
+    """What this order commits — the credit amount of its PR row, gross of
+    GST, which is what we will owe the supplier."""
+    ln = po_pr_line(po)
+    if ln is None:
+        return Decimal("0")
+    credit = ln.amount_credit or Decimal("0")
+    return Decimal(str(credit)) + _gst_share(ln, credit)
+
+
+def po_commitment(po):
+    """(pr, vendor row, error) for an order about to be signed. Resolved
+    before the status moves, so a broken link cannot leave an order issued
+    with nothing committed behind it."""
+    pr = po_source_pr(po)
+    if pr is None:
+        return None, None, "This order is not linked to a purchase request."
+    ln = po_pr_line(po, pr)
+    if ln is None:
+        return None, None, f"{pr.ref} has no vendor row for {po.ref}."
+    return pr, ln, None
+
+
+def issue_po(po, actor):
+    """A Signatory has signed the order: commit its cost, record what we will
+    owe the supplier, and let the PR move on.
+
+    This is the step that used to happen inside a Finance payment voucher. A
+    purchase order is a commitment, not a payment — putting it through a
+    payment instrument meant Purchasing could not place an order until Finance
+    ran a voucher, and made Finance the gatekeeper of a purchasing document
+    (owner 2026-08-22).
+    """
     from datetime import timedelta
 
-    from . import costing
-    from .models import CostHead, Payable
+    from .models import Payable
 
-    materials = CostHead.objects.get(name="Materials")
-    gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
-    ho = _ho_site()
-    for ln in pr.current_revision.lines.all():
-        net = (ln.amount_cash or 0) + (ln.amount_credit or 0)
-        gst = ln.gst_amount or 0
-        if net <= 0:
-            continue
-        head = ln.cost_head or materials
-        # Net is the project cost; GST is recoverable input tax (not a project
-        # cost) — posted to the Input GST account at HO (owner 2026-07-13).
-        for state in ("COMMITTED", "INCURRED"):
-            costing.post(site=pr.site, cost_head=head, state=state,
-                         source="PR", amount=net, document=pr,
-                         document_line=ln, actor=actor)
-            if gst > 0 and gst_head is not None:
-                costing.post(site=ho, cost_head=gst_head, state=state,
-                             source="PR", amount=gst, document=pr,
-                             document_line=ln, is_stock_pool=True, actor=actor)
-        if (ln.amount_credit or 0) > 0:
-            # We owe the vendor the gross (net + GST). Due date follows the
-            # line's agreed credit period (days); 30 is only a fallback.
-            days = ln.credit_days if ln.credit_days is not None else 30
-            Payable.objects.create(
-                document=pr, document_line=ln, site=pr.site,
-                vendor=ln.vendor or ln.free_text_desc,
-                terms=ln.payment_terms or (f"{days} days" if ln.credit_days
-                                           is not None else ""),
-                amount=(ln.amount_credit or 0) + gst,
-                due_date=date.today() + timedelta(days=days))
-    generate_pos_for_pr(pr, actor)
+    pr, ln, err = po_commitment(po)
+    if err:
+        return err
+    credit = ln.amount_credit or Decimal("0")
+    gst = _gst_share(ln, credit)
+    _post_pr_line(pr, ln, credit, gst, actor)
+    if credit > 0 and not Payable.objects.filter(
+            document=pr, document_line=ln).exists():
+        # We owe the vendor the gross (net + GST). Due date follows the row's
+        # agreed credit period (days); 30 is only a fallback.
+        days = ln.credit_days if ln.credit_days is not None else 30
+        Payable.objects.create(
+            document=pr, document_line=ln, site=pr.site,
+            vendor=ln.vendor or ln.free_text_desc,
+            terms=ln.payment_terms or (f"{days} days" if ln.credit_days
+                                       is not None else ""),
+            amount=credit + gst,
+            due_date=date.today() + timedelta(days=days))
+    audit("document", po.id, "PO_AUTHORISED", actor=actor,
+          detail={"ref": po.ref, "pr": pr.ref, "amount": str(credit + gst)})
+    advance_pr_settlement(pr, actor)
+    return None
 
 
 def reverse_pr_authorisation(pr, actor):

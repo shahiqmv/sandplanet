@@ -85,6 +85,11 @@ def targets_for(doc):
         # placing the order is the commitment, not a payment — a signatory
         # authorises the order directly (no voucher)
         return [(u, "to authorise") for u in _role_users("SIGNATORY")]
+    if t == "PO" and s == "SUBMITTED":
+        # A local purchase order is the same kind of thing: a commitment the
+        # signatory signs directly, not a payment on a voucher (owner
+        # 2026-08-22).
+        return [(u, "to authorise") for u in _role_users("SIGNATORY")]
     if t == "PYR" and s == "PM_APPROVED":
         return [(u, "needs Director approval") for u in _role_users("DIRECTOR")]
     if t == "PYR" and s == "DIRECTOR_APPROVED":

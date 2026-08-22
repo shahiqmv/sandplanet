@@ -31,6 +31,8 @@ from .procurement import (
     on_grn_verified,
     on_lm_departed,
     on_pr_approved,
+    issue_po,
+    po_commitment,
     po_lm_prefill_lines,
     resolve_refs,
     save_lines,
@@ -681,8 +683,15 @@ def _do_issue(request, doc, comment):
         return _apply(request, doc, "ISSUED", "ISSUE", pm_gate=True,
                       lock_revision=True, pdf_milestone="issue",
                       comment=comment)
-    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS", "PO"):
-        # DPR/TWS/PO issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
+    if doc.doc_type == "PO":
+        # An order is issued by the Signatory authorising it, not by
+        # Purchasing pushing it out — that signature is the commitment (owner
+        # 2026-08-22).
+        return Response({"detail": "Send the order for the signatory's "
+                                   "approval; approving it issues it."},
+                        status=400)
+    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS"):
+        # DPR/TWS issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         err = _apply(request, doc, "ISSUED", "ISSUE",
                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
                      pdf_milestone="issue", comment=comment)
@@ -928,6 +937,12 @@ def pending_groups(user):
         add("To authorise — approved subcontract valuations",
             rows(base.filter(doc_type="SVC", status="DIRECTOR_APPROVED"),
                  "Authorise — commits the cost, raises the payable"))
+        # A local purchase order is the same kind of decision: a commitment
+        # signed on the order, not a payment on a voucher (owner 2026-08-22).
+        add("To authorise — purchase orders",
+            rows(base.filter(doc_type="PO", status="SUBMITTED"),
+                 "Approve to place the order — commits the cost and raises "
+                 "the payable"))
     if user.role in ("HO_PURCHASING", "ADMIN"):
         add("To confirm — procurement schedules",
             rows(scoped(base.filter(doc_type="PSC", status="SUBMITTED")),
@@ -937,9 +952,15 @@ def pending_groups(user):
                 doc_type="MR",
                 status__in=["SENT_TO_HO", "PARTIALLY_ORDERED"])),
                  "Raise PR or plan loading"))
-        add("To issue — draft POs",
+        # Purchasing tracks its own orders end to end: what it still has to
+        # send for signature, and what is sitting with the signatory (owner
+        # 2026-08-22).
+        add("To send for approval — draft POs",
             rows(scoped(base.filter(doc_type="PO", status="DRAFT")),
-                 "Issue to supplier"))
+                 "Check the order, then send it to the signatory"))
+        add("With the signatory — POs awaiting approval",
+            rows(scoped(base.filter(doc_type="PO", status="SUBMITTED")),
+                 "Approved orders issue to the supplier"))
         add("To review — PM-approved import requests (PMR)",
             rows(scoped(base.filter(doc_type="PMR", status="PM_APPROVED")),
                  "Review the requirement before the Director sizes it"))
@@ -1132,10 +1153,11 @@ def _do_submit(request, doc, comment):
              "MS": {"SITE_ENGINEER", "PM"},
              "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
              "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
+             "PO": {"HO_PURCHASING"},
              "IPR": {"HO_PURCHASING"}}.get(doc.doc_type)
     if roles is None:
-        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/SCA/IPR."},
-                        status=400)
+        return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/SCA/"
+                                   "PO/IPR."}, status=400)
     if doc.doc_type == "SCA" and not doc.subcontract_agreement.items.exists():
         return Response({"detail": "Add at least one scope line before "
                                    "submitting."}, status=400)
@@ -1202,13 +1224,34 @@ def _do_approve(request, doc, comment):
 
 
 def _do_authorise(request, doc, comment):
-    """A signatory authorises a Director-approved import order — this is the
-    commitment point (posts COMMITTED at the agreed rate). No Payment Voucher
-    is raised here: vouchers are strictly for payments, and placing the order
-    is not a payment. Each overseas TT is vouchered later when it is paid.
+    """A signatory authorises an order — the commitment point. No Payment
+    Voucher is raised here: vouchers are strictly for payments, and placing an
+    order is not a payment. An overseas TT is vouchered later when it is paid;
+    a local credit order becomes a payable Finance settles when it falls due.
 
-    (For PR/PYR the equivalent authorisation is done on a Payment Voucher — a
-    signatory approves a batch, not each requisition individually, M6d.)"""
+    Covers the import order (IPR) and, since 2026-08-22, the local purchase
+    order (PO) — which used to be signed inside Finance's voucher, holding
+    every order behind a payment run. A PYR is still authorised on a voucher:
+    that one really is a payment.
+    """
+    if doc.doc_type == "PO":
+        if doc.status != "SUBMITTED":
+            return Response({"detail": "Only an order sent for approval can "
+                                       "be authorised."}, status=400)
+        # Resolve what this order commits BEFORE moving it, so a broken link
+        # cannot leave an order issued with nothing booked behind it.
+        _pr, _ln, msg = po_commitment(doc)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        err = _apply(request, doc, "ISSUED", "AUTHORISE",
+                     roles={"SIGNATORY"}, lock_revision=True,
+                     pdf_milestone="issue", comment=comment)
+        if err is not None:
+            return err
+        msg = issue_po(doc, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return None
     if doc.doc_type == "IPR":
         if doc.status != "APPROVED":
             return Response({"detail": "Only a Director-approved order can be "
@@ -1229,11 +1272,24 @@ def _do_withdraw(request, doc, comment):
     COMMITTED postings, cancels payables, returns to Draft."""
     if doc.doc_type not in ("PR", "IPR"):
         return Response({"detail": "Withdraw applies to PR / IPR."}, status=400)
+    if not comment.strip():
+        return Response({"detail": "A reason is required."}, status=400)
+    if doc.doc_type == "PR":
+        # Checked before the status rule so the answer names the real
+        # obstacle: a signed order is with the supplier, and that is not
+        # Finance's to cancel — it is withdrawn or amended on its own (owner
+        # 2026-08-22).
+        live = Document.objects.filter(
+            doc_type="PO", links_from__to_document=doc,
+            status__in=("ISSUED", "AMENDMENT_PENDING")).distinct()
+        if live.exists():
+            refs = ", ".join(sorted(x.ref for x in live))
+            return Response({"detail": f"{refs} is already issued to the "
+                                       "supplier. Withdraw or amend the order "
+                                       "first."}, status=400)
     if doc.status != "AUTHORISED":
         return Response({"detail": "Only an authorised order can have its "
                                    "authorisation withdrawn."}, status=400)
-    if not comment.strip():
-        return Response({"detail": "A reason is required."}, status=400)
     if doc.doc_type == "IPR":
         from . import imports as ipr_svc
         blocked = ipr_svc.withdraw_blocked(doc)
@@ -1628,7 +1684,7 @@ OPEN_STATUSES = {
     "PR": ["SUBMITTED", "APPROVED", "PAYMENT_PROCESSING", "PAID_PO_ISSUED"],
     # An order mid-amendment is still live work for the chain — the goods are
     # on order and the supplier holds the previous revision (owner 2026-08-13).
-    "PO": ["DRAFT", "ISSUED", "AMENDMENT_PENDING"],
+    "PO": ["DRAFT", "SUBMITTED", "ISSUED", "AMENDMENT_PENDING"],
     "LM": ["DRAFT", "LOADING", "DEPARTED"],
 }
 

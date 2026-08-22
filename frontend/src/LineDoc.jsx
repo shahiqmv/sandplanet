@@ -140,8 +140,17 @@ const ACTIONS = {
      ["SUBMITTED", "PM_VERIFIED", "DIRECTOR_APPROVED"],
      ["PM", "DIRECTOR", "SIGNATORY", "ADMIN"], "comment"],
   ],
+  // A purchase order is a commitment, not a payment, so it never goes through
+  // Finance's payment voucher to get signed: Purchasing sends the drafted
+  // order, the signatory's approval places it, and Finance sees it afterwards
+  // as a payable to settle (owner 2026-08-22).
   PO: [
-    ["issue", "Issue to supplier", ["DRAFT"], ["HO_PURCHASING", "ADMIN"]],
+    ["submit", "Send for approval (Signatory)", ["DRAFT"],
+     ["HO_PURCHASING", "ADMIN"]],
+    ["authorise", "Approve & place order (Signatory)", ["SUBMITTED"],
+     ["SIGNATORY", "ADMIN"]],
+    ["return", "Return to Purchasing", ["SUBMITTED"],
+     ["SIGNATORY", "ADMIN"], "comment"],
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
   ],
   GRN: [

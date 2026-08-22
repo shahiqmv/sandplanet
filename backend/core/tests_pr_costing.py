@@ -47,6 +47,20 @@ class PrCostingBase(TestCase):
             f"/api/v1/payment-vouchers/{pref}/actions/approve", {},
             format="json")
 
+    def sign_orders(self, pr):
+        """Walk the credit orders the award drafted through Purchasing and the
+        Signatory — the step that used to happen inside Finance's voucher
+        (owner 2026-08-22). Returns the issued POs."""
+        from .models import Document
+        pos = list(Document.objects.filter(doc_type="PO",
+                                           links_from__to_document=pr,
+                                           status="DRAFT").distinct())
+        for po in pos:
+            self.act(po.ref, "submit", self.purchasing)
+            self.act(po.ref, "authorise", self.signatory)
+            po.refresh_from_db()
+        return pos
+
     def make_pr(self):
         # MR first (a PR answers an MR)
         self.client.force_authenticate(self.sa)
@@ -170,27 +184,64 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(inflight[0]["status"], "DRAFT")
         self.assertIn(pr.ref, inflight[0]["holds"])
 
-    def test_commit_posts_at_authorisation_not_approval(self):
+    def test_each_side_commits_where_it_is_signed(self):
+        """Cash commits when Finance's voucher is approved; credit commits
+        when the Signatory signs its purchase order. A purchase order is a
+        commitment, not a payment, so it no longer waits on a payment run
+        (owner 2026-08-22)."""
         pr = self.make_pr()
-        # Director-approved: nothing committed yet
+        # Director-approved: nothing committed yet, either side.
         self.assertEqual(CostPosting.objects.filter(document=pr).count(), 0)
+        self.assertEqual(Payable.objects.filter(document=pr).count(), 0)
+        # The cash side, on the voucher — 5000, and nothing of the credit.
         r = self.authorise(pr.ref)
         self.assertEqual(r.status_code, 200, r.data)
-        pr.refresh_from_db()
-        self.assertEqual(pr.status, "AUTHORISED")
-        # COMMITTED per vendor line, netting to the grand total; materials
-        # are also INCURRED at PV authorisation (owner decision, M7 — no
-        # inventory system, so no GRN cost event)
+        self.assertEqual(costing.document_net(pr, state="COMMITTED"),
+                         Decimal("5000"))
+        self.assertEqual(costing.document_net(pr, state="INCURRED"),
+                         Decimal("5000"))
+        self.assertEqual(Payable.objects.filter(document=pr).count(), 0)
+        # The credit side, on its own order.
+        self.sign_orders(pr)
         self.assertEqual(costing.document_net(pr, state="COMMITTED"),
                          Decimal("12000"))
         self.assertEqual(costing.document_net(pr, state="INCURRED"),
                          Decimal("12000"))
-        # a payable was created for the credit vendor only
         self.assertEqual(Payable.objects.filter(document=pr).count(), 1)
         self.assertEqual(Payable.objects.get(document=pr).amount,
                          Decimal("7000"))
-        # POs generated at authorisation (none here — free-text vendors,
-        # no quotes) but the flow ran without error
+
+    def test_a_fully_credit_pr_never_reaches_finance(self):
+        """The complaint that started this: a credit purchase had to sit in
+        Finance's voucher queue purely to be authorised (owner 2026-08-22)."""
+        from .models import Document
+        self.client.force_authenticate(self.sa)
+        mr = self.client.post("/api/v1/documents", {
+            "doc_type": "MR", "site_id": self.site.id, "general_works": True,
+            "payload": {}, "lines": [{"free_text_desc": "Steel", "unit": "t",
+                                      "qty_required": 5, "qty_to_order": 5}]},
+            format="json").data
+        self.act(mr["ref"], "submit", self.sa)
+        self.act(mr["ref"], "approve", self.pm)
+        self.act(mr["ref"], "send", self.sa)
+        self.client.force_authenticate(self.purchasing)
+        pr = self.client.post("/api/v1/documents", {
+            "doc_type": "PR", "site_id": self.site.id, "mr_refs": [mr["ref"]],
+            "lines": [{"free_text_desc": "Steel Co", "vendor": "Steel Co",
+                       "amount_credit": 9000}]}, format="json").data
+        self.act(pr["ref"], "submit", self.purchasing)
+        self.act(pr["ref"], "approve", self.director)
+        doc = Document.objects.get(ref=pr["ref"])
+        # Not in Finance's queue at all — there is nothing to pay yet.
+        self.client.force_authenticate(self.finance)
+        self.assertNotIn(pr["ref"], [x["ref"] for x in self.client.get(
+            "/api/v1/finance/awaiting-voucher").data])
+        # The order carries it instead, and settles the PR when signed.
+        self.sign_orders(doc)
+        doc.refresh_from_db()
+        self.assertEqual(doc.status, "PAID_PO_ISSUED")
+        self.assertEqual(Payable.objects.get(document=doc).amount,
+                         Decimal("9000"))
 
     def test_direct_authorise_action_is_retired(self):
         pr = self.make_pr()
@@ -214,22 +265,34 @@ class PrAuthorisationTests(PrCostingBase):
     def test_withdrawal_reverses_commitment(self):
         pr = self.make_pr()
         self.authorise(pr.ref)
-        # committed + incurred both posted at authorisation (12000 each)
         self.assertEqual(costing.document_net(pr, state="COMMITTED"),
-                         Decimal("12000"))
-        self.assertEqual(costing.document_net(pr, state="INCURRED"),
-                         Decimal("12000"))
+                         Decimal("5000"))
         r = self.act(pr.ref, "withdraw-authorisation", self.finance,
                      comment="wrong vendor account")
         self.assertEqual(r.status_code, 200, r.data)
         pr.refresh_from_db()
         self.assertEqual(pr.status, "DRAFT")
         self.assertEqual(costing.document_net(pr), Decimal("0"))
-        self.assertEqual(Payable.objects.get(document=pr).status, "CANCELLED")
+
+    def test_finance_cannot_withdraw_behind_a_signed_order(self):
+        """A signed order is with the supplier. Finance withdrawing the cash
+        payment must not quietly cancel it (owner 2026-08-22)."""
+        pr = self.make_pr()
+        self.authorise(pr.ref)
+        pos = self.sign_orders(pr)
+        r = self.act(pr.ref, "withdraw-authorisation", self.finance,
+                     comment="wrong vendor account")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(pos[0].ref, r.data["detail"])
+        self.assertIn("amend the order", r.data["detail"])
+        pr.refresh_from_db()
+        self.assertNotEqual(pr.status, "DRAFT")
+        self.assertEqual(Payable.objects.get(document=pr).status,
+                         "OUTSTANDING")
 
     def test_payment_posts_paid_and_settles_payable(self):
         pr = self.make_pr()
-        self.authorise(pr.ref)
+        self.sign_orders(pr)           # the credit order books the payable
         lines = list(pr.current_revision.lines.all())
         credit_line = next(ln for ln in lines if (ln.amount_credit or 0) > 0)
         self.client.force_authenticate(self.finance)
@@ -245,7 +308,7 @@ class PrAuthorisationTests(PrCostingBase):
         """A credit payable can be pulled onto a fresh voucher; signatory
         approves, Finance settles → PAID posted + payable SETTLED."""
         pr = self.make_pr()
-        self.authorise(pr.ref)         # creates the OUTSTANDING payable (7000)
+        self.sign_orders(pr)           # the order books the payable (7000)
         payable = Payable.objects.get(document=pr)
         self.assertEqual(payable.status, "OUTSTANDING")
         self.client.force_authenticate(self.finance)
@@ -280,7 +343,7 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(r.status_code, 200, r.data)
         credit_line.refresh_from_db()
         self.assertEqual(credit_line.credit_days, 45)
-        self.authorise(pr.ref)         # payable due now follows the 45 days
+        self.sign_orders(pr)           # payable due now follows the 45 days
         p = Payable.objects.get(document=pr)
         self.assertEqual(p.due_date, date.today() + timedelta(days=45))
         # once the payable exists the terms are locked
@@ -297,7 +360,7 @@ class PrAuthorisationTests(PrCostingBase):
                            if (ln.amount_credit or 0) > 0)
         credit_line.credit_days = 60          # supplier gives 60-day terms
         credit_line.save(update_fields=["credit_days"])
-        self.authorise(pr.ref)
+        self.sign_orders(pr)
         p = Payable.objects.get(document=pr)
         self.assertEqual(p.due_date, date.today() + timedelta(days=60))
         self.assertIn("60", p.terms)

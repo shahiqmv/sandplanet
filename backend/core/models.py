@@ -413,12 +413,15 @@ class Document(models.Model):
             "LOADED": {"CLOSED"},
         },
         "PR": {
-            # Director approves (award) -> Signatory authorises (commitment,
-            # §6C.2) -> POs issue + payables + payment. Return to DRAFT
-            # before authorisation (§7.5a); Finance withdrawal after (§7.5b).
+            # Director approves (award) -> credit POs are drafted and go to the
+            # Signatory on their own (see "PO" below); only the CASH side goes
+            # to Finance on a payment voucher, where the Signatory's approval
+            # authorises it. A fully-credit PR never reaches AUTHORISED — it
+            # settles as its POs are issued (owner 2026-08-22).
             "DRAFT": {"SUBMITTED", "CANCELLED"},
             "SUBMITTED": {"APPROVED", "DRAFT", "REJECTED", "CANCELLED"},
-            "APPROVED": {"AUTHORISED", "DRAFT", "REJECTED"},
+            "APPROVED": {"AUTHORISED", "PAYMENT_PROCESSING", "PAID_PO_ISSUED",
+                         "DRAFT", "REJECTED"},
             "AUTHORISED": {"PAYMENT_PROCESSING", "PAID_PO_ISSUED", "DRAFT"},
             "PAYMENT_PROCESSING": {"PAID_PO_ISSUED"},
             "PAID_PO_ISSUED": {"CLOSED"},
@@ -433,8 +436,14 @@ class Document(models.Model):
             "DRAFT": {"COUNTED"},
             "COUNTED": {"COMPLETE", "SHORTAGE_REPORTED"},
         },
-        "PO": {  # generated per awarded supplier on PR approval (R2)
-            "DRAFT": {"ISSUED"},
+        "PO": {  # generated per awarded credit supplier on PR approval (R2)
+            # A purchase order is a commitment, not a payment, so it does not
+            # travel through Finance's payment voucher to get signed: the
+            # Director awards the PR, Purchasing sends the drafted order for
+            # signature, and the Signatory's approval issues it. Finance sees
+            # it afterwards, as a payable to settle (owner 2026-08-22).
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"ISSUED", "DRAFT", "REJECTED"},
             # An issued order often has to change — the supplier is short, an
             # item is unavailable (owner 2026-08-13). Purchasing proposes a new
             # revision and the Director approves EVERY amendment; approve and

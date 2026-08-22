@@ -120,13 +120,23 @@ def _on_live_voucher():
 
 
 def awaiting_voucher():
-    """Director-approved PR / PYR not already on a live voucher."""
+    """Director-approved PR / PYR not already on a live voucher.
+
+    A PR reaches Finance only for its CASH side. Its credit orders are signed
+    on the PO and settle later as payables, so a fully-credit PR has nothing
+    to voucher and used to sit in this queue purely to be authorised — which
+    is what held every purchase order behind a Finance payment run (owner
+    2026-08-22).
+    """
+    from .procurement import pr_cash_total
     docs = Document.objects.filter(is_void=False).exclude(
         id__in=_on_live_voucher())
     out = []
-    for doc in docs.filter(doc_type="PR", status="APPROVED") \
+    for doc in docs.filter(doc_type="PR",
+                           status__in=("APPROVED", "PAYMENT_PROCESSING")) \
             .select_related("site"):
-        out.append(doc)
+        if pr_cash_total(doc) > 0:
+            out.append(doc)
     for doc in docs.filter(doc_type="PYR", status="DIRECTOR_APPROVED") \
             .select_related("site"):
         out.append(doc)

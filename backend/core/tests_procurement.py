@@ -410,12 +410,28 @@ class ChainTests(ProcBase):
         self.assertEqual(float(r.data["total"]), 5000.0)
         rows = r.data["lines"][0]["vendor_rows"]
         self.assertEqual([v["vendor"] for v in rows], ["Cash Vendor"])
-        # approving commits the PR → the credit vendor is now a payable
+        # Approving the voucher pays the CASH side and nothing else — the
+        # credit vendor's commitment now rides on its own purchase order,
+        # signed by the signatory (owner 2026-08-22).
         self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/submit", {},
                          format="json")
         self.as_user(self.signatory)
         self.client.post(f"/api/v1/payment-vouchers/{pv}/actions/approve", {},
                          format="json")
+        self.assertFalse(Payable.objects.filter(
+            document__ref=pr["ref"], vendor="Credit Vendor").exists())
+        # The order was drafted when the Director awarded the PR. Purchasing
+        # sends it, the signatory approves it, and THAT books the payable.
+        po = Document.objects.filter(doc_type="PO",
+                                     links_from__to_document__ref=pr["ref"]
+                                     ).distinct().get()
+        self.assertEqual(po.status, "DRAFT")
+        self.as_user(self.purchasing)
+        self.act(po.ref, "submit")
+        self.as_user(self.signatory)
+        self.act(po.ref, "authorise")
+        po.refresh_from_db()
+        self.assertEqual(po.status, "ISSUED")
         self.assertTrue(Payable.objects.filter(
             document__ref=pr["ref"], vendor="Credit Vendor",
             status="OUTSTANDING").exists())

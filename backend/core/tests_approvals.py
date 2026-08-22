@@ -4,7 +4,7 @@ from datetime import date
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from .models import Site, SitePmHistory, User
+from .models import Document, Site, SitePmHistory, User
 from .tests import make_user
 
 
@@ -53,30 +53,48 @@ class ApprovalsQueueTests(TestCase):
         r = self.client.get("/api/v1/approvals/pending")
         self.assertEqual(r.data["total"], 0)
 
-    def test_director_and_finance_see_pr_stages(self):
+    def _pr(self, **line):
         self.client.force_authenticate(self.purchasing)
         pr = self.client.post("/api/v1/documents", {
             "doc_type": "PR", "site_id": self.site.id, "payload": {},
             "lines": [{"free_text_desc": "Cement", "unit": "bags",
-                       "qty_required": 10}],
+                       "qty_required": 10, **line}],
         }, format="json").data
         self.client.post(f"/api/v1/documents/{pr['ref']}/actions/submit")
+        return pr
 
+    def test_a_cash_pr_goes_to_finance_for_a_voucher(self):
+        pr = self._pr(vendor="Cash Vendor", amount_cash=5000)
         d = self.pending(self.director)
         self.assertIn("To award — submitted PRs", self.titles(d))
         self.assertEqual(self.pending(self.finance)["total"], 0)
 
         self.client.force_authenticate(self.director)
         self.client.post(f"/api/v1/documents/{pr['ref']}/actions/approve")
-        # After Director approval the PR awaits a payment voucher (M6d):
-        # Finance batches it, a signatory approves the voucher. Finance sees
-        # it in "Awaiting a payment voucher"; the signatory sees nothing yet
-        # (no submitted voucher), only PVs once Finance submits one.
+        # Cash is a real payment, so it still reaches Finance's voucher queue.
         f = self.pending(self.finance)
         self.assertIn("Awaiting a payment voucher", self.titles(f))
-        sig = self.pending(make_user("sig", User.Role.SIGNATORY))
-        self.assertNotIn("To authorise — approved PRs", self.titles(sig))
         self.assertEqual(self.pending(self.director)["total"], 0)
+
+    def test_a_credit_pr_goes_to_the_signatory_not_to_finance(self):
+        """A purchase order is a commitment, not a payment: it is signed by
+        the signatory and Finance only sees it later, as a payable (owner
+        2026-08-22)."""
+        pr = self._pr(vendor="Credit Vendor", amount_credit=7000,
+                      payment_terms="30 days credit")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{pr['ref']}/actions/approve")
+        # Nothing for Finance — there is nothing to pay yet.
+        self.assertEqual(self.pending(self.finance)["total"], 0)
+        # Purchasing has the drafted order to send on.
+        self.assertIn("To send for approval — draft POs",
+                      self.titles(self.pending(self.purchasing)))
+        po = Document.objects.get(doc_type="PO")
+        self.client.force_authenticate(self.purchasing)
+        self.client.post(f"/api/v1/documents/{po.ref}/actions/submit")
+        # ...and then it is the signatory's decision, on the order itself.
+        sig = self.pending(make_user("sig", User.Role.SIGNATORY))
+        self.assertIn("To authorise — purchase orders", self.titles(sig))
 
     def test_purchasing_sees_mr_sent_to_ho(self):
         self.client.force_authenticate(self.sa)
