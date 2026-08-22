@@ -274,6 +274,29 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(pr.status, "DRAFT")
         self.assertEqual(costing.document_net(pr), Decimal("0"))
 
+    def test_a_legacy_order_does_not_commit_its_cost_twice(self):
+        """The orders drafted before this change belong to PRs the old voucher
+        route already committed. Signing one must not post the cost again —
+        costing.post is append-only, so nothing else would catch it (owner
+        2026-08-22)."""
+        from .models import Document
+
+        pr = self.make_pr()
+        credit_line = next(ln for ln in pr.current_revision.lines.all()
+                           if (ln.amount_credit or 0) > 0)
+        # Stand in for the old flow: commit the whole row up front.
+        from core.procurement import _post_pr_line
+        _post_pr_line(pr, credit_line, Decimal("7000"), Decimal("0"),
+                      self.finance)
+        before = costing.document_net(pr, state="COMMITTED")
+        self.assertEqual(before, Decimal("7000"))
+        self.sign_orders(pr)
+        # The order issues and books its payable, but posts nothing further.
+        self.assertEqual(costing.document_net(pr, state="COMMITTED"), before)
+        self.assertEqual(Document.objects.filter(
+            doc_type="PO", status="ISSUED").count(), 1)
+        self.assertEqual(Payable.objects.filter(document=pr).count(), 1)
+
     def test_finance_cannot_withdraw_behind_a_signed_order(self):
         """A signed order is with the supplier. Finance withdrawing the cash
         payment must not quietly cancel it (owner 2026-08-22)."""

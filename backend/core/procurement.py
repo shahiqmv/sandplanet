@@ -808,6 +808,19 @@ def po_credit_total(po):
     return Decimal(str(credit)) + _gst_share(ln, credit)
 
 
+def _already_committed(pr, ln):
+    """Net COMMITTED already on the ledger for one vendor row (excluding the
+    recoverable-GST pool, which is not a project cost)."""
+    from .models import CostPosting
+
+    total = Decimal("0")
+    for cp in CostPosting.objects.filter(document=pr, document_line=ln,
+                                         state="COMMITTED",
+                                         is_stock_pool=False):
+        total += cp.amount
+    return total
+
+
 def po_commitment(po):
     """(pr, vendor row, error) for an order about to be signed. Resolved
     before the status moves, so a broken link cannot leave an order issued
@@ -840,7 +853,12 @@ def issue_po(po, actor):
         return err
     credit = ln.amount_credit or Decimal("0")
     gst = _gst_share(ln, credit)
-    _post_pr_line(pr, ln, credit, gst, actor)
+    # Orders drafted before this change belong to PRs that were already
+    # authorised the old way, so their cost is already on the ledger. Posting
+    # again on signature would double-count it — and `costing.post` is an
+    # append-only writer, so nothing else would stop it (owner 2026-08-22).
+    if _already_committed(pr, ln) < ((ln.amount_cash or 0) + credit):
+        _post_pr_line(pr, ln, credit, gst, actor)
     if credit > 0 and not Payable.objects.filter(
             document=pr, document_line=ln).exists():
         # We owe the vendor the gross (net + GST). Due date follows the row's
