@@ -1317,6 +1317,21 @@ def variation_pdf_context(v):
     # by ref so the client sees what this one sits on top of; the bottom line
     # becomes the anticipated sum if all of them are approved. Not shown on an
     # approved VO, whose bottom line is the revised contract sum itself.
+    if approved:
+        status_note = (
+            f"Approved by the Employer on {v.employer_approved_on:%d %b %Y}"
+            + (f" · ref {v.employer_ref}" if v.employer_ref else "")
+            + " — this variation forms part of the contract")
+        client_status = "Approved by the Employer"
+    elif v.status == v.Status.SUBMITTED:
+        when = f" on {v.sent_at:%d %b %Y}" if v.sent_at else ""
+        status_note = f"Submitted for the Employer's approval{when}"
+        client_status = f"Submitted for approval{when}"
+    elif v.status == v.Status.REJECTED:
+        status_note = client_status = "Rejected by the Employer"
+    else:                                   # PD_APPROVED — about to go out
+        status_note = "For the Employer's approval"
+        client_status = "For the Employer's approval"
     prior_pending = [] if approved else list(
         project.variations.filter(status__in=("PD_APPROVED", "SUBMITTED"),
                                   seq__lt=v.seq).order_by("seq"))
@@ -1375,14 +1390,12 @@ def variation_pdf_context(v):
         "employer_ref": v.employer_ref,
         "doc_title": "VARIATION ORDER",
         "subline": f"{v.ref}  ·  {project.code}",
-        # "Approved" on this document means the EMPLOYER approved it; the
-        # Director's internal approval is what lets it go out, and is not
-        # something the client needs to see (owner 2026-08-22).
-        "status_note": (
-            (f"Approved by the Employer on {v.employer_approved_on:%d %b %Y}"
-             + (f" · ref {v.employer_ref}" if v.employer_ref else "")
-             + " — this variation forms part of the contract")
-            if approved else "Submitted for the Employer's approval"),
+        # The client copy speaks the client's language. "Approved" means the
+        # EMPLOYER approved it; the Director's internal approval is what lets
+        # it go out and is never printed; and it does not say "submitted"
+        # until Send has actually been pressed (owner 2026-08-22).
+        "client_status": client_status,
+        "status_note": status_note,
         "loa_ref": project.loa_ref,
         "prepared_by": v.created_by.full_name if v.created_by_id else "",
     }

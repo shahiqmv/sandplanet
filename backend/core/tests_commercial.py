@@ -373,10 +373,28 @@ class VariationTests(TestCase):
         from core import commercial
         from core.models import Variation
         v = self._create()
-        vo_send(self, v["id"])
+        # PD approved but NOT yet sent: the client copy says "for approval" —
+        # not "submitted", and never the internal label (owner 2026-08-22).
+        self.client.force_authenticate(self.qs)
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "PD_PENDING"}, format="json")
+        self.client.force_authenticate(_vo_director(self))
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "PD_APPROVED"}, format="json")
         html = render_to_string("pdf/variation_order.html",
             commercial.variation_pdf_context(Variation.objects.get(pk=v["id"])))
-        self.assertIn("Submitted for the Employer&#x27;s approval", html)
+        self.assertIn("For the Employer&#x27;s approval", html)
+        self.assertNotIn("Submitted", html)
+        self.assertNotIn("PD approved", html)
+        self.assertNotIn("ready to send", html)
+        # Sent: now it says so, with the date.
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "SUBMITTED"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        html = render_to_string("pdf/variation_order.html",
+            commercial.variation_pdf_context(Variation.objects.get(pk=v["id"])))
+        self.assertIn("Submitted for the Employer&#x27;s approval on", html)
         self.assertNotIn("APPROVED BY THE EMPLOYER", html)
         vo_approve(self, v["id"], on="2026-08-15", ref="CL/VO/7")
         html = render_to_string("pdf/variation_order.html",
@@ -422,13 +440,13 @@ class VariationTests(TestCase):
         self.assertEqual(c1["prior_pending"], [])
         h1 = render_to_string("pdf/variation_order.html", c1)
         self.assertIn("Contract sum if this variation is approved", h1)
-        self.assertNotIn("awaiting the Employer", h1)
+        self.assertNotIn("issued for the Employer", h1)
         # VO-02 sits on VO-01.
         c2 = commercial.variation_pdf_context(v2)
         self.assertEqual(c2["prior_pending_refs"], "VO-01")
         self.assertEqual(float(c2["anticipated"]), 502800.0)   # 500000+1400+1400
         h2 = render_to_string("pdf/variation_order.html", c2)
-        self.assertIn("awaiting the Employer", h2)
+        self.assertIn("issued for the Employer", h2)
         self.assertIn("VO-01", h2)
         self.assertIn("Anticipated contract sum", h2)
         self.assertIn("502,800.00", h2)

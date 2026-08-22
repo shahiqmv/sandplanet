@@ -52,7 +52,7 @@
   <tr><td class="k">Project</td><td>{{ project.title }}</td>
       <td class="k">Project code</td><td>{{ project.code }}</td></tr>
   <tr><td class="k">LOA reference</td><td>{{ loa_ref|default:"—" }}</td>
-      <td class="k">Status</td><td>{{ v.get_status_display }}</td></tr>
+      <td class="k">Status</td><td>{{ client_status }}</td></tr>
 </table>
 
 <div class="status{% if is_approved %} approved{% endif %}">{{ status_note }}</div>
@@ -109,7 +109,7 @@
   <tr class="sub"><td>Contract sum before this variation</td>
       <td class="amt">{{ sum_before_f }}</td></tr>
   {% if prior_pending %}
-  <tr><td>Variations submitted, awaiting the Employer's approval
+  <tr><td>Variations issued for the Employer's approval
           <span style="color:#5a6b78;">— {{ prior_pending_refs }}</span></td>
       <td class="amt">{{ prior_pending_net_f }}</td></tr>
   {% endif %}
@@ -117,12 +117,12 @@
       <td class="amt{% if is_omission %} neg{% endif %}">
         {{ signed_total_f }}</td></tr>
   <tr class="grand">
-      <td>{% if is_approved %}Revised contract sum{% elif prior_pending %}Anticipated contract sum if the submitted variations are approved{% else %}Contract sum if this variation is approved{% endif %}</td>
+      <td>{% if is_approved %}Revised contract sum{% elif prior_pending %}Anticipated contract sum if the issued variations are approved{% else %}Contract sum if this variation is approved{% endif %}</td>
       <td class="amt">{% if prior_pending %}{{ anticipated_f }}{% else %}{{ sum_after_f }}{% endif %}</td></tr>
 </table>
 {% if prior_pending %}
 <div class="note" style="margin-top:2mm;">
-  {{ v.ref }} is submitted together with {{ prior_pending_refs }}. Each is priced
+  {{ v.ref }} is issued together with {{ prior_pending_refs }}. Each is priced
   and approved on its own; the anticipated sum above assumes all are approved.
 </div>
 {% endif %}
