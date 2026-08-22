@@ -361,6 +361,38 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(r2.status_code, 400)
         self.assertIn("import request", r2.data["detail"])
 
+    def test_the_suppliers_credit_period_reaches_the_payable(self):
+        """Sonee gives 60 days and the Suppliers page said so — yet every one
+        of its orders was booked at the 30-day default, because nothing ever
+        read the record (owner 2026-08-22)."""
+        from datetime import date, timedelta
+
+        from .models import Payable
+        self.steel.credit_days = 60
+        self.steel.save(update_fields=["credit_days"])
+        mr, pr = self.full_award()
+        # The sync carried the supplier's period onto the vendor row...
+        row = next(l for l in self.client.get(
+            f"/api/v1/documents/{pr['ref']}").data["lines"]
+            if l["vendor"] == self.steel.name)
+        self.assertEqual(row["credit_days"], 60)
+        # ...and the payable is due on it.
+        self.sign_orders(pr["ref"])
+        pay = Payable.objects.get(document__ref=pr["ref"])
+        self.assertEqual(pay.due_date, date.today() + timedelta(days=60))
+
+    def test_no_agreed_period_anywhere_is_thirty_days_and_says_so(self):
+        """The fallback stays 30 — but it is no longer silent."""
+        from datetime import date, timedelta
+
+        from .models import Payable
+        self.assertIsNone(self.steel.credit_days)
+        mr, pr = self.full_award()
+        self.sign_orders(pr["ref"])
+        pay = Payable.objects.get(document__ref=pr["ref"])
+        self.assertEqual(pay.due_date, date.today() + timedelta(days=30))
+        self.assertIn("no agreed period on file", pay.terms)
+
     def test_quotes_locked_after_approval(self):
         mr, pr = self.full_award()
         self.as_user(self.purchasing)

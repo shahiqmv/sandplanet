@@ -683,6 +683,13 @@ def sync_pr_vendor_rows(pr):
             vendor=quotation.supplier.name,
             quotation_ref=quotation.quote_ref,
             payment_terms=quotation.payment_terms,
+            # The supplier's agreed credit period, so the payable's due date
+            # follows it. The Suppliers page had recorded this for weeks and
+            # nothing read it: Sonee gives 60 days and every one of its orders
+            # was booked at the 30-day default (owner 2026-08-22). Purchasing
+            # can still override it on the row.
+            credit_days=(quotation.supplier.credit_days
+                         if is_credit else None),
             purchase_type="CREDIT" if is_credit else "CASH",
             amount_cash=None if is_credit else total,
             amount_credit=total if is_credit else None,
@@ -808,6 +815,25 @@ def po_credit_total(po):
     return Decimal(str(credit)) + _gst_share(ln, credit)
 
 
+def credit_period_for(ln):
+    """(days, terms text) for a credit row's payable.
+
+    The row's own period wins; failing that, the period agreed with the
+    supplier on its record; failing both, 30 — and the terms say so. The 30
+    used to be silent, which is how two months of a 60-day supplier's orders
+    were booked a month early without anyone seeing it (owner 2026-08-22).
+    """
+    from .models import Supplier
+    if ln.credit_days is not None:
+        return ln.credit_days, (ln.payment_terms or f"{ln.credit_days} days")
+    sup = Supplier.objects.filter(name=(ln.vendor or "").strip()).first()
+    if sup is not None and sup.credit_days is not None:
+        base = ln.payment_terms or "Credit"
+        return sup.credit_days, f"{base} · {sup.credit_days} days (supplier terms)"
+    base = ln.payment_terms or "Credit"
+    return 30, f"{base} · 30 days (no agreed period on file)"
+
+
 def _already_committed(pr, ln):
     """Net COMMITTED already on the ledger for one vendor row (excluding the
     recoverable-GST pool, which is not a project cost)."""
@@ -871,15 +897,12 @@ def issue_po(po, actor):
         _post_pr_line(pr, ln, credit, gst, actor)
     if credit > 0 and not Payable.objects.filter(
             document=pr, document_line=ln).exists():
-        # We owe the vendor the gross (net + GST). Due date follows the row's
-        # agreed credit period (days); 30 is only a fallback.
-        days = ln.credit_days if ln.credit_days is not None else 30
+        # We owe the vendor the gross (net + GST).
+        days, terms = credit_period_for(ln)
         Payable.objects.create(
             document=pr, document_line=ln, site=pr.site,
             vendor=ln.vendor or ln.free_text_desc,
-            terms=ln.payment_terms or (f"{days} days" if ln.credit_days
-                                       is not None else ""),
-            amount=credit + gst,
+            terms=terms, amount=credit + gst,
             due_date=date.today() + timedelta(days=days))
     audit("document", po.id, "PO_AUTHORISED", actor=actor,
           detail={"ref": po.ref, "pr": pr.ref, "amount": str(credit + gst)})

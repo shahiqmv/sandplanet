@@ -104,7 +104,7 @@ export default function SuppliersPage({ me }) {
             </>
           )}
           <input type="number" min="0" placeholder="Credit days"
-                 title="Default credit period in days — prefills a PR vendor line"
+                 title="Agreed credit period in days — sets the payment due date on this supplier's credit orders"
                  value={draft.credit_days ?? ""}
                  onChange={(e) => setDraft({ ...draft,
                                              credit_days: e.target.value })}

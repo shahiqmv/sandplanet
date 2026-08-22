@@ -340,6 +340,19 @@ class PrAuthorisationTests(PrCostingBase):
                              format="json")
         self.assertEqual(r.status_code, 403)
 
+    def test_a_blank_row_falls_back_to_the_supplier_record(self):
+        """A credit row typed straight onto the PR carries no period; the
+        supplier's record still decides the due date (owner 2026-08-22)."""
+        from datetime import date, timedelta
+
+        from .models import Supplier
+        Supplier.objects.create(name="Vendor B", credit_days=45)
+        pr = self.make_pr()               # Vendor B row has credit_days=None
+        self.sign_orders(pr)
+        pay = Payable.objects.get(document=pr)
+        self.assertEqual(pay.due_date, date.today() + timedelta(days=45))
+        self.assertIn("supplier terms", pay.terms)
+
     def test_finance_cannot_withdraw_behind_a_signed_order(self):
         """A signed order is with the supplier. Finance withdrawing the cash
         payment must not quietly cancel it (owner 2026-08-22)."""
