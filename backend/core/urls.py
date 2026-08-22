@@ -62,6 +62,8 @@ urlpatterns = [
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
          name="awaiting-voucher"),
     path("finance/payables", vouchers.payables, name="finance-payables"),
+    path("finance/payables/<int:pk>/due-date", vouchers.payable_due_date,
+         name="payable-due-date"),
     path("finance/dashboard", vouchers.finance_dashboard,
          name="finance-dashboard"),
     path("payment-vouchers", vouchers.payment_vouchers,

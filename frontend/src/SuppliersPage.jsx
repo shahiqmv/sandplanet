@@ -21,6 +21,10 @@ export default function SuppliersPage({ me }) {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState(EMPTY);
   const [error, setError] = useState(null);
+  // The row being edited. The table only ever let you flip category and
+  // active — a changed phone number, a new contact or an address for the PO
+  // had no way in (owner 2026-08-22).
+  const [editing, setEditing] = useState(null);
 
   const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role);
   const isOverseas = draft.category !== "LOCAL";
@@ -123,6 +127,13 @@ export default function SuppliersPage({ me }) {
       )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
+      {editing && (
+        <SupplierEditor supplier={editing} canEdit={canEdit}
+          seesBank={["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role)}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }} />
+      )}
+
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead><tr>
           <th style={th}>Name</th><th style={th}>Category</th>
@@ -134,7 +145,15 @@ export default function SuppliersPage({ me }) {
           {suppliers.map((s) => (
             <tr key={s.id} style={{ opacity: s.is_active ? 1 : 0.5 }}>
               <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)" }}>
-                {s.name}</td>
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              setEditing(s); }}
+                   style={{ color: "inherit" }}
+                   title={canEdit ? "Open to edit" : "Open"}>{s.name}</a>
+                {s.credit_days != null && s.credit_days !== "" && (
+                  <div style={{ fontSize: 11, color: "#5a6b78",
+                                fontWeight: 400 }}>
+                    {s.credit_days} days credit</div>)}
+              </td>
               <td style={td}>
                 {canEdit ? (
                   <select value={s.category}
@@ -175,5 +194,103 @@ export default function SuppliersPage({ me }) {
         <p style={{ color: "#5a6b78", fontSize: 13 }}>No suppliers yet.</p>
       )}
     </section>
+  );
+}
+
+// Every field on the supplier record, in one place. Bank details are shown
+// only to the roles the API returns them to.
+const FIELDS = [
+  ["name", "Supplier name", "text"],
+  ["contact_person", "Contact person", "text"],
+  ["phone", "Phone", "text"],
+  ["email", "Email", "text"],
+  ["address", "Address (shown on POs)", "text"],
+  ["country", "Country", "text"],
+  ["default_currency", "Default currency (e.g. USD)", "text"],
+  ["default_incoterm", "Default incoterm (e.g. FOB)", "text"],
+  ["credit_days", "Credit period (days)", "number"],
+];
+
+function SupplierEditor({ supplier, canEdit, seesBank, onClose, onSaved }) {
+  const [form, setForm] = useState({ ...supplier });
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setForm({ ...form, [k]: v });
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const body = {};
+      for (const k of Object.keys(form)) {
+        if (k === "id") continue;
+        if (form[k] !== supplier[k]) body[k] = form[k];
+      }
+      if (Object.keys(body).length) {
+        await api(`/suppliers/${supplier.id}`, { method: "PATCH", body });
+      }
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  const field = ([k, label, type]) => (
+    <label key={k} style={{ display: "flex", flexDirection: "column",
+                            gap: 3, fontSize: 12, color: "#5a6b78",
+                            minWidth: 200, flex: 1 }}>
+      {label}
+      <input type={type} value={form[k] ?? ""} disabled={!canEdit}
+        onChange={(e) => set(k, k === "default_currency"
+          ? e.target.value.toUpperCase() : e.target.value)}
+        style={inputStyle} />
+    </label>
+  );
+
+  return (
+    <div style={{ border: "1px solid #dde5ea", borderRadius: 8,
+                  padding: 14, margin: "10px 0 14px",
+                  background: "#fafcfd" }}>
+      <div style={{ display: "flex", justifyContent: "space-between",
+                    alignItems: "baseline", marginBottom: 8 }}>
+        <strong style={{ color: "var(--sp-navy)" }}>{supplier.name}</strong>
+        <button onClick={onClose} style={{ ...ghostButton, padding: "2px 10px",
+                                           fontSize: 12 }}>Close</button>
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {FIELDS.slice(0, 5).map(field)}
+        <label style={{ display: "flex", flexDirection: "column", gap: 3,
+                        fontSize: 12, color: "#5a6b78", minWidth: 200 }}>
+          Category
+          <select value={form.category} disabled={!canEdit}
+                  onChange={(e) => set("category", e.target.value)}
+                  style={inputStyle}>
+            {CATEGORIES.map(([v, label]) => (
+              <option key={v} value={v}>{label}</option>))}
+          </select>
+        </label>
+        {FIELDS.slice(5).map(field)}
+      </div>
+      {seesBank && (
+        <label style={{ display: "flex", flexDirection: "column", gap: 3,
+                        fontSize: 12, color: "#5a6b78", marginTop: 10 }}>
+          Bank / remittance details
+          <textarea rows={3} value={form.bank_details ?? ""} disabled={!canEdit}
+            onChange={(e) => set("bank_details", e.target.value)}
+            style={{ ...inputStyle, fontFamily: "inherit" }} />
+        </label>
+      )}
+      <label style={{ display: "flex", flexDirection: "column", gap: 3,
+                      fontSize: 12, color: "#5a6b78", marginTop: 10 }}>
+        Notes
+        <textarea rows={2} value={form.notes ?? ""} disabled={!canEdit}
+          onChange={(e) => set("notes", e.target.value)}
+          style={{ ...inputStyle, fontFamily: "inherit" }} />
+      </label>
+      {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
+      {canEdit && (
+        <div style={{ marginTop: 10 }}>
+          <button onClick={save} disabled={busy || !form.name}
+                  style={buttonStyle}>{busy ? "Saving…" : "Save changes"}</button>
+        </div>
+      )}
+    </div>
   );
 }

@@ -297,6 +297,49 @@ class PrAuthorisationTests(PrCostingBase):
             doc_type="PO", status="ISSUED").count(), 1)
         self.assertEqual(Payable.objects.filter(document=pr).count(), 1)
 
+    def test_the_payables_page_names_the_order_not_the_requisition(self):
+        """What we owe is owed under the ORDER — that is the reference Finance
+        and the vendor both quote (owner 2026-08-22)."""
+        pr = self.make_pr()
+        pos = self.sign_orders(pr)
+        self.client.force_authenticate(self.finance)
+        rows = self.client.get("/api/v1/finance/payables").data["payables"]
+        row = next(r for r in rows if r["pr_ref"] == pr.ref)
+        self.assertEqual(row["ref"], pos[0].ref)
+        self.assertEqual(row["po_ref"], pos[0].ref)
+        # ...and searching by either reference still finds it.
+        for q in (pos[0].ref, pr.ref):
+            hits = self.client.get(f"/api/v1/finance/payables?q={q}").data
+            self.assertEqual(hits["count"], 1, q)
+
+    def test_finance_can_move_a_due_date_with_a_reason(self):
+        from datetime import date, timedelta
+        pr = self.make_pr()
+        self.sign_orders(pr)
+        payable = Payable.objects.get(document=pr)
+        self.client.force_authenticate(self.finance)
+        url = f"/api/v1/finance/payables/{payable.id}/due-date"
+        new_due = str(date.today() + timedelta(days=90))
+        # A reason is required — it is agreed terms being overridden.
+        r = self.client.post(url, {"due_date": new_due}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post(url, {"due_date": new_due,
+                                   "reason": "supplier granted 90 days"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        payable.refresh_from_db()
+        self.assertEqual(str(payable.due_date), new_due)
+        self.assertIn("90 days", payable.terms)
+        # The order shows the same date.
+        self.client.force_authenticate(self.purchasing)
+        po = Document.objects.get(doc_type="PO", status="ISSUED")
+        d = self.client.get(f"/api/v1/documents/{po.ref}").data
+        self.assertEqual(str(d["payable"]["due_date"]), new_due)
+        # Purchasing cannot move it — payment dates are Finance's.
+        r = self.client.post(url, {"due_date": new_due, "reason": "x"},
+                             format="json")
+        self.assertEqual(r.status_code, 403)
+
     def test_finance_cannot_withdraw_behind_a_signed_order(self):
         """A signed order is with the supplier. Finance withdrawing the cash
         payment must not quietly cancel it (owner 2026-08-22)."""

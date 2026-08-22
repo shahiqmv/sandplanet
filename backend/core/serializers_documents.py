@@ -125,6 +125,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     resubmitted_as = serializers.SerializerMethodField()
     payment_request = serializers.SerializerMethodField()
     subcontract_agreement = serializers.SerializerMethodField()
+    payable = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
@@ -133,8 +134,26 @@ class DocumentSerializer(serializers.ModelSerializer):
                   "doc_date", "status", "rev_label", "payload", "lines",
                   "links", "revisions", "is_void", "void_reason",
                   "previous_ir_ref", "resubmitted_as", "supplier_name",
-                  "payment_request", "subcontract_agreement",
+                  "payment_request", "subcontract_agreement", "payable",
                   "attachments", "approvals", "created_by_name", "created_at"]
+
+    def get_payable(self, obj):
+        """The money a signed credit order put on the books — what we owe the
+        supplier and when. Shown on the order so Purchasing and Finance read
+        the same date (owner 2026-08-22)."""
+        if obj.doc_type != "PO":
+            return None
+        from .models import Payable
+        from .procurement import po_pr_line
+        ln = po_pr_line(obj)
+        if ln is None:
+            return None
+        p = Payable.objects.filter(document_line=ln).order_by("-id").first()
+        if p is None:
+            return None
+        return {"id": p.id, "amount": p.amount, "due_date": p.due_date,
+                "terms": p.terms, "status": p.status,
+                "settled_on": p.settled_on, "settled_ref": p.settled_ref}
 
     def get_subcontract_agreement(self, obj):
         if obj.doc_type != "SCA" or not hasattr(obj, "subcontract_agreement"):

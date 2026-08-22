@@ -38,6 +38,72 @@ const HEADER_FIELDS = {
   ],
 };
 
+// What a signed credit order put on the books: the amount owed to the
+// supplier and the date it falls due. Shown on the order so Purchasing, the
+// signatory and Finance all read the same date; Finance can move it, with a
+// reason (owner 2026-08-22).
+function PayableBlock({ p, me, onChanged }) {
+  const [err, setErr] = useState(null);
+  if (!p) return null;
+  const isFinance = ["FINANCE", "ADMIN"].includes(me.role);
+  const today = new Date().toISOString().slice(0, 10);
+  const overdue = p.status === "OUTSTANDING" && p.due_date
+                  && p.due_date < today;
+  async function move() {
+    const when = window.prompt("New payment due date", p.due_date || "");
+    if (!when) return;
+    const reason = window.prompt("Why is the date changing?");
+    if (!reason) return;
+    setErr(null);
+    try {
+      await api(`/finance/payables/${p.id}/due-date`,
+                { method: "POST", body: { due_date: when, reason } });
+      onChanged?.();
+    } catch (e) { setErr(e.message); }
+  }
+  return (
+    <div style={{ margin: "12px 0", padding: "10px 14px",
+                  background: "var(--sky-soft)", borderRadius: 8,
+                  display: "flex", gap: 24, flexWrap: "wrap",
+                  alignItems: "baseline", fontSize: 13 }}>
+      <div>
+        <div style={{ fontSize: 11, color: "var(--muted)",
+                      textTransform: "uppercase", letterSpacing: ".04em" }}>
+          Payable to supplier</div>
+        <div style={{ fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+          MVR {Number(p.amount || 0).toLocaleString("en-US",
+            { minimumFractionDigits: 2 })}</div>
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: "var(--muted)",
+                      textTransform: "uppercase", letterSpacing: ".04em" }}>
+          Payment due</div>
+        <div style={{ fontWeight: 600,
+                      color: overdue ? "#c0392b" : "inherit" }}>
+          {p.due_date || "—"}{overdue ? " · overdue" : ""}
+          {isFinance && p.status === "OUTSTANDING" && (
+            <button onClick={move} style={{ ...ghostButton, padding: "0 6px",
+                                            fontSize: 11, marginLeft: 8 }}>
+              edit</button>)}
+        </div>
+        {p.terms && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+          {p.terms}</div>}
+      </div>
+      <div>
+        <div style={{ fontSize: 11, color: "var(--muted)",
+                      textTransform: "uppercase", letterSpacing: ".04em" }}>
+          Status</div>
+        <div style={{ fontWeight: 600 }}>
+          {p.status === "SETTLED"
+            ? `Settled ${p.settled_on || ""}${p.settled_ref
+                ? ` · ${p.settled_ref}` : ""}`
+            : p.status.toLowerCase()}</div>
+      </div>
+      {err && <div style={{ color: "#c0392b", width: "100%" }}>{err}</div>}
+    </div>
+  );
+}
+
 // A subcontract valuation has no document lines — its content is the priced
 // scope and what it is worth — so without this the signatory was asked to
 // authorise a page with nothing on it (owner 2026-08-16).
@@ -1762,6 +1828,9 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       )}
 
       <ValuationBlock v={doc.valuation} />
+      <PayableBlock p={doc.payable} me={me}
+        onChanged={async () => { setDoc(await api(`/documents/${doc.ref}`));
+                                 onChanged?.(); }} />
 
       {doc.approvals?.length > 0 && (
         <>

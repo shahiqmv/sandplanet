@@ -53,6 +53,25 @@ export default function PayablesPage({ me, onOpenDoc }) {
     setBusy(false);
   }
 
+  // The due date comes from the vendor's agreed terms, but a supplier
+  // withdraws credit, grants an extension, or the invoice says otherwise —
+  // Finance needs to be able to move it rather than work around a wrong date
+  // (owner 2026-08-22). A reason is required: it is agreed terms being
+  // overridden.
+  async function moveDueDate(r) {
+    const when = window.prompt(
+      `New due date for ${r.payee} (${r.ref})`, r.due_date || "");
+    if (!when) return;
+    const reason = window.prompt("Why is the date changing?");
+    if (!reason) return;
+    setError(null);
+    try {
+      await api(`/finance/payables/${r.payable_id}/due-date`,
+                { method: "POST", body: { due_date: when, reason } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   if (!data && !error) return <div style={card}>Loading…</div>;
 
   return (
@@ -127,14 +146,28 @@ export default function PayablesPage({ me, onOpenDoc }) {
                           [r.payable_id]: e.target.checked })} /></td>
                   )}
                   <td style={td}>
+                    {/* What we owe is owed under the ORDER, so that is the
+                        reference shown; the requisition sits under it (owner
+                        2026-08-22). */}
                     <a href="#" onClick={(e) => { e.preventDefault();
                                                   onOpenDoc?.(r.ref); }}
                        style={{ textDecoration: "none" }}>
-                      <RefStamp small>{r.ref}</RefStamp></a></td>
+                      <RefStamp small>{r.ref}</RefStamp></a>
+                    {r.po_ref && r.pr_ref && (
+                      <div style={{ fontSize: 11, color: "var(--muted)",
+                                    marginTop: 2 }}>from {r.pr_ref}</div>)}
+                  </td>
                   <td style={td}>{r.payee}</td>
                   <td style={td}>{r.site_code}</td>
                   <td style={td}>{r.due_date || "—"}
-                    {r.overdue && <> <Chip tone="alert">overdue</Chip></>}</td>
+                    {r.overdue && <> <Chip tone="alert">overdue</Chip></>}
+                    {isFinance && (
+                      <button onClick={() => moveDueDate(r)}
+                              title="Change the due date"
+                              style={{ ...ghostButton, padding: "0 6px",
+                                       fontSize: 11, marginLeft: 6 }}>
+                        edit</button>)}
+                  </td>
                   <td style={{ ...td, textAlign: "right", ...mono }}>
                     {money(r.amount)}</td>
                 </tr>

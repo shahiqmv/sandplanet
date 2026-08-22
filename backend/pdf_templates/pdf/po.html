@@ -84,7 +84,7 @@
 <table class="meta"><tr>
   <td><div class="k">Order Date</div>{{ doc.doc_date|date:"d/m/Y" }}</td>
   <td><div class="k">Your Quotation Ref</div>{{ payload.quote_ref|default:"—" }}</td>
-  <td><div class="k">Payment Terms</div>{{ payload.payment_terms|default:"—" }}</td>
+  <td><div class="k">Payment Terms</div>{{ payload.payment_terms|default:"—" }}{% if payment_due %}<div style="font-size:8pt;color:#5a6b78;margin-top:1px;">Payment due {{ payment_due|date:"d/m/Y" }}</div>{% endif %}</td>
   <td><div class="k">Expected Delivery</div>{{ payload.expected_delivery|default:"—" }}</td>
 </tr>{% if site %}<tr>
   <td colspan="4" class="deliver"><div class="k">Deliver To</div>{{ site.code }} — {{ site.name }}</td>

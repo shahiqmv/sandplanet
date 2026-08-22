@@ -858,10 +858,24 @@ def _po_context(document, revision):
                            f"{a.acted_at.strftime('%d/%m/%Y %H:%M')} — "
                            f"issued electronically via Sand Planet Site "
                            f"Documents")
+    # The date payment falls due under the agreed credit terms — the supplier
+    # should see the same date Finance is working to (owner 2026-08-22).
+    due = None
+    try:
+        from .models import Payable
+        from .procurement import po_pr_line
+        ln = po_pr_line(document)
+        if ln is not None:
+            pay = Payable.objects.filter(document_line=ln).order_by(
+                "-id").first()
+            due = pay.due_date if pay else None
+    except Exception:                           # pragma: no cover - defensive
+        due = None
     return {
         "doc": document,
         "payload": payload,
         "supplier": supplier,
+        "payment_due": due,
         # Where the goods are going (owner 2026-08-13, superseding R2).
         "site": {"code": site.code, "name": site.name} if site else None,
         # An amended order must be distinguishable from the one the supplier

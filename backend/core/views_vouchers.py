@@ -7,6 +7,7 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import vouchers
+from .audit import audit
 from .models import Document
 
 
@@ -206,12 +207,19 @@ def payables(request):
     q = (request.GET.get("q") or "").strip().lower()
     rows = []
     for p in vouchers.awaiting_payables():
+        # What we owe is owed under the ORDER, so the order's reference is the
+        # one Finance and the vendor both quote. The requisition behind it is
+        # kept alongside for traceability (owner 2026-08-22).
+        po_ref = (p.document_line.po_ref or "").strip() \
+            if p.document_line_id else ""
+        ref = po_ref or p.document.ref
         if q and q not in (p.vendor or "").lower() \
-                and q not in p.document.ref.lower():
+                and q not in ref.lower() and q not in p.document.ref.lower():
             continue
         rows.append({
             "kind": "PAYABLE", "payable_id": p.id,
-            "ref": p.document.ref, "doc_type": "PAYABLE",
+            "ref": ref, "po_ref": po_ref, "pr_ref": p.document.ref,
+            "doc_type": "PAYABLE",
             "site_code": p.site.code if p.site_id else "HO",
             "doc_date": p.due_date, "due_date": p.due_date,
             "overdue": bool(p.due_date and p.due_date < today),
@@ -222,6 +230,46 @@ def payables(request):
     overdue = sum(1 for r in rows if r["overdue"])
     return Response({"payables": rows, "total": total,
                      "count": len(rows), "overdue": overdue})
+
+
+@api_view(["POST"])
+def payable_due_date(request, pk):
+    """Move a payable's due date.
+
+    The date is derived from the vendor's agreed credit period, but a supplier
+    withdraws credit, grants an extension, or the terms on the invoice differ
+    from the ones recorded — Finance needs to be able to say so rather than
+    work around a wrong date (owner 2026-08-22).
+    """
+    from .models import Payable
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance sets payment dates."}, status=403)
+    p = Payable.objects.filter(pk=pk).first()
+    if p is None:
+        return Response({"detail": "Not found."}, status=404)
+    if p.status != "OUTSTANDING":
+        return Response({"detail": f"This payable is already "
+                                   f"{p.status.lower()}."}, status=400)
+    raw = str(request.data.get("due_date") or "").strip()
+    try:
+        new_due = date.fromisoformat(raw)
+    except ValueError:
+        return Response({"detail": "Give a date like 2026-09-15."}, status=400)
+    reason = (request.data.get("reason") or "").strip()
+    if not reason:
+        return Response({"detail": "Say why the date is changing — it is the "
+                                   "agreed terms being overridden."},
+                        status=400)
+    was = p.due_date
+    p.due_date = new_due
+    p.terms = (f"{p.terms} · due {new_due:%d %b %Y} ({reason})"
+               if p.terms else f"Due {new_due:%d %b %Y} ({reason})")
+    p.save(update_fields=["due_date", "terms"])
+    audit("payable", p.id, "PAYABLE_DUE_DATE_CHANGED", actor=request.user,
+          detail={"vendor": p.vendor, "from": str(was), "to": str(new_due),
+                  "reason": reason, "document": p.document.ref})
+    return Response({"payable_id": p.id, "due_date": p.due_date,
+                     "terms": p.terms})
 
 
 @api_view(["GET", "POST"])
