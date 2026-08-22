@@ -401,6 +401,57 @@ class VariationTests(TestCase):
         self.assertIsNone(obj.employer_approved_on)
         self.assertIn("Rolled back 1", out.getvalue())
 
+    def test_a_later_vo_names_the_earlier_ones_awaiting_approval(self):
+        """Four VOs sent together each read as if it were the first — VO-02
+        said nothing of VO-01 and showed the original sum (owner
+        2026-08-22). A later VO lists the earlier ones with the Employer and
+        gives the anticipated sum if all are approved."""
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import Variation
+        first = self._create("ADDITION")                  # 1400
+        second = self._create("ADDITION")                 # 1400
+        third = self._create("OMISSION")                  # -1400
+        for x in (first, second, third):                  # all with the client
+            vo_send(self, x["id"])
+        v1, v2, v3 = (Variation.objects.get(pk=x["id"])
+                      for x in (first, second, third))
+        # VO-01: nothing before it.
+        c1 = commercial.variation_pdf_context(v1)
+        self.assertEqual(c1["prior_pending"], [])
+        h1 = render_to_string("pdf/variation_order.html", c1)
+        self.assertIn("Contract sum if this variation is approved", h1)
+        self.assertNotIn("awaiting the Employer", h1)
+        # VO-02 sits on VO-01.
+        c2 = commercial.variation_pdf_context(v2)
+        self.assertEqual(c2["prior_pending_refs"], "VO-01")
+        self.assertEqual(float(c2["anticipated"]), 502800.0)   # 500000+1400+1400
+        h2 = render_to_string("pdf/variation_order.html", c2)
+        self.assertIn("awaiting the Employer", h2)
+        self.assertIn("VO-01", h2)
+        self.assertIn("Anticipated contract sum", h2)
+        self.assertIn("502,800.00", h2)
+        # VO-03 sits on both, and an omission nets against them.
+        c3 = commercial.variation_pdf_context(v3)
+        self.assertEqual(c3["prior_pending_refs"], "VO-01, VO-02")
+        self.assertEqual(float(c3["anticipated"]), 501400.0)
+        # Once VO-01 is approved it moves up into "approved to date" and out
+        # of the awaiting line.
+        vo_approve(self, first["id"])
+        c2b = commercial.variation_pdf_context(
+            Variation.objects.get(pk=second["id"]))
+        self.assertEqual(float(c2b["prior_approved"]), 1400.0)
+        self.assertEqual(c2b["prior_pending_refs"], "")
+        # An approved VO never shows the awaiting line — its bottom line is
+        # the revised contract sum itself.
+        vo_approve(self, second["id"])
+        c2c = commercial.variation_pdf_context(
+            Variation.objects.get(pk=second["id"]))
+        self.assertEqual(c2c["prior_pending"], [])
+        self.assertIn("Revised contract sum", render_to_string(
+            "pdf/variation_order.html", c2c))
+
     def test_omission_subtracts(self):
         v = self._create("OMISSION")
         self.assertEqual(float(v["signed_total"]), -1400.0)

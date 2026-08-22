@@ -1311,6 +1311,17 @@ def variation_pdf_context(v):
     this_vo = v.signed_total
     after = before + this_vo
     approved = v.status == v.Status.APPROVED
+    # Earlier variations that are with the Employer awaiting approval. Four
+    # VOs submitted together each read as if it were the first — VO-02 said
+    # nothing of VO-01 and showed the original sum (owner 2026-08-22). Listed
+    # by ref so the client sees what this one sits on top of; the bottom line
+    # becomes the anticipated sum if all of them are approved. Not shown on an
+    # approved VO, whose bottom line is the revised contract sum itself.
+    prior_pending = [] if approved else list(
+        project.variations.filter(status__in=("PD_APPROVED", "SUBMITTED"),
+                                  seq__lt=v.seq).order_by("seq"))
+    pending_net = sum((x.signed_total for x in prior_pending), Decimal("0"))
+    anticipated = before + pending_net + this_vo
     items = list(v.items.all())
     # Show the supply/labour split when the variation is priced that way — the
     # client's QS checks a variation rate against the contract BOQ, and this
@@ -1344,6 +1355,12 @@ def variation_pdf_context(v):
         "prior_approved_f": _fmt_money(prior, 2),
         "sum_before_f": _fmt_money(before, 2),
         "sum_after_f": _fmt_money(after, 2),
+        "prior_pending": [{"ref": x.ref, "amount_f": _fmt_money(
+            x.signed_total, 2)} for x in prior_pending],
+        "prior_pending_refs": ", ".join(x.ref for x in prior_pending),
+        "prior_pending_net_f": _fmt_money(pending_net, 2),
+        "anticipated_f": _fmt_money(anticipated, 2),
+        "anticipated": anticipated,
         "logo_src": logo_src(), "co": company_info(),
         "v": v, "project": project, "employer": _employer(project),
         "currency": ccy, "sections": sections,
