@@ -63,6 +63,7 @@ class DocumentLineSerializer(serializers.ModelSerializer):
     item_is_major = serializers.BooleanField(source="item.is_major",
                                              read_only=True, default=False)
     ordered_pr_ref = serializers.SerializerMethodField()
+    po_status = serializers.SerializerMethodField()
 
     class Meta:
         model = DocumentLine
@@ -74,12 +75,24 @@ class DocumentLineSerializer(serializers.ModelSerializer):
                   "priority", "urgent_reason", "rate", "amount",
                   "amount_cash", "amount_credit", "vendor", "quotation_ref",
                   "payment_terms", "credit_days", "action_taken", "po_ref",
-                  "is_changed",
+                  "po_status", "is_changed",
                   "fulfil_source", "store_issue_line", "spec", "mar_ref",
                   "remarks", "ordered_pr_ref"]
 
     def get_is_free_text(self, obj):
         return obj.item_id is None  # flagged "new item — not in catalog"
+
+    def get_po_status(self, obj):
+        """The state of the order cut from this vendor row. A PR showed
+        "PO-055" as if the order were out when it was still a draft nobody
+        had sent for signature (owner 2026-08-22)."""
+        ref = (obj.po_ref or "").strip()
+        if not ref:
+            return None
+        from .models import Document
+        po = Document.objects.filter(doc_type="PO", ref=ref).only(
+            "status").first()
+        return po.status if po else None
 
     def get_ordered_pr_ref(self, obj):
         # For an MR line: the live PR that has already taken it (so the PR

@@ -1649,6 +1649,22 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                             {line.po_ref}
                           </a>
                         )}
+                        {/* A PO ref alone read as "order out" when it was
+                            still a draft nobody had sent for signature
+                            (owner 2026-08-22). Say where it actually is. */}
+                        {line.po_ref && line.po_status && (
+                          <span style={{ fontSize: 11, fontWeight: 600,
+                            color: line.po_status === "DRAFT" ? "#b35900"
+                                 : line.po_status === "SUBMITTED" ? "#0E3A5C"
+                                 : "var(--muted)" }}>
+                            {{ DRAFT: "draft — not yet sent for signature",
+                               SUBMITTED: "with the signatory",
+                               ISSUED: "issued to supplier",
+                               AMENDMENT_PENDING: "amendment pending",
+                               CLOSED: "closed" }[line.po_status]
+                             || line.po_status.toLowerCase()}
+                          </span>
+                        )}
                         {line.action_taken && (
                           <span style={{ color: "#1a7f37", fontWeight: 600 }}>
                             {line.action_taken}

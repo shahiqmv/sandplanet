@@ -281,12 +281,20 @@ class PoGenerationTests(QuoteBase):
         po_refs = {row["vendor"]: row["po_ref"] for row in fresh["lines"]}
         self.assertEqual(po_refs["Maldives Steel Traders"], po.ref)
         self.assertEqual(po_refs["Male' Hardware Pvt Ltd"], "")
+        # ...and the PR says where that order actually is, so a ref alone
+        # never again reads as "order out" while it is a draft.
+        steel_row = next(r for r in fresh["lines"]
+                         if r["vendor"] == "Maldives Steel Traders")
+        self.assertEqual(steel_row["po_status"], "DRAFT")
         # The voucher authorised the CASH vendor; the drafted order settles
         # nothing until the signatory has actually signed it.
         self.assertEqual(fresh["status"], "AUTHORISED")
         self.sign_orders(pr["ref"])
         fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
         self.assertEqual(fresh["status"], "PAYMENT_PROCESSING")
+        steel_row = next(r for r in fresh["lines"]
+                         if r["vendor"] == "Maldives Steel Traders")
+        self.assertEqual(steel_row["po_status"], "ISSUED")
         # recording the cash vendor's slip settles the PR (Finance's role)
         self.as_user(self.finance)
         hw_line = next(row for row in fresh["lines"]
