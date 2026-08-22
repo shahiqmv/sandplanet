@@ -246,13 +246,13 @@ def create_variation(project, data, actor):
 def set_variation_items(variation, rows, actor):
     from django.db import transaction
     from .models import ProgressClaimItem, VariationItem
-    if variation.status not in ("DRAFT", "APPROVED"):
-        return None, "Only a draft or approved variation can be edited."
-    # An APPROVED VO stays editable to fix its list (owner 2026-08-11) — but
-    # only until a claim beyond draft carries it. Its item rows CASCADE into
-    # claim lines, so past a submitted/certified claim the correction must be
-    # a fresh variation, not a rewrite of history.
+    # Editable in any state: a change to a priced VO simply invalidates
+    # whatever approval it had and sends it back to draft. An APPROVED VO
+    # (owner 2026-08-11) stays editable only until a claim beyond draft
+    # carries it — its item rows CASCADE into claim lines, so past a
+    # submitted/certified claim the correction must be a fresh variation.
     approved_edit = variation.status == "APPROVED"
+    reopened = variation.status != "DRAFT"
     if approved_edit:
         from django.db.models import Q
         claimed = (ProgressClaimItem.objects
@@ -269,16 +269,21 @@ def set_variation_items(variation, rows, actor):
     with transaction.atomic():
         variation.items.all().delete()   # cascades draft-claim VO lines only
         VariationItem.objects.bulk_create(items)
-        if approved_edit:
-            # Changing an approved VO invalidates the approval (owner
-            # 2026-08-11): it returns to DRAFT, leaves the revised contract
-            # sum, and must run submit → approve again. Draft claims regain
-            # its lines on re-approval.
+        if reopened:
+            # Changing a VO invalidates its approval (owner 2026-08-11): it
+            # returns to DRAFT, leaves the revised contract sum, and runs the
+            # PD → Employer chain again. Draft claims regain its lines on
+            # re-approval.
+            was = variation.status
             variation.status = "DRAFT"
-            variation.save(update_fields=["status"])
+            variation.pd_approved_by = None
+            variation.pd_approved_at = None
+            variation.sent_at = None
+            variation.save(update_fields=["status", "pd_approved_by",
+                                          "pd_approved_at", "sent_at"])
             audit("project", variation.project_id, "VARIATION_REOPENED",
                   actor=actor, detail={"ref": variation.ref,
-                                       "reason": "edited after approval"})
+                                       "reason": f"edited while {was}"})
     audit("project", variation.project_id, "VARIATION_SAVED", actor=actor,
           detail={"ref": variation.ref, "gross": str(variation.gross),
                   "approved_edit": approved_edit})
@@ -298,22 +303,73 @@ def set_variation_meta(variation, data, actor):
     return variation, None
 
 
+# QS drafts → Director approves internally → sent to the Employer → the
+# Employer approves (recorded by the QS with date + reference). Anything
+# short of APPROVED can be pulled back to DRAFT for rework.
 VARIATION_FLOW = {
-    "DRAFT": {"SUBMITTED"},
+    "DRAFT": {"PD_PENDING"},
+    "PD_PENDING": {"PD_APPROVED", "DRAFT"},
+    "PD_APPROVED": {"SUBMITTED", "DRAFT"},
     "SUBMITTED": {"APPROVED", "REJECTED", "DRAFT"},
     "APPROVED": set(),          # locked once approved (feeds claims)
     "REJECTED": {"DRAFT"},
 }
+VO_INTERNAL_APPROVERS = ("DIRECTOR", "ADMIN")
 
 
-def set_variation_status(variation, to_status, actor):
+def variation_by_queue_ref(ref):
+    """Resolve "<project code> VO-NN" (the queue/phone key for a variation,
+    which is not a Document) back to the row. Project codes may contain
+    spaces; the VO ref never does, so split from the right."""
+    from .models import Variation
+    code, _, vo_ref = (ref or "").rpartition(" ")
+    if not code or not vo_ref:
+        return None
+    return (Variation.objects.select_related("project__site", "created_by")
+            .filter(project__code=code, ref=vo_ref).first())
+
+
+def set_variation_status(variation, to_status, actor, data=None):
+    from django.utils import timezone
+    data = data or {}
     allowed = VARIATION_FLOW.get(variation.status, set())
     if to_status not in allowed:
         return None, f"Cannot move a {variation.status} variation to {to_status}."
-    if to_status == "SUBMITTED" and not variation.items.exists():
-        return None, "Add at least one variation item before submitting."
+    if to_status == "PD_PENDING" and not variation.items.exists():
+        return None, "Add at least one variation item before sending it to the PD."
+    fields = ["status"]
+    if to_status == "PD_APPROVED":
+        if actor.role not in VO_INTERNAL_APPROVERS:
+            return None, "The Director approves a variation internally."
+        variation.pd_approved_by = actor
+        variation.pd_approved_at = timezone.now()
+        fields += ["pd_approved_by", "pd_approved_at"]
+    if to_status == "SUBMITTED":
+        variation.sent_at = timezone.localdate()
+        fields.append("sent_at")
+    if to_status == "APPROVED":
+        # The Employer's approval is a fact with a date and a reference — not
+        # a button. Without them "Approved" says nothing about who agreed.
+        from datetime import date as _date
+        try:
+            on = _date.fromisoformat(str(data.get("employer_approved_on") or ""))
+        except ValueError:
+            return None, "Enter the date the Employer approved this variation."
+        ref = (data.get("employer_ref") or "").strip()
+        if not ref:
+            return None, ("Enter the Employer's reference — the letter, email "
+                          "or instruction that approved it.")
+        variation.employer_approved_on = on
+        variation.employer_ref = ref
+        fields += ["employer_approved_on", "employer_ref"]
+    if to_status == "DRAFT":
+        # Pulled back for rework: whatever was approved no longer stands.
+        variation.pd_approved_by = None
+        variation.pd_approved_at = None
+        variation.sent_at = None
+        fields += ["pd_approved_by", "pd_approved_at", "sent_at"]
     variation.status = to_status
-    variation.save(update_fields=["status"])
+    variation.save(update_fields=fields)
     if to_status == "APPROVED":
         # Open draft claims gain this VO's lines (idempotent) — covers both a
         # first approval and a re-approval after an approved-VO edit, so the
@@ -328,7 +384,8 @@ def set_variation_status(variation, to_status, actor):
                 for it in variation.items.all()
                 if not it.is_heading and it.id not in have])
     audit("project", variation.project_id, f"VARIATION_{to_status}",
-          actor=actor, detail={"ref": variation.ref})
+          actor=actor, detail={"ref": variation.ref,
+                               "note": (data.get("comment") or "")[:300]})
     return variation, None
 
 
@@ -343,6 +400,8 @@ def contract_summary(project):
     def signed(qs):
         return sum((v.signed_total for v in qs), Decimal("0"))
 
+    internal = project.variations.filter(status__in=("PD_PENDING",
+                                                     "PD_APPROVED"))
     approved_net = signed(approved)
     pending_net = signed(submitted)
     revised = original + approved_net
@@ -350,7 +409,8 @@ def contract_summary(project):
         "original": original,
         "approved_net": approved_net,
         "revised": revised,
-        "pending_net": pending_net,
+        "pending_net": pending_net,          # with the Employer
+        "internal_net": signed(internal),    # not yet sent to the Employer
         "forecast": revised + pending_net,
     }
 
@@ -1294,11 +1354,18 @@ def variation_pdf_context(v):
         "sum_before": before, "sum_after": after,
         "amount_words": amount_in_words(abs(this_vo), ccy),
         "is_approved": approved,
+        "employer_approved_on": v.employer_approved_on,
+        "employer_ref": v.employer_ref,
         "doc_title": "VARIATION ORDER",
         "subline": f"{v.ref}  ·  {project.code}",
-        "status_note": ("Approved — this variation forms part of the contract"
-                        if approved
-                        else "Submitted for the Employer's approval"),
+        # "Approved" on this document means the EMPLOYER approved it; the
+        # Director's internal approval is what lets it go out, and is not
+        # something the client needs to see (owner 2026-08-22).
+        "status_note": (
+            (f"Approved by the Employer on {v.employer_approved_on:%d %b %Y}"
+             + (f" · ref {v.employer_ref}" if v.employer_ref else "")
+             + " — this variation forms part of the contract")
+            if approved else "Submitted for the Employer's approval"),
         "loa_ref": project.loa_ref,
         "prepared_by": v.created_by.full_name if v.created_by_id else "",
     }

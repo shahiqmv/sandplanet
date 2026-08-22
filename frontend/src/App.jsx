@@ -548,6 +548,15 @@ export default function App() {
     g.subs.some(([key]) => key === hoPage));
 
   function openApprovalItem(item) {
+    // A variation order is not a Document — it lives on its project's
+    // Variations tab, where the Director's approve button is (owner
+    // 2026-08-22).
+    if (item.doc_type === "VO") {
+      setOpenSite(null);
+      setDocView({ mode: "project", projectId: item.project_id,
+                   tab: "variations" });
+      return;
+    }
     if (item.doc_type === "DMA") {
       const site = sites.find((s) => s.code === item.site_code);
       if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
@@ -832,6 +841,7 @@ export default function App() {
           )}
           {docView?.mode === "project" && (
             <ProjectPage projectId={docView.projectId} me={me}
+                         initialTab={docView.tab}
                          onClose={closeDoc} onOpenDoc={openDoc} />
           )}
           {docView?.mode === "vessels" && (

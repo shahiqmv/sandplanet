@@ -447,10 +447,22 @@ class VariationSerializer(serializers.ModelSerializer):
                                             read_only=True)
     items = VariationItemSerializer(many=True, read_only=True)
 
+    status_label = serializers.CharField(source="get_status_display",
+                                         read_only=True)
+    pd_approved_by_name = serializers.CharField(
+        source="pd_approved_by.full_name", read_only=True, default=None)
+    employer_copy_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Variation
-        fields = ["id", "seq", "ref", "title", "kind", "status", "ref_date",
-                  "gross", "signed_total", "items"]
+        fields = ["id", "seq", "ref", "title", "kind", "status",
+                  "status_label", "ref_date", "gross", "signed_total",
+                  "pd_approved_by_name", "pd_approved_at", "sent_at",
+                  "employer_approved_on", "employer_ref", "employer_copy_url",
+                  "items"]
+
+    def get_employer_copy_url(self, obj):
+        return obj.employer_copy.url if obj.employer_copy else None
 
 
 def _variations_payload(project):
@@ -533,9 +545,28 @@ def variation_status(request, pk):
     if (bad := _require_editor(request)):
         return bad
     _, msg = commercial.set_variation_status(
-        v, request.data.get("status"), request.user)
+        v, request.data.get("status"), request.user, request.data)
     if msg:
         return Response({"detail": msg}, status=400)
+    return Response(_variations_payload(v.project))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@parser_classes([MultiPartParser, FormParser])
+def variation_employer_copy(request, pk):
+    """Attach the Employer's countersigned copy of a variation (optional —
+    many clients approve by email)."""
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if (bad := _require_editor(request)):
+        return bad
+    up = request.FILES.get("file")
+    if up is None:
+        return Response({"detail": "Attach a file."}, status=400)
+    v.employer_copy = up
+    v.save(update_fields=["employer_copy"])
     return Response(_variations_payload(v.project))
 
 
@@ -855,9 +886,10 @@ def variation_pdf(request, pk):
     v, err = _get_variation(request, pk)
     if err:
         return err
-    if v.status == "DRAFT":
-        return Response({"detail": "Submit the variation before issuing it to "
-                                   "the client."}, status=400)
+    if v.status in ("DRAFT", "PD_PENDING"):
+        return Response({"detail": "The Director approves the variation "
+                                   "internally before it is issued to the "
+                                   "client."}, status=400)
     if not v.items.exists():
         return Response({"detail": "This variation has no priced items."},
                         status=400)

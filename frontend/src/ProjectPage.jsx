@@ -29,10 +29,13 @@ const TABS = [
 const money = (v) => v == null ? null
   : Number(v).toLocaleString("en-US", { maximumFractionDigits: 0 });
 
-export default function ProjectPage({ projectId, me, onClose, onOpenDoc }) {
+export default function ProjectPage({ projectId, me, onClose, onOpenDoc,
+                                      initialTab }) {
   const [project, setProject] = useState(null);
-  const [tab, setTab] = useState("overview");
-  const [commTab, setCommTab] = useState("boq");   // Commercial sub-tab
+  const [tab, setTab] = useState(initialTab ? "commercial" : "overview");
+  // A task ("approve VO-03") opens the project straight on the tab it
+  // lives on (owner 2026-08-22).
+  const [commTab, setCommTab] = useState(initialTab || "boq");
   const [docs, setDocs] = useState(null);
   const [error, setError] = useState(null);
   const [editing, setEditing] = useState(false);

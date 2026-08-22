@@ -90,6 +90,9 @@ APPROVABLE = {
     # itself — not inside a payment voucher — so it must be on the phone the
     # way an import order is (owner 2026-08-22).
     ("PO", "SUBMITTED"),
+    # The Director's internal approval of a variation order. Not a Document:
+    # its queue key is "<project code> VO-NN" (owner 2026-08-22).
+    ("VO", "PD_PENDING"),
     # A charge correction on an already-authorised order: the row carries the
     # CORRECTION's status, so it no longer looks like a finished IPR and is
     # actionable from the phone (owner 2026-08-15).
@@ -474,12 +477,56 @@ def _document_payload(doc, request):
     return DocumentSerializer(doc, context={"request": request}).data
 
 
+def _vo_mobile_payload(v, request):
+    """The priced variation the Director is asked to approve internally."""
+    from .commercial import variation_pdf_context
+    ctx = variation_pdf_context(v)
+    ccy = ctx["currency"]
+    lines = []
+    for sec in ctx["sections"]:
+        for ln in sec["lines"]:
+            if ln["is_heading"]:
+                continue
+            it = ln["item"]
+            lines.append({"ref": "", "kind": "",
+                          "title": it.description or "Item",
+                          "subtitle": f"{ln['qty']} {it.unit or ''} × "
+                                      f"{ln['rate_total']}".strip(),
+                          "amount": float(it.amount), "currency": ccy,
+                          "site_code": ""})
+    return {"ref": f"{v.project.code} {v.ref}", "doc_type": "VO",
+            "status": v.status, "rev_label": "",
+            "doc_date": v.ref_date or v.created_at.date(),
+            "site_code": v.project.site.code if v.project.site_id else "",
+            "project_code": v.project.code,
+            "created_by_name": (v.created_by.full_name
+                                if v.created_by_id else None),
+            "attachments": [], "approvals": [],
+            "title": v.title, "line_label": "Variation items",
+            "amount": float(abs(v.signed_total)), "currency": ccy,
+            "lines": lines,
+            "summary": [
+                {"k": "Type", "v": ctx["kind_label"]},
+                {"k": "Project", "v": v.project.title},
+                {"k": "Contract sum now", "v": f"{ccy} {ctx['sum_before_f']}"},
+                {"k": "This variation", "v": f"{ccy} {ctx['signed_total_f']}"},
+                {"k": "If the Employer approves",
+                 "v": f"{ccy} {ctx['sum_after_f']}"},
+            ]}
+
+
 @api_view(["GET"])
 @authentication_classes(MOBILE_AUTH)
 @permission_classes([IsAuthenticated])
 def m_document(request, ref):
     from .models import Document
     from .permissions import scoped_site_ids
+    if " " in ref:                      # a variation: "<project code> VO-NN"
+        from .commercial import variation_by_queue_ref
+        v = variation_by_queue_ref(ref)
+        if v is None:
+            return Response({"detail": "Not found."}, status=404)
+        return Response(_vo_mobile_payload(v, request))
     try:
         doc = Document.objects.select_related("site", "current_revision").get(
             ref=ref, is_void=False)
@@ -495,6 +542,25 @@ def _act(request, ref, kind):
     """Approve/return a document from mobile, reusing the exact desktop service
     functions. Returns a DRF Response."""
     from .models import Document
+    if " " in ref:                      # a variation: "<project code> VO-NN"
+        from .commercial import set_variation_status, variation_by_queue_ref
+        comment = (request.data.get("comment") or "").strip()
+        v = variation_by_queue_ref(ref)
+        if v is None:
+            return Response({"detail": "Not found."}, status=404)
+        if v.status != "PD_PENDING":
+            return Response({"detail": f"Already actioned — {v.ref} is now "
+                                       f"{v.get_status_display()}."},
+                            status=409)
+        if kind == "return" and not comment:
+            return Response({"detail": "A reason is required to return."},
+                            status=400)
+        _, msg = set_variation_status(
+            v, "PD_APPROVED" if kind == "approve" else "DRAFT",
+            request.user, {"comment": comment})
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response({"ref": ref, "doc_type": "VO", "status": v.status})
 
     try:
         doc = Document.objects.select_related("current_revision").get(

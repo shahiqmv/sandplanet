@@ -8,6 +8,45 @@ from .models import Boq, Project, Site, User
 from .tests import make_user
 
 
+def _vo_director(tc):
+    """The internal approver. Classes that already make one use it; the rest
+    get one on first use."""
+    d = getattr(tc, "director", None)
+    if d is None:
+        d = make_user("vo_dir_auto", User.Role.DIRECTOR)
+        tc.director = d
+    return d
+
+
+def vo_send(tc, vid):
+    """QS → PD approves internally → QS sends to the Employer. Returns the
+    last response (the send). Leaves the client authenticated as the QS."""
+    c = tc.client
+    c.force_authenticate(tc.qs)
+    r = c.post(f"/api/v1/variations/{vid}/status",
+               {"status": "PD_PENDING"}, format="json")
+    assert r.status_code == 200, r.data
+    c.force_authenticate(_vo_director(tc))
+    r = c.post(f"/api/v1/variations/{vid}/status",
+               {"status": "PD_APPROVED"}, format="json")
+    assert r.status_code == 200, r.data
+    c.force_authenticate(tc.qs)
+    return c.post(f"/api/v1/variations/{vid}/status",
+                  {"status": "SUBMITTED"}, format="json")
+
+
+def vo_approve(tc, vid, on="2026-08-01", ref="CL/VO/1"):
+    """...and the Employer approves: recorded with a date and reference.
+    Idempotent about the send — a test may already have sent it."""
+    from .models import Variation
+    if Variation.objects.get(pk=vid).status != "SUBMITTED":
+        vo_send(tc, vid)
+    tc.client.force_authenticate(tc.qs)
+    return tc.client.post(f"/api/v1/variations/{vid}/status",
+                          {"status": "APPROVED", "employer_approved_on": on,
+                           "employer_ref": ref}, format="json")
+
+
 class BoqTests(TestCase):
     def setUp(self):
         self.site = Site.objects.create(
@@ -155,15 +194,13 @@ class VariationTests(TestCase):
         self.assertEqual(float(v["signed_total"]), 1400.0)
         vid = v["id"]
         # submitted → shows as a pending provision, revised unchanged
-        r = self.client.post(f"/api/v1/variations/{vid}/status",
-                             {"status": "SUBMITTED"}, format="json")
+        r = vo_send(self, vid)
         c = r.data["contract"]
         self.assertEqual(float(c["revised"]), 500000.0)
         self.assertEqual(float(c["pending_net"]), 1400.0)
         self.assertEqual(float(c["forecast"]), 501400.0)
         # approved → folds into the revised contract sum
-        r = self.client.post(f"/api/v1/variations/{vid}/status",
-                             {"status": "APPROVED"}, format="json")
+        r = vo_approve(self, vid)
         c = r.data["contract"]
         self.assertEqual(float(c["revised"]), 501400.0)
         self.assertEqual(float(c["pending_net"]), 0.0)
@@ -177,8 +214,7 @@ class VariationTests(TestCase):
         from core import commercial
         from core.models import Variation
         v = self._create("ADDITION")
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
-                         {"status": "SUBMITTED"}, format="json")
+        vo_send(self, v['id'])
         obj = Variation.objects.get(pk=v["id"])
         html = render_to_string("pdf/variation_order.html",
                                 commercial.variation_pdf_context(obj))
@@ -206,7 +242,7 @@ class VariationTests(TestCase):
         from core import commercial
         from core.models import Variation
         v = self._create("ADDITION")
-        self._approve(v["id"])
+        vo_approve(self, v["id"])
         obj = Variation.objects.get(pk=v["id"])
         html = render_to_string("pdf/variation_order.html",
                                 commercial.variation_pdf_context(obj))
@@ -222,10 +258,9 @@ class VariationTests(TestCase):
         from core import commercial
         from core.models import Variation
         first = self._create("ADDITION")
-        self._approve(first["id"])
+        vo_approve(self, first["id"])
         second = self._create("ADDITION")
-        self.client.post(f"/api/v1/variations/{second['id']}/status",
-                         {"status": "SUBMITTED"}, format="json")
+        vo_send(self, second['id'])
         ctx = commercial.variation_pdf_context(
             Variation.objects.get(pk=second["id"]))
         self.assertEqual(float(ctx["prior_approved"]), 1400.0)
@@ -238,8 +273,7 @@ class VariationTests(TestCase):
         from core import commercial
         from core.models import Variation
         v = self._create("OMISSION")
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
-                         {"status": "SUBMITTED"}, format="json")
+        vo_send(self, v['id'])
         ctx = commercial.variation_pdf_context(
             Variation.objects.get(pk=v["id"]))
         self.assertEqual(float(ctx["signed_total"]), -1400.0)
@@ -255,37 +289,131 @@ class VariationTests(TestCase):
         v = self._create("ADDITION")
         r = self.client.get(f"/api/v1/variations/{v['id']}/vo.pdf")
         self.assertEqual(r.status_code, 400)
-        self.assertIn("Submit the variation", r.data["detail"])
+        self.assertIn("Director approves", r.data["detail"])
 
     def test_a_site_role_cannot_pull_a_variation_order(self):
         v = self._create("ADDITION")
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
-                         {"status": "SUBMITTED"}, format="json")
+        vo_send(self, v['id'])
         self.client.force_authenticate(self.se)
         r = self.client.get(f"/api/v1/variations/{v['id']}/vo.pdf")
         self.assertEqual(r.status_code, 403)
 
+    def test_the_qs_cannot_approve_internally(self):
+        """The internal gate is the Director's. The QS used to be able to
+        press Approve on a VO nobody had sent anywhere (owner 2026-08-22)."""
+        v = self._create()
+        self.client.force_authenticate(self.qs)
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "PD_PENDING"}, format="json")
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "PD_APPROVED"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Director", r.data["detail"])
+        # ...and cannot jump to the Employer without the PD.
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "SUBMITTED"}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_employer_approval_is_a_date_and_a_reference_not_a_button(self):
+        v = self._create()
+        vo_send(self, v["id"])
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "APPROVED"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("date", r.data["detail"].lower())
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "APPROVED",
+                              "employer_approved_on": "2026-08-15"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("reference", r.data["detail"].lower())
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "APPROVED",
+                              "employer_approved_on": "2026-08-15",
+                              "employer_ref": "Email 15 Aug, R. Client"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        vv = next(x for x in r.data["variations"] if x["id"] == v["id"])
+        self.assertEqual(vv["status"], "APPROVED")
+        self.assertEqual(vv["employer_approved_on"], "2026-08-15")
+        self.assertEqual(vv["employer_ref"], "Email 15 Aug, R. Client")
+        self.assertTrue(vv["pd_approved_by_name"])
+
+    def test_an_internally_approved_vo_is_not_yet_in_the_contract_sum(self):
+        v = self._create()
+        self.client.force_authenticate(self.qs)
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "PD_PENDING"}, format="json")
+        self.client.force_authenticate(_vo_director(self))
+        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
+                             {"status": "PD_APPROVED"}, format="json")
+        c = r.data["contract"]
+        self.assertEqual(float(c["revised"]), 500000.0)     # unchanged
+        self.assertEqual(float(c["pending_net"]), 0.0)      # not with client
+        self.assertEqual(float(c["internal_net"]), 1400.0)  # ours, unsent
+
+    def test_the_director_sees_the_vo_in_my_tasks_and_on_the_phone_key(self):
+        v = self._create()
+        self.client.force_authenticate(self.qs)
+        self.client.post(f"/api/v1/variations/{v['id']}/status",
+                         {"status": "PD_PENDING"}, format="json")
+        self.client.force_authenticate(_vo_director(self))
+        d = self.client.get("/api/v1/approvals/pending").data
+        grp = next((g for g in d["groups"]
+                    if g["title"] == "To approve — variation orders (internal)"),
+                   None)
+        self.assertIsNotNone(grp, [g["title"] for g in d["groups"]])
+        self.assertEqual(grp["items"][0]["ref"], "POOLS17 VO-01")
+        self.assertEqual(grp["items"][0]["doc_type"], "VO")
+        self.assertEqual(grp["items"][0]["project_id"], self.project.id)
+
+    def test_pd_approved_vo_pdf_reads_as_submitted_and_approved_as_employer(self):
+        from django.template.loader import render_to_string
+
+        from core import commercial
+        from core.models import Variation
+        v = self._create()
+        vo_send(self, v["id"])
+        html = render_to_string("pdf/variation_order.html",
+            commercial.variation_pdf_context(Variation.objects.get(pk=v["id"])))
+        self.assertIn("Submitted for the Employer&#x27;s approval", html)
+        self.assertNotIn("APPROVED BY THE EMPLOYER", html)
+        vo_approve(self, v["id"], on="2026-08-15", ref="CL/VO/7")
+        html = render_to_string("pdf/variation_order.html",
+            commercial.variation_pdf_context(Variation.objects.get(pk=v["id"])))
+        self.assertIn("APPROVED BY THE EMPLOYER", html)
+        self.assertIn("15 Aug 2026", html)
+        self.assertIn("CL/VO/7", html)
+
+    def test_rollback_command_returns_a_never_sent_vo_to_ready_to_send(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from core.models import Variation
+        v = self._create()
+        vo_approve(self, v["id"])
+        out = StringIO()
+        call_command("rollback_vo_employer_approval", project="POOLS17",
+                     apply=True, stdout=out)
+        obj = Variation.objects.get(pk=v["id"])
+        self.assertEqual(obj.status, "PD_APPROVED")
+        self.assertIsNone(obj.employer_approved_on)
+        self.assertIn("Rolled back 1", out.getvalue())
+
     def test_omission_subtracts(self):
         v = self._create("OMISSION")
         self.assertEqual(float(v["signed_total"]), -1400.0)
-        self.client.post(f"/api/v1/variations/{v['id']}/status",
-                         {"status": "SUBMITTED"}, format="json")
-        r = self.client.post(f"/api/v1/variations/{v['id']}/status",
-                             {"status": "APPROVED"}, format="json")
+        vo_send(self, v['id'])
+        r = vo_approve(self, v['id'])
         self.assertEqual(float(r.data["contract"]["revised"]), 498600.0)
-
-    def _approve(self, vid):
-        self.client.post(f"/api/v1/variations/{vid}/status",
-                         {"status": "SUBMITTED"}, format="json")
-        self.client.post(f"/api/v1/variations/{vid}/status",
-                         {"status": "APPROVED"}, format="json")
 
     def test_approved_edit_reverts_to_draft_for_reapproval(self):
         # Owner 2026-08-11: an approved VO stays fixable while unclaimed, but
         # editing INVALIDATES the approval — it returns to DRAFT, leaves the
         # revised contract sum, and runs submit → approve again.
         v = self._create()
-        self._approve(v["id"])
+        vo_approve(self, v["id"])
         r = self.client.post(f"/api/v1/variations/{v['id']}/items",
                              {"rows": [
                                  {"item_code": "V1", "description":
@@ -297,14 +425,14 @@ class VariationTests(TestCase):
         self.assertEqual(vv["status"], "DRAFT")               # back for approval
         self.assertEqual(float(vv["gross"]), 1750.0)          # 50 × 35
         self.assertEqual(float(r.data["contract"]["revised"]), 500000.0)
-        self._approve(v["id"])                                # re-approve
+        vo_approve(self, v["id"])                                # re-approve
         r = self.client.get(f"/api/v1/projects/{self.project.id}/variations")
         self.assertEqual(float(r.data["contract"]["revised"]), 501750.0)
 
     def test_approved_edit_reseeds_draft_claims_and_locks_after_claiming(self):
         from .models import ProgressClaim
         v = self._create()
-        self._approve(v["id"])
+        vo_approve(self, v["id"])
         self.client.post(f"/api/v1/projects/{self.project.id}/boq/items",
                          {"rows": [{"item_code": "A", "description": "Item A",
                                     "unit": "no", "qty": "10",
@@ -329,7 +457,7 @@ class VariationTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(
             claim.items.filter(variation_item__isnull=False).count(), 0)
-        self._approve(v["id"])                                # re-approve
+        vo_approve(self, v["id"])                                # re-approve
         self.assertEqual(
             claim.items.filter(variation_item__isnull=False).count(), 2)
         # claim value against it and submit → the VO is locked
@@ -707,10 +835,8 @@ class ProgressClaimTests(TestCase):
                 {"item_code": "V1", "description": "Extra work", "unit": "no",
                  "qty": "10", "rate_combined": "50"}]}, format="json").data
         vid = v["variations"][-1]["id"]
-        self.client.post(f"/api/v1/variations/{vid}/status",
-                         {"status": "SUBMITTED"}, format="json")
-        self.client.post(f"/api/v1/variations/{vid}/status",
-                         {"status": "APPROVED"}, format="json")
+        vo_send(self, vid)
+        vo_approve(self, vid)
         c = self._create()
         lines = self._detail(c["id"])["lines"]
         vo = next(ln for ln in lines if ln["source"] == "VO")
@@ -1042,6 +1168,42 @@ class ProgressClaimTests(TestCase):
         self.assertEqual(
             amount_in_words(Decimal("1234.56")),
             "US Dollars One thousand two hundred thirty-four and 56/100 only")
+
+
+    def test_rollback_leaves_a_claimed_vo_approved(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from core.models import Variation
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/variations/create",
+            {"title": "Extra", "kind": "ADDITION", "rows": [
+                {"item_code": "V1", "description": "X", "unit": "m",
+                 "qty": "10", "rate_supply": "10"}]}, format="json")
+        vid = r.data["variations"][-1]["id"]
+        vo_approve(self, vid)
+        c = self._create()                      # interim claim seeds VO lines
+        self._value_pct(c["id"], {"A": "50", "B": "50"})
+        vo_item = next(i for i in self.client.get(
+            f"/api/v1/claims/{c['id']}").data["lines"]
+            if i.get("source") == "VO")
+        self.client.post(f"/api/v1/claims/{c['id']}/value", {"rows": [
+            {"line_id": vo_item["id"], "cumulative_pct": "100"}]},
+            format="json")
+        self._status(c["id"], "SUBMITTED")
+        self._status(c["id"], "CERTIFIED")
+        out = StringIO()
+        call_command("rollback_vo_employer_approval",
+                     project=self.project.code, apply=True, stdout=out)
+        self.assertEqual(Variation.objects.get(pk=vid).status, "APPROVED")
+        self.assertIn("LEFT APPROVED", out.getvalue())
+
+
+class VoRollbackGuardTests(TestCase):
+    """Placeholder kept empty on purpose — the guard test lives on
+    ProgressClaimTests, where the claim fixtures are."""
 
 
 class UnitClaimTests(TestCase):

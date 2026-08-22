@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
 import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -8,8 +8,12 @@ const fmt = (v) =>
   Number(v || 0).toLocaleString("en-US", { minimumFractionDigits: 2,
     maximumFractionDigits: 2 });
 const signed = (v) => (Number(v) < 0 ? `(${fmt(-v)})` : fmt(v));
-const STATUS_TONE = { DRAFT: "info", SUBMITTED: "info", APPROVED: "ok",
-  REJECTED: "alert" };
+// Two approvals, not one (owner 2026-08-22): the Director approves the
+// priced draft INTERNALLY; only the Employer's approval puts it in the
+// contract sum. "Approved" here always means the Employer.
+const STATUS_TONE = { DRAFT: "info", PD_PENDING: "warn", PD_APPROVED: "info",
+  SUBMITTED: "info", APPROVED: "ok", REJECTED: "alert" };
+const DIRECTOR_ROLES = ["DIRECTOR", "ADMIN"];
 
 // Variation orders (VOs) — additions/omissions to the contract that adjust the
 // revised sum once approved and become claimable alongside the BOQ.
@@ -18,7 +22,9 @@ export default function VariationsPanel({ projectId, me }) {
   const [error, setError] = useState(null);
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [approvingId, setApprovingId] = useState(null);  // employer form
   const canEdit = EDIT_ROLES.includes(me.role);
+  const isDirector = DIRECTOR_ROLES.includes(me.role);
 
   function load() {
     setError(null);
@@ -27,11 +33,16 @@ export default function VariationsPanel({ projectId, me }) {
   }
   useEffect(load, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function status(id, s) {
+  async function status(id, s, extra) {
     setError(null);
     try { setData(await api(`/variations/${id}/status`,
-      { method: "POST", body: { status: s } })); }
+      { method: "POST", body: { status: s, ...(extra || {}) } })); }
     catch (e) { setError(e.message); }
+  }
+  function returnToDraft(id) {
+    const comment = window.prompt("Reason for sending it back:");
+    if (!comment) return;
+    status(id, "DRAFT", { comment });
   }
   async function del(id) {
     setError(null);
@@ -66,10 +77,14 @@ export default function VariationsPanel({ projectId, me }) {
         <Fig label="Revised contract" v={`${ccy} ${fmt(c.revised)}`} strong />
         {Number(c.pending_net) !== 0 && (
           <>
-            <Fig label="Pending VOs"
+            <Fig label="With the Employer"
                  v={`${ccy} ${signed(c.pending_net)}`} />
             <Fig label="Forecast" v={`${ccy} ${fmt(c.forecast)}`} />
           </>
+        )}
+        {Number(c.internal_net || 0) !== 0 && (
+          <Fig label="Internal — not yet sent"
+               v={`${ccy} ${signed(c.internal_net)}`} />
         )}
       </div>
 
@@ -96,12 +111,27 @@ export default function VariationsPanel({ projectId, me }) {
                 <Fragment key={v.id}>
                   <tr>
                     <td style={td}>{v.ref}</td>
-                    <td style={td}>{v.title || "—"}</td>
+                    <td style={td}>{v.title || "—"}
+                      {v.status === "APPROVED" && v.employer_approved_on && (
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          Employer approved {v.employer_approved_on}
+                          {v.employer_ref ? ` · ${v.employer_ref}` : ""}
+                          {v.employer_copy_url && (<>
+                            {" · "}<a href={v.employer_copy_url} target="_blank"
+                              rel="noreferrer">signed copy</a></>)}
+                        </div>)}
+                      {["PD_APPROVED", "SUBMITTED"].includes(v.status)
+                        && v.pd_approved_by_name && (
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          PD approved · {v.pd_approved_by_name}
+                          {v.sent_at ? ` · sent ${v.sent_at}` : ""}
+                        </div>)}
+                    </td>
                     <td style={td}>{v.kind === "OMISSION" ? "Omission"
                       : "Addition"}</td>
                     <td style={td}>
                       <Chip tone={STATUS_TONE[v.status] || "info"}>
-                        {v.status}</Chip></td>
+                        {v.status_label || v.status}</Chip></td>
                     <td style={{ ...td, textAlign: "right", fontWeight: 600,
                       color: Number(v.signed_total) < 0 ? "#b0402f"
                         : "inherit" }}>
@@ -112,7 +142,7 @@ export default function VariationsPanel({ projectId, me }) {
                           to them as a document they can file and sign. Not on
                           a draft — that price is not one we stand behind yet
                           (owner 2026-08-22). */}
-                      {v.status !== "DRAFT" && (
+                      {!["DRAFT", "PD_PENDING"].includes(v.status) && (
                         <a href={`/api/v1/variations/${v.id}/vo.pdf`}
                            target="_blank" rel="noreferrer"
                            title="Variation order to send to the client"
@@ -125,19 +155,37 @@ export default function VariationsPanel({ projectId, me }) {
                       {canEdit && v.status === "DRAFT" && (<>
                         <A onClick={() => setEditId(
                           editId === v.id ? null : v.id)}>edit</A>
-                        <A onClick={() => status(v.id, "SUBMITTED")}>
-                          submit</A>
+                        <A onClick={() => status(v.id, "PD_PENDING")}>
+                          send to PD</A>
                         <A danger onClick={() => del(v.id)}>delete</A>
                       </>)}
+                      {v.status === "PD_PENDING" && (<>
+                        {isDirector && (
+                          <A onClick={() => status(v.id, "PD_APPROVED")}>
+                            approve (PD)</A>)}
+                        {(isDirector || canEdit) && (
+                          <A danger onClick={() => returnToDraft(v.id)}>
+                            {isDirector ? "return" : "withdraw"}</A>)}
+                      </>)}
+                      {canEdit && v.status === "PD_APPROVED" && (<>
+                        <A onClick={() => status(v.id, "SUBMITTED")}>
+                          send to Employer</A>
+                        <A onClick={() => setEditId(
+                          editId === v.id ? null : v.id)}>
+                          {editId === v.id ? "close" : "view / edit"}</A>
+                      </>)}
                       {canEdit && v.status === "SUBMITTED" && (<>
-                        <A onClick={() => status(v.id, "APPROVED")}>
-                          approve</A>
+                        <A onClick={() => setApprovingId(
+                          approvingId === v.id ? null : v.id)}>
+                          record Employer approval</A>
                         <A danger onClick={() => status(v.id, "REJECTED")}>
-                          reject</A>
+                          rejected by Employer</A>
+                        <A onClick={() => returnToDraft(v.id)}>withdraw</A>
                       </>)}
                       {/* an approved VO stays viewable — and editable until
                           a submitted/certified claim carries it (the server
-                          refuses after that) */}
+                          refuses after that); editing invalidates both
+                          approvals and it runs the chain again */}
                       {canEdit && v.status === "APPROVED" && (
                         <A onClick={() => setEditId(
                           editId === v.id ? null : v.id)}>
@@ -154,6 +202,12 @@ export default function VariationsPanel({ projectId, me }) {
                         if (d) setData(d); setEditId(null); }} />
                     </td></tr>
                   )}
+                  {approvingId === v.id && (
+                    <tr><td colSpan={6} style={{ padding: 0 }}>
+                      <EmployerApprovalForm variation={v} onDone={(d) => {
+                        if (d) setData(d); setApprovingId(null); }} />
+                    </td></tr>
+                  )}
                 </Fragment>
               ))}
             </tbody>
@@ -161,6 +215,65 @@ export default function VariationsPanel({ projectId, me }) {
         </div>
       )}
     </section>
+  );
+}
+
+// The Employer's approval is a fact — a date and the client's reference —
+// not a button. The countersigned copy is optional: many clients approve by
+// email (owner 2026-08-22).
+function EmployerApprovalForm({ variation, onDone }) {
+  const [on, setOn] = useState("");
+  const [ref, setRef] = useState("");
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      let d = await api(`/variations/${variation.id}/status`,
+        { method: "POST", body: { status: "APPROVED",
+                                  employer_approved_on: on,
+                                  employer_ref: ref } });
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file);
+        d = await apiUpload(`/variations/${variation.id}/employer-copy`, fd);
+      }
+      onDone(d);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  return (
+    <div style={{ padding: "10px 12px", background: "var(--sky-soft)",
+                  display: "flex", gap: 10, flexWrap: "wrap",
+                  alignItems: "flex-end" }}>
+      <label style={{ fontSize: 12, color: "var(--muted)",
+                      display: "flex", flexDirection: "column", gap: 3 }}>
+        Employer approved on
+        <input type="date" value={on} onChange={(e) => setOn(e.target.value)}
+               style={inputStyle} />
+      </label>
+      <label style={{ fontSize: 12, color: "var(--muted)", flex: 1,
+                      minWidth: 220, display: "flex",
+                      flexDirection: "column", gap: 3 }}>
+        Employer's reference (letter / email / instruction)
+        <input value={ref} onChange={(e) => setRef(e.target.value)}
+               placeholder="e.g. Email from J. Smith, 15 Aug 2026"
+               style={inputStyle} />
+      </label>
+      <label style={{ fontSize: 12, color: "var(--muted)",
+                      display: "flex", flexDirection: "column", gap: 3 }}>
+        Countersigned copy (optional)
+        <input type="file" accept="application/pdf,image/*"
+               onChange={(e) => setFile(e.target.files?.[0] || null)} />
+      </label>
+      <button style={buttonStyle} disabled={busy || !on || !ref.trim()}
+              onClick={save}>{busy ? "Saving…" : "Mark approved by Employer"}</button>
+      <button style={ghostButton} onClick={() => onDone(null)}>Cancel</button>
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5,
+                            width: "100%" }}>{err}</div>}
+    </div>
   );
 }
 

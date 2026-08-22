@@ -3111,17 +3111,30 @@ class BoqImport(models.Model):
         return f"{self.project.code} BOQ import {self.id}"
 
 
+def _variation_copy_path(instance, filename):
+    import uuid
+    return (f"variations/{instance.project_id}/"
+            f"{uuid.uuid4().hex[:8]}-{filename}")
+
+
 class Variation(models.Model):
     """A variation order (VO) on a project's contract — an addition or omission
     the QS raises, sends for client approval, and (once approved) claims like
     BOQ items. Approved VOs adjust the contract sum; submitted-not-approved
     ones read as provisions pending approval in the forecast (IPA §D/E)."""
 
+    # Two approvals, not one (owner 2026-08-22): the Director approves the
+    # priced draft INTERNALLY, then it goes to the Employer, and only the
+    # Employer's approval makes it part of the contract. The old three-state
+    # flow let the QS mark a VO "Approved" the moment it was drafted, and four
+    # VOs nobody had sent to the client sat in the revised contract sum.
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
-        SUBMITTED = "SUBMITTED", "Submitted to client"
-        APPROVED = "APPROVED", "Approved"
-        REJECTED = "REJECTED", "Rejected"
+        PD_PENDING = "PD_PENDING", "With PD for approval"
+        PD_APPROVED = "PD_APPROVED", "PD approved — ready to send"
+        SUBMITTED = "SUBMITTED", "Sent to Employer"
+        APPROVED = "APPROVED", "Approved by Employer"
+        REJECTED = "REJECTED", "Rejected by Employer"
 
     class Kind(models.TextChoices):
         ADDITION = "ADDITION", "Addition"
@@ -3134,11 +3147,22 @@ class Variation(models.Model):
     title = models.TextField(blank=True)
     kind = models.CharField(max_length=8, choices=Kind.choices,
                             default=Kind.ADDITION)
-    status = models.CharField(max_length=10, choices=Status.choices,
+    status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
     ref_date = models.DateField(null=True, blank=True)   # client instruction
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
+    # --- the two approvals ---
+    pd_approved_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name="+")
+    pd_approved_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateField(null=True, blank=True)      # to the Employer
+    employer_approved_on = models.DateField(null=True, blank=True)
+    employer_ref = models.CharField(max_length=120, blank=True)
+    # The client's countersigned copy, when there is one (email approval is
+    # common, so it is optional).
+    employer_copy = models.FileField(upload_to=_variation_copy_path,
+                                     blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

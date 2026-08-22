@@ -131,7 +131,7 @@
   <tr><td class="t">Prepared — Quantity Surveyor{% if prepared_by %}<br>{{ prepared_by }}{% endif %}</td>
       <td class="t">Approved — Employer / Consultant</td></tr>
   <tr><td></td>
-      <td>{% if is_approved %}<div style="font-size:9.5pt;color:#1a7f37;font-weight:700;">APPROVED</div><div style="font-size:8pt;color:#5a6b78;">Recorded {{ v.updated_at|date:"d M Y" }}</div>{% endif %}</td></tr>
+      <td>{% if is_approved %}<div style="font-size:9.5pt;color:#1a7f37;font-weight:700;">APPROVED BY THE EMPLOYER</div><div style="font-size:8pt;color:#5a6b78;">{% if employer_approved_on %}{{ employer_approved_on|date:"d M Y" }}{% endif %}{% if employer_ref %} · ref {{ employer_ref }}{% endif %}</div>{% endif %}</td></tr>
 </table>
 </body>
 </html>

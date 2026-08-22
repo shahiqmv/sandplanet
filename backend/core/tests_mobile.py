@@ -420,3 +420,73 @@ class MobilePurchaseOrderTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         po.refresh_from_db()
         self.assertEqual(po.status, "DRAFT")
+
+
+
+class MobileVariationTests(TestCase):
+    """The Director's INTERNAL approval of a variation order, on the phone.
+    A Variation is not a Document; its key is "<project code> VO-NN"."""
+
+    def setUp(self):
+        from datetime import date, timedelta
+        from .models import Project, Site, User
+        from .tests import make_user
+        self.site = Site.objects.create(code="MVO", name="Mvo Isle",
+                                        status=Site.Status.ACTIVE,
+                                        start_date=date.today() - timedelta(days=30))
+        self.project = Project.objects.create(site=self.site, code="MVO-P",
+                                              title="Mvo pools",
+                                              contract_value="100000")
+        self.qs = make_user("mvo_qs", User.Role.QS)
+        self.director = make_user("mvo_dir", User.Role.DIRECTOR)
+        self.web = APIClient()
+        self.web.force_authenticate(self.qs)
+        r = self.web.post(f"/api/v1/projects/{self.project.id}/variations/create",
+                          {"title": "Extra coping", "kind": "ADDITION", "rows": [
+                              {"item_code": "V1", "description": "Coping",
+                               "unit": "m", "qty": "40", "rate_supply": "25",
+                               "rate_install": "10"}]}, format="json")
+        self.vid = r.data["variations"][-1]["id"]
+        self.web.post(f"/api/v1/variations/{self.vid}/status",
+                      {"status": "PD_PENDING"}, format="json")
+        self.m = APIClient()
+        r = self.m.post("/api/mobile/v1/auth/login",
+                        {"username": self.director.username,
+                         "password": "pw-test-123"}, format="json")
+        self.token = r.data.get("token") if r.status_code in (200, 201) else None
+        if self.token:
+            self.m.credentials(HTTP_AUTHORIZATION=f"Bearer {self.token}")
+        self.key = "MVO-P VO-01"
+
+    def test_director_sees_prices_and_approves_the_vo_on_the_phone(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        from .models import Variation
+        q = self.m.get("/api/mobile/v1/queue").data
+        card = next((c for c in q["items"] if c["ref"] == self.key), None)
+        self.assertIsNotNone(card, q)
+        self.assertEqual(card["doc_type"], "VO")
+        self.assertEqual(card["amount"], 1400.0)
+        d = self.m.get(f"/api/mobile/v1/documents/{self.key}").data
+        self.assertEqual(d["line_label"], "Variation items")
+        self.assertTrue(any(x["k"] == "If the Employer approves"
+                            for x in d["summary"]))
+        r = self.m.post(f"/api/mobile/v1/documents/{self.key}/approve", {},
+                        format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Variation.objects.get(pk=self.vid).status,
+                         "PD_APPROVED")
+        q2 = self.m.get("/api/mobile/v1/queue").data
+        self.assertNotIn(self.key, [c["ref"] for c in q2["items"]])
+
+    def test_return_needs_a_reason_and_sends_it_back_to_draft(self):
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        from .models import Variation
+        r = self.m.post(f"/api/mobile/v1/documents/{self.key}/return", {},
+                        format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.m.post(f"/api/mobile/v1/documents/{self.key}/return",
+                        {"comment": "rate looks high"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Variation.objects.get(pk=self.vid).status, "DRAFT")

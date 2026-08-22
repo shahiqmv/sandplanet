@@ -738,6 +738,10 @@ def queue_amount(ref, doc_type):
     phone had this from the start; the desktop did not.
     """
     from .models import Document, PaymentVoucherLine
+    if doc_type == "VO":
+        from .commercial import variation_by_queue_ref
+        v = variation_by_queue_ref(ref)
+        return float(abs(v.signed_total)) if v else None
     try:
         d = Document.objects.get(ref=ref)
     except Document.DoesNotExist:
@@ -899,6 +903,23 @@ def pending_groups(user):
                                     status="AMENDMENT_PENDING")),
                  "Approve the revised order, or reject and the issued one "
                  "stands"))
+        # A variation order waits on the Director's INTERNAL approval before
+        # the QS may send it to the Employer (owner 2026-08-22). A Variation
+        # is not a Document, so it is listed by hand; the ref is
+        # "<project code> VO-NN", which the viewers resolve back.
+        from .models import Variation as _Vo
+        vos = (_Vo.objects.filter(status="PD_PENDING")
+               .select_related("project__site").order_by("project__code",
+                                                          "seq"))
+        add("To approve — variation orders (internal)", [
+            {"ref": f"{v.project.code} {v.ref}", "doc_type": "VO",
+             "site_code": v.project.site.code if v.project.site_id else "",
+             "project_code": v.project.code, "project_id": v.project_id,
+             "vo_id": v.id,
+             "doc_date": v.ref_date or v.created_at.date(),
+             "status": v.status,
+             "hint": "Approve the priced draft, then the QS sends it to the "
+                     "Employer"} for v in vos])
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.
