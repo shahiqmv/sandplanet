@@ -267,7 +267,7 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
         {vis.show_programme && active && active.has_units && (
           <div className="qcard" onClick={goUnits}>
             <div className="qic">▦</div>
-            <div><h3>Unit progress</h3>
+            <div><h3>Unit Progress</h3>
               <p>{active.units
                 ? `${active.units.complete} of ${active.units.count} complete`
                   + `${active.units.in_progress
@@ -330,7 +330,7 @@ function UnitsView({ project, onBack }) {
         <div className="card hero">
           <div className="row">
             <div className="lead">
-              <div className="eyebrow">{project.code} · Unit progress</div>
+              <div className="eyebrow">{project.code} · Unit Progress</div>
               <div className="proj-name serif">{project.title}</div>
               <div className="proj-sub">
                 {d.complete} of {d.unit_count} complete</div>
@@ -985,7 +985,7 @@ function SitePortal({ id, single, onBackToSites }) {
           onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>}
         {vis.show_programme && activeProject && activeProject.has_units &&
           <button className={`seg ${seg === "units" ? "on" : ""}`}
-            onClick={() => setView({ name: "units" })}>Units</button>}
+            onClick={() => setView({ name: "units" })}>Unit Progress</button>}
         {vis.show_gallery && <button className={`seg ${seg === "gallery" ? "on" : ""}`}
           onClick={() => setView({ name: "gallery" })}>Gallery</button>}
         {vis.show_procurement && <button className={`seg ${seg === "proc" ? "on" : ""}`}

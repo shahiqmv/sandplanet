@@ -61,7 +61,7 @@ export default function UnitsPanel({ projectId, me }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 14,
                     flexWrap: "wrap", marginBottom: 10 }}>
         <h3 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
-          Unit progress</h3>
+          Unit Progress</h3>
         <span style={{ fontSize: 13, color: "var(--muted)" }}>
           {data.complete} of {data.unit_count} complete ·{" "}
           <strong style={{ color: "var(--sp-navy)" }}>

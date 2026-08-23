@@ -202,7 +202,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               a dashboard tile (owner 2026-08-23). */}
           {onUnits && (
             <Btn variant="secondary" onClick={onUnits}>
-              <Icon name="grid" />Unit progress</Btn>
+              <Icon name="grid" />Unit Progress</Btn>
           )}
           {onVessels && (
             <Btn variant="secondary" onClick={onVessels}

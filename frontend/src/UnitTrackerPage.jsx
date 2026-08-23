@@ -46,7 +46,7 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
       <div style={{ display: "flex", alignItems: "baseline", gap: 12,
                     flexWrap: "wrap", marginBottom: 12 }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 18 }}>
-          Unit progress tracker — {site.code}</h2>
+          Unit Progress — {site.code}</h2>
         <input placeholder="Find a unit…" value={filter}
                onChange={(e) => setFilter(e.target.value)}
                style={{ ...inputStyle, width: 190, marginLeft: "auto" }} />

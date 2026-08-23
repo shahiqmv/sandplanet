@@ -221,7 +221,7 @@ manpower histogram, on the letterhead — send to the client"
           <div style={{ display: "flex", gap: 2, margin: "0 0 12px",
                         flexWrap: "wrap", alignItems: "flex-end",
                         borderBottom: "2px solid var(--sp-border,#d8e1e8)" }}>
-            {[["boq", "BOQ"], ["units", "Units"],
+            {[["boq", "BOQ"], ["units", "Unit Progress"],
               ["variations", "Variations"],
               ["claims", "Claims"], ["bonds", "Bonds & Insurance"]]
               .map(([key, label]) => (
