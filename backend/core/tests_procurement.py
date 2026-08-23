@@ -910,6 +910,30 @@ class PoAmendmentTests(TestCase):
             f"/api/v1/documents/{self.po.ref}/amend-decision",
             {"approve": approve, "note": note}, format="json")
 
+    def test_the_diff_reads_a_catalog_items_own_description(self):
+        """Every line here used to be free text, so nothing exercised the
+        catalog-item branch — which read a field Item does not have. The
+        Director's amendment screen 500'd and PO-036 sat with no button on it
+        (owner 2026-08-23)."""
+        from .models import DocumentLine, Item
+        item = Item.objects.create(code="ITM-00001", description="Rebar 12mm",
+                                   unit="PCS")
+        DocumentLine.objects.create(
+            revision=self.r0, line_no=2, item=item, unit="PCS",
+            qty_required=Decimal("200"), rate=Decimal("100"),
+            amount=Decimal("20000"))
+        self.assertEqual(self._amend(self.buyer).status_code, 200)
+        self.client.force_authenticate(self.director)
+        r = self.client.get(f"/api/v1/documents/{self.po.ref}/amendment")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["can_decide"])
+        self.assertIn("Rebar 12mm",
+                      [ln["description"] for ln in r.data["before"]])
+        # ...and the Director can actually decide it.
+        self.assertEqual(self._decide(self.director, True).status_code, 200)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, "ISSUED")
+
     def test_purchasing_proposes_and_the_order_waits_on_the_director(self):
         r = self._amend(self.buyer)
         self.assertEqual(r.status_code, 200, r.data)

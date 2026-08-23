@@ -304,7 +304,8 @@ def _split_label(line):
     if (line.bundle or "").strip():
         return line.bundle.strip()
     base = (line.description or line.make_brand
-            or (line.item.name if line.item_id else "") or "Split order")
+            or (line.item.description if line.item_id else "")
+            or "Split order")
     return " ".join(base.split())[:120]      # single-line, within max_length
 
 

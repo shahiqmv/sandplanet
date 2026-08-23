@@ -410,6 +410,23 @@ class MobilePurchaseOrderTests(TestCase):
         q2 = self.m.get("/api/mobile/v1/queue").data
         self.assertNotIn(po.ref, [c["ref"] for c in q2["items"]])
 
+    def test_the_phone_card_reads_a_catalog_items_description(self):
+        """A PO line can carry a catalog item rather than free text — reading
+        the wrong field 500'd the signatory's phone screen (owner
+        2026-08-23)."""
+        if not self.token:
+            self.skipTest("mobile login unavailable in this fixture")
+        from .models import DocumentLine, Item
+        pr, po = self._submitted_po()
+        item = Item.objects.create(code="ITM-09001",
+                                   description="Deformed bar 12mm", unit="kg")
+        DocumentLine.objects.create(
+            revision=po.current_revision, line_no=9, item=item, unit="kg",
+            qty_required=10, rate=5, amount=50)
+        d = self.m.get(f"/api/mobile/v1/documents/{po.ref}").data
+        self.assertIn("Deformed bar 12mm",
+                      [ln["title"] for ln in d["lines"]])
+
     def test_return_hands_the_order_back_to_purchasing(self):
         if not self.token:
             self.skipTest("mobile login unavailable in this fixture")

@@ -424,8 +424,8 @@ def _po_mobile_payload(doc, request):
         amount = float(ln.amount if ln.amount is not None else qty * rate)
         lines.append({
             "ref": "", "kind": "",
-            "title": (ln.item.name if ln.item_id else ln.free_text_desc)
-                     or "Item",
+            "title": (ln.item.description if ln.item_id
+                      else ln.free_text_desc) or "Item",
             "subtitle": f"{qty:g} {ln.unit or ''} × {rate:,.2f}".strip(),
             "amount": amount, "currency": "MVR", "site_code": ""})
     pr, row, _err = po_commitment(doc)

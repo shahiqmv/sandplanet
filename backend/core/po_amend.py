@@ -151,8 +151,12 @@ def decide_amendment(po, approve, actor, note=""):
 def _line_view(line):
     return {
         "id": line.id, "line_no": line.line_no,
+        # Item's field is `description`, not `name` — reading `.name` here
+        # raised on every order carrying a catalog item, so the Director's
+        # amendment screen 500'd and left the PO stuck with no button on it
+        # (owner 2026-08-23, PO-036).
         "description": line.free_text_desc or (
-            line.item.name if line.item_id else ""),
+            line.item.description if line.item_id else ""),
         "unit": line.unit or "",
         "qty": line.qty_required, "rate": line.rate,
         "amount": _line_total(line), "remarks": line.remarks or "",
