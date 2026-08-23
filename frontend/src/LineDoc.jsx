@@ -223,6 +223,8 @@ const ACTIONS = {
     ["return", "Return to Purchasing", ["SUBMITTED"],
      ["SIGNATORY", "ADMIN"], "comment"],
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
+    // Close sits beside the other actions and used to be a one-way door.
+    ["reopen", "Re-open (Admin)", ["CLOSED"], ["ADMIN"], "comment"],
   ],
   GRN: [
     ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "PM",

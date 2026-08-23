@@ -1545,9 +1545,23 @@ def _do_count(request, doc, comment):
 
 
 def _do_reopen(request, doc, comment):
-    """Admin re-opens a wrongly-verified GRN to correct the received counts."""
+    """Admin re-opens a wrongly-verified GRN, or a purchase order closed by
+    mistake — Close sits beside the other actions and had no way back (owner
+    2026-08-23, PO-036)."""
+    if doc.doc_type == "PO":
+        if request.user.role != "ADMIN":
+            return Response({"detail": "Only an admin re-opens a closed "
+                                       "order."}, status=403)
+        if doc.status != "CLOSED":
+            return Response({"detail": "This order is not closed."},
+                            status=400)
+        if not comment.strip():
+            return Response({"detail": "A reason is required."}, status=400)
+        return _apply(request, doc, "ISSUED", "REOPEN", roles={"ADMIN"},
+                      comment=comment)
     if doc.doc_type != "GRN":
-        return Response({"detail": "Re-open applies to a GRN."}, status=400)
+        return Response({"detail": "Re-open applies to a GRN or a PO."},
+                        status=400)
     if request.user.role != "ADMIN":
         return Response({"detail": "Only an admin re-opens a GRN."}, status=403)
     from .procurement import reopen_grn

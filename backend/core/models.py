@@ -455,6 +455,10 @@ class Document(models.Model):
             # that is a different award and belongs on its own PO.
             "ISSUED": {"CLOSED", "AMENDMENT_PENDING"},
             "AMENDMENT_PENDING": {"ISSUED"},
+            # Closing is one click next to the others and there was no way
+            # back: PO-036 was closed by accident mid-amendment (owner
+            # 2026-08-23). An admin can re-open; the handler holds that rule.
+            "CLOSED": {"ISSUED"},
         },
         # Subcontract Agreement (subcontractor module): the site raises it,
         # the PM approves, the Director activates. Approved = SVCs may value

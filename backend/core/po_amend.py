@@ -15,6 +15,10 @@ Two rules shape the design:
   award and belongs on its own PO against the PR — otherwise an approved
   award silently becomes an order to a company nobody chose.
 """
+
+import logging
+
+log = logging.getLogger(__name__)
 from django.db import transaction
 
 from .audit import audit
@@ -201,8 +205,18 @@ def decide_amendment(po, approve, actor, note=""):
         revision.delete()
     po.status = "ISSUED"
     po.save(update_fields=["status", "current_revision", "updated_at"])
-    if approve and pr is not None and row is not None:
-        _apply_amendment_money(po, pr, row, now - was, actor)
+    if approve:
+        if pr is not None and row is not None:
+            _apply_amendment_money(po, pr, row, now - was, actor)
+        # The supplier holds a document, and the amended order is a new one.
+        # Approving used to change the lines and leave the only PDF on the
+        # file showing the superseded revision (owner 2026-08-23).
+        try:
+            from .pdf import generate_pdf
+            generate_pdf(po, revision, "amendment")
+        except Exception:                  # never block the decision on a PDF
+            log.exception("amendment PDF failed for %s %s", po.ref,
+                          revision.rev_label)
     audit("document", po.id,
           "PO_AMENDMENT_APPROVED" if approve else "PO_AMENDMENT_REJECTED",
           actor=actor, detail={"ref": po.ref, "note": note,

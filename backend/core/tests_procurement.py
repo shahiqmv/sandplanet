@@ -910,6 +910,43 @@ class PoAmendmentTests(TestCase):
             f"/api/v1/documents/{self.po.ref}/amend-decision",
             {"approve": approve, "note": note}, format="json")
 
+    def test_an_admin_reopens_an_order_closed_by_mistake(self):
+        """Close sits beside the other actions and had no way back — PO-036
+        was closed mid-amendment (owner 2026-08-23)."""
+        from .models import User as U
+        from .tests import make_user as mk
+        admin = mk("po_adm", U.Role.ADMIN)
+        self.po.status = "CLOSED"
+        self.po.save(update_fields=["status"])
+        self.client.force_authenticate(self.buyer)
+        r = self.client.post(f"/api/v1/documents/{self.po.ref}/actions/reopen",
+                             {"comment": "closed by mistake"}, format="json")
+        self.assertEqual(r.status_code, 403)          # purchasing may not
+        self.client.force_authenticate(admin)
+        r = self.client.post(f"/api/v1/documents/{self.po.ref}/actions/reopen",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 400)          # a reason is required
+        r = self.client.post(f"/api/v1/documents/{self.po.ref}/actions/reopen",
+                             {"comment": "closed by mistake"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.po.refresh_from_db()
+        self.assertEqual(self.po.status, "ISSUED")
+        # ...and it can be amended again from there.
+        self.assertEqual(self._amend(self.buyer).status_code, 200)
+
+    def test_approving_an_amendment_issues_the_amended_order_as_a_pdf(self):
+        """The supplier holds a document; approving used to change the lines
+        and leave the only PDF showing the superseded revision (owner
+        2026-08-23)."""
+        self._amend(self.buyer)
+        self._decide(self.director, True)
+        self.po.refresh_from_db()
+        rev = self.po.current_revision
+        self.assertEqual(rev.rev_label, "R1")
+        self.assertTrue(
+            rev.attachments.filter(kind="GENERATED_PDF").exists(),
+            "the amended revision carries no PDF")
+
     def test_the_diff_reads_a_catalog_items_own_description(self):
         """Every line here used to be free text, so nothing exercised the
         catalog-item branch — which read a field Item does not have. The
