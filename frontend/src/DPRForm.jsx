@@ -8,8 +8,8 @@ const WEATHER = ["Sunny", "Cloudy", "Rainy"];
 // Site-wide DPR (R8): every work row is tagged with its project (or
 // General) and may link to that project's programme activity
 const emptyWork = { project: "", activity_id: "", activity: "", trade: "",
-                    location: "", progress_today: "", progress_todate: "",
-                    remarks: "" };
+                    location: "", unit_id: "", stage_id: "",
+                    progress_today: "", progress_todate: "", remarks: "" };
 const emptyMachine = { item: "", nos: "", remarks: "", project: "" };
 const emptyMaterial = {
   material: "", unit: "", opening: "", received: "", consumed: "", remarks: "",
@@ -117,6 +117,10 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   const [incidentDetails, setIncidentDetails] = useState(p.safety?.details || "");
   const [categories, setCategories] = useState([]);
   const [programmes, setProgrammes] = useState({});  // project code → acts
+  // Units of this site's unit-based projects (owner 2026-08-23): a work row
+  // can name the villa/pool and the stage it moved, so issuing the DPR
+  // updates the unit board. Rows without a unit behave exactly as before.
+  const [units, setUnits] = useState([]);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [doc, setDoc] = useState(existing || null);
@@ -140,6 +144,11 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       </select>
     </td>
   );
+
+  useEffect(() => {
+    if (!site?.id) return;
+    api(`/sites/${site.id}/units`).then(setUnits).catch(() => setUnits([]));
+  }, [site?.id]);
 
   useEffect(() => {
     api("/manpower-categories").then((all) =>
@@ -251,7 +260,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       work_time_lost: timeLost,
       time_lost_cause: timeLost ? timeLostCause : "",
       time_lost_reason: timeLost ? timeLostReason : "",
-      work_done: workDone.filter((r) => r.activity)
+      work_done: workDone.filter((r) => r.activity || r.unit_id)
         .map(({ _baseline, ...r }) => r),   // drop the UI-only baseline
       manpower: manpowerMap(),
       machinery: machinery.filter((r) => r.item),
@@ -463,7 +472,8 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       </SectionTitle>
       <RowTable focus={focus}
         headers={["Project", "Activity / Milestone", "Trade",
-                  "Location/Area/Villa", "Today %", "To-date %", "Remarks"]}
+                  "Location/Area/Villa", "Unit / stage", "Today %",
+                  "To-date %", "Remarks"]}
         rows={workDone} setRows={setWorkDone} empty={emptyWork}
         render={(row, set) => {
           const acts = programmes[row.project] || [];
@@ -535,6 +545,43 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
             </td>
             {cell(row.trade, (v) => set({ trade: v }), 90)}
             {cell(row.location, (v) => set({ location: v }), 120)}
+            {/* Unit + stage: only for a project that tracks units. Choosing
+                them makes this row move the unit board when the DPR is
+                issued; leaving them blank keeps the row exactly as it was
+                (owner 2026-08-23). */}
+            <td style={{ padding: 3, verticalAlign: "top" }}>
+              {(() => {
+                const mine = units.filter(
+                  (u) => !row.project || u.project_code === row.project);
+                if (mine.length === 0) return (
+                  <span style={{ fontSize: 11, color: "var(--muted)" }}>—</span>);
+                const unit = mine.find(
+                  (u) => String(u.id) === String(row.unit_id));
+                return (<>
+                  <select value={row.unit_id || ""}
+                          onChange={(e) => set({ unit_id: e.target.value,
+                                                 stage_id: "" })}
+                          style={{ ...inputStyle, width: 130 }}>
+                    <option value="">— no unit —</option>
+                    {mine.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {u.ref} ({Number(u.percent)}%)
+                      </option>))}
+                  </select>
+                  {unit && (
+                    <select value={row.stage_id || ""}
+                            onChange={(e) => set({ stage_id: e.target.value })}
+                            style={{ ...inputStyle, width: 130,
+                                     marginTop: 4,
+                                     background: row.stage_id
+                                       ? "#effaf1" : "#fff8e6" }}>
+                      <option value="">— pick the stage —</option>
+                      {unit.stages.map((st) => (
+                        <option key={st.id} value={st.id}>{st.name}</option>))}
+                    </select>)}
+                </>);
+              })()}
+            </td>
             {cell(row.progress_today, (v) => {
               // to-date accumulates: previous cumulative (baseline) + today %,
               // capped at 100. Still editable below for corrections.

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
+import UnitsPanel from "./UnitsPanel.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import VariationsPanel from "./VariationsPanel.jsx";
 import ClaimsPanel from "./ClaimsPanel.jsx";
@@ -220,7 +221,8 @@ manpower histogram, on the letterhead — send to the client"
           <div style={{ display: "flex", gap: 2, margin: "0 0 12px",
                         flexWrap: "wrap", alignItems: "flex-end",
                         borderBottom: "2px solid var(--sp-border,#d8e1e8)" }}>
-            {[["boq", "BOQ"], ["variations", "Variations"],
+            {[["boq", "BOQ"], ["units", "Units"],
+              ["variations", "Variations"],
               ["claims", "Claims"], ["bonds", "Bonds & Insurance"]]
               .map(([key, label]) => (
               <button key={key} onClick={() => setCommTab(key)}
@@ -242,6 +244,8 @@ manpower histogram, on the letterhead — send to the client"
           </div>
           {commTab === "boq" && (
             <BoqPanel projectId={projectId} project={project} me={me} />)}
+          {commTab === "units" && (
+            <UnitsPanel projectId={projectId} me={me} />)}
           {commTab === "variations" && (
             <VariationsPanel projectId={projectId} me={me} />)}
           {commTab === "claims" && (

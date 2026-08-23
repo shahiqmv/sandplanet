@@ -3081,6 +3081,95 @@ class BoqCategory(models.Model):
         return self.per_unit_total * (self.qty or Decimal("0"))
 
 
+class UnitStage(models.Model):
+    """A stage in a unit's life, defined once per BOQ category and weighted.
+
+    Owner 2026-08-23: on a unit-based project everyone — the client, the site
+    team, management — needs to know where each villa/pool has got to, and the
+    programme is too coarse to answer it. A stage with a weight gives both
+    halves of the answer: "Finishes" tells you what is happening, the weighted
+    roll-up tells you how far along it is.
+    """
+
+    category = models.ForeignKey("BoqCategory", on_delete=models.CASCADE,
+                                 related_name="stages")
+    sort_order = models.IntegerField(default=0)
+    name = models.CharField(max_length=80)
+    # Share of the unit this stage represents. Weights are normalised on
+    # read, so they need not sum to exactly 100.
+    weight = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return self.name
+
+
+class ProjectUnit(models.Model):
+    """One deliverable unit — a villa, a pool, an apartment.
+
+    Generated from its BOQ category's quantity (D-01…D-11) and renamed by the
+    PM to whatever the client calls it. Progress is reported per stage from
+    the DPR; `percent` is the weighted roll-up, cached for the board.
+    """
+
+    class Status(models.TextChoices):
+        NOT_STARTED = "NOT_STARTED", "Not started"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        COMPLETE = "COMPLETE", "Complete"
+        ON_HOLD = "ON_HOLD", "On hold"
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="units")
+    category = models.ForeignKey("BoqCategory", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="units")
+    sort_order = models.IntegerField(default=0)
+    ref = models.CharField(max_length=30)                  # D-01, Villa 214
+    name = models.CharField(max_length=120, blank=True)    # client's name
+    size = models.CharField(max_length=60, blank=True)     # e.g. 145 m²
+    scope = models.TextField(blank=True)
+    location = models.CharField(max_length=120, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.NOT_STARTED)
+    percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    started_on = models.DateField(null=True, blank=True)
+    completed_on = models.DateField(null=True, blank=True)
+    target_date = models.DateField(null=True, blank=True)
+    hold_reason = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+        constraints = [models.UniqueConstraint(
+            fields=["project", "ref"], name="uniq_project_unit_ref")]
+
+    def __str__(self):
+        return f"{self.ref} {self.name}".strip()
+
+
+class UnitStageProgress(models.Model):
+    """Where one unit has got to on one stage — the figure the DPR writes."""
+
+    unit = models.ForeignKey(ProjectUnit, on_delete=models.CASCADE,
+                             related_name="stage_progress")
+    stage = models.ForeignKey(UnitStage, on_delete=models.CASCADE,
+                              related_name="+")
+    percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # The DPR that last moved it — the board says where every figure came
+    # from, so the daily report stays the record and does not go stale.
+    updated_from = models.ForeignKey(Document, on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="+")
+    updated_on = models.DateField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["stage__sort_order", "id"]
+        constraints = [models.UniqueConstraint(
+            fields=["unit", "stage"], name="uniq_unit_stage")]
+
+
 class BoqImport(models.Model):
     """A staging area for importing a BOQ from a client PDF/Excel. The document
     is extracted (pdfplumber/openpyxl + Claude) into draft rows the QS reviews

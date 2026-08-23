@@ -699,6 +699,11 @@ def _do_issue(request, doc, comment):
                      pdf_milestone="issue", comment=comment)
         if err is None and doc.doc_type == "DPR":
             _update_programme_progress(doc, request.user)
+            # Unit-based projects: the same work-done rows carry a unit and
+            # stage, so issuing the DPR moves the unit board too. Rows without
+            # a unit are untouched — the DPR loses nothing (owner 2026-08-23).
+            from . import units as _units
+            _units.apply_dpr(doc, request.user)
             _post_dpr_consumption(doc, request.user)
         return err
     return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO/DMA."},

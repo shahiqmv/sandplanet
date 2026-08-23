@@ -30,6 +30,8 @@ urlpatterns = [
          name="client-portal-programme-pdf"),
     path("projects/<int:pk>/programme", views_client.client_project_programme,
          name="client-portal-programme"),
+    path("projects/<int:pk>/units", views_client.client_project_units,
+         name="client-portal-units"),
     path("projects/<int:pk>/procurement",
          views_client.client_project_procurement,
          name="client-portal-procurement"),

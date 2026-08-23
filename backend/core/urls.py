@@ -10,7 +10,7 @@ from . import views, views_bom as bom_api, views_cameras as cameras_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
     views_stock as stock, views_subcontract as subcontract_api, \
-    views_tools as tools_api, views_transfers as transfers_api, \
+    views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
     views_vouchers as vouchers, \
     views_receivables as receivables_api, \
@@ -264,6 +264,17 @@ urlpatterns = [
          name="programme-pdf"),
     path("projects/<int:pk>/client-progress", projects.project_client_progress,
          name="project-client-progress"),
+    # Unit progress board (unit-based BOQ projects)
+    path("projects/<int:pk>/units", units_api.project_units,
+         name="project-units"),
+    path("boq-categories/<int:pk>/stages", units_api.category_stages,
+         name="category-stages"),
+    path("boq-categories/<int:pk>/generate-units",
+         units_api.category_generate_units, name="category-generate-units"),
+    path("units/<int:pk>", units_api.unit_detail, name="unit-detail"),
+    path("units/<int:pk>/progress", units_api.unit_progress,
+         name="unit-progress"),
+    path("sites/<int:pk>/units", units_api.site_units, name="site-units"),
     path("programme-activities/<int:pk>", projects.activity_detail,
          name="activity-detail"),
     # Project commercial (QS) — BOQ

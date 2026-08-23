@@ -1,0 +1,298 @@
+"""Unit progress tracking on a unit-based BOQ project (owner 2026-08-23)."""
+from datetime import date
+from decimal import Decimal
+
+from django.test import TestCase
+from rest_framework.test import APIClient
+
+from .models import (Boq, BoqCategory, Document, DocumentRevision, Project,
+                     ProjectUnit, Site, SitePmHistory, User)
+from .tests import make_user
+
+
+class UnitBoardBase(TestCase):
+    def setUp(self):
+        self.site = Site.objects.create(code="SFR", name="Fushi",
+                                        status=Site.Status.ACTIVE)
+        self.pm = make_user("u_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.se = make_user("u_se", User.Role.SITE_ENGINEER, site=self.site)
+        self.qs = make_user("u_qs", User.Role.QS)
+        self.project = Project.objects.create(
+            site=self.site, code="19 VILLAS", title="Refurbishment",
+            contract_value="500000")
+        self.boq = Boq.objects.create(project=self.project, currency="USD",
+                                      mode=Boq.Mode.UNIT)
+        self.cat = BoqCategory.objects.create(
+            boq=self.boq, sort_order=1, ref="Bill 03",
+            name="Villa Category - D", qty=3, unit="no")
+        self.lump = BoqCategory.objects.create(
+            boq=self.boq, sort_order=2, ref="Bill 01", name="Preliminaries",
+            qty=1, is_lump=True, lump_amount="10000")
+        self.client = APIClient()
+        self.client.force_authenticate(self.pm)
+
+    def _generate(self, cat=None):
+        return self.client.post(
+            f"/api/v1/boq-categories/{(cat or self.cat).id}/generate-units",
+            {}, format="json")
+
+
+class UnitSetupTests(UnitBoardBase):
+    def test_units_are_generated_from_the_category_quantity(self):
+        r = self._generate()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["created"], 3)
+        self.assertEqual([u["ref"] for u in r.data["units"]],
+                         ["BILL03-01", "BILL03-02", "BILL03-03"])
+        # Every unit starts on the default stage ladder, not started.
+        u = r.data["units"][0]
+        self.assertEqual(u["status"], "NOT_STARTED")
+        self.assertEqual(float(u["percent"]), 0.0)
+        self.assertTrue(len(u["stages"]) >= 5)
+
+    def test_generating_twice_tops_up_rather_than_duplicating(self):
+        self._generate()
+        self.cat.qty = 5
+        self.cat.save(update_fields=["qty"])
+        r = self._generate()
+        self.assertEqual(r.data["created"], 2)
+        self.assertEqual(len(r.data["units"]), 5)
+
+    def test_a_lump_bill_has_no_units(self):
+        r = self._generate(self.lump)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("lump", r.data["detail"].lower())
+
+    def test_the_pm_renames_a_unit_to_the_clients_number(self):
+        self._generate()
+        uid = ProjectUnit.objects.first().id
+        r = self.client.patch(f"/api/v1/units/{uid}",
+                              {"ref": "Villa 214", "size": "145 m2",
+                               "scope": "Full refurbishment"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        u = next(x for x in r.data["units"] if x["id"] == uid)
+        self.assertEqual(u["ref"], "Villa 214")
+        self.assertEqual(u["size"], "145 m2")
+
+    def test_a_duplicate_ref_is_refused(self):
+        self._generate()
+        a, b = ProjectUnit.objects.all()[:2]
+        r = self.client.patch(f"/api/v1/units/{b.id}", {"ref": a.ref},
+                              format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already used", r.data["detail"])
+
+    def test_only_the_pm_or_qs_sets_up_units(self):
+        self.client.force_authenticate(self.se)
+        self.assertEqual(self._generate().status_code, 403)
+
+
+class StageLadderTests(UnitBoardBase):
+    def test_the_ladder_is_editable_and_keeps_progress_on_surviving_stages(self):
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        stage = self.cat.stages.all()[2]
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": stage.id, "percent": "100"},
+                         format="json")
+        keep = stage.name
+        r = self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
+                             {"stages": [{"name": "Set out", "weight": 20},
+                                         {"name": keep, "weight": 60},
+                                         {"name": "Handover", "weight": 20}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual([s["name"] for s in u["stages"]],
+                         ["Set out", keep, "Handover"])
+        # the surviving stage kept its 100%, and now carries 60% weight
+        self.assertEqual(float(u["percent"]), 60.0)
+
+    def test_weights_need_not_sum_to_a_hundred(self):
+        self._generate()
+        r = self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
+                             {"stages": [{"name": "A", "weight": 1},
+                                         {"name": "B", "weight": 3}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        unit = ProjectUnit.objects.first()
+        stage_b = self.cat.stages.get(name="B")
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": stage_b.id, "percent": "100"},
+                         format="json")
+        unit.refresh_from_db()
+        self.assertEqual(float(unit.percent), 75.0)      # 3 of 4
+
+    def test_an_empty_ladder_is_refused(self):
+        r = self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
+                             {"stages": []}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+
+class UnitProgressTests(UnitBoardBase):
+    def test_the_board_reports_the_stage_a_unit_is_on(self):
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        stages = list(self.cat.stages.all())
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": stages[0].id, "percent": "100"},
+                         format="json")
+        r = self.client.post(f"/api/v1/units/{unit.id}/progress",
+                             {"stage_id": stages[1].id, "percent": "50"},
+                             format="json")
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual(u["current_stage"], stages[1].name)
+        self.assertEqual(u["status"], "IN_PROGRESS")
+        self.assertTrue(0 < float(u["percent"]) < 100)
+
+    def test_a_finished_unit_reads_complete_with_its_date(self):
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        for st in self.cat.stages.all():
+            self.client.post(f"/api/v1/units/{unit.id}/progress",
+                             {"stage_id": st.id, "percent": "100"},
+                             format="json")
+        unit.refresh_from_db()
+        self.assertEqual(unit.status, "COMPLETE")
+        self.assertEqual(float(unit.percent), 100.0)
+        self.assertEqual(unit.completed_on, date.today())
+
+    def test_a_unit_on_hold_keeps_its_percentage_and_says_why(self):
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        st = self.cat.stages.first()
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": st.id, "percent": "100"}, format="json")
+        r = self.client.patch(f"/api/v1/units/{unit.id}",
+                              {"status": "ON_HOLD",
+                               "hold_reason": "client changed the finishes"},
+                              format="json")
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual(u["status"], "ON_HOLD")
+        self.assertGreater(float(u["percent"]), 0)
+        self.assertIn("finishes", u["hold_reason"])
+
+    def test_the_board_rolls_up_per_category_and_overall(self):
+        self._generate()
+        units = list(ProjectUnit.objects.all())
+        st = self.cat.stages.first()          # first stage, weight 5 of 100
+        for u in units[:2]:
+            self.client.post(f"/api/v1/units/{u.id}/progress",
+                             {"stage_id": st.id, "percent": "100"},
+                             format="json")
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/units")
+        self.assertEqual(r.data["unit_count"], 3)
+        cat = next(c for c in r.data["categories"]
+                   if c["id"] == self.cat.id)
+        self.assertEqual(cat["in_progress"], 2)
+        self.assertEqual(cat["not_started"], 1)
+        self.assertGreater(float(r.data["overall_percent"]), 0)
+
+
+class DprDrivesTheBoardTests(UnitBoardBase):
+    """The DPR stays the record: it reports the unit progress, and the board
+    says which DPR each figure came from."""
+
+    def _dpr(self, rows):
+        doc = Document.objects.create(
+            doc_type="DPR", ref=f"DPR-SFR-{Document.objects.count()+1:03d}",
+            site=self.site, doc_date=date.today(), status="DRAFT",
+            created_by=self.se)
+        doc.current_revision = DocumentRevision.objects.create(
+            document=doc, rev_label="R0", created_by=self.se,
+            payload={"work_done": rows})
+        doc.save(update_fields=["current_revision"])
+        return doc
+
+    def test_issuing_a_dpr_moves_the_unit_board(self):
+        from core import units as svc
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        first, stage = self.cat.stages.all()[0], self.cat.stages.all()[1]
+        # One DPR, two rows — mobilisation finished, the next stage part done.
+        doc = self._dpr([{"activity": "Mobilise", "unit_id": unit.id,
+                          "stage_id": first.id, "progress_todate": "100"},
+                         {"activity": "Civil", "unit_id": unit.id,
+                          "stage_id": stage.id, "progress_todate": "40"}])
+        applied = svc.apply_dpr(doc, self.se)
+        self.assertEqual(applied, 2)
+        board = svc.board(self.project)
+        u = next(x for x in board["units"] if x["id"] == unit.id)
+        self.assertEqual(u["current_stage"], stage.name)
+        self.assertEqual(u["last_dpr"], doc.ref)
+        st = next(s for s in u["stages"] if s["id"] == stage.id)
+        self.assertEqual(float(st["percent"]), 40.0)
+        self.assertEqual(st["dpr"], doc.ref)
+        self.assertEqual(st["on"], date.today())
+
+    def test_ordinary_work_rows_are_untouched(self):
+        """A DPR row with no unit is the existing programme row — the daily
+        report must not be narrowed by this feature."""
+        from core import units as svc
+        self._generate()
+        doc = self._dpr([{"activity": "General site works",
+                          "progress_todate": "30"},
+                         {"activity": "Nothing", "unit_id": None}])
+        self.assertEqual(svc.apply_dpr(doc, self.se), 0)
+        self.assertEqual(len(doc.current_revision.payload["work_done"]), 2)
+
+    def test_a_unit_from_another_site_is_ignored(self):
+        from core import units as svc
+        self._generate()
+        other = Site.objects.create(code="ZZZ", name="Other",
+                                    status=Site.Status.ACTIVE)
+        unit = ProjectUnit.objects.first()
+        doc = self._dpr([{"unit_id": unit.id,
+                          "stage_id": self.cat.stages.first().id,
+                          "progress_todate": "50"}])
+        doc.site = other
+        doc.save(update_fields=["site"])
+        self.assertEqual(svc.apply_dpr(doc, self.se), 0)
+
+
+class ClientPortalUnitTests(UnitBoardBase):
+    def _portal(self):
+        admin = make_user("u_admin", User.Role.ADMIN)
+        c = APIClient()
+        c.force_authenticate(admin)
+        r = c.post("/api/v1/client-users", {
+            "org_name": "Resort", "full_name": "Client", "email": "c@r.mv",
+            "site_ids": [self.site.id]}, format="json")
+        pw = r.data["temp_password"]
+        c.force_authenticate(None)
+        tok = c.post("/api/client/auth/login",
+                     {"email": "c@r.mv", "password": pw},
+                     format="json").data["token"]
+        c.credentials(HTTP_AUTHORIZATION=f"Bearer {tok}")
+        return c
+
+    def test_the_client_sees_the_board_without_our_internal_refs(self):
+        from core import units as svc
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        stage = self.cat.stages.first()
+        doc = Document.objects.create(
+            doc_type="DPR", ref="DPR-SFR-900", site=self.site,
+            doc_date=date.today(), status="ISSUED", created_by=self.se)
+        doc.current_revision = DocumentRevision.objects.create(
+            document=doc, rev_label="R0", created_by=self.se, payload={})
+        doc.save(update_fields=["current_revision"])
+        svc.report_progress(unit, stage, 100, document=doc, on=date.today())
+        c = self._portal()
+        r = c.get(f"/api/client/projects/{self.project.id}/units")
+        self.assertEqual(r.status_code, 200, r.data)
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual(u["ref"], unit.ref)
+        self.assertGreater(float(u["percent"]), 0)
+        self.assertNotIn("last_dpr", u)          # our daily-report ref
+        self.assertNotIn("dpr", u["stages"][0])
+
+    def test_a_client_cannot_reach_another_clients_project(self):
+        other_site = Site.objects.create(code="OTH", name="Other",
+                                         status=Site.Status.ACTIVE)
+        other = Project.objects.create(site=other_site, code="X", title="X")
+        c = self._portal()
+        self.assertEqual(
+            c.get(f"/api/client/projects/{other.id}/units").status_code, 404)

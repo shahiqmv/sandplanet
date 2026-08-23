@@ -287,6 +287,28 @@ def client_project_programme(request, pk):
 @api_view(["GET"])
 @authentication_classes([ClientTokenAuthentication])
 @permission_classes([IsClient])
+def client_project_units(request, pk):
+    """The unit progress board — what stage each villa/pool has reached. The
+    question clients ask most, answered without a phone call (owner
+    2026-08-23). Read-only, and gated by the same programme permission."""
+    if (b := _blocked(request, "show_programme")):
+        return b
+    project = _client_project(request, pk)
+    if not project:
+        return Response({"detail": "Not found."}, status=404)
+    from . import units as svc
+    data = svc.board(project)
+    # The client sees where the work is, not our internal daily-report refs.
+    for row in data["units"]:
+        row.pop("last_dpr", None)
+        for st in row["stages"]:
+            st.pop("dpr", None)
+    return Response(data)
+
+
+@api_view(["GET"])
+@authentication_classes([ClientTokenAuthentication])
+@permission_classes([IsClient])
 def client_project_programme_pdf(request, pk):
     """The construction programme as a PDF (Gantt + activity table + planned
     manpower) — the same award-package document, downloadable in the portal."""
