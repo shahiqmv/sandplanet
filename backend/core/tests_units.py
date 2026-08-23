@@ -138,6 +138,32 @@ class StageLadderTests(UnitBoardBase):
         # the surviving stage kept its 100%, and now carries 60% weight
         self.assertEqual(float(u["percent"]), 60.0)
 
+    def test_reordering_the_ladder_keeps_each_stages_progress(self):
+        """The ladder's order is the sequence of work, and it is usually typed
+        out of sequence first time round — reordering must not cost the
+        figures already reported (owner 2026-08-23)."""
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        first, second = self.cat.stages.all()[0], self.cat.stages.all()[1]
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": second.id, "percent": "100"},
+                         format="json")
+        before = [s.name for s in self.cat.stages.all()]
+        # Swap the first two — the same names, in a new order.
+        swapped = [{"name": before[1], "weight": 50},
+                   {"name": before[0], "weight": 50}]
+        r = self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
+                             {"stages": swapped}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual([s["name"] for s in u["stages"]],
+                         [before[1], before[0]])
+        # The 100% followed its stage, which is now first and worth half.
+        moved = next(s for s in u["stages"] if s["name"] == before[1])
+        self.assertEqual(float(moved["percent"]), 100.0)
+        self.assertEqual(float(u["percent"]), 50.0)
+        self.assertEqual(u["current_stage"], before[0])
+
     def test_weights_need_not_sum_to_a_hundred(self):
         self._generate()
         r = self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",

@@ -351,6 +351,15 @@ function UnitEdit({ u, patchUnit }) {
     </div>);
 }
 
+// Swap two rows — the ladder's order IS the sequence of work.
+function move(rows, from, to) {
+  if (to < 0 || to >= rows.length) return rows;
+  const out = rows.slice();
+  const [x] = out.splice(from, 1);
+  out.splice(to, 0, x);
+  return out;
+}
+
 function StageLadder({ ladder, onDone }) {
   const [rows, setRows] = useState(ladder.stages.map(
     (s) => ({ name: s.name, weight: String(Number(s.weight)) })));
@@ -370,20 +379,48 @@ function StageLadder({ ladder, onDone }) {
   return (
     <div style={{ border: "1px solid var(--sp-border, #d8e1e8)",
                   borderRadius: 8, padding: 10, margin: "6px 0" }}>
-      <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "0 0 6px" }}>
-        The stages every {ladder.name} goes through, and what share of the unit
-        each is worth. Weights need not add to 100 — they are relative.
+      <p style={{ fontSize: 11.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        The stages every {ladder.name} goes through, in order, and what share
+        of the whole unit each one is worth. A unit sitting at 100% on the
+        first two stages of this ladder reads as{" "}
+        {total > 0
+          ? `${Math.round((((Number(rows[0]?.weight) || 0)
+              + (Number(rows[1]?.weight) || 0)) / total) * 100)}%`
+          : "—"} complete. Weights are relative — they need not add to 100.
       </p>
       {rows.map((r, i) => (
-        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4 }}>
+        <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4,
+                              alignItems: "center" }}>
+          {/* Stages run in order, so the order has to be settable — the
+              ladder is usually typed out of sequence first time round
+              (owner 2026-08-23). */}
+          <span style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            <button title="Move up" disabled={i === 0}
+                    style={{ ...ghostButton, padding: "0 5px", fontSize: 10,
+                             lineHeight: "11px",
+                             opacity: i === 0 ? 0.3 : 1 }}
+                    onClick={() => setRows(move(rows, i, i - 1))}>▲</button>
+            <button title="Move down" disabled={i === rows.length - 1}
+                    style={{ ...ghostButton, padding: "0 5px", fontSize: 10,
+                             lineHeight: "11px",
+                             opacity: i === rows.length - 1 ? 0.3 : 1 }}
+                    onClick={() => setRows(move(rows, i, i + 1))}>▼</button>
+          </span>
+          <span style={{ width: 18, textAlign: "right", fontSize: 11.5,
+                         color: "var(--muted)" }}>{i + 1}.</span>
           <input value={r.name} placeholder="Stage"
                  style={{ ...inputStyle, flex: 1 }}
                  onChange={(e) => setRows(rows.map((x, j) => j === i
                    ? { ...x, name: e.target.value } : x))} />
           <input type="number" min="0" value={r.weight} placeholder="weight"
+                 title="This stage's share of the whole unit"
                  style={{ ...inputStyle, width: 84 }}
                  onChange={(e) => setRows(rows.map((x, j) => j === i
                    ? { ...x, weight: e.target.value } : x))} />
+          <span style={{ width: 44, fontSize: 11.5, color: "var(--muted)",
+                         textAlign: "right" }}>
+            {total > 0 ? `${Math.round((Number(r.weight) || 0) / total * 100)}%`
+                       : "—"}</span>
           <button style={{ ...ghostButton, color: "#c0392b",
                            padding: "2px 8px" }}
                   onClick={() => setRows(rows.filter((_, j) => j !== i))}>
