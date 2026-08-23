@@ -117,15 +117,80 @@ def _notify(po, revision, actor):
                     doc=po, category="approval")
 
 
+def _money_block(po):
+    """Why an approved amendment cannot move the money — or None if it can."""
+    from .models import Payable, PaymentVoucherLine
+    from .procurement import po_commitment
+    pr, row, err = po_commitment(po)
+    if err:                       # not a PR-backed order (an import PO)
+        return None, None, None
+    payable = Payable.objects.filter(document=pr, document_line=row).first()
+    if payable is None:
+        return pr, row, None
+    if payable.status != "OUTSTANDING":
+        return pr, row, (f"This order has already been settled "
+                         f"({payable.status.lower()}) — a change now needs a "
+                         f"credit note, not an amendment.")
+    if PaymentVoucherLine.objects.filter(
+            source_payable=payable,
+            voucher__status__in=("DRAFT", "SUBMITTED")).exists():
+        return pr, row, ("Finance has this payable on a voucher — take it off "
+                         "the voucher before amending the order.")
+    return pr, row, None
+
+
+def _apply_amendment_money(po, pr, row, delta_net, actor):
+    """Move the commitment and what we owe by the amendment's difference.
+
+    Approving used to swap the revision and nothing else, so an order whose
+    value changed left the payable and the cost ledger on the old figure —
+    PO-036 would have understated what we owe Sonee by 4,860 (owner
+    2026-08-23).
+    """
+    from decimal import Decimal
+
+    from .models import Payable
+    from .procurement import _post_pr_line
+
+    if delta_net == 0:
+        return
+    old_credit = row.amount_credit or Decimal("0")
+    old_gst = row.gst_amount or Decimal("0")
+    # Keep the row's own effective tax rate rather than assuming the company
+    # rate — the quotation set it.
+    rate = (old_gst / old_credit) if old_credit else Decimal("0")
+    delta_gst = (delta_net * rate).quantize(Decimal("0.01"))
+    row.amount_credit = old_credit + delta_net
+    row.gst_amount = old_gst + delta_gst
+    row.save(update_fields=["amount_credit", "gst_amount"])
+    # The ledger is append-only: post the difference, never rewrite history.
+    _post_pr_line(pr, row, delta_net, delta_gst, actor)
+    payable = Payable.objects.filter(document=pr, document_line=row,
+                                     status="OUTSTANDING").first()
+    if payable:
+        payable.amount = payable.amount + delta_net + delta_gst
+        payable.save(update_fields=["amount"])
+    audit("document", po.id, "PO_AMENDMENT_MONEY_ADJUSTED", actor=actor,
+          detail={"ref": po.ref, "net_delta": str(delta_net),
+                  "gst_delta": str(delta_gst),
+                  "payable_now": str(payable.amount) if payable else None})
+
+
 @transaction.atomic
 def decide_amendment(po, approve, actor, note=""):
     """Approve (the new revision goes live) or reject it (the supplier's copy
-    stands). Either way the order returns to ISSUED."""
+    stands). Either way the order returns to ISSUED. Approving also moves the
+    commitment and the payable by the difference in value."""
     revision = pending_revision(po)
     if revision is None:
         return None, "This order has no amendment waiting."
     old = po.current_revision
+    pr = row = None
     if approve:
+        was, now = revision_total(old), revision_total(revision)
+        pr, row, blocked = _money_block(po)
+        if blocked and was != now:
+            return None, blocked
         old.is_current = False
         old.save(update_fields=["is_current"])
         revision.is_current = True
@@ -136,6 +201,8 @@ def decide_amendment(po, approve, actor, note=""):
         revision.delete()
     po.status = "ISSUED"
     po.save(update_fields=["status", "current_revision", "updated_at"])
+    if approve and pr is not None and row is not None:
+        _apply_amendment_money(po, pr, row, now - was, actor)
     audit("document", po.id,
           "PO_AMENDMENT_APPROVED" if approve else "PO_AMENDMENT_REJECTED",
           actor=actor, detail={"ref": po.ref, "note": note,

@@ -353,6 +353,54 @@ class PrAuthorisationTests(PrCostingBase):
         self.assertEqual(pay.due_date, date.today() + timedelta(days=45))
         self.assertIn("supplier terms", pay.terms)
 
+    def test_an_approved_amendment_moves_the_commitment_and_the_payable(self):
+        """Approving used to swap the revision and nothing else, leaving the
+        payable and the ledger on the old figure — PO-036 would have
+        understated what we owe by the difference (owner 2026-08-23)."""
+        from decimal import Decimal
+
+        from .models import Document, DocumentLine
+        pr = self.make_pr()
+        po = self.sign_orders(pr)[0]
+        payable = Payable.objects.get(document=pr)
+        before = payable.amount                       # 7000, no GST here
+        committed = costing.document_net(pr, state="COMMITTED")
+        line = po.current_revision.lines.first()
+        self.client.force_authenticate(self.purchasing)
+        r = self.client.post(f"/api/v1/documents/{po.ref}/amend", {
+            "reason": "rate moved", "lines": [
+                {"id": line.id, "description": line.free_text_desc,
+                 "unit": line.unit, "qty_required": "1",
+                 "rate": "8000", "amount": "8000"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/documents/{po.ref}/amend-decision",
+                             {"approve": True}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        payable.refresh_from_db()
+        self.assertEqual(payable.amount, before + Decimal("1000"))
+        self.assertEqual(costing.document_net(pr, state="COMMITTED"),
+                         committed + Decimal("1000"))
+
+    def test_an_amendment_is_refused_once_the_payable_is_settled(self):
+        pr = self.make_pr()
+        po = self.sign_orders(pr)[0]
+        payable = Payable.objects.get(document=pr)
+        payable.status = "SETTLED"
+        payable.save(update_fields=["status"])
+        line = po.current_revision.lines.first()
+        self.client.force_authenticate(self.purchasing)
+        self.client.post(f"/api/v1/documents/{po.ref}/amend", {
+            "reason": "rate moved", "lines": [
+                {"id": line.id, "description": line.free_text_desc,
+                 "unit": line.unit, "qty_required": "1", "rate": "8000",
+                 "amount": "8000"}]}, format="json")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/documents/{po.ref}/amend-decision",
+                             {"approve": True}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("credit note", r.data["detail"])
+
     def test_finance_cannot_withdraw_behind_a_signed_order(self):
         """A signed order is with the supplier. Finance withdrawing the cash
         payment must not quietly cancel it (owner 2026-08-22)."""
