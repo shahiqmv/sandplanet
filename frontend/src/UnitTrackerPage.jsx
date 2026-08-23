@@ -93,6 +93,7 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
               <thead><tr>
                 <th style={th}>Unit</th><th style={th}>Milestone now</th>
                 <th style={{ ...th, width: 190 }}>Progress</th>
+                <th style={th}>Started</th>
                 <th style={th}>Status</th><th style={th}>Last reported</th>
               </tr></thead>
               <tbody>
@@ -100,7 +101,7 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
                   <UnitRows key={u.id} u={u} open={open === u.id}
                     onToggle={() => setOpen(open === u.id ? null : u.id)} />))}
                 {units.length === 0 && (
-                  <tr><td style={td} colSpan={5}>No unit matches.</td></tr>)}
+                  <tr><td style={td} colSpan={6}>No unit matches.</td></tr>)}
               </tbody>
             </table>
           </div>);
@@ -121,6 +122,16 @@ function UnitRows({ u, open, onToggle }) {
           <Bar value={u.percent} w={120} />
           <strong style={{ minWidth: 38 }}>{round(u.percent)}%</strong></span>
       </td>
+      {/* When work began on this unit, and how long it has run — or took
+          (owner 2026-08-23). */}
+      <td style={td}>
+        {u.started_on ? (<>
+          {u.started_on}
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>
+            {u.days_running} day{u.days_running === 1 ? "" : "s"}
+            {u.status === "COMPLETE" ? " · finished" : ""}</div>
+        </>) : <span style={{ color: "var(--muted)" }}>—</span>}
+      </td>
       <td style={td}><Chip tone={TONE[u.status] || "info"}>
         {u.status_label}</Chip>
         {u.status === "ON_HOLD" && u.hold_reason && (
@@ -131,7 +142,7 @@ function UnitRows({ u, open, onToggle }) {
           {u.last_dpr}</div>}</td>
     </tr>
     {open && (
-      <tr><td colSpan={5} style={{ background: "var(--sky-soft, #f3f8fb)",
+      <tr><td colSpan={6} style={{ background: "var(--sky-soft, #f3f8fb)",
                                    padding: "8px 16px 14px" }}>
         {/* The milestones behind the bar — how far each stage has got and
             which daily report reported it. */}

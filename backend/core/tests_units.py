@@ -299,6 +299,66 @@ class UnitProgressTests(UnitBoardBase):
         self.assertGreater(float(r.data["overall_percent"]), 0)
 
 
+class DurationTests(UnitBoardBase):
+    """Each unit shows when it started and how long it has been running —
+    derived from dates already held, no new bookkeeping (owner 2026-08-23)."""
+
+    def test_a_running_unit_counts_days_since_it_started(self):
+        from datetime import timedelta
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        stage = self.cat.stages.first()
+        self.client.post(f"/api/v1/units/{unit.id}/progress",
+                         {"stage_id": stage.id, "percent": "40"},
+                         format="json")
+        # Work actually began a fortnight ago; the PM corrects the date.
+        began = date.today() - timedelta(days=14)
+        r = self.client.patch(f"/api/v1/units/{unit.id}",
+                              {"started_on": str(began)}, format="json")
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual(str(u["started_on"]), str(began))
+        self.assertEqual(u["days_running"], 14)
+
+    def test_a_finished_unit_reports_how_long_it_took(self):
+        from datetime import timedelta
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        began = date.today() - timedelta(days=9)
+        self.client.patch(f"/api/v1/units/{unit.id}",
+                          {"started_on": str(began)}, format="json")
+        for st in self.cat.stages.all():
+            self.client.post(f"/api/v1/units/{unit.id}/progress",
+                             {"stage_id": st.id, "percent": "100"},
+                             format="json")
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/units")
+        u = next(x for x in r.data["units"] if x["id"] == unit.id)
+        self.assertEqual(u["status"], "COMPLETE")
+        self.assertEqual(str(u["completed_on"]), str(date.today()))
+        self.assertEqual(u["days_running"], 9)      # start to finish, not today
+
+    def test_a_unit_not_yet_started_has_no_duration(self):
+        self._generate()
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/units")
+        u = r.data["units"][0]
+        self.assertIsNone(u["started_on"])
+        self.assertIsNone(u["days_running"])
+
+    def test_finishing_before_starting_is_refused(self):
+        from datetime import timedelta
+        self._generate()
+        unit = ProjectUnit.objects.first()
+        for st in self.cat.stages.all():
+            self.client.post(f"/api/v1/units/{unit.id}/progress",
+                             {"stage_id": st.id, "percent": "100"},
+                             format="json")
+        r = self.client.patch(
+            f"/api/v1/units/{unit.id}",
+            {"started_on": str(date.today() + timedelta(days=3))},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("finish before it starts", r.data["detail"])
+
+
 class DprDrivesTheBoardTests(UnitBoardBase):
     """The DPR stays the record: it reports the unit progress, and the board
     says which DPR each figure came from."""

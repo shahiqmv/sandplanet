@@ -360,6 +360,8 @@ def apply_dpr(doc, actor):
 def board(project):
     """The unit board: every unit with its stage line, for the team, for
     management and for the client portal."""
+    from django.utils import timezone
+    today = timezone.localdate()
     units = (project.units.select_related("category")
              .prefetch_related("stage_progress__stage",
                                "category__stages",
@@ -395,6 +397,11 @@ def board(project):
             "status": u.status, "status_label": u.get_status_display(),
             "percent": u.percent, "current_stage": current,
             "started_on": u.started_on, "completed_on": u.completed_on,
+            # How long this unit has been running — or, once finished, how
+            # long it took. Counted from the day work was first reported
+            # (owner 2026-08-23).
+            "days_running": (((u.completed_on or today) - u.started_on).days
+                             if u.started_on else None),
             "target_date": u.target_date, "hold_reason": u.hold_reason,
             "last_reported_on": last, "last_dpr": last_doc,
             "stages": [{"id": st.id, "name": st.name, "weight": st.weight,

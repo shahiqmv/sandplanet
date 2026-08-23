@@ -184,8 +184,22 @@ def unit_detail(request, pk):
     for f in ("ref", "name", "size", "scope", "location", "hold_reason"):
         if f in request.data:
             setattr(unit, f, (request.data.get(f) or "").strip())
-    if "target_date" in request.data:
-        unit.target_date = request.data.get("target_date") or None
+    from datetime import date as _date
+    for f in ("target_date", "started_on"):
+        if f not in request.data:
+            continue
+        raw = request.data.get(f)
+        if not raw:
+            setattr(unit, f, None)
+            continue
+        try:
+            setattr(unit, f, _date.fromisoformat(str(raw)[:10]))
+        except ValueError:
+            return Response({"detail": f"{raw} is not a date."}, status=400)
+    if unit.started_on and unit.completed_on \
+            and unit.completed_on < unit.started_on:
+        return Response({"detail": "A unit cannot finish before it starts."},
+                        status=400)
     if request.data.get("status") in dict(ProjectUnit.Status.choices):
         unit.status = request.data["status"]
     if not unit.ref:

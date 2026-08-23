@@ -348,7 +348,8 @@ function UnitRow({ u, open, onToggle, can, me, patchUnit, call,
 function UnitEdit({ u, patchUnit }) {
   const [f, setF] = useState({ ref: u.ref, name: u.name, size: u.size,
                                location: u.location, scope: u.scope,
-                               target_date: u.target_date || "" });
+                               target_date: u.target_date || "",
+                               started_on: u.started_on || "" });
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
   const row = { display: "flex", gap: 6, alignItems: "center",
                 marginBottom: 5 };
@@ -363,6 +364,10 @@ function UnitEdit({ u, patchUnit }) {
                style={inputStyle} /></div>
       <div style={row}><span style={{ width: 62 }}>Location</span>
         <input value={f.location} onChange={set("location")}
+               style={inputStyle} /></div>
+      <div style={row}><span style={{ width: 62 }}>Started</span>
+        <input type="date" value={f.started_on} onChange={set("started_on")}
+               title="When work began — stamped on the first report, correct it here"
                style={inputStyle} /></div>
       <div style={row}><span style={{ width: 62 }}>Target</span>
         <input type="date" value={f.target_date} onChange={set("target_date")}
