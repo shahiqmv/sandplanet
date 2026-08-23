@@ -14,7 +14,8 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onManpower, onNewPyr, onPyrRegister,
                                         onPettyCash, onStock, onTools,
                                         onCreateGrn, onNewPmr, onOpenDoc,
-                                        onWorkforce, onVessels, refresh }) {
+                                        onWorkforce, onVessels, onUnits,
+                                        refresh }) {
   const [dash, setDash] = useState(null);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -196,6 +197,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
             <Btn variant="secondary" onClick={onWorkforce}>
               <Icon name="users" />Workforce</Btn>
+          )}
+          {/* Unit progress opens its own page — the tracker is a report, not
+              a dashboard tile (owner 2026-08-23). */}
+          {onUnits && (
+            <Btn variant="secondary" onClick={onUnits}>
+              <Icon name="grid" />Unit progress</Btn>
           )}
           {onVessels && (
             <Btn variant="secondary" onClick={onVessels}

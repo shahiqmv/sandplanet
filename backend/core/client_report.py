@@ -145,6 +145,19 @@ def project_programme(project):
                             if project.planned_completion else None)}
 
 
+def unit_summary(project):
+    """A one-line unit headline for the portal overview — the detail lives on
+    the unit board (owner 2026-08-23)."""
+    from . import units as svc
+    if not project.units.exists():
+        return None
+    b = svc.board(project)
+    return {"count": b["unit_count"], "complete": b["complete"],
+            "in_progress": sum(1 for u in b["units"]
+                               if u["status"] == "IN_PROGRESS"),
+            "percent": b["overall_percent"]}
+
+
 def project_progress(site, code=None):
     """Interim overall progress for a project (or the whole site when code is
     None): the average of the to-date % across the most recent DPR that carries

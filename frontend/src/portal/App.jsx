@@ -128,7 +128,7 @@ function DocRow({ icon, label, sub, status, onView }) {
 
 /* --------------------------------------------------------------- overview */
 function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
-  goGallery, goCameras, goSubmittals }) {
+  goGallery, goCameras, goSubmittals, goUnits }) {
   const projects = d.projects || [];
   const active = projects[proj] || null;
   const mp = d.manpower;
@@ -190,6 +190,10 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
           <div className="mstat"><div className="k">Next delivery</div>
             <div className="v">{d.materials_on_the_way.length
               ? fmt(d.materials_on_the_way[0].date) : "—"}</div></div>
+          {active && active.units && (
+            <div className="mstat"><div className="k">Units complete</div>
+              <div className="v tnum">{active.units.complete}
+                <span> of {active.units.count}</span></div></div>)}
           {dTo != null && <div className="mstat"><div className="k">Days to target</div>
             <div className="v tnum">{dTo}</div></div>}
         </div>
@@ -260,6 +264,17 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
               method statements ({d.submittals.length})</p></div>
             <div className="arw">→</div>
           </div>)}
+        {vis.show_programme && active && active.has_units && (
+          <div className="qcard" onClick={goUnits}>
+            <div className="qic">▦</div>
+            <div><h3>Unit progress</h3>
+              <p>{active.units
+                ? `${active.units.complete} of ${active.units.count} complete`
+                  + `${active.units.in_progress
+                      ? ` · ${active.units.in_progress} under way` : ""}`
+                : "Stage by stage, unit by unit"}</p></div>
+            <div className="arw">→</div>
+          </div>)}
         {vis.show_programme && <div className="qcard" onClick={goProgramme}>
           <div className="qic">📅</div>
           <div><h3>Construction programme</h3><p>Timeline &amp; % complete per activity</p></div>
@@ -282,6 +297,131 @@ function Overview({ d, vis = {}, proj, setProj, openDoc, goProc, goProgramme,
         </div>}
       </div>
       <div className="footer">Sand Planet (Pvt) Ltd · Client Portal</div>
+    </>
+  );
+}
+
+/* -------------------------------------------------------- unit progress view */
+/* The question clients ask most on a villa/pool job: where is MY unit? A bar
+   per unit, the milestones behind it, and what is happening right now — the
+   same board the site team reads, without our internal daily-report refs
+   (owner 2026-08-23). */
+function UnitsView({ project, onBack }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    setD(null); setErr(null);
+    api(`/projects/${project.id}/units`).then(setD)
+      .catch((e) => setErr(e.message));
+  }, [project.id]);
+
+  const tone = (u) => u.status === "COMPLETE" ? "ok"
+    : u.status === "ON_HOLD" ? "warn"
+    : u.status === "IN_PROGRESS" ? "" : "mut";
+
+  return (
+    <>
+      <button className="btn" style={{ marginBottom: 16 }} onClick={onBack}>
+        ‹ Back to overview</button>
+      {err && <div className="card"><p className="err">{err}</p></div>}
+      {!d && !err && <div className="card"><p className="muted">Loading…</p></div>}
+      {d && (<>
+        <div className="card hero">
+          <div className="row">
+            <div className="lead">
+              <div className="eyebrow">{project.code} · Unit progress</div>
+              <div className="proj-name serif">{project.title}</div>
+              <div className="proj-sub">
+                {d.complete} of {d.unit_count} complete</div>
+            </div>
+            <div className="pct-wrap">
+              <div className="pct serif tnum">
+                {Math.round(Number(d.overall_percent))}<small>%</small></div>
+              <div className="pct-l">Across all units</div>
+            </div>
+          </div>
+          <div className="bar">
+            <i style={{ width: `${Number(d.overall_percent)}%` }} /></div>
+          <div className="ticks">
+            <span>{d.unit_count} units</span>
+            <span>Updated from the daily site reports</span>
+            <span>{d.complete} complete</span>
+          </div>
+        </div>
+
+        {d.categories.length > 1 && (
+          <div className="card">
+            <div className="sec-title"><h2>By type</h2></div>
+            {d.categories.map((c) => (
+              <div key={c.id || c.name} style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between",
+                              fontSize: 13.5, marginBottom: 5 }}>
+                  <strong>{c.name}</strong>
+                  <span className="muted tnum">
+                    {c.complete}/{c.units} · {Math.round(Number(c.percent))}%
+                  </span>
+                </div>
+                <div className="bar"><i style={{
+                  width: `${Number(c.percent)}%` }} /></div>
+              </div>))}
+          </div>)}
+
+        <div className="card">
+          <div className="sec-title"><h2>Every unit</h2>
+            <span className="hint">Tap a unit for its milestones</span></div>
+          {d.units.map((u) => (
+            <div key={u.id} style={{ borderTop: "1px solid var(--line-2)",
+                                     padding: "12px 0" }}>
+              <div onClick={() => setOpen(open === u.id ? null : u.id)}
+                   style={{ cursor: "pointer", display: "flex", gap: 12,
+                            alignItems: "center", flexWrap: "wrap" }}>
+                <strong style={{ minWidth: 74 }}>{u.ref}</strong>
+                <span className="muted" style={{ flex: "1 1 150px",
+                                                 fontSize: 13 }}>
+                  {u.current_stage || (u.status === "COMPLETE"
+                                       ? "Complete" : "Not started")}
+                  {u.size ? ` · ${u.size}` : ""}
+                </span>
+                <span className={`pill ${tone(u)}`}>{u.status_label}</span>
+                <span className="tnum" style={{ minWidth: 46,
+                                                textAlign: "right" }}>
+                  {Math.round(Number(u.percent))}%</span>
+              </div>
+              <div className="bar" style={{ marginTop: 8, height: 8 }}>
+                <i style={{ width: `${Number(u.percent)}%` }} /></div>
+              {open === u.id && (
+                <div style={{ marginTop: 12 }}>
+                  {u.stages.map((st) => {
+                    const pc = Number(st.percent);
+                    return (
+                      <div key={st.id} style={{ display: "flex", gap: 10,
+                                                alignItems: "center",
+                                                margin: "7px 0" }}>
+                        <span style={{ width: 16, textAlign: "center",
+                                       color: pc >= 100 ? "var(--ok)"
+                                            : pc > 0 ? "var(--accent)"
+                                            : "var(--ink-3)" }}>
+                          {pc >= 100 ? "●" : pc > 0 ? "◐" : "○"}</span>
+                        <span style={{ flex: "1 1 auto", fontSize: 13 }}>
+                          {st.name}</span>
+                        <div className="bar" style={{ width: 110, height: 6 }}>
+                          <i style={{ width: `${pc}%` }} /></div>
+                        <span className="tnum muted"
+                              style={{ width: 40, fontSize: 12,
+                                       textAlign: "right" }}>
+                          {Math.round(pc)}%</span>
+                      </div>);
+                  })}
+                  {u.scope && <p className="muted" style={{ fontSize: 12.5,
+                                                            marginTop: 8 }}>
+                    {u.scope}</p>}
+                </div>)}
+            </div>))}
+          {d.units.length === 0 && (
+            <p className="muted">No units are being tracked yet.</p>)}
+        </div>
+      </>)}
     </>
   );
 }
@@ -843,6 +983,9 @@ function SitePortal({ id, single, onBackToSites }) {
           onClick={() => setView({ name: "overview" })}>Overview</button>
         {vis.show_programme && <button className={`seg ${seg === "programme" ? "on" : ""}`}
           onClick={() => setView({ name: "programme" })} disabled={!activeProject}>Programme</button>}
+        {vis.show_programme && activeProject && activeProject.has_units &&
+          <button className={`seg ${seg === "units" ? "on" : ""}`}
+            onClick={() => setView({ name: "units" })}>Units</button>}
         {vis.show_gallery && <button className={`seg ${seg === "gallery" ? "on" : ""}`}
           onClick={() => setView({ name: "gallery" })}>Gallery</button>}
         {vis.show_procurement && <button className={`seg ${seg === "proc" ? "on" : ""}`}
@@ -861,7 +1004,13 @@ function SitePortal({ id, single, onBackToSites }) {
           goProgramme={() => setView({ name: "programme" })}
           goGallery={() => setView({ name: "gallery" })}
           goSubmittals={() => setView({ name: "submittals" })}
-          goCameras={() => setView({ name: "cameras" })} />}
+          goCameras={() => setView({ name: "cameras" })}
+          goUnits={() => setView({ name: "units" })} />}
+        {seg === "units" && (activeProject
+          ? <UnitsView project={activeProject}
+                       onBack={() => setView({ name: "overview" })} />
+          : <div className="card"><p className="muted">
+              No project selected.</p></div>)}
         {seg === "submittals" && <SubmittalsView submittals={d.submittals}
           onBack={() => setView({ name: "overview" })} />}
         {seg === "report" && <ReportView docRef={view.ref}

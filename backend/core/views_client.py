@@ -141,7 +141,12 @@ def client_site(request, pk):
                       "progress": cr.client_project_progress(p),
                       "start_date": p.start_date,
                       "target_date": p.planned_completion,
-                      "has_programme": p.activities.exists()}
+                      "has_programme": p.activities.exists(),
+                      # Per-unit tracking, when the project runs it: the
+                      # client's most-asked question is which villa/pool is
+                      # where (owner 2026-08-23).
+                      "has_units": p.units.exists(),
+                      "units": cr.unit_summary(p)}
                      for p in projects],
         # Current strength on site — by trade + grand total, from the latest
         # daily report (includes subcontract labour).
