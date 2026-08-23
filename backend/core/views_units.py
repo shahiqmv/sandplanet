@@ -95,7 +95,8 @@ def category_generate_units(request, pk):
     if not svc.can_manage(request.user):
         return Response({"detail": "The PM or QS sets up units."}, status=403)
     made, msg = svc.generate_units(cat, request.user,
-                                   prefix=request.data.get("prefix"))
+                                   prefix=request.data.get("prefix"),
+                                   refs=request.data.get("refs"))
     if msg:
         return Response({"detail": msg}, status=400)
     data = _payload(cat.boq.project, request.user)

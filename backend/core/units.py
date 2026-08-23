@@ -186,9 +186,13 @@ def _set_stages(rows, actor, existing, units, label, project_id,
     return None
 
 
-def generate_units(category, actor, prefix=None, start=1):
-    """Create the category's units from its quantity — D-01…D-11 — skipping
-    refs that already exist, so it is safe to re-run after the quantity grows.
+def generate_units(category, actor, prefix=None, start=1, refs=None):
+    """Create the category's units.
+
+    `refs` names them explicitly — the real villa numbers, which is what a PM
+    has to hand on a refurbishment (owner 2026-08-23). Otherwise they are
+    numbered from the category's quantity, D-01…D-11. Either way, refs that
+    already exist are skipped, so it is safe to re-run after a quantity grows.
     """
     project = category.boq.project
     if category.is_lump:
@@ -202,8 +206,25 @@ def generate_units(category, actor, prefix=None, start=1):
     have = set(project.units.values_list("ref", flat=True))
     made = []
     n = int(start)
-    last = category.units.order_by("-sort_order").first()
+    last = project.units.order_by("-sort_order").first()
     order = (last.sort_order if last else 0)
+    wanted = [r.strip() for r in (refs or []) if r and r.strip()]
+    if wanted:
+        for ref in wanted:
+            if ref in have:
+                continue
+            have.add(ref)
+            order += 1
+            made.append(ProjectUnit(project=project, category=category,
+                                    sort_order=order, ref=ref[:30],
+                                    name=category.name[:120]))
+        if not made:
+            return 0, None
+        ProjectUnit.objects.bulk_create(made)
+        audit("project", project.id, "UNITS_GENERATED", actor=actor,
+              detail={"category": category.name[:80], "count": len(made),
+                      "refs": [u.ref for u in made][:25]})
+        return len(made), None
     while len(made) < want - category.units.count():
         ref = f"{base}-{n:02d}"
         n += 1

@@ -52,6 +52,27 @@ class UnitSetupTests(UnitBoardBase):
         self.assertEqual(float(u["percent"]), 0.0)
         self.assertTrue(len(u["stages"]) >= 5)
 
+    def test_a_category_can_be_given_the_real_unit_numbers(self):
+        """A refurbishment PM knows the villa numbers — Soneva Fushi's
+        Category C is villas 56, 57 and 58, not BILL03-01 (owner
+        2026-08-23)."""
+        r = self.client.post(
+            f"/api/v1/boq-categories/{self.cat.id}/generate-units",
+            {"refs": ["Villa 56", "Villa 57", "Villa 58"]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual([u["ref"] for u in r.data["units"]],
+                         ["Villa 56", "Villa 57", "Villa 58"])
+        self.assertEqual(self.cat.units.count(), 3)
+        u = r.data["units"][0]
+        self.assertEqual(u["category"], self.cat.name)
+        self.assertTrue(len(u["stages"]) >= 5)
+        # Re-running with an overlapping list adds only what is missing.
+        r2 = self.client.post(
+            f"/api/v1/boq-categories/{self.cat.id}/generate-units",
+            {"refs": ["Villa 57", "Villa 60"]}, format="json")
+        self.assertEqual(r2.data["created"], 1)
+        self.assertEqual(len(r2.data["units"]), 4)
+
     def test_generating_twice_tops_up_rather_than_duplicating(self):
         self._generate()
         self.cat.qty = 5
