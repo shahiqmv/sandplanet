@@ -34,6 +34,9 @@ export default function UnitsPanel({ projectId, me }) {
   const [open, setOpen] = useState(null);        // expanded unit id
   const [editing, setEditing] = useState(null);  // category id for the ladder
   const [filter, setFilter] = useState("");
+  // Units are listed in the order the site walks them — generated refs
+  // rarely match that (owner 2026-08-23).
+  const [ordering, setOrdering] = useState(false);
 
   const load = () => api(`/projects/${projectId}/units`).then(setData)
     .catch((e) => setError(e.message));
@@ -49,6 +52,13 @@ export default function UnitsPanel({ projectId, me }) {
     catch (e) { setError(e.message); }
   }
   const patchUnit = (u, body) => call(`/units/${u.id}`, body, "PATCH");
+  const moveUnit = (idx, to) => {
+    if (to < 0 || to >= data.units.length) return;
+    const ids = data.units.map((u) => u.id);
+    const [x] = ids.splice(idx, 1);
+    ids.splice(to, 0, x);
+    call(`/projects/${projectId}/reorder-units`, { ids });
+  };
 
   const shown = data.units.filter((u) => {
     const q = filter.trim().toLowerCase();
@@ -70,6 +80,11 @@ export default function UnitsPanel({ projectId, me }) {
         <input placeholder="Find a unit…" value={filter}
                onChange={(e) => setFilter(e.target.value)}
                style={{ ...inputStyle, width: 180, marginLeft: "auto" }} />
+        {can && data.unit_count > 1 && (
+          <button style={{ ...ghostButton, padding: "3px 11px",
+                           fontSize: 12.5 }}
+                  onClick={() => { setOrdering(!ordering); setOpen(null); }}>
+            {ordering ? "Done ordering" : "Reorder units"}</button>)}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
@@ -150,6 +165,11 @@ export default function UnitsPanel({ projectId, me }) {
               onDone={(d) => { if (d) setData(d); setEditing(null); }} />)}
         </div>)}
 
+      {ordering && filter.trim() && (
+        <p style={{ fontSize: 12, color: "#b35900", margin: "0 0 6px" }}>
+          Clear the search to reorder — the arrows move a unit within the full
+          list, not a filtered one.</p>)}
+
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>
           <th style={th}>Ref</th><th style={th}>Unit</th>
@@ -158,10 +178,12 @@ export default function UnitsPanel({ projectId, me }) {
           <th style={th}>Last reported</th>
         </tr></thead>
         <tbody>
-          {shown.map((u) => (
+          {shown.map((u, i) => (
             <UnitRow key={u.id} u={u} open={open === u.id}
-              onToggle={() => setOpen(open === u.id ? null : u.id)}
-              can={can} me={me} patchUnit={patchUnit} call={call} />))}
+              onToggle={() => !ordering && setOpen(open === u.id ? null : u.id)}
+              can={can} me={me} patchUnit={patchUnit} call={call}
+              ordering={ordering && !filter.trim()} index={i}
+              last={i === shown.length - 1} onMove={moveUnit} />))}
           {shown.length === 0 && (
             <tr><td style={td} colSpan={6}>
               {data.unit_count === 0
@@ -237,12 +259,28 @@ function SetUp({ projectId, can, unitPriced, onDone }) {
     </div>);
 }
 
-function UnitRow({ u, open, onToggle, can, me, patchUnit, call }) {
+function UnitRow({ u, open, onToggle, can, me, patchUnit, call,
+                  ordering, index, last, onMove }) {
   const canReport = REPORT_ROLES.includes(me.role);
   return (<>
-    <tr style={{ cursor: "pointer" }} onClick={onToggle}>
+    <tr style={{ cursor: ordering ? "default" : "pointer" }}
+        onClick={onToggle}>
       <td style={{ ...td, fontFamily: "var(--font-mono)", fontWeight: 600 }}>
-        {open ? "▾ " : "▸ "}{u.ref}</td>
+        {ordering ? (
+          <span style={{ display: "inline-flex", gap: 2, marginRight: 6,
+                         verticalAlign: "middle" }}>
+            <button title="Move up" disabled={index === 0}
+                    style={{ ...ghostButton, padding: "0 5px", fontSize: 10,
+                             opacity: index === 0 ? 0.3 : 1 }}
+                    onClick={(e) => { e.stopPropagation();
+                                      onMove(index, index - 1); }}>▲</button>
+            <button title="Move down" disabled={last}
+                    style={{ ...ghostButton, padding: "0 5px", fontSize: 10,
+                             opacity: last ? 0.3 : 1 }}
+                    onClick={(e) => { e.stopPropagation();
+                                      onMove(index, index + 1); }}>▼</button>
+          </span>
+        ) : (open ? "▾ " : "▸ ")}{u.ref}</td>
       <td style={td}>{u.name}
         {u.size && <span style={{ color: "var(--muted)" }}> · {u.size}</span>}
       </td>

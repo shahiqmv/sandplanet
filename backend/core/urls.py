@@ -275,6 +275,8 @@ urlpatterns = [
          name="project-unit-stages"),
     path("projects/<int:pk>/create-units", units_api.project_create_units,
          name="project-create-units"),
+    path("projects/<int:pk>/reorder-units", units_api.project_reorder_units,
+         name="project-reorder-units"),
     path("units/<int:pk>", units_api.unit_detail, name="unit-detail"),
     path("units/<int:pk>/progress", units_api.unit_progress,
          name="unit-progress"),

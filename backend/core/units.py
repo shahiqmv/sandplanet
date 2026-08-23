@@ -221,6 +221,41 @@ def generate_units(category, actor, prefix=None, start=1):
     return len(made), None
 
 
+def reorder_units(project, ids, actor):
+    """Put the units in the order the site actually walks them — a jetty runs
+    in a sequence, and generated refs rarely match it (owner 2026-08-23).
+    Ids not named keep their place at the end."""
+    wanted = []
+    seen = set()
+    for raw in ids or []:
+        try:
+            i = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if i not in seen:
+            seen.add(i)
+            wanted.append(i)
+    by_id = {u.id: u for u in project.units.all()}
+    unknown = [i for i in wanted if i not in by_id]
+    if unknown:
+        return "One or more units are not on this project."
+    order = 0
+    for i in wanted:
+        order += 1
+        u = by_id.pop(i)
+        if u.sort_order != order:
+            u.sort_order = order
+            u.save(update_fields=["sort_order"])
+    for u in sorted(by_id.values(), key=lambda x: (x.sort_order, x.id)):
+        order += 1
+        if u.sort_order != order:
+            u.sort_order = order
+            u.save(update_fields=["sort_order"])
+    audit("project", project.id, "UNITS_REORDERED", actor=actor,
+          detail={"count": len(wanted)})
+    return None
+
+
 def recalc(unit):
     """The unit's weighted percentage, and the status that follows from it."""
     stages = stages_for(unit)

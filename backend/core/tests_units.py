@@ -112,6 +112,39 @@ class UnitSetupTests(UnitBoardBase):
                                             f"is missing {k}")
             self.assertTrue(resp.data["is_unit_project"])
 
+    def test_units_can_be_put_in_the_order_the_site_walks_them(self):
+        """Generated refs rarely match the sequence on the ground (owner
+        2026-08-23)."""
+        self._generate()
+        ids = [u["id"] for u in self.client.get(
+            f"/api/v1/projects/{self.project.id}/units").data["units"]]
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/reorder-units",
+                             {"ids": [ids[2], ids[0], ids[1]]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual([u["id"] for u in r.data["units"]],
+                         [ids[2], ids[0], ids[1]])
+        again = self.client.get(f"/api/v1/projects/{self.project.id}/units")
+        self.assertEqual([u["id"] for u in again.data["units"]],
+                         [ids[2], ids[0], ids[1]])
+
+    def test_a_partial_order_leaves_the_rest_behind_it(self):
+        self._generate()
+        ids = [u["id"] for u in self.client.get(
+            f"/api/v1/projects/{self.project.id}/units").data["units"]]
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/reorder-units",
+                             {"ids": [ids[2]]}, format="json")
+        self.assertEqual([u["id"] for u in r.data["units"]][0], ids[2])
+        self.assertEqual(len(r.data["units"]), 3)
+
+    def test_a_unit_from_another_project_is_refused(self):
+        self._generate()
+        other = Project.objects.create(site=self.site, code="OTHER",
+                                       title="Other")
+        stray = ProjectUnit.objects.create(project=other, ref="X-01")
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/reorder-units",
+                             {"ids": [stray.id]}, format="json")
+        self.assertEqual(r.status_code, 400)
+
     def test_only_the_pm_or_qs_sets_up_units(self):
         self.client.force_authenticate(self.se)
         self.assertEqual(self._generate().status_code, 403)

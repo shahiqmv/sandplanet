@@ -142,6 +142,23 @@ def project_create_units(request, pk):
     return Response(data, status=201)
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def project_reorder_units(request, pk):
+    """Set the order the units are listed in — ids, first to last."""
+    project, err = _get_project(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "The PM or QS orders the units."},
+                        status=403)
+    msg = svc.reorder_units(project, request.data.get("ids") or [],
+                            request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_payload(project, request.user))
+
+
 @api_view(["PATCH", "DELETE"])
 @permission_classes([IsAuthenticated])
 def unit_detail(request, pk):
