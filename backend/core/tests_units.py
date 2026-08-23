@@ -84,6 +84,34 @@ class UnitSetupTests(UnitBoardBase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("already used", r.data["detail"])
 
+    def test_every_endpoint_returns_the_full_panel_payload(self):
+        """The panel replaces its whole state with each response. A bare board
+        made it forget the project was unit-based and fall back to the "not a
+        unit BOQ" message the moment units were generated (owner 2026-08-23)."""
+        keys = ("is_unit_project", "can_manage", "ladders", "units",
+                "categories", "overall_percent")
+        r = self._generate()
+        for k in keys:
+            self.assertIn(k, r.data, f"generate-units is missing {k}")
+        self.assertTrue(r.data["is_unit_project"])
+        unit = ProjectUnit.objects.first()
+        stage = self.cat.stages.first()
+        for resp in (
+            self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
+                             {"stages": [{"name": "A", "weight": 1}]},
+                             format="json"),
+            self.client.patch(f"/api/v1/units/{unit.id}", {"size": "10 m2"},
+                              format="json"),
+            self.client.post(f"/api/v1/units/{unit.id}/progress",
+                             {"stage_id": self.cat.stages.first().id,
+                              "percent": "10"}, format="json"),
+        ):
+            self.assertEqual(resp.status_code, 200, resp.data)
+            for k in keys:
+                self.assertIn(k, resp.data, f"{resp.request['PATH_INFO']} "
+                                            f"is missing {k}")
+            self.assertTrue(resp.data["is_unit_project"])
+
     def test_only_the_pm_or_qs_sets_up_units(self):
         self.client.force_authenticate(self.se)
         self.assertEqual(self._generate().status_code, 403)

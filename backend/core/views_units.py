@@ -21,16 +21,17 @@ def _get_project(request, pk):
     return project, None
 
 
-@api_view(["GET"])
-@permission_classes([IsAuthenticated])
-def project_units(request, pk):
-    """The board, plus the stage ladder per category so the tab can edit it."""
-    project, err = _get_project(request, pk)
-    if err:
-        return err
+def _payload(project, user):
+    """The board plus everything the panel needs to render itself.
+
+    EVERY endpoint returns this, not a bare board: the panel replaces its
+    whole state with the response, so a partial payload made it forget the
+    project was unit-based and fall back to the "not a unit BOQ" message
+    right after generating units.
+    """
     data = svc.board(project)
     data["is_unit_project"] = svc.is_unit_project(project)
-    data["can_manage"] = svc.can_manage(request.user)
+    data["can_manage"] = svc.can_manage(user)
     data["ladders"] = [
         {"category_id": c.id, "ref": c.ref, "name": c.name, "qty": c.qty,
          "is_lump": c.is_lump, "units": c.units.count(),
@@ -38,7 +39,17 @@ def project_units(request, pk):
                     for s in c.stages.all()]}
         for c in getattr(project, "boq", None).categories.all()
     ] if svc.is_unit_project(project) else []
-    return Response(data)
+    return data
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def project_units(request, pk):
+    """The board, plus the stage ladder per category so the tab can edit it."""
+    project, err = _get_project(request, pk)
+    if err:
+        return err
+    return Response(_payload(project, request.user))
 
 
 @api_view(["POST"])
@@ -58,7 +69,7 @@ def category_stages(request, pk):
     msg = svc.set_stages(cat, request.data.get("stages") or [], request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(svc.board(cat.boq.project))
+    return Response(_payload(cat.boq.project, request.user))
 
 
 @api_view(["POST"])
@@ -78,7 +89,7 @@ def category_generate_units(request, pk):
                                    prefix=request.data.get("prefix"))
     if msg:
         return Response({"detail": msg}, status=400)
-    data = svc.board(cat.boq.project)
+    data = _payload(cat.boq.project, request.user)
     data["created"] = made
     return Response(data, status=201)
 
@@ -103,7 +114,7 @@ def unit_detail(request, pk):
                             status=400)
         project = unit.project
         unit.delete()
-        return Response(svc.board(project))
+        return Response(_payload(project, request.user))
     for f in ("ref", "name", "size", "scope", "location", "hold_reason"):
         if f in request.data:
             setattr(unit, f, (request.data.get(f) or "").strip())
@@ -120,7 +131,7 @@ def unit_detail(request, pk):
     unit.save()
     if unit.status != ProjectUnit.Status.ON_HOLD:
         svc.recalc(unit)
-    return Response(svc.board(unit.project))
+    return Response(_payload(unit.project, request.user))
 
 
 @api_view(["POST"])
@@ -145,7 +156,7 @@ def unit_progress(request, pk):
                               on=date.today(), actor=request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(svc.board(unit.project))
+    return Response(_payload(unit.project, request.user))
 
 
 @api_view(["GET"])
