@@ -577,10 +577,18 @@ def set_milestones(order, rows):
             return f"Milestone {i}: set a percent or a fixed amount."
         amt = fixed if fixed is not None else (total * pct / Decimal("100"))
         scheduled += amt
+        # Credit after the trigger: the row's own figure, else the supplier's
+        # agreed period, else none (pay on the trigger).
+        raw_cd = r.get("credit_days")
+        cd = (int(raw_cd) if str(raw_cd if raw_cd is not None else "").strip()
+              .isdigit() else None)
+        if cd is None:
+            cd = order.supplier.credit_days if order.supplier_id else None
         cleaned.append({"label": label,
                         "trigger": r.get("trigger") or "BALANCE",
                         "percent": pct, "fixed_amount": fixed,
-                        "due_date": r.get("due_date") or None})
+                        "due_date": r.get("due_date") or None,
+                        "credit_days": cd})
     if abs(scheduled.quantize(Decimal("0.01")) - total.quantize(
             Decimal("0.01"))) > Decimal("0.01"):
         return (f"The schedule ({scheduled.quantize(Decimal('0.01'))}) must "
@@ -592,15 +600,50 @@ def set_milestones(order, rows):
     return None
 
 
+def _stamp_due(m):
+    """The day a milestone fell due, and the day it must be paid by — the
+    trigger date plus whatever credit the supplier gives on it. Stamped once;
+    Finance may move pay_by afterwards with a reason."""
+    from datetime import timedelta
+    from django.utils import timezone
+    today = timezone.localdate()
+    m.status = "DUE"
+    m.fell_due_on = today
+    m.pay_by = today + timedelta(days=m.credit_days or 0)
+    m.save(update_fields=["status", "fell_due_on", "pay_by"])
+
+
 def mark_milestone_due(milestone, actor):
     """Purchasing flags a milestone due (its trigger has been met) — it then
-    enters Finance's import-payments queue."""
+    enters Finance's international-payables register."""
     if milestone.status != "PENDING":
         return "Only a pending milestone can be marked due."
-    milestone.status = "DUE"
-    milestone.save(update_fields=["status"])
+    _stamp_due(milestone)
     audit("document", milestone.order.document_id, "IPR_MILESTONE_DUE",
-          actor=actor, detail={"milestone": milestone.label})
+          actor=actor, detail={"milestone": milestone.label,
+                               "pay_by": str(milestone.pay_by)})
+    return None
+
+
+def move_pay_by(milestone, on, reason, actor):
+    """Finance moves the pay-by date — a supplier extended, or a related party
+    is happy to wait. Reason required, audited, and the milestone stays where
+    it is otherwise (owner 2026-08-23)."""
+    from datetime import date as _date
+    if milestone.status != "DUE":
+        return "Only a due milestone has a pay-by date to move."
+    try:
+        new = _date.fromisoformat(str(on))
+    except (TypeError, ValueError):
+        return "Give the new pay-by date."
+    if not (reason or "").strip():
+        return "Say why the pay-by date is moving."
+    old = milestone.pay_by
+    milestone.pay_by = new
+    milestone.save(update_fields=["pay_by"])
+    audit("document", milestone.order.document_id, "IPR_MILESTONE_PAY_BY_MOVED",
+          actor=actor, detail={"milestone": milestone.label, "from": str(old),
+                               "to": str(new), "reason": reason.strip()})
     return None
 
 
@@ -649,13 +692,16 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
 
 
 def payments_due():
-    """Overseas TT milestones in Finance's queue: DUE ones (awaiting voucher
-    authorisation) and AUTHORISED ones (voucher-approved, ready for the TT)."""
+    """The international-payables register: every unpaid milestone on an
+    authorised order — PENDING (coming: the balance on arrival Finance wants to
+    see ahead of time), DUE (payable, with a pay-by date) and AUTHORISED
+    (voucher-approved, ready for the TT). Owner 2026-08-23."""
     from .models import ImportPaymentMilestone
     return ImportPaymentMilestone.objects.filter(
-        status__in=("DUE", "AUTHORISED"),
+        status__in=("PENDING", "DUE", "AUTHORISED"),
         order__document__status="AUTHORISED").select_related(
-        "order__document", "order__supplier", "voucher")
+        "order__document", "order__supplier", "voucher").order_by(
+        "order__supplier__name", "order__document__ref", "seq")
 
 
 # ---- Shipments + shipping documents (P1B-d) ------------------------------
@@ -670,8 +716,7 @@ def fire_milestones(order, trigger, actor):
     so they enter Finance's queue (§5.10.7)."""
     fired = []
     for m in order.milestones.filter(trigger=trigger, status="PENDING"):
-        m.status = "DUE"
-        m.save(update_fields=["status"])
+        _stamp_due(m)
         fired.append(m)
     if fired:
         audit("document", order.document_id, "IPR_MILESTONES_FIRED",

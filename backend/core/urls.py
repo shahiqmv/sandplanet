@@ -109,6 +109,8 @@ urlpatterns = [
          imports_api.ipr_milestone_pay, name="ipr-milestone-pay"),
     path("ipr/<str:ref>/milestones/<int:pk>/tt-advice",
          imports_api.ipr_milestone_tt_advice, name="ipr-milestone-tt-advice"),
+    path("ipr/milestones/<int:pk>/pay-by", imports_api.ipr_milestone_pay_by,
+         name="ipr-milestone-pay-by"),
     path("ipr/<str:ref>/shipments", imports_api.ipr_shipment_create,
          name="ipr-shipment-create"),
     path("ipr/<str:ref>/shipments/<int:pk>/status",

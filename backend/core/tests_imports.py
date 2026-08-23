@@ -148,6 +148,10 @@ class IprBase(PmrBase):
         self.pmr.current_revision = rev
         self.pmr.save(update_fields=["current_revision"])
 
+    def _order(self, ref):
+        from .models import ImportOrder
+        return ImportOrder.objects.get(document__ref=ref)
+
     def create_and_authorise(self):
         """Create the order, award it (Director), and authorise it directly
         (Signatory) — no voucher: placing the order is a commitment, not a
@@ -320,10 +324,15 @@ class MilestonePaymentTests(IprBase):
             f"/api/v1/ipr/{ref}/milestones/{advance['id']}/due", {},
             format="json")
         self.client.force_authenticate(self.finance)
-        due = self.client.get("/api/v1/ipr/payments-due").data
+        reg = self.client.get("/api/v1/ipr/payments-due").data
+        # The register carries the pending balance too now (owner
+        # 2026-08-23) — the advance is the one payable.
+        due = [r for r in reg if r["band"] == "PAYABLE"]
         self.assertEqual(len(due), 1)
         self.assertEqual(float(due[0]["expected_mvr"]), 4500.0)  # 300*15
         self.assertEqual(due[0]["stage"], "AWAITING_VOUCHER")
+        coming = [r for r in reg if r["band"] == "COMING"]
+        self.assertEqual([c["label"] for c in coming], ["Balance"])
 
         # a due (un-vouchered) TT cannot be paid yet
         r = self.client.post(
@@ -346,7 +355,8 @@ class MilestonePaymentTests(IprBase):
         approve_voucher(pv, self.signatory)
 
         # the milestone now carries its authorising voucher and is ready to pay
-        due = self.client.get("/api/v1/ipr/payments-due").data
+        due = [r for r in self.client.get("/api/v1/ipr/payments-due").data
+               if r["label"] == "Advance"]
         self.assertEqual(due[0]["stage"], "READY")
         self.assertEqual(due[0]["voucher_ref"], pv.ref)
 
@@ -636,6 +646,121 @@ class MilestonePaymentTests(IprBase):
         self.assertEqual(payload["doc_type"], "PV")
         self.assertEqual(len(payload["lines"]), 1)
         self.assertIn("Advance", payload["lines"][0]["ref"])
+
+    def test_credit_days_live_in_the_schedule_and_set_pay_by(self):
+        """Credit terms are written into the milestone schedule itself: the
+        row's own figure, else the supplier's agreed period. When a milestone
+        falls due, pay-by = that day + its credit days (owner 2026-08-23)."""
+        from datetime import date, timedelta
+
+        from .models import ImportPaymentMilestone, Supplier
+        ref = self.create_and_authorise()
+        order = self._order(ref)
+        Supplier.objects.filter(pk=order.supplier_id).update(credit_days=45)
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "percent": "30",
+             "credit_days": "0"},                      # pay on the trigger
+            {"label": "Balance", "trigger": "ARRIVAL", "percent": "70"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        ms = {m["label"]: m for m in r.data["milestones"]}
+        self.assertEqual(ms["Advance"]["credit_days"], 0)     # explicit wins
+        self.assertEqual(ms["Balance"]["credit_days"], 45)    # supplier default
+        # Falls due today → pay-by follows the credit.
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{ms['Balance']['id']}"
+                         f"/due", {}, format="json")
+        m = ImportPaymentMilestone.objects.get(pk=ms["Balance"]["id"])
+        self.assertEqual(m.fell_due_on, date.today())
+        self.assertEqual(m.pay_by, date.today() + timedelta(days=45))
+        self.client.force_authenticate(self.finance)
+        row = next(x for x in self.client.get("/api/v1/ipr/payments-due").data
+                   if x["label"] == "Balance")
+        self.assertEqual(row["band"], "PAYABLE")
+        self.assertEqual(str(row["pay_by"]),
+                         str(date.today() + timedelta(days=45)))
+        self.assertFalse(row["overdue"])
+
+    def test_finance_moves_pay_by_with_a_reason(self):
+        from datetime import date, timedelta
+
+        from .models import AuditLog, ImportPaymentMilestone
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Full", "trigger": "ADVANCE", "percent": "100"}]},
+            format="json").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        self.client.force_authenticate(self.finance)
+        later = str(date.today() + timedelta(days=60))
+        r = self.client.post(f"/api/v1/ipr/milestones/{m['id']}/pay-by",
+                             {"pay_by": later}, format="json")
+        self.assertEqual(r.status_code, 400)               # reason required
+        r = self.client.post(f"/api/v1/ipr/milestones/{m['id']}/pay-by",
+                             {"pay_by": later,
+                              "reason": "related party — agreed 60 days"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(str(ImportPaymentMilestone.objects.get(
+            pk=m["id"]).pay_by), later)
+        self.assertTrue(AuditLog.objects.filter(
+            event="IPR_MILESTONE_PAY_BY_MOVED").exists())
+
+    def test_one_voucher_pays_one_supplier(self):
+        from .models import Supplier
+        from .vouchers import create_voucher
+        ref1 = self.create_and_authorise()
+        # A second order for a DIFFERENT supplier (the fixture's PMR is spent
+        # on the first, so this one carries none).
+        other = Supplier.objects.create(name="Other Overseas Co",
+                                        default_currency="USD")
+        body = self.order_body()
+        body.update({"supplier_id": other.id, "pmr_refs": []})
+        self.client.force_authenticate(self.ho)
+        r = self.client.post("/api/v1/ipr", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref2 = r.data["ref"]
+        self.client.post(f"/api/v1/documents/{ref2}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref2}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref2}/actions/authorise", {},
+                         format="json")
+        self.client.force_authenticate(self.ho)
+        ids = []
+        for ref in (ref1, ref2):
+            m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+                {"label": "Full", "trigger": "ADVANCE", "percent": "100"}]},
+                format="json").data["milestones"][0]
+            self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due",
+                             {}, format="json")
+            ids.append(m["id"])
+        pv, err = create_voucher([], self.finance, milestone_ids=ids)
+        self.assertIsNone(pv)
+        self.assertIn("one supplier", err)
+
+    def test_due_milestones_are_not_offered_in_the_generic_voucher_builder(self):
+        """They are picked on the International Payables register, one
+        supplier at a time (owner 2026-08-23)."""
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Full", "trigger": "ADVANCE", "percent": "100"}]},
+            format="json").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        self.client.force_authenticate(self.finance)
+        aw = self.client.get("/api/v1/finance/awaiting-voucher").data
+        self.assertFalse(any(r.get("kind") == "MILESTONE" for r in aw))
+        # ...but the register has it, and can voucher it.
+        reg = self.client.get("/api/v1/ipr/payments-due").data
+        self.assertEqual([r["band"] for r in reg], ["PAYABLE"])
+        r = self.client.post("/api/v1/payment-vouchers",
+                             {"milestone_ids": [m["id"]]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
 
     def test_schedule_must_sum_to_order_total(self):
         ref = self.create_and_authorise()

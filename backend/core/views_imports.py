@@ -91,7 +91,7 @@ class MilestoneSerializer(serializers.ModelSerializer):
         model = ImportPaymentMilestone
         fields = ["id", "seq", "label", "trigger", "percent", "fixed_amount",
                   "due_date", "status", "due_amount", "tt_ref", "mvr_paid",
-                  "actual_rate", "paid_at", "tt_advice_url", "voucher_ref"]
+                  "actual_rate", "paid_at", "tt_advice_url", "voucher_ref", "credit_days", "fell_due_on", "pay_by"]
 
     def get_tt_advice_url(self, obj):
         return obj.tt_advice.url if obj.tt_advice else None
@@ -894,22 +894,54 @@ def ipr_milestone_pay(request, ref, pk):
 def ipr_payments_due(request):
     if request.user.role not in PAY_ROLES + ("SIGNATORY",):
         return Response({"detail": "Finance view."}, status=403)
+    from datetime import date as _date
+    from .vouchers import _on_live_milestone
+    on_live = set(_on_live_milestone())
+    today = _date.today()
     rows = []
     for m in ipr_svc.payments_due():
         total = ipr_svc.ipr_order_total(m.order)
+        band = {"PENDING": "COMING", "DUE": "PAYABLE",
+                "AUTHORISED": "TT_READY"}[m.status]
         rows.append({
             "ipr_ref": m.order.document.ref, "milestone_id": m.id,
-            "label": m.label, "supplier": m.order.supplier.name,
+            "label": m.label, "trigger": m.trigger,
+            "trigger_label": m.get_trigger_display(),
+            "supplier": m.order.supplier.name,
+            "supplier_id": m.order.supplier_id,
             "currency": m.order.order_currency,
             "due_amount": m.due_amount(total),
             "expected_mvr": (m.due_amount(total) * m.order.exchange_rate)
             .quantize(Decimal("0.01")),
-            "due_date": m.due_date, "status": m.status,
+            "due_date": m.due_date, "credit_days": m.credit_days,
+            "fell_due_on": m.fell_due_on, "pay_by": m.pay_by,
+            "overdue": bool(m.status == "DUE" and m.pay_by
+                            and m.pay_by < today),
+            "status": m.status, "band": band,
+            "on_voucher": m.id in on_live,
             "stage": ("READY" if m.status == "AUTHORISED"
-                      else "AWAITING_VOUCHER"),
+                      else "AWAITING_VOUCHER" if m.status == "DUE"
+                      else "PENDING"),
             "voucher_ref": m.voucher.ref if m.voucher_id else None,
         })
     return Response(rows)
+
+
+@api_view(["POST"])
+def ipr_milestone_pay_by(request, pk):
+    """Finance moves a due milestone's pay-by date (reason required)."""
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance moves a pay-by date."}, status=403)
+    from .models import ImportPaymentMilestone
+    m = ImportPaymentMilestone.objects.filter(pk=pk).select_related(
+        "order__document").first()
+    if m is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = ipr_svc.move_pay_by(m, request.data.get("pay_by"),
+                              request.data.get("reason") or "", request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"milestone_id": m.id, "pay_by": m.pay_by})
 
 
 PMR_REGISTER_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE",

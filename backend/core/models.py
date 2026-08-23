@@ -1138,6 +1138,14 @@ class ImportPaymentMilestone(models.Model):
     fixed_amount = models.DecimalField(max_digits=14, decimal_places=2,
                                        null=True, blank=True)  # order currency
     due_date = models.DateField(null=True, blank=True)
+    # Credit terms written into the schedule itself (owner 2026-08-23): how
+    # many days after its trigger the supplier lets us pay this milestone.
+    # Defaults from the supplier's record when the schedule is drawn up and is
+    # editable per milestone — "balance 30 days after arrival" lives here,
+    # not on a flag somewhere else.
+    credit_days = models.PositiveIntegerField(null=True, blank=True)
+    fell_due_on = models.DateField(null=True, blank=True)   # stamped at DUE
+    pay_by = models.DateField(null=True, blank=True)        # fell_due_on+credit
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.PENDING)
     # the Payment Voucher a signatory approved to authorise this TT — every

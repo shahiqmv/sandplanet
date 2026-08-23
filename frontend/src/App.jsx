@@ -134,7 +134,7 @@ const NAV_GROUPS = [
            ["vouchers", "Payment Vouchers", ["FINANCE", "SIGNATORY",
                                              "ADMIN"]],
            ["payables", "Payables", ["FINANCE", "ADMIN", "SIGNATORY"]],
-           ["import-payments", "Import Payments", ["FINANCE", "ADMIN",
+           ["import-payments", "International Payables", ["FINANCE", "ADMIN",
                                                    "SIGNATORY"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
                                            "QS", "PA", "SIGNATORY"]]] },

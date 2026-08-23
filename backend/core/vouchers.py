@@ -213,6 +213,11 @@ def create_voucher(source_refs, actor, milestone_ids=None, payable_ids=None,
                 voucher__status__in=("DRAFT", "SUBMITTED")).exists():
             return None, f"{m.order.document.ref} · {m.label} is already on a " \
                          "voucher."
+    # One voucher pays one supplier: a TT has one payee, and that is how the
+    # bank and the register see it (owner 2026-08-23).
+    if len({m.order.supplier_id for m in milestones}) > 1:
+        return None, ("One voucher pays one supplier — pick milestones for a "
+                      "single supplier at a time.")
     payables = list(Payable.objects.filter(id__in=payable_ids)
                     .select_related("document"))
     if len(payables) != len(set(payable_ids)):

@@ -2207,61 +2207,212 @@ export function ImportTracker({ me, onOpenIpr }) {
 }
 
 export function ImportPaymentsDue({ onOpenIpr }) {
+  // The International Payables register (owner 2026-08-23). The IPR's own
+  // payment schedule stays the source of truth; this is where Finance sees
+  // every unpaid milestone on an authorised order, in three bands:
+  //   Coming   — pending: the balance-on-arrival, with its trigger
+  //   Payable  — due, with a pay-by date (trigger day + the credit days
+  //              written into the schedule; movable with a reason)
+  //   TT ready — voucher-approved, waiting for the transfer
+  // Payable rows are ticked ONE SUPPLIER at a time and vouchered from here;
+  // they no longer appear in the generic voucher builder.
   const [rows, setRows] = useState(null);
   const [error, setError] = useState(null);
-  useEffect(() => {
-    api("/ipr/payments-due").then(setRows).catch((e) => setError(e.message));
-  }, []);
+  const [msg, setMsg] = useState(null);
+  const [picked, setPicked] = useState({});
+  const [busy, setBusy] = useState(false);
+  const isFinance = true;
+
+  const load = () => api("/ipr/payments-due").then(setRows)
+    .catch((e) => setError(e.message));
+  useEffect(() => { load(); }, []);
+
+  const bySupplier = (band) => {
+    const out = new Map();
+    (rows || []).filter((r) => r.band === band).forEach((r) => {
+      if (!out.has(r.supplier)) out.set(r.supplier, []);
+      out.get(r.supplier).push(r);
+    });
+    return [...out.entries()];
+  };
+  const pickedRows = (rows || []).filter((r) => picked[r.milestone_id]);
+  const pickedSuppliers = new Set(pickedRows.map((r) => r.supplier_id));
+
+  async function raiseVoucher() {
+    if (!pickedRows.length) return;
+    setBusy(true); setError(null); setMsg(null);
+    try {
+      const pv = await api("/payment-vouchers", { method: "POST",
+        body: { milestone_ids: pickedRows.map((r) => r.milestone_id) } });
+      setMsg(`Voucher ${pv.ref} raised for ${pickedRows.length} `
+             + `milestone${pickedRows.length > 1 ? "s" : ""} — `
+             + `${pickedRows[0].supplier}. A signatory approves it on the `
+             + `Payment Vouchers page.`);
+      setPicked({});
+      load();
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  }
+
+  async function movePayBy(r) {
+    const on = window.prompt(`New pay-by date for ${r.ipr_ref} · ${r.label} `
+                             + `(YYYY-MM-DD):`, r.pay_by || "");
+    if (!on) return;
+    const reason = window.prompt("Reason (e.g. supplier agreed 60 days):");
+    if (!reason) return;
+    setError(null);
+    try {
+      await api(`/ipr/milestones/${r.milestone_id}/pay-by`,
+                { method: "POST", body: { pay_by: on, reason } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
+  const head = (extra) => (
+    <thead><tr>
+      {extra === "pick" && <th style={{ ...th, width: 30 }}></th>}
+      <th style={th}>Order</th><th style={th}>Milestone</th>
+      <th style={th}>{extra === "coming" ? "Falls due" : "Pay by"}</th>
+      <th style={{ ...th, textAlign: "right" }}>Amount</th>
+      <th style={{ ...th, textAlign: "right" }}>≈ MVR</th>
+      {extra === "ready" && <th style={th}>Voucher</th>}
+    </tr></thead>);
+
+  const orderCell = (r) => (
+    <td style={td}>
+      <a href="#" onClick={(e) => { e.preventDefault(); onOpenIpr(r.ipr_ref); }}
+         style={{ color: "var(--sp-navy)", fontWeight: 600 }}>{r.ipr_ref}</a>
+    </td>);
+  const amountCells = (r) => (<>
+    <td style={{ ...td, textAlign: "right" }}>{r.currency} {money(r.due_amount)}</td>
+    <td style={{ ...td, textAlign: "right" }}>{money(r.expected_mvr)}</td>
+  </>);
+  const supplierHead = (name, list, band) => (
+    <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                  margin: "12px 0 4px" }}>
+      <strong style={{ color: "var(--sp-navy)" }}>{name}</strong>
+      <span style={{ fontSize: 12, color: "var(--muted)" }}>
+        {list.length} milestone{list.length > 1 ? "s" : ""} ·{" "}
+        {list[0].currency} {money(list.reduce((a, r) => a + Number(r.due_amount), 0))}
+        {list.some((r) => r.credit_days > 0) && " · on credit"}
+      </span>
+      {band === "PAYABLE" && isFinance && (
+        <button style={{ ...buttonStyle, padding: "3px 10px", fontSize: 12,
+                         marginLeft: "auto",
+                         opacity: pickedRows.length && pickedSuppliers.size === 1
+                                  && pickedRows[0].supplier === name ? 1 : 0.45 }}
+                disabled={busy || !pickedRows.length || pickedSuppliers.size !== 1
+                          || pickedRows[0].supplier !== name}
+                onClick={raiseVoucher}>
+          Raise voucher{pickedRows.length && pickedRows[0].supplier === name
+            ? ` (${pickedRows.length})` : ""}</button>)}
+    </div>);
+
+  const coming = bySupplier("COMING");
+  const payable = bySupplier("PAYABLE");
+  const ready = bySupplier("TT_READY");
+  const overdueN = (rows || []).filter((r) => r.overdue).length;
+
   return (
     <section style={card}>
       <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-        🌍 Import payments due</h2>
+        🌍 International payables</h2>
       <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "4px 0 0" }}>
-        Every overseas TT is authorised on a Payment Voucher first. Batch a
-        due one on the <strong>Payment Vouchers</strong> page; once a signatory
-        approves it, record the TT against its milestone.</p>
+        Every unpaid milestone on an authorised import order. The schedule on
+        the order decides when each falls due; the credit days written into it
+        decide the pay-by date. Tick payable milestones for <strong>one
+        supplier</strong> and raise the voucher here; a signatory approves it
+        on the Payment Vouchers page, then record the TT against the milestone.
+      </p>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12,
-                      fontSize: 13 }}>
-        <thead><tr>
-          <th style={th}>Order</th><th style={th}>Supplier</th>
-          <th style={th}>Milestone</th>
-          <th style={{ ...th, textAlign: "right" }}>Amount</th>
-          <th style={{ ...th, textAlign: "right" }}>≈ MVR</th>
-          <th style={th}>Due</th><th style={th}>Stage</th>
-        </tr></thead>
-        <tbody>
-          {(rows || []).map((r) => (
-            <tr key={r.milestone_id}>
-              <td style={td}>
-                <a href="#" onClick={(e) => { e.preventDefault();
-                                              onOpenIpr(r.ipr_ref); }}
-                   style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                  {r.ipr_ref}</a>
-              </td>
-              <td style={td}>{r.supplier}</td>
-              <td style={td}>{r.label}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {r.currency} {money(r.due_amount)}</td>
-              <td style={{ ...td, textAlign: "right" }}>{money(r.expected_mvr)}</td>
-              <td style={td}>{r.due_date || "—"}</td>
-              <td style={td}>
-                {r.stage === "READY"
-                  ? <span style={{ color: "#1d6fb8", fontWeight: 600 }}>
-                      Authorised · {r.voucher_ref} → record TT</span>
-                  : <span style={{ color: "#b35900", fontWeight: 600 }}>
-                      Awaiting voucher</span>}
-              </td>
-            </tr>
-          ))}
-          {rows && rows.length === 0 && (
-            <tr><td colSpan={7} style={{ ...td, textAlign: "center",
-                                         color: "var(--muted)" }}>
-              No import payments due. Purchasing marks a milestone due when its
-              trigger is met.</td></tr>
-          )}
-        </tbody>
-      </table>
+      {msg && <p style={{ color: "#1a7f37", fontSize: 13 }}>{msg}</p>}
+      {pickedSuppliers.size > 1 && (
+        <p style={{ color: "#b35900", fontSize: 12.5 }}>
+          One voucher pays one supplier — untick the other supplier's rows.</p>)}
+
+      <h3 style={{ fontSize: 13.5, color: "var(--sp-navy)", marginTop: 14 }}>
+        Payable now
+        {overdueN > 0 && <span style={{ color: "#c0392b", fontWeight: 600,
+          marginLeft: 8, fontSize: 12 }}>{overdueN} past pay-by</span>}</h3>
+      {payable.length === 0 && <p style={{ color: "var(--muted)",
+        fontSize: 12.5 }}>Nothing payable. Purchasing marks a milestone due when
+        its trigger is met; it lands here with its pay-by date.</p>}
+      {payable.map(([name, list]) => (
+        <div key={name}>
+          {supplierHead(name, list, "PAYABLE")}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            {head("pick")}
+            <tbody>{list.map((r) => (
+              <tr key={r.milestone_id} style={{ background:
+                picked[r.milestone_id] ? "var(--sky-soft)" : "transparent" }}>
+                <td style={{ ...td, textAlign: "center" }}>
+                  <input type="checkbox" checked={!!picked[r.milestone_id]}
+                    disabled={r.on_voucher}
+                    title={r.on_voucher ? "Already on a voucher in progress" : ""}
+                    onChange={(e) => setPicked({ ...picked,
+                      [r.milestone_id]: e.target.checked })} /></td>
+                {orderCell(r)}
+                <td style={td}>{r.label}
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {r.trigger_label} · fell due {r.fell_due_on || "—"}
+                    {r.credit_days > 0 ? ` · ${r.credit_days}d credit` : ""}
+                    {r.on_voucher ? " · on a voucher" : ""}</div></td>
+                <td style={td}>
+                  <span style={{ color: r.overdue ? "#c0392b" : "inherit",
+                                 fontWeight: r.overdue ? 700 : 400 }}>
+                    {r.pay_by || "—"}{r.overdue ? " · overdue" : ""}</span>
+                  {" "}<a href="#" style={{ fontSize: 11 }}
+                    onClick={(e) => { e.preventDefault(); movePayBy(r); }}>edit</a>
+                </td>
+                {amountCells(r)}
+              </tr>))}
+            </tbody>
+          </table>
+        </div>))}
+
+      <h3 style={{ fontSize: 13.5, color: "var(--sp-navy)", marginTop: 18 }}>
+        TT ready — voucher approved</h3>
+      {ready.length === 0 && <p style={{ color: "var(--muted)", fontSize: 12.5 }}>
+        No transfers waiting.</p>}
+      {ready.map(([name, list]) => (
+        <div key={name}>
+          {supplierHead(name, list, "TT_READY")}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            {head("ready")}
+            <tbody>{list.map((r) => (
+              <tr key={r.milestone_id}>
+                {orderCell(r)}
+                <td style={td}>{r.label}</td>
+                <td style={td}>{r.pay_by || "—"}</td>
+                {amountCells(r)}
+                <td style={td}><span style={{ color: "#1d6fb8", fontWeight: 600 }}>
+                  {r.voucher_ref} → record TT on the order</span></td>
+              </tr>))}
+            </tbody>
+          </table>
+        </div>))}
+
+      <h3 style={{ fontSize: 13.5, color: "var(--sp-navy)", marginTop: 18 }}>
+        Coming — not yet due</h3>
+      {coming.length === 0 && <p style={{ color: "var(--muted)", fontSize: 12.5 }}>
+        No pending milestones.</p>}
+      {coming.map(([name, list]) => (
+        <div key={name}>
+          {supplierHead(name, list, "COMING")}
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            {head("coming")}
+            <tbody>{list.map((r) => (
+              <tr key={r.milestone_id}>
+                {orderCell(r)}
+                <td style={td}>{r.label}</td>
+                <td style={td}>{r.trigger_label}
+                  {r.due_date ? ` · ${r.due_date}` : ""}
+                  {r.credit_days > 0 ? ` · then ${r.credit_days}d credit` : ""}</td>
+                {amountCells(r)}
+              </tr>))}
+            </tbody>
+          </table>
+        </div>))}
     </section>
   );
 }
@@ -2333,7 +2484,11 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                   <td style={td}>{(TRIGGERS.find((t) => t[0] === m.trigger)
                     || [, m.trigger])[1]}
                     {m.percent ? ` · ${num(m.percent)}%`
-                      : (m.fixed_amount != null ? " · fixed" : "")}</td>
+                      : (m.fixed_amount != null ? " · fixed" : "")}
+                    {m.credit_days > 0 && ` · ${m.credit_days}d credit`}
+                    {m.status === "DUE" && m.pay_by && (
+                      <div style={{ fontSize: 11, color: "#b35900" }}>
+                        pay by {m.pay_by}</div>)}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {doc.order.order_currency} {money(m.due_amount)}</td>
                   <td style={td}>
@@ -2407,6 +2562,7 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                              marginTop: 6 }}
                     onClick={() => { setRows(ms.map((m) => ({ label: m.label,
                       trigger: m.trigger,
+                      credit_days: m.credit_days ?? "",
                       basis: m.fixed_amount != null ? "fixed" : "pct",
                       value: m.fixed_amount != null ? String(num(m.fixed_amount))
                         : (m.percent ? String(num(m.percent)) : "") })));
@@ -2443,6 +2599,15 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                 style={{ ...inputStyle, width: 90 }}
                 onChange={(e) => setRows(rows.map((x, j) => j === i
                   ? { ...x, value: e.target.value } : x))} />
+              {/* Credit written into the schedule: days after the trigger
+                  the supplier lets us pay. Blank = the supplier's agreed
+                  period on its record (owner 2026-08-23). */}
+              <input type="number" min="0" placeholder="credit d"
+                title="Days after the trigger the supplier allows — blank uses the supplier's agreed credit period"
+                value={r.credit_days ?? ""}
+                style={{ ...inputStyle, width: 80 }}
+                onChange={(e) => setRows(rows.map((x, j) => j === i
+                  ? { ...x, credit_days: e.target.value } : x))} />
               {rows.length > 1 && (
                 <button style={{ ...ghostButton, color: "#c0392b",
                                  padding: "2px 8px" }}
@@ -2454,7 +2619,8 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
                     onClick={() => setRows([...rows, { label: "",
-                      trigger: "BALANCE", basis: "pct", value: "" }])}>
+                      trigger: "BALANCE", basis: "pct", value: "",
+                      credit_days: "" }])}>
               + milestone</button>
             <span style={{ fontSize: 12, fontWeight: 600,
               color: balanced ? "#1a7f37" : "#b35900" }}>
@@ -2466,6 +2632,7 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                     disabled={!balanced}
                     onClick={() => call("/milestones", { rows: rows.map((r) => ({
                       label: r.label, trigger: r.trigger,
+                      credit_days: r.credit_days,
                       percent: r.basis === "pct" ? r.value : "",
                       fixed_amount: r.basis === "fixed" ? r.value : "" })) })}>
               Save schedule</button>

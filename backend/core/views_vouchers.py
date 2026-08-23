@@ -173,16 +173,10 @@ def awaiting_voucher(request):
         else:
             row.update({"payee": "(procurement)", "cost_head": "Materials"})
         out.append(row)
-    for m in vouchers.awaiting_milestones():
-        out.append({
-            "kind": "MILESTONE", "milestone_id": m.id,
-            "ref": m.order.document.ref, "doc_type": "MILESTONE",
-            "site_code": "HO", "doc_date": m.due_date,
-            "amount": vouchers.milestone_amount(m),
-            "currency": vouchers.milestone_currency(m),
-            "payee": m.order.supplier.name,
-            "cost_head": f"Overseas TT · {m.label}",
-            "purpose": m.label})
+    # Overseas milestones are no longer offered here: they are picked on the
+    # International Payables register, one supplier at a time, where the
+    # pending balances and pay-by dates are (owner 2026-08-23). The voucher
+    # service still accepts milestone_ids — that is what the register posts.
     today = date.today()
     for p in vouchers.awaiting_payables():
         out.append({
