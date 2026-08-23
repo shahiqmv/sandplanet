@@ -762,6 +762,50 @@ class MilestonePaymentTests(IprBase):
                              {"milestone_ids": [m["id"]]}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
 
+    def test_historical_payment_marks_paid_without_a_voucher_or_fx(self):
+        """Payments made before the app: marked paid through the normal TT
+        posting path, at the committed rate, no voucher, no FX (owner
+        2026-08-23)."""
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from .models import ImportPaymentMilestone
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        ms = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "percent": "30"},
+            {"label": "Balance", "trigger": "ARRIVAL", "percent": "70"},
+        ]}, format="json").data["milestones"]
+        adv = next(m for m in ms if m["label"] == "Advance")
+        out = StringIO()
+        call_command("mark_milestone_paid_historical", ids=str(adv["id"]),
+                     date="2026-06-01", stdout=out)          # dry run
+        self.assertEqual(ImportPaymentMilestone.objects.get(
+            pk=adv["id"]).status, "PENDING")
+        call_command("mark_milestone_paid_historical", ids=str(adv["id"]),
+                     date="2026-06-01", apply=True, stdout=out)
+        m = ImportPaymentMilestone.objects.get(pk=adv["id"])
+        self.assertEqual(m.status, "PAID")
+        self.assertIsNone(m.voucher_id)
+        self.assertIn("historical", m.tt_ref.lower())
+        self.assertEqual(float(m.mvr_paid), 4500.0)          # 300 USD @ 15
+        self.assertEqual(str(m.paid_at.date()), "2026-06-01")
+        # PAID legs posted to the project/stock; no FX posting.
+        self.assertTrue(CostPosting.objects.filter(
+            state="PAID", document__ref=ref, ipr_milestone=m).exists())
+        self.assertFalse(CostPosting.objects.filter(
+            source="FX", document__ref=ref).exists())
+        # Off the register, and a second run skips it.
+        self.client.force_authenticate(self.finance)
+        labels = [r["label"] for r in
+                  self.client.get("/api/v1/ipr/payments-due").data]
+        self.assertNotIn("Advance", labels)
+        out2 = StringIO()
+        call_command("mark_milestone_paid_historical", ids=str(adv["id"]),
+                     apply=True, stdout=out2)
+        self.assertIn("already PAID", out2.getvalue())
+
     def test_schedule_must_sum_to_order_total(self):
         ref = self.create_and_authorise()
         self.client.force_authenticate(self.ho)
