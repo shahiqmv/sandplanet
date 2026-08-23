@@ -41,15 +41,6 @@ export default function UnitsPanel({ projectId, me }) {
 
   if (error && !data) return <section style={card}>{error}</section>;
   if (!data) return <section style={card}>Loading…</section>;
-  if (!data.is_unit_project) {
-    return (
-      <section style={card}>
-        <p style={{ color: "var(--muted)", fontSize: 13, margin: 0 }}>
-          Unit tracking is for unit-based BOQs — this project prices flat
-          items. Switch the BOQ to unit mode to track per-unit progress.
-        </p>
-      </section>);
-  }
   const can = data.can_manage;
 
   async function call(path, body, method = "POST") {
@@ -103,6 +94,12 @@ export default function UnitsPanel({ projectId, me }) {
           </div>))}
       </div>
 
+      {/* Nothing set up yet — a flat-priced job monitored per unit starts
+          here. Pricing is untouched; this is monitoring only. */}
+      {!data.tracks_units && (
+        <SetUp projectId={projectId} can={can} unitPriced={data.unit_priced}
+               onDone={(d) => d && setData(d)} />)}
+
       {/* Setup: generate units, edit the stage ladder */}
       {can && (
         <div style={{ marginBottom: 12 }}>
@@ -130,6 +127,29 @@ export default function UnitsPanel({ projectId, me }) {
             </div>))}
         </div>)}
 
+      {can && data.tracks_units && !data.unit_priced && (
+        <div style={{ marginBottom: 12, fontSize: 12.5 }}>
+          <strong>Stages</strong>{" "}
+          <span style={{ color: "var(--muted)" }}>
+            {data.project_stages.length} for every unit on this project</span>{" "}
+          <button style={{ ...ghostButton, padding: "2px 9px", fontSize: 12 }}
+                  onClick={() => setEditing(editing === "project"
+                                            ? null : "project")}>
+            {editing === "project" ? "close" : "edit"}</button>{" "}
+          <button style={{ ...ghostButton, padding: "2px 9px", fontSize: 12 }}
+                  onClick={() => {
+                    const refs = window.prompt(
+                      "Add units — comma-separated refs (e.g. V227, V229)");
+                    if (refs) call(`/projects/${projectId}/create-units`,
+                                   { refs: refs.split(",") });
+                  }}>+ units</button>
+          {editing === "project" && (
+            <StageLadder
+              ladder={{ category_id: null, projectId,
+                        name: "unit", stages: data.project_stages }}
+              onDone={(d) => { if (d) setData(d); setEditing(null); }} />)}
+        </div>)}
+
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>
           <th style={th}>Ref</th><th style={th}>Unit</th>
@@ -151,6 +171,70 @@ export default function UnitsPanel({ projectId, me }) {
       </table>
     </section>
   );
+}
+
+// A project with no units yet. For a unit-priced BOQ the categories above
+// generate them; for a flat-priced job (VKR's 17 pools — priced flat, BOQ
+// locked) the PM names the units and the stages here. Pricing is never
+// touched: this is monitoring (owner 2026-08-23).
+function SetUp({ projectId, can, unitPriced, onDone }) {
+  const [refs, setRefs] = useState("");
+  const [count, setCount] = useState("");
+  const [prefix, setPrefix] = useState("UNIT");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  if (!can) {
+    return (
+      <p style={{ color: "var(--muted)", fontSize: 13 }}>
+        No units are being tracked on this project yet.</p>);
+  }
+  async function create(body) {
+    setBusy(true); setErr(null);
+    try {
+      onDone(await api(`/projects/${projectId}/create-units`,
+                       { method: "POST", body }));
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{ border: "1px dashed var(--sp-border, #d8e1e8)",
+                  borderRadius: 8, padding: 12, marginBottom: 12 }}>
+      <div style={{ fontWeight: 600, fontSize: 13.5,
+                    color: "var(--sp-navy)" }}>
+        Track this project unit by unit</div>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "4px 0 8px" }}>
+        {unitPriced
+          ? "Generate the units from the BOQ categories below, or name them here."
+          : "This project is priced as flat items — that stays exactly as it is. "
+            + "Naming the units here only adds progress monitoring on top."}
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                    alignItems: "center" }}>
+        <input value={refs} onChange={(e) => setRefs(e.target.value)}
+               placeholder="Refs, comma-separated — e.g. V211, V213, V215"
+               style={{ ...inputStyle, flex: "1 1 340px" }} />
+        <button style={{ ...buttonStyle, padding: "4px 12px", fontSize: 12.5 }}
+                disabled={busy || !refs.trim()}
+                onClick={() => create({ refs: refs.split(",") })}>
+          Create these units</button>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginTop: 8, fontSize: 12.5 }}>
+        <span style={{ color: "var(--muted)" }}>or</span>
+        <input type="number" min="1" value={count} placeholder="how many"
+               onChange={(e) => setCount(e.target.value)}
+               style={{ ...inputStyle, width: 96 }} />
+        <input value={prefix} onChange={(e) => setPrefix(e.target.value)}
+               style={{ ...inputStyle, width: 96 }} />
+        <button style={{ ...ghostButton, padding: "3px 11px", fontSize: 12.5 }}
+                disabled={busy || !count}
+                onClick={() => create({ count, prefix })}>
+          Create numbered units</button>
+      </div>
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5,
+                            marginTop: 6 }}>{err}</div>}
+    </div>);
 }
 
 function UnitRow({ u, open, onToggle, can, me, patchUnit, call }) {
@@ -277,8 +361,10 @@ function StageLadder({ ladder, onDone }) {
   async function save() {
     setBusy(true); setErr(null);
     try {
-      onDone(await api(`/boq-categories/${ladder.category_id}/stages`,
-        { method: "POST", body: { stages: rows } }));
+      const url = ladder.category_id
+        ? `/boq-categories/${ladder.category_id}/stages`
+        : `/projects/${ladder.projectId}/unit-stages`;
+      onDone(await api(url, { method: "POST", body: { stages: rows } }));
     } catch (e) { setErr(e.message); setBusy(false); }
   }
   return (

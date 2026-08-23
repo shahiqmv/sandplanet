@@ -324,3 +324,118 @@ class ClientPortalUnitTests(UnitBoardBase):
         c = self._portal()
         self.assertEqual(
             c.get(f"/api/client/projects/{other.id}/units").status_code, 404)
+
+
+class FlatPricedProjectTests(TestCase):
+    """VKR's 17 overwater pools: priced flat, BOQ locked with claims against
+    it, but the client and the team still need to know where each pool is.
+    Tracking is a monitoring concern and must never touch pricing (owner
+    2026-08-23)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="VKR", name="Vakkaru",
+                                        status=Site.Status.ACTIVE)
+        self.pm = make_user("f_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        self.se = make_user("f_se", User.Role.SITE_ENGINEER, site=self.site)
+        self.project = Project.objects.create(
+            site=self.site, code="17POOL", title="17 Overwater pools",
+            contract_value="1426784.78")
+        # A conventional, LOCKED BOQ — exactly VKR's shape.
+        self.boq = Boq.objects.create(project=self.project, currency="USD",
+                                      mode=Boq.Mode.CONVENTIONAL,
+                                      is_locked=True)
+        self.client = APIClient()
+        self.client.force_authenticate(self.pm)
+
+    def test_a_flat_priced_project_can_still_track_units(self):
+        r = self.client.get(f"/api/v1/projects/{self.project.id}/units")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["is_unit_project"])   # the board is offered
+        self.assertFalse(r.data["unit_priced"])      # ...but not BOQ-priced
+        self.assertFalse(r.data["tracks_units"])     # nothing set up yet
+
+    def test_units_are_created_from_the_real_villa_numbers(self):
+        refs = ["V211", "V213", "V215"]
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                             {"refs": refs}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["created"], 3)
+        self.assertEqual([u["ref"] for u in r.data["units"]], refs)
+        self.assertTrue(r.data["tracks_units"])
+        # A default ladder came with them, hung off the project.
+        self.assertTrue(len(r.data["project_stages"]) >= 5)
+        self.assertEqual(self.project.units.filter(
+            category__isnull=True).count(), 3)
+        # ...and the BOQ was not touched.
+        self.boq.refresh_from_db()
+        self.assertTrue(self.boq.is_locked)
+        self.assertEqual(self.boq.mode, "CONVENTIONAL")
+
+    def test_a_count_and_prefix_names_them_when_numbers_are_unknown(self):
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                             {"count": 4, "prefix": "POOL"}, format="json")
+        self.assertEqual([u["ref"] for u in r.data["units"]],
+                         ["POOL-01", "POOL-02", "POOL-03", "POOL-04"])
+
+    def test_creating_again_tops_up_and_never_duplicates(self):
+        self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                         {"refs": ["V211", "V213"]}, format="json")
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                             {"refs": ["V213", "V215"]}, format="json")
+        self.assertEqual(r.data["created"], 1)
+        self.assertEqual([u["ref"] for u in r.data["units"]],
+                         ["V211", "V213", "V215"])
+
+    def test_the_project_ladder_is_the_scope_of_works(self):
+        self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                         {"refs": ["V211", "V213"]}, format="json")
+        ladder = [{"name": "Precast column", "weight": 15},
+                  {"name": "Pool construction", "weight": 35},
+                  {"name": "Finishes", "weight": 25},
+                  {"name": "MEP fixes", "weight": 15},
+                  {"name": "Commissioning", "weight": 10}]
+        r = self.client.post(f"/api/v1/projects/{self.project.id}/unit-stages",
+                             {"stages": ladder}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual([s["name"] for s in r.data["project_stages"]],
+                         [x["name"] for x in ladder])
+        u = r.data["units"][0]
+        self.assertEqual([s["name"] for s in u["stages"]],
+                         [x["name"] for x in ladder])
+        # Weighted roll-up on the project ladder.
+        stage = next(s for s in u["stages"] if s["name"] == "Precast column")
+        r2 = self.client.post(f"/api/v1/units/{u['id']}/progress",
+                              {"stage_id": stage["id"], "percent": "100"},
+                              format="json")
+        moved = next(x for x in r2.data["units"] if x["id"] == u["id"])
+        self.assertEqual(float(moved["percent"]), 15.0)
+        self.assertEqual(moved["current_stage"], "Pool construction")
+
+    def test_the_dpr_reports_against_a_flat_priced_projects_units(self):
+        from core import units as svc
+        self.client.post(f"/api/v1/projects/{self.project.id}/create-units",
+                         {"refs": ["V211"]}, format="json")
+        unit = ProjectUnit.objects.get(ref="V211")
+        stage = self.project.unit_stages.first()
+        # The site's DPR picker offers it.
+        picker = self.client.get(f"/api/v1/sites/{self.site.id}/units").data
+        row = next(x for x in picker if x["id"] == unit.id)
+        self.assertEqual(row["project_code"], "17POOL")
+        self.assertTrue(len(row["stages"]) >= 5)
+        doc = Document.objects.create(
+            doc_type="DPR", ref="DPR-VKR-001", site=self.site,
+            doc_date=date.today(), status="DRAFT", created_by=self.se)
+        doc.current_revision = DocumentRevision.objects.create(
+            document=doc, rev_label="R0", created_by=self.se,
+            payload={"work_done": [{"activity": "Slab FW",
+                                    "unit_id": unit.id,
+                                    "stage_id": stage.id,
+                                    "progress_todate": "60"}]})
+        doc.save(update_fields=["current_revision"])
+        self.assertEqual(svc.apply_dpr(doc, self.se), 1)
+        board = svc.board(self.project)
+        u = next(x for x in board["units"] if x["id"] == unit.id)
+        self.assertEqual(u["last_dpr"], doc.ref)
+        self.assertGreater(float(u["percent"]), 0)

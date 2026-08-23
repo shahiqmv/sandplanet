@@ -34,9 +34,94 @@ def can_manage(user):
     return user.role in MANAGE_ROLES
 
 
-def is_unit_project(project):
+def is_unit_priced(project):
+    """Does the BOQ price this project per unit? Only decides whether units
+    can be GENERATED from BOQ category quantities — never whether progress can
+    be tracked."""
     boq = getattr(project, "boq", None)
     return bool(boq and boq.mode == Boq.Mode.UNIT)
+
+
+# Kept for callers that only ask "does this project track units".
+def is_unit_project(project):
+    return is_unit_priced(project) or project.units.exists()
+
+
+def tracks_units(project):
+    return project.units.exists() or project.unit_stages.exists()
+
+
+def stages_for(unit):
+    """A unit's ladder: its BOQ category's, or the project's own."""
+    if unit.category_id:
+        return list(unit.category.stages.all())
+    return list(unit.project.unit_stages.all())
+
+
+def project_stages(project):
+    return list(project.unit_stages.all())
+
+
+def set_project_stages(project, rows, actor):
+    """The ladder for a project whose units are not tied to BOQ categories —
+    a flat-priced project monitored per unit (owner 2026-08-23)."""
+    return _set_stages(rows, actor, project=project,
+                       existing=project.unit_stages.all(),
+                       units=project.units.filter(category__isnull=True),
+                       label=project.code, project_id=project.id)
+
+
+def ensure_project_stages(project, names=None):
+    """Seed a project ladder the first time — the caller's stage names, or the
+    default ladder."""
+    if project.unit_stages.exists():
+        return project_stages(project)
+    rows = ([(n, w) for n, w in names] if names else DEFAULT_STAGES)
+    UnitStage.objects.bulk_create([
+        UnitStage(project=project, sort_order=i, name=n, weight=w)
+        for i, (n, w) in enumerate(rows, 1)])
+    return project_stages(project)
+
+
+def generate_project_units(project, actor, count=None, refs=None,
+                           prefix="UNIT"):
+    """Create units directly on a project — for a flat-priced job that still
+    has to be monitored unit by unit. `refs` names them explicitly (the real
+    villa numbers); otherwise `count` makes PREFIX-01…"""
+    ensure_project_stages(project)
+    have = set(project.units.values_list("ref", flat=True))
+    last = project.units.order_by("-sort_order").first()
+    order = last.sort_order if last else 0
+    wanted = [r.strip() for r in (refs or []) if r and r.strip()]
+    if not wanted:
+        try:
+            n = int(count or 0)
+        except (TypeError, ValueError):
+            return 0, "How many units?"
+        if n <= 0:
+            return 0, "How many units?"
+        base = "".join(ch for ch in (prefix or "UNIT").strip().upper()
+                       if ch.isalnum() or ch in "-_") or "UNIT"
+        wanted, i = [], 1
+        while len(wanted) < n:
+            ref = f"{base}-{i:02d}"
+            i += 1
+            if ref not in have:
+                wanted.append(ref)
+    made = []
+    for ref in wanted:
+        if ref in have:
+            continue
+        have.add(ref)
+        order += 1
+        made.append(ProjectUnit(project=project, category=None,
+                                sort_order=order, ref=ref[:30]))
+    if not made:
+        return 0, None
+    ProjectUnit.objects.bulk_create(made)
+    audit("project", project.id, "UNITS_GENERATED", actor=actor,
+          detail={"count": len(made), "refs": [u.ref for u in made][:20]})
+    return len(made), None
 
 
 def ensure_stages(category):
@@ -53,6 +138,14 @@ def ensure_stages(category):
 def set_stages(category, rows, actor):
     """Replace a category's stage ladder. Progress already reported against a
     stage that survives (matched by name) is kept."""
+    return _set_stages(rows, actor, category=category,
+                       existing=category.stages.all(),
+                       units=category.units.all(), label=category.name[:80],
+                       project_id=category.boq.project_id)
+
+
+def _set_stages(rows, actor, existing, units, label, project_id,
+                category=None, project=None):
     cleaned = []
     for i, r in enumerate(rows or [], 1):
         name = (r.get("name") or "").strip()
@@ -71,7 +164,7 @@ def set_stages(category, rows, actor):
         return "The weights cannot all be zero."
     with transaction.atomic():
         keep = {}
-        for old in category.stages.all():
+        for old in existing:
             keep[old.name.strip().lower()] = old
         seen = []
         for order, name, weight in cleaned:
@@ -82,15 +175,14 @@ def set_stages(category, rows, actor):
                 seen.append(existing)
             else:
                 seen.append(UnitStage.objects.create(
-                    category=category, sort_order=order, name=name,
-                    weight=weight))
+                    category=category, project=project, sort_order=order,
+                    name=name, weight=weight))
         for dropped in keep.values():          # removed stages take their
             dropped.delete()                   # progress rows with them
-        for unit in category.units.all():
+        for unit in units:
             recalc(unit)
-    audit("project", category.boq.project_id, "UNIT_STAGES_SET", actor=actor,
-          detail={"category": category.name[:80],
-                  "stages": [n for _, n, _ in cleaned]})
+    audit("project", project_id, "UNIT_STAGES_SET", actor=actor,
+          detail={"for": label, "stages": [n for _, n, _ in cleaned]})
     return None
 
 
@@ -131,7 +223,7 @@ def generate_units(category, actor, prefix=None, start=1):
 
 def recalc(unit):
     """The unit's weighted percentage, and the status that follows from it."""
-    stages = list(unit.category.stages.all()) if unit.category_id else []
+    stages = stages_for(unit)
     total_w = sum((s.weight for s in stages), ZERO)
     done = {p.stage_id: p.percent for p in unit.stage_progress.all()}
     if total_w > ZERO:
@@ -194,7 +286,11 @@ def apply_dpr(doc, actor):
             pk=unit_id, project__site_id=doc.site_id).select_related(
             "category").first()
         stage = UnitStage.objects.filter(pk=stage_id).first()
-        if unit is None or stage is None or stage.category_id != unit.category_id:
+        if unit is None or stage is None:
+            continue
+        if stage.category_id != unit.category_id or (
+                stage.category_id is None
+                and stage.project_id != unit.project_id):
             continue
         if report_progress(unit, stage, todate, document=doc,
                            on=doc.doc_date, actor=actor) is None:
@@ -210,10 +306,12 @@ def board(project):
     management and for the client portal."""
     units = (project.units.select_related("category")
              .prefetch_related("stage_progress__stage",
-                               "category__stages").order_by("sort_order", "id"))
+                               "category__stages",
+                               "project__unit_stages")
+             .order_by("sort_order", "id"))
     cats, rows = {}, []
     for u in units:
-        stages = list(u.category.stages.all()) if u.category_id else []
+        stages = stages_for(u)
         done = {p.stage_id: p for p in u.stage_progress.all()}
         current = ""
         for st in stages:
@@ -252,10 +350,13 @@ def board(project):
                         "on": done[st.id].updated_on if st.id in done else None}
                        for st in stages],
         })
-        if u.category_id:
-            c = cats.setdefault(u.category_id, {
-                "id": u.category_id, "name": u.category.name,
-                "ref": u.category.ref, "units": 0, "complete": 0,
+        key = u.category_id or 0
+        if True:
+            c = cats.setdefault(key, {
+                "id": u.category_id,
+                "name": u.category.name if u.category_id else "All units",
+                "ref": u.category.ref if u.category_id else "",
+                "units": 0, "complete": 0,
                 "in_progress": 0, "not_started": 0, "on_hold": 0,
                 "percent": ZERO})
             c["units"] += 1

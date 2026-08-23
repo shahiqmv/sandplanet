@@ -30,15 +30,24 @@ def _payload(project, user):
     right after generating units.
     """
     data = svc.board(project)
-    data["is_unit_project"] = svc.is_unit_project(project)
+    # Progress tracking is a MONITORING concern: any project may use it, even
+    # one priced flat with a locked BOQ (owner 2026-08-23, VKR's 17 pools).
+    # `unit_priced` only says whether units can be generated from BOQ category
+    # quantities; `tracks_units` says whether this project is using the board.
+    data["is_unit_project"] = True
+    data["unit_priced"] = svc.is_unit_priced(project)
+    data["tracks_units"] = svc.tracks_units(project)
     data["can_manage"] = svc.can_manage(user)
+    data["project_stages"] = [
+        {"id": st.id, "name": st.name, "weight": st.weight}
+        for st in svc.project_stages(project)]
     data["ladders"] = [
         {"category_id": c.id, "ref": c.ref, "name": c.name, "qty": c.qty,
          "is_lump": c.is_lump, "units": c.units.count(),
          "stages": [{"id": s.id, "name": s.name, "weight": s.weight}
                     for s in c.stages.all()]}
         for c in getattr(project, "boq", None).categories.all()
-    ] if svc.is_unit_project(project) else []
+    ] if svc.is_unit_priced(project) else []
     return data
 
 
@@ -90,6 +99,45 @@ def category_generate_units(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     data = _payload(cat.boq.project, request.user)
+    data["created"] = made
+    return Response(data, status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def project_stages(request, pk):
+    """Set the stage ladder for a project whose units are not tied to BOQ
+    categories — a flat-priced job monitored unit by unit."""
+    project, err = _get_project(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "The PM or QS sets the stages."},
+                        status=403)
+    msg = svc.set_project_stages(project, request.data.get("stages") or [],
+                                 request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_payload(project, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def project_create_units(request, pk):
+    """Create units on a project: a count with a prefix, or explicit refs
+    (the real villa / pool numbers)."""
+    project, err = _get_project(request, pk)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "The PM or QS sets up units."}, status=403)
+    made, msg = svc.generate_project_units(
+        project, request.user, count=request.data.get("count"),
+        refs=request.data.get("refs"),
+        prefix=request.data.get("prefix") or "UNIT")
+    if msg:
+        return Response({"detail": msg}, status=400)
+    data = _payload(project, request.user)
     data["created"] = made
     return Response(data, status=201)
 
@@ -164,9 +212,8 @@ def unit_progress(request, pk):
 def site_units(request, pk):
     """Units across a site's unit-based projects — the picker the DPR uses."""
     out = []
-    for project in Project.objects.filter(site_id=pk).select_related("boq"):
-        if not svc.is_unit_project(project):
-            continue
+    for project in Project.objects.filter(site_id=pk).select_related(
+            "boq").prefetch_related("unit_stages"):
         for u in project.units.select_related("category").prefetch_related(
                 "category__stages"):
             out.append({
@@ -174,6 +221,5 @@ def site_units(request, pk):
                 "project_id": project.id, "project_code": project.code,
                 "percent": u.percent, "status": u.status,
                 "stages": [{"id": s.id, "name": s.name}
-                           for s in (u.category.stages.all()
-                                     if u.category_id else [])]})
+                           for s in svc.stages_for(u)]})
     return Response(out)

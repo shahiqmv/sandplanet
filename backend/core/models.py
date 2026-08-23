@@ -3091,8 +3091,15 @@ class UnitStage(models.Model):
     roll-up tells you how far along it is.
     """
 
+    # A ladder belongs to a BOQ category (unit-priced projects) OR straight to
+    # a project (owner 2026-08-23: VKR's 17 overwater pools are priced flat
+    # but must still be monitored per pool — tracking is a monitoring concern,
+    # never a pricing one, and must not touch a locked BOQ).
     category = models.ForeignKey("BoqCategory", on_delete=models.CASCADE,
+                                 null=True, blank=True,
                                  related_name="stages")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True,
+                                blank=True, related_name="unit_stages")
     sort_order = models.IntegerField(default=0)
     name = models.CharField(max_length=80)
     # Share of the unit this stage represents. Weights are normalised on
