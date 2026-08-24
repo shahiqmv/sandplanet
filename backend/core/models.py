@@ -912,7 +912,8 @@ class DocumentLink(models.Model):
     LINK_TYPES = [("MR_PR", "MR→PR"), ("MR_LM", "MR→LM"), ("PR_LM", "PR→LM"),
                   ("LM_GRN", "LM→GRN"), ("IR_NCR", "IR→NCR"),
                   ("PR_PO", "PR→PO"), ("PO_LM", "PO→LM"),
-                  ("PMR_IPR", "PMR→IPR")]
+                  ("PMR_IPR", "PMR→IPR"),
+                  ("IPR_CHARGE_PYR", "IPR→charge PYR")]
 
     from_document = models.ForeignKey(
         Document, on_delete=models.PROTECT, related_name="links_from"
@@ -920,7 +921,7 @@ class DocumentLink(models.Model):
     to_document = models.ForeignKey(
         Document, on_delete=models.PROTECT, related_name="links_to"
     )
-    link_type = models.CharField(max_length=8, choices=LINK_TYPES)
+    link_type = models.CharField(max_length=16, choices=LINK_TYPES)
 
     class Meta:
         constraints = [
