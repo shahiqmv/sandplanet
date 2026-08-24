@@ -1867,6 +1867,7 @@ class ClearingAgentShareTests(IprBase):
         self.assertEqual(len(mail.outbox), 1)
         msg = mail.outbox[0]
         self.assertEqual(msg.to, ["agent@clearco.mv"])
+        self.assertEqual(msg.cc, ["projects@sandplanet.mv"])
         self.assertIn(ref, msg.subject)
         self.assertEqual(len(msg.attachments), 2)
         self.assertIn("Dear Ali", msg.body)

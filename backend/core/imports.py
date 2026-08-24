@@ -1166,6 +1166,7 @@ def share_with_agent(shipment, actor):
         body="\n".join(lines),
         from_email=f"{sender_name} <{settings.DEFAULT_FROM_EMAIL}>",
         to=to_addrs,
+        cc=[settings.IMPORT_SHARE_CC] if settings.IMPORT_SHARE_CC else [],
         reply_to=[reply_to],
     )
     total = 0

@@ -219,6 +219,9 @@ DEFAULT_FROM_EMAIL = os.environ.get(
 # App emails send From DEFAULT_FROM_EMAIL with the acting user's name + a
 # Reply-To to that user; a reply with no user routes to this office inbox.
 REPLY_TO_FALLBACK = os.environ.get("REPLY_TO_FALLBACK", DEFAULT_FROM_EMAIL)
+# The projects office is copied on every shipping-document share to the
+# clearing agent (owner 2026-08-24).
+IMPORT_SHARE_CC = os.environ.get("IMPORT_SHARE_CC", "projects@sandplanet.mv")
 # The login link put in invite emails.
 APP_BASE_URL = os.environ.get(
     "APP_BASE_URL", "https://sandplanet.159.223.35.180.sslip.io")
