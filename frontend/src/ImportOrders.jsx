@@ -1361,7 +1361,8 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
       {(canManage || (s.payments || []).length > 0) && (
         <div style={{ marginTop: 8 }}>
           <div style={{ fontSize: 11.5, color: "#5a6b78", marginBottom: 4 }}>
-            Import charges — paid to agents, capitalized into landed cost</div>
+            Import charges — paid to the agent or direct to port / customs,
+            capitalized into landed cost</div>
           <ChargePayments s={s} refIpr={refIpr} canManage={canManage}
                           onChanged={onChanged} onError={onError}
                           agents={agents} onOpenDoc={onOpenDoc}
@@ -1405,11 +1406,25 @@ function ChargePayments({ s, refIpr, canManage, onChanged, onError, agents = [],
   );
 }
 
+// Port dues go to the port and duty to customs — not to the shipment's
+// agents, who may not even be on file (owner 2026-08-24, IPR-020). Each
+// charge offers its direct payee alongside the agents, plus a typed name.
+const DIRECT_PAYEES = {
+  PORT: ["Maldives Ports Limited"],
+  DUTY: ["Maldives Customs Service"],
+};
+
 function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
                     onError, agents = [], onOpenDoc }) {
   // Forwarder freight is always paid to the shipment's forwarder — no picker.
   const freightToForwarder = kind === "FREIGHT" && !!s.forwarder;
+  const directs = DIRECT_PAYEES[kind] || [];
   const [payeeId, setPayeeId] = useState(p?.payee || "");
+  const [payeeName, setPayeeName] = useState(p?.payee_name || "");
+  const preset = payeeId ? `id:${payeeId}`
+    : payeeName && directs.includes(payeeName) ? `name:${payeeName}`
+    : payeeName ? "other" : "";
+  const [choice, setChoice] = useState(preset);
   const [amount, setAmount] = useState(p?.amount ?? "");
   const [currency, setCurrency] = useState(p?.currency || "MVR");
   const [invRef, setInvRef] = useState(p?.invoice_ref || "");
@@ -1421,7 +1436,10 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
     onError(null);
     const fd = new FormData();
     // Freight-to-forwarder needs no payee (the server uses the forwarder).
-    if (!freightToForwarder) fd.append("payee_id", payeeId || "");
+    if (!freightToForwarder) {
+      if (payeeId) fd.append("payee_id", payeeId);
+      else fd.append("payee_name", payeeName || "");
+    }
     fd.append("amount", amount);
     fd.append("currency", currency); fd.append("invoice_ref", invRef);
     if (file) fd.append("invoice", file);
@@ -1467,15 +1485,36 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
             {freightToForwarder ? (
               <span style={{ fontSize: 12, color: "#5a6b78", width: 150 }}>
                 → {s.forwarder_display}</span>
-            ) : (
-              <select value={payeeId} disabled={!canManage}
-                      style={{ ...inputStyle, width: 150 }}
-                      onChange={(e) => setPayeeId(e.target.value)}>
-                <option value="">Payee (agent)…</option>
+            ) : (<>
+              <select value={choice} disabled={!canManage}
+                      style={{ ...inputStyle, width: 170 }}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setChoice(v);
+                        if (v.startsWith("id:")) {
+                          setPayeeId(v.slice(3)); setPayeeName("");
+                        } else if (v.startsWith("name:")) {
+                          setPayeeId(""); setPayeeName(v.slice(5));
+                        } else {
+                          setPayeeId(""); setPayeeName(v === "other"
+                            ? payeeName : "");
+                        }
+                      }}>
+                <option value="">Paid to…</option>
+                {directs.map((n) => (
+                  <option key={n} value={`name:${n}`}>{n} (direct)</option>))}
                 {agents.map((a) => (
-                  <option key={a.id} value={a.id}>{a.name}</option>))}
+                  <option key={a.id} value={`id:${a.id}`}>
+                    {a.name} (agent)</option>))}
+                <option value="other">Other — type a name…</option>
               </select>
-            )}
+              {choice === "other" && (
+                <input placeholder="Payee name" value={payeeName}
+                       disabled={!canManage}
+                       style={{ ...inputStyle, width: 150 }}
+                       onChange={(e) => setPayeeName(e.target.value)} />
+              )}
+            </>)}
             <input type="number" placeholder="Amount" value={amount}
                    disabled={!canManage} style={{ ...inputStyle, width: 90 }}
                    onChange={(e) => setAmount(e.target.value)} />

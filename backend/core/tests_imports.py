@@ -1769,6 +1769,56 @@ class ShipmentChargePyrTests(IprBase):
         self.assertFalse(
             CostPosting.objects.filter(source="PYR", document=doc).exists())
 
+    def test_a_charge_can_be_paid_direct_to_port_or_customs(self):
+        """Port dues go to the port and duty to customs — not to the agents,
+        who may not even be on file. IPR-020's port charge sat unraisable
+        because the payee dropdown offered agents only (owner 2026-08-24)."""
+        from decimal import Decimal
+
+        from core import imports
+        sh = self._shipment()          # no forwarder, no agents at all
+        pay, err = imports.set_shipment_payment(sh, "PORT", {
+            "payee_name": "Maldives Ports Limited",
+            "amount": "6246.02", "currency": "MVR"}, self.signatory)
+        self.assertIsNone(err, err)
+        self.assertEqual(pay.resolved_payee(), "Maldives Ports Limited")
+        pay.invoice = self._file()
+        pay.save(update_fields=["invoice"])
+        doc, err = imports.raise_charge_pyr(pay, self.signatory)
+        self.assertIsNone(err, err)
+        self.assertEqual(doc.payment_request.payee, "Maldives Ports Limited")
+        self.assertEqual(float(doc.payment_request.amount_requested), 6246.02)
+
+    def test_agent_and_typed_payee_are_mutually_exclusive(self):
+        """The supplier FK used to silently win over a typed name."""
+        from core import imports
+        from core.models import Supplier
+        sh = self._shipment()
+        agent = Supplier.objects.create(name="Clearing Co")
+        pay, _ = imports.set_shipment_payment(sh, "DUTY", {
+            "payee_id": agent.id, "amount": "100"}, self.signatory)
+        self.assertEqual(pay.resolved_payee(), "Clearing Co")
+        # Switching to a typed name clears the agent…
+        pay, _ = imports.set_shipment_payment(sh, "DUTY", {
+            "payee_name": "Maldives Customs Service"}, self.signatory)
+        self.assertIsNone(pay.payee_id)
+        self.assertEqual(pay.resolved_payee(), "Maldives Customs Service")
+        # …and switching back clears the name.
+        pay, _ = imports.set_shipment_payment(sh, "DUTY", {
+            "payee_id": agent.id}, self.signatory)
+        self.assertEqual(pay.payee_name, "")
+        self.assertEqual(pay.resolved_payee(), "Clearing Co")
+
+    def test_missing_payee_says_what_the_choices_are(self):
+        from core import imports
+        sh = self._shipment()
+        pay, _ = imports.set_shipment_payment(sh, "PORT", {"amount": "50"},
+                                              self.signatory)
+        pay.invoice = self._file()
+        pay.save(update_fields=["invoice"])
+        _, err = imports.raise_charge_pyr(pay, self.signatory)
+        self.assertIn("port / customs", err)
+
     def test_raise_requires_amount_payee_invoice(self):
         from core import imports
         from core.models import ShipmentPayment

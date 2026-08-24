@@ -964,12 +964,19 @@ def set_shipment_payment(shipment, kind, data, actor):
         shipment=shipment, kind=kind, defaults={"created_by": actor})
     if payment.pyr_id:
         return None, "This charge already has a PYR — it can't be edited."
-    if "payee_id" in data:
-        payment.payee = (Supplier.objects.filter(
-            pk=data["payee_id"]).first()
-            if data.get("payee_id") else None)
-    if "payee_name" in data:
-        payment.payee_name = data.get("payee_name") or ""
+    # A charge is paid EITHER to an agent on file (payee_id) OR directly to a
+    # named body — the port, customs — typed as payee_name. The two must never
+    # both be set: the supplier FK would silently win over the typed name
+    # (owner 2026-08-24, IPR-020's port charge).
+    if "payee_id" in data and data.get("payee_id"):
+        payment.payee = Supplier.objects.filter(pk=data["payee_id"]).first()
+        payment.payee_name = ""
+    elif "payee_name" in data and (data.get("payee_name") or "").strip():
+        payment.payee_name = (data.get("payee_name") or "").strip()[:160]
+        payment.payee = None
+    elif "payee_id" in data or "payee_name" in data:
+        payment.payee = None
+        payment.payee_name = ""
     if "amount" in data:
         payment.amount = _dec(data.get("amount"))
     if "currency" in data:
@@ -1023,7 +1030,8 @@ def raise_charge_pyr(payment, actor):
     if not payment.amount or payment.amount <= ZERO:
         return None, "Enter the charge amount first."
     if not payment.resolved_payee():
-        return None, "Choose the payee (agent) first."
+        return None, ("Choose who this charge is paid to first — the agent, "
+                      "or the port / customs directly.")
     if not payment.invoice:
         return None, "Upload the agent's invoice before raising the PYR."
     head, _ = CostHead.objects.get_or_create(
