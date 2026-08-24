@@ -17,6 +17,7 @@ import { VesselsPage } from "./Vessels.jsx";
 import ClientUsersPage from "./ClientUsersPage.jsx";
 import EmployeesPage from "./EmployeesPage.jsx";
 import HeadOfficePage from "./HeadOfficePage.jsx";
+import AttendanceDevicesPage from "./AttendanceDevicesPage.jsx";
 import LeavePage from "./LeavePage.jsx";
 import OnboardingPage from "./OnboardingPage.jsx";
 import BvRegisterPage from "./BvRegisterPage.jsx";
@@ -154,6 +155,8 @@ const NAV_GROUPS = [
                                         "ADMIN", "PA", "SIGNATORY"]],
            ["leave", "Worker Leave", ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN",
                                       "PA", "SIGNATORY"]],
+           ["attendance-devices", "Attendance Terminals",
+            ["HO_HR", "ADMIN", "PA", "DIRECTOR", "FINANCE"]],
            ["worker-categories", "Worker Categories", ["ADMIN", "PA"]],
            // The OT rate feeds every overtime figure on a payroll run, and
            // Finance runs payroll (owner 2026-08-19).
@@ -1096,6 +1099,12 @@ export default function App() {
              "SIGNATORY"].includes(me.role) &&
             hoPage === "ho-staff" && (
             <HeadOfficePage me={me} sites={sites} />
+          )}
+          {!docView && !openSite &&
+            ["HO_HR", "ADMIN", "PA", "DIRECTOR",
+             "FINANCE"].includes(me.role) &&
+            hoPage === "attendance-devices" && (
+            <AttendanceDevicesPage me={me} sites={sites} />
           )}
           {!docView && !openSite &&
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA",
