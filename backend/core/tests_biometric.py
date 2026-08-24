@@ -136,6 +136,22 @@ class AdmsIngestTests(TestCase):
         self._push("603\t2026-08-23 07:12:04\t0\t1\n")
         self.assertEqual(DevicePunch.objects.count(), 0)
 
+    def test_the_doubled_iclock_path_is_accepted(self):
+        """The firmware appends /iclock/cdata to the configured address, so an
+        address ending in /iclock produces /iclock/iclock/ — the first real
+        unit did exactly this (2026-08-24)."""
+        r = self.client.post(
+            f"/adms/{SECRET}/iclock/iclock/cdata"
+            f"?SN={self.device.serial}&table=ATTLOG",
+            "603\t2026-08-23 07:12:04\t0\t1\n",
+            content_type="text/plain")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(DevicePunch.objects.count(), 1)
+        r = self.client.get(f"/adms/{SECRET}/iclock/iclock/cdata"
+                            f"?SN={self.device.serial}&options=all")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("Realtime=1", r.content.decode())
+
     # ---- the handshake ----
 
     def test_the_handshake_answers_and_marks_the_device_seen(self):

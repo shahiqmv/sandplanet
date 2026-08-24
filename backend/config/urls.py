@@ -29,6 +29,13 @@ urlpatterns = [
          name="adms-getrequest"),
     path("adms/<str:secret>/iclock/devicecmd", views_adms.devicecmd,
          name="adms-devicecmd"),
+    # The firmware appends its own /iclock/… to the configured address, so an
+    # address that already ends in /iclock produces /iclock/iclock/ — seen live
+    # on the first real unit (UFS2261101359, 2026-08-24). Accept the doubled
+    # path rather than sending someone back to a keypad on an island.
+    path("adms/<str:secret>/iclock/iclock/cdata", views_adms.cdata),
+    path("adms/<str:secret>/iclock/iclock/getrequest", views_adms.getrequest),
+    path("adms/<str:secret>/iclock/iclock/devicecmd", views_adms.devicecmd),
     # Public, token-gated client view of a procurement schedule (no login).
     path("share/procurement/<str:token>",
          views_procurement_public.client_plan_page, name="psc-client-plan"),
