@@ -1311,12 +1311,26 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
           ))}
           {!s.shared_with_agent_at && (
             <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
-                    onClick={() => call(`/shipments/${s.id}/share`, {})}>
+                    title="Emails every uploaded shipping document to the company's clearing agent"
+                    onClick={() => window.confirm(
+                        "Email all uploaded shipping documents to the "
+                        + "clearing agent?")
+                      && call(`/shipments/${s.id}/share`, {})}>
               Share with clearing agent</button>
           )}
           {s.shared_with_agent_at && (
             <span style={{ fontSize: 11.5, color: "#1a7f37" }}>
-              ✓ shared with agent</span>
+              ✓ emailed to agent{" "}
+              {new Date(s.shared_with_agent_at).toLocaleDateString("en-GB")}
+              <button style={{ ...ghostButton, padding: "1px 8px",
+                               fontSize: 11, marginLeft: 6 }}
+                      title="Email the documents again — e.g. after uploading more"
+                      onClick={() => window.confirm(
+                          "Email all uploaded shipping documents to the "
+                          + "clearing agent again?")
+                        && call(`/shipments/${s.id}/share`, {})}>
+                send again</button>
+            </span>
           )}
           {arrived && (
             <button style={{ ...buttonStyle, padding: "2px 10px",

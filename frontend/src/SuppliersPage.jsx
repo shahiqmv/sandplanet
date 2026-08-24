@@ -130,6 +130,7 @@ export default function SuppliersPage({ me }) {
       {editing && (
         <SupplierEditor supplier={editing} canEdit={canEdit}
           seesBank={["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role)}
+          agentName={suppliers.find((x) => x.is_clearing_agent)?.name}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }} />
       )}
@@ -149,6 +150,14 @@ export default function SuppliersPage({ me }) {
                                               setEditing(s); }}
                    style={{ color: "inherit" }}
                    title={canEdit ? "Open to edit" : "Open"}>{s.name}</a>
+                {s.is_clearing_agent && (
+                  <span title="Shipping documents are emailed to this supplier when purchasing shares a shipment"
+                        style={{ marginLeft: 6, fontSize: 10, fontWeight: 600,
+                                 color: "#fff", background: "var(--sp-navy)",
+                                 borderRadius: 4, padding: "1px 6px",
+                                 verticalAlign: "middle",
+                                 whiteSpace: "nowrap" }}>
+                    CLEARING AGENT</span>)}
                 {s.credit_days != null && s.credit_days !== "" && (
                   <div style={{ fontSize: 11, color: "#5a6b78",
                                 fontWeight: 400 }}>
@@ -211,11 +220,29 @@ const FIELDS = [
   ["credit_days", "Credit period (days)", "number"],
 ];
 
-function SupplierEditor({ supplier, canEdit, seesBank, onClose, onSaved }) {
+function SupplierEditor({ supplier, canEdit, seesBank, agentName,
+                          onClose, onSaved }) {
   const [form, setForm] = useState({ ...supplier });
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const set = (k, v) => setForm({ ...form, [k]: v });
+
+  // ONE clearing agent company-wide — setting it here moves the flag off
+  // whoever held it. "Share with clearing agent" on a shipment emails the
+  // shipping documents to this supplier.
+  async function setClearingAgent(want) {
+    if (want && agentName && !supplier.is_clearing_agent
+        && !window.confirm(
+          `${agentName} is the clearing agent now. Move it to `
+          + `${supplier.name}? All shipping-document emails will go to `
+          + `${supplier.name} from here on.`)) return;
+    setBusy(true); setErr(null);
+    try {
+      await api(`/suppliers/${supplier.id}/clearing-agent`,
+                { method: "POST", body: { set: want } });
+      onSaved();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
 
   async function save() {
     setBusy(true); setErr(null);
@@ -284,6 +311,35 @@ function SupplierEditor({ supplier, canEdit, seesBank, onClose, onSaved }) {
           onChange={(e) => set("notes", e.target.value)}
           style={{ ...inputStyle, fontFamily: "inherit" }} />
       </label>
+      <div style={{ marginTop: 12, padding: "8px 10px", borderRadius: 6,
+                    background: supplier.is_clearing_agent
+                      ? "#eef6ee" : "#f4f7f9",
+                    fontSize: 12, color: "#41525f" }}>
+        {supplier.is_clearing_agent ? (
+          <>This is the company's <strong>clearing agent</strong> — "Share
+            with clearing agent" on a shipment emails the shipping documents
+            {supplier.email ? ` to ${supplier.email}` : ""}.
+            {!supplier.email && (
+              <span style={{ color: "#c0392b" }}> No email on file — add one
+                above or sharing will fail.</span>)}
+            {canEdit && (
+              <button onClick={() => setClearingAgent(false)} disabled={busy}
+                      style={{ ...ghostButton, padding: "2px 10px",
+                               fontSize: 12, marginLeft: 10 }}>
+                Remove clearing-agent role</button>)}
+          </>
+        ) : (
+          <>Clearing agent: <strong>{agentName || "none set"}</strong>.
+            The company has one clearing agent; shipping documents are
+            emailed to them.
+            {canEdit && (
+              <button onClick={() => setClearingAgent(true)} disabled={busy}
+                      style={{ ...ghostButton, padding: "2px 10px",
+                               fontSize: 12, marginLeft: 10 }}>
+                Make {supplier.name} the clearing agent</button>)}
+          </>
+        )}
+      </div>
       {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
       {canEdit && (
         <div style={{ marginTop: 10 }}>

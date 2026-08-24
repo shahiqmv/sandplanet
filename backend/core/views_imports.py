@@ -487,7 +487,9 @@ def ipr_shipment_share(request, ref, pk):
     s = _get_shipment(doc, pk)
     if not s:
         return Response({"detail": "Not found."}, status=404)
-    ipr_svc.share_with_agent(s, request.user)
+    err = ipr_svc.share_with_agent(s, request.user)
+    if err:
+        return Response({"detail": err}, status=400)
     return Response(_serialize(doc, request))
 
 

@@ -1827,3 +1827,103 @@ class ShipmentChargePyrTests(IprBase):
         _, err = imports.raise_charge_pyr(pay, self.signatory)
         self.assertIsNotNone(err)      # no amount / payee / invoice
         self.assertIsNone(pay.pyr_id)
+
+
+class ClearingAgentShareTests(IprBase):
+    """Share-with-agent emails the shipping documents to THE clearing agent
+    (one company-wide, flagged on the supplier — owner 2026-08-24)."""
+
+    def _file(self, name="doc.pdf"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b"%PDF-1.4 test",
+                                  content_type="application/pdf")
+
+    def _shipment_with_docs(self, doc_types=("BL_AWB", "PACKING_LIST")):
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                             {"mode": "SEA", "vessel_flight": "MV Test",
+                              "container_awb": "MSCU1234566"}, format="json")
+        sid = r.data["shipments"][0]["id"]
+        for t in doc_types:
+            self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/documents",
+                             {"doc_type": t, "file": self._file(f"{t}.pdf")},
+                             format="multipart")
+        return ref, sid
+
+    def _agent(self, email="agent@clearco.mv", flag=True):
+        return Supplier.objects.create(
+            name="ClearCo Maldives", category="CLEARING_AGENT",
+            email=email, contact_person="Ali", is_clearing_agent=flag)
+
+    def test_share_emails_all_documents_to_the_agent(self):
+        from django.core import mail
+        from .models import ImportShipment
+        self._agent()
+        ref, sid = self._shipment_with_docs()
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/share",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(mail.outbox), 1)
+        msg = mail.outbox[0]
+        self.assertEqual(msg.to, ["agent@clearco.mv"])
+        self.assertIn(ref, msg.subject)
+        self.assertEqual(len(msg.attachments), 2)
+        self.assertIn("Dear Ali", msg.body)
+        self.assertIsNotNone(
+            ImportShipment.objects.get(pk=sid).shared_with_agent_at)
+
+    def test_share_refused_without_agent_email_or_documents(self):
+        from django.core import mail
+        from .models import ImportShipment
+        # one shipment, nothing uploaded yet
+        ref, sid = self._shipment_with_docs(doc_types=())
+        # no agent at all
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/share",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("No clearing agent", r.data["detail"])
+        # agent without an email address
+        agent = self._agent(email="")
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/share",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no email", r.data["detail"])
+        # agent fine, but nothing uploaded
+        agent.email = "agent@clearco.mv"
+        agent.save()
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/share",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("nothing to send", r.data["detail"])
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertIsNone(
+            ImportShipment.objects.get(pk=sid).shared_with_agent_at)
+
+    def test_clearing_agent_swap_is_atomic_and_unique(self):
+        a = self._agent()
+        b = Supplier.objects.create(name="Other Agent",
+                                    category="CLEARING_AGENT",
+                                    email="b@x.mv")
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/suppliers/{b.id}/clearing-agent",
+                             {"set": True}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        a.refresh_from_db(); b.refresh_from_db()
+        self.assertFalse(a.is_clearing_agent)
+        self.assertTrue(b.is_clearing_agent)
+        # clear it
+        self.client.post(f"/api/v1/suppliers/{b.id}/clearing-agent",
+                         {"set": False}, format="json")
+        b.refresh_from_db()
+        self.assertFalse(b.is_clearing_agent)
+        # a plain PATCH can't sneak the flag on — only the swap action moves it
+        self.client.patch(f"/api/v1/suppliers/{b.id}",
+                          {"is_clearing_agent": True}, format="json")
+        b.refresh_from_db()
+        self.assertFalse(b.is_clearing_agent)
+        # site roles can't touch it
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(f"/api/v1/suppliers/{a.id}/clearing-agent",
+                             {"set": True}, format="json")
+        self.assertEqual(r.status_code, 403)

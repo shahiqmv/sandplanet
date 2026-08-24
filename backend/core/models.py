@@ -1012,12 +1012,24 @@ class Supplier(models.Model):
     # Bank / remittance details for TT payments — sensitive, shown only to
     # HO Purchasing / Finance / Admin (§5.10.2).
     bank_details = models.TextField(blank=True)
+    # The company clears imports through ONE clearing agent at a time (owner
+    # 2026-08-24); "Share with clearing agent" emails shipping documents to
+    # this supplier. Set via the swap action, which moves the flag atomically.
+    is_clearing_agent = models.BooleanField(default=False)
     # payment terms live per quotation, not per supplier — terms vary by
     # goods/volume (owner, 2026-07-07)
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["is_clearing_agent"],
+                condition=models.Q(is_clearing_agent=True),
+                name="one_clearing_agent"),
+        ]
 
     def __str__(self):
         return self.name

@@ -1098,12 +1098,105 @@ def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
     return doc
 
 
+SHARE_ATTACH_CAP = 20 * 1024 * 1024   # most mailboxes bounce past ~25 MB
+
+
 def share_with_agent(shipment, actor):
+    """Email every shipping document on this shipment to the company's
+    clearing agent (owner 2026-08-24: ONE agent company-wide, flagged on the
+    supplier). Stamps shared_with_agent_at only when the send succeeds."""
+    import mimetypes
+
+    from django.conf import settings
+    from django.core.mail import EmailMessage
     from django.utils import timezone
+
+    from .models import Supplier
+
+    agent = Supplier.objects.filter(is_clearing_agent=True,
+                                    is_active=True).first()
+    if not agent:
+        return ("No clearing agent is set. Open Suppliers and mark one "
+                "supplier as the clearing agent first.")
+    to_addrs = [a.strip() for a in (agent.email or "").replace(";", ",")
+                .split(",") if a.strip()]
+    if not to_addrs:
+        return (f"{agent.name} has no email address on file. Add one on the "
+                "supplier before sharing.")
+    docs = list(shipment.documents.order_by("doc_type", "id"))
+    if not docs:
+        return "Upload the shipping documents first — there is nothing to send."
+
+    order_doc = shipment.order.document
+    supplier = shipment.order.supplier
+    lines = [
+        f"Dear {agent.contact_person or agent.name},",
+        "",
+        f"Please find attached the shipping documents for our import "
+        f"{order_doc.ref} (shipment {shipment.seq}) for clearance.",
+        "",
+        f"    Supplier : {supplier.name if supplier else '-'}",
+    ]
+    if shipment.vessel_flight:
+        lines.append(f"    Vessel / flight : {shipment.vessel_flight}")
+    if shipment.bl_no:
+        lines.append(f"    B/L no. : {shipment.bl_no}")
+    if shipment.container_awb:
+        lines.append(f"    Container / AWB : {shipment.container_awb}")
+    if shipment.eta:
+        lines.append(f"    ETA Male' : {shipment.eta:%d %b %Y}")
+    lines += ["", "Documents attached:"]
+    lines += [f"    - {d.get_doc_type_display()}: {d.file_name or d.file.name}"
+              for d in docs]
+    lines += ["",
+              "Please proceed with clearance and revert with the duty and "
+              "charge figures.",
+              "",
+              f"Best regards,",
+              f"{actor.full_name or actor.username}",
+              "Sand Planet Pvt Ltd"]
+
+    reply_to = actor.email or settings.REPLY_TO_FALLBACK
+    sender_name = actor.full_name or actor.username
+    msg = EmailMessage(
+        subject=(f"Shipping documents — {order_doc.ref} shipment "
+                 f"{shipment.seq}"
+                 + (f" ({shipment.container_awb})"
+                    if shipment.container_awb else "")),
+        body="\n".join(lines),
+        from_email=f"{sender_name} <{settings.DEFAULT_FROM_EMAIL}>",
+        to=to_addrs,
+        reply_to=[reply_to],
+    )
+    total = 0
+    for d in docs:
+        name = d.file_name or d.file.name.rsplit("/", 1)[-1]
+        try:
+            with d.file.open("rb") as fh:
+                content = fh.read()
+        except Exception:
+            return (f"Could not read the file for "
+                    f"{d.get_doc_type_display()} ({name}). Re-upload it and "
+                    "try again.")
+        total += len(content)
+        if total > SHARE_ATTACH_CAP:
+            return ("The documents together exceed the 20 MB email limit. "
+                    "Replace the largest file with a compressed copy and "
+                    "try again.")
+        ctype = (mimetypes.guess_type(name)[0]
+                 or "application/octet-stream")
+        msg.attach(name, content, ctype)
+    try:
+        msg.send(fail_silently=False)
+    except Exception as e:
+        return f"The email could not be sent: {e}"
     shipment.shared_with_agent_at = timezone.now()
     shipment.save(update_fields=["shared_with_agent_at"])
     audit("document", shipment.order.document_id, "SHIPMENT_SHARED_AGENT",
-          actor=actor, detail={"shipment": shipment.seq})
+          actor=actor,
+          detail={"shipment": shipment.seq, "agent": agent.name,
+                  "to": to_addrs, "documents": len(docs)})
+    return None
 
 
 # ---- Landed cost + IRN receipt + stock lots (P1B-e) ----------------------

@@ -2,8 +2,9 @@
 
 from decimal import Decimal
 
+from django.db import transaction
 from rest_framework import serializers, viewsets
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import action, api_view, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import BasePermission
 from rest_framework.response import Response
@@ -30,7 +31,11 @@ class SupplierSerializer(serializers.ModelSerializer):
         model = Supplier
         fields = ["id", "name", "category", "country", "default_currency",
                   "default_incoterm", "credit_days", "contact_person", "phone",
-                  "email", "address", "bank_details", "notes", "is_active"]
+                  "email", "address", "bank_details", "notes", "is_active",
+                  "is_clearing_agent"]
+        # only the swap action moves the clearing-agent flag — the company
+        # has exactly ONE agent (owner 2026-08-24)
+        read_only_fields = ["is_clearing_agent"]
 
     def to_representation(self, obj):
         data = super().to_representation(obj)
@@ -61,6 +66,34 @@ class SupplierViewSet(viewsets.ModelViewSet):
         supplier = serializer.save()
         audit("supplier", supplier.id, "SUPPLIER_CREATED",
               actor=self.request.user, detail={"name": supplier.name})
+
+    @action(detail=True, methods=["post"], url_path="clearing-agent")
+    def clearing_agent(self, request, pk=None):
+        """Make this supplier THE clearing agent (or clear the flag with
+        {"set": false}). One agent company-wide — setting it moves the flag
+        off whoever held it, in one transaction."""
+        supplier = self.get_object()
+        want = request.data.get("set", True)
+        want = want not in (False, "false", "0", 0)
+        with transaction.atomic():
+            previous = (Supplier.objects.select_for_update()
+                        .filter(is_clearing_agent=True).exclude(pk=supplier.pk)
+                        .first())
+            if want and previous:
+                previous.is_clearing_agent = False
+                previous.save(update_fields=["is_clearing_agent",
+                                             "updated_at"])
+            if supplier.is_clearing_agent != want:
+                supplier.is_clearing_agent = want
+                supplier.save(update_fields=["is_clearing_agent",
+                                             "updated_at"])
+        audit("supplier", supplier.id,
+              "CLEARING_AGENT_SET" if want else "CLEARING_AGENT_UNSET",
+              actor=request.user,
+              detail={"name": supplier.name,
+                      "previous": previous.name if previous else None})
+        return Response(SupplierSerializer(
+            supplier, context={"request": request}).data)
 
 
 class QuotationLineSerializer(serializers.ModelSerializer):
