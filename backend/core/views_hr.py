@@ -621,6 +621,14 @@ def attendance_grid(request):
         .order_by("emp_no").distinct()
     existing = {a.employee_id: a for a in Attendance.objects.filter(
         site=site, day=day)}
+    # What the gate terminals saw (phase 2, owner 2026-08-24). Proposals are
+    # computed from the raw punch log at read time and never stored — the only
+    # write path into attendance is still the clerk's save below, with every
+    # guard it already carries.
+    device = None
+    if site.attendance_devices.filter(is_active=True).exists():
+        from . import biometric
+        device = biometric.day_proposals(site, day)
     rows = []
     for employee in roster:
         att = existing.get(employee.id)
@@ -645,11 +653,15 @@ def attendance_grid(request):
             "sub_extra_hours": att.sub_extra_hours if att else 0,
             "remark": att.remark if att else default_remark,
             "saved": att is not None,
+            "device": (device["rows"].get(employee.id)
+                       if device is not None else None),
         })
     return Response({
         "site": site.code, "date": day.isoformat(),
         "is_rest_day": is_rest_day,
         "locked": _month_locked(site.id, day),
+        "has_devices": device is not None,
+        "device_unmatched": device["unmatched"] if device else [],
         "rows": rows,
     })
 

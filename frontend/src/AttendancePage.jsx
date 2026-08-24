@@ -33,6 +33,26 @@ export default function AttendancePage({ site, me, onClose }) {
   const setRow = (i, patch) =>
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
+  // Phase 2 of the gate terminals (owner 2026-08-24): punches PROPOSE the
+  // day; nothing lands until the clerk saves, through the same endpoint and
+  // guards as hand marking. "Use" copies one proposal into the row; the
+  // button by Save copies every unsaved one.
+  const applyDevice = (i) => {
+    const d = rows[i]?.device;
+    if (!d?.proposal) return;
+    setRow(i, { check_in: d.proposal.check_in,
+                check_out: d.proposal.check_out,
+                remark: d.proposal.remark,
+                ot_requested: d.proposal.ot_requested });
+  };
+  const applyAllDevice = () =>
+    setRows(rows.map((r) => (r.device?.proposal && !r.saved)
+      ? { ...r, check_in: r.device.proposal.check_in,
+          check_out: r.device.proposal.check_out,
+          remark: r.device.proposal.remark,
+          ot_requested: r.device.proposal.ot_requested }
+      : r));
+
   async function save() {
     setBusy(true);
     setError(null);
@@ -160,6 +180,13 @@ export default function AttendancePage({ site, me, onClose }) {
           this day; a worked rest day is paid as an extra (7th) day in payroll.
         </p>
       )}
+      {grid?.device_unmatched?.length > 0 && (
+        <p style={{ fontSize: 12.5, color: "#b35900", marginTop: 8 }}>
+          At the gate but not on this register:{" "}
+          {grid.device_unmatched.map((u) =>
+            `${u.full_name || `ID ${u.device_user_id}`} (${u.punched_at} — ${
+              u.why})`).join(" · ")}
+        </p>)}
       {grid?.locked && (
         <div style={{ background: "#fdeceb", borderRadius: 8,
                       padding: "8px 12px", fontSize: 13, display: "flex",
@@ -187,6 +214,7 @@ export default function AttendancePage({ site, me, onClose }) {
           <th style={{ ...th, width: 120 }}>In</th>
           <th style={{ ...th, width: 120 }}>Out</th>
           <th style={{ ...th, width: 130 }}>Remark</th>
+          {grid?.has_devices && <th style={{ ...th, width: 125 }}>Gate</th>}
           <th style={{ ...th, width: 90 }}>OT / Extra (h)</th>
           <th style={th}>OT approved</th>
         </tr></thead>
@@ -237,6 +265,31 @@ export default function AttendancePage({ site, me, onClose }) {
                     : remarkOptions).map((r) => <option key={r}>{r}</option>)}
                 </select>
               </td>
+              {grid?.has_devices && (
+                <td style={{ padding: "3px 6px", fontSize: 11.5,
+                             lineHeight: 1.35 }}>
+                  {row.device ? (<>
+                    <span style={{ fontWeight: 600 }}>
+                      {row.device.first}
+                      {row.device.last ? `–${row.device.last}` : ""}</span>
+                    {row.device.proposal && !grid?.locked && canEnter && (
+                      <a href="#" style={{ marginLeft: 6, fontWeight: 600 }}
+                         onClick={(e) => { e.preventDefault();
+                                           applyDevice(i); }}>use</a>)}
+                    {row.device.flags.length > 0 && (
+                      <div style={{ color:
+                        row.device.flags.includes("REST_DAY")
+                        || row.device.flags.includes("NO_OUT")
+                          ? "#b35900" : "#5a6b78" }}>
+                        {row.device.flags.map((f) => ({
+                          NO_OUT: "no punch-out", SHORT: "short day",
+                          LATE: "late",
+                          OT: `OT ${row.device.proposal?.ot_requested}h`,
+                          REST_DAY: "rest day — you decide",
+                        }[f] || f)).join(" · ")}
+                      </div>)}
+                  </>) : <span style={{ color: "#9aa8b3" }}>—</span>}
+                </td>)}
               {sub ? (
                 <td style={{ padding: 3, whiteSpace: "nowrap" }} colSpan={2}>
                   <input type="number" min="0" step="0.5"
@@ -280,11 +333,15 @@ export default function AttendancePage({ site, me, onClose }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 14,
                     flexWrap: "wrap" }}>
-        {canEnter && !grid?.locked && rows.length > 0 && (
+        {canEnter && !grid?.locked && rows.length > 0 && (<>
+          {grid?.has_devices
+            && rows.some((r) => r.device?.proposal && !r.saved) && (
+            <button onClick={applyAllDevice} style={ghostButton}>
+              ⇊ Use gate times for unsaved rows</button>)}
           <button onClick={save} disabled={busy} style={buttonStyle}>
             Save day
           </button>
-        )}
+        </>)}
         {isPm && !grid?.locked && (
           <>
             <button onClick={approveAllOt} style={ghostButton}>

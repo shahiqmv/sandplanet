@@ -316,3 +316,125 @@ class DeviceRegistryTests(TestCase):
         self.assertEqual(r.data["count"], 1)
         self.assertEqual(r.data["punches"][0]["device_user_id"], "42")
         self.assertIsNone(r.data["punches"][0]["emp_no"])
+
+
+@override_settings(ADMS_SECRET=SECRET)
+class DayProposalTests(TestCase):
+    """Phase 2: punches PROPOSE the day on the clerk's grid, by the owner's
+    rules (2026-08-24). Nothing is stored; the clerk's save is still the only
+    write path into attendance."""
+
+    def setUp(self):
+        from datetime import time
+        self.site = Site.objects.create(
+            code="MLE", name="Head Office", status=Site.Status.ACTIVE,
+            working_hours_from=time(8, 0), working_hours_to=time(17, 0))
+        self.hr = make_user("dp_hr", User.Role.HO_HR)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-0700", full_name="Grid Man", job_category=self.cat,
+            is_active=True, join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        self.device = AttendanceDevice.objects.create(
+            site=self.site, name="Office", serial="DP-1")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+        # A Monday — inside the default working week.
+        self.day = date(2026, 8, 24)
+
+    def _push(self, *lines):
+        body = "".join(f"{l}\n" for l in lines)
+        return self.client.post(
+            f"/adms/{SECRET}/iclock/cdata?SN=DP-1&table=ATTLOG",
+            body, content_type="text/plain")
+
+    def _grid_row(self):
+        r = self.client.get(f"/api/v1/attendance?site={self.site.id}"
+                            f"&date={self.day}")
+        assert r.status_code == 200, r.data
+        self.grid = r.data
+        return next(x for x in r.data["rows"]
+                    if x["employee_id"] == self.emp.id)
+
+    def test_a_full_day_with_overtime_is_proposed_for_the_clerk(self):
+        self._push("700\t2026-08-24 07:58:00\t255\t1",
+                   "700\t2026-08-24 19:47:00\t255\t1")
+        row = self._grid_row()
+        d = row["device"]
+        self.assertEqual(d["punch_count"], 2)
+        self.assertEqual(d["proposal"]["check_in"], "07:58")
+        self.assertEqual(d["proposal"]["check_out"], "19:47")
+        self.assertEqual(d["proposal"]["remark"], "PRESENT")
+        # 17:00 -> 19:47 is 2h47m; floored to the half hour = 2.5, for the
+        # clerk to adjust and the PM to approve as always.
+        self.assertEqual(d["proposal"]["ot_requested"], "2.5")
+        self.assertIn("OT", d["flags"])
+        self.assertNotIn("LATE", d["flags"])
+
+    def test_no_punch_out_proposes_the_normal_finish_flagged(self):
+        self._push("700\t2026-08-24 07:55:00\t255\t15")
+        d = self._grid_row()["device"]
+        self.assertIn("NO_OUT", d["flags"])
+        self.assertEqual(d["proposal"]["check_out"], "17:00")
+        self.assertEqual(d["proposal"]["remark"], "PRESENT")
+        self.assertEqual(d["proposal"]["ot_requested"], "0")
+
+    def test_a_short_span_proposes_a_half_day(self):
+        self._push("700\t2026-08-24 08:02:00\t255\t1",
+                   "700\t2026-08-24 12:30:00\t255\t1")
+        d = self._grid_row()["device"]
+        self.assertEqual(d["proposal"]["remark"], "HALF_DAY")
+        self.assertIn("SHORT", d["flags"])
+
+    def test_more_than_fifteen_minutes_late_is_flagged_not_priced(self):
+        self._push("700\t2026-08-24 08:20:00\t255\t1",
+                   "700\t2026-08-24 17:05:00\t255\t1")
+        d = self._grid_row()["device"]
+        self.assertIn("LATE", d["flags"])
+        self.assertEqual(d["proposal"]["remark"], "PRESENT")  # pay untouched
+
+    def test_a_rest_day_punch_is_flagged_and_proposes_nothing(self):
+        self.day = date(2026, 8, 28)                     # a Friday
+        self._push("700\t2026-08-28 09:10:00\t255\t1")
+        d = self._grid_row()["device"]
+        self.assertIn("REST_DAY", d["flags"])
+        self.assertIsNone(d["proposal"])
+
+    def test_a_stranger_at_the_gate_is_listed_not_rostered(self):
+        other = Employee.objects.create(
+            emp_no="EMP-0800", full_name="Other Site Man",
+            job_category=self.cat, is_active=True)
+        self._push("800\t2026-08-24 08:05:00\t255\t1",
+                   "999\t2026-08-24 08:06:00\t255\t1")
+        self._grid_row()
+        um = self.grid["device_unmatched"]
+        self.assertEqual(len(um), 2)
+        whys = {u["device_user_id"]: u["why"] for u in um}
+        self.assertEqual(whys["800"], "not on this site's register")
+        self.assertEqual(whys["999"], "no worker for this ID")
+
+    def test_a_site_with_no_terminal_pays_no_cost(self):
+        self.device.is_active = False
+        self.device.save(update_fields=["is_active"])
+        row = self._grid_row()
+        self.assertIsNone(row["device"])
+        self.assertFalse(self.grid["has_devices"])
+
+    def test_proposals_store_nothing_until_the_clerk_saves(self):
+        self._push("700\t2026-08-24 07:58:00\t255\t1",
+                   "700\t2026-08-24 19:47:00\t255\t1")
+        self._grid_row()
+        self.assertEqual(Attendance.objects.count(), 0)
+        # The clerk accepts the proposal — through the SAME endpoint as a
+        # hand-marked day, so every guard applies.
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": str(self.day),
+            "rows": [{"employee_id": self.emp.id, "check_in": "07:58",
+                      "check_out": "19:47", "ot_requested": "2.5",
+                      "remark": "PRESENT"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        a = Attendance.objects.get()
+        self.assertEqual(str(a.ot_requested), "2.50")
+        self.assertIsNone(a.ot_approved)          # the PM still approves

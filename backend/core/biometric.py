@@ -14,6 +14,7 @@ raw line either way, and never drops a punch it failed to read.
 import logging
 import re
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone as djtz
@@ -249,3 +250,123 @@ def enrolment_gaps(site):
                                   if e.job_category_id else ""),
                         "suggested_id": device_id_for(e)})
     return out
+
+
+# ---- Phase 2: propose the day from the punches (owner 2026-08-24) ---------
+#
+# The rules, as decided by the owner:
+#   * no punch-out  -> propose a NORMAL day to the site's finish time, flagged
+#   * span < 5h     -> propose HALF_DAY
+#   * beyond hours  -> PROPOSE the overtime; the clerk adjusts, the PM still
+#                      approves — the approval chain is untouched
+#   * rest day      -> flag the punch, propose NOTHING (rest-day pay is
+#                      deliberate, never a by-product of crossing the gate)
+#   * >15 min late  -> flagged only; pay is untouched (check-in is stored)
+#   * no punch, no clerk mark -> stays unmarked and unpaid, as today
+#
+# Proposals are computed from the punch log at read time and are never stored:
+# the only write path into attendance remains the clerk's own save, which
+# carries every existing guard (join date, unpaid leave, month lock).
+
+HALF_DAY_BELOW_HOURS = Decimal("5")
+LATE_GRACE_MIN = 15
+
+
+def _local(dt):
+    return dt.astimezone(timezone(SITE_OFFSET))
+
+
+def day_punch_window(day):
+    """The UTC instants bounding a Maldives calendar day."""
+    start = datetime(day.year, day.month, day.day, tzinfo=timezone(SITE_OFFSET))
+    return start, start + timedelta(days=1)
+
+
+def day_proposals(site, day):
+    """What the gate saw, per worker, for one site and one local day.
+
+    Returns {"rows": {employee_id: {...}}, "unmatched": [...]} — the second
+    list is punches at this site's terminals that belong to nobody on this
+    site's register (an unknown ID, or a worker allocated elsewhere).
+    """
+    from decimal import ROUND_FLOOR
+
+    start, end = day_punch_window(day)
+    punches = (DevicePunch.objects
+               .filter(device__site=site, punched_at__gte=start,
+                       punched_at__lt=end)
+               .select_related("employee")
+               .order_by("punched_at"))
+    if not punches:
+        return {"rows": {}, "unmatched": []}
+    here = set(Employee.objects.filter(
+        is_active=True, site_allocations__site=site,
+        site_allocations__to_date__isnull=True).values_list("id", flat=True))
+    is_rest = day.isoweekday() not in (site.working_days or [])
+    by_emp, unmatched = {}, []
+    for p in punches:
+        if p.employee_id and p.employee_id in here:
+            by_emp.setdefault(p.employee_id, []).append(p)
+        else:
+            unmatched.append({
+                "device_user_id": p.device_user_id,
+                "punched_at": _local(p.punched_at).strftime("%H:%M")
+                if p.punched_at else None,
+                "emp_no": p.employee.emp_no if p.employee_id else None,
+                "full_name": p.employee.full_name if p.employee_id else None,
+                "why": ("not on this site's register" if p.employee_id
+                        else "no worker for this ID"),
+            })
+    rows = {}
+    for emp_id, plist in by_emp.items():
+        first, last = _local(plist[0].punched_at), _local(plist[-1].punched_at)
+        distinct = last > first
+        flags = []
+        row = {
+            "punch_count": len(plist),
+            "first": first.strftime("%H:%M"),
+            "last": last.strftime("%H:%M") if distinct else None,
+            "modes": sorted({p.verify_mode for p in plist if p.verify_mode}),
+            "flags": flags, "proposal": None,
+        }
+        if is_rest:
+            # Owner: rest-day pay is deliberate — show, never propose.
+            flags.append("REST_DAY")
+            rows[emp_id] = row
+            continue
+        late_by = (
+            datetime.combine(day, first.time())
+            - datetime.combine(day, site.working_hours_from)
+        ).total_seconds() / 60
+        if late_by > LATE_GRACE_MIN:
+            flags.append("LATE")
+        if not distinct:
+            # The most common exception: he was almost certainly there all
+            # day. Propose the normal finish, loudly flagged.
+            flags.append("NO_OUT")
+            rows[emp_id] = {**row, "proposal": {
+                "check_in": first.strftime("%H:%M"),
+                "check_out": site.working_hours_to.strftime("%H:%M"),
+                "remark": "PRESENT", "ot_requested": "0"}}
+            continue
+        span = Decimal(str((last - first).total_seconds())) / 3600
+        remark = "PRESENT"
+        if span < HALF_DAY_BELOW_HOURS:
+            remark = "HALF_DAY"
+            flags.append("SHORT")
+        # OT proposed from time past the site's finish, floored to the half
+        # hour so a proposal never overstates; the clerk bumps it if real.
+        ot = Decimal("0")
+        if remark == "PRESENT" and last.time() > site.working_hours_to:
+            past = (datetime.combine(day, last.time())
+                    - datetime.combine(day, site.working_hours_to)
+                    ).total_seconds() / 3600
+            ot = (Decimal(str(past)) * 2).quantize(
+                Decimal("1"), rounding=ROUND_FLOOR) / 2
+        if ot > 0:
+            flags.append("OT")
+        rows[emp_id] = {**row, "proposal": {
+            "check_in": first.strftime("%H:%M"),
+            "check_out": last.strftime("%H:%M"),
+            "remark": remark, "ot_requested": str(ot)}}
+    return {"rows": rows, "unmatched": unmatched}
