@@ -1,7 +1,7 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_bom as bom_api, views_cameras as cameras_api, \
+from . import views, views_biometric as biometric_api, views_bom as bom_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_documents as docs, \
@@ -425,6 +425,15 @@ urlpatterns = [
     path("employees/merge", hr.employee_merge, name="employee-merge"),
     path("employees/duplicate-passports", hr.duplicate_passports,
          name="duplicate-passports"),
+    # Biometric terminals (owner 2026-08-23) — registry, raw log, enrolment.
+    path("attendance-devices", biometric_api.devices,
+         name="attendance-devices"),
+    path("attendance-devices/punches", biometric_api.punches,
+         name="attendance-punches"),
+    path("attendance-devices/enrolment", biometric_api.enrolment,
+         name="attendance-enrolment"),
+    path("employees/<int:pk>/biometric", biometric_api.employee_enrolment,
+         name="employee-biometric"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),
     path("attendance/register", hr.attendance_register,
          name="attendance-register"),

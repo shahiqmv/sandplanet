@@ -151,6 +151,11 @@ REST_FRAMEWORK = {
     ],
 }
 
+# Shared secret in the biometric terminals' push URL. Set in the environment;
+# empty means the ADMS endpoints refuse everything, which is the right default
+# for a machine with no terminals (owner 2026-08-23).
+ADMS_SECRET = os.environ.get("ADMS_SECRET", "")
+
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"  # stored UTC; UI displays Maldives UTC+5 (design §1)
 USE_I18N = True

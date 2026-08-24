@@ -4,8 +4,8 @@ from django.contrib import admin
 from django.urls import include, path, re_path
 from django.views.generic import TemplateView
 
-from core import (views_cameras, views_procurement_public, views_pwa,
-                  views_tracking)
+from core import (views_adms, views_cameras, views_procurement_public,
+                  views_pwa, views_tracking)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -21,6 +21,14 @@ urlpatterns = [
     # /api/relay/ from the internet, so this is container-network only.
     path("api/relay/auth/<str:secret>", views_cameras.relay_auth,
          name="relay-auth"),
+    # Biometric terminals push here (ZKTeco ADMS). Not session-authenticated:
+    # a gate terminal cannot log in. It proves itself with the secret in the
+    # path plus a serial registered to a site (owner 2026-08-23).
+    path("adms/<str:secret>/iclock/cdata", views_adms.cdata, name="adms-cdata"),
+    path("adms/<str:secret>/iclock/getrequest", views_adms.getrequest,
+         name="adms-getrequest"),
+    path("adms/<str:secret>/iclock/devicecmd", views_adms.devicecmd,
+         name="adms-devicecmd"),
     # Public, token-gated client view of a procurement schedule (no login).
     path("share/procurement/<str:token>",
          views_procurement_public.client_plan_page, name="psc-client-plan"),

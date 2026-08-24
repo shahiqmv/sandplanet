@@ -5033,3 +5033,128 @@ class Camera(models.Model):
 
     def __str__(self):
         return f"{self.site.code} · {self.name}"
+
+
+# ===== Biometric attendance terminals (owner 2026-08-23) =====
+#
+# Face/fingerprint terminals at the gate on the bigger sites. A punch is
+# EVIDENCE that a worker was at the gate — never a day's pay by itself. The raw
+# log below is never edited, and the day grid the clerk confirms is derived from
+# it, so any figure can be traced back to the punch behind it. Fingerprint
+# templates never leave the device: all we ever receive is a numeric user ID
+# and a timestamp.
+
+class AttendanceDevice(models.Model):
+    """A terminal at a site. ZKTeco's ADMS/push protocol identifies a device by
+    its serial number alone, so a serial must be registered here before any of
+    its punches are accepted — an unknown serial is refused and logged."""
+
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="attendance_devices")
+    name = models.CharField(max_length=60)          # "Camp gate"
+    serial = models.CharField(max_length=40, unique=True)
+    model = models.CharField(max_length=60, blank=True)
+    location_note = models.CharField(max_length=120, blank=True)
+    is_active = models.BooleanField(default=True)
+    # Health, so a dead terminal shows the same morning rather than at month end
+    last_seen_at = models.DateTimeField(null=True, blank=True)
+    last_punch_at = models.DateTimeField(null=True, blank=True)
+    punches_received = models.PositiveIntegerField(default=0)
+    registered_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True,
+                                      related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["site_id", "name"]
+
+    def __str__(self):
+        return f"{self.site.code} · {self.name} ({self.serial})"
+
+
+class BiometricEnrolment(models.Model):
+    """Which device user ID belongs to which worker.
+
+    The ID is the numeric part of the employee number (EMP-0603 -> 603), so
+    matching is exact and needs no second numbering scheme. Held explicitly all
+    the same: it records who enrolled whom and when, and it is what tells us a
+    worker on site has not been enrolled yet.
+    """
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE,
+                                 related_name="biometric_enrolments")
+    device_user_id = models.CharField(max_length=20)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    finger_count = models.PositiveSmallIntegerField(default=0)
+    face_enrolled = models.BooleanField(default=False)
+    card_enrolled = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    enrolled_on = models.DateField(null=True, blank=True)
+    enrolled_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    removed_on = models.DateField(null=True, blank=True)
+    notes = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["employee__emp_no"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device_user_id"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_device_user_id"),
+        ]
+
+    def __str__(self):
+        return f"{self.employee.emp_no} -> {self.device_user_id}"
+
+
+class DevicePunch(models.Model):
+    """One punch, exactly as the terminal sent it. Never edited.
+
+    A re-send after a network outage must not double-count, so (device,
+    device_user_id, punched_at) is unique — the device may safely repeat itself.
+    A line we cannot parse is still stored, because a punch we failed to read is
+    the one most worth keeping.
+    """
+
+    class Status(models.TextChoices):
+        MATCHED = "MATCHED", "Matched to a worker"
+        UNKNOWN_ID = "UNKNOWN_ID", "No worker for this ID"
+        UNPARSED = "UNPARSED", "Could not be read"
+
+    class Direction(models.TextChoices):
+        IN = "IN", "In"
+        OUT = "OUT", "Out"
+        UNKNOWN = "UNKNOWN", "Not stated"
+
+    device = models.ForeignKey(AttendanceDevice, on_delete=models.PROTECT,
+                               related_name="punches")
+    device_user_id = models.CharField(max_length=20, blank=True)
+    punched_at = models.DateTimeField(null=True, blank=True)
+    direction = models.CharField(max_length=8, choices=Direction.choices,
+                                 default=Direction.UNKNOWN)
+    verify_mode = models.CharField(max_length=16, blank=True)  # face/finger/card
+    employee = models.ForeignKey(Employee, on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="device_punches")
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.MATCHED)
+    raw = models.TextField(blank=True)         # the line as received
+    received_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-punched_at", "-id"]
+        indexes = [
+            models.Index(fields=["device", "punched_at"]),
+            models.Index(fields=["employee", "punched_at"]),
+            models.Index(fields=["status"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["device", "device_user_id", "punched_at"],
+                name="uniq_punch_per_device_user_time"),
+        ]
+
+    def __str__(self):
+        return f"{self.device_user_id} @ {self.punched_at}"
