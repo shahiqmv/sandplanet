@@ -699,7 +699,8 @@ def payments_due():
     from .models import ImportPaymentMilestone
     return ImportPaymentMilestone.objects.filter(
         status__in=("PENDING", "DUE", "AUTHORISED"),
-        order__document__status="AUTHORISED").select_related(
+        order__document__status="AUTHORISED",
+        order__document__is_void=False).select_related(
         "order__document", "order__supplier", "voucher").order_by(
         "order__supplier__name", "order__document__ref", "seq")
 

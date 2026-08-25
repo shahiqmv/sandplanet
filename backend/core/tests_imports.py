@@ -1928,3 +1928,52 @@ class ClearingAgentShareTests(IprBase):
         r = self.client.post(f"/api/v1/suppliers/{a.id}/clearing-agent",
                              {"set": True}, format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class VoidedIprTests(IprBase):
+    """A voided order stays readable but shows VOID and refuses all moves
+    (IPR-035: voided while APPROVED yet the page still offered Authorise)."""
+
+    def _void(self, ref):
+        self.admin = make_user("adm2", User.Role.ADMIN)
+        self.client.force_authenticate(self.admin)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/void",
+                             {"reason": "not needed"}, format="json")
+        self.assertIsNone(r.data.get("detail"), r.data)
+        return r
+
+    def test_voided_ipr_is_read_only_everywhere(self):
+        # award it (Director) but stop before authorisation — IPR-035's state
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self.order_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self._void(ref)
+        # generic workflow action refused
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        # IPR-specific mutations refused
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                             {"mode": "SEA"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("void", r.data["detail"].lower())
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones",
+                             {"rows": []}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # still readable, but read-only for every role, and flagged void
+        r = self.client.get(f"/api/v1/ipr/{ref}")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.data["is_void"])
+        self.assertFalse(r.data["can_manage"])
+        self.assertFalse(r.data["can_pay"])
+        # the list carries the flag too
+        row = next(x for x in self.client.get("/api/v1/ipr").data
+                   if x["ref"] == ref)
+        self.assertTrue(row["is_void"])

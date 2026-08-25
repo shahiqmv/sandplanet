@@ -66,7 +66,7 @@ export default function ImportOrders({ me, onOpenIpr }) {
         </tr></thead>
         <tbody>
           {(rows || []).map((r) => (
-            <tr key={r.ref}>
+            <tr key={r.ref} style={r.is_void ? { opacity: 0.55 } : undefined}>
               <td style={td}>
                 <a href="#" onClick={(e) => { e.preventDefault();
                                               onOpenIpr(r.ref); }}
@@ -78,7 +78,8 @@ export default function ImportOrders({ me, onOpenIpr }) {
               <td style={{ ...td, textAlign: "right" }}>
                 {r.currency} {money(r.order_total)}</td>
               <td style={{ ...td, textAlign: "right" }}>{money(r.mvr_total)}</td>
-              <td style={td}><StatusChip status={r.status} /></td>
+              <td style={td}>
+                <StatusChip status={r.is_void ? "VOID" : r.status} /></td>
             </tr>
           ))}
           {rows && rows.length === 0 && (
@@ -453,7 +454,10 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
 
   if (!doc) return <section style={card}>{error || "Loading…"}</section>;
   const o = doc.order;
-  const actions = ACTIONS.filter(([, , st, roles]) =>
+  // A voided order keeps its number and stays readable, but nothing on it
+  // may move — no workflow buttons, and the chip says VOID, not the status
+  // it died in.
+  const actions = doc.is_void ? [] : ACTIONS.filter(([, , st, roles]) =>
     st.includes(doc.status) && roles.includes(me.role));
 
   return (
@@ -461,7 +465,8 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
       <div style={{ display: "flex", justifyContent: "space-between",
                     alignItems: "baseline" }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
-          {doc.ref} <StatusChip status={doc.status} /></h2>
+          {doc.ref} <StatusChip status={doc.is_void ? "VOID" : doc.status} />
+        </h2>
         <div style={{ display: "flex", gap: 8 }}>
           {doc.status === "DRAFT" && doc.can_manage && onEdit && (
             <button onClick={() => onEdit(doc)} style={buttonStyle}>
@@ -515,7 +520,16 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
         ))}
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      {doc.status === "APPROVED" && (
+      {doc.is_void && (
+        <p style={{ background: "#fdecea", border: "1px solid #f2b8b5",
+                    borderRadius: 6, padding: "8px 12px", fontSize: 13,
+                    color: "#8a1f1a" }}>
+          This order was <strong>voided</strong>
+          {doc.void_reason ? <> — {doc.void_reason}</> : null}. It is kept
+          for the record only; nothing on it can be actioned.
+        </p>
+      )}
+      {doc.status === "APPROVED" && !doc.is_void && (
         <p style={{ fontSize: 12.5, color: "#1a7f37" }}>
           Awarded — awaiting a signatory to authorise the order. The MVR
           commitment posts on authorisation; each overseas TT is vouchered

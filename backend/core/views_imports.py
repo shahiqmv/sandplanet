@@ -225,6 +225,11 @@ def _get_ipr(request, ref):
         return None, Response({"detail": "Not found."}, status=404)
     if request.user.role not in VIEW_ROLES:
         return None, Response({"detail": "Not found."}, status=404)
+    # A voided order stays readable (number kept, §7.2) but nothing on it may
+    # move — the generic document actions already refuse, this covers the
+    # IPR-specific endpoints (shipments, milestones, charges, share…).
+    if doc.is_void and request.method not in ("GET", "HEAD", "OPTIONS"):
+        return None, Response({"detail": "This order is void."}, status=400)
     return doc, None
 
 
@@ -254,8 +259,11 @@ def _serialize(doc, request):
          "shipment_seq": r.shipment.seq}
         for r in ImportReceipt.objects.filter(shipment__order=order)
         .select_related("document", "shipment")]
-    data["can_pay"] = request.user.role in PAY_ROLES
-    data["can_manage"] = request.user.role in CREATE_ROLES
+    # A voided order is read-only for everyone — no client shows its
+    # manage/pay controls (the endpoints refuse anyway, see _get_ipr).
+    data["can_pay"] = request.user.role in PAY_ROLES and not doc.is_void
+    data["can_manage"] = (request.user.role in CREATE_ROLES
+                          and not doc.is_void)
     corr = ipr_svc.pending_charge_correction(order)
     data["charge_correction"] = ({
         "id": corr.id, "status": corr.status, "reason": corr.reason,
@@ -1065,7 +1073,8 @@ def ipr_list_create(request):
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
     rows = [{
-        "ref": d.ref, "status": d.status, "doc_date": d.doc_date,
+        "ref": d.ref, "status": d.status, "is_void": d.is_void,
+        "doc_date": d.doc_date,
         "supplier": d.import_order.supplier.name,
         "currency": d.import_order.order_currency,
         "order_total": ipr_svc.ipr_order_total(d.import_order),
