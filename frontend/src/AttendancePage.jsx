@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import ShiftAllocation from "./ShiftAllocation.jsx";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
@@ -159,6 +160,11 @@ export default function AttendancePage({ site, me, onClose }) {
         <button onClick={() => setMode("register")}
                 style={mode === "register" ? buttonStyle : ghostButton}>
           Month register</button>
+        {(hasShifts || mode === "shifts") && (
+          <button onClick={() => setMode("shifts")}
+                  style={mode === "shifts" ? buttonStyle : ghostButton}>
+            Shift allocation</button>
+        )}
         <button onClick={onClose} style={ghostButton}>Close</button>
       </span>
     </div>
@@ -170,6 +176,15 @@ export default function AttendancePage({ site, me, onClose }) {
         {header}
         <Register site={site} canEnter={canEnter}
           onOpenDay={(dateStr) => { setDay(dateStr); setMode("day"); }} />
+      </section>
+    );
+  }
+
+  if (mode === "shifts") {
+    return (
+      <section style={card}>
+        {header}
+        <ShiftAllocation site={site} canEnter={canEnter} />
       </section>
     );
   }
