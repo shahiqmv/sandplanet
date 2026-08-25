@@ -203,8 +203,13 @@ def apply_snapshot(tracking, snapshot: Snapshot, source: str):
             tracking.eta_initial = snapshot.eta_initial or snapshot.eta
         tracking.current_eta = snapshot.eta
     if created:
+        # ACTUAL events only — an ESTIMATED event carries a FUTURE date, and
+        # a future last_event_at made the daily poll skip the tracking as
+        # "recently updated" forever (IPR-003 sat frozen at SAILING while
+        # ShipsGo showed it discharged, 2026-08-25).
         tracking.last_event_at = max(
-            (e.event_time for e in created if e.event_time),
+            (e.event_time for e in created
+             if e.event_time and e.is_actual),
             default=tracking.last_event_at) or timezone.now()
     if snapshot.arrived and tracking.state == tracking.State.ACTIVE:
         tracking.state = tracking.State.ARRIVED
@@ -311,6 +316,8 @@ def is_stale(tracking, days=7):
     if tracking.state != tracking.State.ACTIVE:
         return False
     ref = tracking.last_event_at or tracking.created_at
+    # a legacy future value (estimated events, pre-2026-08-25) never ages
+    ref = min(ref, timezone.now())
     return (timezone.now() - ref).days >= days
 
 

@@ -45,9 +45,12 @@ class Command(BaseCommand):
 
         active = ShipmentTracking.objects.filter(
             state=ShipmentTracking.State.ACTIVE)
+        now = timezone.now()
         for t in active:
             ref = t.last_event_at or t.created_at
-            if ref and ref > gap:
+            # A FUTURE ref is a legacy estimated-event timestamp, not a
+            # recent update — poll it, don't skip it forever.
+            if ref and gap < ref <= now:
                 continue                     # recently updated — skip
             try:
                 snap = trk.get_provider(t.provider).fetch(t)

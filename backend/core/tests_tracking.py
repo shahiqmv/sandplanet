@@ -2,7 +2,7 @@
 idempotent snapshot application. No live HTTP — payloads mirror the ShipsGo v2
 schema (see api-1.json)."""
 import json
-from datetime import date
+from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.test import TestCase, override_settings
@@ -480,3 +480,63 @@ class BookedShipmentRegistersTests(TestCase):
                                             actor)
         self.assertFalse(
             ShipmentTracking.objects.filter(shipment=ship).exists())
+
+
+class FutureEstimateDoesNotFreezeThePollTests(TestCase):
+    """IPR-003 regression (2026-08-25): estimated movements carry FUTURE
+    dates; last_event_at took the max of ALL events, so the daily poll's
+    "recently updated — skip" check skipped the tracking every day, forever,
+    and it froze at SAILING while ShipsGo showed it discharged."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="HO2", name="Head Office",
+                                        status=Site.Status.ACTIVE)
+        self.actor = make_user("ho9", User.Role.HO_PURCHASING)
+        supplier = Supplier.objects.create(name="LTL Galvanizers",
+                                           category="INTERNATIONAL",
+                                           default_currency="USD")
+        doc = Document.objects.create(doc_type="IPR", ref="IPR-HO-009",
+                                      site=self.site, doc_date=date.today(),
+                                      status="AUTHORISED",
+                                      created_by=self.actor)
+        order = ImportOrder.objects.create(document=doc, supplier=supplier,
+                                           order_currency="USD",
+                                           exchange_rate=15)
+        self.ship = ImportShipment.objects.create(order=order, seq=1,
+                                                  mode="SEA")
+        self.tr = ShipmentTracking.objects.create(
+            shipment=self.ship, mode="SEA",
+            state=ShipmentTracking.State.ACTIVE,
+            provider_tracking_id="6555275")
+
+    def _payload_with_future_estimate(self):
+        p = _ocean_payload()
+        future = (timezone.now() + timedelta(days=5)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        p["containers"][0]["movements"][-1]["timestamp"] = future
+        return p
+
+    def test_last_event_at_ignores_estimated_events(self):
+        snap = ShipsGoProvider()._normalise(
+            self._payload_with_future_estimate(), "SEA")
+        tracking.apply_snapshot(self.tr, snap, source="POLL")
+        self.tr.refresh_from_db()
+        # the latest ACTUAL event is 2026-07-20 — the future estimate must
+        # not become last_event_at
+        self.assertEqual(self.tr.last_event_at.date(), date(2026, 7, 20))
+
+    def test_poll_does_not_skip_a_future_stamped_tracking(self):
+        from unittest import mock
+        from django.core.management import call_command
+        # simulate the legacy bad state: last_event_at in the future
+        self.tr.last_event_at = timezone.now() + timedelta(days=3)
+        self.tr.save(update_fields=["last_event_at"])
+        with mock.patch.object(tracking, "get_provider",
+                               return_value=_Fake()), \
+             mock.patch("core.carriers.sync_carriers",
+                        return_value=(True, 0)):
+            call_command("poll_trackings")
+        self.tr.refresh_from_db()
+        self.assertIsNotNone(self.tr.last_polled_at)   # it WAS polled
+        # and the ingest repaired last_event_at back to the actual event
+        self.assertEqual(self.tr.last_event_at.date(), date(2026, 7, 20))
