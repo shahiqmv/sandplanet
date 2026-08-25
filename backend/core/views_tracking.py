@@ -86,7 +86,18 @@ def tracking_health(request):
             "map_url": t.map_url, "last_error": t.last_error,
             "register_attempts": t.register_attempts,
             "movements": trk.movements_for(t)})
-    return Response({"items": rows})
+    # Channel health — the tracker ran for six weeks with webhooks dead and
+    # the poll frozen and nothing said so (2026-08-25). Now the panel does.
+    from django.conf import settings as _s
+    from .models import CompanyParameter
+    def _param_time(key):
+        row = CompanyParameter.objects.filter(key=key).first()
+        return row.value if row else None
+    return Response({"items": rows, "channels": {
+        "webhook_secret_set": bool(getattr(_s, "SHIPSGO_WEBHOOK_SECRET", "")),
+        "webhook_last_at": _param_time("tracking_last_webhook"),
+        "poll_last_run": _param_time("tracking_last_poll"),
+    }})
 
 
 @api_view(["POST"])
@@ -175,6 +186,14 @@ def shipsgo_webhook(request):
         return Response({"detail": "Unauthorised."}, status=401)
     except (json.JSONDecodeError, ValueError):
         return Response({"detail": "Bad payload."}, status=400)
+    # every verified delivery stamps the channel as alive — the health panel
+    # shows when webhooks last spoke, so a dead channel can't hide again
+    from django.utils import timezone as _tz
+    from .models import CompanyParameter
+    CompanyParameter.objects.update_or_create(
+        key="tracking_last_webhook",
+        defaults={"value": _tz.now().isoformat(),
+                  "description": "Last verified ShipsGo webhook delivery"})
     t = (ShipmentTracking.objects.filter(provider_ref=ref).first()
          or ShipmentTracking.objects.filter(
              provider_tracking_id=snapshot.provider_tracking_id).first())

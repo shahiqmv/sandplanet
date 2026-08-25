@@ -66,5 +66,10 @@ class Command(BaseCommand):
                 notify.notify_tracking_problem(t, "stale")
                 stale += 1
 
+        from core.models import CompanyParameter
+        CompanyParameter.objects.update_or_create(
+            key="tracking_last_poll",
+            defaults={"value": timezone.now().isoformat(),
+                      "description": "Last tracking poll run"})
         self.stdout.write(self.style.SUCCESS(
             f"Registered {registered}, polled {polled}, stale {stale}."))

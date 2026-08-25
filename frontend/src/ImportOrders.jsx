@@ -2046,10 +2046,12 @@ const dt = (s) => (s ? s.slice(0, 10) : "—");
 
 function TrackingHealth({ canManage }) {
   const [rows, setRows] = useState(null);
+  const [channels, setChannels] = useState(null);
   const [busy, setBusy] = useState(null);
   const [open, setOpen] = useState({});
   const load = () => api("/tracking/health")
-    .then((d) => setRows(d.items || [])).catch(() => setRows([]));
+    .then((d) => { setRows(d.items || []); setChannels(d.channels || null); })
+    .catch(() => setRows([]));
   useEffect(() => { load(); }, []);
   async function retry(id) {
     setBusy(id);
@@ -2070,6 +2072,40 @@ function TrackingHealth({ canManage }) {
         <button style={{ ...ghostButton, padding: "2px 10px", marginLeft:
           "auto" }} onClick={load}>Refresh</button>
       </div>
+      {channels && (() => {
+        // The tracker once ran for weeks with webhooks dead and the poll
+        // frozen, silently — these lines make a dead channel visible.
+        const hours = (iso) => iso
+          ? (Date.now() - new Date(iso).getTime()) / 36e5 : null;
+        const wh = hours(channels.webhook_last_at);
+        const pl = hours(channels.poll_last_run);
+        const problems = [];
+        if (!channels.webhook_secret_set) {
+          problems.push("Webhook secret not configured — live updates are "
+            + "rejected; set SHIPSGO_WEBHOOK_SECRET on the server.");
+        } else if (wh == null) {
+          problems.push("No webhook has ever been received — check the "
+            + "ShipsGo dashboard webhook URL.");
+        } else if (wh > 96) {
+          problems.push(`No webhook for ${Math.round(wh / 24)} days — check `
+            + "the ShipsGo dashboard.");
+        }
+        if (pl == null || pl > 30) {
+          problems.push(pl == null
+            ? "The daily poll has never run — check the server cron."
+            : `Daily poll last ran ${Math.round(pl)}h ago — check the `
+              + "server cron.");
+        }
+        return (
+          <div style={{ fontSize: 11.5, marginTop: 6,
+                        color: problems.length ? "#c0392b" : "#5a6b78" }}>
+            {problems.length
+              ? problems.map((p, i) => <div key={i}>⚠ {p}</div>)
+              : <>Channels OK — webhook {Math.round(wh)}h ago · poll{" "}
+                  {Math.round(pl)}h ago</>}
+          </div>
+        );
+      })()}
       <div style={{ overflowX: "auto", marginTop: 8 }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
                         fontSize: 12.5 }}>
