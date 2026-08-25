@@ -1117,6 +1117,15 @@ def share_with_agent(shipment, actor):
     agent = Supplier.objects.filter(is_clearing_agent=True,
                                     is_active=True).first()
     if not agent:
+        # The likely miss: the supplier was CATEGORISED "Clearing agent" but
+        # the company-wide flag was never clicked (happened 2026-08-25).
+        candidate = Supplier.objects.filter(category="CLEARING_AGENT",
+                                            is_active=True).first()
+        if candidate:
+            return (f"No clearing agent is set. {candidate.name} is "
+                    "categorised as a clearing agent, but the category alone "
+                    "isn't enough — open it on the Suppliers page and click "
+                    f"\"Make {candidate.name} the clearing agent\".")
         return ("No clearing agent is set. Open Suppliers and mark one "
                 "supplier as the clearing agent first.")
     to_addrs = [a.strip() for a in (agent.email or "").replace(";", ",")
