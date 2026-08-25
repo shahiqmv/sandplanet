@@ -295,22 +295,30 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
         return (
           <div key={i} style={{ border: "1px solid var(--sp-border)",
             borderRadius: 8, padding: 10, marginBottom: 10 }}>
+            {/* The description gets the whole first row — supplier item names
+                ("DSW 6314FLW Exquisite Light - HPL SIZE: 3050 x 1320 x
+                0.8mm") were unreadable squeezed beside four number fields
+                (owner 2026-08-25). */}
+            <input list="ipr-items" placeholder="Search catalog / describe"
+                   title={l._itemText ?? (l.item_id
+                     ? itemLabel(items.find((it) => it.id === l.item_id))
+                     : l.free_text_desc)}
+                   value={l._itemText ?? (l.item_id
+                     ? itemLabel(items.find((it) => it.id === l.item_id))
+                     : l.free_text_desc)}
+                   onChange={(e) => {
+                     const v = e.target.value;
+                     const m = items.find((it) => itemLabel(it) === v);
+                     if (m) setLine(i, { item_id: m.id, _itemText: v,
+                       unit: m.unit, free_text_desc: "" });
+                     else setLine(i, { item_id: null, _itemText: v,
+                       free_text_desc: v });
+                   }}
+                   style={{ ...inputStyle, width: "100%",
+                            boxSizing: "border-box", marginBottom: 6 }} />
             <div style={{ display: "grid",
-              gridTemplateColumns: "2fr 0.7fr 1fr 1fr 1.4fr 30px", gap: 6,
+              gridTemplateColumns: "0.8fr 1fr 1fr 1.6fr 30px", gap: 6,
               alignItems: "center" }}>
-              <input list="ipr-items" placeholder="Search catalog / describe"
-                     value={l._itemText ?? (l.item_id
-                       ? itemLabel(items.find((it) => it.id === l.item_id))
-                       : l.free_text_desc)}
-                     onChange={(e) => {
-                       const v = e.target.value;
-                       const m = items.find((it) => itemLabel(it) === v);
-                       if (m) setLine(i, { item_id: m.id, _itemText: v,
-                         unit: m.unit, free_text_desc: "" });
-                       else setLine(i, { item_id: null, _itemText: v,
-                         free_text_desc: v });
-                     }}
-                     style={inputStyle} />
               <input placeholder="Unit" value={l.unit}
                      disabled={!!l.item_id}
                      onChange={(e) => setLine(i, { unit: e.target.value })}
