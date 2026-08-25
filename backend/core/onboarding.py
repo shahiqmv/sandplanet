@@ -319,10 +319,46 @@ def decide_case(case, action, actor, note=""):
         _set_status(doc, "REJECTED", "REJECT", actor, comment=note)
         return None
     if action == "cancel":
+        # A case dies for real-world reasons — terms not agreed with the
+        # candidate, or the company decides not to continue — at ANY point
+        # before completion (owner 2026-08-25). The reason is required: a
+        # cancelled case with money already spent must explain itself.
         if actor.role not in RAISE_ROLES:
             return "Only the site team / HR can cancel a case."
+        if not note.strip():
+            return ("A reason is required to cancel — e.g. could not agree "
+                    "terms with the candidate, or position no longer needed.")
         if not _transition(doc, "CANCELLED"):
             return f"Cannot cancel a {doc.status} case."
+        # Fee PYRs riding on the case: paid ones stand (the money is spent —
+        # a refundable deposit is chased with Immigration outside the app);
+        # unpaid ones are pulled back and cancelled so Finance never pays for
+        # a dead case. One exception blocks the cancel: a fee already batched
+        # on a Payment Voucher belongs to Finance now — they must query or
+        # remove it first, or the voucher totals would rot under them.
+        from .models import PaymentVoucherLine
+        from .payments import _set_status as pyr_set
+        blockers, to_cancel = [], []
+        for fee in case.fees.select_related("document"):
+            pyr = fee.document
+            if pyr.status in ("PAID", "CLOSED", "CANCELLED", "REJECTED"):
+                continue
+            on_voucher = PaymentVoucherLine.objects.filter(
+                source_document=pyr, status="INCLUDED").exists()
+            if pyr.status == "AUTHORISED" or on_voucher:
+                blockers.append(f"{pyr.ref} ({fee.stage})")
+            else:
+                to_cancel.append(pyr)
+        if blockers:
+            return ("These fee payment requests are already with Finance on "
+                    "a Payment Voucher: " + ", ".join(blockers) + ". Ask "
+                    "Finance to query them off the voucher, then cancel the "
+                    "case.")
+        why = f"Onboarding case {doc.ref} cancelled — {note.strip()}"
+        for pyr in to_cancel:
+            if pyr.status != "DRAFT":
+                pyr_set(pyr, "DRAFT", "WITHDRAW", actor, why)
+            pyr_set(pyr, "CANCELLED", "CANCEL", actor, why)
         _set_status(doc, "CANCELLED", "CANCEL", actor, comment=note)
         return None
     return "Unknown action."
@@ -2171,6 +2207,13 @@ def case_dict(case):
     sv = stage_view(case)
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
+        # Why a closed case died — the reason given on cancel/reject, so the
+        # page can say it instead of a bare status chip (owner 2026-08-25).
+        "closed_note": (
+            next((a.comment for a in reversed(list(
+                doc.approvals.filter(action__in=("CANCEL", "REJECT"))))
+                if a.comment), "")
+            if doc.status in ("CANCELLED", "REJECTED") else ""),
         "site_code": doc.site.code, "site_id": doc.site_id,
         "doc_date": doc.doc_date,
         # The list showed no date at all, so there was no telling a case

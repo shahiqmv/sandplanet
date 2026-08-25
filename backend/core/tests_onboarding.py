@@ -2216,3 +2216,79 @@ class IM30GenerationTests(TestCase):
         from .numbering import next_ref
         ref = next_ref("IM30", None)
         self.assertTrue(ref.startswith("IM30-"), ref)
+
+
+class CancelACaseTests(OnboardingSpineTests):
+    """A case can be closed for real-world reasons at any point before
+    completion (owner 2026-08-25): reason required, unpaid fee PYRs pulled
+    back, paid ones stand, and a fee on a live voucher blocks the cancel."""
+
+    def _fee_raised(self):
+        pk = self._approved()               # WP, Indian, IN_PROGRESS track
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                             {"amount": "1500", "payee": "Immigration"},
+                             format="json")
+        assert r.status_code == 201, r.data
+        return pk
+
+    def _cancel(self, pk, note="candidate declined the offer", actor=None):
+        self.client.force_authenticate(actor or self.hr)
+        return self.client.post(f"/api/v1/onboarding/{pk}/action",
+                                {"action": "cancel", "note": note},
+                                format="json")
+
+    def test_cancel_needs_a_reason(self):
+        pk = self._approved()
+        r = self._cancel(pk, note="")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("reason", r.data["detail"].lower())
+
+    def test_cancel_in_progress_withdraws_the_unpaid_fee(self):
+        pk = self._fee_raised()
+        case = OnboardingCase.objects.get(pk=pk)
+        pyr = case.fees.get(stage="WP_DEPOSIT").document
+        self.assertNotEqual(pyr.status, "PAID")
+        r = self._cancel(pk)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "CANCELLED")
+        self.assertIn("declined", r.data["closed_note"])
+        pyr.refresh_from_db()
+        self.assertEqual(pyr.status, "CANCELLED")
+
+    def test_a_paid_fee_stands_when_the_case_dies(self):
+        pk = self._fee_raised()
+        case = OnboardingCase.objects.get(pk=pk)
+        pyr = case.fees.get(stage="WP_DEPOSIT").document
+        pyr.status = "PAID"
+        pyr.save(update_fields=["status"])
+        r = self._cancel(pk)
+        self.assertEqual(r.status_code, 200, r.data)
+        pyr.refresh_from_db()
+        self.assertEqual(pyr.status, "PAID")     # money spent — record stands
+
+    def test_a_fee_on_a_voucher_blocks_the_cancel(self):
+        from datetime import date as _date
+        from .models import Document, PaymentVoucherLine
+        pk = self._fee_raised()
+        case = OnboardingCase.objects.get(pk=pk)
+        pyr = case.fees.get(stage="WP_DEPOSIT").document
+        pv = Document.objects.create(
+            doc_type="PV", ref="PV-HO-900", site=case.document.site,
+            doc_date=_date.today(), status="SUBMITTED", created_by=self.hr)
+        PaymentVoucherLine.objects.create(
+            voucher=pv, source_document=pyr, amount=1500, currency="MVR")
+        r = self._cancel(pk)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn(pyr.ref, r.data["detail"])
+        case.document.refresh_from_db()
+        self.assertNotEqual(case.document.status, "CANCELLED")
+
+    def test_completed_case_cannot_be_cancelled(self):
+        pk = self._approved()
+        doc = OnboardingCase.objects.get(pk=pk).document
+        doc.status = "COMPLETED"
+        doc.save(update_fields=["status"])
+        r = self._cancel(pk)
+        self.assertEqual(r.status_code, 400)

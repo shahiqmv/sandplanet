@@ -672,10 +672,16 @@ export function CaseDetail({ id, me, onBack }) {
     api(`/onboarding/${id}/submit`, { method: "POST" }));
   const decide = (action) => act(async () => {
     let note = "";
-    if (action === "return" || action === "reject") {
-      note = window.prompt(action === "return"
-        ? "Reason to return to the raiser:" : "Reason to reject:") || "";
-      if ((action === "return") && !note.trim()) throw new Error("A reason is required.");
+    if (action === "return" || action === "reject" || action === "cancel") {
+      note = window.prompt({
+        return: "Reason to return to the raiser:",
+        reject: "Reason to reject:",
+        cancel: "Reason to cancel this case (required) — e.g. could not "
+          + "agree terms with the candidate, or decided not to continue:",
+      }[action]) || "";
+      if ((action === "return" || action === "cancel") && !note.trim()) {
+        throw new Error("A reason is required.");
+      }
     }
     await api(`/onboarding/${id}/action`,
       { method: "POST", body: { action, note } });
@@ -764,6 +770,18 @@ export function CaseDetail({ id, me, onBack }) {
         )}
       </div>
 
+      {["CANCELLED", "REJECTED"].includes(c.status) && (
+        <div style={{ background: "#fdecea", border: "1px solid #f2b8b5",
+                      borderRadius: 8, padding: "8px 12px", fontSize: 13,
+                      color: "#8a1f1a", marginTop: 12 }}>
+          This case was <strong>{c.status === "CANCELLED"
+            ? "cancelled" : "rejected"}</strong>
+          {c.closed_note ? <> — {c.closed_note}</> : null}. It is kept for
+          the record; any fees already paid stand, and unpaid fee requests
+          were withdrawn.
+        </div>
+      )}
+
       {/* processing */}
       {["APPROVED", "IN_PROGRESS", "COMPLETED"].includes(c.status) && (
         <Processing c={c} me={me} onReload={load} />
@@ -802,8 +820,13 @@ export function CaseDetail({ id, me, onBack }) {
                title="Return this case to the raiser to correct details">
             ↩ Send back to edit</Btn>
         )}
-        {editable && canRaise && (
+        {/* A case can die at any point before completion — terms not agreed,
+            or the company decides not to continue (owner 2026-08-25). Unpaid
+            fee PYRs are pulled back automatically; paid ones stand. */}
+        {["DRAFT", "RETURNED", "APPROVED", "IN_PROGRESS"].includes(c.status)
+          && canRaise && (
           <button style={{ ...linkBtn, color: "var(--red-fg)" }}
+            title="Close this case for good — requires a reason; unpaid fee requests are withdrawn"
             onClick={() => decide("cancel")}>Cancel case</button>
         )}
         {c.status === "SUBMITTED" && !canApprove && (
