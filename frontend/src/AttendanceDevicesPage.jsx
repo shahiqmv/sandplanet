@@ -9,7 +9,12 @@ import { Btn, Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
  */
 const MANAGE = ["HO_HR", "ADMIN", "PA"];
 const STATUS_TONE = { MATCHED: "ok", UNKNOWN_ID: "warn", UNPARSED: "alert" };
-const fmt = (s) => s ? String(s).replace("T", " ").slice(0, 16) : "—";
+// Timestamps arrive as UTC ISO strings; the gate clerk thinks in Maldives
+// time, so render +5 — slicing the raw string showed punches 5h early.
+const fmt = (s) => s
+  ? new Date(s).toLocaleString("sv-SE",
+      { timeZone: "Indian/Maldives" }).slice(0, 16)
+  : "—";
 
 export default function AttendanceDevicesPage({ me, sites }) {
   const [devices, setDevices] = useState(null);
