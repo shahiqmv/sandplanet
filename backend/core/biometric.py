@@ -334,11 +334,13 @@ def day_proposals(site, day):
             flags.append("REST_DAY")
             rows[emp_id] = row
             continue
+        grace = (site.late_after_min if site.late_after_min is not None
+                 else LATE_GRACE_MIN)
         late_by = (
             datetime.combine(day, first.time())
             - datetime.combine(day, site.working_hours_from)
         ).total_seconds() / 60
-        if late_by > LATE_GRACE_MIN:
+        if late_by > grace:
             flags.append("LATE")
         if not distinct:
             # The most common exception: he was almost certainly there all
@@ -354,12 +356,14 @@ def day_proposals(site, day):
         if span < HALF_DAY_BELOW_HOURS:
             remark = "HALF_DAY"
             flags.append("SHORT")
-        # OT proposed from time past the site's finish, floored to the half
-        # hour so a proposal never overstates; the clerk bumps it if real.
+        # OT proposed from time past the site's OT threshold (its official
+        # finish unless the site sets a later ot_counts_from), floored to the
+        # half hour so a proposal never overstates; the clerk bumps it if real.
+        ot_from = site.ot_counts_from or site.working_hours_to
         ot = Decimal("0")
-        if remark == "PRESENT" and last.time() > site.working_hours_to:
+        if remark == "PRESENT" and last.time() > ot_from:
             past = (datetime.combine(day, last.time())
-                    - datetime.combine(day, site.working_hours_to)
+                    - datetime.combine(day, ot_from)
                     ).total_seconds() / 3600
             ot = (Decimal(str(past)) * 2).quantize(
                 Decimal("1"), rounding=ROUND_FLOOR) / 2

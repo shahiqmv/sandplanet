@@ -29,10 +29,17 @@ const SITE_TRANSITIONS = {
   CLOSED: ["ACTIVE"],
 };
 
+// Site times arrive as "HH:MM:SS" — the inputs want "HH:MM".
+const hhmm = (t) => (t ? String(t).slice(0, 5) : "");
+
+const DAY_NAMES = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri",
+                    6: "Sat", 7: "Sun" };
+
 export default function SitesManagePage({ me, onChanged }) {
   const [sites, setSites] = useState([]);
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({});
+  const [hours, setHours] = useState(null);
   const [siteProjects, setSiteProjects] = useState([]);
   const [pms, setPms] = useState([]);
   const [projDraft, setProjDraft] = useState(PROJECT_EMPTY);
@@ -62,8 +69,27 @@ export default function SitesManagePage({ me, onChanged }) {
     setError(null);
     setForm(Object.fromEntries(
       SITE_FIELDS.map(([key]) => [key, site[key] || ""])));
+    setHours({
+      working_hours_from: hhmm(site.working_hours_from) || "07:00",
+      working_hours_to: hhmm(site.working_hours_to) || "18:00",
+      ot_counts_from: hhmm(site.ot_counts_from),
+      late_after_min: site.late_after_min ?? 15,
+      working_days: site.working_days || [],
+    });
     api(`/sites/${site.id}/projects`).then(setSiteProjects);
   }, []);
+
+  async function saveHours() {
+    setError(null);
+    try {
+      const fresh = await api(`/sites/${selected.id}`, { method: "PATCH",
+        body: { ...hours, ot_counts_from: hours.ot_counts_from || null } });
+      setSelected(fresh);
+      loadSites();
+      setNotice("Working hours saved — the attendance grid, gate flags and "
+                + "OT proposals now follow them.");
+    } catch (e) { setError(e.message); }
+  }
 
   async function createSite() {
     setError(null);
@@ -215,13 +241,20 @@ export default function SitesManagePage({ me, onChanged }) {
             <th style={th}>Projects</th><th style={th}>Status</th>
           </tr></thead>
           <tbody>
-            {sites.filter((s) => !s.is_head_office).map((s) => (
+            {sites.map((s) => (
               <tr key={s.id} onClick={() => openSite(s)}
                   style={{ cursor: "pointer",
                            background: selected?.id === s.id
                              ? "#e8f0f7" : "transparent" }}>
                 <td style={{ ...td, fontWeight: 700,
-                             color: "var(--sp-navy)" }}>{s.code}</td>
+                             color: "var(--sp-navy)" }}>{s.code}
+                  {s.is_head_office && (
+                    <span style={{ marginLeft: 6, fontSize: 10,
+                                   fontWeight: 600, color: "#5a6b78",
+                                   border: "1px solid #b9c6cf",
+                                   borderRadius: 4, padding: "1px 5px" }}>
+                      HEAD OFFICE</span>)}
+                </td>
                 <td style={td}>{s.name}</td>
                 <td style={td}>{s.client_name || "—"}</td>
                 <td style={td}>{s.current_pm?.full_name || "—"}</td>
@@ -236,7 +269,14 @@ export default function SitesManagePage({ me, onChanged }) {
       </section>
 
       {selected && (
-        <section style={card}>
+        <div onClick={() => setSelected(null)}
+             style={{ position: "fixed", inset: 0,
+                      background: "rgba(0,0,0,.4)", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      zIndex: 60, padding: 16 }}>
+        <section onClick={(e) => e.stopPropagation()}
+                 style={{ ...card, maxWidth: 1080, width: "96vw",
+                          maxHeight: "92vh", overflowY: "auto", margin: 0 }}>
           <div style={{ display: "flex", gap: 10, alignItems: "baseline",
                         flexWrap: "wrap" }}>
             <h2 style={{ marginTop: 0, color: "var(--sp-navy)",
@@ -252,6 +292,9 @@ export default function SitesManagePage({ me, onChanged }) {
                   → {next.replace("_", " ")}
                 </button>
               ))}
+            <button onClick={() => setSelected(null)}
+                    style={{ ...ghostButton, marginLeft: "auto" }}>
+              Close</button>
           </div>
           {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
           {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
@@ -307,6 +350,78 @@ export default function SitesManagePage({ me, onChanged }) {
             </button>
           )}
 
+          <h3 style={{ color: "var(--sp-navy)", fontSize: 15,
+                       borderBottom: "1px solid var(--sp-sky)",
+                       paddingBottom: 4, marginTop: 26 }}>
+            Working hours &amp; attendance
+          </h3>
+          {hours && (
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap",
+                          alignItems: "flex-end" }}>
+              <label style={{ fontSize: 13 }}>Reporting time
+                <input type="time" value={hours.working_hours_from}
+                       disabled={!canEditSite}
+                       onChange={(e) => setHours({ ...hours,
+                         working_hours_from: e.target.value })}
+                       style={{ ...inputStyle, width: 110 }} />
+              </label>
+              <label style={{ fontSize: 13 }}>Finish time
+                <input type="time" value={hours.working_hours_to}
+                       disabled={!canEditSite}
+                       onChange={(e) => setHours({ ...hours,
+                         working_hours_to: e.target.value })}
+                       style={{ ...inputStyle, width: 110 }} />
+              </label>
+              <label style={{ fontSize: 13 }}
+                     title="Time worked past this counts as OT on the gate proposal. Leave blank to count from the finish time.">
+                OT counts from
+                <input type="time" value={hours.ot_counts_from}
+                       disabled={!canEditSite}
+                       onChange={(e) => setHours({ ...hours,
+                         ot_counts_from: e.target.value })}
+                       style={{ ...inputStyle, width: 110 }} />
+              </label>
+              <label style={{ fontSize: 13 }}
+                     title="A punch-in this many minutes after reporting time gets the late flag">
+                Late after (min)
+                <input type="number" min="0" max="240"
+                       value={hours.late_after_min}
+                       disabled={!canEditSite}
+                       onChange={(e) => setHours({ ...hours,
+                         late_after_min: e.target.value })}
+                       style={{ ...inputStyle, width: 90 }} />
+              </label>
+              <div style={{ fontSize: 13 }}>Working days
+                <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                  {[1, 2, 3, 4, 5, 6, 7].map((d) => (
+                    <label key={d} style={{ fontSize: 12, display: "flex",
+                                            alignItems: "center", gap: 3 }}>
+                      <input type="checkbox" disabled={!canEditSite}
+                        checked={(hours.working_days || []).includes(d)}
+                        onChange={(e) => setHours({ ...hours,
+                          working_days: e.target.checked
+                            ? [...hours.working_days, d].sort()
+                            : hours.working_days.filter((x) => x !== d) })} />
+                      {DAY_NAMES[d]}
+                    </label>
+                  ))}
+                </div>
+              </div>
+              {canEditSite && (
+                <button onClick={saveHours} style={{ ...ghostButton,
+                                                     padding: "6px 14px" }}>
+                  Save hours</button>
+              )}
+              <span style={{ fontSize: 12, color: "#5a6b78",
+                             width: "100%" }}>
+                These drive the attendance day grid's default in/out, the
+                gate terminal's late flag, and where OT starts counting.
+                A non-working day punch is flagged, never proposed.
+              </span>
+            </div>
+          )}
+
+          {!selected.is_head_office && (<>
           <h3 style={{ color: "var(--sp-navy)", fontSize: 15,
                        borderBottom: "1px solid var(--sp-sky)",
                        paddingBottom: 4, marginTop: 26 }}>
@@ -442,7 +557,9 @@ export default function SitesManagePage({ me, onChanged }) {
               </div>
             </div>
           )}
+          </>)}
         </section>
+        </div>
       )}
     </>
   );

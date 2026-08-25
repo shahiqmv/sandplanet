@@ -34,6 +34,7 @@ class SiteSerializer(serializers.ModelSerializer):
             "client_designation", "client_phone", "client_email",
             "consultant_name", "consultant_contact",
             "working_hours_from", "working_hours_to", "working_days",
+            "ot_counts_from", "late_after_min",
             "current_pm", "current_pms",
         ]
         # status via /status action only; PMs via /assign-pm

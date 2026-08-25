@@ -23,8 +23,20 @@ export default function AttendancePage({ site, me, onClose }) {
     setNotice(null);
     api(`/attendance?site=${site.id}&date=${day}`).then((data) => {
       setGrid(data);
-      setRows(data.rows.map((r) => ({ ...r, check_in: hhmm(r.check_in),
-                                      check_out: hhmm(r.check_out) })));
+      setRows(data.rows.map((r) => {
+        const row = { ...r, check_in: hhmm(r.check_in),
+                      check_out: hhmm(r.check_out) };
+        // The gate's OT proposal pre-fills the OT box on rows not yet saved
+        // — nothing to click; the clerk adjusts if wrong and saves, the PM
+        // approves as always. In/out stay the site's official hours: punch
+        // times are evidence, not the timesheet (owner 2026-08-25).
+        const p = r.device?.proposal;
+        if (!r.saved && p && parseFloat(p.ot_requested) > 0) {
+          if (r.is_subcontract) row.sub_extra_hours = p.ot_requested;
+          else row.ot_requested = p.ot_requested;
+        }
+        return row;
+      }));
     }).catch((e) => setError(e.message));
   }, [site.id, day]);
 
@@ -32,26 +44,6 @@ export default function AttendancePage({ site, me, onClose }) {
 
   const setRow = (i, patch) =>
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-
-  // Phase 2 of the gate terminals (owner 2026-08-24): punches PROPOSE the
-  // day; nothing lands until the clerk saves, through the same endpoint and
-  // guards as hand marking. "Use" copies one proposal into the row; the
-  // button by Save copies every unsaved one.
-  const applyDevice = (i) => {
-    const d = rows[i]?.device;
-    if (!d?.proposal) return;
-    setRow(i, { check_in: d.proposal.check_in,
-                check_out: d.proposal.check_out,
-                remark: d.proposal.remark,
-                ot_requested: d.proposal.ot_requested });
-  };
-  const applyAllDevice = () =>
-    setRows(rows.map((r) => (r.device?.proposal && !r.saved)
-      ? { ...r, check_in: r.device.proposal.check_in,
-          check_out: r.device.proposal.check_out,
-          remark: r.device.proposal.remark,
-          ot_requested: r.device.proposal.ot_requested }
-      : r));
 
   async function save() {
     setBusy(true);
@@ -272,10 +264,6 @@ export default function AttendancePage({ site, me, onClose }) {
                     <span style={{ fontWeight: 600 }}>
                       {row.device.first}
                       {row.device.last ? `–${row.device.last}` : ""}</span>
-                    {row.device.proposal && !grid?.locked && canEnter && (
-                      <a href="#" style={{ marginLeft: 6, fontWeight: 600 }}
-                         onClick={(e) => { e.preventDefault();
-                                           applyDevice(i); }}>use</a>)}
                     {row.device.flags.length > 0 && (
                       <div style={{ color:
                         row.device.flags.includes("REST_DAY")
@@ -333,15 +321,11 @@ export default function AttendancePage({ site, me, onClose }) {
 
       <div style={{ display: "flex", gap: 10, marginTop: 14,
                     flexWrap: "wrap" }}>
-        {canEnter && !grid?.locked && rows.length > 0 && (<>
-          {grid?.has_devices
-            && rows.some((r) => r.device?.proposal && !r.saved) && (
-            <button onClick={applyAllDevice} style={ghostButton}>
-              ⇊ Use gate times for unsaved rows</button>)}
+        {canEnter && !grid?.locked && rows.length > 0 && (
           <button onClick={save} disabled={busy} style={buttonStyle}>
             Save day
           </button>
-        </>)}
+        )}
         {isPm && !grid?.locked && (
           <>
             <button onClick={approveAllOt} style={ghostButton}>

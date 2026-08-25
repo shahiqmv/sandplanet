@@ -395,6 +395,25 @@ class DayProposalTests(TestCase):
         self.assertIn("LATE", d["flags"])
         self.assertEqual(d["proposal"]["remark"], "PRESENT")  # pay untouched
 
+    def test_ot_counts_from_the_sites_own_threshold_when_set(self):
+        from datetime import time
+        # Site says OT only counts after 18:00, though work finishes 17:00.
+        self.site.ot_counts_from = time(18, 0)
+        self.site.save(update_fields=["ot_counts_from"])
+        self._push("700\t2026-08-24 07:58:00\t255\t1",
+                   "700\t2026-08-24 19:47:00\t255\t1")
+        d = self._grid_row()["device"]
+        # 18:00 -> 19:47 is 1h47m, floored = 1.5 (was 2.5 from the finish).
+        self.assertEqual(d["proposal"]["ot_requested"], "1.5")
+
+    def test_the_late_grace_is_the_sites_own_setting(self):
+        self.site.late_after_min = 45
+        self.site.save(update_fields=["late_after_min"])
+        self._push("700\t2026-08-24 08:40:00\t255\t1",
+                   "700\t2026-08-24 17:05:00\t255\t1")
+        d = self._grid_row()["device"]
+        self.assertNotIn("LATE", d["flags"])   # 40 min late, 45 allowed
+
     def test_a_rest_day_punch_is_flagged_and_proposes_nothing(self):
         self.day = date(2026, 8, 28)                     # a Friday
         self._push("700\t2026-08-28 09:10:00\t255\t1")

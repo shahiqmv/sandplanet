@@ -118,6 +118,12 @@ class Site(models.Model):
     working_hours_to = models.TimeField(default="18:00")
     # ISO dow list; default Sat–Thu, Fri off (decision 5). JSON for SQLite compat.
     working_days = models.JSONField(default=default_working_days)
+    # Gate-terminal thresholds (owner 2026-08-25): OT counts from this time —
+    # blank means from the official finish; a punch-in later than start +
+    # grace is flagged late. Both per site, since head office keeps different
+    # hours from the islands.
+    ot_counts_from = models.TimeField(null=True, blank=True)
+    late_after_min = models.PositiveSmallIntegerField(default=15)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
