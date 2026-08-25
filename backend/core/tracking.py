@@ -362,8 +362,17 @@ def movements_for(tracking):
     timeline) — shared by the IPR shipment panel and the tracking-health list."""
     from .models import TrackingEvent
     from .tracking_shipsgo import move_label
+    events = list(tracking.events.all())
+    # An estimate is a placeholder, not history — once the ACTUAL event for
+    # the same move+port has landed, showing the stale estimate beside it
+    # (often with a different vessel) just confuses (IPR-003, 2026-08-25).
+    actual_keys = {(e.provider_event_code, e.location)
+                   for e in events if e.is_actual and e.provider_event_code}
     out = []
-    for e in tracking.events.all():
+    for e in events:
+        if (not e.is_actual and e.provider_event_code
+                and (e.provider_event_code, e.location) in actual_keys):
+            continue
         out.append({
             "label": (move_label(e.provider_event_code, tracking.mode,
                                  e.code == TrackingEvent.Code.TRANSSHIPMENT)
