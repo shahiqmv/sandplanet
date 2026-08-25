@@ -851,13 +851,31 @@ def _po_context(document, revision):
     freight = Decimal(str(payload.get("freight") or 0))
     misc = Decimal(str(payload.get("misc_fee") or 0))
     grand = untaxed + gst - disc + freight + misc
-    issue_stamp = ""
+    # The stamp names who AUTHORISED the order (the signatory), not the clerk
+    # who pressed issue (owner 2026-08-25). A credit PO carries its own
+    # AUTHORISE; an import PO inherits it from the IPR it was generated for.
+    auth = issued = None
     for a in document.approvals.select_related("actor"):
-        if a.action == "ISSUE":
-            issue_stamp = (f"{a.actor.full_name} — "
-                           f"{a.acted_at.strftime('%d/%m/%Y %H:%M')} — "
-                           f"issued electronically via Sand Planet Site "
-                           f"Documents")
+        if a.action == "AUTHORISE":
+            auth = a
+        elif a.action == "ISSUE":
+            issued = a
+    if auth is None and payload.get("ipr_ref"):
+        from .models import Document
+        ipr = Document.objects.filter(ref=payload["ipr_ref"],
+                                      doc_type="IPR").first()
+        if ipr:
+            for a in ipr.approvals.select_related("actor"):
+                if a.action == "AUTHORISE":
+                    auth = a
+    stamp = auth or issued
+    issue_stamp = ""
+    if stamp:
+        issue_stamp = (
+            f"{'Authorised' if auth else 'Issued'} by "
+            f"{stamp.actor.full_name} — "
+            f"{stamp.acted_at.strftime('%d/%m/%Y %H:%M')} — electronically "
+            f"via Sand Planet Project Management App")
     # The date payment falls due under the agreed credit terms — the supplier
     # should see the same date Finance is working to (owner 2026-08-22).
     due = None
@@ -885,6 +903,9 @@ def _po_context(document, revision):
                            if revision.rev_label not in ("R0", "", None)
                            else ""),
         "amendment_reason": payload.get("amendment_reason", ""),
+        # The supplier's own reference: their quotation on a domestic PO,
+        # their proforma invoice on an import PO (owner 2026-08-25).
+        "quote_ref": payload.get("quote_ref") or payload.get("pi_ref") or "",
         "logo_src": logo_src(),
         "lines": lines,
         "currency": currency,

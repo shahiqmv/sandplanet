@@ -63,7 +63,6 @@
 
 <div class="masthead">
   <img src="{{ logo_src }}">
-  <div class="legal">{{ company.legal_name }}</div>
 </div>
 
 <div class="supplier">
@@ -83,7 +82,7 @@
 
 <table class="meta"><tr>
   <td><div class="k">Order Date</div>{{ doc.doc_date|date:"d/m/Y" }}</td>
-  <td><div class="k">Your Quotation Ref</div>{{ payload.quote_ref|default:"—" }}</td>
+  <td><div class="k">Your Quotation / PI Ref</div>{{ quote_ref|default:"—" }}</td>
   <td><div class="k">Payment Terms</div>{{ payload.payment_terms|default:"—" }}{% if payment_due %}<div style="font-size:8pt;color:#5a6b78;margin-top:1px;">Payment due {{ payment_due|date:"d/m/Y" }}</div>{% endif %}</td>
   <td><div class="k">Expected Delivery</div>{{ payload.expected_delivery|default:"—" }}</td>
 </tr>{% if site %}<tr>
@@ -133,7 +132,7 @@
 
 <div class="sig">
   {% if issue_stamp %}
-  <div class="stamp">Issued by {{ issue_stamp }}</div>
+  <div class="stamp">{{ issue_stamp }}</div>
   {% endif %}
   <div class="line">For {{ company.legal_name }} — Authorised Signature</div>
 </div>
