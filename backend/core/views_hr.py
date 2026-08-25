@@ -2,7 +2,7 @@
 passport_no) are serialized only for HO HR / Admin, never logged, and
 excluded from site-level responses."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from django.db import transaction
@@ -560,26 +560,26 @@ def _month_locked(site_id, day):
     ).exists()
 
 
-def _window_hours(site):
-    start = datetime.combine(date.today(), site.working_hours_from)
-    end = datetime.combine(date.today(), site.working_hours_to)
-    return Decimal((end - start).seconds) / 3600
-
-
-def _normal_hours(site, check_in, check_out, remark):
+def _normal_hours(site, check_in, check_out, remark, shift=None):
+    """Hours inside the worker's window — his shift's if he has one, else
+    the site's. A night shift's window (and its punches) run past midnight."""
+    from .shifts import schedule_for, window_datetimes
+    win_from, win_to, _, _ = schedule_for(site, shift)
+    win_s, win_e = window_datetimes(date.today(), win_from, win_to)
+    full = Decimal(str((win_e - win_s).total_seconds())) / 3600
     if remark in ("ABSENT", "SICK", "LEAVE"):
         return Decimal("0")
-    full = _window_hours(site)
     if remark == "HALF_DAY":
         return (full / 2).quantize(Decimal("0.01"))
     if check_in and check_out:
-        start = max(check_in, site.working_hours_from)
-        end = min(check_out, site.working_hours_to)
-        overlap = (datetime.combine(date.today(), end) -
-                   datetime.combine(date.today(), start)).total_seconds()
+        ci = datetime.combine(date.today(), check_in)
+        co = datetime.combine(date.today(), check_out)
+        if co <= ci:
+            co += timedelta(days=1)      # out after midnight
+        overlap = (min(co, win_e) - max(ci, win_s)).total_seconds()
         return max(Decimal(str(overlap)) / 3600, Decimal("0")) \
             .quantize(Decimal("0.01"))
-    return full.quantize(Decimal("0.01"))  # present, default site hours
+    return full.quantize(Decimal("0.01"))  # present, default window
 
 
 def _site_scope_ok(request, site):
@@ -629,9 +629,16 @@ def attendance_grid(request):
     if site.attendance_devices.filter(is_active=True).exists():
         from . import biometric
         device = biometric.day_proposals(site, day)
+    # Shift sites: each worker's In/Out defaults to HIS shift's window;
+    # workers without one follow the site's normal hours (mixed staff).
+    from .shifts import site_shifts, shifts_map
+    shifts = site_shifts(site)
+    smap = (shifts_map(site, day, [e.id for e in roster])
+            if shifts else {})
     rows = []
     for employee in roster:
         att = existing.get(employee.id)
+        shift = smap.get(employee.id)
         default_remark = "OFF" if is_rest_day else "PRESENT"
         is_sub = employee.engagement_type == Employee.Engagement.SUBCONTRACT
         rows.append({
@@ -646,8 +653,12 @@ def attendance_grid(request):
             "is_subcontract": is_sub,
             "subcontractor": employee.subcontractor.name
             if is_sub and employee.subcontractor_id else "",
-            "check_in": att.check_in if att else site.working_hours_from,
-            "check_out": att.check_out if att else site.working_hours_to,
+            "check_in": att.check_in if att
+            else (shift.start if shift else site.working_hours_from),
+            "check_out": att.check_out if att
+            else (shift.end if shift else site.working_hours_to),
+            "shift_id": shift.id if shift else None,
+            "shift_name": shift.name if shift else None,
             "ot_requested": att.ot_requested if att else 0,
             "ot_approved": att.ot_approved if att else None,
             "sub_extra_hours": att.sub_extra_hours if att else 0,
@@ -662,6 +673,10 @@ def attendance_grid(request):
         "locked": _month_locked(site.id, day),
         "has_devices": device is not None,
         "device_unmatched": device["unmatched"] if device else [],
+        "shifts": [{"id": s.id, "name": s.name,
+                    "start": s.start.strftime("%H:%M"),
+                    "end": s.end.strftime("%H:%M"),
+                    "overnight": s.overnight} for s in shifts],
         "rows": rows,
     })
 
@@ -809,6 +824,10 @@ def attendance_bulk(request):
         return value
 
     late_edit = day < date.today()
+    from .shifts import shifts_map
+    smap = shifts_map(site, day,
+                      [r.get("employee_id") for r in
+                       request.data.get("rows", [])])
     saved = 0
     refused = []
     for row in request.data.get("rows", []):
@@ -858,7 +877,8 @@ def attendance_bulk(request):
         record, _created = Attendance.objects.update_or_create(
             employee=employee, day=day, defaults=defaults)
         record.normal_hours = _normal_hours(
-            site, record.check_in, record.check_out, remark)
+            site, record.check_in, record.check_out, remark,
+            shift=smap.get(employee.id))
         record.save(update_fields=["normal_hours"])
         saved += 1
     audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
@@ -866,6 +886,129 @@ def attendance_bulk(request):
                   "late_edit": late_edit})
     return Response({"saved": saved, "late_edit": late_edit,
                      "refused": refused})
+
+
+@api_view(["GET", "POST"])
+def site_shifts_view(request, pk):
+    """List / define a site's shifts. Reading is open to whoever can see the
+    site; defining takes Admin/Director or the site's own PM."""
+    from .shifts import can_manage_shifts
+
+    try:
+        site = Site.objects.get(pk=pk)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST":
+        if not can_manage_shifts(request.user, site):
+            return Response({"detail": "Admin, Director or the site PM "
+                                       "defines shifts."}, status=403)
+        from .models import SiteShift
+        name = (request.data.get("name") or "").strip()
+        if not name:
+            return Response({"detail": "Give the shift a name."}, status=400)
+        try:
+            start = datetime.strptime(
+                str(request.data.get("start"))[:5], "%H:%M").time()
+            end = datetime.strptime(
+                str(request.data.get("end"))[:5], "%H:%M").time()
+        except (TypeError, ValueError):
+            return Response({"detail": "Start and end times are required "
+                                       "(HH:MM)."}, status=400)
+        ot_raw = request.data.get("ot_counts_from")
+        ot_from = (datetime.strptime(str(ot_raw)[:5], "%H:%M").time()
+                   if ot_raw else None)
+        shift = SiteShift.objects.create(
+            site=site, name=name, start=start, end=end,
+            ot_counts_from=ot_from)
+        audit("site", site.id, "SHIFT_DEFINED", actor=request.user,
+              detail={"shift": name, "start": str(start), "end": str(end)})
+    return Response([{
+        "id": s.id, "name": s.name,
+        "start": s.start.strftime("%H:%M"), "end": s.end.strftime("%H:%M"),
+        "ot_counts_from": (s.ot_counts_from.strftime("%H:%M")
+                           if s.ot_counts_from else None),
+        "overnight": s.overnight, "is_active": s.is_active,
+        "workers": s.assignments.filter(to_date__isnull=True).count(),
+    } for s in site.shifts.all()])
+
+
+@api_view(["PATCH"])
+def shift_update(request, pk):
+    """Rename / retime / retire one shift (same roles as defining)."""
+    from .models import SiteShift
+    from .shifts import can_manage_shifts
+
+    try:
+        shift = SiteShift.objects.select_related("site").get(pk=pk)
+    except SiteShift.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not can_manage_shifts(request.user, shift.site):
+        return Response({"detail": "Admin, Director or the site PM edits "
+                                   "shifts."}, status=403)
+    fields = []
+    if "name" in request.data:
+        shift.name = (request.data["name"] or "").strip() or shift.name
+        fields.append("name")
+    for key in ("start", "end", "ot_counts_from"):
+        if key in request.data:
+            raw = request.data[key]
+            try:
+                value = (datetime.strptime(str(raw)[:5], "%H:%M").time()
+                         if raw else None)
+            except ValueError:
+                return Response({"detail": f"Bad time for {key}."},
+                                status=400)
+            if key != "ot_counts_from" and value is None:
+                return Response({"detail": f"{key} cannot be blank."},
+                                status=400)
+            setattr(shift, key, value)
+            fields.append(key)
+    if "is_active" in request.data:
+        shift.is_active = bool(request.data["is_active"])
+        fields.append("is_active")
+    if fields:
+        shift.save(update_fields=fields)
+        audit("site", shift.site_id, "SHIFT_UPDATED", actor=request.user,
+              detail={"shift": shift.name, "fields": fields})
+    return Response({"ok": True})
+
+
+@api_view(["POST"])
+def shift_assign(request):
+    """Put workers on a shift (or back on normal hours with shift_id null),
+    effective from the given day. Same roles as the day grid."""
+    from .models import SiteShift
+    from . import shifts as shift_svc
+
+    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM",
+                                 "HO_HR", "DIRECTOR", "ADMIN"):
+        return Response({"detail": "Site team or HR assigns shifts."},
+                        status=403)
+    try:
+        site = Site.objects.get(pk=request.data.get("site"))
+        day = date.fromisoformat(request.data.get("date"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "site and date required."}, status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not allocated to this site."}, status=403)
+    shift = None
+    if request.data.get("shift_id"):
+        shift = SiteShift.objects.filter(pk=request.data["shift_id"],
+                                         site=site, is_active=True).first()
+        if shift is None:
+            return Response({"detail": "No such shift on this site."},
+                            status=400)
+    ids = request.data.get("employee_ids") or []
+    moved = 0
+    for employee in Employee.objects.filter(id__in=ids, is_active=True):
+        shift_svc.assign(employee, shift, day)
+        moved += 1
+    audit("site", site.id, "SHIFT_ASSIGNED", actor=request.user,
+          detail={"shift": shift.name if shift else None,
+                  "employees": moved, "from": day.isoformat()})
+    return Response({"assigned": moved})
 
 
 @api_view(["POST"])

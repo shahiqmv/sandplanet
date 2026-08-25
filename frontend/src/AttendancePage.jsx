@@ -23,6 +23,14 @@ export default function AttendancePage({ site, me, onClose }) {
     setNotice(null);
     api(`/attendance?site=${site.id}&date=${day}`).then((data) => {
       setGrid(data);
+      // Shift sites read best crew by crew: normal-hours staff first, then
+      // each shift in start order.
+      const order = new Map((data.shifts || []).map((s, ix) => [s.id, ix]));
+      data.rows.sort((a, b) => {
+        const ka = a.shift_id != null ? order.get(a.shift_id) ?? 99 : -1;
+        const kb = b.shift_id != null ? order.get(b.shift_id) ?? 99 : -1;
+        return ka - kb || String(a.emp_no).localeCompare(String(b.emp_no));
+      });
       setRows(data.rows.map((r) => {
         const row = { ...r, check_in: hhmm(r.check_in),
                       check_out: hhmm(r.check_out) };
@@ -44,6 +52,20 @@ export default function AttendancePage({ site, me, onClose }) {
 
   const setRow = (i, patch) =>
     setRows(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+
+  const hasShifts = (grid?.shifts || []).length > 0;
+  // Moving a man between shifts is an assignment from this day on (history
+  // kept, like site transfers) — then the grid re-reads so his defaults and
+  // gate judging follow the new shift.
+  async function assignShift(row, shiftId) {
+    setError(null);
+    try {
+      await api("/attendance/shift-assign", { method: "POST",
+        body: { site: site.id, date: day,
+                employee_ids: [row.employee_id], shift_id: shiftId } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
 
   async function save() {
     setBusy(true);
@@ -203,6 +225,7 @@ export default function AttendancePage({ site, me, onClose }) {
           <th style={{ ...th, width: 80 }}>Emp No</th>
           <th style={{ ...th, width: 240 }}>Name</th>
           <th style={{ ...th, width: 130 }}>Category</th>
+          {hasShifts && <th style={{ ...th, width: 120 }}>Shift</th>}
           <th style={{ ...th, width: 120 }}>In</th>
           <th style={{ ...th, width: 120 }}>Out</th>
           <th style={{ ...th, width: 130 }}>Remark</th>
@@ -231,6 +254,24 @@ export default function AttendancePage({ site, me, onClose }) {
                 )}
               </td>
               <td style={td}>{row.category}</td>
+              {hasShifts && (
+                <td style={{ padding: 3 }}>
+                  <select value={row.shift_id || ""}
+                          disabled={!canEnter}
+                          title="Moves the worker to this shift from this day on (his history is kept)"
+                          onChange={(e) => assignShift(row,
+                                                       e.target.value || null)}
+                          style={{ ...inputStyle, width: 110, fontSize: 12,
+                                   padding: "3px 6px" }}>
+                    <option value="">site hours</option>
+                    {grid.shifts.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} {s.start}–{s.end}{s.overnight ? " +1d" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </td>
+              )}
               <td style={{ padding: 3 }}>
                 <input type="time" value={row.check_in || ""}
                        disabled={grid?.locked || !canEnter || off}

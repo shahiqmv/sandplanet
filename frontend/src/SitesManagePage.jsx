@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import ShiftsEditor from "./ShiftsEditor.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -420,6 +421,12 @@ export default function SitesManagePage({ me, onChanged }) {
               </span>
             </div>
           )}
+
+          <h4 style={{ color: "var(--sp-navy)", fontSize: 13.5,
+                       margin: "16px 0 6px" }}>
+            Shifts (morning / afternoon / night crews)
+          </h4>
+          <ShiftsEditor siteId={selected.id} canEdit={canEditSite} />
 
           {!selected.is_head_office && (<>
           <h3 style={{ color: "var(--sp-navy)", fontSize: 15,

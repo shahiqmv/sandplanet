@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
+import ShiftsEditor from "./ShiftsEditor.jsx";
 import { twsDefaultDate } from "./QADocs.jsx";
 import { Btn, Eyebrow, Icon, IssuedStamp, RefStamp, StampTile, StatusChip,
          buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
@@ -17,6 +18,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onWorkforce, onVessels, onUnits,
                                         refresh }) {
   const [dash, setDash] = useState(null);
+  const [showShifts, setShowShifts] = useState(false);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
   const [pmrs, setPmrs] = useState([]);
@@ -90,6 +92,30 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
 
   return (
     <>
+      {showShifts && (
+        <div onClick={() => setShowShifts(false)}
+             style={{ position: "fixed", inset: 0,
+                      background: "rgba(0,0,0,.4)", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      zIndex: 60, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()}
+               style={{ ...card, maxWidth: 640, width: "94vw",
+                        maxHeight: "88vh", overflowY: "auto", margin: 0 }}>
+            <div style={{ display: "flex", alignItems: "baseline" }}>
+              <h2 style={{ margin: 0, color: "var(--sp-navy)",
+                           fontSize: 16 }}>
+                Shifts — {site.code}</h2>
+              <button onClick={() => setShowShifts(false)}
+                      style={{ ...ghostButton, marginLeft: "auto" }}>
+                Close</button>
+            </div>
+            <div style={{ marginTop: 10 }}>
+              <ShiftsEditor siteId={site.id}
+                canEdit={["PM", "DIRECTOR", "ADMIN"].includes(me.role)} />
+            </div>
+          </div>
+        </div>
+      )}
       <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
                                 + "the last two weeks" : null}
                metaTone="alert">
@@ -193,6 +219,12 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
             .includes(me.role) && (
             <Btn variant="secondary" onClick={onAttendance}>
               <Icon name="clock" />Attendance</Btn>
+          )}
+          {/* Shift timetable: the PM defines his site's shifts here since the
+              Sites management page is HO-only (owner 2026-08-25). */}
+          {["PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
+            <Btn variant="secondary" onClick={() => setShowShifts(true)}>
+              <Icon name="clock" />Shifts</Btn>
           )}
           {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
             <Btn variant="secondary" onClick={onWorkforce}>

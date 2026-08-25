@@ -2082,6 +2082,52 @@ class SubcontractValuationItem(models.Model):
         ordering = ["scope_item__sort_order", "id"]
 
 
+class SiteShift(models.Model):
+    """A named working window on a shift site (owner 2026-08-25): Morning /
+    Afternoon / Night, each with its own start, end and OT threshold. end <=
+    start means the shift runs past midnight; such a day belongs to the date
+    the shift STARTS. A site with no shifts keeps its single schedule."""
+
+    site = models.ForeignKey(Site, on_delete=models.CASCADE,
+                             related_name="shifts")
+    name = models.CharField(max_length=40)
+    start = models.TimeField()
+    end = models.TimeField()
+    # OT counts from here; blank = from the shift's end.
+    ot_counts_from = models.TimeField(null=True, blank=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["start", "id"]
+
+    @property
+    def overnight(self):
+        return self.end <= self.start
+
+    def __str__(self):
+        return f"{self.site.code} {self.name}"
+
+
+class EmployeeShiftAssignment(models.Model):
+    """Who works which shift, date-scoped like site allocations — stable
+    assignments the site team moves when needed; payroll and audits can
+    always answer 'what shift was he on that day'. A worker with no open
+    assignment simply follows the site's normal hours (mixed staff, owner
+    2026-08-25)."""
+
+    employee = models.ForeignKey(Employee, on_delete=models.CASCADE,
+                                 related_name="shift_assignments")
+    shift = models.ForeignKey(SiteShift, on_delete=models.PROTECT,
+                              related_name="assignments")
+    from_date = models.DateField()
+    to_date = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-from_date", "-id"]
+
+
 class EmployeeSiteAllocation(models.Model):
     """Transfer history — payroll must know where each person worked and
     when (spec §6A.1)."""

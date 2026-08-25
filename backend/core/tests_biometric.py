@@ -457,3 +457,146 @@ class DayProposalTests(TestCase):
         a = Attendance.objects.get()
         self.assertEqual(str(a.ot_requested), "2.50")
         self.assertIsNone(a.ot_approved)          # the PM still approves
+
+
+@override_settings(ADMS_SECRET=SECRET)
+class ShiftTests(TestCase):
+    """Shift crews (owner 2026-08-25): shifts defined per site (PM allowed),
+    workers date-scoped onto one, mixed staff fall back to site hours, and a
+    night shift belongs to the day it starts."""
+
+    def setUp(self):
+        from datetime import time
+        self.site = Site.objects.create(
+            code="SHF", name="Shift Site", status=Site.Status.ACTIVE,
+            working_hours_from=time(8, 0), working_hours_to=time(17, 0))
+        self.hr = make_user("sh_hr", User.Role.HO_HR)
+        self.pm = make_user("sh_pm", User.Role.PM)
+        from .models import SitePmHistory, UserSiteAllocation
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date(2026, 1, 1))
+        UserSiteAllocation.objects.create(user=self.pm, site=self.site,
+                                          from_date=date(2026, 1, 1))
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Operator", sort_order=11)
+        self.men = []
+        for i, no in enumerate(("EMP-0801", "EMP-0802")):
+            e = Employee.objects.create(
+                emp_no=no, full_name=f"Shift Man {i}", job_category=self.cat,
+                is_active=True, join_date=date(2026, 1, 1))
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+            self.men.append(e)
+        self.device = AttendanceDevice.objects.create(
+            site=self.site, name="Gate", serial="SH-1")
+        self.client = APIClient()
+        self.client.force_authenticate(self.pm)
+        self.day = date(2026, 8, 24)          # a Monday
+
+    def _define(self, name, start, end, actor=None):
+        self.client.force_authenticate(actor or self.pm)
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/shifts",
+                             {"name": name, "start": start, "end": end},
+                             format="json")
+        assert r.status_code == 200, r.data
+        return next(s for s in r.data if s["name"] == name)
+
+    def _assign(self, emp, shift_id):
+        r = self.client.post("/api/v1/attendance/shift-assign",
+                             {"site": self.site.id,
+                              "date": self.day.isoformat(),
+                              "employee_ids": [emp.id],
+                              "shift_id": shift_id}, format="json")
+        assert r.status_code == 200, r.data
+
+    def _grid(self, day=None):
+        self.client.force_authenticate(self.hr)
+        r = self.client.get(f"/api/v1/attendance?site={self.site.id}"
+                            f"&date={day or self.day}")
+        assert r.status_code == 200, r.data
+        return r.data
+
+    def _push(self, *lines):
+        body = "".join(f"{l}\n" for l in lines)
+        return self.client.post(
+            f"/adms/{SECRET}/iclock/cdata?SN=SH-1&table=ATTLOG",
+            body, content_type="text/plain")
+
+    def test_the_sites_pm_defines_shifts_a_stranger_pm_cannot(self):
+        s = self._define("Afternoon", "15:00", "23:00")
+        self.assertFalse(s["overnight"])
+        other_pm = make_user("sh_pm2", User.Role.PM)
+        self.client.force_authenticate(other_pm)
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/shifts",
+                             {"name": "X", "start": "01:00", "end": "02:00"},
+                             format="json")
+        # not his site: invisible (404) — refusal either way
+        self.assertIn(r.status_code, (403, 404))
+
+    def test_assigned_men_default_to_their_shift_mixed_staff_keep_site_hours(self):
+        s = self._define("Afternoon", "15:00", "23:00")
+        self._assign(self.men[0], s["id"])
+        rows = {r["emp_no"]: r for r in self._grid()["rows"]}
+        self.assertEqual(str(rows["EMP-0801"]["check_in"]), "15:00:00")
+        self.assertEqual(str(rows["EMP-0801"]["check_out"]), "23:00:00")
+        self.assertEqual(rows["EMP-0801"]["shift_name"], "Afternoon")
+        self.assertEqual(str(rows["EMP-0802"]["check_in"]), "08:00:00")
+        self.assertIsNone(rows["EMP-0802"]["shift_name"])
+
+    def test_gate_judges_an_afternoon_man_by_his_own_shift(self):
+        s = self._define("Afternoon", "15:00", "23:00")
+        self._assign(self.men[0], s["id"])
+        # 801 arrives 15:05 (fine for his shift) and stays to 23:58 — OT 0.5.
+        self._push("801\t2026-08-24 15:05:00\t255\t1",
+                   "801\t2026-08-24 23:58:00\t255\t1")
+        d = next(r for r in self._grid()["rows"]
+                 if r["emp_no"] == "EMP-0801")["device"]
+        self.assertNotIn("LATE", d["flags"])
+        self.assertEqual(d["proposal"]["ot_requested"], "0.5")
+
+    def test_a_night_shift_belongs_to_the_day_it_starts(self):
+        s = self._define("Night", "23:00", "07:00")
+        self.assertTrue(any(x["name"] == "Night" and x["overnight"]
+                            for x in self.client.get(
+                                f"/api/v1/sites/{self.site.id}/shifts").data))
+        self._assign(self.men[0], s["id"])
+        self._push("801\t2026-08-24 22:55:00\t255\t1",
+                   "801\t2026-08-25 07:40:00\t255\t1")
+        # Monday's row carries the whole night; OT = 07:00->07:40 floored 0.5.
+        d = next(r for r in self._grid()["rows"]
+                 if r["emp_no"] == "EMP-0801")["device"]
+        self.assertEqual(d["proposal"]["check_in"], "22:55")
+        self.assertEqual(d["proposal"]["check_out"], "07:40")
+        self.assertNotIn("LATE", d["flags"])
+        self.assertEqual(d["proposal"]["remark"], "PRESENT")
+        self.assertEqual(d["proposal"]["ot_requested"], "0.5")
+        # Tuesday shows nothing for him — the out-punch was Monday's.
+        tue = next(r for r in self._grid(date(2026, 8, 25))["rows"]
+                   if r["emp_no"] == "EMP-0801")
+        self.assertIsNone(tue["device"])
+
+    def test_night_normal_hours_survive_midnight_on_save(self):
+        from decimal import Decimal
+        s = self._define("Night", "23:00", "07:00")
+        self._assign(self.men[0], s["id"])
+        self.client.force_authenticate(self.hr)
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": self.day.isoformat(),
+            "rows": [{"employee_id": self.men[0].id, "check_in": "23:00",
+                      "check_out": "07:00", "remark": "PRESENT",
+                      "ot_requested": 0}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        att = Attendance.objects.get(employee=self.men[0], day=self.day)
+        self.assertEqual(att.normal_hours, Decimal("8.00"))
+
+    def test_reassignment_closes_the_old_row_datescoped(self):
+        from core.models import EmployeeShiftAssignment
+        a = self._define("Morning", "07:00", "15:00")
+        b = self._define("Afternoon", "15:00", "23:00")
+        self._assign(self.men[0], a["id"])
+        self.day = date(2026, 8, 30)
+        self._assign(self.men[0], b["id"])
+        rows = EmployeeShiftAssignment.objects.filter(
+            employee=self.men[0]).order_by("from_date")
+        self.assertEqual(rows[0].to_date, date(2026, 8, 29))
+        self.assertIsNone(rows[1].to_date)

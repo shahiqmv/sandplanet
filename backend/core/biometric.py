@@ -292,9 +292,11 @@ def day_proposals(site, day):
     from decimal import ROUND_FLOOR
 
     start, end = day_punch_window(day)
+    # Night crews punch out after midnight, so the fetch runs into the next
+    # morning; each worker's own window (below) decides what counts as HIS day.
     punches = (DevicePunch.objects
                .filter(device__site=site, punched_at__gte=start,
-                       punched_at__lt=end)
+                       punched_at__lt=end + timedelta(hours=13))
                .select_related("employee")
                .order_by("punched_at"))
     if not punches:
@@ -307,7 +309,7 @@ def day_proposals(site, day):
     for p in punches:
         if p.employee_id and p.employee_id in here:
             by_emp.setdefault(p.employee_id, []).append(p)
-        else:
+        elif p.punched_at < end:   # strangers list stays this calendar day's
             unmatched.append({
                 "device_user_id": p.device_user_id,
                 "punched_at": _local(p.punched_at).strftime("%H:%M")
@@ -317,15 +319,38 @@ def day_proposals(site, day):
                 "why": ("not on this site's register" if p.employee_id
                         else "no worker for this ID"),
             })
+    # Shift sites: every threshold below — window, late, finish, OT — is the
+    # WORKER's schedule; a worker with no shift follows the site's hours. A
+    # night shift belongs to the date it starts (owner 2026-08-25).
+    from .shifts import schedule_for, shifts_map, window_datetimes
+    smap = shifts_map(site, day, list(by_emp)) if site.shifts.exists() else {}
     rows = {}
     for emp_id, plist in by_emp.items():
+        shift = smap.get(emp_id)
+        sched_start, sched_end, ot_from, overnight = schedule_for(site, shift)
+        win_s, win_e = window_datetimes(day, sched_start, sched_end)
+        if overnight:
+            # His day: from well before the shift to a while after it ends
+            # tomorrow. Anything outside is another day's business (an early
+            # out-punch this morning belongs to yesterday's row).
+            lo, hi = win_s - timedelta(hours=4), win_e + timedelta(hours=6)
+        else:
+            lo = datetime.combine(day, datetime.min.time())
+            hi = lo + timedelta(days=1)
+        plist = [p for p in plist
+                 if lo <= _local(p.punched_at).replace(tzinfo=None) < hi]
+        if not plist:
+            continue
         first, last = _local(plist[0].punched_at), _local(plist[-1].punched_at)
+        first_dt = first.replace(tzinfo=None)
+        last_dt = last.replace(tzinfo=None)
         distinct = last > first
         flags = []
         row = {
             "punch_count": len(plist),
             "first": first.strftime("%H:%M"),
             "last": last.strftime("%H:%M") if distinct else None,
+            "shift": shift.name if shift else None,
             "modes": sorted({p.verify_mode for p in plist if p.verify_mode}),
             "flags": flags, "proposal": None,
         }
@@ -336,10 +361,7 @@ def day_proposals(site, day):
             continue
         grace = (site.late_after_min if site.late_after_min is not None
                  else LATE_GRACE_MIN)
-        late_by = (
-            datetime.combine(day, first.time())
-            - datetime.combine(day, site.working_hours_from)
-        ).total_seconds() / 60
+        late_by = (first_dt - win_s).total_seconds() / 60
         if late_by > grace:
             flags.append("LATE")
         if not distinct:
@@ -348,7 +370,7 @@ def day_proposals(site, day):
             flags.append("NO_OUT")
             rows[emp_id] = {**row, "proposal": {
                 "check_in": first.strftime("%H:%M"),
-                "check_out": site.working_hours_to.strftime("%H:%M"),
+                "check_out": sched_end.strftime("%H:%M"),
                 "remark": "PRESENT", "ot_requested": "0"}}
             continue
         span = Decimal(str((last - first).total_seconds())) / 3600
@@ -356,15 +378,18 @@ def day_proposals(site, day):
         if span < HALF_DAY_BELOW_HOURS:
             remark = "HALF_DAY"
             flags.append("SHORT")
-        # OT proposed from time past the site's OT threshold (its official
-        # finish unless the site sets a later ot_counts_from), floored to the
-        # half hour so a proposal never overstates; the clerk bumps it if real.
-        ot_from = site.ot_counts_from or site.working_hours_to
+        # OT proposed from time past the schedule's OT threshold (the finish
+        # unless a later ot_counts_from is set), floored to the half hour so
+        # a proposal never overstates; the clerk bumps it if real.
+        if ot_from == sched_end:
+            ot_from_dt = win_e
+        else:
+            ot_from_dt = datetime.combine(day, ot_from)
+            if overnight and ot_from <= sched_start:
+                ot_from_dt += timedelta(days=1)   # threshold past midnight
         ot = Decimal("0")
-        if remark == "PRESENT" and last.time() > ot_from:
-            past = (datetime.combine(day, last.time())
-                    - datetime.combine(day, ot_from)
-                    ).total_seconds() / 3600
+        if remark == "PRESENT" and last_dt > ot_from_dt:
+            past = (last_dt - ot_from_dt).total_seconds() / 3600
             ot = (Decimal(str(past)) * 2).quantize(
                 Decimal("1"), rounding=ROUND_FLOOR) / 2
         if ot > 0:
