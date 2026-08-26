@@ -314,6 +314,17 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               check before the client asks.
             </p>
           )}
+          {dash.manpower.register_gap > 0 && (
+            <p style={{ fontSize: 12, color: "var(--amber-fg)",
+                        margin: "6px 0 0" }}>
+              ⚠ The DPR ({dash.manpower.latest_reported?.date}) reports{" "}
+              {dash.manpower.latest_reported?.total} men but the worker
+              register holds {dash.manpower.roster_total} —{" "}
+              {dash.manpower.register_gap} unregistered. Register the
+              subcontract crews or complete the transfers, or they stay
+              invisible to attendance, allocation and payroll.
+            </p>
+          )}
           <div style={{ display: "flex", gap: 18, flexWrap: "wrap",
                         marginTop: 10 }}>
             {dash.manpower.top.map((c) => (

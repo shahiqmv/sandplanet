@@ -121,6 +121,7 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   // can name the villa/pool and the stage it moved, so issuing the DPR
   // updates the unit board. Rows without a unit behave exactly as before.
   const [units, setUnits] = useState([]);
+  const [rosterTotal, setRosterTotal] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [doc, setDoc] = useState(existing || null);
@@ -148,6 +149,11 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
   useEffect(() => {
     if (!site?.id) return;
     api(`/sites/${site.id}/units`).then(setUnits).catch(() => setUnits([]));
+    // Register size, for the manpower sanity check (owner 2026-08-26 — SFR
+    // reported 100 men on the DPR while its register held 59).
+    api(`/sites/${site.id}/manpower`)
+      .then((d) => setRosterTotal(d.roster_total))
+      .catch(() => setRosterTotal(null));
   }, [site?.id]);
 
   useEffect(() => {
@@ -609,6 +615,17 @@ export default function DPRForm({ site, projects = [], existing, onSaved,
       />
 
       <SectionTitle>2. Manpower — total {manpowerTotal}</SectionTitle>
+      {rosterTotal != null && manpowerTotal > rosterTotal && (
+        <p style={{ background: "#fdf6ec", border: "1px solid #ecd9b8",
+                    borderRadius: 6, padding: "6px 10px", fontSize: 12.5,
+                    color: "#8a5b00", margin: "0 0 8px" }}>
+          ⚠ Reporting {manpowerTotal} men, but this site's worker register
+          holds {rosterTotal}. The extra {manpowerTotal - rosterTotal} are
+          invisible to attendance, allocation and payroll — register the
+          subcontract crews (Workforce page) or complete their site
+          transfers. The DPR still saves.
+        </p>
+      )}
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     marginBottom: 8 }}>
         <button type="button" onClick={prefillFromAttendance}

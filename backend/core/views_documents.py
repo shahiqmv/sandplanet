@@ -2120,9 +2120,31 @@ def dashboard_site(request, site_id):
             dpr_total = sum(int(v or 0) for v in counts.values())
         except (TypeError, ValueError):
             dpr_total = None
+    # DPR-vs-register check (owner 2026-08-26, the SFR case): the latest DPR
+    # reported 100 men while the register held 59 — ~41 unregistered
+    # subcontract/transferred workers invisible to attendance, DMA, payroll
+    # and the gate. Surface the gap instead of letting it drift for weeks.
+    latest_reported = None
+    for d in Document.objects.filter(
+            site=site, doc_type="DPR", is_void=False,
+            status__in=("ISSUED", "VERIFIED"),
+            current_revision__isnull=False).order_by("-doc_date")[:10]:
+        counts = (d.current_revision.payload or {}).get("manpower", {}) or {}
+        try:
+            total = sum(int(v or 0) for v in counts.values())
+        except (TypeError, ValueError):
+            continue
+        if total > 0:
+            latest_reported = {"total": total,
+                               "date": d.doc_date.isoformat()}
+            break
+    register_gap = (max(latest_reported["total"] - mp["roster_total"], 0)
+                    if latest_reported else 0)
     manpower = {
         "attendance_entered": mp["attendance_entered"],
         "roster_total": mp["roster_total"],
+        "latest_reported": latest_reported,
+        "register_gap": register_gap,
         "present": mp["present"],
         "absent": mp["absent"],
         "allocated": dma_total,
