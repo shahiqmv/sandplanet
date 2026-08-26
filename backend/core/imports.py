@@ -1100,6 +1100,20 @@ def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
 
 
 SHARE_ATTACH_CAP = 20 * 1024 * 1024   # most mailboxes bounce past ~25 MB
+SHARE_CC_PARAM = "clearance_share_cc"
+
+
+def share_cc_list():
+    """Who is copied on every clearing-agent document share. Editable on the
+    Clearance page (owner 2026-08-26: cargoclearance@sandplanet.mv, a
+    dedicated group); the env IMPORT_SHARE_CC is only the fallback."""
+    from django.conf import settings
+    from .models import CompanyParameter
+    row = CompanyParameter.objects.filter(key=SHARE_CC_PARAM).first()
+    raw = (row.value if row and row.value
+           else getattr(settings, "IMPORT_SHARE_CC", ""))
+    return [a.strip() for a in str(raw).replace(";", ",").split(",")
+            if a.strip()]
 
 
 def share_with_agent(shipment, actor):
@@ -1176,7 +1190,7 @@ def share_with_agent(shipment, actor):
         body="\n".join(lines),
         from_email=f"{sender_name} <{settings.DEFAULT_FROM_EMAIL}>",
         to=to_addrs,
-        cc=[settings.IMPORT_SHARE_CC] if settings.IMPORT_SHARE_CC else [],
+        cc=share_cc_list(),
         reply_to=[reply_to],
     )
     total = 0

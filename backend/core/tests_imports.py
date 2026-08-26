@@ -1977,3 +1977,68 @@ class VoidedIprTests(IprBase):
         row = next(x for x in self.client.get("/api/v1/ipr").data
                    if x["ref"] == ref)
         self.assertTrue(row["is_void"])
+
+
+class ClearanceSetupTests(IprBase):
+    """The Cargo Clearance page (owner 2026-08-26): editable CC list drives
+    the share email; agent + candidates + share history in one payload."""
+
+    def test_cc_param_drives_the_share_email(self):
+        from django.core import mail
+        from core.models import CompanyParameter, Supplier
+        Supplier.objects.create(name="ClearCo", category="CLEARING_AGENT",
+                                email="agent@clearco.mv",
+                                is_clearing_agent=True)
+        CompanyParameter.objects.create(
+            key="clearance_share_cc",
+            value="cargoclearance@sandplanet.mv, second@sandplanet.mv")
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                             {"mode": "SEA"}, format="json")
+        sid = r.data["shipments"][0]["id"]
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/documents",
+                         {"doc_type": "BL_AWB",
+                          "file": SimpleUploadedFile("bl.pdf", b"%PDF-1.4",
+                              content_type="application/pdf")},
+                         format="multipart")
+        r = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/share",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(mail.outbox[0].cc,
+                         ["cargoclearance@sandplanet.mv",
+                          "second@sandplanet.mv"])
+
+    def test_setup_page_reads_and_purchasing_edits(self):
+        from core.models import Supplier
+        agent = Supplier.objects.create(
+            name="ClearCo", category="CLEARING_AGENT",
+            email="agent@clearco.mv", is_clearing_agent=True)
+        self.client.force_authenticate(self.ho)
+        r = self.client.get("/api/v1/clearance/setup")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["agent"]["id"], agent.id)
+        self.assertTrue(r.data["can_edit"])
+        # save a CC list
+        r = self.client.post("/api/v1/clearance/setup",
+                             {"share_cc": "cargoclearance@sandplanet.mv"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["share_cc"], "cargoclearance@sandplanet.mv")
+        # a bad address is refused
+        r = self.client.post("/api/v1/clearance/setup",
+                             {"share_cc": "not-an-email"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # finance reads but cannot edit
+        self.client.force_authenticate(self.finance)
+        r = self.client.get("/api/v1/clearance/setup")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.data["can_edit"])
+        r = self.client.post("/api/v1/clearance/setup",
+                             {"share_cc": "x@y.mv"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        # site roles see nothing
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(
+            self.client.get("/api/v1/clearance/setup").status_code, 403)

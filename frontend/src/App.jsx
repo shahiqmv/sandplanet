@@ -10,6 +10,7 @@ import LiveFeedsPage from "./LiveFeedsPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
+import ClearancePage from "./ClearancePage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
@@ -119,6 +120,7 @@ const NAV_GROUPS = [
            ["pmr-register", "Import Requests", IMPORT_CHAIN],
            ["imports", "International Orders", IMPORT_CHAIN],
            ["import-tracker", "Import Tracker", IMPORT_CHAIN],
+           ["clearance", "Cargo Clearance", IMPORT_CHAIN],
            ["store", "HO Store", IMPORT_CHAIN],
            ["suppliers", "Suppliers",
             ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "PA",
@@ -1087,6 +1089,9 @@ export default function App() {
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>
               setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "clearance" && (
+            <ClearancePage me={me} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />

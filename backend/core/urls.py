@@ -88,6 +88,8 @@ urlpatterns = [
          name="petty-cash-cycles"),
     path("ipr", imports_api.ipr_list_create, name="ipr-list-create"),
     path("ipr/context", imports_api.ipr_context, name="ipr-context"),
+    path("clearance/setup", imports_api.clearance_setup,
+         name="clearance-setup"),
     path("imports/tracker", imports_api.imports_tracker,
          name="imports-tracker"),
     path("pmr/register", imports_api.pmr_register, name="pmr-register"),

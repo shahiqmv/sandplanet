@@ -13,6 +13,7 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from . import imports as ipr_svc
+from .audit import audit
 from .models import (CostHead, Document, ImportAllocation, ImportOrder,
                      ImportOrderLine, ImportPaymentMilestone, ImportReceipt,
                      ImportReceiptLine, ImportShipment, ImportShipmentLine,
@@ -1140,3 +1141,62 @@ def ipr_context(request):
         })
     return Response({"suppliers": suppliers, "cost_heads": heads,
                      "items": items, "projects": projects, "pmrs": pmrs})
+
+
+@api_view(["GET", "POST"])
+def clearance_setup(request):
+    """One page for cargo clearance (owner 2026-08-26): the clearing agent's
+    details, who is copied on document shares, and the recent share history.
+    Anyone on the import chain reads it; Purchasing/Admin edit."""
+    from django.core.validators import validate_email
+    from django.core.exceptions import ValidationError
+    from .models import CompanyParameter, ImportShipment, Supplier
+
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    if request.method == "POST":
+        if request.user.role not in CREATE_ROLES:
+            return Response({"detail": "Purchasing manages clearance "
+                                       "setup."}, status=403)
+        raw = str(request.data.get("share_cc") or "").replace(";", ",")
+        addrs = [a.strip() for a in raw.split(",") if a.strip()]
+        for a in addrs:
+            try:
+                validate_email(a)
+            except ValidationError:
+                return Response({"detail": f"'{a}' is not a valid email "
+                                           "address."}, status=400)
+        CompanyParameter.objects.update_or_create(
+            key=ipr_svc.SHARE_CC_PARAM,
+            defaults={"value": ", ".join(addrs),
+                      "description": "CC on clearing-agent document shares"})
+        audit("company", 0, "CLEARANCE_CC_SET", actor=request.user,
+              detail={"cc": addrs})
+
+    agent = Supplier.objects.filter(is_clearing_agent=True,
+                                    is_active=True).first()
+    candidates = Supplier.objects.filter(
+        category="CLEARING_AGENT", is_active=True).order_by("name")
+    recent = (ImportShipment.objects
+              .filter(shared_with_agent_at__isnull=False)
+              .select_related("order__document", "order__supplier")
+              .order_by("-shared_with_agent_at")[:15])
+    return Response({
+        "agent": ({
+            "id": agent.id, "name": agent.name,
+            "contact_person": agent.contact_person, "phone": agent.phone,
+            "email": agent.email, "address": agent.address,
+            "notes": agent.notes,
+        } if agent else None),
+        "candidates": [{"id": s.id, "name": s.name,
+                        "is_agent": bool(agent and s.id == agent.id)}
+                       for s in candidates],
+        "share_cc": ", ".join(ipr_svc.share_cc_list()),
+        "can_edit": request.user.role in CREATE_ROLES,
+        "recent_shares": [{
+            "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
+            "supplier": s.order.supplier.name,
+            "shared_at": s.shared_with_agent_at,
+            "documents": s.documents.count(),
+        } for s in recent],
+    })
