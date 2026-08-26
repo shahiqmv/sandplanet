@@ -683,12 +683,8 @@ function ProcRow({ r, bundle, variant, open, onToggle }) {
       <tr>
         <td colSpan={13} style={{ background: "var(--paper-2, #fafafa)",
                                   padding: "8px 14px" }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12,
-                        marginBottom: 4 }}>
+          <div style={{ marginBottom: 4 }}>
             <strong style={{ fontSize: 12 }}>Shipment tracking</strong>
-            {t.map_url && (
-              <a href={t.map_url} target="_blank" rel="noreferrer"
-                 style={{ fontSize: 12 }}>📍 Live position ↗</a>)}
           </div>
           <table className="data" style={{ fontSize: 12 }}>
             <tbody>

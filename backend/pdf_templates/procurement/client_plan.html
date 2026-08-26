@@ -195,7 +195,7 @@
             <td class="n">{{ r.production }}</td>
             <td class="n">{{ r.shipment }}{% if r.tracking %}
               <div style="font-size:8.5pt;color:#5a6b78;">
-                {% if r.tracking.map_url %}<a href="{{ r.tracking.map_url }}" target="_blank" rel="noreferrer">{{ r.tracking.status }}</a>{% else %}{{ r.tracking.status }}{% endif %}{% if r.tracking.eta %} · ETA {{ r.tracking.eta|date:"d M" }}{% endif %}
+                {{ r.tracking.status }}{% if r.tracking.eta %} · ETA {{ r.tracking.eta|date:"d M" }}{% endif %}
               </div>{% endif %}</td>
             <td class="n">{{ r.delivery }}</td>
             <td class="n">{% if r.eta %}{{ r.eta|date:"d M Y"|default:r.eta }}{% endif %}</td>

@@ -69,9 +69,9 @@ CLIENT_STATUS_WORDS = {
 
 def client_tracking(line):
     """Sanitised live tracking for the client (owner 2026-08-26, reversing
-    the 2026-08-06 hold-back): friendly status, ETA, the movement timeline
-    and the provider's public live map — never internal health states,
-    errors, or anything money-side. None when there is nothing live to show."""
+    the 2026-08-06 hold-back): friendly status, ETA and the movement
+    timeline — never the provider map link, internal health states, errors,
+    or anything money-side. None when there is nothing live to show."""
     from . import tracking as trk
     from .models import ShipmentTracking
     from .procurement_pipeline import _shipment_for
@@ -84,12 +84,13 @@ def client_tracking(line):
     moves = trk.movements_for(t)
     if not moves and not t.raw_status:
         return None
+    # No provider map link for clients (owner 2026-08-26) — the movement
+    # summary below is the tracker; the ShipsGo map stays internal.
     return {
         "mode": t.mode,
         "status": CLIENT_STATUS_WORDS.get(
             t.raw_status, (t.raw_status or "").title()),
         "eta": t.current_eta.date() if t.current_eta else None,
-        "map_url": t.map_url or "",
         "movements": [{
             "label": m["label"], "location": m["location"],
             "vessel": m["vessel_flight"], "date": m["event_time"],
