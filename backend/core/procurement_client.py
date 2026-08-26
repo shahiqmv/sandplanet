@@ -46,6 +46,20 @@ def _stage_word(pipeline, key):
     return STAGE_WORDS.get(key, {}).get(st["state"], "") if st else ""
 
 
+def _shipment_word(pipeline):
+    """The shipment column shows the IPR shipment's REAL status (Booked /
+    Shipped / In Transit / Arrived / Under Clearing / Cleared) so the client
+    sees what is actually going on, not a two-word rollup (owner
+    2026-08-26). Falls back to the mapped word when there is no shipment or
+    the rollup carries no status text."""
+    st = next((s for s in pipeline if s["key"] == "shipment"), None)
+    if not st:
+        return ""
+    if st["state"] in ("none", "na"):
+        return STAGE_WORDS["shipment"].get(st["state"], "")
+    return st.get("detail") or STAGE_WORDS["shipment"].get(st["state"], "")
+
+
 def _eta_value(line, risk):
     if risk["level"] == "DELIVERED":
         return "Delivered"
@@ -116,7 +130,7 @@ def client_row(line):
         "tds_req": "Yes" if line.tds_required else "No",
         "tds": _stage_word(pipe, "tds"), "order": _stage_word(pipe, "order"),
         "production": _stage_word(pipe, "production"),
-        "shipment": _stage_word(pipe, "shipment"),
+        "shipment": _shipment_word(pipe),
         "delivery": _stage_word(pipe, "delivery"),
         "eta": _eta_value(line, risk),
         "status": RISK_WORD.get(risk["level"], ""),
@@ -164,7 +178,7 @@ def _bundle_client_row(summary, members=None):
         "tds": _stage_word(summary["pipeline"], "tds"),
         "order": _stage_word(summary["pipeline"], "order"),
         "production": _stage_word(summary["pipeline"], "production"),
-        "shipment": _stage_word(summary["pipeline"], "shipment"),
+        "shipment": _shipment_word(summary["pipeline"]),
         "delivery": _stage_word(summary["pipeline"], "delivery"),
         "eta": ("Delivered" if lvl == "DELIVERED"
                 else (summary["risk"].get("projected") or "")),
