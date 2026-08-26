@@ -11,7 +11,7 @@ import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import ClearancePage from "./ClearancePage.jsx";
-import ImportOrders, { IprView, IprForm, IrnView, StoreLots,
+import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import { VesselsPage } from "./Vessels.jsx";
@@ -807,6 +807,15 @@ export default function App() {
             <MatchingWorkspace doc={docView.doc} me={me} onChanged={bump}
                                onClose={() => openDoc(docView.doc.ref)} />
           )}
+          {docView?.mode === "shipment-view" && (
+            <ShipmentView me={me} refIpr={docView.doc.ref}
+                     seq={docView.shipmentSeq} onClose={closeDoc}
+                     onOpenDoc={openDoc}
+                     onOpenIpr={(ref) =>
+                       setDocView({ mode: "ipr-view", doc: { ref } })}
+                     onOpenIrn={(ref) =>
+                       setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
           {docView?.mode === "ipr-view" && (
             <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc}
                      onOpenDoc={openDoc}
@@ -1093,8 +1102,9 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "clearance" && (
             <ClearancePage me={me} onOpenIpr={(ref, seq) =>
-              setDocView({ mode: "ipr-view", doc: { ref },
-                           shipmentSeq: seq })} />
+              setDocView(seq != null
+                ? { mode: "shipment-view", doc: { ref }, shipmentSeq: seq }
+                : { mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />

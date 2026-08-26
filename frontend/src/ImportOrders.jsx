@@ -1607,6 +1607,81 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
   );
 }
 
+// A single shipment's clearing workspace (owner 2026-08-26) — the clearance
+// board opens THIS, not the whole order: same card, own page, with the full
+// order one click away.
+export function ShipmentView({ me, refIpr, seq, onClose, onOpenIrn,
+                               onOpenDoc, onOpenIpr }) {
+  const [doc, setDoc] = useState(null);
+  const [error, setError] = useState(null);
+  const [forwarders, setForwarders] = useState([]);
+  const [agents, setAgents] = useState([]);
+
+  const load = () => api(`/ipr/${refIpr}`).then(setDoc)
+    .catch((e) => setError(e.message));
+  useEffect(() => { load(); /* eslint-disable-next-line */ }, [refIpr]);
+  useEffect(() => {
+    Promise.all([
+      api("/suppliers?category=FORWARDER").catch(() => []),
+      api("/suppliers?category=CLEARING_AGENT").catch(() => []),
+    ]).then(([fw, cl]) => {
+      setForwarders(fw || []);
+      setAgents([...(fw || []), ...(cl || [])]);
+    });
+  }, []);
+
+  async function call(path, body) {
+    setError(null);
+    try { await api(`/ipr/${refIpr}${path}`, { method: "POST", body });
+      load(); } catch (e) { setError(e.message); }
+  }
+
+  if (!doc) return <section style={card}>{error || "Loading…"}</section>;
+  const o = doc.order;
+  const s = (doc.shipments || []).find(
+    (x) => String(x.seq) === String(seq)) || (doc.shipments || [])[0];
+
+  return (
+    <section style={card}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 10,
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)" }}>
+          Clearing — {doc.ref}{s ? ` · Shipment ${s.seq}` : ""}
+        </h2>
+        {s && <StatusChip status={s.status} />}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+          {onOpenIpr && (
+            <button onClick={() => onOpenIpr(doc.ref)} style={ghostButton}
+                    title="Order details, payment schedule, all shipments">
+              Full order ↗</button>
+          )}
+          <button onClick={onClose} style={ghostButton}>Close</button>
+        </span>
+      </div>
+      <p style={{ color: "#5a6b78", fontSize: 13, margin: "6px 0 12px" }}>
+        {o.supplier_name}
+        {o.incoterm ? ` · ${o.incoterm}` : ""}
+        {o.loading_port ? ` · ${o.loading_port}` : ""}
+        {o.discharge_port ? ` → ${o.discharge_port}` : ""}
+        {o.pi_ref ? ` · PI ${o.pi_ref}` : ""}
+      </p>
+      {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      {s ? (
+        <Shipment s={s} refIpr={refIpr} canManage={doc.can_manage}
+                  call={call} onChanged={load} onError={setError}
+                  onOpenIrn={onOpenIrn} isAdmin={me.role === "ADMIN"}
+                  forwarders={forwarders} agents={agents}
+                  onOpenDoc={onOpenDoc}
+                  supplierChargesFreight={doc.supplier_charges_freight} />
+      ) : (
+        <p style={{ color: "#5a6b78", fontSize: 13 }}>
+          No shipments booked on this order yet.</p>
+      )}
+    </section>
+  );
+}
+
+
 export function IrnView({ me, refIrn, onClose }) {
   const [doc, setDoc] = useState(null);
   const [rows, setRows] = useState([]);
