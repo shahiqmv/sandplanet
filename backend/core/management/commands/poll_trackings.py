@@ -47,9 +47,13 @@ class Command(BaseCommand):
             state=ShipmentTracking.State.ACTIVE)
         now = timezone.now()
         for t in active:
-            ref = t.last_event_at or t.created_at
-            # A FUTURE ref is a legacy estimated-event timestamp, not a
-            # recent update — poll it, don't skip it forever.
+            # Skip only when a real EVENT is recent. created_at is no proxy:
+            # ShipsGo returns an empty snapshot at registration and fills
+            # the history minutes later, so a freshly registered tracking
+            # with no events sat blind for two days (IPR-003 S2,
+            # 2026-08-27). A FUTURE ref is a legacy estimated-event
+            # timestamp, not a recent update — poll it too.
+            ref = t.last_event_at
             if ref and gap < ref <= now:
                 continue                     # recently updated — skip
             try:
