@@ -59,11 +59,51 @@ def _last_update(sched):
     return max(d for d in dates if d)
 
 
+CLIENT_STATUS_WORDS = {
+    "NEW": "Booked", "INPROGRESS": "Booked", "BOOKED": "Booked",
+    "LOADED": "Loaded", "SAILING": "Sailing", "ARRIVED": "Arrived",
+    "DISCHARGED": "Discharged", "EN_ROUTE": "En route", "LANDED": "Landed",
+    "DELIVERED": "Delivered",
+}
+
+
+def client_tracking(line):
+    """Sanitised live tracking for the client (owner 2026-08-26, reversing
+    the 2026-08-06 hold-back): friendly status, ETA, the movement timeline
+    and the provider's public live map — never internal health states,
+    errors, or anything money-side. None when there is nothing live to show."""
+    from . import tracking as trk
+    from .models import ShipmentTracking
+    from .procurement_pipeline import _shipment_for
+    sh = _shipment_for(line)
+    if sh is None:
+        return None
+    t = ShipmentTracking.objects.filter(shipment=sh).first()
+    if t is None or t.state not in ("ACTIVE", "ARRIVED"):
+        return None
+    moves = trk.movements_for(t)
+    if not moves and not t.raw_status:
+        return None
+    return {
+        "mode": t.mode,
+        "status": CLIENT_STATUS_WORDS.get(
+            t.raw_status, (t.raw_status or "").title()),
+        "eta": t.current_eta.date() if t.current_eta else None,
+        "map_url": t.map_url or "",
+        "movements": [{
+            "label": m["label"], "location": m["location"],
+            "vessel": m["vessel_flight"], "date": m["event_time"],
+            "actual": m["is_actual"],
+        } for m in moves],
+    }
+
+
 def client_row(line):
     """One line as the client sees it — allowlist fields only."""
     pipe = line_pipeline(line)
     risk = line_risk(line)
     return {
+        "tracking": client_tracking(line),
         "s_no": line.s_no, "category": line.category,
         "description": line.description, "make_brand": line.make_brand,
         "specification": line.specification,

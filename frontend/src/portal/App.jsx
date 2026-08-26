@@ -633,7 +633,12 @@ const etaCell = (v) => !v ? "—"
 function ProcRow({ r, bundle, variant, open, onToggle }) {
   const sub = [r.category, r.make_brand].filter(
     (x) => x && x !== "Multiple").join(" · ");
+  // Live shipment tracking, client-safe (owner 2026-08-26): status + ETA on
+  // the row, the movement timeline and public live map behind a toggle.
+  const [showTrack, setShowTrack] = useState(false);
+  const t = r.tracking;
   return (
+    <Fragment>
     <tr className={variant ? "pvar" : bundle ? "pbun" : ""}>
       <td>
         <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -656,13 +661,53 @@ function ProcRow({ r, bundle, variant, open, onToggle }) {
       <td className="pstg">{r.tds || "—"}</td>
       <td className="pstg">{r.order || "—"}</td>
       <td className="pstg">{r.production || "—"}</td>
-      <td className="pstg">{r.shipment || "—"}</td>
+      <td className="pstg">{r.shipment || "—"}
+        {t && (
+          <div style={{ fontSize: 11, marginTop: 2 }}>
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          setShowTrack(!showTrack); }}
+               style={{ color: "var(--sky, #1a6091)" }}>
+              {t.mode === "AIR" ? "✈" : "🛳"} {t.status}
+              {t.eta ? ` · ETA ${fmt(t.eta)}` : ""} {showTrack ? "▾" : "▸"}
+            </a>
+          </div>
+        )}
+      </td>
       <td className="pstg">{r.delivery || "—"}</td>
       <td>{etaCell(r.eta)}</td>
       <td><span className={`pill ${statusClass(r.status)}`}>
         {r.status || "—"}</span></td>
       <td>{r.remarks}</td>
     </tr>
+    {t && showTrack && (
+      <tr>
+        <td colSpan={13} style={{ background: "var(--paper-2, #fafafa)",
+                                  padding: "8px 14px" }}>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                        marginBottom: 4 }}>
+            <strong style={{ fontSize: 12 }}>Shipment tracking</strong>
+            {t.map_url && (
+              <a href={t.map_url} target="_blank" rel="noreferrer"
+                 style={{ fontSize: 12 }}>📍 Live position ↗</a>)}
+          </div>
+          <table className="data" style={{ fontSize: 12 }}>
+            <tbody>
+              {t.movements.map((m, i) => (
+                <tr key={i} style={{ opacity: m.actual ? 1 : 0.55 }}>
+                  <td>{m.actual ? "●" : "○"} {m.label}</td>
+                  <td>{m.location}</td>
+                  <td>{m.vessel}</td>
+                  <td>{fmt(m.date)}{m.actual ? "" : " · est."}</td>
+                </tr>
+              ))}
+              {t.movements.length === 0 && (
+                <tr><td>No movements reported yet.</td></tr>)}
+            </tbody>
+          </table>
+        </td>
+      </tr>
+    )}
+    </Fragment>
   );
 }
 

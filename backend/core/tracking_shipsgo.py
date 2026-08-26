@@ -41,6 +41,16 @@ _AIR_MOVE = {"RCS": "Received from shipper", "MAN": "Manifested",
              "RCF": "Received from flight", "DLV": "Delivered"}
 
 
+def _map_url(token):
+    """tokens.map is a BARE token, not a URL — the public live map lives at
+    map.shipsgo.com/<token> (probed 2026-08-26; storing the raw token made
+    every "Live" link a dead relative href)."""
+    t = (token or "").strip()
+    if not t:
+        return ""
+    return t if t.startswith("http") else f"https://map.shipsgo.com/{t}"
+
+
 def move_label(provider_code, mode="SEA", transshipment=False):
     """A human move name for a provider event code (e.g. DISC → 'Discharged'),
     tagged '… in transshipment' at an intermediate port."""
@@ -212,7 +222,7 @@ class ShipsGoProvider(TrackingProvider):
             provider_tracking_id=str(s.get("id") or ""), raw_status=status,
             eta=_dt(disc.get("date_of_discharge")),
             eta_initial=_dt(disc.get("date_of_discharge_initial")),
-            map_url=((s.get("tokens") or {}).get("map") or ""),
+            map_url=_map_url((s.get("tokens") or {}).get("map")),
             arrived=status in _OCEAN_ARRIVED_STATUS,
             untracked=status == "UNTRACKED")
         for cont in s.get("containers") or []:
@@ -253,7 +263,7 @@ class ShipsGoProvider(TrackingProvider):
         snap = Snapshot(
             provider_tracking_id=str(s.get("id") or ""), raw_status=status,
             eta=_dt(dest.get("date_of_arrival") or dest.get("date")),
-            map_url=((s.get("tokens") or {}).get("map") or ""),
+            map_url=_map_url((s.get("tokens") or {}).get("map")),
             arrived=status in _AIR_ARRIVED_STATUS,
             untracked=status == "UNTRACKED")
         for mv in s.get("movements") or []:
