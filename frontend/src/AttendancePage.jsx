@@ -35,14 +35,21 @@ export default function AttendancePage({ site, me, onClose }) {
       setRows(data.rows.map((r) => {
         const row = { ...r, check_in: hhmm(r.check_in),
                       check_out: hhmm(r.check_out) };
-        // The gate's OT proposal pre-fills the OT box on rows not yet saved
-        // — nothing to click; the clerk adjusts if wrong and saves, the PM
-        // approves as always. In/out stay the site's official hours: punch
-        // times are evidence, not the timesheet (owner 2026-08-25).
+        // The gate's proposal fills unsaved rows AUTOMATICALLY — times,
+        // remark and OT, zero clicks (owner clarified 2026-08-26: sign-in
+        // auto-updates; the earlier read of "only OT" was mine). The clerk
+        // adjusts anything wrong and saves; the PM approves OT as always.
         const p = r.device?.proposal;
-        if (!r.saved && p && parseFloat(p.ot_requested) > 0) {
-          if (r.is_subcontract) row.sub_extra_hours = p.ot_requested;
-          else row.ot_requested = p.ot_requested;
+        if (!r.saved && p) {
+          row.check_in = p.check_in || row.check_in;
+          row.check_out = p.check_out || row.check_out;
+          row.remark = p.remark || row.remark;
+          const ot = parseFloat(p.ot_requested) || 0;
+          if (ot > 0) {
+            if (r.is_subcontract) row.sub_extra_hours = p.ot_requested;
+            else row.ot_requested = p.ot_requested;
+          }
+          row._fromGate = true;
         }
         return row;
       }));
@@ -202,6 +209,42 @@ export default function AttendancePage({ site, me, onClose }) {
             { weekday: "long" })}</span>}
       </div>
 
+      {rows.length > 0 && (() => {
+        // The day at a glance, before the clerk scrolls 60 rows.
+        const n = (f) => rows.filter(f).length;
+        const present = n((r) => r.remark === "PRESENT");
+        const half = n((r) => r.remark === "HALF_DAY");
+        const away = n((r) => ["ABSENT", "SICK", "LEAVE"].includes(r.remark));
+        const gate = n((r) => r._fromGate);
+        const saved = n((r) => r.saved);
+        const ot = rows.reduce((a, r) => a
+          + (parseFloat(r.ot_requested) || 0)
+          + (parseFloat(r.sub_extra_hours) || 0), 0);
+        const chip = (label, value, tone) => (
+          <span key={label} style={{ fontSize: 12.5, padding: "4px 12px",
+            borderRadius: 999, background: tone === "ok" ? "#e8f3eb"
+              : tone === "warn" ? "#f9efe2" : "#eef3f7",
+            color: tone === "ok" ? "#1a7f37" : tone === "warn" ? "#8a5b00"
+              : "var(--sp-navy)", fontWeight: 600 }}>
+            {value} {label}</span>
+        );
+        return (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                        margin: "10px 0 2px", alignItems: "center" }}>
+            {chip("on roster", rows.length)}
+            {chip("present", present, "ok")}
+            {half > 0 && chip("half day", half, "warn")}
+            {away > 0 && chip("absent / sick / leave", away, "warn")}
+            {grid?.has_devices && chip("filled from gate", gate,
+                                       gate > 0 ? "ok" : undefined)}
+            {ot > 0 && chip("OT hours", ot % 1 ? ot.toFixed(1) : ot, "warn")}
+            <span style={{ fontSize: 12, color: "var(--muted, #5a6b78)" }}>
+              {saved === rows.length ? "✓ day saved"
+                : `${rows.length - saved} row(s) not saved yet`}</span>
+          </div>
+        );
+      })()}
+
       {restDay && (
         <p style={{ background: "#eef4fb", borderRadius: 8,
                     padding: "8px 12px", fontSize: 13, marginTop: 10 }}>
@@ -237,16 +280,17 @@ export default function AttendancePage({ site, me, onClose }) {
       <table style={{ width: "100%", borderCollapse: "collapse",
                       marginTop: 10 }}>
         <thead><tr>
-          <th style={{ ...th, width: 80 }}>Emp No</th>
-          <th style={{ ...th, width: 240 }}>Name</th>
-          <th style={{ ...th, width: 130 }}>Category</th>
-          {hasShifts && <th style={{ ...th, width: 120 }}>Shift</th>}
-          <th style={{ ...th, width: 120 }}>In</th>
-          <th style={{ ...th, width: 120 }}>Out</th>
-          <th style={{ ...th, width: 130 }}>Remark</th>
-          {grid?.has_devices && <th style={{ ...th, width: 125 }}>Gate</th>}
-          <th style={{ ...th, width: 90 }}>OT / Extra (h)</th>
-          <th style={th}>OT approved</th>
+          {[["Emp No", 80], ["Name", 250], ["Category", 125],
+            ...(hasShifts ? [["Shift", 120]] : []),
+            ["In", 110], ["Out", 110], ["Remark", 125],
+            ...(grid?.has_devices ? [["Gate", 135]] : []),
+            ["OT / Extra (h)", 88], ["OT approved", null]].map(([label, w]) => (
+            <th key={label}
+                style={{ ...th, width: w || undefined, position: "sticky",
+                         top: 0, background: "var(--sp-paper, #fff)",
+                         zIndex: 2, boxShadow: "0 1.5px 0 var(--sp-sky, #29abe2)" }}>
+              {label}</th>
+          ))}
         </tr></thead>
         <tbody>
           {rows.map((row, i) => {
@@ -254,7 +298,8 @@ export default function AttendancePage({ site, me, onClose }) {
             const sub = row.is_subcontract;
             return (
             <tr key={row.employee_id}
-                style={sub ? { background: "#eef5fb" } : undefined}>
+                style={{ background: sub ? "#eef5fb"
+                           : i % 2 ? "#fafcfd" : undefined }}>
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
               <td style={td}>
@@ -308,11 +353,15 @@ export default function AttendancePage({ site, me, onClose }) {
                 <input type="time" value={row.check_in || ""}
                        disabled={grid?.locked || !canEnter || off}
                        onChange={(e) => setRow(i, { check_in: e.target.value })}
-                       style={{ ...inputStyle, width: 105 }} />
+                       title={row._fromGate ? "Filled from the gate punch" : undefined}
+                       style={{ ...inputStyle, width: 105,
+                                background: row._fromGate && !row.saved
+                                  ? "#eef8f0" : undefined }} />
               </td>
               <td style={{ padding: 3 }}>
                 <input type="time" value={row.check_out || ""}
                        disabled={grid?.locked || !canEnter || off}
+                       title={row._fromGate ? "Filled from the gate punch" : undefined}
                        onChange={(e) => setRow(i, { check_out: e.target.value })}
                        style={{ ...inputStyle, width: 105 }} />
               </td>

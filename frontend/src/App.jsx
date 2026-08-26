@@ -702,7 +702,10 @@ export default function App() {
           api("/auth/me").then(setMe)} />
       ) : (
         <main style={{ maxWidth:
-                         ["attendance", "workforce", "dma"].includes(docView?.mode)
+                         // The day grid carries 9 columns + gate evidence —
+                         // give it the room (owner 2026-08-26).
+                         docView?.mode === "attendance" ? 1560
+                         : ["workforce", "dma"].includes(docView?.mode)
                          || (!docView && hoPage === "meetings")
                            ? 1160
                          // The salary grid is 17 columns wide — at the 900px
