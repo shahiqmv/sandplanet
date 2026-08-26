@@ -122,7 +122,11 @@ def _shipment_stage(line):
     sh = _shipment_for(line)
     if sh is None:
         return _stage("shipment", "Shipment", "none", "Not shipped")
-    state = "done" if sh.status in ("ARRIVED", "CLEARED") else "pending"
+    # UNDER_CLEARING sits BETWEEN arrived and cleared — leaving it out sent
+    # the stage back to "pending" (client word: "In transit") the moment
+    # clearing started on a landed shipment (IPR-024, 2026-08-26).
+    state = ("done" if sh.status in ("ARRIVED", "UNDER_CLEARING", "CLEARED")
+             else "pending")
     ref = ""
     order = getattr(sh, "order", None)
     if order and order.document_id:
