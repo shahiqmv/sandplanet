@@ -579,6 +579,11 @@ function MeetingDetail({ id, me, onBack }) {
       { method: "DELETE" }); load(); });
   };
   const sendInvite = () => run(async () => {
+    // Save the list first — an invitee added moments before was being
+    // dropped: the send re-read the STORED list, and the refresh wiped the
+    // unsaved row (owner 2026-08-26). One button now does both.
+    await api(`/meetings/${id}`, { method: "PATCH",
+      body: { attendees: att } });
     const d = await api(`/meetings/${id}/send-invite`, { method: "POST" });
     setM(d);
     const skip = (d.skipped || []).length;
@@ -685,16 +690,25 @@ function MeetingDetail({ id, me, onBack }) {
             alignItems: "center", flexWrap: "wrap" }}>
             <Btn variant="secondary" disabled={busy}
               onClick={saveAtt}>Save attendees</Btn>
-            <Btn variant="primary" disabled={busy || !m.email_recipients}
-              onClick={sendInvite}
-              title={m.email_recipients
-                ? `Email the invite + calendar file to ${m.email_recipients} `
-                  + "attendee(s) with an email"
-                : "No attendee has an email yet"}>
-              {m.invite_sent_at ? "✉ Resend invite" : "✉ Send invite"}</Btn>
+            {(() => {
+              // Count from what's ON SCREEN, not the last save — a freshly
+              // added invitee must light the button up immediately.
+              const emailable = att.filter(
+                (a) => (a.email || "").trim()).length;
+              return (
+                <Btn variant="primary" disabled={busy || !emailable}
+                  onClick={sendInvite}
+                  title={emailable
+                    ? `Saves the list, then emails the invite + calendar `
+                      + `file to ${emailable} attendee(s) with an email`
+                    : "No attendee has an email yet"}>
+                  {m.invite_sent_at ? "✉ Resend invite" : "✉ Send invite"}
+                </Btn>
+              );
+            })()}
             <span style={{ fontSize: 12, color: "var(--muted)" }}>
-              {m.email_recipients
-                ? `${m.email_recipients} with email`
+              {att.filter((a) => (a.email || "").trim()).length
+                ? `${att.filter((a) => (a.email || "").trim()).length} with email`
                 : "add emails to invite by email"}
               {m.invite_sent_at ? ` · last sent ${dt(m.invite_sent_at)}` : ""}
             </span>
