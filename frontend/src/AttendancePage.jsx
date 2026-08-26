@@ -337,12 +337,12 @@ export default function AttendancePage({ site, me, onClose }) {
                     2026-08-26) */}
                 {row.photo_url
                   ? <img src={row.photo_url} alt=""
-                         style={{ width: 24, height: 27, objectFit: "cover",
+                         style={{ width: 32, height: 38, objectFit: "cover",
                                   borderRadius: 4, verticalAlign: "middle",
                                   marginRight: 7,
                                   border: "1px solid #dde5ea" }} />
-                  : <span style={{ display: "inline-grid", width: 24,
-                                   height: 27, placeItems: "center",
+                  : <span style={{ display: "inline-grid", width: 32,
+                                   height: 38, placeItems: "center",
                                    borderRadius: 4, marginRight: 7,
                                    border: "1px dashed #d5ccb4",
                                    background: "#fbf7ec", fontSize: 12,
