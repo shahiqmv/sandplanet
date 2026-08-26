@@ -800,6 +800,10 @@ def create_shipment(order, data, actor):
     for ln, qty in alloc:
         ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
                                           qty=qty)
+    # A key entered AT BOOKING starts tracking right away — only edits and
+    # the Shipped move registered before, so an air shipment booked with its
+    # AWB sat untracked until someone touched it (IPR-024, 2026-08-26).
+    _register_tracking(shipment)
     return shipment, None
 
 
@@ -858,7 +862,7 @@ def _register_tracking(shipment):
                else trk._sea_key(shipment))
         if not key:
             return
-        new_key = trk.normalise_key(key)
+        new_key = trk.normalise_tracking_key(shipment.mode, key)
         new_scac = (shipment.carrier_scac or "").strip().upper()
         key_changed = new_key != t.tracking_key or new_scac != t.carrier_scac
         # Re-register a pending/failed tracking — but ALSO an active one whose

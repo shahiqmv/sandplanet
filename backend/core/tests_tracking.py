@@ -284,6 +284,39 @@ class RegistrationTests(TestCase):
         self.assertIn(t.state, ("PENDING_REGISTRATION", "FAILED"))
         self.assertTrue(t.last_error)   # "SHIPSGO_API_KEY is not configured"
 
+    def _line(self, order):
+        from .models import CostHead, ImportOrderLine
+        head, _ = CostHead.objects.get_or_create(name="Materials",
+                                                 defaults={"sort_order": 1})
+        return ImportOrderLine.objects.create(
+            order=order, line_no=1, free_text_desc="Pump", unit="nos",
+            order_qty=5, unit_price=100, cost_head=head)
+
+    def test_booking_with_a_key_registers_tracking_immediately(self):
+        # IPR-024 (2026-08-26): the AWB was entered AT booking and nothing
+        # registered — only edits and the Shipped move did. A dashed/spaced
+        # AWB normalises fine (603-7074 3772 -> 60370743772, check digit 2).
+        ship, actor = _make_shipment(mode="AIR")
+        ship.delete()                       # book fresh on an order with stock
+        self._line(ship.order)
+        s2, msg = ipr_svc.create_shipment(
+            ship.order, {"mode": "AIR", "container_awb": "603-7074 3772"},
+            actor)
+        self.assertIsNone(msg)
+        t = ShipmentTracking.objects.filter(shipment=s2).first()
+        self.assertIsNotNone(t)
+        self.assertEqual(t.tracking_key, "60370743772")
+        self.assertEqual(t.mode, "AIR")
+
+    def test_booking_without_a_key_stays_quiet(self):
+        ship, actor = _make_shipment(mode="AIR")
+        ship.delete()
+        self._line(ship.order)
+        s2, msg = ipr_svc.create_shipment(ship.order, {"mode": "AIR"}, actor)
+        self.assertIsNone(msg)
+        self.assertFalse(
+            ShipmentTracking.objects.filter(shipment=s2).exists())
+
     def test_air_awb_validation_blocks_bad_key(self):
         ship, actor = _make_shipment(mode="AIR")
         _, msg = ipr_svc.create_shipment(

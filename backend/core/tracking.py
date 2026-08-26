@@ -25,6 +25,14 @@ def normalise_key(value: str) -> str:
     return (value or "").strip().upper().replace(" ", "")
 
 
+def normalise_tracking_key(mode: str, value: str) -> str:
+    """The key as sent to the provider. Air waybills are written with dashes
+    ("603-7074 3772") but the API wants the bare 11 digits; sea keys keep
+    their punctuation (booking formats vary by line)."""
+    v = normalise_key(value)
+    return v.replace("-", "") if mode == "AIR" else v
+
+
 def _iso6346_check_digit(container: str) -> int:
     """The ISO 6346 check digit for the first 10 chars of a container number.
     Letters map A=10,B=12,… skipping every multiple of 11; each of the 10 chars
@@ -248,7 +256,7 @@ def ensure_tracking(shipment):
     return ShipmentTracking.objects.create(
         shipment=shipment, mode=shipment.mode,
         carrier_scac=(shipment.carrier_scac or "").strip().upper(),
-        tracking_key=normalise_key(key),
+        tracking_key=normalise_tracking_key(shipment.mode, key),
         provider_ref=f"{shipment.order.document.ref}-S{shipment.seq}",
         state=ShipmentTracking.State.PENDING)
 
