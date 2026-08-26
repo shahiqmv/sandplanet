@@ -1169,9 +1169,16 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
   // card to the user instead of the top of the order (owner 2026-08-26).
   const cardRef = useRef(null);
   useEffect(() => {
-    if (focused && cardRef.current) {
-      cardRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    if (!focused) return;
+    // Instant, and re-asserted twice: late-rendering content above the card
+    // (images, tracking) shifts the layout after the first scroll and left
+    // long orders (IPR-020) sitting back at the top.
+    const go = () => cardRef.current
+      && cardRef.current.scrollIntoView({ block: "start" });
+    go();
+    const t1 = setTimeout(go, 350);
+    const t2 = setTimeout(go, 1000);
+    return () => { clearTimeout(t1); clearTimeout(t2); };
   }, [focused]);
   const [charges, setCharges] = useState(Object.fromEntries(
     CHARGE_LABELS.map(([k]) => [k, s[k] ?? ""])));
