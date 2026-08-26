@@ -280,11 +280,14 @@ export default function AttendancePage({ site, me, onClose }) {
       <table style={{ width: "100%", borderCollapse: "collapse",
                       marginTop: 10 }}>
         <thead><tr>
-          {[["Emp No", 80], ["Name", 250], ["Category", 125],
-            ...(hasShifts ? [["Shift", 120]] : []),
-            ["In", 110], ["Out", 110], ["Remark", 125],
-            ...(grid?.has_devices ? [["Gate", 135]] : []),
-            ["OT / Extra (h)", 88], ["OT approved", null]].map(([label, w]) => (
+          {/* Name is the flexible column — it absorbs the page's width so
+              long names fit; everything else is fixed, and OT-approved is
+              just a number (owner 2026-08-26). */}
+          {[["Emp No", 78], ["Name", null], ["Category", 118],
+            ...(hasShifts ? [["Shift", 114]] : []),
+            ["In", 98], ["Out", 98], ["Remark", 118],
+            ...(grid?.has_devices ? [["Gate", 150]] : []),
+            ["OT / Extra (h)", 78], ["OT approved", 72]].map(([label, w]) => (
             <th key={label}
                 style={{ ...th, width: w || undefined, position: "sticky",
                          top: 0, background: "var(--sp-paper, #fff)",
@@ -354,7 +357,7 @@ export default function AttendancePage({ site, me, onClose }) {
                        disabled={grid?.locked || !canEnter || off}
                        onChange={(e) => setRow(i, { check_in: e.target.value })}
                        title={row._fromGate ? "Filled from the gate punch" : undefined}
-                       style={{ ...inputStyle, width: 105,
+                       style={{ ...inputStyle, width: 92,
                                 background: row._fromGate && !row.saved
                                   ? "#eef8f0" : undefined }} />
               </td>
@@ -363,7 +366,7 @@ export default function AttendancePage({ site, me, onClose }) {
                        disabled={grid?.locked || !canEnter || off}
                        title={row._fromGate ? "Filled from the gate punch" : undefined}
                        onChange={(e) => setRow(i, { check_out: e.target.value })}
-                       style={{ ...inputStyle, width: 105 }} />
+                       style={{ ...inputStyle, width: 92 }} />
               </td>
               <td style={{ padding: 3 }}>
                 <select value={row.remark} disabled={grid?.locked || !canEnter}
