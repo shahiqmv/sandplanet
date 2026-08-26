@@ -3,16 +3,16 @@ import { api } from "./api.js";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
-// Cargo clearance in one place (owner 2026-08-26): who the clearing agent
-// is, who gets copied on every document share, and what has been shared.
-// The share email itself: all uploaded shipping documents attached, sent in
-// the purchasing user's name with reply-to them, 20 MB cap.
+// The cargo-clearance board (owner 2026-08-26): the day's work first — what
+// is at the port, what is arriving, what is cleared but not yet counted into
+// the store — each row with its NEXT ACTION; the agent + share-email setup
+// lives below, locked behind explicit Edit buttons.
+const fmtD = (d) => (d ? new Date(d).toLocaleDateString("en-GB") : "—");
+
 export default function ClearancePage({ me, onOpenIpr }) {
   const [data, setData] = useState(null);
   const [cc, setCc] = useState("");
   const [agentForm, setAgentForm] = useState(null);
-  // Fields stay locked until an explicit Edit (owner 2026-08-26) — this is
-  // a reference page first, a form second.
   const [editingAgent, setEditingAgent] = useState(false);
   const [editingCc, setEditingCc] = useState(false);
   const [error, setError] = useState(null);
@@ -73,33 +73,164 @@ export default function ClearancePage({ me, onOpenIpr }) {
 
   if (!data) return <section style={card}>{error || "Loading…"}</section>;
 
-  const field = (key, label, wide) => (
-    <label key={key} style={{ fontSize: 12, color: "#5a6b78",
-                              flex: wide ? 2 : 1, minWidth: wide ? 260 : 170,
-                              display: "flex", flexDirection: "column",
-                              gap: 3 }}>
-      {label}
-      <input value={agentForm?.[key] ?? ""}
-             disabled={!canEdit || !editingAgent || busy}
-             onChange={(e) => setAgentForm({ ...agentForm,
-                                             [key]: e.target.value })}
-             style={{ ...inputStyle,
-                      background: editingAgent ? undefined : "#f4f7f9" }} />
-    </label>
+  const tile = (label, n, hot) => (
+    <div style={{ border: "1px solid #dde5ea", borderRadius: 8,
+                  padding: "10px 16px", minWidth: 130,
+                  background: hot && n > 0 ? "#fdf6ec" : "#fafcfd" }}>
+      <div style={{ fontSize: 24, fontWeight: 700,
+                    color: hot && n > 0 ? "#b35900" : "var(--sp-navy)" }}>
+        {n}</div>
+      <div style={{ fontSize: 11.5, color: "#5a6b78" }}>{label}</div>
+    </div>
+  );
+
+  const openRow = (r) => onOpenIpr?.(r.ipr_ref);
+
+  const shipRows = (rows, atPort) => rows.map((r, i) => (
+    <tr key={i} onClick={() => openRow(r)}
+        title="Open the order's clearing window"
+        style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
+      <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)",
+                   whiteSpace: "nowrap" }}>
+        {r.ipr_ref} · S{r.shipment_seq}</td>
+      <td style={td}>{r.supplier}</td>
+      <td style={td}>{r.mode}</td>
+      <td style={td}><StatusChip status={r.status} /></td>
+      {atPort ? (
+        <td style={{ ...td, color: (r.days_at_port ?? 0) >= 5
+                       ? "#c0392b" : undefined,
+                     fontWeight: (r.days_at_port ?? 0) >= 5 ? 700 : 400 }}>
+          {r.arrived_on
+            ? `${fmtD(r.arrived_on)} · ${r.days_at_port}d`
+            : "—"}
+        </td>
+      ) : (
+        <td style={td}>{fmtD(r.eta)}</td>
+      )}
+      <td style={td}>
+        {r.shared_at
+          ? fmtD(r.shared_at)
+          : <span style={{ color: atPort ? "#c0392b" : "#8a97a1" }}>
+              not shared</span>}
+      </td>
+      <td style={td}>
+        {r.documents}
+        {r.missing_docs.length > 0 && (
+          <span style={{ fontSize: 11, color: "#b35900" }}>
+            {" "}· missing {r.missing_docs.length}</span>)}
+      </td>
+      <td style={{ ...td, fontSize: 12 }}>
+        {r.charges.paid > 0 && <span style={{ color: "#1a7f37" }}>
+          {r.charges.paid}✓ </span>}
+        {r.charges.raised > 0 && <span style={{ color: "#b35900" }}>
+          {r.charges.raised}⏳ </span>}
+        {r.charges.entered > 0 && <span style={{ color: "#5a6b78" }}>
+          {r.charges.entered}·raise</span>}
+        {r.charges.paid + r.charges.raised + r.charges.entered === 0 && "—"}
+      </td>
+      <td style={{ ...td, fontSize: 12, color: "#41525f" }}>
+        {r.next_action}</td>
+    </tr>
+  ));
+
+  const head = (dateCol) => (
+    <thead><tr>
+      <th style={th}>Order</th><th style={th}>Supplier</th>
+      <th style={th}>Mode</th><th style={th}>Status</th>
+      <th style={th}>{dateCol}</th>
+      <th style={th}>Shared</th><th style={th}>Docs</th>
+      <th style={th}>Charges</th><th style={th}>Next action</th>
+    </tr></thead>
+  );
+
+  const section = (title, hint) => (
+    <h3 style={{ color: "var(--sp-navy)", fontSize: 14, marginTop: 22,
+                 borderBottom: "1px solid #dde5ea", paddingBottom: 4 }}>
+      {title}{hint && <span style={{ fontWeight: 400, fontSize: 11.5,
+                                     color: "#8a97a1", marginLeft: 8 }}>
+        {hint}</span>}
+    </h3>
   );
 
   return (
     <section style={card}>
-      <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-        Cargo Clearance
-      </h2>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+          Cargo Clearance
+        </h2>
+        <span style={{ fontSize: 12.5, color: "#5a6b78" }}>
+          Agent: <strong>{data.agent?.name || "not set"}</strong>
+          {data.agent && !data.agent.email && (
+            <span style={{ color: "#c0392b" }}> — no email!</span>)}
+        </span>
+      </div>
       {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
-      <h3 style={{ color: "var(--sp-navy)", fontSize: 14,
-                   borderBottom: "1px solid #dde5ea", paddingBottom: 4 }}>
-        Clearing agent
-      </h3>
+      <div style={{ display: "flex", gap: 10, marginTop: 12,
+                    flexWrap: "wrap" }}>
+        {tile("at sea", data.tiles.at_sea, false)}
+        {tile("arriving ≤ 7 days", data.tiles.arriving_week, true)}
+        {tile("at the port", data.tiles.at_port, true)}
+        {tile("cleared, to receive", data.tiles.to_receive, true)}
+      </div>
+
+      {section("At the port — clear these now",
+               "days at port in red past 5 — demurrage territory")}
+      {data.at_port.length === 0
+        ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
+            Nothing at the port.</p>
+        : <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse",
+                            fontSize: 13 }}>
+              {head("Arrived · days")}
+              <tbody>{shipRows(data.at_port, true)}</tbody>
+            </table>
+          </div>}
+
+      {section("Arriving", "get documents in and shared before the vessel")}
+      {data.incoming.length === 0
+        ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
+            Nothing on the water.</p>
+        : <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse",
+                            fontSize: 13 }}>
+              {head("ETA")}
+              <tbody>{shipRows(data.incoming, false)}</tbody>
+            </table>
+          </div>}
+
+      {section("Cleared — waiting to enter the store")}
+      {data.to_receive.length === 0
+        ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
+            Nothing waiting — every cleared shipment is counted in.</p>
+        : <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr>
+              <th style={th}>Order</th><th style={th}>Supplier</th>
+              <th style={th}>Mode</th><th style={th}>IRN</th>
+              <th style={th}>Next action</th>
+            </tr></thead>
+            <tbody>
+              {data.to_receive.map((r, i) => (
+                <tr key={i} onClick={() => openRow(r)}
+                    style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
+                  <td style={{ ...td, fontWeight: 600,
+                               color: "var(--sp-navy)" }}>
+                    {r.ipr_ref} · S{r.shipment_seq}</td>
+                  <td style={td}>{r.supplier}</td>
+                  <td style={td}>{r.mode}</td>
+                  <td style={td}>{r.irn_ref
+                    ? <>{r.irn_ref} <StatusChip status={r.irn_status} /></>
+                    : "—"}</td>
+                  <td style={{ ...td, fontSize: 12, color: "#41525f" }}>
+                    {r.next_action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>}
+
+      {section("Clearing agent")}
       {data.agent ? (
         <>
           <div style={{ display: "flex", gap: 10, alignItems: "baseline",
@@ -109,20 +240,30 @@ export default function ClearancePage({ me, onOpenIpr }) {
             <span style={{ fontSize: 11, fontWeight: 600, color: "#fff",
                            background: "var(--sp-navy)", borderRadius: 4,
                            padding: "1px 6px" }}>CLEARING AGENT</span>
-            {!data.agent.email && (
-              <span style={{ color: "#c0392b", fontSize: 12.5 }}>
-                ⚠ no email — document shares will fail</span>)}
           </div>
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
                         marginTop: 8 }}>
-            {field("contact_person", "Contact person")}
-            {field("phone", "Phone")}
-            {field("email", "Email (documents are sent here — commas for more than one)", true)}
-          </div>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
-                        marginTop: 8 }}>
-            {field("address", "Address", true)}
-            {field("notes", "Notes (licence no, opening hours, who to call…)", true)}
+            {[["contact_person", "Contact person", false],
+              ["phone", "Phone", false],
+              ["email", "Email (documents are sent here)", true],
+              ["address", "Address", true],
+              ["notes", "Notes (licence no, who to call…)", true]]
+              .map(([key, label, wide]) => (
+              <label key={key} style={{ fontSize: 12, color: "#5a6b78",
+                                        flex: wide ? 2 : 1,
+                                        minWidth: wide ? 260 : 170,
+                                        display: "flex",
+                                        flexDirection: "column", gap: 3 }}>
+                {label}
+                <input value={agentForm?.[key] ?? ""}
+                       disabled={!canEdit || !editingAgent || busy}
+                       onChange={(e) => setAgentForm({ ...agentForm,
+                                                       [key]: e.target.value })}
+                       style={{ ...inputStyle,
+                                background: editingAgent ? undefined
+                                                         : "#f4f7f9" }} />
+              </label>
+            ))}
           </div>
           {canEdit && !editingAgent && (
             <button onClick={() => setEditingAgent(true)}
@@ -149,7 +290,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
           No clearing agent is set — document shares are blocked until one is.
         </p>
       )}
-      {canEdit && data.candidates.length > 0 && (
+      {canEdit && data.candidates.filter((c) => !c.is_agent).length > 0 && (
         <div style={{ marginTop: 10, fontSize: 13 }}>
           <span style={{ color: "#5a6b78" }}>Change agent: </span>
           <select value="" disabled={busy}
@@ -166,14 +307,11 @@ export default function ClearancePage({ me, onOpenIpr }) {
         </div>
       )}
 
-      <h3 style={{ color: "var(--sp-navy)", fontSize: 14, marginTop: 22,
-                   borderBottom: "1px solid #dde5ea", paddingBottom: 4 }}>
-        Share email
-      </h3>
+      {section("Share email")}
       <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "6px 0" }}>
         "Share with clearing agent" on a shipment emails every uploaded
         shipping document to the agent, sent in your name with replies coming
-        back to you. These addresses are copied on every share:
+        back to you. Copied on every share:
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     flexWrap: "wrap" }}>
@@ -202,77 +340,6 @@ export default function ClearancePage({ me, onOpenIpr }) {
           </>
         )}
       </div>
-
-      <h3 style={{ color: "var(--sp-navy)", fontSize: 14, marginTop: 22,
-                   borderBottom: "1px solid #dde5ea", paddingBottom: 4 }}>
-        Pending clearances
-      </h3>
-      {data.pending.length === 0 ? (
-        <p style={{ color: "#5a6b78", fontSize: 13 }}>
-          Nothing in the clearance pipeline — every booked shipment is
-          cleared.</p>
-      ) : (
-        <div style={{ overflowX: "auto" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse",
-                        fontSize: 13 }}>
-          <thead><tr>
-            <th style={th}>Order</th><th style={th}>Supplier</th>
-            <th style={th}>Mode</th><th style={th}>Status</th>
-            <th style={th}>ETA</th><th style={th}>Shared with agent</th>
-            <th style={th}>Documents</th><th style={th}>Charges</th>
-          </tr></thead>
-          <tbody>
-            {data.pending.map((r, i) => {
-              const ch = r.charges;
-              return (
-              <tr key={i} onClick={() => onOpenIpr?.(r.ipr_ref)}
-                  title="Open the order's clearing window"
-                  style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
-                <td style={{ ...td, fontWeight: 600,
-                             color: "var(--sp-navy)" }}>
-                  {r.ipr_ref} · S{r.shipment_seq}</td>
-                <td style={td}>{r.supplier}</td>
-                <td style={td}>{r.mode}</td>
-                <td style={td}><StatusChip status={r.status} /></td>
-                <td style={td}>{r.eta || "—"}</td>
-                <td style={td}>
-                  {r.shared_at
-                    ? new Date(r.shared_at).toLocaleDateString("en-GB")
-                    : <span style={{ color: ["ARRIVED", "UNDER_CLEARING"]
-                        .includes(r.status) ? "#c0392b" : "#8a97a1" }}>
-                        not shared</span>}
-                </td>
-                <td style={td}>
-                  {r.documents} uploaded
-                  {r.missing_docs.length > 0 && (
-                    <div style={{ fontSize: 11, color: "#b35900" }}>
-                      for clearing: {r.missing_docs.join(", ")}</div>)}
-                </td>
-                <td style={td}>
-                  {ch.paid + ch.raised + ch.entered === 0
-                    ? <span style={{ color: "#8a97a1" }}>none entered</span>
-                    : <>
-                        {ch.paid > 0 && <span style={{ color: "#1a7f37" }}>
-                          {ch.paid} paid</span>}
-                        {ch.raised > 0 && <span style={{ color: "#b35900" }}>
-                          {ch.paid > 0 ? " · " : ""}{ch.raised} awaiting
-                          {" "}payment</span>}
-                        {ch.entered > 0 && <span style={{ color: "#5a6b78" }}>
-                          {ch.paid + ch.raised > 0 ? " · " : ""}{ch.entered}
-                          {" "}to raise</span>}
-                      </>}
-                </td>
-              </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
-      )}
-      <p style={{ fontSize: 11.5, color: "#8a97a1", marginTop: 6 }}>
-        Every shipment not yet cleared, the ones being cleared first. Click a
-        row to open the order's clearing window.
-      </p>
     </section>
   );
 }

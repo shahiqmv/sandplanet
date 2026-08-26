@@ -2052,10 +2052,15 @@ class ClearanceSetupTests(IprBase):
         self.client.force_authenticate(self.ho)
         self.client.post(f"/api/v1/ipr/{ref}/shipments",
                          {"mode": "SEA"}, format="json")
-        rows = self.client.get("/api/v1/clearance/setup").data["pending"]
-        row = next(x for x in rows if x["ipr_ref"] == ref)
+        data = self.client.get("/api/v1/clearance/setup").data
+        row = next(x for x in data["incoming"] if x["ipr_ref"] == ref)
         self.assertEqual(row["status"], "BOOKED")
         self.assertIsNone(row["shared_at"])
         self.assertIn("Packing list", row["missing_docs"])
         self.assertEqual(row["charges"],
                          {"paid": 0, "raised": 0, "entered": 0})
+        self.assertIn("Upload", row["next_action"])
+        self.assertEqual(data["tiles"]["at_sea"], 1)
+        self.assertEqual(data["tiles"]["at_port"], 0)
+        self.assertEqual(data["at_port"], [])
+        self.assertEqual(data["to_receive"], [])

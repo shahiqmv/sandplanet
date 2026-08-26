@@ -1145,12 +1145,17 @@ def ipr_context(request):
 
 @api_view(["GET", "POST"])
 def clearance_setup(request):
-    """One page for cargo clearance (owner 2026-08-26): the clearing agent's
-    details, who is copied on document shares, and the recent share history.
-    Anyone on the import chain reads it; Purchasing/Admin edit."""
+    """The cargo-clearance board (owner 2026-08-26): everything the
+    clearance officer needs in one page — what is at the port now, what is
+    arriving, what is cleared but not yet in the store, each with its next
+    action; plus the agent + share-email setup. Import chain reads,
+    Purchasing/Admin edit."""
     from django.core.validators import validate_email
     from django.core.exceptions import ValidationError
-    from .models import CompanyParameter, ImportShipment, Supplier
+    from django.utils import timezone as _tz
+    from datetime import date as _date, timedelta as _td
+    from .models import (AuditLog, CompanyParameter, ImportShipment,
+                         Supplier)
 
     if request.user.role not in VIEW_ROLES:
         return Response({"detail": "Head Office view."}, status=403)
@@ -1177,19 +1182,105 @@ def clearance_setup(request):
                                     is_active=True).first()
     candidates = Supplier.objects.filter(
         category="CLEARING_AGENT", is_active=True).order_by("name")
-    # The worklist (owner 2026-08-26): every shipment still on its way
-    # through clearance — not a share log. Order: the ones being cleared
-    # first, then arrivals, then what's still at sea.
-    stage_rank = {"UNDER_CLEARING": 0, "ARRIVED": 1, "IN_TRANSIT": 2,
-                  "SHIPPED": 3, "BOOKED": 4}
-    pending = sorted(
+
+    live = list(
         ImportShipment.objects
-        .filter(status__in=stage_rank,
-                order__document__status="AUTHORISED",
+        .filter(order__document__status="AUTHORISED",
+                order__document__is_void=False)
+        .exclude(status="CLEARED")
+        .select_related("order__document", "order__supplier")
+        .prefetch_related("documents", "payments__pyr"))
+    cleared = list(
+        ImportShipment.objects
+        .filter(status="CLEARED", order__document__status="AUTHORISED",
                 order__document__is_void=False)
         .select_related("order__document", "order__supplier")
-        .prefetch_related("documents", "payments__pyr"),
-        key=lambda s: (stage_rank[s.status], s.eta or _far_date()))
+        .prefetch_related("receipts__document"))
+    # When each shipment reached ARRIVED, from the append-only audit trail.
+    doc_ids = {s.order.document_id for s in live}
+    arrived_on = {}
+    for row in AuditLog.objects.filter(
+            entity="document", entity_id__in=doc_ids,
+            event="SHIPMENT_STATUS", to_state="ARRIVED").order_by("at"):
+        seq = (row.detail or {}).get("shipment")
+        arrived_on[(row.entity_id, seq)] = row.at.date()
+
+    today = _date.today()
+
+    def charges_tally(s):
+        return {
+            "paid": sum(1 for p in s.payments.all()
+                        if p.pyr_id and p.pyr.status == "PAID"),
+            "raised": sum(1 for p in s.payments.all()
+                          if p.pyr_id and p.pyr.status != "PAID"),
+            "entered": sum(1 for p in s.payments.all()
+                           if p.amount and not p.pyr_id),
+        }
+
+    def next_action(s, missing, ch, at_port):
+        if not agent:
+            return "Set the clearing agent first"
+        if missing:
+            return ("Upload " + ", ".join(missing).lower()
+                    + (" to start clearing" if at_port
+                       else " before arrival"))
+        if not s.shared_with_agent_at:
+            return ("Share the documents with the agent"
+                    + ("" if at_port else " ahead of arrival"))
+        if s.status == "ARRIVED":
+            return "Move to Under clearing"
+        if s.status == "UNDER_CLEARING":
+            if ch["entered"]:
+                return f"Raise the PYR for {ch['entered']} charge(s)"
+            if ch["raised"]:
+                return (f"{ch['raised']} charge PYR(s) with Finance — "
+                        "chase payment")
+            if not ch["paid"]:
+                return "Enter the clearing charges when invoiced"
+            return "With the agent — mark Cleared when the cargo is out"
+        return "Documents ready — waiting on the vessel"
+
+    def row(s, at_port):
+        missing = [dict(ShipmentDocument.Type.choices)[d]
+                   for d in ipr_svc.missing_clearing_docs(s)]
+        ch = charges_tally(s)
+        arr = arrived_on.get((s.order.document_id, s.seq))
+        return {
+            "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
+            "supplier": s.order.supplier.name, "mode": s.mode,
+            "status": s.status, "status_display": s.get_status_display(),
+            "eta": s.eta, "arrived_on": arr,
+            "days_at_port": (today - arr).days if at_port and arr else None,
+            "shared_at": s.shared_with_agent_at,
+            "documents": s.documents.count(), "missing_docs": missing,
+            "charges": ch,
+            "next_action": next_action(s, missing, ch, at_port),
+        }
+
+    stage = {"UNDER_CLEARING": 0, "ARRIVED": 1, "IN_TRANSIT": 2,
+             "SHIPPED": 3, "BOOKED": 4}
+    far = _date(9999, 12, 31)
+    live.sort(key=lambda s: (stage.get(s.status, 9), s.eta or far))
+    at_port_rows = [row(s, True) for s in live
+                    if s.status in ("ARRIVED", "UNDER_CLEARING")]
+    incoming_rows = [row(s, False) for s in live
+                     if s.status in ("BOOKED", "SHIPPED", "IN_TRANSIT")]
+    to_receive = []
+    for s in cleared:
+        irns = [r.document for r in s.receipts.all()]
+        if any(d.status == "VERIFIED" for d in irns):
+            continue                    # in the store — off the board
+        open_irn = irns[-1] if irns else None
+        to_receive.append({
+            "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
+            "supplier": s.order.supplier.name, "mode": s.mode,
+            "irn_ref": open_irn.ref if open_irn else None,
+            "irn_status": open_irn.status if open_irn else None,
+            "next_action": (f"Finish the count on {open_irn.ref}"
+                            if open_irn
+                            else "Count into the HO store (IRN)"),
+        })
+    week = today + _td(days=7)
     return Response({
         "agent": ({
             "id": agent.id, "name": agent.name,
@@ -1202,30 +1293,14 @@ def clearance_setup(request):
                        for s in candidates],
         "share_cc": ", ".join(ipr_svc.share_cc_list()),
         "can_edit": request.user.role in CREATE_ROLES,
-        "pending": [{
-            "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
-            "supplier": s.order.supplier.name, "mode": s.mode,
-            "status": s.status, "status_display": s.get_status_display(),
-            "eta": s.eta,
-            "shared_at": s.shared_with_agent_at,
-            "documents": s.documents.count(),
-            "missing_docs": [
-                dict(ShipmentDocument.Type.choices)[d]
-                for d in ipr_svc.missing_clearing_docs(s)],
-            # the four import charges: paid / raised (awaiting payment) /
-            # still to enter — the money half of getting cargo out
-            "charges": {
-                "paid": sum(1 for p in s.payments.all()
-                            if p.pyr_id and p.pyr.status == "PAID"),
-                "raised": sum(1 for p in s.payments.all()
-                              if p.pyr_id and p.pyr.status != "PAID"),
-                "entered": sum(1 for p in s.payments.all()
-                               if p.amount and not p.pyr_id),
-            },
-        } for s in pending],
+        "tiles": {
+            "at_sea": len(incoming_rows),
+            "arriving_week": sum(1 for r in incoming_rows
+                                 if r["eta"] and r["eta"] <= week),
+            "at_port": len(at_port_rows),
+            "to_receive": len(to_receive),
+        },
+        "at_port": at_port_rows,
+        "incoming": incoming_rows,
+        "to_receive": to_receive,
     })
-
-
-def _far_date():
-    from datetime import date
-    return date(9999, 12, 31)
