@@ -30,12 +30,22 @@ const ACTIONS = [
    "reason"],
 ];
 
+const SHIP_WORD = { BOOKED: "Booked", SHIPPED: "Shipped",
+  IN_TRANSIT: "In transit", ARRIVED: "Arrived",
+  UNDER_CLEARING: "Clearing", CLEARED: "Cleared" };
+const PAY_TONE = { ok: "#1a7f37", due: "#b35900", part: "#1a6091",
+                   none: "#8a97a1" };
+
 export default function ImportOrders({ me, onOpenIpr }) {
   const [rows, setRows] = useState(null);
+  const [tiles, setTiles] = useState(null);
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
 
-  const load = () => api("/ipr").then(setRows).catch((e) => setError(e.message));
+  const load = () => api("/ipr").then((d) => {
+    setRows(d.rows || d); setTiles(d.tiles || null);
+  }).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
   const canCreate = ["HO_PURCHASING", "ADMIN"].includes(me.role);
@@ -45,50 +55,120 @@ export default function ImportOrders({ me, onOpenIpr }) {
                     onSaved={(ref) => { setAdding(false); onOpenIpr(ref); }} />;
   }
 
+  const shown = (rows || []).filter((r) => {
+    const needle = q.trim().toLowerCase();
+    return !needle || r.ref.toLowerCase().includes(needle)
+      || r.supplier.toLowerCase().includes(needle)
+      || (r.projects || []).some((p) => p.toLowerCase().includes(needle));
+  });
+
+  const tile = (label, n, hot) => (
+    <div key={label} style={{ border: "1px solid var(--sp-border, #dde5ea)",
+      borderRadius: 8, padding: "8px 14px", minWidth: 108,
+      background: hot && n > 0 ? "#fdf6ec" : "#fafcfd" }}>
+      <div style={{ fontSize: 21, fontWeight: 700,
+        color: hot && n > 0 ? "#b35900" : "var(--sp-navy)" }}>{n}</div>
+      <div style={{ fontSize: 11, color: "#5a6b78" }}>{label}</div>
+    </div>
+  );
+
   return (
     <section style={card}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                    flexWrap: "wrap" }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
           🌍 International Orders (IPR)</h2>
         {canCreate && (
           <Btn onClick={() => setAdding(true)}>+ New order</Btn>
         )}
+        <input placeholder="Search ref / supplier / project…" value={q}
+               onChange={(e) => setQ(e.target.value)}
+               style={{ ...inputStyle, width: 240, marginLeft: "auto" }} />
       </div>
+      {tiles && (
+        <div style={{ display: "flex", gap: 8, marginTop: 12,
+                      flexWrap: "wrap" }}>
+          {tile("draft", tiles.draft, false)}
+          {tile("awaiting award", tiles.awaiting_award, true)}
+          {tile("awaiting signatory", tiles.awaiting_authorisation, true)}
+          {tile("active orders", tiles.active, false)}
+          {tile("payments open", tiles.payments_open, true)}
+          {tile("cargo moving", tiles.cargo_moving, false)}
+          {tile("cargo at port", tiles.cargo_at_port, true)}
+        </div>
+      )}
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
+      <div style={{ overflowX: "auto" }}>
       <table style={{ width: "100%", borderCollapse: "collapse", marginTop: 12,
                       fontSize: 13 }}>
         <thead><tr>
           <th style={th}>Ref</th><th style={th}>Supplier</th>
+          <th style={th}>For</th>
           <th style={th}>Date</th>
           <th style={{ ...th, textAlign: "right" }}>Order value</th>
-          <th style={{ ...th, textAlign: "right" }}>MVR</th>
+          <th style={th}>Payment</th>
+          <th style={th}>Shipping</th>
           <th style={th}>Status</th>
         </tr></thead>
         <tbody>
-          {(rows || []).map((r) => (
+          {shown.map((r) => (
             <tr key={r.ref} style={r.is_void ? { opacity: 0.55 } : undefined}>
-              <td style={td}>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>
                 <a href="#" onClick={(e) => { e.preventDefault();
                                               onOpenIpr(r.ref); }}
                    style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
                   {r.ref}</a>
               </td>
               <td style={td}>{r.supplier}</td>
-              <td style={td}>{r.doc_date}</td>
-              <td style={{ ...td, textAlign: "right" }}>
-                {r.currency} {money(r.order_total)}</td>
-              <td style={{ ...td, textAlign: "right" }}>{money(r.mvr_total)}</td>
+              <td style={{ ...td, fontSize: 12 }}>
+                {(r.projects || []).join(", ") || "—"}</td>
+              <td style={{ ...td, whiteSpace: "nowrap" }}>{r.doc_date}</td>
+              <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
+                {r.currency} {money(r.order_total)}
+                <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                  MVR {money(r.mvr_total)}</div>
+              </td>
+              <td style={{ ...td, fontSize: 12 }}>
+                {r.payment ? (<>
+                  <span style={{ color: PAY_TONE[r.payment.tone] || "#5a6b78",
+                                 fontWeight: r.payment.tone === "due"
+                                   ? 600 : 400 }}>
+                    {r.payment.label}</span>
+                  {r.payment.paid != null && r.payment.total > 0
+                    && r.payment.tone !== "none" && (
+                    <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                      {money(r.payment.paid)} / {money(r.payment.total)} paid
+                    </div>)}
+                </>) : "—"}
+              </td>
+              <td style={{ ...td, fontSize: 12, whiteSpace: "nowrap" }}>
+                {r.shipping ? (<>
+                  {r.shipping.mode === "AIR" ? "✈" : "🚢"}{" "}
+                  {SHIP_WORD[r.shipping.status] || r.shipping.status}
+                  {r.shipping.count > 1 ? ` ·${r.shipping.count}×` : ""}
+                  {(r.shipping.live || r.shipping.eta) && (
+                    <div style={{ fontSize: 11, color: "#5a6b78" }}>
+                      {r.shipping.live
+                        ? r.shipping.live.replace(/_/g, " ").toLowerCase()
+                        : ""}
+                      {r.shipping.eta ? ` · ETA ${r.shipping.eta}` : ""}
+                    </div>)}
+                </>) : <span style={{ color: "#8a97a1" }}>—</span>}
+              </td>
               <td style={td}>
                 <StatusChip status={r.is_void ? "VOID" : r.status} /></td>
             </tr>
           ))}
-          {rows && rows.length === 0 && (
-            <tr><td colSpan={6} style={{ ...td, textAlign: "center",
+          {rows && shown.length === 0 && (
+            <tr><td colSpan={8} style={{ ...td, textAlign: "center",
                                          color: "var(--muted)" }}>
-              No orders yet. Raise one from a sized-and-released PMR.</td></tr>
+              {q ? "Nothing matches the search."
+                 : "No orders yet. Raise one from a sized-and-released PMR."}
+            </td></tr>
           )}
         </tbody>
       </table>
+      </div>
     </section>
   );
 }

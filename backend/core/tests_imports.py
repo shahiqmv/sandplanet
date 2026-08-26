@@ -1974,7 +1974,7 @@ class VoidedIprTests(IprBase):
         self.assertFalse(r.data["can_manage"])
         self.assertFalse(r.data["can_pay"])
         # the list carries the flag too
-        row = next(x for x in self.client.get("/api/v1/ipr").data
+        row = next(x for x in self.client.get("/api/v1/ipr").data["rows"]
                    if x["ref"] == ref)
         self.assertTrue(row["is_void"])
 

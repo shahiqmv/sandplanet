@@ -1070,18 +1070,91 @@ def ipr_list_create(request):
     if request.user.role not in VIEW_ROLES:
         return Response({"detail": "Head Office view."}, status=403)
     qs = Document.objects.filter(doc_type="IPR").select_related(
-        "import_order__supplier", "created_by").order_by("-id")
+        "import_order__supplier", "created_by").prefetch_related(
+        "import_order__milestones",
+        "import_order__shipments__tracking",
+        "import_order__lines__allocations__project").order_by("-id")
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
-    rows = [{
-        "ref": d.ref, "status": d.status, "is_void": d.is_void,
-        "doc_date": d.doc_date,
-        "supplier": d.import_order.supplier.name,
-        "currency": d.import_order.order_currency,
-        "order_total": ipr_svc.ipr_order_total(d.import_order),
-        "mvr_total": ipr_svc.ipr_mvr_total(d.import_order),
-    } for d in qs[:200]]
-    return Response(rows)
+
+    # The list is the desk view of the whole import process (owner
+    # 2026-08-27): each order carries where it is going, how much of it is
+    # paid and what payment comes next, and where its cargo physically is.
+    def payment_summary(order, total):
+        ms = list(order.milestones.all())
+        if not ms:
+            return {"label": "No schedule", "tone": "none",
+                    "paid": None, "total": total}
+        paid = sum((m.due_amount(total) for m in ms if m.status == "PAID"),
+                   Decimal("0"))
+        if all(m.status == "PAID" for m in ms):
+            return {"label": "Paid in full", "tone": "ok",
+                    "paid": paid, "total": total}
+        nxt = next((m for m in ms if m.status == "DUE"), None)
+        if nxt:
+            return {"label": f"{nxt.label} due", "tone": "due",
+                    "paid": paid, "total": total}
+        nxt = next((m for m in ms if m.status == "AUTHORISED"), None)
+        if nxt:
+            return {"label": "TT ready", "tone": "due",
+                    "paid": paid, "total": total}
+        return {"label": ("Advance paid" if paid > 0 else "Nothing due yet"),
+                "tone": "part" if paid > 0 else "none",
+                "paid": paid, "total": total}
+
+    def shipping_summary(order):
+        ships = list(order.shipments.all())
+        if not ships:
+            return None
+        sh = max(ships, key=lambda x: x.seq)
+        t = getattr(sh, "tracking", None)
+        return {"status": sh.status, "mode": sh.mode,
+                "count": len(ships),
+                "live": (t.raw_status if t and t.raw_status else None),
+                "eta": sh.eta}
+
+    def destinations(order):
+        codes = []
+        for ln in order.lines.all():
+            for a in ln.allocations.all():
+                code = a.project.code if a.project_id else "Stock"
+                if code not in codes:
+                    codes.append(code)
+        return codes
+
+    rows = []
+    for d in qs[:200]:
+        order = d.import_order
+        total = ipr_svc.ipr_order_total(order)
+        rows.append({
+            "ref": d.ref, "status": d.status, "is_void": d.is_void,
+            "doc_date": d.doc_date,
+            "supplier": order.supplier.name,
+            "currency": order.order_currency,
+            "order_total": total,
+            "mvr_total": ipr_svc.ipr_mvr_total(order),
+            "projects": destinations(order),
+            "payment": payment_summary(order, total),
+            "shipping": shipping_summary(order),
+        })
+
+    live = [r for r in rows if not r["is_void"]]
+    tiles = {
+        "draft": sum(1 for r in live if r["status"] == "DRAFT"),
+        "awaiting_award": sum(1 for r in live if r["status"] == "SUBMITTED"),
+        "awaiting_authorisation": sum(1 for r in live
+                                      if r["status"] == "APPROVED"),
+        "active": sum(1 for r in live if r["status"] == "AUTHORISED"),
+        "payments_open": sum(1 for r in live
+                             if r["payment"]["tone"] == "due"),
+        "cargo_moving": sum(1 for r in live if r["shipping"] and
+                            r["shipping"]["status"] in
+                            ("SHIPPED", "IN_TRANSIT")),
+        "cargo_at_port": sum(1 for r in live if r["shipping"] and
+                             r["shipping"]["status"] in
+                             ("ARRIVED", "UNDER_CLEARING")),
+    }
+    return Response({"rows": rows, "tiles": tiles})
 
 
 @api_view(["GET", "PATCH"])
