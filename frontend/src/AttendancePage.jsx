@@ -257,7 +257,24 @@ export default function AttendancePage({ site, me, onClose }) {
                 style={sub ? { background: "#eef5fb" } : undefined}>
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
-              <td style={td}>{row.full_name}
+              <td style={td}>
+                {/* photo identity — big crews, similar names (owner
+                    2026-08-26) */}
+                {row.photo_url
+                  ? <img src={row.photo_url} alt=""
+                         style={{ width: 26, height: 30, objectFit: "cover",
+                                  borderRadius: 4, verticalAlign: "middle",
+                                  marginRight: 7,
+                                  border: "1px solid #dde5ea" }} />
+                  : <span style={{ display: "inline-grid", width: 26,
+                                   height: 30, placeItems: "center",
+                                   borderRadius: 4, marginRight: 7,
+                                   border: "1px dashed #d5ccb4",
+                                   background: "#fbf7ec", fontSize: 12,
+                                   verticalAlign: "middle" }}
+                          title="No photo — add one on the Workforce page">
+                      👤</span>}
+                {row.full_name}
                 {sub && (
                   <span title={row.subcontractor || "Subcontract worker"}
                         style={{ marginLeft: 6, fontSize: 10.5,

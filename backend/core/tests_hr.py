@@ -8,6 +8,7 @@ from .models import (
     Attendance,
     AuditLog,
     CompanyParameter,
+    EmployeeSiteAllocation,
     Employee,
     ManpowerCategory,
     Site,
@@ -669,3 +670,59 @@ class OnePassportOneRecordTests(TestCase):
         self.assertEqual(case.employee_id, self.existing.pk)
         self.assertEqual(self.Employee.objects.filter(
             passport_no__iexact="AB123456").count(), 1)
+
+
+class WorkerPhotoTests(TestCase):
+    """Site team adds/replaces worker photos (owner 2026-08-26 — photo
+    identity for big crews, adopted from the SFR spreadsheet)."""
+
+    def setUp(self):
+        from .tests import make_user
+        self.site = Site.objects.create(code="WPH", name="Photo Site",
+                                        status=Site.Status.ACTIVE)
+        self.other = Site.objects.create(code="WPO", name="Other",
+                                         status=Site.Status.ACTIVE)
+        self.sa = make_user("wph_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-0900", full_name="Photo Man", is_active=True,
+            join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        self.stranger = Employee.objects.create(
+            emp_no="EMP-0901", full_name="Elsewhere Man", is_active=True,
+            join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=self.stranger, site=self.other, from_date=date(2026, 1, 1))
+        from rest_framework.test import APIClient
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def _file(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile("face.jpg", b"\xff\xd8\xff\xdbjpegish",
+                                  content_type="image/jpeg")
+
+    def test_site_admin_sets_a_photo_for_his_own_worker(self):
+        r = self.client.post(f"/api/v1/workers/{self.emp.id}/photo",
+                             {"photo": self._file()}, format="multipart")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.emp.refresh_from_db()
+        self.assertTrue(self.emp.photo)
+        self.assertIn("EMP-0900", self.emp.photo.name)
+
+    def test_not_for_another_sites_worker(self):
+        r = self.client.post(f"/api/v1/workers/{self.stranger.id}/photo",
+                             {"photo": self._file()}, format="multipart")
+        self.assertEqual(r.status_code, 403)
+
+    def test_grid_and_roster_carry_the_photo_url(self):
+        self.client.post(f"/api/v1/workers/{self.emp.id}/photo",
+                         {"photo": self._file()}, format="multipart")
+        row = next(x for x in self.client.get(
+            f"/api/v1/attendance?site={self.site.id}&date={date.today()}")
+            .data["rows"] if x["employee_id"] == self.emp.id)
+        self.assertTrue(row["photo_url"])
+        w = next(x for x in self.client.get(
+            f"/api/v1/sites/{self.site.id}/direct-workers").data
+            if x["id"] == self.emp.id)
+        self.assertTrue(w["photo_url"])

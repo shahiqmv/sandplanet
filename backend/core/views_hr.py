@@ -646,6 +646,7 @@ def attendance_grid(request):
             "employee_id": employee.id,
             "emp_no": employee.emp_no,
             "full_name": employee.full_name,
+            "photo_url": employee.photo.url if employee.photo else None,
             "category": employee.job_category.name
             if employee.job_category else "",
             # Internal split (this form is not client-facing): a subcontract

@@ -487,6 +487,8 @@ urlpatterns = [
          name="worker-batch-create"),
     path("sites/<int:site_id>/direct-workers",
          worker_api.site_direct_workers, name="site-direct-workers"),
+    path("workers/<int:pk>/photo", worker_api.worker_photo,
+         name="worker-photo"),
     path("sites/<int:site_id>/transfer-destinations",
          worker_api.transfer_destinations, name="transfer-destinations"),
     path("worker-hires/<int:emp_id>", worker_api.hire_edit, name="hire-edit"),

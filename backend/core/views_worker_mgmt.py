@@ -101,6 +101,7 @@ def site_direct_workers(request, site_id):
         hide_pay = hides_staff_pay and is_staff_grade(grp=grp)
         out.append({
             "id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+            "photo_url": e.photo.url if e.photo else None,
             "nationality": e.nationality,
             "job_title": e.job_category.name if e.job_category_id else "",
             "join_date": e.join_date,
@@ -295,3 +296,42 @@ def worker_join_date(request, emp_id):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(_emp_json(emp, request.user))
+
+
+@api_view(["POST"])
+def worker_photo(request, pk):
+    """Add or replace a worker's photo — the site team for workers on their
+    own site, HR/Admin anywhere. Photo identity matters on big crews full of
+    similar names (owner 2026-08-26, the one good idea adopted from the SFR
+    spreadsheet). Saved under a fresh name each time so S3 never has to
+    overwrite."""
+    import time as _time
+
+    from rest_framework.parsers import FormParser, MultiPartParser  # noqa
+    from .audit import audit
+
+    emp = Employee.objects.filter(pk=pk, is_active=True).first()
+    if emp is None:
+        return Response({"detail": "Not found."}, status=404)
+    user = request.user
+    if user.role in ("HO_HR", "ADMIN", "PA"):
+        pass
+    elif user.role in ("SITE_ADMIN", "SITE_ENGINEER", "PM"):
+        ids = scoped_site_ids(user)
+        if ids is not None and not emp.site_allocations.filter(
+                to_date__isnull=True, site_id__in=ids).exists():
+            return Response({"detail": "Not one of your site's workers."},
+                            status=403)
+    else:
+        return Response({"detail": "Site team or HR updates worker photos."},
+                        status=403)
+    upload = request.FILES.get("photo")
+    if upload is None:
+        return Response({"detail": "photo file is required."}, status=400)
+    ext = (upload.name.rsplit(".", 1)[-1] if "." in upload.name
+           else "jpg").lower()[:5]
+    emp.photo.save(f"{emp.emp_no}-{int(_time.time())}.{ext}", upload,
+                   save=True)
+    audit("employee", emp.id, "EMPLOYEE_PHOTO", actor=user,
+          detail={"emp_no": emp.emp_no, "file": upload.name})
+    return Response({"photo_url": emp.photo.url})

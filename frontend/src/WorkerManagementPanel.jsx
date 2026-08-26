@@ -1,6 +1,49 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, apiUpload } from "./api.js";
+import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
+
+// Worker photo: thumbnail + add/replace via the phone camera or camera
+// roll (owner 2026-08-26 — photo identity, adopted from the SFR
+// spreadsheet). accept="image/*" gives the Take Photo / Photo Library
+// choice on mobile; shrinkPhoto keeps uploads small.
+function WorkerPhoto({ worker, canManage, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const pick = async (file) => {
+    if (!file) return;
+    setBusy(true);
+    try {
+      const fd = new FormData();
+      fd.append("photo", await shrinkPhoto(file));
+      await apiUpload(`/workers/${worker.id}/photo`, fd);
+      onSaved?.();
+    } catch { /* row reloads regardless */ }
+    finally { setBusy(false); }
+  };
+  const img = worker.photo_url
+    ? <img src={worker.photo_url} alt=""
+           style={{ width: 40, height: 48, objectFit: "cover",
+                    borderRadius: 5, border: "1px solid #dde5ea",
+                    display: "block" }} />
+    : <div style={{ width: 40, height: 48, borderRadius: 5,
+                    border: "1px dashed #c8b98a", background: "#fdf6ec",
+                    display: "grid", placeItems: "center", fontSize: 15,
+                    color: "#8a6d00" }}>👤</div>;
+  if (!canManage) return img;
+  return (
+    <label title={worker.photo_url ? "Replace photo" : "Add photo — camera or camera roll"}
+           style={{ cursor: "pointer", opacity: busy ? 0.5 : 1,
+                    display: "inline-block" }}>
+      {img}
+      <span style={{ fontSize: 9.5, color: "var(--sky, #1a6091)",
+                     display: "block", textAlign: "center" }}>
+        {busy ? "…" : worker.photo_url ? "replace" : "add"}</span>
+      <input type="file" accept="image/*" style={{ display: "none" }}
+             onChange={(e) => { pick(e.target.files[0]);
+                                e.target.value = ""; }} />
+    </label>
+  );
+}
 
 const SITE_MANAGE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"];
 const KIND_LABEL = { ADD: "New hires", REMOVE: "Removals", TRANSFER: "Transfers" };
@@ -119,6 +162,7 @@ export default function WorkerManagementPanel({ site, me }) {
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead><tr>
+              <th style={{ ...th, width: 52 }}>Photo</th>
               <th style={th}>Emp No</th><th style={th}>Name</th>
               <th style={th}>Category</th><th style={th}>Nationality</th>
               <th style={th}>Joined</th>
@@ -128,6 +172,9 @@ export default function WorkerManagementPanel({ site, me }) {
             <tbody>
               {roster.map((w) => (
                 <tr key={w.id}>
+                  <td style={{ ...td, padding: "4px 6px" }}>
+                    <WorkerPhoto worker={w} canManage={canManage}
+                                 onSaved={load} /></td>
                   <td style={td}>{w.emp_no}</td>
                   <td style={td}>{w.full_name}</td>
                   <td style={td}>{w.job_title || "—"}</td>
