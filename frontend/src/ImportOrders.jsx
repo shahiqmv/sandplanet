@@ -869,7 +869,7 @@ const MILE_LABEL = { DEPARTED: "Departed origin",
 
 // The full provider movement list (ShipsGo-style) — move · location · vessel ·
 // date, actual (green) vs estimated. Shared by the IPR panel + health list.
-function MovementsTable({ movements }) {
+export function MovementsTable({ movements }) {
   if (!movements || movements.length === 0) return null;
   const hc = { padding: "0 10px 4px 0", fontWeight: 500 };
   return (

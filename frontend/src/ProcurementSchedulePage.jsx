@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { MovementsTable } from "./ImportOrders.jsx";
 import { shrinkPhoto } from "./imageResize.js";
 import { Btn, Chip, RefStamp, card, inputStyle } from "./ui.jsx";
 
@@ -53,19 +54,62 @@ const TRACK_HEALTH = { UNTRACKED: "Not trackable", STALE: "No recent movement",
 const TRACK_BAD = ["UNTRACKED", "STALE", "FAILED"];
 
 function TrackingLine({ t }) {
+  // The timeline opens in OUR modal, not a jump to the provider's site
+  // (owner 2026-08-26); the live map stays available inside it.
+  const [open, setOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
   if (!t) return null;
   const bad = TRACK_BAD.includes(t.health);
-  const lastTip = t.last_move
-    ? `${t.last_move.label}${t.last_move.location
-        ? " · " + t.last_move.location : ""}${t.last_move.event_time
-        ? " · " + fmt(t.last_move.event_time) : ""}` : "";
+  const show = () => {
+    setOpen(true);
+    api(`/tracking/shipments/${t.shipment_id}/movements`)
+      .then(setDetail).catch(() => setDetail({ movements: [] }));
+  };
   return (
     <div style={{ fontSize: 9.5, marginTop: 3,
-      color: bad ? "var(--amber-fg)" : "var(--muted)" }} title={lastTip}>
-      🚢 {t.live_status || TRACK_HEALTH[t.health] || "—"}
-      {t.current_eta ? ` · ETA ${fmt(t.current_eta)}` : ""}
-      {t.map_url && <>{" · "}<a href={t.map_url} target="_blank"
-        rel="noreferrer" style={{ color: "var(--sky)" }}>Live ↗</a></>}
+      color: bad ? "var(--amber-fg)" : "var(--muted)" }}>
+      <a href="#" onClick={(e) => { e.preventDefault(); show(); }}
+         style={{ color: "inherit", textDecoration: "none" }}
+         title="Open the movement timeline">
+        🚢 {t.live_status || TRACK_HEALTH[t.health] || "—"}
+        {t.current_eta ? ` · ETA ${fmt(t.current_eta)}` : ""}
+        <span style={{ color: "var(--sky)" }}> · timeline ▸</span>
+      </a>
+      {open && (
+        <div onClick={() => setOpen(false)}
+             style={{ position: "fixed", inset: 0,
+                      background: "rgba(0,0,0,.4)", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      zIndex: 70, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()}
+               style={{ ...card, maxWidth: 620, width: "94vw",
+                        maxHeight: "80vh", overflowY: "auto", margin: 0,
+                        fontSize: 13, color: "var(--ink, #1c2b36)" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
+              <strong>Shipment tracking
+                {t.ipr_ref ? ` — ${t.ipr_ref}` : ""}</strong>
+              <span style={{ color: "#5a6b78", fontSize: 12 }}>
+                {detail?.status || t.live_status || ""}
+                {t.current_eta ? ` · ETA ${fmt(t.current_eta)}` : ""}</span>
+              <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
+                {(detail?.map_url || t.map_url) && (
+                  <a href={detail?.map_url || t.map_url} target="_blank"
+                     rel="noreferrer" style={{ fontSize: 12 }}>
+                    📍 Live position ↗</a>)}
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              setOpen(false); }}
+                   style={{ fontSize: 12 }}>Close</a>
+              </span>
+            </div>
+            {detail == null
+              ? <p style={{ color: "#5a6b78", fontSize: 12 }}>Loading…</p>
+              : detail.movements?.length
+                ? <MovementsTable movements={detail.movements} />
+                : <p style={{ color: "#5a6b78", fontSize: 12 }}>
+                    No movements reported yet.</p>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

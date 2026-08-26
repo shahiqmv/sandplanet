@@ -143,6 +143,8 @@ urlpatterns = [
          name="tracking-carriers-refresh"),
     path("tracking/health", tracking_api.tracking_health,
          name="tracking-health"),
+    path("tracking/shipments/<int:pk>/movements",
+         tracking_api.tracking_movements, name="tracking-movements"),
     path("tracking/shipments/<int:pk>/retry", tracking_api.tracking_retry,
          name="tracking-retry"),
     path("tracking/shipments/<int:pk>/manual", tracking_api.tracking_manual,

@@ -100,6 +100,21 @@ def tracking_health(request):
     }})
 
 
+@api_view(["GET"])
+def tracking_movements(request, pk):
+    """One shipment's movement timeline — feeds the tracking modal on the
+    procurement schedule (owner 2026-08-26: our own timeline beats a jump
+    to the provider's site). Any signed-in user; movements carry no money."""
+    t = ShipmentTracking.objects.filter(shipment_id=pk).first()
+    if t is None:
+        return Response({"detail": "Not tracked."}, status=404)
+    return Response({
+        "mode": t.mode, "status": t.raw_status, "state": t.state,
+        "eta": t.current_eta, "map_url": t.map_url,
+        "movements": trk.movements_for(t),
+    })
+
+
 @api_view(["POST"])
 def tracking_retry(request, pk):
     """Re-attempt tracking: re-sync the shipment's current keys and force a fresh
