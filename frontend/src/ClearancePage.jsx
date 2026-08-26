@@ -94,11 +94,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
         style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
       <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)",
                    whiteSpace: "nowrap" }}>
-        <a href="#" title="Open the full order (IPR)"
-           onClick={(e) => { e.preventDefault(); e.stopPropagation();
-                             onOpenIpr?.(r.ipr_ref); }}
-           style={{ color: "inherit" }}>{r.ipr_ref}</a>
-        {" "}· S{r.shipment_seq}</td>
+        {r.ipr_ref} · S{r.shipment_seq}</td>
       <td style={td}>{r.supplier}</td>
       <td style={td}>{r.mode}</td>
       <td style={td}><StatusChip status={r.status} /></td>
@@ -136,6 +132,11 @@ export default function ClearancePage({ me, onOpenIpr }) {
       </td>
       <td style={{ ...td, fontSize: 12, color: "#41525f" }}>
         {r.next_action}</td>
+      <td style={{ ...td, whiteSpace: "nowrap" }}>
+        <a href="#" title="Open the full order — details, schedule, all shipments"
+           onClick={(e) => { e.preventDefault(); e.stopPropagation();
+                             onOpenIpr?.(r.ipr_ref); }}
+           style={{ fontSize: 12 }}>order ↗</a></td>
     </tr>
   ));
 
@@ -146,6 +147,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
       <th style={th}>{dateCol}</th>
       <th style={th}>Shared</th><th style={th}>Docs</th>
       <th style={th}>Charges</th><th style={th}>Next action</th>
+      <th style={th} />
     </tr></thead>
   );
 
@@ -215,7 +217,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
             <thead><tr>
               <th style={th}>Order</th><th style={th}>Supplier</th>
               <th style={th}>Mode</th><th style={th}>IRN</th>
-              <th style={th}>Next action</th>
+              <th style={th}>Next action</th><th style={th} />
             </tr></thead>
             <tbody>
               {data.to_receive.map((r, i) => (
@@ -223,12 +225,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
                     style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
                   <td style={{ ...td, fontWeight: 600,
                                color: "var(--sp-navy)" }}>
-                    <a href="#" title="Open the full order (IPR)"
-                       onClick={(e) => { e.preventDefault();
-                                         e.stopPropagation();
-                                         onOpenIpr?.(r.ipr_ref); }}
-                       style={{ color: "inherit" }}>{r.ipr_ref}</a>
-                    {" "}· S{r.shipment_seq}</td>
+                    {r.ipr_ref} · S{r.shipment_seq}</td>
                   <td style={td}>{r.supplier}</td>
                   <td style={td}>{r.mode}</td>
                   <td style={td}>{r.irn_ref
@@ -236,6 +233,12 @@ export default function ClearancePage({ me, onOpenIpr }) {
                     : "—"}</td>
                   <td style={{ ...td, fontSize: 12, color: "#41525f" }}>
                     {r.next_action}</td>
+                  <td style={td}>
+                    <a href="#" title="Open the full order"
+                       onClick={(e) => { e.preventDefault();
+                                         e.stopPropagation();
+                                         onOpenIpr?.(r.ipr_ref); }}
+                       style={{ fontSize: 12 }}>order ↗</a></td>
                 </tr>
               ))}
             </tbody>
