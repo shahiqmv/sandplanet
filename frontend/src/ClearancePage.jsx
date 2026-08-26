@@ -84,15 +84,21 @@ export default function ClearancePage({ me, onOpenIpr }) {
     </div>
   );
 
-  const openRow = (r) => onOpenIpr?.(r.ipr_ref);
+  // Row click lands ON the shipment's card, ready to work; the ref itself
+  // is a separate link to the full order, just in case (owner 2026-08-26).
+  const openRow = (r) => onOpenIpr?.(r.ipr_ref, r.shipment_seq);
 
   const shipRows = (rows, atPort) => rows.map((r, i) => (
     <tr key={i} onClick={() => openRow(r)}
-        title="Open the order's clearing window"
+        title="Open this shipment's clearing card"
         style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
       <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)",
                    whiteSpace: "nowrap" }}>
-        {r.ipr_ref} · S{r.shipment_seq}</td>
+        <a href="#" title="Open the full order (IPR)"
+           onClick={(e) => { e.preventDefault(); e.stopPropagation();
+                             onOpenIpr?.(r.ipr_ref); }}
+           style={{ color: "inherit" }}>{r.ipr_ref}</a>
+        {" "}· S{r.shipment_seq}</td>
       <td style={td}>{r.supplier}</td>
       <td style={td}>{r.mode}</td>
       <td style={td}><StatusChip status={r.status} /></td>
@@ -217,7 +223,12 @@ export default function ClearancePage({ me, onOpenIpr }) {
                     style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
                   <td style={{ ...td, fontWeight: 600,
                                color: "var(--sp-navy)" }}>
-                    {r.ipr_ref} · S{r.shipment_seq}</td>
+                    <a href="#" title="Open the full order (IPR)"
+                       onClick={(e) => { e.preventDefault();
+                                         e.stopPropagation();
+                                         onOpenIpr?.(r.ipr_ref); }}
+                       style={{ color: "inherit" }}>{r.ipr_ref}</a>
+                    {" "}· S{r.shipment_seq}</td>
                   <td style={td}>{r.supplier}</td>
                   <td style={td}>{r.mode}</td>
                   <td style={td}>{r.irn_ref

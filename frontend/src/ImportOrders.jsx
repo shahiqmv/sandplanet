@@ -435,7 +435,7 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
 }
 
 export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
-                          onOpenDoc }) {
+                          onOpenDoc, focusShipment }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
 
@@ -649,7 +649,7 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
                       onError={setError} />
       <ShipmentsPanel doc={doc} refIpr={refIpr} onChanged={load}
                       onError={setError} onOpenIrn={onOpenIrn}
-                      onOpenDoc={onOpenDoc}
+                      onOpenDoc={onOpenDoc} focusSeq={focusShipment}
                       isAdmin={me.role === "ADMIN"} />
     </section>
   );
@@ -989,7 +989,7 @@ function TrackingBlock({ s, canManage, onChanged, onError }) {
 }
 
 function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
-                          onOpenDoc, isAdmin }) {
+                          onOpenDoc, isAdmin, focusSeq }) {
   const ships = doc.shipments || [];
   const canManage = doc.can_manage;
   const [adding, setAdding] = useState(false);
@@ -1067,6 +1067,8 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
                   onOpenIrn={onOpenIrn} isAdmin={isAdmin}
                   forwarders={forwarders} agents={agents}
                   onOpenDoc={onOpenDoc}
+                  focused={focusSeq != null
+                           && String(focusSeq) === String(s.seq)}
                   supplierChargesFreight={doc.supplier_charges_freight} />
       ))}
 
@@ -1160,9 +1162,17 @@ function ShipmentsPanel({ doc, refIpr, onChanged, onError, onOpenIrn,
 
 function Shipment({ s, refIpr, canManage, call, onChanged, onError,
                     onOpenIrn, isAdmin, forwarders = [], agents = [],
-                    onOpenDoc, supplierChargesFreight }) {
+                    onOpenDoc, supplierChargesFreight, focused }) {
   const fileRef = useRef(null);
   const [docType, setDocType] = useState("BL_AWB");
+  // Landed here from the Cargo Clearance board — bring this shipment's
+  // card to the user instead of the top of the order (owner 2026-08-26).
+  const cardRef = useRef(null);
+  useEffect(() => {
+    if (focused && cardRef.current) {
+      cardRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [focused]);
   const [charges, setCharges] = useState(Object.fromEntries(
     CHARGE_LABELS.map(([k]) => [k, s[k] ?? ""])));
   const [editing, setEditing] = useState(false);
@@ -1216,8 +1226,12 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
   }
 
   return (
-    <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
-                  padding: 10, marginBottom: 10 }}>
+    <div ref={cardRef}
+         style={{ border: focused ? "2px solid var(--sp-navy)"
+                                  : "1px solid var(--sp-border)",
+                  borderRadius: 8, padding: 10, marginBottom: 10,
+                  boxShadow: focused ? "0 0 0 3px #dcebf7" : undefined,
+                  scrollMarginTop: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10,
                     flexWrap: "wrap" }}>
         <strong style={{ color: "var(--sp-navy)" }}>

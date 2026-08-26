@@ -810,6 +810,7 @@ export default function App() {
           {docView?.mode === "ipr-view" && (
             <IprView me={me} refIpr={docView.doc.ref} onClose={closeDoc}
                      onOpenDoc={openDoc}
+                     focusShipment={docView.shipmentSeq}
                      onOpenIrn={(ref) =>
                        setDocView({ mode: "irn-view", doc: { ref } })}
                      onEdit={(doc) =>
@@ -1091,8 +1092,9 @@ export default function App() {
               setDocView({ mode: "irn-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "clearance" && (
-            <ClearancePage me={me} onOpenIpr={(ref) =>
-              setDocView({ mode: "ipr-view", doc: { ref } })} />
+            <ClearancePage me={me} onOpenIpr={(ref, seq) =>
+              setDocView({ mode: "ipr-view", doc: { ref },
+                           shipmentSeq: seq })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />
