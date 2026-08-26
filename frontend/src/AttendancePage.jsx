@@ -21,6 +21,9 @@ export default function AttendancePage({ site, me, onClose }) {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Click a face to see it big — a thumbnail can only do so much
+  // (owner 2026-08-26).
+  const [photoView, setPhotoView] = useState(null);
 
   const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "DIRECTOR",
                     "ADMIN"].includes(me.role);
@@ -337,12 +340,14 @@ export default function AttendancePage({ site, me, onClose }) {
                     2026-08-26) */}
                 {row.photo_url
                   ? <img src={row.photo_url} alt=""
-                         style={{ width: 32, height: 38, objectFit: "cover",
+                         onClick={() => setPhotoView(row)}
+                         title="Click to enlarge"
+                         style={{ width: 36, height: 42, objectFit: "cover",
                                   borderRadius: 4, verticalAlign: "middle",
-                                  marginRight: 7,
+                                  marginRight: 7, cursor: "zoom-in",
                                   border: "1px solid #dde5ea" }} />
-                  : <span style={{ display: "inline-grid", width: 32,
-                                   height: 38, placeItems: "center",
+                  : <span style={{ display: "inline-grid", width: 36,
+                                   height: 42, placeItems: "center",
                                    borderRadius: 4, marginRight: 7,
                                    border: "1px dashed #d5ccb4",
                                    background: "#fbf7ec", fontSize: 12,
@@ -470,6 +475,28 @@ export default function AttendancePage({ site, me, onClose }) {
           )}
         </tbody>
       </table>
+      {photoView && (
+        <div onClick={() => setPhotoView(null)}
+             style={{ position: "fixed", inset: 0,
+                      background: "rgba(10,20,30,.55)", display: "flex",
+                      alignItems: "center", justifyContent: "center",
+                      zIndex: 80, cursor: "zoom-out" }}>
+          <div style={{ textAlign: "center" }}>
+            <img src={photoView.photo_url} alt={photoView.full_name}
+                 style={{ maxWidth: "min(420px, 88vw)",
+                          maxHeight: "70vh", borderRadius: 10,
+                          border: "3px solid #fff",
+                          boxShadow: "0 10px 40px rgba(0,0,0,.4)" }} />
+            <div style={{ color: "#fff", fontWeight: 600, marginTop: 10,
+                          fontSize: 16, textShadow: "0 1px 4px rgba(0,0,0,.6)" }}>
+              {photoView.full_name}
+              <span style={{ fontWeight: 400, opacity: 0.85 }}>
+                {" "}· {photoView.emp_no}
+                {photoView.category ? ` · ${photoView.category}` : ""}</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 10, marginTop: 14,
                     flexWrap: "wrap" }}>
