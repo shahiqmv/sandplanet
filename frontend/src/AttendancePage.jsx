@@ -6,6 +6,12 @@ import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
 const REST_REMARKS = ["OFF", "PRESENT", "HALF_DAY"];
 const hhmm = (value) => (value ? String(value).slice(0, 5) : "");
+// Compact grid cells — the roster should show as many men as the screen
+// allows (owner 2026-08-26).
+const gtd = { padding: "3px 8px", fontSize: 13,
+              borderTop: "1px solid var(--row-line, #e3ecf2)",
+              verticalAlign: "middle" };
+const gin = { padding: "4px 6px", fontSize: 13 };
 
 export default function AttendancePage({ site, me, onClose }) {
   const [mode, setMode] = useState("day");   // "day" | "register"
@@ -197,16 +203,37 @@ export default function AttendancePage({ site, me, onClose }) {
   }
 
   return (
-    <section style={card}>
-      {header}
-      <div style={{ display: "flex", gap: 8, alignItems: "center",
-                    marginTop: 10 }}>
+    <section style={{ ...card, padding: "14px 18px 18px" }}>
+      {/* One compact bar: everything above the roster in two thin lines, so
+          the crew list owns the screen (owner 2026-08-26). */}
+      <div style={{ display: "flex", gap: 10, alignItems: "center",
+                    flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+          Attendance — {site.code}
+        </h2>
         <input type="date" value={day}
                onChange={(e) => setDay(e.target.value)}
-               style={{ ...inputStyle, width: 150 }} />
-        {grid && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+               style={{ ...inputStyle, width: 140, padding: "4px 8px" }} />
+        {grid && <span style={{ fontSize: 12, color: "var(--muted)" }}>
           {new Date(day + "T00:00").toLocaleDateString("en",
             { weekday: "long" })}</span>}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6,
+                       alignItems: "center" }}>
+          <button onClick={() => setMode("day")}
+                  style={{ ...buttonStyle, padding: "4px 12px",
+                           fontSize: 13 }}>Day entry</button>
+          <button onClick={() => setMode("register")}
+                  style={{ ...ghostButton, padding: "4px 12px",
+                           fontSize: 13 }}>Month register</button>
+          {hasShifts && (
+            <button onClick={() => setMode("shifts")}
+                    style={{ ...ghostButton, padding: "4px 12px",
+                             fontSize: 13 }}>Shift allocation</button>
+          )}
+          <button onClick={onClose}
+                  style={{ ...ghostButton, padding: "4px 12px",
+                           fontSize: 13 }}>Close</button>
+        </span>
       </div>
 
       {rows.length > 0 && (() => {
@@ -221,7 +248,7 @@ export default function AttendancePage({ site, me, onClose }) {
           + (parseFloat(r.ot_requested) || 0)
           + (parseFloat(r.sub_extra_hours) || 0), 0);
         const chip = (label, value, tone) => (
-          <span key={label} style={{ fontSize: 12.5, padding: "4px 12px",
+          <span key={label} style={{ fontSize: 11.5, padding: "2px 10px",
             borderRadius: 999, background: tone === "ok" ? "#e8f3eb"
               : tone === "warn" ? "#f9efe2" : "#eef3f7",
             color: tone === "ok" ? "#1a7f37" : tone === "warn" ? "#8a5b00"
@@ -229,8 +256,8 @@ export default function AttendancePage({ site, me, onClose }) {
             {value} {label}</span>
         );
         return (
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                        margin: "10px 0 2px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                        margin: "8px 0 0", alignItems: "center" }}>
             {chip("on roster", rows.length)}
             {chip("present", present, "ok")}
             {half > 0 && chip("half day", half, "warn")}
@@ -303,19 +330,19 @@ export default function AttendancePage({ site, me, onClose }) {
             <tr key={row.employee_id}
                 style={{ background: sub ? "#eef5fb"
                            : i % 2 ? "#fafcfd" : undefined }}>
-              <td style={{ ...td, fontWeight: 600,
+              <td style={{ ...gtd, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
-              <td style={td}>
+              <td style={gtd}>
                 {/* photo identity — big crews, similar names (owner
                     2026-08-26) */}
                 {row.photo_url
                   ? <img src={row.photo_url} alt=""
-                         style={{ width: 26, height: 30, objectFit: "cover",
+                         style={{ width: 24, height: 27, objectFit: "cover",
                                   borderRadius: 4, verticalAlign: "middle",
                                   marginRight: 7,
                                   border: "1px solid #dde5ea" }} />
-                  : <span style={{ display: "inline-grid", width: 26,
-                                   height: 30, placeItems: "center",
+                  : <span style={{ display: "inline-grid", width: 24,
+                                   height: 27, placeItems: "center",
                                    borderRadius: 4, marginRight: 7,
                                    border: "1px dashed #d5ccb4",
                                    background: "#fbf7ec", fontSize: 12,
@@ -333,7 +360,7 @@ export default function AttendancePage({ site, me, onClose }) {
                   </span>
                 )}
               </td>
-              <td style={td}>{row.category}</td>
+              <td style={gtd}>{row.category}</td>
               {hasShifts && (
                 <td style={{ padding: 3 }}>
                   <select value={row.shift_id || ""}
@@ -357,7 +384,7 @@ export default function AttendancePage({ site, me, onClose }) {
                        disabled={grid?.locked || !canEnter || off}
                        onChange={(e) => setRow(i, { check_in: e.target.value })}
                        title={row._fromGate ? "Filled from the gate punch" : undefined}
-                       style={{ ...inputStyle, width: 92,
+                       style={{ ...inputStyle, ...gin, width: 92,
                                 background: row._fromGate && !row.saved
                                   ? "#eef8f0" : undefined }} />
               </td>
@@ -366,12 +393,12 @@ export default function AttendancePage({ site, me, onClose }) {
                        disabled={grid?.locked || !canEnter || off}
                        title={row._fromGate ? "Filled from the gate punch" : undefined}
                        onChange={(e) => setRow(i, { check_out: e.target.value })}
-                       style={{ ...inputStyle, width: 92 }} />
+                       style={{ ...inputStyle, ...gin, width: 92 }} />
               </td>
               <td style={{ padding: 3 }}>
                 <select value={row.remark} disabled={grid?.locked || !canEnter}
                         onChange={(e) => setRow(i, { remark: e.target.value })}
-                        style={{ ...inputStyle, width: 110 }}>
+                        style={{ ...inputStyle, ...gin, width: 110 }}>
                   {/* PAID_LEAVE is never offered — leave is granted on the
                       Worker Leave screen, which also moves the man to Head
                       Office. It is listed only when the day already carries
@@ -410,7 +437,7 @@ export default function AttendancePage({ site, me, onClose }) {
                          disabled={grid?.locked || !canEnter || off}
                          onChange={(e) => setRow(i, { sub_extra_hours:
                                                       e.target.value })}
-                         style={{ ...inputStyle, width: 75 }} />
+                         style={{ ...inputStyle, ...gin, width: 75 }} />
                   <span style={{ marginLeft: 8, fontSize: 11,
                                  color: "#5a6b78" }}>
                     extra hours
@@ -424,9 +451,9 @@ export default function AttendancePage({ site, me, onClose }) {
                            disabled={grid?.locked || !canEnter || off}
                            onChange={(e) => setRow(i, { ot_requested:
                                                         e.target.value })}
-                           style={{ ...inputStyle, width: 75 }} />
+                           style={{ ...inputStyle, ...gin, width: 75 }} />
                   </td>
-                  <td style={{ ...td, color: row.ot_approved ? "#1a7f37"
+                  <td style={{ ...gtd, color: row.ot_approved ? "#1a7f37"
                                                              : "#5a6b78" }}>
                     {row.ot_approved ?? "—"}
                   </td>
