@@ -1177,10 +1177,19 @@ def clearance_setup(request):
                                     is_active=True).first()
     candidates = Supplier.objects.filter(
         category="CLEARING_AGENT", is_active=True).order_by("name")
-    recent = (ImportShipment.objects
-              .filter(shared_with_agent_at__isnull=False)
-              .select_related("order__document", "order__supplier")
-              .order_by("-shared_with_agent_at")[:15])
+    # The worklist (owner 2026-08-26): every shipment still on its way
+    # through clearance — not a share log. Order: the ones being cleared
+    # first, then arrivals, then what's still at sea.
+    stage_rank = {"UNDER_CLEARING": 0, "ARRIVED": 1, "IN_TRANSIT": 2,
+                  "SHIPPED": 3, "BOOKED": 4}
+    pending = sorted(
+        ImportShipment.objects
+        .filter(status__in=stage_rank,
+                order__document__status="AUTHORISED",
+                order__document__is_void=False)
+        .select_related("order__document", "order__supplier")
+        .prefetch_related("documents", "payments__pyr"),
+        key=lambda s: (stage_rank[s.status], s.eta or _far_date()))
     return Response({
         "agent": ({
             "id": agent.id, "name": agent.name,
@@ -1193,10 +1202,30 @@ def clearance_setup(request):
                        for s in candidates],
         "share_cc": ", ".join(ipr_svc.share_cc_list()),
         "can_edit": request.user.role in CREATE_ROLES,
-        "recent_shares": [{
+        "pending": [{
             "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
-            "supplier": s.order.supplier.name,
+            "supplier": s.order.supplier.name, "mode": s.mode,
+            "status": s.status, "status_display": s.get_status_display(),
+            "eta": s.eta,
             "shared_at": s.shared_with_agent_at,
             "documents": s.documents.count(),
-        } for s in recent],
+            "missing_docs": [
+                dict(ShipmentDocument.Type.choices)[d]
+                for d in ipr_svc.missing_clearing_docs(s)],
+            # the four import charges: paid / raised (awaiting payment) /
+            # still to enter — the money half of getting cargo out
+            "charges": {
+                "paid": sum(1 for p in s.payments.all()
+                            if p.pyr_id and p.pyr.status == "PAID"),
+                "raised": sum(1 for p in s.payments.all()
+                              if p.pyr_id and p.pyr.status != "PAID"),
+                "entered": sum(1 for p in s.payments.all()
+                               if p.amount and not p.pyr_id),
+            },
+        } for s in pending],
     })
+
+
+def _far_date():
+    from datetime import date
+    return date(9999, 12, 31)

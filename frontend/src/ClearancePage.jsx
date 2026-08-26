@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
+  from "./ui.jsx";
 
 // Cargo clearance in one place (owner 2026-08-26): who the clearing agent
 // is, who gets copied on every document share, and what has been shared.
 // The share email itself: all uploaded shipping documents attached, sent in
 // the purchasing user's name with reply-to them, 20 MB cap.
-export default function ClearancePage({ me }) {
+export default function ClearancePage({ me, onOpenIpr }) {
   const [data, setData] = useState(null);
   const [cc, setCc] = useState("");
   const [agentForm, setAgentForm] = useState(null);
+  // Fields stay locked until an explicit Edit (owner 2026-08-26) — this is
+  // a reference page first, a form second.
+  const [editingAgent, setEditingAgent] = useState(false);
+  const [editingCc, setEditingCc] = useState(false);
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -32,6 +37,7 @@ export default function ClearancePage({ me }) {
       await api("/clearance/setup", { method: "POST",
                                       body: { share_cc: cc } });
       setNotice("CC list saved — future shares copy these addresses.");
+      setEditingCc(false);
       load();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -43,6 +49,7 @@ export default function ClearancePage({ me }) {
       await api(`/suppliers/${data.agent.id}`, { method: "PATCH",
                                                  body: agentForm });
       setNotice("Agent details saved.");
+      setEditingAgent(false);
       load();
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
@@ -72,10 +79,12 @@ export default function ClearancePage({ me }) {
                               display: "flex", flexDirection: "column",
                               gap: 3 }}>
       {label}
-      <input value={agentForm?.[key] ?? ""} disabled={!canEdit || busy}
+      <input value={agentForm?.[key] ?? ""}
+             disabled={!canEdit || !editingAgent || busy}
              onChange={(e) => setAgentForm({ ...agentForm,
                                              [key]: e.target.value })}
-             style={inputStyle} />
+             style={{ ...inputStyle,
+                      background: editingAgent ? undefined : "#f4f7f9" }} />
     </label>
   );
 
@@ -115,10 +124,24 @@ export default function ClearancePage({ me }) {
             {field("address", "Address", true)}
             {field("notes", "Notes (licence no, opening hours, who to call…)", true)}
           </div>
-          {canEdit && (
-            <button onClick={saveAgent} disabled={busy}
-                    style={{ ...buttonStyle, marginTop: 10 }}>
-              Save agent details</button>
+          {canEdit && !editingAgent && (
+            <button onClick={() => setEditingAgent(true)}
+                    style={{ ...ghostButton, marginTop: 10,
+                             padding: "6px 16px" }}>
+              ✏️ Edit agent details</button>
+          )}
+          {canEdit && editingAgent && (
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={saveAgent} disabled={busy}
+                      style={buttonStyle}>Save agent details</button>
+              <button onClick={() => { setEditingAgent(false);
+                  setAgentForm({ contact_person: data.agent.contact_person,
+                                 phone: data.agent.phone,
+                                 email: data.agent.email,
+                                 address: data.agent.address,
+                                 notes: data.agent.notes }); }}
+                      style={ghostButton}>Cancel</button>
+            </div>
           )}
         </>
       ) : (
@@ -154,47 +177,102 @@ export default function ClearancePage({ me }) {
       </p>
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     flexWrap: "wrap" }}>
-        <input value={cc} disabled={!canEdit || busy}
-               placeholder="cargoclearance@sandplanet.mv"
-               onChange={(e) => setCc(e.target.value)}
-               style={{ ...inputStyle, width: 380 }} />
-        {canEdit && (
-          <button onClick={saveCc} disabled={busy} style={buttonStyle}>
-            Save CC list</button>)}
-        <span style={{ fontSize: 11.5, color: "#8a97a1" }}>
-          comma-separated for more than one</span>
+        {editingCc ? (
+          <>
+            <input value={cc} disabled={busy}
+                   placeholder="cargoclearance@sandplanet.mv"
+                   onChange={(e) => setCc(e.target.value)}
+                   style={{ ...inputStyle, width: 380 }} />
+            <button onClick={saveCc} disabled={busy} style={buttonStyle}>
+              Save CC list</button>
+            <button onClick={() => { setEditingCc(false);
+                                     setCc(data.share_cc); }}
+                    style={ghostButton}>Cancel</button>
+            <span style={{ fontSize: 11.5, color: "#8a97a1" }}>
+              comma-separated for more than one</span>
+          </>
+        ) : (
+          <>
+            <strong style={{ fontSize: 13.5, color: "var(--sp-navy)" }}>
+              {data.share_cc || "— nobody copied —"}</strong>
+            {canEdit && (
+              <button onClick={() => setEditingCc(true)}
+                      style={{ ...ghostButton, padding: "3px 12px",
+                               fontSize: 12 }}>✏️ Edit</button>)}
+          </>
+        )}
       </div>
 
       <h3 style={{ color: "var(--sp-navy)", fontSize: 14, marginTop: 22,
                    borderBottom: "1px solid #dde5ea", paddingBottom: 4 }}>
-        Recent shares
+        Pending clearances
       </h3>
-      {data.recent_shares.length === 0 ? (
+      {data.pending.length === 0 ? (
         <p style={{ color: "#5a6b78", fontSize: 13 }}>
-          No documents shared yet.</p>
+          Nothing in the clearance pipeline — every booked shipment is
+          cleared.</p>
       ) : (
-        <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
+        <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        fontSize: 13 }}>
           <thead><tr>
-            <th style={th}>Order</th><th style={th}>Shipment</th>
-            <th style={th}>Supplier</th><th style={th}>Documents</th>
-            <th style={th}>Last shared</th>
+            <th style={th}>Order</th><th style={th}>Supplier</th>
+            <th style={th}>Mode</th><th style={th}>Status</th>
+            <th style={th}>ETA</th><th style={th}>Shared with agent</th>
+            <th style={th}>Documents</th><th style={th}>Charges</th>
           </tr></thead>
           <tbody>
-            {data.recent_shares.map((r, i) => (
-              <tr key={i}>
+            {data.pending.map((r, i) => {
+              const ch = r.charges;
+              return (
+              <tr key={i} onClick={() => onOpenIpr?.(r.ipr_ref)}
+                  title="Open the order's clearing window"
+                  style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
                 <td style={{ ...td, fontWeight: 600,
-                             color: "var(--sp-navy)" }}>{r.ipr_ref}</td>
-                <td style={td}>S{r.shipment_seq}</td>
+                             color: "var(--sp-navy)" }}>
+                  {r.ipr_ref} · S{r.shipment_seq}</td>
                 <td style={td}>{r.supplier}</td>
-                <td style={td}>{r.documents}</td>
-                <td style={td}>{r.shared_at
-                  ? new Date(r.shared_at).toLocaleString("en-GB",
-                      { dateStyle: "medium", timeStyle: "short" }) : "—"}</td>
+                <td style={td}>{r.mode}</td>
+                <td style={td}><StatusChip status={r.status} /></td>
+                <td style={td}>{r.eta || "—"}</td>
+                <td style={td}>
+                  {r.shared_at
+                    ? new Date(r.shared_at).toLocaleDateString("en-GB")
+                    : <span style={{ color: ["ARRIVED", "UNDER_CLEARING"]
+                        .includes(r.status) ? "#c0392b" : "#8a97a1" }}>
+                        not shared</span>}
+                </td>
+                <td style={td}>
+                  {r.documents} uploaded
+                  {r.missing_docs.length > 0 && (
+                    <div style={{ fontSize: 11, color: "#b35900" }}>
+                      for clearing: {r.missing_docs.join(", ")}</div>)}
+                </td>
+                <td style={td}>
+                  {ch.paid + ch.raised + ch.entered === 0
+                    ? <span style={{ color: "#8a97a1" }}>none entered</span>
+                    : <>
+                        {ch.paid > 0 && <span style={{ color: "#1a7f37" }}>
+                          {ch.paid} paid</span>}
+                        {ch.raised > 0 && <span style={{ color: "#b35900" }}>
+                          {ch.paid > 0 ? " · " : ""}{ch.raised} awaiting
+                          {" "}payment</span>}
+                        {ch.entered > 0 && <span style={{ color: "#5a6b78" }}>
+                          {ch.paid + ch.raised > 0 ? " · " : ""}{ch.entered}
+                          {" "}to raise</span>}
+                      </>}
+                </td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
+        </div>
       )}
+      <p style={{ fontSize: 11.5, color: "#8a97a1", marginTop: 6 }}>
+        Every shipment not yet cleared, the ones being cleared first. Click a
+        row to open the order's clearing window.
+      </p>
     </section>
   );
 }

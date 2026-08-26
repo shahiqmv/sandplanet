@@ -1091,7 +1091,8 @@ export default function App() {
               setDocView({ mode: "irn-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "clearance" && (
-            <ClearancePage me={me} />
+            <ClearancePage me={me} onOpenIpr={(ref) =>
+              setDocView({ mode: "ipr-view", doc: { ref } })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "suppliers" && (
             <SuppliersPage me={me} />

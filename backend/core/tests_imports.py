@@ -2042,3 +2042,20 @@ class ClearanceSetupTests(IprBase):
         self.client.force_authenticate(self.pm)
         self.assertEqual(
             self.client.get("/api/v1/clearance/setup").status_code, 403)
+
+    def test_pending_clearances_list_the_uncleared_shipments(self):
+        from core.models import Supplier
+        Supplier.objects.create(name="ClearCo", category="CLEARING_AGENT",
+                                email="agent@clearco.mv",
+                                is_clearing_agent=True)
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        self.client.post(f"/api/v1/ipr/{ref}/shipments",
+                         {"mode": "SEA"}, format="json")
+        rows = self.client.get("/api/v1/clearance/setup").data["pending"]
+        row = next(x for x in rows if x["ipr_ref"] == ref)
+        self.assertEqual(row["status"], "BOOKED")
+        self.assertIsNone(row["shared_at"])
+        self.assertIn("Packing list", row["missing_docs"])
+        self.assertEqual(row["charges"],
+                         {"paid": 0, "raised": 0, "entered": 0})
