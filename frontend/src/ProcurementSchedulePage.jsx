@@ -519,9 +519,11 @@ function Modal({ onClose, children }) {
 
 function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
   const [briefRef, setBriefRef] = useState(null);
-  // Site roles get the sanitised brief card; HO opens the full order.
+  // Everyone gets the status card on the planner (owner 2026-08-27) — the
+  // full order page is a jump too far mid-schedule; HO reaches it from the
+  // International Orders list when they need to act.
   const openRef = (ref) =>
-    (String(ref).startsWith("IPR-") && !me.is_ho)
+    String(ref).startsWith("IPR-")
       ? setBriefRef(ref)
       : onOpenDoc && onOpenDoc(ref);
   const [c, setC] = useState(null);
