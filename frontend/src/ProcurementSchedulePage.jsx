@@ -507,6 +507,12 @@ function Modal({ onClose, children }) {
 }
 
 function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
+  const [briefRef, setBriefRef] = useState(null);
+  // Site roles get the sanitised brief card; HO opens the full order.
+  const openRef = (ref) =>
+    (String(ref).startsWith("IPR-") && !me.is_ho)
+      ? setBriefRef(ref)
+      : onOpenDoc && onOpenDoc(ref);
   const [c, setC] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -724,8 +730,10 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
       {trackId && <Modal onClose={() => setTrackId(null)}>
         <LinkPanel line={c.lines.find((l) => l.id === trackId)}
           onClose={() => setTrackId(null)} onSaved={setC}
-          onOpenDoc={onOpenDoc} />
+          onOpenDoc={openRef} />
       </Modal>}
+      {briefRef && <IprBrief refIpr={briefRef}
+        onClose={() => setBriefRef(null)} />}
 
       {quotesId && <Modal onClose={() => setQuotesId(null)}>
         <QuotesPanel line={c.lines.find((l) => l.id === quotesId)}
@@ -820,6 +828,80 @@ function SplitPanel({ line, onClose, onSaved }) {
 
 // Track panel: link the execution documents that fulfil a line (MAR/IPR/GRN)
 // and set the manual production flag. The pipeline above is derived from these.
+// The IPR as the site team sees it (owner 2026-08-27): status, payment
+// position in words, shipments with live tracking — no import prices
+// (§6C.5). HO users open the full order instead.
+function IprBrief({ refIpr, onClose }) {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
+  useEffect(() => {
+    api(`/ipr/${refIpr}/brief`).then(setD).catch((e) => setErr(e.message));
+  }, [refIpr]);
+  const line = { fontSize: 13, margin: "2px 0" };
+  return (
+    <Modal onClose={onClose}>
+      <div style={{ minWidth: 320, maxWidth: 560 }}>
+        {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
+        {!d && !err && <p style={{ fontSize: 13 }}>Loading…</p>}
+        {d && (
+          <>
+            <div style={{ display: "flex", gap: 10, alignItems: "baseline",
+                          flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 16, color: "var(--navy)" }}>
+                {d.ref}</strong>
+              <Chip tone={{ AUTHORISED: "ok", APPROVED: "ok",
+                            SUBMITTED: "info", DRAFT: "warn" }[d.status]
+                          || "info"}>{d.status}</Chip>
+              <span style={{ marginLeft: "auto", fontSize: 12,
+                             color: "var(--muted)" }}>{d.doc_date}</span>
+            </div>
+            <p style={{ ...line, color: "var(--muted)" }}>
+              {d.supplier}{d.supplier_country ? ` · ${d.supplier_country}` : ""}
+              {d.incoterm ? ` · ${d.incoterm}` : ""}
+              {" · for "}{(d.projects || []).join(", ") || "—"}
+            </p>
+            <p style={line}><b>Payment:</b> {d.payment_word}</p>
+            {(d.milestones || []).length > 0 && (
+              <div style={{ fontSize: 12.5, color: "var(--muted)",
+                            marginBottom: 6 }}>
+                {d.milestones.map((m, i) => (
+                  <div key={i}>· {m.label} ({m.trigger}) —{" "}
+                    <span style={{ fontWeight: 600,
+                      color: m.status === "PAID" ? "var(--ok-fg, #1a7f37)"
+                        : m.status === "DUE" ? "#b35900"
+                        : "var(--muted)" }}>{m.status}</span></div>
+                ))}
+              </div>
+            )}
+            <p style={{ ...line, marginTop: 6 }}><b>Shipping:</b>
+              {(d.shipments || []).length === 0 && " no shipment booked yet"}
+            </p>
+            {(d.shipments || []).map((sh) => (
+              <div key={sh.seq} style={{ border: "1px solid var(--line)",
+                borderRadius: 8, padding: "6px 10px", marginBottom: 6,
+                fontSize: 12.5 }}>
+                <b>{sh.mode === "AIR" ? "✈" : "🚢"} Shipment {sh.seq}</b>
+                {" — "}{sh.status_display}
+                {sh.live ? ` · live: ${sh.live.replace(/_/g, " ")
+                  .toLowerCase()}` : ""}
+                {sh.eta ? ` · ETA ${sh.eta}` : ""}
+                {sh.vessel_flight ? ` · ${sh.vessel_flight}` : ""}
+                {sh.last_move && (
+                  <div style={{ color: "var(--muted)" }}>
+                    last: {sh.last_move.label}
+                    {sh.last_move.location ? ` — ${sh.last_move.location}`
+                                           : ""} · {sh.last_move.date}</div>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+
 function LinkPanel({ line, onClose, onSaved, onOpenDoc }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);

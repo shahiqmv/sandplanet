@@ -2110,3 +2110,30 @@ class CorrectionReschedulesFixedMilestoneTests(IprBase):
         mm = ImportPaymentMilestone.objects.get(pk=m["id"])
         self.assertEqual(mm.fixed_amount, Decimal("1350.00"))
         self.assertEqual(mm.status, "DUE")     # still due, at the new value
+
+
+class IprBriefTests(IprBase):
+    """Site teams track their orders through the sanitised brief (owner
+    2026-08-27) — status, payment words, shipping; never a price (§6C.5)."""
+
+    def test_pm_of_the_allocated_site_reads_it_without_money(self):
+        ref = self.create_and_authorise()
+        pm = make_user("brief_pm", User.Role.PM, site=self.site)
+        self.client.force_authenticate(pm)
+        r = self.client.get(f"/api/v1/ipr/{ref}/brief")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["ref"], ref)
+        self.assertEqual(r.data["supplier"], self.supplier.name)
+        blob = str(r.data)
+        for forbidden in ("unit_price", "order_total", "mvr", "amount",
+                          "exchange_rate", "1500", "100.0"):
+            self.assertNotIn(forbidden, blob.lower())
+
+    def test_pm_of_another_site_sees_nothing(self):
+        ref = self.create_and_authorise()
+        other = Site.objects.create(code="ZZB", name="Elsewhere",
+                                    status=Site.Status.ACTIVE)
+        pm = make_user("brief_pm2", User.Role.PM, site=other)
+        self.client.force_authenticate(pm)
+        self.assertEqual(
+            self.client.get(f"/api/v1/ipr/{ref}/brief").status_code, 404)

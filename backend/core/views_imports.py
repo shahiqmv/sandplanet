@@ -1377,3 +1377,74 @@ def clearance_setup(request):
         "incoming": incoming_rows,
         "to_receive": to_receive,
     })
+
+
+@api_view(["GET"])
+def ipr_brief(request, ref):
+    """The IPR as a site team may see it (owner 2026-08-27): the PM tracks
+    his site's materials — approval status, payment position in WORDS,
+    shipments with live tracking — but never import prices (§6C.5). HO roles
+    can read it too (it is a subset of what they already see)."""
+    from .permissions import scoped_site_ids
+
+    doc = (Document.objects.select_related("import_order__supplier")
+           .filter(ref=ref, doc_type="IPR").first())
+    if doc is None or doc.is_void:
+        return Response({"detail": "Not found."}, status=404)
+    order = doc.import_order
+    alloc_sites = set()
+    projects = []
+    for ln in order.lines.all():
+        for a in ln.allocations.select_related("project__site"):
+            if a.project_id:
+                alloc_sites.add(a.project.site_id)
+                if a.project.code not in projects:
+                    projects.append(a.project.code)
+            elif "Stock" not in projects:
+                projects.append("Stock")
+    if request.user.role not in VIEW_ROLES:
+        ids = scoped_site_ids(request.user)
+        if ids is not None and not (set(ids) & alloc_sites):
+            return Response({"detail": "Not found."}, status=404)
+
+    milestones = [{
+        "label": m.label, "trigger": m.get_trigger_display(),
+        "status": m.status,
+    } for m in order.milestones.all()]
+    paid = sum(1 for m in milestones if m["status"] == "PAID")
+    due = sum(1 for m in milestones if m["status"] == "DUE")
+    payment_word = ("No schedule yet" if not milestones
+                    else "Paid in full" if paid == len(milestones)
+                    else f"{paid} of {len(milestones)} paid"
+                         + (f" · {due} due" if due else ""))
+
+    ships = []
+    for s in order.shipments.all():
+        t = getattr(s, "tracking", None)
+        last = None
+        if t:
+            ev = (t.events.filter(is_actual=True).exclude(code="OTHER")
+                  .order_by("-event_time").first())
+            if ev:
+                from .tracking_shipsgo import move_label
+                last = {"label": (move_label(ev.provider_event_code, t.mode,
+                                             ev.code == "TRANSSHIPMENT")
+                                  if ev.provider_event_code
+                                  else ev.get_code_display()),
+                        "location": ev.location,
+                        "date": ev.event_time.date()}
+        ships.append({
+            "seq": s.seq, "mode": s.mode, "status": s.status,
+            "status_display": s.get_status_display(), "eta": s.eta,
+            "vessel_flight": s.vessel_flight,
+            "live": t.raw_status if t and t.raw_status else None,
+            "last_move": last,
+        })
+    return Response({
+        "ref": doc.ref, "status": doc.status, "doc_date": doc.doc_date,
+        "supplier": order.supplier.name,
+        "supplier_country": order.supplier.country,
+        "incoterm": order.incoterm, "projects": projects,
+        "payment_word": payment_word, "milestones": milestones,
+        "shipments": ships,
+    })

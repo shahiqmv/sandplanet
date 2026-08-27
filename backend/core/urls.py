@@ -97,6 +97,7 @@ urlpatterns = [
          name="ipr-proforma"),
     path("ipr/payments-due", imports_api.ipr_payments_due,
          name="ipr-payments-due"),
+    path("ipr/<str:ref>/brief", imports_api.ipr_brief, name="ipr-brief"),
     path("ipr/<str:ref>", imports_api.ipr_detail, name="ipr-detail"),
     path("ipr/<str:ref>/correct-charges", imports_api.ipr_correct_charges,
          name="ipr-correct-charges"),
