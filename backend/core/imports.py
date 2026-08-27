@@ -402,15 +402,26 @@ def propose_charge_correction(doc, data, actor):
     from .models import PaymentVoucherLine
     old_total = ipr_order_total(order)
     settled = ZERO
+    holders = []
     for m in order.milestones.all():
+        line = (PaymentVoucherLine.objects
+                .filter(source_milestone=m, status="INCLUDED")
+                .select_related("voucher").first())
         committed = (m.status in ("AUTHORISED", "PAID") or m.voucher_id
-                     or PaymentVoucherLine.objects.filter(
-                         source_milestone=m, status="INCLUDED").exists())
+                     or line is not None)
         if committed:
             settled += m.due_amount(old_total)
+            if m.status == "PAID":
+                holders.append(f"{m.label} (paid)")
+            elif line is not None:
+                holders.append(f"{m.label} on {line.voucher.ref}")
+            else:
+                holders.append(f"{m.label} ({m.status.lower()})")
     if new_total < settled:
         return None, (f"The corrected total ({new_total}) is below what is "
-                      f"already vouchered or paid ({settled}).")
+                      f"already vouchered or paid ({settled}): "
+                      + "; ".join(holders) + ". Query or cancel the voucher "
+                      "line first, then propose the correction.")
     corr = ImportChargeCorrection.objects.create(
         order=order, reason=reason, created_by=actor,
         fold_line_ids=sorted(fold_ids), **new)
