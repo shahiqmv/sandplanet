@@ -93,7 +93,7 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
     rows = []
 
     def _add(source, ident, invoice_no, ref, claim_type, project, inv_date,
-             dd, amt, got):
+             dd, amt, got, currency="USD"):
         out = amt - got
         if only_outstanding and out <= 0:
             return
@@ -108,6 +108,7 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
             "invoice_date": inv_date, "due_date": dd,
             "days_overdue": max(overdue, 0),
             "amount": amt, "received": got, "outstanding": out,
+            "currency": currency,
             "bucket": _bucket(overdue),
             "status": "PAID" if out <= 0 else (
                 "OVERDUE" if overdue > 0 else "CURRENT"),
@@ -120,7 +121,7 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
     for m in manual:
         _add("MANUAL", m.id, m.invoice_no, m.invoice_no, m.origin, m.project,
              m.invoice_date, m.effective_due_date, _q2(m.amount),
-             _q2(rm.get(m.id, ZERO)))
+             _q2(rm.get(m.id, ZERO)), currency=(m.currency or "USD"))
     rows.sort(key=lambda r: (r["due_date"], r["invoice_no"]))
     return rows
 
@@ -155,32 +156,40 @@ def aging(as_of=None, site_id=None):
     rows = invoice_rows(site_id=site_id, as_of=as_of, only_outstanding=True)
     clients = {}
     for r in rows:
-        c = clients.setdefault(r["site_id"], {
-            "site_id": r["site_id"], **_empty_buckets(),
-            "total": ZERO, "invoices": 0})
+        # An MVR project's invoices never mix into USD sums (owner
+        # 2026-08-27, the MRA case) — a client row is per (site, currency).
+        key = (r["site_id"], r["currency"])
+        c = clients.setdefault(key, {
+            "site_id": r["site_id"], "currency": r["currency"],
+            **_empty_buckets(), "total": ZERO, "invoices": 0})
         c[r["bucket"]] += r["outstanding"]
         c["total"] += r["outstanding"]
         c["invoices"] += 1
     # attach client names + sort by exposure
-    sites = {s.id: s for s in Site.objects.filter(id__in=clients.keys())}
+    sites = {s.id: s for s in Site.objects.filter(
+        id__in=[k[0] for k in clients])}
     client_rows = []
-    for sid, c in clients.items():
+    for (sid, _cur), c in clients.items():
         s = sites.get(sid)
         c["client"] = (s.client_name.strip() if s and s.client_name.strip()
                        else (s.name if s else "—"))
         c["site_code"] = s.code if s else "—"
         client_rows.append(c)
     client_rows.sort(key=lambda c: c["total"], reverse=True)
-    totals = _empty_buckets()
-    totals["total"] = ZERO
+    totals_by_currency = {}
     for c in client_rows:
+        t = totals_by_currency.setdefault(
+            c["currency"], {**_empty_buckets(), "total": ZERO})
         for b in BUCKETS:
-            totals[b] += c[b]
-        totals["total"] += c["total"]
+            t[b] += c[b]
+        t["total"] += c["total"]
+    totals = totals_by_currency.get("USD",
+                                    {**_empty_buckets(), "total": ZERO})
     return {
         "as_of": as_of, "buckets": BUCKETS,
         "bucket_labels": BUCKET_LABELS,
         "clients": client_rows, "totals": totals,
+        "totals_by_currency": totals_by_currency,
         "invoice_count": len(rows),
     }
 
@@ -192,8 +201,9 @@ def client_accounts(as_of=None):
     rows = invoice_rows(as_of=as_of)
     accts = {}
     for r in rows:
-        a = accts.setdefault(r["site_id"], {
-            "site_id": r["site_id"], "billed": ZERO, "received": ZERO,
+        a = accts.setdefault((r["site_id"], r["currency"]), {
+            "site_id": r["site_id"], "currency": r["currency"],
+            "billed": ZERO, "received": ZERO,
             "outstanding": ZERO, "invoices": 0, "overdue": ZERO})
         a["billed"] += r["amount"]
         a["received"] += r["received"]
@@ -201,9 +211,10 @@ def client_accounts(as_of=None):
         a["invoices"] += 1
         if r["days_overdue"] > 0 and r["outstanding"] > 0:
             a["overdue"] += r["outstanding"]
-    sites = {s.id: s for s in Site.objects.filter(id__in=accts.keys())}
+    sites = {s.id: s for s in Site.objects.filter(
+        id__in=[k[0] for k in accts])}
     out = []
-    for sid, a in accts.items():
+    for (sid, _cur), a in accts.items():
         s = sites.get(sid)
         a["client"] = (s.client_name.strip() if s and s.client_name.strip()
                        else (s.name if s else "—"))
@@ -283,6 +294,9 @@ def client_statement(site, date_from=None, date_to=None):
               else site.name)
     return {
         "site_id": site.id, "site_code": site.code, "client": client,
+        # The statement's money is in the site's contract currency — MVR for
+        # an MVR-based project like MRA, USD otherwise (owner 2026-08-27).
+        "currency": (site.currency or "USD"),
         "client_address": site.client_address,
         "date_from": date_from, "date_to": date_to,
         "opening": opening, "rows": rows,

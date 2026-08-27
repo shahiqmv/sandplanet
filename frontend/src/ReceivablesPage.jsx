@@ -33,7 +33,8 @@ export default function ReceivablesPage({ me }) {
                     marginBottom: 4 }}>
         <h1 style={{ margin: 0 }}>Receivables</h1>
         <span style={{ color: "var(--muted)", fontSize: 13 }}>
-          Client billing, due dates &amp; collections — all figures USD</span>
+          Client billing, due dates &amp; collections — figures in each
+          contract's currency (USD unless marked MVR)</span>
       </div>
       <div style={{ display: "flex", gap: 6, margin: "10px 0 14px" }}>
         {TABS.map(([k, label]) => (
@@ -69,7 +70,12 @@ function Aging() {
     <>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginBottom: 12 }}>
-        <Kpi label="Total outstanding" value={money(total)} strong />
+        <Kpi label="Total outstanding (USD)" value={money(total)} strong />
+        {Object.entries(d.totals_by_currency || {})
+          .filter(([cur]) => cur !== "USD").map(([cur, t]) => (
+          <Kpi key={cur} label={`Total outstanding (${cur})`}
+               value={money(t.total)} strong />
+        ))}
         {cols.map((b) => Number(d.totals[b]) > 0 && (
           <Kpi key={b} label={d.bucket_labels[b]} value={money(d.totals[b])}
                alert={b === "d61_90" || b === "d90p"} />
@@ -89,11 +95,14 @@ function Aging() {
           </tr></thead>
           <tbody>
             {d.clients.map((c) => (
-              <tr key={c.site_id}>
+              <tr key={`${c.site_id}-${c.currency}`}>
                 <td style={td}>
                   <div style={{ fontWeight: 600 }}>{c.client}</div>
                   <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {c.site_code}</div>
+                    {c.site_code}
+                    {c.currency && c.currency !== "USD" && (
+                      <b style={{ marginLeft: 6, color: "#8a6d00" }}>
+                        {c.currency}</b>)}</div>
                 </td>
                 <td style={{ ...td, textAlign: "right" }}>{c.invoices}</td>
                 {cols.map((b) => (
@@ -106,16 +115,22 @@ function Aging() {
               </tr>
             ))}
           </tbody>
-          <tfoot><tr style={{ borderTop: "2px solid var(--line)" }}>
-            <td style={{ ...td, fontWeight: 700 }}>All clients</td>
-            <td style={{ ...td, textAlign: "right" }}>{d.invoice_count}</td>
-            {cols.map((b) => (
-              <td key={b} style={{ ...td, textAlign: "right", ...mono,
-                fontWeight: 700 }}>{dash(d.totals[b])}</td>
+          <tfoot>
+            {Object.entries(d.totals_by_currency || { USD: d.totals })
+              .map(([cur, t]) => (
+              <tr key={cur} style={{ borderTop: "2px solid var(--line)" }}>
+                <td style={{ ...td, fontWeight: 700 }}>
+                  All clients ({cur})</td>
+                <td style={{ ...td, textAlign: "right" }} />
+                {cols.map((b) => (
+                  <td key={b} style={{ ...td, textAlign: "right", ...mono,
+                    fontWeight: 700 }}>{dash(t[b])}</td>
+                ))}
+                <td style={{ ...td, textAlign: "right", ...mono,
+                             fontWeight: 800 }}>{money(t.total)}</td>
+              </tr>
             ))}
-            <td style={{ ...td, textAlign: "right", ...mono, fontWeight: 800 }}>
-              {money(total)}</td>
-          </tr></tfoot>
+          </tfoot>
         </table>
       </div>
       <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 8 }}>
@@ -171,8 +186,9 @@ function Statement() {
           <select value={siteId} onChange={(e) => setSiteId(e.target.value)}
             style={sel}>
             {clients.map((c) => (
-              <option key={c.site_id} value={c.site_id}>
-                {c.client} ({c.site_code}) — {money(c.outstanding)} due</option>
+              <option key={`${c.site_id}-${c.currency}`} value={c.site_id}>
+                {c.client} ({c.site_code}) — {money(c.outstanding)}
+                {" "}{c.currency || "USD"} due</option>
             ))}
           </select>
         </Field>
@@ -192,9 +208,12 @@ function Statement() {
         <>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                         marginBottom: 12 }}>
-            <Kpi label="Invoiced" value={money(stmt.billed)} />
-            <Kpi label="Received" value={money(stmt.received)} />
-            <Kpi label="Balance due" value={money(stmt.closing)} strong
+            <Kpi label={`Invoiced (${stmt.currency || "USD"})`}
+                 value={money(stmt.billed)} />
+            <Kpi label={`Received (${stmt.currency || "USD"})`}
+                 value={money(stmt.received)} />
+            <Kpi label={`Balance due (${stmt.currency || "USD"})`}
+                 value={money(stmt.closing)} strong
                  alert={Number(stmt.closing) > 0} />
           </div>
           <div style={{ ...card, padding: 0, overflowX: "auto" }}>
@@ -499,7 +518,7 @@ function NewReceipt({ onDone, onCancel }) {
         <div style={{ fontSize: 15 }}>
           Total to receipt:{" "}
           <strong style={{ ...mono, color: "var(--navy)" }}>
-            {money(total)} USD</strong></div>
+            {money(total)} {invoices[0]?.currency || "USD"}</strong></div>
         <Btn variant="primary" onClick={save}
              disabled={saving || total <= 0}>
           {saving ? "Generating…" : "Generate receipt"}</Btn>
@@ -574,11 +593,15 @@ function ManualInvoices({ canManual }) {
                 <td style={td}><Chip tone={mi.origin === "ISSUED"
                   ? "info" : "ok"}>{ORIGIN_LABEL[mi.origin]}</Chip></td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
-                  {money(mi.amount)}</td>
+                  {money(mi.amount)}
+                  <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                    {" "}{mi.currency}</span></td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
                   {dash(mi.received)}</td>
                 <td style={{ ...td, textAlign: "right", ...mono }}>
-                  {money(mi.outstanding)}</td>
+                  {money(mi.outstanding)}
+                  <span style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                    {" "}{mi.currency}</span></td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
                   {mi.can_pdf && <a href={`/api/v1/receivables/`
                     + `manual-invoices/${mi.id}.pdf`} target="_blank"
@@ -608,7 +631,7 @@ function NewManualInvoice({ onDone, onCancel }) {
   const [form, setForm] = useState({
     origin: "HISTORICAL", project_id: "", invoice_no: "",
     invoice_date: new Date().toISOString().slice(0, 10), due_date: "",
-    gst_pct: "8", description: "", note: "" });
+    gst_pct: "8", currency: "USD", description: "", note: "" });
   const [lines, setLines] = useState([
     { description: "", quantity: "", unit_price: "", amount: "" }]);
   const [file, setFile] = useState(null);
@@ -624,7 +647,11 @@ function NewManualInvoice({ onDone, onCancel }) {
     api(`/sites/${siteId}/projects`)
       .then((r) => setProjects(Array.isArray(r) ? r : (r.results || [])))
       .catch(() => setProjects([]));
-    setForm((f) => ({ ...f, project_id: "" }));
+    // The invoice follows the contract's currency — MVR for an MVR-based
+    // project like MRA, USD otherwise (owner 2026-08-27). Still editable.
+    const site = (sites || []).find((x) => String(x.id) === String(siteId));
+    setForm((f) => ({ ...f, project_id: "",
+                      currency: (site?.currency || "USD").toUpperCase() }));
   }, [siteId]);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -670,7 +697,7 @@ function NewManualInvoice({ onDone, onCancel }) {
     try {
       const fd = new FormData();
       ["origin", "project_id", "invoice_date", "due_date", "gst_pct",
-        "description", "note"].forEach((k) => {
+        "currency", "description", "note"].forEach((k) => {
         if (form[k] !== "" && form[k] != null) fd.append(k, form[k]);
       });
       if (!issued) fd.append("invoice_no", form.invoice_no);
@@ -810,7 +837,13 @@ function NewManualInvoice({ onDone, onCancel }) {
           <div style={{ display: "flex", justifyContent: "space-between",
             padding: "6px 0", borderTop: "1px solid var(--line)",
             fontSize: 15 }}>
-            <span>Total (USD)</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              Total
+              <select value={form.currency} onChange={set("currency")}
+                      style={{ ...sel, width: 74, padding: "2px 6px" }}>
+                <option>USD</option><option>MVR</option>
+              </select>
+            </span>
             <b style={{ ...mono, color: "var(--navy)" }}>{money(total)}</b></div>
         </div>
       </div>

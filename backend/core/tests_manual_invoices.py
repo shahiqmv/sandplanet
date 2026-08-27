@@ -147,3 +147,28 @@ class ManualInvoiceTests(TestCase):
         self.assertEqual(self.client.get(
             f"/api/v1/receivables/manual-invoices/{hist['id']}.pdf")
             .status_code, 400)
+
+
+class MvrInvoiceTests(ManualInvoiceTests):
+    """MRA is an MVR-based project — its bills carry MVR, and MVR money never
+    mixes into USD aging totals (owner 2026-08-27)."""
+
+    def test_currency_is_kept_and_aging_separates_it(self):
+        r = self._create(currency="MVR", invoice_no="MRA-001")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["currency"], "MVR")
+        from core import receivables as rcv
+        rows = rcv.invoice_rows(site_id=self.site.id)
+        self.assertEqual(rows[0]["currency"], "MVR")
+        ag = rcv.aging()
+        self.assertIn("MVR", ag["totals_by_currency"])
+        self.assertEqual(ag["totals_by_currency"]["MVR"]["total"],
+                         rows[0]["outstanding"])
+        # USD totals untouched by the MVR invoice
+        self.assertEqual(ag["totals"]["total"], 0)
+        row = next(c for c in ag["clients"] if c["currency"] == "MVR")
+        self.assertEqual(row["site_id"], self.site.id)
+
+    def test_default_stays_usd(self):
+        r = self._create(invoice_no="V42-USD-1")
+        self.assertEqual(r.data["currency"], "USD")
