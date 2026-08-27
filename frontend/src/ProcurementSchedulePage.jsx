@@ -256,6 +256,17 @@ function LineRow({ ln, c, member, sel, on }) {
               {ln.state.replace(/_/g, " ")}</Chip>}
         {ln.stage && <div style={{ fontSize: 9.5, color: "var(--muted)",
           marginTop: 2 }}>{ln.state.replace(/_/g, " ").toLowerCase()}</div>}
+        {/* The order ref, right on the row — click for the status card
+            (site roles) or the full order (HO) (owner 2026-08-27). */}
+        {ln.ipr_ref && (
+          <div style={{ marginTop: 3 }}>
+            <a href="#" title="Open the order's status"
+               onClick={(e) => { e.preventDefault();
+                                 on.openRef?.(ln.ipr_ref); }}
+               style={{ textDecoration: "none" }}>
+              <RefStamp small>{ln.ipr_ref}</RefStamp></a>
+          </div>
+        )}
         <TrackingLine t={ln.tracking} />
       </td>
       <td style={{ ...cell, whiteSpace: "nowrap" }}>
@@ -665,7 +676,8 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
         const gkey = String(sec.id === "none" ? 0 : sec.id);
         const grows = c.groups?.[gkey] || [];
         if (!grows.length && sec.id !== "none") return null;
-        const on = { edit: setEditId, track: setTrackId, quotes: setQuotesId,
+        const on = { openRef,
+                     edit: setEditId, track: setTrackId, quotes: setQuotesId,
           split: setSplitId };
         const sel = { track: trackId, quotes: quotesId };
         return (
