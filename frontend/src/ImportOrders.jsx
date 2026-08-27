@@ -1423,7 +1423,9 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
             {i < at ? "✓ " : ""}{st.replace(/_/g, " ")}</span>
         ))}
       </div>
-      {canManage && s.next_statuses.length > 0 && (
+      {/* CLEARED is the end of the status chain, but not of the work —
+          the Receive button must survive it (owner 2026-08-27). */}
+      {canManage && (s.next_statuses.length > 0 || arrived) && (
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
           {s.next_statuses.map((ns) => (
             <button key={ns} style={{ ...ghostButton, padding: "2px 10px",
