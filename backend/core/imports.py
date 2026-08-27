@@ -394,11 +394,20 @@ def propose_charge_correction(doc, data, actor):
                  + (new["misc_fee"] or ZERO))
     if new_total <= ZERO:
         return None, "The corrected charges wipe out the order value."
-    # what the paid / vouchered milestones were worth at the total they were
-    # raised against — the corrected total must still cover it
+    # Only money the company is actually committed to blocks a reduction:
+    # milestones paid, authorised, or sitting on a voucher. A merely-DUE
+    # milestone with no voucher rescales with the correction instead of
+    # blocking it (owner 2026-08-27, IPR-037 — the guard counted a DUE
+    # advance as "settled" and dead-locked the correction).
+    from .models import PaymentVoucherLine
     old_total = ipr_order_total(order)
-    settled = sum((m.due_amount(old_total) for m in
-                   order.milestones.exclude(status="PENDING")), ZERO)
+    settled = ZERO
+    for m in order.milestones.all():
+        committed = (m.status in ("AUTHORISED", "PAID") or m.voucher_id
+                     or PaymentVoucherLine.objects.filter(
+                         source_milestone=m, status="INCLUDED").exists())
+        if committed:
+            settled += m.due_amount(old_total)
     if new_total < settled:
         return None, (f"The corrected total ({new_total}) is below what is "
                       f"already vouchered or paid ({settled}).")
@@ -514,6 +523,7 @@ def _apply_charge_correction(doc, corr, actor):
         _post_split(order, doc, "COMMITTED", (target - posted) / target,
                     order.exchange_rate, actor)
     _revise_po_charges(doc, order, actor)
+    _rescale_fixed_milestones(order, old_total, actor)
     corr.status = "APPLIED"
     corr.decided_by, corr.decided_at = actor, timezone.now()
     corr.save(update_fields=["status", "decided_by", "decided_at"])
@@ -521,6 +531,52 @@ def _apply_charge_correction(doc, corr, actor):
           detail={"ref": doc.ref, "old_total": str(old_total),
                   "new_total": str(ipr_order_total(order)),
                   "folded_lines": corr.fold_line_ids or []})
+
+
+def _rescale_fixed_milestones(order, old_total, actor):
+    """Bring FIXED milestones along with a charge correction (owner
+    2026-08-27, IPR-037): percent milestones follow the total by
+    construction, but a fixed advance kept its old amount and the schedule
+    no longer summed to the corrected total — dead-locking the schedule
+    editor. Milestones already committed (paid / authorised / on a voucher)
+    are never touched; the still-movable fixed ones scale proportionally,
+    with the last one absorbing rounding so the schedule sums exactly."""
+    from .models import PaymentVoucherLine
+    new_total = ipr_order_total(order)
+    ms = list(order.milestones.all())
+
+    def committed(m):
+        return (m.status in ("AUTHORISED", "PAID") or m.voucher_id
+                or PaymentVoucherLine.objects.filter(
+                    source_milestone=m, status="INCLUDED").exists())
+
+    kept = sum((m.due_amount(old_total) for m in ms if committed(m)), ZERO)
+    pct_due = sum((m.due_amount(new_total) for m in ms
+                   if not committed(m) and m.fixed_amount is None), ZERO)
+    movable = [m for m in ms
+               if not committed(m) and m.fixed_amount is not None]
+    if not movable:
+        return
+    target = new_total - kept - pct_due
+    if target < ZERO:
+        target = ZERO
+    base = sum((m.fixed_amount for m in movable), ZERO)
+    running = ZERO
+    for i, m in enumerate(movable):
+        if i == len(movable) - 1:
+            amount = (target - running).quantize(Decimal("0.01"))
+        else:
+            share = (m.fixed_amount / base) if base else \
+                Decimal("1") / len(movable)
+            amount = (target * share).quantize(Decimal("0.01"))
+        running += amount
+        if amount != m.fixed_amount:
+            audit("document", order.document_id, "IPR_MILESTONE_RESCALED",
+                  actor=actor, detail={"milestone": m.id, "label": m.label,
+                                       "from": str(m.fixed_amount),
+                                       "to": str(amount)})
+            m.fixed_amount = amount
+            m.save(update_fields=["fixed_amount"])
 
 
 def _revise_po_charges(doc, order, actor):

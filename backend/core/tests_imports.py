@@ -488,11 +488,16 @@ class MilestonePaymentTests(IprBase):
         m = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"][0]
         self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
                          format="json")
+        # Merely DUE (no voucher) no longer blocks — only committed money
+        # does (owner 2026-08-27). Authorise it to arm the guard.
+        ImportPaymentMilestone.objects.filter(pk=m["id"]).update(
+            status="AUTHORISED")
         r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
                              {"discount": "900", "reason": "wrong"},
                              format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("below what is already", r.data["detail"])
+        ImportPaymentMilestone.objects.filter(pk=m["id"]).update(status="DUE")
         # a valid proposal can be rejected by the Director with a reason
         r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
                              {"freight_handling": "80", "reason": "PI freight"},
@@ -2064,3 +2069,44 @@ class ClearanceSetupTests(IprBase):
         self.assertEqual(data["tiles"]["at_port"], 0)
         self.assertEqual(data["at_port"], [])
         self.assertEqual(data["to_receive"], [])
+
+
+class CorrectionReschedulesFixedMilestoneTests(IprBase):
+    """IPR-037 (owner 2026-08-27): a DUE fixed advance dead-locked charge
+    corrections — the guard called it settled, and even an approved
+    correction left the fixed amount stale so the schedule no longer summed
+    to the total. Now DUE-unvouchered milestones rescale with the total."""
+
+    def test_due_fixed_advance_rescales_through_a_correction(self):
+        from decimal import Decimal
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        # order 1000 goods + 1150 freight = 2150; fixed advance = full total
+        order = self._order(ref)
+        order.freight_handling = Decimal("1150")
+        order.save(update_fields=["freight_handling"])
+        total = str(Decimal("1000") + Decimal("1150"))
+        self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance 100%", "trigger": "ADVANCE",
+             "fixed_amount": total}]}, format="json")
+        m = self.client.get(f"/api/v1/ipr/{ref}").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        # correct: freight removed, misc 350 → total 1350 (below old 2150,
+        # above nothing committed) — proposal must be ACCEPTED
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"freight_handling": "0", "misc_fee": "350",
+                              "reason": "air freight removed"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        # Director then Signatory
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                         {"action": "approve"}, format="json")
+        self.client.force_authenticate(self.signatory)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                             {"action": "approve"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        mm = ImportPaymentMilestone.objects.get(pk=m["id"])
+        self.assertEqual(mm.fixed_amount, Decimal("1350.00"))
+        self.assertEqual(mm.status, "DUE")     # still due, at the new value
