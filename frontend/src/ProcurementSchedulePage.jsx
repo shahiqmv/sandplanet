@@ -854,7 +854,8 @@ function IprBrief({ refIpr, onClose }) {
   const line = { fontSize: 13, margin: "2px 0" };
   return (
     <Modal onClose={onClose}>
-      <div style={{ minWidth: 320, maxWidth: 560 }}>
+      <div style={{ ...card, minWidth: 320, maxWidth: 560,
+                    margin: "0 auto" }}>
         {err && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{err}</p>}
         {!d && !err && <p style={{ fontSize: 13 }}>Loading…</p>}
         {d && (
