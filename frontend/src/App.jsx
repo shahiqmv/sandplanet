@@ -1088,8 +1088,12 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho &&
             hoPage === "import-tracker" && (
-            <ImportTracker me={me} onOpenIpr={(ref) =>
-              setDocView({ mode: "ipr-view", doc: { ref } })} />
+            <ImportTracker me={me}
+              onOpenIpr={(ref) =>
+                setDocView({ mode: "ipr-view", doc: { ref } })}
+              onOpenShipment={(ref, sh) =>
+                setDocView({ mode: "shipment-view", doc: { ref },
+                             shipmentId: sh.id, shipmentSeq: sh.seq })} />
           )}
           {!docView && !openSite && me.is_ho &&
             hoPage === "import-payments" && (

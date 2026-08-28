@@ -1038,18 +1038,28 @@ def imports_tracker(request):
     for d in Document.objects.filter(doc_type="IPR").select_related(
             "import_order__supplier", "created_by").order_by("-id")[:200]:
         o = d.import_order
-        ships = list(o.shipments.all())
+        # Shipments are independent now — an order's cargo may ride a
+        # consolidated shipment booked from another order (2026-08-28).
+        ships = list(ipr_svc.order_shipments(o))
         milestones = list(o.milestones.all())
         receipts = ImportReceipt.objects.filter(
-            shipment__order=o).select_related("document")
+            shipment__in=[s.id for s in ships]).select_related("document")
         orders.append({
             "ref": d.ref, "status": d.status, "supplier": o.supplier.name,
             "currency": o.order_currency,
             "order_total": ipr_svc.ipr_order_total(o),
             "pmrs": list(ipr_svc.linked_pmrs(d).values_list("ref", flat=True)),
-            "shipments": [{"seq": s.seq, "status": s.status,
-                           "status_display": s.get_status_display(),
-                           "eta": s.eta} for s in ships],
+            "shipments": [{
+                "id": s.id, "ref": s.ref or f"S{s.seq}", "seq": s.seq,
+                "mode": s.mode, "status": s.status,
+                "status_display": s.get_status_display(), "eta": s.eta,
+                "live": (s.tracking.raw_status
+                         if getattr(s, "tracking", None)
+                         and s.tracking.raw_status else None),
+                "key": s.container_awb or s.bl_no or "",
+                "with": [o2.document.ref for o2 in s.orders()
+                         if o2.id != o.id],
+            } for s in ships],
             "milestones_paid": sum(1 for m in milestones
                                    if m.status == "PAID"),
             "milestones_total": len(milestones),

@@ -2393,20 +2393,74 @@ function CarrierAdmin({ isAdmin }) {
   );
 }
 
-export function ImportTracker({ me, onOpenIpr }) {
+export function ImportTracker({ me, onOpenIpr, onOpenShipment }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState("live");
   useEffect(() => {
     api("/imports/tracker").then(setData).catch((e) => setError(e.message));
   }, []);
+
+  const orders = data?.orders || [];
+  const isLive = (o) => !["CLOSED", "CANCELLED", "REJECTED"].includes(o.status)
+    && !(o.receipts.length > 0 && o.shipments.every(
+      (s) => s.status === "CLEARED"));
+  const matches = (o) => {
+    const n = q.trim().toLowerCase();
+    if (!n) return true;
+    return o.ref.toLowerCase().includes(n)
+      || o.supplier.toLowerCase().includes(n)
+      || (o.pmrs || []).some((p) => p.toLowerCase().includes(n))
+      || (o.shipments || []).some((s) => (s.ref || "").toLowerCase()
+                                           .includes(n));
+  };
+  const shown = orders.filter(matches).filter((o) =>
+    filter === "all" ? true
+    : filter === "live" ? isLive(o)
+    : filter === "moving" ? o.shipments.some(
+        (s) => ["SHIPPED", "IN_TRANSIT"].includes(s.status))
+    : filter === "port" ? o.shipments.some(
+        (s) => ["ARRIVED", "UNDER_CLEARING"].includes(s.status))
+    : filter === "unshipped" ? o.shipments.length === 0
+    : true);
+
+  // The pipeline a PM/purchaser reads left to right.
+  const stageOf = (o) => {
+    const done = (x) => ({ state: x });
+    const anyShip = o.shipments.length > 0;
+    const cleared = anyShip && o.shipments.every((s) => s.status === "CLEARED");
+    const atPort = o.shipments.some(
+      (s) => ["ARRIVED", "UNDER_CLEARING"].includes(s.status));
+    const moving = o.shipments.some(
+      (s) => ["SHIPPED", "IN_TRANSIT"].includes(s.status));
+    return [
+      ["Ordered", o.status === "AUTHORISED" || anyShip ? "done" : "now"],
+      ["Shipped", moving ? "now" : (atPort || cleared ? "done"
+        : anyShip ? "next" : "wait")],
+      ["At port", atPort ? "now" : (cleared ? "done" : "wait")],
+      ["Cleared", cleared ? "done" : "wait"],
+      ["Received", o.receipts.length ? "done" : "wait"],
+    ].map(([label, state]) => ({ label, state, ...done(state) }));
+  };
+  const DOT = { done: "#1a7f37", now: "#b35900", next: "#8fb3c9",
+                wait: "#d7e1e8" };
+
+  const chip = (key, label, n) => (
+    <button key={key} onClick={() => setFilter(key)}
+            style={{ ...(filter === key ? buttonStyle : ghostButton),
+                     padding: "4px 12px", fontSize: 12.5 }}>
+      {label}{n != null ? ` · ${n}` : ""}</button>
+  );
+
   return (
     <section style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 18 }}>
           🌍 Import tracker</h2>
         <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "4px 0 0" }}>
-          Every overseas order and where it stands — demand (PMR) → order (IPR)
-          → shipment → receipt (IRN) → payments.</p>
+          Every overseas order and where it stands — demand (PMR) → order
+          (IPR) → shipment → clearance → receipt (IRN) → payments.</p>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
@@ -2417,8 +2471,8 @@ export function ImportTracker({ me, onOpenIpr }) {
       {data?.awaiting_order?.length > 0 && (
         <section style={card}>
           <h3 style={{ margin: "0 0 8px", fontSize: 14, color: "#b35900" }}>
-            Awaiting an order — sized & released demand ({data.awaiting_order
-              .length})</h3>
+            Awaiting an order — sized &amp; released demand
+            ({data.awaiting_order.length})</h3>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {data.awaiting_order.map((p) => (
               <span key={p.ref} style={{ fontSize: 12.5, padding: "3px 10px",
@@ -2429,70 +2483,146 @@ export function ImportTracker({ me, onOpenIpr }) {
         </section>
       )}
 
-      <section style={card}>
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse",
-                          fontSize: 13 }}>
-            <thead><tr>
-              <th style={th}>Order</th><th style={th}>Supplier</th>
-              <th style={th}>Stage</th>
-              <th style={{ ...th, textAlign: "right" }}>Value</th>
-              <th style={th}>Shipments</th><th style={th}>Payments</th>
-              <th style={th}>Receipt</th>
-            </tr></thead>
-            <tbody>
-              {(data?.orders || []).map((o) => (
-                <tr key={o.ref}>
-                  <td style={td}>
-                    <a href="#" onClick={(e) => { e.preventDefault();
-                                                  onOpenIpr(o.ref); }}
-                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                      {o.ref}</a>
-                    {o.pmrs.length > 0 && (
-                      <div style={{ fontSize: 11, color: "#8a97a1" }}>
-                        ← {o.pmrs.join(", ")}</div>
-                    )}
-                  </td>
-                  <td style={td}>{o.supplier}</td>
-                  <td style={td}><StatusChip status={o.status} /></td>
-                  <td style={{ ...td, textAlign: "right" }}>
-                    {o.currency} {money(o.order_total)}</td>
-                  <td style={td}>
-                    {o.shipments.length === 0
-                      ? <span style={{ color: "#8a97a1" }}>—</span>
-                      : o.shipments.map((s) => (
-                        <div key={s.seq} style={{ fontSize: 12 }}>
-                          #{s.seq}{" "}
-                          <span style={{ color: SHIP_TONE[s.status] || "inherit",
-                            fontWeight: 600 }}>{s.status_display}</span>
-                          {s.eta ? ` · ETA ${s.eta}` : ""}</div>
-                      ))}
-                  </td>
-                  <td style={td}>
-                    {o.milestones_total === 0
-                      ? <span style={{ color: "#8a97a1" }}>no schedule</span>
-                      : <span style={{ fontWeight: 600, color:
-                          o.milestones_paid === o.milestones_total
-                            ? "#1a7f37" : "#b35900" }}>
-                          {o.milestones_paid}/{o.milestones_total} paid</span>}
-                  </td>
-                  <td style={td}>
-                    {o.receipts.length === 0
-                      ? <span style={{ color: "#8a97a1" }}>—</span>
-                      : o.receipts.map((r) => (
-                        <div key={r.ref} style={{ fontSize: 12 }}>
-                          {r.ref} · {r.status}</div>))}
-                  </td>
-                </tr>
-              ))}
-              {data && data.orders.length === 0 && (
-                <tr><td colSpan={7} style={{ ...td, textAlign: "center",
-                  color: "var(--muted)" }}>No overseas orders yet.</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    flexWrap: "wrap" }}>
+        {chip("live", "In flight", orders.filter(isLive).length)}
+        {chip("moving", "On the water", orders.filter((o) =>
+          o.shipments.some((s) => ["SHIPPED", "IN_TRANSIT"]
+            .includes(s.status))).length)}
+        {chip("port", "At the port", orders.filter((o) =>
+          o.shipments.some((s) => ["ARRIVED", "UNDER_CLEARING"]
+            .includes(s.status))).length)}
+        {chip("unshipped", "Not shipped yet", orders.filter((o) =>
+          o.shipments.length === 0).length)}
+        {chip("all", "All orders", orders.length)}
+        <input placeholder="Search order / supplier / shipment / PMR…"
+               value={q} onChange={(e) => setQ(e.target.value)}
+               style={{ ...inputStyle, width: 280, marginLeft: "auto" }} />
+      </div>
+
+      {!data && <section style={card}>Loading…</section>}
+      {data && shown.length === 0 && (
+        <section style={card}>
+          <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
+            Nothing here — try another filter or clear the search.</p>
+        </section>
+      )}
+
+      {shown.map((o) => (
+        <section key={o.ref} style={{ ...card, padding: "14px 18px" }}>
+          {/* header */}
+          <div style={{ display: "flex", gap: 12, alignItems: "baseline",
+                        flexWrap: "wrap" }}>
+            <a href="#" onClick={(e) => { e.preventDefault();
+                                          onOpenIpr(o.ref); }}
+               style={{ color: "var(--sp-navy)", fontWeight: 700,
+                        fontSize: 16, textDecoration: "none" }}>{o.ref}</a>
+            <StatusChip status={o.status} />
+            <span style={{ fontSize: 13, color: "#41525f" }}>{o.supplier}</span>
+            <span style={{ marginLeft: "auto", fontSize: 13,
+                           fontWeight: 600, color: "var(--sp-navy)" }}>
+              {o.currency} {money(o.order_total)}</span>
+          </div>
+          <div style={{ fontSize: 11.5, color: "#8a97a1", marginTop: 2 }}>
+            {o.doc_date}
+            {o.pmrs.length > 0 ? ` · from ${o.pmrs.join(", ")}` : ""}
+            {o.created_by ? ` · raised by ${o.created_by}` : ""}
+          </div>
+
+          {/* pipeline */}
+          <div style={{ display: "flex", gap: 0, alignItems: "center",
+                        margin: "12px 0 4px", flexWrap: "wrap" }}>
+            {stageOf(o).map((st, i, arr) => (
+              <span key={st.label} style={{ display: "flex",
+                alignItems: "center" }}>
+                <span style={{ display: "inline-flex", alignItems: "center",
+                               gap: 6 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 5,
+                                 background: DOT[st.state],
+                                 display: "inline-block" }} />
+                  <span style={{ fontSize: 12,
+                    fontWeight: st.state === "now" ? 700 : 500,
+                    color: st.state === "wait" ? "#a9b7c2"
+                      : st.state === "now" ? "#b35900" : "#41525f" }}>
+                    {st.label}</span>
+                </span>
+                {i < arr.length - 1 && (
+                  <span style={{ width: 26, height: 2, margin: "0 8px",
+                    background: arr[i + 1].state === "wait"
+                      ? "#e3ecf2" : "#bcd4e3" }} />
+                )}
+              </span>
+            ))}
+          </div>
+
+          {/* detail strip */}
+          <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
+                        marginTop: 10 }}>
+            <div style={{ flex: 2, minWidth: 280 }}>
+              <div style={{ fontSize: 11, color: "#8a97a1",
+                            marginBottom: 4 }}>SHIPMENTS</div>
+              {o.shipments.length === 0
+                ? <span style={{ fontSize: 12.5, color: "#8a97a1" }}>
+                    not booked yet</span>
+                : o.shipments.map((s) => (
+                  <div key={s.id || s.seq}
+                       onClick={() => onOpenShipment?.(o.ref, s)}
+                       style={{ fontSize: 12.5, marginBottom: 4,
+                                cursor: onOpenShipment ? "pointer" : "default",
+                                border: "1px solid #e3ecf2", borderRadius: 6,
+                                padding: "5px 9px" }}>
+                    <b style={{ color: "var(--sp-navy)" }}>
+                      {s.mode === "AIR" ? "✈" : "🚢"} {s.ref}</b>
+                    {" — "}
+                    <span style={{ color: SHIP_TONE[s.status] || "inherit",
+                                   fontWeight: 600 }}>{s.status_display}</span>
+                    {s.eta ? ` · ETA ${s.eta}` : ""}
+                    {s.live ? ` · live: ${String(s.live).replace(/_/g, " ")
+                      .toLowerCase()}` : ""}
+                    <div style={{ fontSize: 11, color: "#8a97a1" }}>
+                      {s.key || "no key entered"}
+                      {s.with && s.with.length > 0 && (
+                        <b style={{ color: "#8a6d00" }}>
+                          {" "}· consolidated with {s.with.join(", ")}</b>)}
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <div style={{ flex: 1, minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "#8a97a1",
+                            marginBottom: 4 }}>PAYMENTS</div>
+              {o.milestones_total === 0
+                ? <span style={{ fontSize: 12.5, color: "#8a97a1" }}>
+                    no schedule</span>
+                : (<>
+                    <div style={{ fontSize: 12.5, fontWeight: 600, color:
+                      o.milestones_paid === o.milestones_total
+                        ? "#1a7f37" : "#b35900" }}>
+                      {o.milestones_paid} of {o.milestones_total} paid</div>
+                    <div style={{ height: 6, borderRadius: 3,
+                                  background: "#e8eef3", marginTop: 4,
+                                  maxWidth: 140 }}>
+                      <div style={{ height: 6, borderRadius: 3,
+                        width: `${100 * o.milestones_paid
+                          / o.milestones_total}%`,
+                        background: o.milestones_paid === o.milestones_total
+                          ? "#1a7f37" : "#e0a458" }} />
+                    </div>
+                  </>)}
+            </div>
+            <div style={{ flex: 1, minWidth: 150 }}>
+              <div style={{ fontSize: 11, color: "#8a97a1",
+                            marginBottom: 4 }}>RECEIPT</div>
+              {o.receipts.length === 0
+                ? <span style={{ fontSize: 12.5, color: "#8a97a1" }}>
+                    not counted in yet</span>
+                : o.receipts.map((r) => (
+                  <div key={r.ref} style={{ fontSize: 12.5 }}>
+                    {r.ref} · {r.status.toLowerCase()}</div>))}
+            </div>
+          </div>
+        </section>
+      ))}
     </section>
   );
 }
