@@ -853,21 +853,13 @@ def create_shipment(order, data, actor):
         if not alloc:
             return None, "The whole order is already on shipments."
 
-    shipment = ImportShipment.objects.create(
-        ref=next_ref("SHP", None),
-        order=order, seq=seq, mode=mode,
-        forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
-        vessel_flight=data.get("vessel_flight", ""),
-        carrier_scac=(data.get("carrier_scac", "") or "").strip().upper(),
-        bl_no=data.get("bl_no", ""),
-        container_awb=data.get("container_awb", ""),
-        etd=data.get("etd") or None, eta=data.get("eta") or None,
-        tracking_ref=data.get("tracking_ref", ""),
-        carrier_link=data.get("carrier_link", ""),
-        notes=data.get("notes", ""), created_by=actor)
-    for ln, qty in alloc:
-        ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
-                                          qty=qty)
+    with transaction.atomic():
+        shipment = _new_shipment_row(order, mode, forwarder, data, actor)
+        shipment.seq = seq
+        shipment.save(update_fields=["seq"])
+        for ln, qty in alloc:
+            ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
+                                              qty=qty)
     # A key entered AT BOOKING starts tracking right away — only edits and
     # the Shipped move registered before, so an air shipment booked with its
     # AWB sat untracked until someone touched it (IPR-024, 2026-08-26).
@@ -878,6 +870,24 @@ def create_shipment(order, data, actor):
 def missing_clearing_docs(shipment):
     have = set(shipment.documents.values_list("doc_type", flat=True))
     return [d for d in REQUIRED_FOR_CLEARING if d not in have]
+
+
+def _new_shipment_row(primary, mode, forwarder, data, actor):
+    """The ImportShipment row itself — shared by both booking paths so the
+    SHP reference is issued the same way (2026-08-28)."""
+    from .models import ImportShipment
+    return ImportShipment.objects.create(
+        ref=next_ref("SHP", None),
+        order=primary, seq=(primary.shipments.count() or 0) + 1, mode=mode,
+        forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
+        vessel_flight=data.get("vessel_flight", ""),
+        carrier_scac=(data.get("carrier_scac", "") or "").strip().upper(),
+        bl_no=data.get("bl_no", ""),
+        container_awb=data.get("container_awb", ""),
+        etd=data.get("etd") or None, eta=data.get("eta") or None,
+        tracking_ref=data.get("tracking_ref", ""),
+        carrier_link=data.get("carrier_link", ""),
+        notes=data.get("notes", ""), created_by=actor)
 
 
 def create_consolidated_shipment(data, actor):
@@ -917,20 +927,14 @@ def create_consolidated_shipment(data, actor):
     forwarder = None
     if data.get("forwarder_id"):
         forwarder = Supplier.objects.filter(pk=data["forwarder_id"]).first()
-    shipment = ImportShipment.objects.create(
-        ref=next_ref("SHP", None),
-        order=primary, seq=(primary.shipments.count() or 0) + 1, mode=mode,
-        forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
-        vessel_flight=data.get("vessel_flight", ""),
-        carrier_scac=(data.get("carrier_scac", "") or "").strip().upper(),
-        bl_no=data.get("bl_no", ""),
-        container_awb=data.get("container_awb", ""),
-        etd=data.get("etd") or None, eta=data.get("eta") or None,
-        tracking_ref=data.get("tracking_ref", ""),
-        notes=data.get("notes", ""), created_by=actor)
-    for ln, qty in alloc:
-        ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
-                                          qty=qty)
+    # next_ref locks the counter FOR UPDATE, so the whole booking runs in one
+    # transaction — a failed create rolls the number back (2026-08-28).
+    with transaction.atomic():
+        shipment = _new_shipment_row(
+            primary, mode, forwarder, data, actor)
+        for ln, qty in alloc:
+            ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
+                                              qty=qty)
     _register_tracking(shipment)
     audit("document", primary.document_id, "SHIPMENT_BOOKED", actor=actor,
           detail={"ref": shipment.ref,

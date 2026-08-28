@@ -3,7 +3,7 @@
 Director."""
 from datetime import date
 
-from django.test import TestCase
+from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
 from .models import (CostHead, CostPosting, Document, DocumentRevision,
@@ -2215,3 +2215,47 @@ class ConsolidatedShipmentTests(IprBase):
         self.assertEqual(b.quantize(Decimal("0.01")), Decimal("1000.00"))
         self.assertEqual((a + b).quantize(Decimal("0.01")),
                          Decimal("4000.00"))
+
+
+class BookingNeedsNoAmbientTransactionTests(TransactionTestCase):
+    """IPR-016 (2026-08-28): booking 500ed in the real request because
+    next_ref locks the counter FOR UPDATE and nothing opened a transaction —
+    every test until now ran inside TestCase's implicit atomic block, which
+    hid it. TransactionTestCase reproduces production's autocommit."""
+
+    def test_both_booking_paths_work_in_autocommit(self):
+        from .models import (CostHead, Document, DocumentRevision,
+                             ImportOrder, ImportOrderLine, Site, User)
+        from .tests import make_user
+        site = Site.objects.create(code="BKG", name="Booking",
+                                   status=Site.Status.ACTIVE)
+        actor = make_user("bkg_ho", User.Role.HO_PURCHASING)
+        supplier = Supplier.objects.create(name="Pumps Co",
+                                           category="INTERNATIONAL")
+        head = CostHead.objects.get_or_create(
+            name="Materials", defaults={"sort_order": 1})[0]
+        doc = Document.objects.create(
+            doc_type="IPR", ref="IPR-BKG-001", site=site,
+            doc_date=date.today(), status="AUTHORISED", created_by=actor)
+        DocumentRevision.objects.create(document=doc, rev_label="R0",
+                                        payload={}, created_by=actor)
+        order = ImportOrder.objects.create(document=doc, supplier=supplier,
+                                           order_currency="USD",
+                                           exchange_rate=15)
+        line = ImportOrderLine.objects.create(
+            order=order, line_no=1, free_text_desc="Pump", unit="nos",
+            order_qty=10, unit_price=100, cost_head=head)
+
+        from . import imports as svc
+        sh, err = svc.create_consolidated_shipment(
+            {"mode": "SEA", "rows": [{"ipr_line_id": line.id, "qty": "4"}]},
+            actor)
+        self.assertIsNone(err)
+        self.assertTrue(sh.ref.startswith("SHP-"))
+
+        sh2, err2 = svc.create_shipment(
+            order, {"mode": "SEA", "lines": [{"ipr_line_id": line.id,
+                                              "qty": "6"}]}, actor)
+        self.assertIsNone(err2)
+        self.assertTrue(sh2.ref.startswith("SHP-"))
+        self.assertNotEqual(sh.ref, sh2.ref)
