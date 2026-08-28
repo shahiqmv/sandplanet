@@ -68,12 +68,20 @@ def tracking_health(request):
     if request.user.role not in MANAGE:
         return Response({"detail": "Head Office manages tracking."}, status=403)
     rows = []
-    qs = ShipmentTracking.objects.select_related(
-        "shipment__order__document").order_by("-updated_at")
+    qs = (ShipmentTracking.objects
+          .select_related("shipment__order__document")
+          .prefetch_related("shipment__lines__ipr_line__order__document")
+          .order_by("-updated_at"))
     for t in qs:
         doc = t.shipment.order.document
         health = trk.health_for(t)
+        sh = t.shipment
         rows.append({
+            # Shipments are the unit here — a consolidated one names every
+            # order aboard instead of hiding all but the primary (owner
+            # 2026-08-28).
+            "shipment_ref": sh.ref or f"S{sh.seq}",
+            "orders": [o.document.ref for o in sh.orders()],
             "ipr_ref": doc.ref, "shipment_seq": t.shipment.seq,
             "shipment_id": t.shipment_id,
             "mode": t.mode, "carrier_scac": t.carrier_scac,

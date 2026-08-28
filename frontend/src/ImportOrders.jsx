@@ -2290,7 +2290,7 @@ function TrackingHealth({ canManage }) {
         <table style={{ width: "100%", borderCollapse: "collapse",
                         fontSize: 12.5 }}>
           <thead><tr>
-            <th style={th}>Order</th><th style={th}>Mode</th>
+            <th style={th}>Shipment</th><th style={th}>Mode</th>
             <th style={th}>Carrier</th><th style={th}>Key</th>
             <th style={th}>Health</th><th style={th}>Live status</th>
             <th style={th}>ETA</th><th style={th}>Last event</th>
@@ -2310,7 +2310,15 @@ function TrackingHealth({ canManage }) {
                         && setOpen((o) => ({ ...o, [i]: !isOpen }))}>
                       {hasMoves && <span style={{ color: "#8a97a1",
                         marginRight: 4 }}>{isOpen ? "▾" : "▸"}</span>}
-                      {r.ipr_ref} · S{r.shipment_seq}</td>
+                      <b style={{ color: "var(--sp-navy)" }}>
+                        {r.shipment_ref || `S${r.shipment_seq}`}</b>
+                      <div style={{ fontSize: 11, color: "#5a6b78",
+                                    fontWeight: 400, marginLeft: 14 }}>
+                        {(r.orders && r.orders.length
+                          ? r.orders : [r.ipr_ref]).join(" + ")}
+                        {r.orders && r.orders.length > 1 && (
+                          <b style={{ color: "#8a6d00" }}> · consol.</b>)}
+                      </div></td>
                     <td style={td}>{r.mode}</td>
                     <td style={td}>{r.carrier_scac
                       || <span style={{ color: "#8a97a1" }}>auto</span>}</td>
