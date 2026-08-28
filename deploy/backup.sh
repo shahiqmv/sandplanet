@@ -31,7 +31,7 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
 restore_test() {
   local file="$1"
-  local scratch="restore_test_${STAMP}"
+  local scratch="restore_test_${STAMP//-/_}"   # no hyphens in a DB name
   log "restore test: loading $(basename "$file") into $scratch"
   $COMPOSE exec -T db psql -U "$PGUSER_" -d postgres \
       -c "DROP DATABASE IF EXISTS $scratch;" >/dev/null
