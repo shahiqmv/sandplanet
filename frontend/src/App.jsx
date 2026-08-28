@@ -731,14 +731,21 @@ export default function App() {
                   )}
                 </div>
                 {g.subs.map(([key, label]) => (
-                  <button key={key}
-                          className={"nd-item" + (hoPage === key && !openSite
-                                                  && !docView ? " on" : "")}
-                          onClick={() => { setHoPage(key); setOpenSite(null);
-                                           setDocView(null);
-                                           setMenuOpen(false); }}>
+                  // A real link, so ⌘/Ctrl-click and middle-click open the
+                  // page in a second tab (owner 2026-08-28). Plain clicks
+                  // stay in-app — no reload.
+                  <a key={key} href={`#/ho/${key}`}
+                     className={"nd-item" + (hoPage === key && !openSite
+                                             && !docView ? " on" : "")}
+                     onClick={(e) => {
+                       if (e.metaKey || e.ctrlKey || e.shiftKey
+                           || e.button === 1) return;   // let the browser
+                       e.preventDefault();
+                       setHoPage(key); setOpenSite(null);
+                       setDocView(null); setMenuOpen(false);
+                     }}>
                     {label}
-                  </button>
+                  </a>
                 ))}
               </div>
             ))}

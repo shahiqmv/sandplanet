@@ -383,7 +383,12 @@ main tbody tr:hover > td {
   font-size: 15px;
   color: var(--sp-navy, #17384f);
   cursor: pointer;
+  /* nav items are anchors so ⌘-click opens a tab — keep them looking like
+     the buttons they replaced (2026-08-28) */
+  text-decoration: none;
+  box-sizing: border-box;
 }
+.nd-item.on:hover { background: var(--sp-navy, #17384f); }
 .nd-item:hover { background: #f2f6fa; }
 .nd-item.on {
   background: var(--sp-navy, #17384f);
