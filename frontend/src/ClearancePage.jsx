@@ -94,7 +94,13 @@ export default function ClearancePage({ me, onOpenIpr }) {
         style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
       <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)",
                    whiteSpace: "nowrap" }}>
-        {r.ipr_ref} · S{r.shipment_seq}</td>
+        {r.shipment_ref}
+        <div style={{ fontSize: 11, fontWeight: 400 }}>
+          {(r.orders || []).map((o) => o.ref).join(" + ")}
+          {(r.orders || []).length > 1 && (
+            <b style={{ color: "#8a6d00" }}> · consolidated</b>)}
+        </div>
+      </td>
       <td style={td}>{r.supplier}</td>
       <td style={td}>{r.mode}</td>
       <td style={td}><StatusChip status={r.status} /></td>
@@ -142,7 +148,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
 
   const head = (dateCol) => (
     <thead><tr>
-      <th style={th}>Order</th><th style={th}>Supplier</th>
+      <th style={th}>Shipment</th><th style={th}>Supplier</th>
       <th style={th}>Mode</th><th style={th}>Status</th>
       <th style={th}>{dateCol}</th>
       <th style={th}>Shared</th><th style={th}>Docs</th>
@@ -215,7 +221,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
             Nothing waiting — every cleared shipment is counted in.</p>
         : <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr>
-              <th style={th}>Order</th><th style={th}>Supplier</th>
+              <th style={th}>Shipment</th><th style={th}>Supplier</th>
               <th style={th}>Mode</th><th style={th}>IRN</th>
               <th style={th}>Next action</th><th style={th} />
             </tr></thead>
@@ -225,7 +231,10 @@ export default function ClearancePage({ me, onOpenIpr }) {
                     style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
                   <td style={{ ...td, fontWeight: 600,
                                color: "var(--sp-navy)" }}>
-                    {r.ipr_ref} · S{r.shipment_seq}</td>
+                    {r.shipment_ref}
+                    <div style={{ fontSize: 11, fontWeight: 400 }}>
+                      {(r.orders || []).map((o) => o.ref).join(" + ")}</div>
+                  </td>
                   <td style={td}>{r.supplier}</td>
                   <td style={td}>{r.mode}</td>
                   <td style={td}>{r.irn_ref

@@ -1274,13 +1274,17 @@ def clearance_setup(request):
                 order__document__is_void=False)
         .exclude(status="CLEARED")
         .select_related("order__document", "order__supplier")
-        .prefetch_related("documents", "payments__pyr"))
+        .prefetch_related("documents", "payments__pyr",
+                          "lines__ipr_line__order__document",
+                          "lines__ipr_line__order__supplier"))
     cleared = list(
         ImportShipment.objects
         .filter(status="CLEARED", order__document__status="AUTHORISED",
                 order__document__is_void=False)
         .select_related("order__document", "order__supplier")
-        .prefetch_related("receipts__document"))
+        .prefetch_related("receipts__document",
+                          "lines__ipr_line__order__document",
+                          "lines__ipr_line__order__supplier"))
     # When each shipment reached ARRIVED, from the append-only audit trail.
     doc_ids = {s.order.document_id for s in live}
     arrived_on = {}
@@ -1330,9 +1334,16 @@ def clearance_setup(request):
                    for d in ipr_svc.missing_clearing_docs(s)]
         ch = charges_tally(s)
         arr = arrived_on.get((s.order.document_id, s.seq))
+        aboard = s.orders()
         return {
+            # The shipment is the unit of clearance — a consolidated one
+            # names every order aboard (owner 2026-08-28).
+            "shipment_ref": s.ref or f"S{s.seq}",
+            "orders": [{"ref": o.document.ref, "supplier": o.supplier.name}
+                       for o in aboard],
             "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
-            "supplier": s.order.supplier.name, "mode": s.mode,
+            "supplier": ", ".join(dict.fromkeys(
+                o.supplier.name for o in aboard)), "mode": s.mode,
             "status": s.status, "status_display": s.get_status_display(),
             "eta": s.eta, "arrived_on": arr,
             "days_at_port": (today - arr).days if at_port and arr else None,
@@ -1356,9 +1367,14 @@ def clearance_setup(request):
         if any(d.status == "VERIFIED" for d in irns):
             continue                    # in the store — off the board
         open_irn = irns[-1] if irns else None
+        aboard = s.orders()
         to_receive.append({
+            "shipment_ref": s.ref or f"S{s.seq}",
+            "orders": [{"ref": o.document.ref, "supplier": o.supplier.name}
+                       for o in aboard],
             "ipr_ref": s.order.document.ref, "shipment_seq": s.seq,
-            "supplier": s.order.supplier.name, "mode": s.mode,
+            "supplier": ", ".join(dict.fromkeys(
+                o.supplier.name for o in aboard)), "mode": s.mode,
             "irn_ref": open_irn.ref if open_irn else None,
             "irn_status": open_irn.status if open_irn else None,
             "next_action": (f"Finish the count on {open_irn.ref}"
