@@ -135,6 +135,9 @@ export default function ShipmentsPage({ me, onOpenIpr, onOpenShipment }) {
 function BookShipment({ onCancel, onBooked }) {
   const [opts, setOpts] = useState(null);
   const [qty, setQty] = useState({});          // line id -> qty
+  // Orders fold shut — a picker across every authorised order is a wall of
+  // lines otherwise (owner 2026-08-28). Click an order to open its items.
+  const [open, setOpen] = useState({});
   const [f, setF] = useState({ mode: "SEA", carrier_scac: "", bl_no: "",
     container_awb: "", vessel_flight: "", etd: "", eta: "" });
   const [error, setError] = useState(null);
@@ -208,16 +211,38 @@ function BookShipment({ onCancel, onBooked }) {
         <p style={{ fontSize: 13, color: "#5a6b78" }}>
           No authorised order has cargo left to ship.</p>
       )}
-      {opts.map((o) => (
+      {opts.length > 1 && (
+        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+          <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => setOpen(Object.fromEntries(
+                    opts.map((o) => [o.ipr_ref, true])))}>Expand all</button>
+          <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
+                  onClick={() => setOpen({})}>Collapse all</button>
+        </div>
+      )}
+      {opts.map((o) => {
+        const picked = o.lines.filter((l) => parseFloat(qty[l.id]) > 0).length;
+        const isOpen = !!open[o.ipr_ref];
+        return (
         <div key={o.ipr_ref} style={{ border: "1px solid #dde5ea",
-          borderRadius: 8, padding: 10, marginBottom: 10,
+          borderRadius: 8, padding: 10, marginBottom: 8,
           background: ordersPicked.has(o.ipr_ref) ? "#f2f8f4" : undefined }}>
-          <div style={{ fontWeight: 600, color: "var(--sp-navy)" }}>
+          <div onClick={() => setOpen({ ...open, [o.ipr_ref]: !isOpen })}
+               style={{ fontWeight: 600, color: "var(--sp-navy)",
+                        cursor: "pointer", display: "flex", gap: 8,
+                        alignItems: "baseline", flexWrap: "wrap" }}>
+            <span style={{ color: "#8a97a1" }}>{isOpen ? "▾" : "▸"}</span>
             {o.ipr_ref}
             <span style={{ fontWeight: 400, color: "#5a6b78", fontSize: 12.5 }}>
-              {" "}· {o.supplier}{o.country ? ` · ${o.country}` : ""}
-              {o.incoterm ? ` · ${o.incoterm}` : ""}</span>
+              {o.supplier}{o.country ? ` · ${o.country}` : ""}
+              {o.incoterm ? ` · ${o.incoterm}` : ""}
+              {" · "}{o.lines.length} item(s) to ship</span>
+            {picked > 0 && (
+              <span style={{ marginLeft: "auto", fontSize: 11.5,
+                             fontWeight: 600, color: "#1a7f37" }}>
+                {picked} selected</span>)}
           </div>
+          {isOpen && (
           <table style={{ borderCollapse: "collapse", fontSize: 12.5,
                           marginTop: 6, width: "100%" }}>
             <tbody>
@@ -246,8 +271,10 @@ function BookShipment({ onCancel, onBooked }) {
               ))}
             </tbody>
           </table>
+          )}
         </div>
-      ))}
+        );
+      })}
 
       <div style={{ display: "flex", gap: 10, alignItems: "center",
                     marginTop: 8 }}>
