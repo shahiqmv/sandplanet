@@ -834,7 +834,8 @@ def m_push_subscribe(request):
         return Response({"detail": "endpoint + keys are required."}, status=400)
     sub, _ = PushSubscription.objects.update_or_create(
         endpoint=endpoint,
-        defaults={"user": request.user, "p256dh": keys["p256dh"][:200],
+        defaults={"user": request.user, "platform": "MOBILE",
+                  "p256dh": keys["p256dh"][:200],
                   "auth": keys["auth"][:100],
                   "label": (request.META.get("HTTP_USER_AGENT") or "")[:120]})
     return Response({"id": sub.id}, status=201)

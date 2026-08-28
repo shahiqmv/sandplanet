@@ -424,6 +424,10 @@ export default function App() {
   // in a second tab.
   const [pendingUrl, setPendingUrl] = useState(() =>
     decodeView(window.location.hash));
+  // Planet Desktop: Chrome/Edge fire this when the app is installable, and we
+  // hold on to the event so the offer lives in our own header rather than an
+  // address-bar icon nobody notices (owner 2026-08-28).
+  const [installPrompt, setInstallPrompt] = useState(null);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
@@ -457,6 +461,12 @@ export default function App() {
   // Apply what the URL asked for, once we are signed in.
   useEffect(() => {
     if (!me?.authenticated || !pendingUrl) return;
+    // #/open/<ref> from a desktop notification: resolve the ref to its view.
+    if (pendingUrl.openRef) {
+      openDoc(pendingUrl.openRef);
+      setPendingUrl(null);
+      return;
+    }
     if (pendingUrl.hoPage) setHoPage(pendingUrl.hoPage);
     if (pendingUrl.docView) setDocView(pendingUrl.docView);
     // a site view waits for /sites above; clear the intent either way
@@ -472,6 +482,34 @@ export default function App() {
       window.history.pushState(null, "", next);
     }
   }, [me, hoPage, openSite, docView, pendingUrl]);
+
+  // Install offer, and clearing it once the app is installed.
+  useEffect(() => {
+    const onPrompt = (e) => { e.preventDefault(); setInstallPrompt(e); };
+    const onInstalled = () => setInstallPrompt(null);
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+
+  // A desktop notification clicked while a window is already open: the
+  // service worker focuses that window and tells it where to go, instead of
+  // opening a second copy of the app.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const onMsg = (e) => {
+      if (e.data?.type !== "navigate" || !e.data.url) return;
+      const hash = e.data.url.includes("#")
+        ? "#" + e.data.url.split("#").slice(1).join("#") : "";
+      const v = decodeView(hash);
+      if (v?.openRef) openDoc(v.openRef);
+    };
+    navigator.serviceWorker.addEventListener("message", onMsg);
+    return () => navigator.serviceWorker.removeEventListener("message", onMsg);
+  }, []);
 
   // Back / Forward.
   useEffect(() => {
@@ -706,6 +744,17 @@ export default function App() {
                                       setHoPage("vouchers"); }
               else openDoc(ref);
             }} />
+            {installPrompt && (
+              <button className="signout-btn"
+                title="Install Sand Planet as a desktop app — its own window and Dock icon"
+                onClick={async () => {
+                  installPrompt.prompt();
+                  await installPrompt.userChoice.catch(() => {});
+                  setInstallPrompt(null);
+                }}>
+                Install app
+              </button>
+            )}
             <span className="user-chip">
               <span className="u-name">{me.full_name}</span>
               <span className="u-role">{me.role.replace(/_/g, " ")}</span>

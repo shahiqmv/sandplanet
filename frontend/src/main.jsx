@@ -17,3 +17,15 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
+
+// Planet Desktop: register the service worker that makes the app installable
+// (own window + Dock icon) and delivers desktop push. Served by Django at
+// /sw.js with Service-Worker-Allowed:/ — the Vite dev server has no such
+// route, so only the built app registers.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
+      /* installability is a progressive enhancement — ignore failures */
+    });
+  });
+}

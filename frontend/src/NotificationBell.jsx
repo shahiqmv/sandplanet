@@ -1,11 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "./api.js";
+import {
+  disablePush, enablePush, isSubscribed, pushSupported,
+} from "./push.js";
+
+const PUSH_REASONS = {
+  denied: "Notifications are blocked for this site in your browser settings.",
+  default: "Permission was dismissed — try again and choose Allow.",
+  "server-off": "Push is not configured on the server yet.",
+  "no-sw": "Install or reload the app first, then try again.",
+  unsupported: "This browser cannot show desktop notifications.",
+  "subscribe-failed": "The browser refused the subscription.",
+  "server-error": "Could not register with the server.",
+};
 
 // Header bell: polls for approval/attention notifications, shows an unread
 // badge, and opens the underlying document when a notification is clicked.
 export default function NotificationBell({ onOpen }) {
   const [data, setData] = useState({ unread: 0, items: [] });
   const [open, setOpen] = useState(false);
+  // Desktop push: alerts that arrive when the app is not the front window.
+  const [pushOn, setPushOn] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNote, setPushNote] = useState("");
   const box = useRef(null);
 
   const load = () => api("/notifications").then(setData).catch(() => {});
@@ -21,6 +38,27 @@ export default function NotificationBell({ onOpen }) {
     document.addEventListener("mousedown", h);
     return () => document.removeEventListener("mousedown", h);
   }, []);
+
+  useEffect(() => {
+    if (open && pushSupported()) isSubscribed().then(setPushOn);
+  }, [open]);
+
+  async function togglePush() {
+    setPushBusy(true);
+    setPushNote("");
+    try {
+      if (pushOn) {
+        await disablePush();
+        setPushOn(false);
+      } else {
+        const r = await enablePush();
+        setPushOn(r.ok);
+        if (!r.ok) setPushNote(PUSH_REASONS[r.reason] || "Could not turn on.");
+      }
+    } finally {
+      setPushBusy(false);
+    }
+  }
 
   async function markAll() {
     await api("/notifications/read", { method: "POST", body: {} });
@@ -83,6 +121,23 @@ export default function NotificationBell({ onOpen }) {
                 {new Date(n.created_at).toLocaleString()}</div>
             </div>
           ))}
+          {pushSupported() && (
+            <div style={{ borderTop: "1px solid #e6ecf1", marginTop: 6,
+                          padding: "8px 10px 2px" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8,
+                              fontSize: 12, cursor: "pointer" }}>
+                <input type="checkbox" checked={pushOn} disabled={pushBusy}
+                  onChange={togglePush} />
+                <span>Desktop notifications</span>
+              </label>
+              <p style={{ fontSize: 11, color: "#8a97a1", margin: "4px 0 6px",
+                          paddingLeft: 24 }}>
+                {pushNote || (pushOn
+                  ? "Alerts reach you even when Planet is not the front window."
+                  : "Get alerted without keeping this window open.")}
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

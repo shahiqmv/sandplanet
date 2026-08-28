@@ -59,12 +59,21 @@ def send_push(subscription, title, body, url=""):
         return False
 
 
+def push_url(notification, platform):
+    """Where a click on this notification should land, per app. Desktop uses
+    the SPA's hash router: #/open/<ref> resolves the ref to its own view."""
+    ref = notification.doc_ref
+    if platform == "DESKTOP":
+        return f"/#/open/{ref}" if ref else "/"
+    return f"/m/track/{ref}" if ref else "/m"
+
+
 def dispatch_push(notification, user):
     """Push a Notification to all of a user's subscribed devices. Never raises."""
     from .models import PushSubscription
-    url = f"/m/track/{notification.doc_ref}" if notification.doc_ref else "/m"
     for sub in PushSubscription.objects.filter(user=user):
         try:
-            send_push(sub, notification.title, notification.body, url)
+            send_push(sub, notification.title, notification.body,
+                      push_url(notification, sub.platform))
         except Exception:                   # pragma: no cover - defensive
             log.exception("dispatch_push failed")

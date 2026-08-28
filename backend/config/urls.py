@@ -70,7 +70,12 @@ if (settings.BASE_DIR.parent / "frontend" / "dist" / "portal.html").exists():
 # Serve the built SPA (frontend/dist) same-origin — used by the team-review
 # tunnel and by production; harmless in dev (dist may not exist).
 if (settings.BASE_DIR.parent / "frontend" / "dist" / "index.html").exists():
-    urlpatterns.append(
+    urlpatterns += [
+        # Planet Desktop: the same SPA, installable. The worker must be
+        # served from / for its scope to cover the app (owner 2026-08-28).
+        path("manifest.webmanifest", views_pwa.desktop_manifest,
+             name="desktop-manifest"),
+        path("sw.js", views_pwa.desktop_service_worker, name="desktop-sw"),
         path("", TemplateView.as_view(template_name="index.html"),
-             name="spa-index")
-    )
+             name="spa-index"),
+    ]

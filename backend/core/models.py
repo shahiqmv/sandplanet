@@ -781,8 +781,14 @@ class PushSubscription(models.Model):
     """A Web Push (VAPID) endpoint for a user's browser/PWA. One per browser;
     purged on a 404/410 from the push service (R6 mobile, owner 2026-07-14)."""
 
+    PLATFORMS = [("MOBILE", "Planet Mobile"), ("DESKTOP", "Planet Desktop")]
+
     user = models.ForeignKey(User, on_delete=models.CASCADE,
                              related_name="push_subs")
+    # Which app subscribed — a notification must open the app the person is
+    # actually running, not send a laptop to the phone UI (owner 2026-08-28).
+    platform = models.CharField(max_length=8, choices=PLATFORMS,
+                                default="MOBILE")
     endpoint = models.TextField(unique=True)
     p256dh = models.CharField(max_length=200)
     auth = models.CharField(max_length=100)

@@ -39,6 +39,13 @@ export function decodeView(hash) {
   const parts = path.split("/").filter(Boolean);
   const params = new URLSearchParams(query || "");
   if (parts[0] === "ho" && parts[1]) return { hoPage: parts[1] };
+  // #/open/<ref> — a landing route, never written by encodeView. A desktop
+  // push notification knows the document ref but not which view renders it,
+  // so it hands the ref to the app, which resolves it and rewrites the URL
+  // to the canonical #/doc/... form (owner 2026-08-28).
+  if (parts[0] === "open" && parts[1]) {
+    return { openRef: decodeURIComponent(parts[1]) };
+  }
   if (parts[0] === "vessels") return { docView: { mode: "vessels" } };
   if (parts[0] === "project" && parts[1]) {
     return { docView: { mode: "project", projectId: Number(parts[1]) } };
