@@ -20,10 +20,12 @@ STAMP=$(date +%Y%m%d-%H%M)
 NAME="planet-${STAMP}.sql.gz"
 mkdir -p "$DIR"
 
-# .env holds POSTGRES_USER / POSTGRES_DB
-set -a; . ./.env; set +a
-PGUSER_="${POSTGRES_USER:-planet}"
-PGDB_="${POSTGRES_DB:-planet}"
+# Read the two values we need WITHOUT sourcing .env — a password containing
+# something like $8 would be expanded by the shell (and under `set -u` kills
+# the script outright).
+env_val() { sed -n "s/^$1=//p" ./.env | head -1 | tr -d '"'"'"'"' ; }
+PGUSER_="$(env_val POSTGRES_USER)"; PGUSER_="${PGUSER_:-planet}"
+PGDB_="$(env_val POSTGRES_DB)"; PGDB_="${PGDB_:-planet}"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 
