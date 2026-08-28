@@ -2137,3 +2137,81 @@ class IprBriefTests(IprBase):
         self.client.force_authenticate(pm)
         self.assertEqual(
             self.client.get(f"/api/v1/ipr/{ref}/brief").status_code, 404)
+
+
+class ConsolidatedShipmentTests(IprBase):
+    """Shipments are independent of orders (owner 2026-08-28): one shipment
+    can carry cargo from several IPRs; each order still sees it, and the
+    clearing charges apportion by goods value aboard."""
+
+    def _second_order(self):
+        from .models import Document, DocumentRevision
+        pmr2 = Document.objects.create(
+            doc_type="PMR", ref="PMR-SJR-051", site=self.site,
+            project=self.project, doc_date=date.today(),
+            status="SIZED_RELEASED", created_by=self.pm)
+        DocumentRevision.objects.create(document=pmr2, rev_label="R0",
+                                        payload={}, created_by=self.pm)
+        pmr2.current_revision = pmr2.revisions.first()
+        pmr2.save(update_fields=["current_revision"])
+        self.client.force_authenticate(self.ho)
+        body = self.order_body()
+        body["pmr_refs"] = [pmr2.ref]
+        ref = self.client.post("/api/v1/ipr", body, format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        return ref
+
+    def test_one_shipment_carries_two_orders_and_both_see_it(self):
+        ref_a = self.create_and_authorise()
+        ref_b = self._second_order()
+        self.client.force_authenticate(self.ho)
+        opts = self.client.get("/api/v1/shipments/cargo-options").data
+        rows = []
+        for o in opts:
+            if o["ipr_ref"] in (ref_a, ref_b):
+                rows.append({"ipr_line_id": o["lines"][0]["id"], "qty": "2"})
+        self.assertEqual(len(rows), 2)
+        r = self.client.post("/api/v1/shipments",
+                             {"mode": "SEA", "rows": rows,
+                              "container_awb": "CSQU3054383"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["ref"].startswith("SHP-"))
+        self.assertEqual(len(r.data["orders"]), 2)
+        # both orders show the consolidated shipment, each naming the other
+        for ref in (ref_a, ref_b):
+            doc = self.client.get(f"/api/v1/ipr/{ref}").data
+            self.assertEqual(len(doc["shipments"]), 1)
+            aboard = {o["ref"] for o in doc["shipments"][0]["orders_aboard"]}
+            self.assertEqual(aboard, {ref_a, ref_b})
+
+    def test_clearing_charges_apportion_by_goods_value_aboard(self):
+        from decimal import Decimal
+        from .models import ImportShipment
+        ref_a = self.create_and_authorise()
+        ref_b = self._second_order()
+        self.client.force_authenticate(self.ho)
+        opts = {o["ipr_ref"]: o for o in
+                self.client.get("/api/v1/shipments/cargo-options").data}
+        # 3 units of A and 1 of B, same unit price → 75% / 25%
+        rows = [{"ipr_line_id": opts[ref_a]["lines"][0]["id"], "qty": "3"},
+                {"ipr_line_id": opts[ref_b]["lines"][0]["id"], "qty": "1"}]
+        sid = self.client.post("/api/v1/shipments",
+                               {"mode": "SEA", "rows": rows},
+                               format="json").data["id"]
+        sh = ImportShipment.objects.get(pk=sid)
+        sh.freight = Decimal("4000")          # MVR clearing charge
+        sh.save(update_fields=["freight"])
+        from . import imports as svc
+        a = svc.shipment_charge_share(sh, self._order(ref_a))
+        b = svc.shipment_charge_share(sh, self._order(ref_b))
+        self.assertEqual(a.quantize(Decimal("0.01")), Decimal("3000.00"))
+        self.assertEqual(b.quantize(Decimal("0.01")), Decimal("1000.00"))
+        self.assertEqual((a + b).quantize(Decimal("0.01")),
+                         Decimal("4000.00"))

@@ -11,6 +11,7 @@ import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import ClearancePage from "./ClearancePage.jsx";
+import ShipmentsPage from "./ShipmentsPage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import NotificationBell from "./NotificationBell.jsx";
@@ -120,6 +121,7 @@ const NAV_GROUPS = [
            ["pmr-register", "Import Requests", IMPORT_CHAIN],
            ["imports", "International Orders", IMPORT_CHAIN],
            ["import-tracker", "Import Tracker", IMPORT_CHAIN],
+           ["shipments", "Shipments", IMPORT_CHAIN],
            ["clearance", "Cargo Clearance", IMPORT_CHAIN],
            ["store", "HO Store", IMPORT_CHAIN],
            ["suppliers", "Suppliers",
@@ -812,7 +814,8 @@ export default function App() {
           )}
           {docView?.mode === "shipment-view" && (
             <ShipmentView me={me} refIpr={docView.doc.ref}
-                     seq={docView.shipmentSeq} onClose={closeDoc}
+                     seq={docView.shipmentSeq}
+                     shipmentId={docView.shipmentId} onClose={closeDoc}
                      onOpenDoc={openDoc}
                      onOpenIpr={(ref) =>
                        setDocView({ mode: "ipr-view", doc: { ref } })}
@@ -1102,6 +1105,15 @@ export default function App() {
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>
               setDocView({ mode: "irn-view", doc: { ref } })} />
+          )}
+          {!docView && !openSite && me.is_ho && hoPage === "shipments" && (
+            <ShipmentsPage me={me}
+              onOpenIpr={(ref) =>
+                setDocView({ mode: "ipr-view", doc: { ref } })}
+              onOpenShipment={(r) =>
+                setDocView({ mode: "shipment-view",
+                             doc: { ref: r.primary_ref || r.orders[0]?.ref },
+                             shipmentSeq: null, shipmentId: r.id })} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "clearance" && (
             <ClearancePage me={me} onOpenIpr={(ref, seq) =>

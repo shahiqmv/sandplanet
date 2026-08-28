@@ -167,9 +167,19 @@ class ShipmentSerializer(serializers.ModelSerializer):
     next_statuses = serializers.SerializerMethodField()
     tracking = serializers.SerializerMethodField()
 
+    orders_aboard = serializers.SerializerMethodField()
+
+    def get_orders_aboard(self, obj):
+        """Every order with cargo on this shipment — the IPR page shows a
+        consolidated shipment and says who else is aboard (owner
+        2026-08-28)."""
+        return [{"ref": o.document.ref, "supplier": o.supplier.name}
+                for o in obj.orders()]
+
     class Meta:
         model = ImportShipment
-        fields = ["id", "seq", "mode", "forwarder", "forwarder_display",
+        fields = ["id", "ref", "orders_aboard", "seq", "mode", "forwarder",
+                  "forwarder_display",
                   "vessel_flight", "carrier_scac", "bl_no", "container_awb",
                   "etd", "eta", "tracking_ref", "carrier_link", "status",
                   "status_display", "shared_with_agent_at", "freight",
@@ -252,7 +262,8 @@ def _serialize(doc, request):
         order.milestones.all(), many=True,
         context={"order_total": total}).data
     data["shipments"] = ShipmentSerializer(
-        order.shipments.prefetch_related("documents", "receipts").all(),
+        ipr_svc.order_shipments(order).prefetch_related("documents",
+                                                        "receipts"),
         many=True).data
     data["landed"] = ipr_svc.landed_cost(order)
     data["receipts"] = [
@@ -327,7 +338,8 @@ def _get_irn(request, ref):
 
 
 def _get_shipment(doc, pk):
-    return doc.import_order.shipments.filter(pk=pk).first()
+    # Consolidated shipments belong to several orders — reachable from each.
+    return ipr_svc.order_shipments(doc.import_order).filter(pk=pk).first()
 
 
 @api_view(["POST"])
@@ -1103,7 +1115,7 @@ def ipr_list_create(request):
                 "paid": paid, "total": total}
 
     def shipping_summary(order):
-        ships = list(order.shipments.all())
+        ships = list(ipr_svc.order_shipments(order))
         if not ships:
             return None
         sh = max(ships, key=lambda x: x.seq)
@@ -1419,7 +1431,7 @@ def ipr_brief(request, ref):
                          + (f" · {due} due" if due else ""))
 
     ships = []
-    for s in order.shipments.all():
+    for s in ipr_svc.order_shipments(order):
         t = getattr(s, "tracking", None)
         last = None
         if t:
@@ -1448,3 +1460,85 @@ def ipr_brief(request, ref):
         "payment_word": payment_word, "milestones": milestones,
         "shipments": ships,
     })
+
+
+@api_view(["GET", "POST"])
+def shipments_module(request):
+    """Shipments as their own register (owner 2026-08-28) — a shipment can
+    carry cargo from several orders (one supplier clubbing orders, or the
+    forwarder consolidating suppliers). GET lists; POST books one from
+    cargo rows spanning any authorised orders."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    if request.method == "POST":
+        if request.user.role not in CREATE_ROLES:
+            return Response({"detail": "Head Office books shipments."},
+                            status=403)
+        sh, err = ipr_svc.create_consolidated_shipment(request.data,
+                                                       request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        return Response(_shipment_row(sh), status=201)
+
+    qs = (ImportShipment.objects
+          .select_related("order__document", "order__supplier", "tracking")
+          .prefetch_related("documents", "receipts__document",
+                            "payments__pyr",
+                            "lines__ipr_line__order__document",
+                            "lines__ipr_line__order__supplier")
+          .order_by("-id"))
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+    rows = [_shipment_row(s) for s in qs[:200]]
+    stage = {"BOOKED": 0, "SHIPPED": 0, "IN_TRANSIT": 0, "ARRIVED": 0,
+             "UNDER_CLEARING": 0, "CLEARED": 0}
+    for r in rows:
+        stage[r["status"]] = stage.get(r["status"], 0) + 1
+    return Response({"rows": rows, "counts": stage,
+                     "consolidated": sum(1 for r in rows
+                                         if len(r["orders"]) > 1)})
+
+
+def _shipment_row(s):
+    t = getattr(s, "tracking", None)
+    return {
+        "id": s.id, "ref": s.ref or f"S{s.seq}", "mode": s.mode,
+        "status": s.status, "status_display": s.get_status_display(),
+        "orders": [{"ref": o.document.ref, "supplier": o.supplier.name}
+                   for o in s.orders()],
+        "primary_ref": s.order.document.ref if s.order_id else "",
+        "carrier_scac": s.carrier_scac, "bl_no": s.bl_no,
+        "container_awb": s.container_awb, "vessel_flight": s.vessel_flight,
+        "etd": s.etd, "eta": s.eta,
+        "line_count": s.lines.count(),
+        "documents": s.documents.count(),
+        "shared_with_agent_at": s.shared_with_agent_at,
+        "live_status": (t.raw_status if t and t.raw_status else None),
+        "irn": next((r.document.ref for r in s.receipts.all()), None),
+    }
+
+
+@api_view(["GET"])
+def shipment_cargo_options(request):
+    """Order lines still awaiting shipment, grouped by order — the cargo
+    picker for booking a (possibly consolidated) shipment."""
+    if request.user.role not in VIEW_ROLES:
+        return Response({"detail": "Head Office view."}, status=403)
+    out = []
+    for o in (ImportOrder.objects
+              .filter(document__status="AUTHORISED", document__is_void=False)
+              .select_related("document", "supplier")
+              .prefetch_related("lines")):
+        lines = []
+        for ln in o.lines.all():
+            remaining = ipr_svc.line_remaining(ln)
+            if remaining and remaining > 0:
+                lines.append({"id": ln.id, "line_no": ln.line_no,
+                              "description": ln.description,
+                              "unit": ln.unit, "remaining": remaining})
+        if lines:
+            out.append({"ipr_ref": o.document.ref,
+                        "supplier": o.supplier.name,
+                        "country": o.supplier.country,
+                        "incoterm": o.incoterm, "lines": lines})
+    return Response(out)

@@ -6,7 +6,7 @@ from .models import DocCounter
 # an HO instrument batching requisitions from many sites.
 # IPR/IRN global per §5.10 / D5
 GLOBAL_TYPES = {"PR", "LM", "PO", "PV", "IPR", "IRN", "SIN", "LOA", "SPL", "AC",
-                "IM30"}
+                "IM30", "SHP"}
 
 
 def next_ref(doc_type, site):

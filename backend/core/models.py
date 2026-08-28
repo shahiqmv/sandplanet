@@ -1221,6 +1221,12 @@ class ImportShipment(models.Model):
         UNDER_CLEARING = "UNDER_CLEARING", "Under clearing"
         CLEARED = "CLEARED", "Cleared"
 
+    # PRIMARY order (owner 2026-08-28: shipments are independent — a
+    # supplier clubs several orders, or the forwarder consolidates several
+    # suppliers into one container). The LINES define the real cargo and may
+    # span many orders; this FK is only the first/primary one, kept non-null
+    # so the order-scoped code keeps working.
+    ref = models.CharField(max_length=20, null=True, blank=True, unique=True)
     order = models.ForeignKey(ImportOrder, on_delete=models.CASCADE,
                               related_name="shipments")
     seq = models.IntegerField()
@@ -1251,6 +1257,18 @@ class ImportShipment(models.Model):
     status = models.CharField(max_length=14, choices=Status.choices,
                               default=Status.BOOKED)
     shared_with_agent_at = models.DateTimeField(null=True, blank=True)
+
+    def orders(self):
+        """Every ImportOrder with cargo aboard — the primary plus any the
+        lines span (consolidation, owner 2026-08-28)."""
+        seen, out = set(), []
+        for o in ([self.order] if self.order_id else []) + [
+                sl.ipr_line.order for sl in
+                self.lines.select_related("ipr_line__order__document")]:
+            if o.id not in seen:
+                seen.add(o.id)
+                out.append(o)
+        return out
     # freight + insurance to Malé, then local clearing charges (all MVR) —
     # the landed-cost inputs (§5.10.8/9)
     freight = models.DecimalField(max_digits=14, decimal_places=2,

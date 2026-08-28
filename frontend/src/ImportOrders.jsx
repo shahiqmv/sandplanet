@@ -1692,8 +1692,8 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
 // A single shipment's clearing workspace (owner 2026-08-26) — the clearance
 // board opens THIS, not the whole order: same card, own page, with the full
 // order one click away.
-export function ShipmentView({ me, refIpr, seq, onClose, onOpenIrn,
-                               onOpenDoc, onOpenIpr }) {
+export function ShipmentView({ me, refIpr, seq, shipmentId, onClose,
+                               onOpenIrn, onOpenDoc, onOpenIpr }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
   const [forwarders, setForwarders] = useState([]);
@@ -1721,7 +1721,9 @@ export function ShipmentView({ me, refIpr, seq, onClose, onOpenIrn,
   if (!doc) return <section style={card}>{error || "Loading…"}</section>;
   const o = doc.order;
   const s = (doc.shipments || []).find(
-    (x) => String(x.seq) === String(seq)) || (doc.shipments || [])[0];
+    (x) => (shipmentId != null && x.id === shipmentId)
+        || (seq != null && String(x.seq) === String(seq)))
+    || (doc.shipments || [])[0];
 
   return (
     <section style={card}>

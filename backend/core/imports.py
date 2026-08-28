@@ -854,6 +854,7 @@ def create_shipment(order, data, actor):
             return None, "The whole order is already on shipments."
 
     shipment = ImportShipment.objects.create(
+        ref=next_ref("SHP", None),
         order=order, seq=seq, mode=mode,
         forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
         vessel_flight=data.get("vessel_flight", ""),
@@ -879,6 +880,64 @@ def missing_clearing_docs(shipment):
     return [d for d in REQUIRED_FOR_CLEARING if d not in have]
 
 
+def create_consolidated_shipment(data, actor):
+    """Book a shipment whose cargo spans ANY authorised orders (owner
+    2026-08-28): a supplier clubbing several of our orders, or our forwarder
+    consolidating several suppliers into one container.
+    data["rows"] = [{ipr_line_id, qty}] across orders."""
+    from . import tracking as trk
+    from .models import (ImportOrderLine, ImportShipment, ImportShipmentLine,
+                         Supplier)
+    mode = data.get("mode") or "SEA"
+    key_err = trk.validate_shipment_keys(
+        mode, data.get("bl_no", ""), data.get("container_awb", ""),
+        data.get("carrier_scac", ""))
+    if key_err:
+        return None, key_err
+    alloc = []
+    for r in data.get("rows") or []:
+        ln = (ImportOrderLine.objects
+              .select_related("order__document")
+              .filter(pk=r.get("ipr_line_id")).first())
+        qty = _dec(r.get("qty"))
+        if ln is None or qty <= ZERO:
+            continue
+        if ln.order.document.is_void \
+                or ln.order.document.status != "AUTHORISED":
+            return None, (f"{ln.order.document.ref} is not an authorised "
+                          f"order.")
+        remaining = line_remaining(ln)
+        if qty > remaining:
+            return None, (f"{ln.order.document.ref} line {ln.line_no}: only "
+                          f"{remaining} left to ship (you entered {qty}).")
+        alloc.append((ln, qty))
+    if not alloc:
+        return None, "Add at least one order line to the shipment."
+    primary = alloc[0][0].order
+    forwarder = None
+    if data.get("forwarder_id"):
+        forwarder = Supplier.objects.filter(pk=data["forwarder_id"]).first()
+    shipment = ImportShipment.objects.create(
+        ref=next_ref("SHP", None),
+        order=primary, seq=(primary.shipments.count() or 0) + 1, mode=mode,
+        forwarder=forwarder, forwarder_name=data.get("forwarder_name", ""),
+        vessel_flight=data.get("vessel_flight", ""),
+        carrier_scac=(data.get("carrier_scac", "") or "").strip().upper(),
+        bl_no=data.get("bl_no", ""),
+        container_awb=data.get("container_awb", ""),
+        etd=data.get("etd") or None, eta=data.get("eta") or None,
+        tracking_ref=data.get("tracking_ref", ""),
+        notes=data.get("notes", ""), created_by=actor)
+    for ln, qty in alloc:
+        ImportShipmentLine.objects.create(shipment=shipment, ipr_line=ln,
+                                          qty=qty)
+    _register_tracking(shipment)
+    audit("document", primary.document_id, "SHIPMENT_BOOKED", actor=actor,
+          detail={"ref": shipment.ref,
+                  "orders": [o.document.ref for o in shipment.orders()]})
+    return shipment, None
+
+
 def advance_shipment(shipment, to_status, actor):
     """Move a shipment forward. Arrival fires arrival-triggered milestones;
     the move to Under Clearing needs the core documents (§5.10.7/8)."""
@@ -899,7 +958,9 @@ def advance_shipment(shipment, to_status, actor):
     if to_status == "SHIPPED":
         _register_tracking(shipment)
     if to_status == "ARRIVED":
-        fire_milestones(shipment.order, "ARRIVAL", actor)
+        # a consolidated shipment arrives for every order aboard
+        for o in shipment.orders():
+            fire_milestones(o, "ARRIVAL", actor)
     return None
 
 
@@ -1124,8 +1185,10 @@ def raise_charge_pyr(payment, actor):
             "currency": payment.currency,
             "payee": payment.resolved_payee(),
             "payment_method": "BANK",
-            "purpose": f"{payment.get_kind_display()} — {order_doc.ref} "
-                       f"shipment {payment.shipment.seq}",
+            "purpose": (f"{payment.get_kind_display()} — "
+                        + ", ".join(o.document.ref
+                                    for o in payment.shipment.orders())
+                        + f" · {payment.shipment.ref or payment.shipment.seq}"),
             "has_supporting_doc": True,
         }, actor)
         if err:
@@ -1166,7 +1229,8 @@ def add_shipment_document(shipment, doc_type, upload, actor, notes=""):
         shipment=shipment, doc_type=doc_type, file=upload,
         file_name=upload.name, notes=notes, uploaded_by=actor)
     if doc_type == "BL_AWB":
-        fire_milestones(shipment.order, "BL", actor)
+        for o in shipment.orders():
+            fire_milestones(o, "BL", actor)
     return doc
 
 
@@ -1222,15 +1286,17 @@ def share_with_agent(shipment, actor):
     if not docs:
         return "Upload the shipping documents first — there is nothing to send."
 
-    order_doc = shipment.order.document
-    supplier = shipment.order.supplier
+    aboard = shipment.orders()
+    refs = ", ".join(o.document.ref for o in aboard)
+    suppliers = ", ".join(dict.fromkeys(
+        o.supplier.name for o in aboard if o.supplier_id))
     lines = [
         f"Dear {agent.contact_person or agent.name},",
         "",
         f"Please find attached the shipping documents for our import "
-        f"{order_doc.ref} (shipment {shipment.seq}) for clearance.",
+        f"shipment {shipment.ref or shipment.seq} ({refs}) for clearance.",
         "",
-        f"    Supplier : {supplier.name if supplier else '-'}",
+        f"    Supplier(s) : {suppliers or '-'}",
     ]
     if shipment.vessel_flight:
         lines.append(f"    Vessel / flight : {shipment.vessel_flight}")
@@ -1254,8 +1320,8 @@ def share_with_agent(shipment, actor):
     reply_to = actor.email or settings.REPLY_TO_FALLBACK
     sender_name = actor.full_name or actor.username
     msg = EmailMessage(
-        subject=(f"Shipping documents — {order_doc.ref} shipment "
-                 f"{shipment.seq}"
+        subject=(f"Shipping documents — {shipment.ref or shipment.seq} "
+                 f"({refs})"
                  + (f" ({shipment.container_awb})"
                     if shipment.container_awb else "")),
         body="\n".join(lines),
@@ -1297,6 +1363,47 @@ def share_with_agent(shipment, actor):
 
 # ---- Landed cost + IRN receipt + stock lots (P1B-e) ----------------------
 
+def order_shipments(order):
+    """Every shipment carrying this order's cargo — primary-FK ones plus any
+    consolidated shipment whose lines span it (owner 2026-08-28)."""
+    from .models import ImportShipment
+    return (ImportShipment.objects
+            .filter(models_q_order(order))
+            .distinct().order_by("id"))
+
+
+def models_q_order(order):
+    from django.db.models import Q
+    return Q(order=order) | Q(lines__ipr_line__order=order)
+
+
+def _shipment_goods_split(shipment):
+    """MVR goods value aboard, per order — the apportionment base for a
+    consolidated shipment's clearing charges (owner 2026-08-28: split by
+    goods value). Cross-currency safe: each line converts at ITS order's
+    agreed rate."""
+    split, total = {}, ZERO
+    for sl in shipment.lines.select_related("ipr_line__order"):
+        o = sl.ipr_line.order
+        v = ((sl.qty or ZERO) * (sl.ipr_line.unit_price or ZERO)
+             * o.exchange_rate)
+        split[o.id] = split.get(o.id, ZERO) + v
+        total += v
+    return split, total
+
+
+def shipment_charge_share(shipment, order):
+    """This order's slice of the shipment's clearing charges."""
+    charges = shipment.clearing_total
+    if not charges:
+        return ZERO
+    split, total = _shipment_goods_split(shipment)
+    if not total or order.id not in split:
+        # no lines recorded (legacy whole-order shipment) — all to primary
+        return charges if shipment.order_id == order.id else ZERO
+    return charges * split[order.id] / total
+
+
 def landed_cost(order):
     """Per-line landed cost for the order (§5.10.9): goods at the agreed rate
     plus every shipment charge (freight/insurance/duty/GST/clearing…)
@@ -1307,8 +1414,8 @@ def landed_cost(order):
     goods = {ln.id: (ln.order_qty or ZERO) * (ln.unit_price or ZERO) * rate
              for ln in lines}
     total_goods = sum(goods.values(), ZERO)
-    total_charges = sum((s.clearing_total for s in order.shipments.all()),
-                        ZERO)
+    total_charges = sum((shipment_charge_share(sh, order)
+                         for sh in order_shipments(order)), ZERO)
     per_line = {}
     for ln in lines:
         g = goods[ln.id]
