@@ -726,3 +726,71 @@ class WorkerPhotoTests(TestCase):
             f"/api/v1/sites/{self.site.id}/direct-workers").data
             if x["id"] == self.emp.id)
         self.assertTrue(w["photo_url"])
+
+
+class Wave1ControlsTests(TestCase):
+    """Audit remediations (2026-08-28): attendance changes are recorded per
+    employee including deletions, and repeated failed sign-ins are throttled."""
+
+    def setUp(self):
+        from .tests import make_user
+        self.site = Site.objects.create(code="W1", name="Wave One",
+                                        status=Site.Status.ACTIVE)
+        self.hr = make_user("w1_hr", User.Role.HO_HR)
+        self.emp = Employee.objects.create(
+            emp_no="EMP-0950", full_name="Audit Man", is_active=True,
+            join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=self.emp, site=self.site, from_date=date(2026, 1, 1))
+        from rest_framework.test import APIClient
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _save(self, rows):
+        return self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": date.today().isoformat(),
+            "rows": rows}, format="json")
+
+    def _last_detail(self):
+        return AuditLog.objects.filter(
+            event="ATTENDANCE_SAVED").order_by("-id").first().detail
+
+    def test_edits_and_deletions_name_the_employee(self):
+        self._save([{"employee_id": self.emp.id, "check_in": "08:00",
+                     "check_out": "17:00", "remark": "PRESENT",
+                     "ot_requested": 0}])
+        d = self._last_detail()
+        self.assertEqual(d["changes"][0]["emp"], "EMP-0950")
+        self.assertEqual(d["changes"][0]["action"], "CREATED")
+
+        # an edit records both sides
+        self._save([{"employee_id": self.emp.id, "check_in": "08:00",
+                     "check_out": "20:00", "remark": "PRESENT",
+                     "ot_requested": "3"}])
+        d = self._last_detail()
+        ch = d["changes"][0]
+        self.assertEqual(ch["action"], "EDITED")
+        self.assertEqual(ch["was"]["out"], "17:00:00")
+        self.assertEqual(str(ch["now"]["ot"]), "3")
+
+        # marking OFF deletes the day — and that is no longer silent
+        self._save([{"employee_id": self.emp.id, "remark": "OFF"}])
+        d = self._last_detail()
+        ch = d["changes"][0]
+        self.assertEqual(ch["action"], "DELETED")
+        self.assertEqual(ch["emp"], "EMP-0950")
+        self.assertEqual(ch["was"]["remark"], "PRESENT")
+
+    def test_repeated_failed_sign_ins_are_throttled(self):
+        from rest_framework.test import APIClient
+        anon = APIClient()
+        for _ in range(10):
+            r = anon.post("/api/v1/auth/login",
+                          {"username": "w1_hr", "password": "wrong"},
+                          format="json")
+            self.assertEqual(r.status_code, 400)
+        r = anon.post("/api/v1/auth/login",
+                      {"username": "w1_hr", "password": "wrong"},
+                      format="json")
+        self.assertEqual(r.status_code, 429)
+        self.assertIn("Too many", r.data["detail"])

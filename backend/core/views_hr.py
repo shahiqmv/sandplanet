@@ -831,6 +831,11 @@ def attendance_bulk(request):
                        request.data.get("rows", [])])
     saved = 0
     refused = []
+    # Per-employee change record. The audit used to say only "this site,
+    # this date, N rows" — you could prove someone edited the day but not
+    # whose, from what, to what; and an OFF mark DELETED a record silently,
+    # uncounted (audit 2026-08-28). Payroll evidence needs names.
+    changes = []
     for row in request.data.get("rows", []):
         try:
             employee = Employee.objects.get(pk=row.get("employee_id"),
@@ -853,8 +858,17 @@ def attendance_bulk(request):
             continue
         remark = row.get("remark") or "PRESENT"
         if remark == "OFF":
-            # Rest day, not worked — clear any existing record, create none
-            Attendance.objects.filter(employee=employee, day=day).delete()
+            # Rest day, not worked — clear any existing record, create none.
+            # A deletion is a change to the pay record and is recorded as one.
+            gone = Attendance.objects.filter(employee=employee, day=day).first()
+            if gone is not None:
+                changes.append({
+                    "emp": employee.emp_no, "action": "DELETED",
+                    "was": {"remark": gone.remark,
+                            "in": str(gone.check_in or ""),
+                            "out": str(gone.check_out or ""),
+                            "ot": str(gone.ot_requested or 0)}})
+                gone.delete()
             continue
         check_in = parse_time(row.get("check_in"))
         check_out = parse_time(row.get("check_out"))
@@ -875,16 +889,29 @@ def attendance_bulk(request):
         else:
             defaults["ot_requested"] = Decimal(str(row.get("ot_requested") or 0))
             defaults["sub_extra_hours"] = Decimal("0")
+        before = Attendance.objects.filter(employee=employee,
+                                           day=day).first()
+        was = ({"remark": before.remark, "in": str(before.check_in or ""),
+                "out": str(before.check_out or ""),
+                "ot": str(before.ot_requested or 0)} if before else None)
         record, _created = Attendance.objects.update_or_create(
             employee=employee, day=day, defaults=defaults)
         record.normal_hours = _normal_hours(
             site, record.check_in, record.check_out, remark,
             shift=smap.get(employee.id))
         record.save(update_fields=["normal_hours"])
+        now = {"remark": record.remark, "in": str(record.check_in or ""),
+               "out": str(record.check_out or ""),
+               "ot": str(record.ot_requested or 0)}
+        if was != now:
+            changes.append({"emp": employee.emp_no,
+                            "action": "CREATED" if before is None else "EDITED",
+                            **({"was": was} if was else {}), "now": now})
         saved += 1
     audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
           detail={"site": site.code, "date": day.isoformat(), "rows": saved,
-                  "late_edit": late_edit})
+                  "late_edit": late_edit,
+                  "changed": len(changes), "changes": changes})
     return Response({"saved": saved, "late_edit": late_edit,
                      "refused": refused})
 

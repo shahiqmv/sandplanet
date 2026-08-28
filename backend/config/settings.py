@@ -200,6 +200,39 @@ MEDIA_ROOT = BASE_DIR / "media"
 # WeasyPrint GTK libraries (DECISIONS.md D4).
 PDF_REQUIRED = os.environ.get("PDF_REQUIRED", "0") == "1"
 
+# Logging. There was no LOGGING block at all until the conformance audit
+# (2026-08-28): unhandled exceptions went to gunicorn's stdout unlabelled and
+# swallowed notification failures were invisible. Console handler only — the
+# platform captures container stdout — but now every error carries its
+# traceback, logger name and timestamp.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "standard": {
+            "format": "%(asctime)s %(levelname)s %(name)s: %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "standard",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "INFO"},
+    "loggers": {
+        # 500s with the traceback, which Django otherwise only emails.
+        "django.request": {"handlers": ["console"], "level": "ERROR",
+                           "propagate": False},
+        "django.security": {"handlers": ["console"], "level": "WARNING",
+                            "propagate": False},
+        # Our own modules log at INFO; SQL stays off.
+        "core": {"handlers": ["console"], "level": "INFO",
+                 "propagate": False},
+        "django.db.backends": {"level": "WARNING"},
+    },
+}
+
 # Email (SMTP) — set EMAIL_HOST etc. in production (e.g. Zoho:
 # smtp.zoho.com, port 465, SSL, an app-specific password). Without it, dev
 # prints emails to the console instead of sending.
@@ -252,6 +285,11 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True
+    # A system holding passports and payroll should not keep a session alive
+    # for Django's default two weeks (audit 2026-08-28). Twelve hours covers
+    # a site day; the clock restarts on each request.
+    SESSION_COOKIE_AGE = int(os.environ.get("SESSION_COOKIE_AGE", 12 * 3600))
+    SESSION_SAVE_EVERY_REQUEST = True
     # HSTS: opt-in via env (only once HTTPS is confirmed working on the
     # domain, to avoid locking browsers onto a broken cert)
     SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))

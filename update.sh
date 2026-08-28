@@ -74,24 +74,51 @@ ensure_swap() {
 
 ensure_swap
 
-ensure_tracking_cron() {
-  # Daily backstop poll for shipment tracking (ShipsGo webhooks are primary).
-  # Idempotent: only added once, keyed on a marker comment.
+ensure_crons() {
+  # Every scheduled job this app depends on, installed idempotently by
+  # marker comment. Written after the conformance audit (2026-08-28) found
+  # the compliance alerts running on the server but recorded NOWHERE in the
+  # repo — a rebuilt droplet would have silently lost permit expiry, bond
+  # expiry, onboarding clocks, procurement risk and meeting reminders. And
+  # the backup, which had never been scheduled at all.
   APP_DIR="$(pwd)"
-  MARK="# planet-poll-trackings"
-  if crontab -l 2>/dev/null | grep -qF "$MARK"; then
-    return 0
-  fi
-  echo "==> Scheduling the daily shipment-tracking poll (06:00) in cron…"
-  LINE="0 6 * * * cd $APP_DIR && docker compose -f docker-compose.prod.yml exec -T web python manage.py poll_trackings >> $APP_DIR/tracking-poll.log 2>&1"
-  ( crontab -l 2>/dev/null; echo "$MARK"; echo "$LINE" ) | crontab - \
-    && echo "    tracking poll scheduled (log: tracking-poll.log)." \
-    || echo "!! Could not install the cron entry automatically — add it by hand:
-    crontab -e   then add:
-    $LINE"
+  C="cd $APP_DIR && docker compose -f docker-compose.prod.yml exec -T web python manage.py"
+
+  add_cron() {   # $1 marker  $2 schedule  $3 command  $4 human name
+    if crontab -l 2>/dev/null | grep -qF "$1"; then return 0; fi
+    echo "==> Scheduling $4…"
+    ( crontab -l 2>/dev/null; echo "$1"; echo "$2 $3" ) | crontab - \
+      && echo "    $4 scheduled." \
+      || echo "!! Could not install cron for $4 — add by hand: $2 $3"
+  }
+
+  add_cron "# planet-backup" "20 2 * * *" \
+    "$APP_DIR/deploy/backup.sh >> /var/log/planet-backup.log 2>&1" \
+    "the nightly database backup (02:20, off-server copy)"
+  add_cron "# planet-backup-verify" "40 3 * * 0" \
+    "$APP_DIR/deploy/backup.sh --verify >> /var/log/planet-backup.log 2>&1" \
+    "the weekly restore test (Sunday 03:40)"
+  add_cron "# planet-poll-trackings" "0 6 * * *" \
+    "$C poll_trackings >> $APP_DIR/tracking-poll.log 2>&1" \
+    "the daily shipment-tracking poll"
+  add_cron "# planet-onboarding-clocks" "0 6 * * *" \
+    "$C onboarding_clocks >> /var/log/onboarding_clocks.log 2>&1" \
+    "onboarding medical / visa expiry alerts"
+  add_cron "# planet-bonds-expiry" "30 6 * * *" \
+    "$C bonds_expiry >> /var/log/bonds_expiry.log 2>&1" \
+    "bond and insurance expiry alerts"
+  add_cron "# planet-procurement-risk" "0 7 * * *" \
+    "$C procurement_risk >> /var/log/procurement_risk.log 2>&1" \
+    "procurement late-risk alerts"
+  add_cron "# planet-procurement-digest" "5 7 * * 1" \
+    "$C procurement_risk --digest >> /var/log/procurement_risk.log 2>&1" \
+    "the weekly procurement digest"
+  add_cron "# planet-meeting-reminders" "*/15 * * * *" \
+    "$C meeting_reminders >> /var/log/meeting_reminders.log 2>&1" \
+    "meeting reminders"
 }
 
-ensure_tracking_cron
+ensure_crons
 
 # Run the deploy detached (setsid + nohup) so a dropped console can't kill it,
 # then follow the log. Ctrl-C or a lost console only stops the tail.

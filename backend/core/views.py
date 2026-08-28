@@ -71,10 +71,43 @@ def record_login_event(request, kind, user=None, username="", source="WEB"):
         pass
 
 
+# Failed sign-ins were recorded and never acted on, so the API accepted
+# unlimited password guesses (audit 2026-08-28). Ten failures against one
+# username, or twenty from one address, in fifteen minutes: cool off. The
+# window is short deliberately — this stops credential stuffing without
+# handing anyone a way to lock a colleague out of their own account for long.
+LOGIN_WINDOW_MIN = 15
+LOGIN_MAX_PER_USER = 10
+LOGIN_MAX_PER_IP = 20
+
+
+def _login_blocked(username, ip):
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from .models import LoginEvent
+    since = timezone.now() - timedelta(minutes=LOGIN_WINDOW_MIN)
+    recent = LoginEvent.objects.filter(kind="FAILED", at__gte=since)
+    if username and recent.filter(
+            username__iexact=username).count() >= LOGIN_MAX_PER_USER:
+        return True
+    if ip and recent.filter(ip_address=ip).count() >= LOGIN_MAX_PER_IP:
+        return True
+    return False
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def auth_login(request):
     username = request.data.get("username", "")
+    ip = _client_ip(request)
+    if _login_blocked(username, ip):
+        record_login_event(request, "FAILED", username=username)
+        return Response({"detail": "Too many failed sign-in attempts. Wait "
+                                   f"{LOGIN_WINDOW_MIN} minutes and try "
+                                   "again, or ask an administrator to reset "
+                                   "your password."}, status=429)
     user = authenticate(request, username=username,
                         password=request.data.get("password", ""))
     if user is None or not user.is_active:
