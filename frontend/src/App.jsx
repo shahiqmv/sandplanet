@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import { decodeView, encodeView } from "./urlState.js";
 import BusyBar from "./BusyBar.jsx";
 import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
@@ -418,13 +419,21 @@ export default function App() {
   const [voucherRef, setVoucherRef] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [docView, setDocView] = useState(null);
+  // URL <-> view sync (owner 2026-08-28): the address bar now names the
+  // view, so refresh stays put, Back/Forward work, and a URL can be opened
+  // in a second tab.
+  const [pendingUrl, setPendingUrl] = useState(() =>
+    decodeView(window.location.hash));
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
 
   useEffect(() => {
-    if (me?.authenticated) setHoPage(landingPage(me));
-  }, [me]);
+    // A URL naming a page wins over the role's landing page.
+    if (me?.authenticated && !pendingUrl?.hoPage) {
+      setHoPage(landingPage(me));
+    }
+  }, [me]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape closes the drawer, and it must never be left open behind a page
   // the user reached some other way (a notification, an approval card).
@@ -445,11 +454,51 @@ export default function App() {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
   }, []);
 
+  // Apply what the URL asked for, once we are signed in.
+  useEffect(() => {
+    if (!me?.authenticated || !pendingUrl) return;
+    if (pendingUrl.hoPage) setHoPage(pendingUrl.hoPage);
+    if (pendingUrl.docView) setDocView(pendingUrl.docView);
+    // a site view waits for /sites above; clear the intent either way
+    if (!pendingUrl.siteId) setPendingUrl(null);
+    else if (openSite?.id === pendingUrl.siteId) setPendingUrl(null);
+  }, [me, openSite]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Write the current view into the address bar.
+  useEffect(() => {
+    if (!me?.authenticated || pendingUrl) return;
+    const next = encodeView({ hoPage, siteId: openSite?.id, docView });
+    if (next !== window.location.hash) {
+      window.history.pushState(null, "", next);
+    }
+  }, [me, hoPage, openSite, docView, pendingUrl]);
+
+  // Back / Forward.
+  useEffect(() => {
+    const onPop = () => {
+      const v = decodeView(window.location.hash);
+      if (!v) return;
+      setDocView(v.docView || null);
+      if (v.hoPage) setHoPage(v.hoPage);
+      if (v.siteId) {
+        setOpenSite((cur) => (cur?.id === v.siteId ? cur
+          : sites.find((s) => s.id === v.siteId) || cur));
+      } else if (v.docView || v.hoPage) {
+        setOpenSite(null);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [sites]);
+
   useEffect(() => {
     if (!me?.authenticated) return;
     api("/sites").then((list) => {
       setSites(list);
-      if (me.landing_site_id) {
+      const wanted = pendingUrl?.siteId;
+      if (wanted) {
+        setOpenSite(list.find((s) => s.id === wanted) || null);
+      } else if (me.landing_site_id && !pendingUrl) {
         setOpenSite(list.find((s) => s.id === me.landing_site_id) || null);
       }
     });
