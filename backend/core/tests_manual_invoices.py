@@ -164,8 +164,10 @@ class MvrInvoiceTests(ManualInvoiceTests):
         self.assertIn("MVR", ag["totals_by_currency"])
         self.assertEqual(ag["totals_by_currency"]["MVR"]["total"],
                          rows[0]["outstanding"])
-        # USD totals untouched by the MVR invoice
-        self.assertEqual(ag["totals"]["total"], 0)
+        # MVR never leaks into a USD total (the headline block now leads
+        # with the currency actually in play — audit 2026-08-28)
+        self.assertEqual(ag["totals_currency"], "MVR")
+        self.assertNotIn("USD", ag["totals_by_currency"])
         row = next(c for c in ag["clients"] if c["currency"] == "MVR")
         self.assertEqual(row["site_id"], self.site.id)
 

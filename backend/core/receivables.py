@@ -115,9 +115,14 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
         })
 
     for c in claims:
+        # A certified claim bills in the CONTRACT's currency — an MVR project
+        # (MRA) must not have its invoices counted as USD (audit 2026-08-28;
+        # the manual-invoice path already carried its currency, this one did
+        # not).
         _add("CLAIM", c.id, c.invoice_no, c.ref, c.claim_type, c.project,
              invoice_date(c), due_date(c), invoiced_amount(c),
-             _q2(rc.get(c.id, ZERO)))
+             _q2(rc.get(c.id, ZERO)),
+             currency=(c.project.site.currency or "USD"))
     for m in manual:
         _add("MANUAL", m.id, m.invoice_no, m.invoice_no, m.origin, m.project,
              m.invoice_date, m.effective_due_date, _q2(m.amount),
@@ -183,12 +188,20 @@ def aging(as_of=None, site_id=None):
         for b in BUCKETS:
             t[b] += c[b]
         t["total"] += c["total"]
-    totals = totals_by_currency.get("USD",
-                                    {**_empty_buckets(), "total": ZERO})
+    # `totals` is the headline block: the only currency in play, or the
+    # largest exposure when a company bills in more than one (audit
+    # 2026-08-28 — it used to assume USD and read zero on an MVR-only book).
+    if totals_by_currency:
+        lead = max(totals_by_currency,
+                   key=lambda c: totals_by_currency[c]["total"])
+    else:
+        lead = "USD"
+    totals = totals_by_currency.get(lead, {**_empty_buckets(), "total": ZERO})
     return {
         "as_of": as_of, "buckets": BUCKETS,
         "bucket_labels": BUCKET_LABELS,
         "clients": client_rows, "totals": totals,
+        "totals_currency": lead,
         "totals_by_currency": totals_by_currency,
         "invoice_count": len(rows),
     }

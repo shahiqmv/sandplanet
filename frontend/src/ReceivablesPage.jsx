@@ -70,9 +70,11 @@ function Aging() {
     <>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginBottom: 12 }}>
-        <Kpi label="Total outstanding (USD)" value={money(total)} strong />
+        <Kpi label={`Total outstanding (${d.totals_currency || "USD"})`}
+             value={money(total)} strong />
         {Object.entries(d.totals_by_currency || {})
-          .filter(([cur]) => cur !== "USD").map(([cur, t]) => (
+          .filter(([cur]) => cur !== (d.totals_currency || "USD"))
+          .map(([cur, t]) => (
           <Kpi key={cur} label={`Total outstanding (${cur})`}
                value={money(t.total)} strong />
         ))}
