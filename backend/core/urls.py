@@ -7,6 +7,8 @@ from . import views, views_biometric as biometric_api, views_bom as bom_api, vie
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
     views_hse as hse_api, \
+    views_contract as contract_api, \
+    views_handover as handover_api, \
     views_quality as quality_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
@@ -101,6 +103,40 @@ urlpatterns = [
          name="quality-supplier-evaluations"),
     path("quality/supplier-scorecards", quality_api.supplier_scorecards,
          name="quality-supplier-scorecards"),
+    # Contract & time
+    path("contract/correspondence", contract_api.correspondence,
+         name="contract-correspondence"),
+    path("contract/correspondence/<str:ref>/respond",
+         contract_api.correspondence_respond, name="contract-respond"),
+    path("contract/outstanding", contract_api.outstanding_replies,
+         name="contract-outstanding"),
+    path("contract/delays", contract_api.delays, name="contract-delays"),
+    path("contract/delays/<str:ref>", contract_api.delay_detail,
+         name="contract-delay"),
+    path("contract/eots", contract_api.eots, name="contract-eots"),
+    path("contract/eots/<str:ref>/submit", contract_api.eot_submit,
+         name="contract-eot-submit"),
+    path("contract/eots/<str:ref>/decide", contract_api.eot_decide,
+         name="contract-eot-decide"),
+    path("projects/<int:pk>/entitlement", contract_api.entitlement,
+         name="project-entitlement"),
+    # Handover
+    path("projects/<int:pk>/handover", handover_api.dossier,
+         name="handover-dossier"),
+    path("projects/<int:pk>/handover/candidates",
+         handover_api.dossier_candidates, name="handover-candidates"),
+    path("projects/<int:pk>/handover/items", handover_api.dossier_items,
+         name="handover-items"),
+    path("projects/<int:pk>/handover/upload", handover_api.dossier_upload,
+         name="handover-upload"),
+    path("projects/<int:pk>/handover/milestones",
+         handover_api.dossier_milestones, name="handover-milestones"),
+    path("projects/<int:pk>/handover/snags", handover_api.snags,
+         name="handover-snags"),
+    path("handover/items/<int:pk>", handover_api.dossier_item_detail,
+         name="handover-item"),
+    path("handover/snags/<int:pk>", handover_api.snag_detail,
+         name="handover-snag"),
     path("push/key", notify_api.push_key, name="push-key"),
     path("push/subscribe", notify_api.push_subscribe, name="push-subscribe"),
     path("push/unsubscribe", notify_api.push_unsubscribe,

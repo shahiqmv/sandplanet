@@ -347,6 +347,14 @@ class Document(models.Model):
         HSI = "HSI"  # safety inspection — walk round + findings (HSE)
         ITP = "ITP"  # inspection & test plan — hold/witness points (QA/QC)
         NCR = "NCR"  # non-conformance report (QA/QC)
+        # Contract & time (2026-08-29). One register, per-kind numbering so a
+        # reference reads for itself: RFI-SFR-012, not COR-SFR-012.
+        RFI = "RFI"  # request for information
+        LTR = "LTR"  # letter / general correspondence
+        INS = "INS"  # instruction received
+        NTC = "NTC"  # contractual notice
+        DLY = "DLY"  # delay event
+        EOT = "EOT"  # extension of time application
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -456,6 +464,22 @@ class Document(models.Model):
         "RAS": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
         "HSI": {"RECORDED": {"CANCELLED"}},
         "ITP": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
+        # Correspondence is OPEN while a reply is owed, CLOSED once it lands
+        # or once it never needed one.
+        "RFI": {"OPEN": {"ANSWERED", "CLOSED", "CANCELLED"},
+                "ANSWERED": {"CLOSED"}},
+        "LTR": {"OPEN": {"ANSWERED", "CLOSED", "CANCELLED"},
+                "ANSWERED": {"CLOSED"}},
+        "INS": {"OPEN": {"ANSWERED", "CLOSED", "CANCELLED"},
+                "ANSWERED": {"CLOSED"}},
+        "NTC": {"OPEN": {"ANSWERED", "CLOSED", "CANCELLED"},
+                "ANSWERED": {"CLOSED"}},
+        "DLY": {"OPEN": {"CLOSED", "CANCELLED"}},
+        "EOT": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            "SUBMITTED": {"AWARDED", "PARTIALLY_AWARDED", "REJECTED",
+                          "DRAFT"},
+        },
         # A non-conformance is open until somebody decides what happens to
         # the work (the disposition) AND the work is done and verified. The
         # guards for both live in quality.py, not here.
@@ -2868,6 +2892,13 @@ class Project(models.Model):
     defects_liability_months = models.PositiveIntegerField(null=True,
                                                            blank=True)
     liquidated_damages = models.TextField(blank=True)  # e.g. 0.5%/week, cap 10%
+    # Contract time bars, as CONFIGURATION rather than code: notice periods
+    # differ by form, and a module that hard-codes one contract is wrong on
+    # every other one (external review, owner 2026-08-29). Days from the date
+    # a party became aware. Blank = no clock, and the register says so rather
+    # than inventing a deadline.
+    notice_period_days = models.PositiveIntegerField(null=True, blank=True)
+    rfi_response_days = models.PositiveIntegerField(null=True, blank=True)
     # contract type & basis
     price_escalation = models.TextField(blank=True)
     # bonds & insurance
@@ -6018,3 +6049,358 @@ class SupplierEvaluation(models.Model):
         if score >= 2.5:
             return "CONDITIONAL"
         return "UNACCEPTABLE"
+
+
+# ===== Contract & time — correspondence, delay, entitlement =====
+# There was no notice document of any kind, no correspondence or RFI register,
+# no delay-event log and no time-bar clock. When a client claimed delay we had
+# daily reports and photographs but no structured evidence chain — and under a
+# FIDIC-derived form, an entitlement not noticed inside its window is an
+# entitlement lost (conformance audit 2026-08-28).
+
+
+class Correspondence(models.Model):
+    """One register for letters, RFIs, instructions and notices.
+
+    They share a shape — a party, a direction, a subject, and a clock for the
+    reply — so they share a table and a screen. The per-kind document type
+    keeps the reference readable: RFI-SFR-012, not COR-SFR-012."""
+
+    class Kind(models.TextChoices):
+        RFI = "RFI", "Request for information"
+        LTR = "LTR", "Letter"
+        INS = "INS", "Instruction"
+        NTC = "NTC", "Contractual notice"
+
+    class Direction(models.TextChoices):
+        IN = "IN", "Received"
+        OUT = "OUT", "Sent"
+
+    class Party(models.TextChoices):
+        CLIENT = "CLIENT", "Client / Employer"
+        CONSULTANT = "CONSULTANT", "Consultant / Engineer"
+        SUBCONTRACTOR = "SUBCONTRACTOR", "Subcontractor"
+        SUPPLIER = "SUPPLIER", "Supplier"
+        AUTHORITY = "AUTHORITY", "Authority"
+        OTHER = "OTHER", "Other"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="correspondence")
+    kind = models.CharField(max_length=4, choices=Kind.choices)
+    direction = models.CharField(max_length=3, choices=Direction.choices)
+    party = models.CharField(max_length=14, choices=Party.choices,
+                             default=Party.CLIENT)
+    party_name = models.TextField(blank=True)
+    their_ref = models.CharField(max_length=80, blank=True)
+    subject = models.TextField()
+    body = models.TextField(blank=True)
+    dated_on = models.DateField()
+
+    response_required = models.BooleanField(default=True)
+    response_due = models.DateField(null=True, blank=True)
+    responded_on = models.DateField(null=True, blank=True)
+    response_summary = models.TextField(blank=True)
+    # The reply, where it is itself a record in this register.
+    response_document = models.ForeignKey(Document, on_delete=models.SET_NULL,
+                                          null=True, blank=True,
+                                          related_name="+")
+
+    # Notice-only. The clause it is served under and the date by which it had
+    # to be served for the entitlement to survive.
+    clause = models.CharField(max_length=80, blank=True)
+    aware_on = models.DateField(null=True, blank=True)
+    time_bar_on = models.DateField(null=True, blank=True)
+
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-dated_on", "-id"]
+        indexes = [models.Index(fields=["kind", "response_due"])]
+
+    def days_outstanding(self, as_of=None):
+        """How long a reply has been owed. Negative = still inside the
+        window; positive = late."""
+        from django.utils import timezone
+        if self.responded_on or not self.response_due:
+            return None
+        return ((as_of or timezone.localdate()) - self.response_due).days
+
+    def served_late(self):
+        """A notice served after its own time bar. Recorded rather than
+        blocked: the fact is what matters, and hiding it helps nobody."""
+        if not self.time_bar_on:
+            return None
+        return self.dated_on > self.time_bar_on
+
+
+class DelayEvent(models.Model):
+    """Something that delayed the work, what it hit, and who carries it.
+
+    RESPONSIBILITY is the field that decides entitlement — an employer-risk
+    event may buy time and money, a contractor-risk one buys neither, and a
+    neutral event (weather) typically buys time only. Recording it at the
+    moment it happens is the whole point; deciding it two years later from
+    photographs is what loses claims."""
+
+    class Cause(models.TextChoices):
+        WEATHER = "WEATHER", "Weather / sea conditions"
+        LATE_INFORMATION = "LATE_INFORMATION", "Information late"
+        INSTRUCTION = "INSTRUCTION", "Instruction / variation"
+        ACCESS = "ACCESS", "Access not given"
+        LATE_MATERIAL = "LATE_MATERIAL", "Material late"
+        SUBCONTRACTOR = "SUBCONTRACTOR", "Subcontractor"
+        AUTHORITY = "AUTHORITY", "Authority / permit"
+        OUR_OWN = "OUR_OWN", "Our own resource or method"
+        OTHER = "OTHER", "Other"
+
+    class Responsibility(models.TextChoices):
+        EMPLOYER = "EMPLOYER", "Employer risk"
+        CONTRACTOR = "CONTRACTOR", "Our risk"
+        NEUTRAL = "NEUTRAL", "Neutral (shared)"
+        UNDECIDED = "UNDECIDED", "Not yet decided"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="delay_event")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT,
+                                related_name="delay_events")
+    title = models.TextField()
+    description = models.TextField(blank=True)
+    cause = models.CharField(max_length=17, choices=Cause.choices)
+    responsibility = models.CharField(max_length=11,
+                                      choices=Responsibility.choices,
+                                      default=Responsibility.UNDECIDED)
+    started_on = models.DateField()
+    ended_on = models.DateField(null=True, blank=True)   # null = still running
+    days_lost = models.IntegerField(null=True, blank=True)
+    mitigation = models.TextField(blank=True)
+
+    activities = models.ManyToManyField(ProgrammeActivity, blank=True,
+                                        related_name="delay_events")
+    # Evidence by linkage: the DPR that recorded it, the RFI that went
+    # unanswered, the shipment that arrived late. Never a second copy of it.
+    evidence = models.ManyToManyField(Document, blank=True,
+                                      related_name="evidences_delays")
+    notice = models.ForeignKey(Correspondence, on_delete=models.SET_NULL,
+                               null=True, blank=True,
+                               related_name="delay_events")
+
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-started_on"]
+
+    def duration_days(self, as_of=None):
+        from django.utils import timezone
+        end = self.ended_on or (as_of or timezone.localdate())
+        return max((end - self.started_on).days + 1, 0)
+
+
+class ExtensionOfTime(models.Model):
+    """An application built out of delay events, not typed from memory.
+
+    Awarding one re-baselines the programme, so what the project is measured
+    against afterwards is the extended plan — which is the point of having a
+    baseline that survives revision."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="eot")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT,
+                                related_name="eot_applications")
+    delay_events = models.ManyToManyField(DelayEvent, blank=True,
+                                          related_name="eot_applications")
+    days_claimed = models.IntegerField(default=0)
+    days_awarded = models.IntegerField(null=True, blank=True)
+    submitted_on = models.DateField(null=True, blank=True)
+    decided_on = models.DateField(null=True, blank=True)
+    revised_completion = models.DateField(null=True, blank=True)
+    grounds = models.TextField(blank=True)
+    decision_note = models.TextField(blank=True)
+    baseline = models.ForeignKey("ProgrammeBaseline", on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+# ===== Handover — the dossier, assembled as the job runs =====
+# There was no snag list, no taking-over or making-good record and no handover
+# pack; `defects_liability_months` sat on the project and was read by nothing
+# (conformance audit 2026-08-28). For a contractor handing villas to a resort,
+# this is the part of the job the client experiences most directly.
+#
+# The dossier is created WITH the project, not at the end of it. Records that
+# already exist — an approved inspection request, a passed test, an approved
+# submittal — become candidates for it as they are produced, so handover is
+# assembled by construction rather than reconstructed from memory in the last
+# fortnight (external review, owner 2026-08-29).
+
+
+def handover_file_path(instance, filename):
+    return (f"handover/{instance.dossier.project_id}/"
+            f"{instance.pk or 'new'}-{filename}")
+
+
+class HandoverDossier(models.Model):
+    project = models.OneToOneField(Project, on_delete=models.CASCADE,
+                                   related_name="handover")
+    target_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Taking-over and making-good: the milestones the DLP clock hangs off.
+    taking_over_on = models.DateField(null=True, blank=True)
+    taking_over_ref = models.CharField(max_length=60, blank=True)
+    making_good_on = models.DateField(null=True, blank=True)
+    making_good_ref = models.CharField(max_length=60, blank=True)
+
+    def defects_liability_ends(self):
+        """When the DLP runs out — the clock the audit found was never
+        started, because nothing read defects_liability_months."""
+        months = self.project.defects_liability_months
+        if not (self.taking_over_on and months):
+            return None
+        year = self.taking_over_on.year + (self.taking_over_on.month - 1
+                                           + months) // 12
+        month = (self.taking_over_on.month - 1 + months) % 12 + 1
+        day = min(self.taking_over_on.day, 28)
+        from datetime import date as _date
+        return _date(year, month, day)
+
+
+class HandoverItem(models.Model):
+    """One thing the client is owed at handover.
+
+    It can POINT at a record the app already holds — an inspection request, a
+    material approval, a test plan — or carry an uploaded file for the things
+    that arrive as paper: cube test reports, as-built drawings, O&M manuals,
+    warranties. Both, where a scan supplements the record."""
+
+    class Section(models.TextChoices):
+        AS_BUILT = "AS_BUILT", "As-built drawings"
+        INSPECTION = "INSPECTION", "Inspection requests & checklists"
+        TEST = "TEST", "Test & commissioning records"
+        SUBMITTAL = "SUBMITTAL", "Approved material submittals"
+        OM_MANUAL = "OM_MANUAL", "O&M manuals"
+        WARRANTY = "WARRANTY", "Warranties & guarantees"
+        CERTIFICATE = "CERTIFICATE", "Statutory & authority certificates"
+        TRAINING = "TRAINING", "Client training records"
+        SPARES = "SPARES", "Spares & attic stock"
+        OTHER = "OTHER", "Other"
+
+    class Discipline(models.TextChoices):
+        CIVIL = "CIVIL", "Civil / structural"
+        MEP = "MEP", "MEP"
+        FINISHES = "FINISHES", "Finishes"
+        EXTERNAL = "EXTERNAL", "External works"
+        GENERAL = "GENERAL", "General"
+
+    class Status(models.TextChoices):
+        REQUIRED = "REQUIRED", "Required — not yet provided"
+        PROVIDED = "PROVIDED", "Provided"
+        ACCEPTED = "ACCEPTED", "Accepted by the client"
+        REJECTED = "REJECTED", "Returned for correction"
+        NOT_APPLICABLE = "NOT_APPLICABLE", "Not applicable"
+
+    dossier = models.ForeignKey(HandoverDossier, on_delete=models.CASCADE,
+                                related_name="items")
+    section = models.CharField(max_length=12, choices=Section.choices)
+    discipline = models.CharField(max_length=9, choices=Discipline.choices,
+                                  default=Discipline.GENERAL)
+    title = models.TextField()
+    reference = models.CharField(max_length=80, blank=True)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=14, choices=Status.choices,
+                              default=Status.REQUIRED)
+
+    # Evidence by linkage, not duplication.
+    document = models.ForeignKey(Document, on_delete=models.SET_NULL,
+                                 null=True, blank=True,
+                                 related_name="handover_items")
+    file = models.FileField(upload_to=handover_file_path, null=True,
+                            blank=True)
+
+    provided_on = models.DateField(null=True, blank=True)
+    provided_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    null=True, blank=True, related_name="+")
+    accepted_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    sort_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["dossier", "section", "sort_order", "id"]
+        indexes = [models.Index(fields=["dossier", "section"])]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dossier", "document"],
+                condition=models.Q(document__isnull=False),
+                name="uniq_handover_document_per_dossier"),
+        ]
+
+    @property
+    def is_satisfied(self):
+        return self.status in ("PROVIDED", "ACCEPTED", "NOT_APPLICABLE")
+
+
+class SnagItem(models.Model):
+    """A defect found at or after handover, with somebody's name on it.
+
+    Separate from a non-conformance: an NCR is work that failed its
+    specification during construction, a snag is what the client walks round
+    and points at. They behave differently and are counted differently."""
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        FIXED = "FIXED", "Fixed — awaiting check"
+        CLOSED = "CLOSED", "Closed"
+        REJECTED = "REJECTED", "Not accepted as a defect"
+
+    dossier = models.ForeignKey(HandoverDossier, on_delete=models.CASCADE,
+                                related_name="snags")
+    ref_no = models.CharField(max_length=20)
+    location = models.TextField()
+    discipline = models.CharField(max_length=9,
+                                  choices=HandoverItem.Discipline.choices,
+                                  default=HandoverItem.Discipline.GENERAL)
+    description = models.TextField()
+    raised_on = models.DateField()
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    # Who owns the fix — our foreman, or a subcontractor.
+    owner = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                              blank=True, related_name="snags")
+    owner_note = models.TextField(blank=True)
+    due_date = models.DateField(null=True, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.OPEN)
+    photo = models.FileField(upload_to=handover_file_path, null=True,
+                             blank=True)
+    fixed_on = models.DateField(null=True, blank=True)
+    closed_on = models.DateField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    # A snag found during the defects-liability period rather than at
+    # taking-over — the distinction the client cares about.
+    in_dlp = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["dossier", "status", "due_date", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["dossier", "ref_no"],
+                                    name="uniq_snag_ref_per_dossier"),
+        ]
+
+    @property
+    def is_open(self):
+        return self.status in ("OPEN", "IN_PROGRESS", "FIXED")

@@ -17,6 +17,7 @@ import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
 import HsePage from "./HsePage.jsx";
 import QualityPage from "./QualityPage.jsx";
+import ContractPage from "./ContractPage.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import { VesselsPage } from "./Vessels.jsx";
 import ClientUsersPage from "./ClientUsersPage.jsx";
@@ -107,6 +108,12 @@ const NAV_GROUPS = [
     subs: [["sites", "Sites", null],
            ["hse", "Safety", null],
            ["quality", "Quality", null],
+           // Contract & time: correspondence, delay and entitlement. Site
+           // teams log the evidence; only PM/QS/Director decide whose risk
+           // a delay is or submit an application (enforced server-side).
+           ["contract", "Contract & time",
+            ["PM", "DIRECTOR", "ADMIN", "QS", "SIGNATORY", "PA",
+             "SITE_ENGINEER", "SITE_ADMIN"]],
            ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
     // PM is here ONLY for the Procurement Schedule, which used to be its own
@@ -1188,6 +1195,9 @@ export default function App() {
           )}
           {!docView && !openSite && hoPage === "quality" && (
             <QualityPage me={me} sites={sites} />
+          )}
+          {!docView && !openSite && hoPage === "contract" && (
+            <ContractPage me={me} sites={sites} />
           )}
           {/* not gated on is_ho — site staff watch their own site's cameras */}
           {!docView && !openSite && hoPage === "live-feeds" && (

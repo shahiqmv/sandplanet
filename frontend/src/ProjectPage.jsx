@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
 import UnitsPanel from "./UnitsPanel.jsx";
+import HandoverTab from "./HandoverTab.jsx";
 import ProgrammePage from "./ProgrammePage.jsx";
 import VariationsPanel from "./VariationsPanel.jsx";
 import ClaimsPanel from "./ClaimsPanel.jsx";
@@ -24,6 +25,7 @@ const TABS = [
   ["commercial", "Commercial", true],  // QS: BOQ (claims follow)
   ["bom", "BOM", true],  // material quantity budget + variance (2026-08-11)
   ["procurement", "Procurement", true],  // procurement schedule (QS-led)
+  ["handover", "Handover", true],  // the pack, snags, taking over (2026-08-29)
   ["tender", "Tender · later", false],
 ];
 
@@ -206,6 +208,12 @@ manpower histogram, on the letterhead — send to the client"
       {tab === "programme" && (
         <section style={card}>
           <ProgrammePage project={project} me={me} embedded />
+        </section>
+      )}
+
+      {tab === "handover" && (
+        <section style={card}>
+          <HandoverTab project={project} me={me} />
         </section>
       )}
 
