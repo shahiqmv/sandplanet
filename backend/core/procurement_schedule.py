@@ -295,7 +295,8 @@ SPLIT_ROLES = (*PROPOSE_ROLES, *CONFIRM_ROLES)   # operational, like doc-linking
 _SPLIT_COPY = ("category", "item_id", "description", "make_brand",
                "specification", "uom", "trade", "supply_by", "required_date",
                "tds_required", "remarks", "planned_supplier", "source_country",
-               "currency", "lead_time_days", "mar_id")
+               "currency", "lead_time_days", "shipping_days",
+               "clearance_days", "mar_id")
 
 
 def _split_label(line):
@@ -412,9 +413,16 @@ def _apply_commercial(line, data):
         line.estimated_value = _dec(data.get("estimated_value"))
     if "currency" in data:
         line.currency = (data.get("currency") or "USD")[:3].upper()
-    if "lead_time_days" in data:
-        v = data.get("lead_time_days")
-        line.lead_time_days = int(v) if str(v).isdigit() else None
+    for field in ("lead_time_days", "shipping_days", "clearance_days"):
+        if field in data:
+            v = data.get(field)
+            setattr(line, field, int(v) if str(v).strip().isdigit() else None)
+    if "inspection_required" in data:
+        line.inspection_required = bool(data["inspection_required"])
+    if "inspection_done_on" in data:
+        line.inspection_done_on = data["inspection_done_on"] or None
+    if "inspection_note" in data:
+        line.inspection_note = (data.get("inspection_note") or "").strip()
 
 
 def _renumber(section):
@@ -569,6 +577,11 @@ def line_dict(line, values=True):
         "planned_supplier": line.planned_supplier,
         "source_country": line.source_country,
         "lead_time_days": line.lead_time_days,
+        "shipping_days": line.shipping_days,
+        "clearance_days": line.clearance_days,
+        "inspection_required": line.inspection_required,
+        "inspection_done_on": line.inspection_done_on,
+        "inspection_note": line.inspection_note,
         "client_last_update": line.client_last_update,
         "client_update_note": line.client_update_note,
         "mar_id": line.mar_id, "ipr_id": line.ipr_id,
@@ -579,6 +592,9 @@ def line_dict(line, values=True):
     }
     from .procurement_pipeline import (client_is_stale, effective_supplier,
                                        line_pipeline, line_risk, line_stage)
+    from .procurement_pipeline import lead_legs, order_by_date
+    d["lead_legs"] = lead_legs(line)
+    d["order_by"] = order_by_date(line)
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
     d["stage"] = line_stage(line)

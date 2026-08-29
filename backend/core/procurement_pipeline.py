@@ -283,9 +283,55 @@ def _delivered(line):
     return bool(line.client_delivered_on)   # CLIENT lines are marked by hand
 
 
+# What a clearing agent takes on a normal consignment. Only a default: a
+# line that states its own is believed.
+DEFAULT_CLEARANCE_DAYS = 10
+
+
 def _shipping_allowance(line):
+    """The sailing/flying leg. A line that states it wins; otherwise the
+    per-country table, which is a guess made in code and should be treated
+    as one."""
+    if line.shipping_days:
+        return line.shipping_days
     return SHIPPING_ALLOWANCE_DAYS.get(
         (line.source_country or "").strip().upper(), DEFAULT_ALLOWANCE_DAYS)
+
+
+def _clearance_allowance(line):
+    return (line.clearance_days if line.clearance_days is not None
+            else DEFAULT_CLEARANCE_DAYS)
+
+
+def lead_legs(line):
+    """The three legs a PM actually plans with: the factory, the forwarder,
+    the clearing agent. Kept apart because each has a different owner, and
+    when a date slips the useful question is WHICH leg slipped."""
+    manufacture = line.lead_time_days or 0
+    shipping = _shipping_allowance(line)
+    clearance = _clearance_allowance(line)
+    return {
+        "manufacture_days": manufacture,
+        "shipping_days": shipping,
+        "clearance_days": clearance,
+        "site_buffer_days": SITE_BUFFER_DAYS,
+        "total_days": manufacture + shipping + clearance + SITE_BUFFER_DAYS,
+        "shipping_assumed": not line.shipping_days,
+        "clearance_assumed": line.clearance_days is None,
+    }
+
+
+def order_by_date(line):
+    """The last day the order can go out and still make the required date.
+
+    This is the number a PM builds their own schedule to get, and the one the
+    planner never gave them: it answers "when must I act?", where the risk
+    engine only answered "will it be late?" (owner 2026-08-29). Working
+    backwards from the date the material is needed, through clearance,
+    shipping and manufacture."""
+    if not line.required_date or line.supply_by == "CLIENT":
+        return None
+    return line.required_date - timedelta(days=lead_legs(line)["total_days"])
 
 
 def _projected_onsite(line):
@@ -295,11 +341,10 @@ def _projected_onsite(line):
     shipped_eta = _site_eta(_shipment_for(line))
     if shipped_eta:
         return shipped_eta
-    lead = line.lead_time_days or 0
-    allow = _shipping_allowance(line)
+    legs = lead_legs(line)
     base = (line.ipr.doc_date if line.ipr_id and line.ipr.doc_date
             else _today())
-    return base + timedelta(days=lead + allow + SITE_BUFFER_DAYS)
+    return base + timedelta(days=legs["total_days"])
 
 
 def line_risk(line):
@@ -331,8 +376,15 @@ def line_risk(line):
         level, reason = "AT_RISK", f"Only {slack}d of slack"
     else:
         level, reason = "ON_TRACK", f"{slack}d slack"
-    return {"level": level, "reason": reason, "projected": proj,
-            "slack_days": slack, "unordered": unordered}
+    out = {"level": level, "reason": reason, "projected": proj,
+           "slack_days": slack, "unordered": unordered}
+    # "You needed to place this order N days ago" is a different sentence from
+    # "this will land late", and it is the one somebody can still act on.
+    by = order_by_date(line)
+    out["order_by"] = by
+    out["order_overdue_days"] = (
+        (_today() - by).days if (by and unordered and by < _today()) else 0)
+    return out
 
 
 def line_stage(line):

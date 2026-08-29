@@ -129,6 +129,42 @@ function ValueCell({ ln }) {
   );
 }
 
+// The last day an order can go out and still make the required date, working
+// back through clearance, shipping and manufacture. A PM's own schedule is
+// built to get this number; ours only ever said whether a line would be late
+// (owner 2026-08-29). Once ordered, the useful figure becomes the projected
+// arrival instead.
+function OrderByCell({ ln }) {
+  const legs = ln.lead_legs;
+  const tip = legs
+    ? `${legs.manufacture_days}d make`
+      + ` + ${legs.shipping_days}d ship${legs.shipping_assumed ? "*" : ""}`
+      + ` + ${legs.clearance_days}d clear${legs.clearance_assumed ? "*" : ""}`
+      + ` + ${legs.site_buffer_days}d to site`
+      + (legs.shipping_assumed || legs.clearance_assumed
+         ? "  (* assumed — set it on the line)" : "")
+    : "";
+  if (ln.ipr_ref) {
+    return (
+      <span title={`Ordered · ${tip}`} style={{ color: "var(--muted)" }}>
+        {ln.risk?.projected ? fmt(ln.risk.projected) : "ordered"}
+      </span>
+    );
+  }
+  if (!ln.order_by) return <span style={{ color: "var(--muted)" }}>—</span>;
+  const late = ln.risk?.order_overdue_days || 0;
+  return (
+    <span title={tip} style={{ fontWeight: late ? 700 : 500,
+                               color: late ? "#a3271b" : undefined }}>
+      {fmt(ln.order_by)}
+      {late > 0 && (
+        <div style={{ fontSize: 11, fontWeight: 700 }}>
+          {late}d overdue to order</div>
+      )}
+    </span>
+  );
+}
+
 function RiskCell({ risk }) {
   if (!risk || risk.level === "NONE")
     return <span style={{ color: "var(--muted)" }}>—</span>;
@@ -244,9 +280,7 @@ function LineRow({ ln, c, member, sel, on }) {
       <td style={cell}>{fmt(ln.required_date)}</td>
       <td style={cell}>{ln.ipr_supplier || ln.planned_supplier || "—"}</td>
       <td style={cell}>{ln.ipr_country || ln.source_country || "—"}</td>
-      <td style={cell}>{ln.ipr_ref && ln.risk?.projected
-        ? fmt(ln.risk.projected)
-        : (ln.lead_time_days != null ? `${ln.lead_time_days}d` : "—")}</td>
+      <td style={cell}><OrderByCell ln={ln} /></td>
       {c.show_values && <td style={cell}><ValueCell ln={ln} /></td>}
       <td style={cell}><PipelineStrip stages={ln.pipeline} /></td>
       <td style={cell}><RiskCell risk={ln.risk} /></td>
@@ -694,7 +728,7 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
               fontSize: 12.5 }}>
               <thead><tr style={{ textAlign: "left", color: "var(--muted)" }}>
                 {["#", "Description", "Make", "Qty", "Category", "Supply",
-                  "Required", "Supplier", "Country", "Lead",
+                  "Required", "Supplier", "Country", "Order by",
                   ...(c.show_values ? ["Est. value"] : []),
                   "Pipeline", "Risk", "State", ""].map((h, i) =>
                   <th key={i} style={{ padding: "6px 10px",
@@ -1438,8 +1472,15 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
             onChange={set("planned_supplier")} /></L>
           <L k="Source country"><input style={inputStyle}
             value={f.source_country || ""} onChange={set("source_country")} /></L>
-          <L k="Lead time (days)"><input type="number" style={inputStyle}
+          <L k="Manufacturing (days)"><input type="number" style={inputStyle}
             value={f.lead_time_days ?? ""} onChange={set("lead_time_days")} /></L>
+          <L k="Shipping (days)"><input type="number" style={inputStyle}
+            placeholder="by country if blank"
+            value={f.shipping_days ?? ""} onChange={set("shipping_days")} /></L>
+          <L k="Customs clearance (days)"><input type="number"
+            style={inputStyle} placeholder="10 if blank"
+            value={f.clearance_days ?? ""}
+            onChange={set("clearance_days")} /></L>
           <L k="Estimated value"><input type="number" style={inputStyle}
             value={f.estimated_value ?? ""}
             onChange={set("estimated_value")} /></L>

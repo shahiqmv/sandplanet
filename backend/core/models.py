@@ -4676,7 +4676,22 @@ class ScheduleLine(models.Model):
     estimated_value = models.DecimalField(max_digits=12, decimal_places=2,
                                           null=True, blank=True)
     currency = models.CharField(max_length=3, default="USD")
+    # The three legs of a lead time, kept apart because they have different
+    # owners and different failure modes: the factory, the forwarder and the
+    # clearing agent. A PM's own schedule always splits them; ours folded
+    # shipping into a per-country constant buried in code, so nobody could
+    # see it or override it for a line (owner 2026-08-29, from a PM's
+    # hand-made schedule for Soneva Fushi).
+    #
+    # `lead_time_days` is the MANUFACTURING leg — the meaning it already had.
     lead_time_days = models.PositiveIntegerField(null=True, blank=True)
+    shipping_days = models.PositiveIntegerField(null=True, blank=True)
+    clearance_days = models.PositiveIntegerField(null=True, blank=True)
+    # Pre-shipment inspection. Rejecting FF&E after it has reached an island
+    # is not a remedy, so the check that matters happens at the factory.
+    inspection_required = models.BooleanField(default=False)
+    inspection_done_on = models.DateField(null=True, blank=True)
+    inspection_note = models.TextField(blank=True)
 
     # --- links to execution documents (populated in phase 2; nullable) ---
     mar = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,

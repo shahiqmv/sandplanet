@@ -70,12 +70,24 @@ class ProcurementRiskTests(TestCase):
         self.assertEqual(self._risk(line), "ON_TRACK")
 
     def test_at_risk_inside_window(self):
-        # projected ≈ today+60 (lead30 + allowance25 + buffer5); required just
-        # a few days past that → thin slack → at risk.
+        # projected ≈ today+70 (make 30 + ship 25 + clear 10 + buffer 5);
+        # required a few days past that → thin slack → at risk.
+        #
+        # The customs leg was added on 2026-08-29, taken from a PM's own
+        # schedule where every line reads "shipping 30 days, customs 10 days".
+        # The shipping table had always been the SAIL, so clearance was simply
+        # missing and every projection ran about ten days optimistic.
+        line = self._signed_line(
+            required_date=(self.today + timedelta(days=75)).isoformat(),
+            commercial={"lead_time_days": 30})
+        self.assertEqual(self._risk(line), "AT_RISK")
+
+    def test_the_customs_leg_is_counted_on_top_of_the_sail(self):
+        """What used to read as five days of slack is really five days late."""
         line = self._signed_line(
             required_date=(self.today + timedelta(days=65)).isoformat(),
             commercial={"lead_time_days": 30})
-        self.assertEqual(self._risk(line), "AT_RISK")
+        self.assertEqual(self._risk(line), "LATE")
 
     def test_delivered_via_grn(self):
         line = self._signed_line(
