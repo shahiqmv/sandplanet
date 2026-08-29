@@ -129,39 +129,63 @@ function ValueCell({ ln }) {
   );
 }
 
-// The last day an order can go out and still make the required date, working
-// back through clearance, shipping and manufacture. A PM's own schedule is
-// built to get this number; ours only ever said whether a line would be late
-// (owner 2026-08-29). Once ordered, the useful figure becomes the projected
-// arrival instead.
+// The last day an order can go out and still make the required date. The PM
+// SETS this — the app cannot know how long a mattress takes out of China in
+// December against a panel board in a normal month, and product type, season,
+// a war on the lane and the state of the port all move it. A date computed
+// from figures the software invented would be worse than none, because it
+// reads as authoritative (owner 2026-08-29).
 function OrderByCell({ ln }) {
-  const legs = ln.lead_legs;
-  const tip = legs
-    ? `${legs.manufacture_days}d make`
-      + ` + ${legs.shipping_days}d ship${legs.shipping_assumed ? "*" : ""}`
-      + ` + ${legs.clearance_days}d clear${legs.clearance_assumed ? "*" : ""}`
-      + ` + ${legs.site_buffer_days}d to site`
-      + (legs.shipping_assumed || legs.clearance_assumed
-         ? "  (* assumed — set it on the line)" : "")
-    : "";
   if (ln.ipr_ref) {
     return (
-      <span title={`Ordered · ${tip}`} style={{ color: "var(--muted)" }}>
+      <span title="Ordered" style={{ color: "var(--muted)" }}>
         {ln.risk?.projected ? fmt(ln.risk.projected) : "ordered"}
       </span>
     );
   }
-  if (!ln.order_by) return <span style={{ color: "var(--muted)" }}>—</span>;
+  if (!ln.order_by) {
+    return (
+      <span style={{ color: "var(--muted)" }}
+            title="Not set — a PM decides this date; the app does not guess it">
+        not set</span>
+    );
+  }
   const late = ln.risk?.order_overdue_days || 0;
   return (
-    <span title={tip} style={{ fontWeight: late ? 700 : 500,
-                               color: late ? "#a3271b" : undefined }}>
+    <span style={{ fontWeight: late ? 700 : 500,
+                   color: late ? "#a3271b" : undefined }}>
       {fmt(ln.order_by)}
       {late > 0 && (
         <div style={{ fontSize: 11, fontWeight: 700 }}>
           {late}d overdue to order</div>
       )}
     </span>
+  );
+}
+
+// Offered only when the PM has stated all three legs themselves. Filling the
+// field from a country-table guess would dress a guess as a deadline.
+function SuggestOrderBy({ f, onUse }) {
+  const legs = [f.lead_time_days, f.shipping_days, f.clearance_days];
+  const ready = f.required_date && legs.every(
+    (v) => v !== "" && v !== null && v !== undefined && !Number.isNaN(+v));
+  if (!ready) {
+    return (
+      <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+        enter the three legs and a required date to work it out
+      </span>
+    );
+  }
+  const total = legs.reduce((a, v) => a + Number(v), 0) + 5;   // site buffer
+  const d = new Date(f.required_date);
+  d.setDate(d.getDate() - total);
+  const iso = d.toISOString().slice(0, 10);
+  return (
+    <Btn variant="ghost" onClick={() => onUse(iso)}
+         title={`${legs[0]}d make + ${legs[1]}d ship + ${legs[2]}d clear `
+                + "+ 5d to site, back from the required date"}>
+      Work it out ({iso})
+    </Btn>
   );
 }
 
@@ -1478,9 +1502,25 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
             placeholder="by country if blank"
             value={f.shipping_days ?? ""} onChange={set("shipping_days")} /></L>
           <L k="Customs clearance (days)"><input type="number"
-            style={inputStyle} placeholder="10 if blank"
+            style={inputStyle}
             value={f.clearance_days ?? ""}
             onChange={set("clearance_days")} /></L>
+          <L k="Order by" wide>
+            <div style={{ display: "flex", gap: 8, alignItems: "center",
+                          flexWrap: "wrap" }}>
+              <input type="date" style={{ ...inputStyle, width: "auto" }}
+                value={f.order_by_date || ""}
+                onChange={set("order_by_date")} />
+              <SuggestOrderBy f={f} onUse={(d) =>
+                setF((p) => ({ ...p, order_by_date: d }))} />
+            </div>
+            <div style={{ fontSize: 11.5, color: "var(--muted)",
+                          marginTop: 3 }}>
+              Your call. Production, sailing and clearing all move with the
+              product, the season and whatever the lanes are doing — the app
+              does not guess this.
+            </div>
+          </L>
           <L k="Estimated value"><input type="number" style={inputStyle}
             value={f.estimated_value ?? ""}
             onChange={set("estimated_value")} /></L>

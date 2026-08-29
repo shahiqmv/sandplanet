@@ -321,17 +321,29 @@ def lead_legs(line):
     }
 
 
-def order_by_date(line):
-    """The last day the order can go out and still make the required date.
+def suggested_order_by(line):
+    """Arithmetic offered to a PM who has entered all three legs — never a
+    substitute for their judgement.
 
-    This is the number a PM builds their own schedule to get, and the one the
-    planner never gave them: it answers "when must I act?", where the risk
-    engine only answered "will it be late?" (owner 2026-08-29). Working
-    backwards from the date the material is needed, through clearance,
-    shipping and manufacture."""
+    Deliberately returns nothing unless the PM has stated manufacturing,
+    shipping AND clearance themselves. The country table is a guess made in
+    code; letting it produce an order-by date would dress a guess as a
+    deadline, and the durations genuinely are not knowable from here —
+    product type, season, a war on the lane, the state of the port
+    (owner 2026-08-29)."""
     if not line.required_date or line.supply_by == "CLIENT":
         return None
-    return line.required_date - timedelta(days=lead_legs(line)["total_days"])
+    if (line.lead_time_days is None or line.shipping_days is None
+            or line.clearance_days is None):
+        return None
+    total = (line.lead_time_days + line.shipping_days + line.clearance_days
+             + SITE_BUFFER_DAYS)
+    return line.required_date - timedelta(days=total)
+
+
+def order_by(line):
+    """The PM's own date. Nothing computes this."""
+    return line.order_by_date
 
 
 def _projected_onsite(line):
@@ -379,8 +391,10 @@ def line_risk(line):
     out = {"level": level, "reason": reason, "projected": proj,
            "slack_days": slack, "unordered": unordered}
     # "You needed to place this order N days ago" is a different sentence from
-    # "this will land late", and it is the one somebody can still act on.
-    by = order_by_date(line)
+    # "this will land late", and it is the one somebody can still act on. It
+    # counts off the PM's OWN date — a flag raised by the app's arithmetic
+    # would be a flag nobody trusts.
+    by = line.order_by_date
     out["order_by"] = by
     out["order_overdue_days"] = (
         (_today() - by).days if (by and unordered and by < _today()) else 0)

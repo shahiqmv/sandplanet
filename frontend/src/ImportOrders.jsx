@@ -1477,7 +1477,7 @@ function Shipment({ s, refIpr, canManage, call, onChanged, onError,
         {s.missing_clearing.length > 0 && (
           <span style={{ color: "#b35900", marginLeft: 4 }}>
             (for clearing, still need: {s.missing_clearing.map((m) =>
-              (DOC_TYPES.find((t) => t[0] === m) || [, m])[1]).join(", ")})</span>
+              (DOC_TYPES.find((t) => t[0] === m) || ["", m])[1]).join(", ")})</span>
         )}
       </div>
       {canManage && (
@@ -2911,7 +2911,7 @@ function MilestonePanel({ doc, me, refIpr, onChanged, onError }) {
                 <tr key={m.id}>
                   <td style={td}>{m.label}</td>
                   <td style={td}>{(TRIGGERS.find((t) => t[0] === m.trigger)
-                    || [, m.trigger])[1]}
+                    || ["", m.trigger])[1]}
                     {m.percent ? ` · ${num(m.percent)}%`
                       : (m.fixed_amount != null ? " · fixed" : "")}
                     {m.credit_days > 0 && ` · ${m.credit_days}d credit`}

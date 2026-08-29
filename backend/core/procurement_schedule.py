@@ -296,7 +296,7 @@ _SPLIT_COPY = ("category", "item_id", "description", "make_brand",
                "specification", "uom", "trade", "supply_by", "required_date",
                "tds_required", "remarks", "planned_supplier", "source_country",
                "currency", "lead_time_days", "shipping_days",
-               "clearance_days", "mar_id")
+               "clearance_days", "order_by_date", "mar_id")
 
 
 def _split_label(line):
@@ -417,6 +417,8 @@ def _apply_commercial(line, data):
         if field in data:
             v = data.get(field)
             setattr(line, field, int(v) if str(v).strip().isdigit() else None)
+    if "order_by_date" in data:
+        line.order_by_date = data["order_by_date"] or None
     if "inspection_required" in data:
         line.inspection_required = bool(data["inspection_required"])
     if "inspection_done_on" in data:
@@ -592,9 +594,10 @@ def line_dict(line, values=True):
     }
     from .procurement_pipeline import (client_is_stale, effective_supplier,
                                        line_pipeline, line_risk, line_stage)
-    from .procurement_pipeline import lead_legs, order_by_date
+    from .procurement_pipeline import lead_legs, suggested_order_by
     d["lead_legs"] = lead_legs(line)
-    d["order_by"] = order_by_date(line)
+    d["order_by"] = line.order_by_date
+    d["suggested_order_by"] = suggested_order_by(line)
     d["pipeline"] = line_pipeline(line)
     d["risk"] = line_risk(line)
     d["stage"] = line_stage(line)

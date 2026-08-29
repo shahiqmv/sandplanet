@@ -11,7 +11,8 @@ from django.test import TestCase
 
 from .models import (Project, ProcurementSchedule, ScheduleLine,
                      ScheduleSection, Site, User)
-from .procurement_pipeline import lead_legs, line_risk, order_by_date
+from .procurement_pipeline import (lead_legs, line_risk,
+                                   suggested_order_by)
 from .tests import make_user
 
 
@@ -61,44 +62,53 @@ class LeadLegTests(TestCase):
         self.assertTrue(legs["shipping_assumed"])
         self.assertTrue(legs["clearance_assumed"])
 
-    def test_the_order_by_date_works_backwards_from_the_required_date(self):
-        """7 + 10 + 10 legs and the site buffer, counted back from 5 Oct."""
-        line = self._line(required_date=date(2026, 10, 5), lead_time_days=7,
-                          shipping_days=10, clearance_days=10)
-        total = lead_legs(line)["total_days"]
-        self.assertEqual(order_by_date(line),
-                         date(2026, 10, 5) - timedelta(days=total))
-
-    def test_no_required_date_means_no_order_by_date(self):
-        self.assertIsNone(order_by_date(self._line(lead_time_days=7)))
-
-    def test_client_supplied_lines_carry_no_order_date(self):
+    def test_the_order_by_date_is_the_pms_own(self):
+        """Nothing computes it. Product type, season, a war on the lane and
+        the state of the port all move it, and none of that is knowable from
+        here (owner 2026-08-29)."""
         line = self._line(required_date=date(2026, 10, 5),
-                          supply_by="CLIENT")
-        self.assertIsNone(order_by_date(line))
+                          order_by_date=date(2026, 7, 1))
+        self.assertEqual(line_risk(line)["order_by"], date(2026, 7, 1))
 
-    def test_an_unordered_line_past_its_order_date_says_how_late(self):
-        """The sentence a PM can still act on."""
-        line = self._line(required_date=date.today() + timedelta(days=10),
-                          lead_time_days=7, shipping_days=10,
-                          clearance_days=10)
+    def test_the_suggestion_needs_all_three_legs_stated(self):
+        """A country-table guess must never produce a deadline."""
+        self.assertIsNone(suggested_order_by(
+            self._line(required_date=date(2026, 10, 5), lead_time_days=7)))
+        full = self._line(required_date=date(2026, 10, 5), lead_time_days=7,
+                          shipping_days=10, clearance_days=10)
+        self.assertEqual(suggested_order_by(full),
+                         date(2026, 10, 5) - timedelta(days=7 + 10 + 10 + 5))
+
+    def test_no_required_date_means_no_suggestion(self):
+        self.assertIsNone(suggested_order_by(
+            self._line(lead_time_days=7, shipping_days=10,
+                       clearance_days=10)))
+
+    def test_client_supplied_lines_get_no_suggestion(self):
+        self.assertIsNone(suggested_order_by(
+            self._line(required_date=date(2026, 10, 5), supply_by="CLIENT",
+                       lead_time_days=7, shipping_days=10,
+                       clearance_days=10)))
+
+    def test_an_unordered_line_past_the_pms_date_says_how_late(self):
+        """The sentence a PM can still act on — counted off their own date."""
+        line = self._line(required_date=date.today() + timedelta(days=60),
+                          order_by_date=date.today() - timedelta(days=12))
         risk = line_risk(line)
-        self.assertGreater(risk["order_overdue_days"], 0)
+        self.assertEqual(risk["order_overdue_days"], 12)
         self.assertTrue(risk["unordered"])
 
     def test_a_line_with_time_in_hand_is_not_flagged(self):
         line = self._line(required_date=date.today() + timedelta(days=200),
-                          lead_time_days=7, shipping_days=10,
-                          clearance_days=10)
+                          order_by_date=date.today() + timedelta(days=30))
         self.assertEqual(line_risk(line)["order_overdue_days"], 0)
 
-    def test_stated_shipping_days_override_the_country_guess(self):
-        """A line that knows better than the table wins."""
-        slow = self._line(required_date=date(2026, 12, 1), lead_time_days=25,
-                          source_country="China")
-        fast = self._line(required_date=date(2026, 12, 1), lead_time_days=25,
-                          source_country="China", shipping_days=5)
-        self.assertLess(order_by_date(slow), order_by_date(fast))
+    def test_a_line_with_no_order_date_is_never_flagged(self):
+        """Silence beats a made-up deadline."""
+        line = self._line(required_date=date.today() + timedelta(days=5),
+                          lead_time_days=90)
+        self.assertEqual(line_risk(line)["order_overdue_days"], 0)
+        self.assertIsNone(line_risk(line)["order_by"])
 
     def test_an_ordered_line_is_not_reported_as_order_overdue(self):
         from .models import Document
@@ -106,5 +116,6 @@ class LeadLegTests(TestCase):
             doc_type="IPR", ref="IPR-PSX-001", site=self.site,
             doc_date=date.today(), status="AUTHORISED", created_by=self.user)
         line = self._line(required_date=date.today() + timedelta(days=5),
-                          lead_time_days=30, ipr=ipr)
+                          order_by_date=date.today() - timedelta(days=40),
+                          ipr=ipr)
         self.assertEqual(line_risk(line)["order_overdue_days"], 0)

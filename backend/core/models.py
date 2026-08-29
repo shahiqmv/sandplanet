@@ -4687,6 +4687,14 @@ class ScheduleLine(models.Model):
     lead_time_days = models.PositiveIntegerField(null=True, blank=True)
     shipping_days = models.PositiveIntegerField(null=True, blank=True)
     clearance_days = models.PositiveIntegerField(null=True, blank=True)
+    # The last day the order can go out — ENTERED, not derived. The app cannot
+    # know how long a mattress takes out of China in December against a panel
+    # board in a normal month: product type, season, a war on a shipping lane
+    # and the state of the port all move it, and a date computed from figures
+    # the software invented is worse than none, because it reads as
+    # authoritative (owner 2026-08-29). The legs above are the PM's own
+    # working, and can fill this in on request — but the number is theirs.
+    order_by_date = models.DateField(null=True, blank=True)
     # Pre-shipment inspection. Rejecting FF&E after it has reached an island
     # is not a remedy, so the check that matters happens at the factory.
     inspection_required = models.BooleanField(default=False)
