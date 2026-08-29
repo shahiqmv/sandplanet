@@ -8,6 +8,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
+from . import programme
 from .audit import audit
 from .models import ProgrammeActivity, Project, Site, User
 from .permissions import scoped_site_ids
@@ -121,7 +122,7 @@ class ActivitySerializer(serializers.ModelSerializer):
         model = ProgrammeActivity
         fields = ["id", "sort_order", "indent", "name", "duration_days",
                   "start", "finish", "is_milestone", "predecessors",
-                  "progress"]
+                  "progress", "actual_start", "actual_finish"]
 
 
 @api_view(["GET"])
@@ -383,7 +384,13 @@ def project_programme(request, pk):
             return Response({"detail": "Nothing to import — paste the "
                                        "programme rows or send activities."},
                             status=400)
+        # A revision must not wipe what actually happened. Actual dates and
+        # reported progress are read off the old rows and re-applied to the
+        # new ones by name — MS Project's ID column renumbers whenever a task
+        # is inserted, so it cannot be the key (owner 2026-08-29).
+        carried = {}
         if request.data.get("replace", True):
+            carried = programme.carry_forward(project)
             project.activities.all().delete()
         base = project.activities.count()
         created = []
@@ -397,9 +404,12 @@ def project_programme(request, pk):
                 is_milestone=bool(row.get("is_milestone")) or
                 row.get("duration_days") == 0,
             ))
+        kept = sum(1 for a in created if programme.apply_carried(a, carried))
         audit("project", project.id, "PROGRAMME_IMPORTED", actor=request.user,
-              detail={"count": len(created)})
-        return Response({"imported": len(created)}, status=201)
+              detail={"count": len(created), "history_carried": kept,
+                      "replaced": bool(request.data.get("replace", True))})
+        return Response({"imported": len(created), "history_carried": kept},
+                        status=201)
 
     acts = list(project.activities.all())
     data = ActivitySerializer(acts, many=True).data
@@ -446,6 +456,49 @@ def activity_detail(request, pk):
     audit("programme_activity", activity.id, "ACTIVITY_UPDATED",
           actor=request.user, detail={"fields": sorted(request.data.keys())})
     return Response(serializer.data)
+
+
+@api_view(["GET", "POST"])
+def project_baseline(request, pk):
+    """GET: the live programme measured against its approved baseline.
+    POST: freeze the programme as a new baseline.
+
+    Re-baselining is what an awarded extension of time produces — the old
+    baseline is superseded, never deleted, so what we were working to at any
+    past date is still answerable (owner 2026-08-29)."""
+    try:
+        project = Project.objects.select_related("site").get(pk=pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and project.site_id not in site_ids:
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "GET":
+        return Response(programme.comparison(project))
+
+    if request.user.role not in PROJECT_CREATE_ROLES:
+        return Response({"detail": "Admin/Director/PM set the baseline."},
+                        status=403)
+    existing = programme.current_baseline(project)
+    if existing is not None and not request.data.get("reason", "").strip():
+        return Response({"detail": "Re-baselining replaces the programme this "
+                                   "project is measured against — say why "
+                                   "(an EOT award, a re-sequence)."},
+                        status=400)
+    baseline, err = programme.capture_baseline(
+        project, request.user,
+        label=(request.data.get("label") or "").strip(),
+        reason=(request.data.get("reason") or "").strip())
+    if err:
+        return Response({"detail": err}, status=400)
+    audit("project", project.id, "PROGRAMME_BASELINED", actor=request.user,
+          detail={"rev_no": baseline.rev_no, "label": baseline.label,
+                  "reason": baseline.reason,
+                  "activities": baseline.activities.count(),
+                  "superseded": existing.rev_no if existing else None})
+    return Response({"rev_no": baseline.rev_no, "label": baseline.label,
+                     "activities": baseline.activities.count()}, status=201)
 
 
 @api_view(["POST"])

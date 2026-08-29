@@ -22,6 +22,10 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
   const [editRow, setEditRow] = useState(null); // { id, ...fields }
   const [notice, setNotice] = useState(null);
   const [error, setError] = useState(null);
+  // Baseline: what we committed to, against what is happening. A revision
+  // no longer destroys it (owner 2026-08-29).
+  const [base, setBase] = useState(null);
+  const [baseBusy, setBaseBusy] = useState(false);
   const [pubEdit, setPubEdit] = useState(false);   // client-progress override
   const [pubPct, setPubPct] = useState("");
   const [pubNote, setPubNote] = useState("");
@@ -31,6 +35,8 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
   const load = useCallback(() => {
     api(`/projects/${project.id}/programme`).then(setActivities);
     api(`/projects/${project.id}`).then(setDetail);
+    api(`/projects/${project.id}/programme/baseline`).then(setBase)
+      .catch(() => setBase(null));
   }, [project.id]);
 
   useEffect(load, [load]);
@@ -48,6 +54,36 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
       load();
     } catch (e) {
       setError(e.message);
+    }
+  }
+
+  async function setBaseline() {
+    const existing = base?.baseline;
+    let reason = "";
+    if (existing) {
+      reason = window.prompt(
+        `${project.code} is already measured against "${existing.label}". `
+        + "Re-baselining changes what every slippage figure is compared "
+        + "with — normally only done when an extension of time is awarded.\n\n"
+        + "Why are you re-baselining?") || "";
+      if (!reason.trim()) return;
+    } else if (!window.confirm(
+      `Freeze the current ${activities.length} activities as the baseline `
+      + `for ${project.code}? This is what slippage will be measured `
+      + "against from now on.")) {
+      return;
+    }
+    setBaseBusy(true); setError(null); setNotice(null);
+    try {
+      const r = await api(`/projects/${project.id}/programme/baseline`, {
+        method: "POST", body: { reason },
+      });
+      setNotice(`Baseline ${r.label} captured — ${r.activities} activities.`);
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBaseBusy(false);
     }
   }
 
@@ -439,6 +475,84 @@ export default function ProgrammePage({ project, me, onClose, embedded }) {
             <button onClick={() => setImporting(false)} style={ghostButton}>
               Cancel</button>
           </div>
+        </div>
+      )}
+
+      {/* Baseline — what we committed to, and what has moved away from it.
+          Exceptions only: a list of every activity would just repeat the
+          table below. */}
+      {activities.length > 0 && (
+        <div style={{ ...card, background: "var(--sand, #f7f4ee)",
+                      margin: "12px 0" }}>
+          <div style={{ display: "flex", justifyContent: "space-between",
+                        alignItems: "baseline", gap: 10, flexWrap: "wrap" }}>
+            <div>
+              <strong style={{ fontSize: 14 }}>Baseline</strong>
+              <span style={{ fontSize: 13, color: "#5a6b78", marginLeft: 8 }}>
+                {base?.baseline
+                  ? `${base.baseline.label} · ${base.baseline.activity_count} `
+                    + `activities · captured `
+                    + new Date(base.baseline.captured_at).toLocaleDateString()
+                  : "not set — slippage cannot be measured until it is"}
+              </span>
+            </div>
+            {canManage && (
+              <button onClick={setBaseline} disabled={baseBusy}
+                      style={base?.baseline ? ghostButton : buttonStyle}
+                      title={base?.baseline
+                        ? "Replace the programme slippage is measured against "
+                          + "— normally only after an EOT award"
+                        : "Freeze the current programme as the plan of record"}>
+                {base?.baseline ? "Re-baseline…" : "Set baseline"}
+              </button>
+            )}
+          </div>
+          {base?.baseline && (
+            <div style={{ display: "flex", gap: 16, flexWrap: "wrap",
+                          fontSize: 12.5, color: "#5a6b78", marginTop: 8 }}>
+              <span><strong style={{ color: "#b02418" }}>
+                {base.summary.slipped}</strong> finishing later than baseline</span>
+              <span><strong style={{ color: "#b35900" }}>
+                {base.summary.overdue}</strong> overdue and not finished</span>
+              <span><strong>{base.summary.complete}</strong> complete</span>
+              {base.summary.not_in_baseline > 0 && (
+                <span><strong>{base.summary.not_in_baseline}</strong> added
+                  since the baseline</span>
+              )}
+            </div>
+          )}
+          {base?.baseline && base.rows.some(
+            (r) => r.days_late > 0 || r.overdue) && (
+            <table style={{ width: "100%", borderCollapse: "collapse",
+                            marginTop: 10 }}>
+              <thead><tr>
+                <th style={th}>Slipping</th>
+                <th style={{ ...th, width: 100 }}>Baseline finish</th>
+                <th style={{ ...th, width: 100 }}>Now</th>
+                <th style={{ ...th, width: 90 }}>Days late</th>
+              </tr></thead>
+              <tbody>
+                {base.rows.filter((r) => r.days_late > 0 || r.overdue)
+                  .slice(0, 12).map((r) => (
+                  <tr key={r.id}>
+                    <td style={td}>{r.name}</td>
+                    <td style={td}>{r.baseline_finish || "—"}</td>
+                    <td style={td}>
+                      {r.actual_finish || r.planned_finish || "—"}
+                      {r.actual_finish && (
+                        <span style={{ color: "#5a6b78" }}> (actual)</span>
+                      )}
+                    </td>
+                    <td style={{ ...td, fontWeight: 700,
+                                 color: r.days_late > 0 ? "#b02418"
+                                                        : "#b35900" }}>
+                      {r.days_late > 0 ? `+${r.days_late}` : "overdue"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       )}
 

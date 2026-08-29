@@ -1162,10 +1162,26 @@ def _update_programme_progress(doc, actor):
         old_value = float(activity.progress)
         activity.progress = new_value
         activity.progress_updated_from = doc
-        activity.save(update_fields=["progress", "progress_updated_from"])
+        fields = ["progress", "progress_updated_from"]
+        # When work really started and finished, taken from the report that
+        # says so rather than typed a second time somewhere else. Nobody
+        # remembers to set an actual date; everybody files the DPR (owner
+        # 2026-08-29). First reported progress = it had started that day;
+        # reaching 100% = it finished. Both can be corrected by hand
+        # afterwards, and neither is overwritten once set — a later DPR
+        # dropping back below 100 does not un-finish the work.
+        if new_value > 0 and activity.actual_start is None:
+            activity.actual_start = doc.doc_date
+            fields.append("actual_start")
+        if new_value >= 100 and activity.actual_finish is None:
+            activity.actual_finish = doc.doc_date
+            fields.append("actual_finish")
+        activity.save(update_fields=fields)
         audit("programme_activity", activity.id, "PROGRESS_UPDATED",
               actor=actor, from_state=str(old_value), to_state=str(new_value),
-              detail={"dpr": doc.ref, "activity": activity.name[:80]})
+              detail={"dpr": doc.ref, "activity": activity.name[:80],
+                      "actual_start": str(activity.actual_start or ""),
+                      "actual_finish": str(activity.actual_finish or "")})
 
 
 def _post_dpr_consumption(doc, actor):

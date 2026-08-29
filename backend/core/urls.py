@@ -261,6 +261,8 @@ urlpatterns = [
          name="site-projects"),
     path("assignable/qs", projects.assignable_qs, name="assignable-qs"),
     path("projects/<int:pk>", projects.project_detail, name="project-detail"),
+    path("projects/<int:pk>/programme/baseline", projects.project_baseline,
+         name="project-baseline"),
     path("projects/<int:pid>/bom", bom_api.bom_detail, name="bom-detail"),
     path("projects/<int:pid>/bom/save", bom_api.bom_save, name="bom-save"),
     path("projects/<int:pid>/bom/seed", bom_api.bom_seed, name="bom-seed"),

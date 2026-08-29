@@ -2881,6 +2881,65 @@ class Project(models.Model):
         return f"{self.site.code}/{self.code} — {self.title[:40]}"
 
 
+class ProgrammeBaseline(models.Model):
+    """A frozen copy of the programme as approved at a point in time.
+
+    Re-importing a revised programme used to delete the previous activities
+    outright, so the plan the company committed to was destroyed every time a
+    revision arrived (conformance audit 2026-08-28). A baseline is captured
+    deliberately, is never edited afterwards, and re-import cannot touch it.
+
+    There can be several: the original contract programme, then a new approved
+    baseline after each extension of time is awarded. `superseded_at` closes
+    the previous one, so "which programme were we working to in June" always
+    has an answer."""
+
+    project = models.ForeignKey(Project, on_delete=models.CASCADE,
+                                related_name="baselines")
+    rev_no = models.IntegerField()                  # 0 = contract programme
+    label = models.TextField(blank=True)            # "Contract", "EOT 1"
+    reason = models.TextField(blank=True)           # why it was re-baselined
+    captured_at = models.DateTimeField(auto_now_add=True)
+    captured_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    superseded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["project", "rev_no"],
+                                    name="uniq_baseline_rev_per_project"),
+        ]
+        ordering = ["project", "-rev_no"]
+
+    @property
+    def is_current(self):
+        return self.superseded_at is None
+
+    def __str__(self):
+        return f"{self.project.code} baseline R{self.rev_no}"
+
+
+class BaselineActivity(models.Model):
+    """One activity as it stood when the baseline was taken. Deliberately a
+    flat copy, not a foreign key to the live activity: the live row may be
+    renamed, re-dated or deleted by a later revision, and the baseline has to
+    survive all three."""
+
+    baseline = models.ForeignKey(ProgrammeBaseline, on_delete=models.CASCADE,
+                                 related_name="activities")
+    sort_order = models.IntegerField()
+    indent = models.IntegerField(default=0)
+    name = models.TextField()
+    match_key = models.CharField(max_length=200, db_index=True)
+    duration_days = models.IntegerField(null=True, blank=True)
+    start = models.DateField(null=True, blank=True)
+    finish = models.DateField(null=True, blank=True)
+    is_milestone = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["baseline", "sort_order"]
+
+
 class ProgrammeActivity(models.Model):
     """A row of the project programme (task or milestone). Progress is
     cumulative %-complete to date, updated from issued DPRs (R4)."""
@@ -2898,6 +2957,12 @@ class ProgrammeActivity(models.Model):
     # dependency arrows (Phase A of the project workspace)
     predecessors = models.CharField(max_length=200, blank=True)
     progress = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # When the work really started and finished. `start`/`finish` are the
+    # PLAN and get overwritten by each revision; these are fact and never do
+    # (owner 2026-08-29). Without them a programme can say a job is late but
+    # not when it actually slipped, which is the whole of a delay argument.
+    actual_start = models.DateField(null=True, blank=True)
+    actual_finish = models.DateField(null=True, blank=True)
     progress_updated_from = models.ForeignKey(  # last DPR that updated it
         Document, on_delete=models.PROTECT, null=True, blank=True,
         related_name="+")
