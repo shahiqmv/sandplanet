@@ -1,3 +1,4 @@
+import logging
 from datetime import date, timedelta
 
 from django.db import transaction
@@ -45,6 +46,8 @@ from .serializers_documents import (
     DocumentSerializer,
     PendingItemSerializer,
 )
+
+log = logging.getLogger(__name__)
 
 CREATE_ROLES = {  # spec §3 "can create"
     "DPR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
@@ -740,6 +743,7 @@ def _do_issue(request, doc, comment):
             from . import units as _units
             _units.apply_dpr(doc, request.user)
             _post_dpr_consumption(doc, request.user)
+            _raise_incident_from_dpr(doc, request.user)
         return err
     return Response({"detail": "Issue applies to DPR/TWS/IR/MAR/PO/DMA."},
                     status=400)
@@ -1140,6 +1144,52 @@ def dma_prefill(request):
         "tasks": rows,
         "tws_refs": [t.ref for t in tws_qs],
     })
+
+
+def _raise_incident_from_dpr(doc, actor):
+    """The daily report's safety checkbox used to notify nobody and escalate
+    to nothing — it lived in an unvalidated blob, so a malformed report read
+    as "no accident" and you could not count incidents without reading every
+    DPR by hand (conformance audit 2026-08-28).
+
+    Ticking it now OPENS A REAL INCIDENT: reported, numbered, notified, and
+    waiting for an investigation. The site team writes nothing extra; the
+    details they already typed become the description."""
+    from . import hse
+
+    payload = doc.current_revision.payload or {}
+    safety = payload.get("safety")
+    if not isinstance(safety, dict) or not safety.get("incident"):
+        return None
+    # Already raised from this report (a re-issue) — don't duplicate.
+    existing = Document.objects.filter(
+        doc_type="INC", site=doc.site,
+        safety_incident__isnull=False).filter(
+        safety_incident__description__startswith=f"[{doc.ref}]").first()
+    if existing is not None:
+        return existing
+    details = (safety.get("details") or "").strip()
+    incident, err = hse.create_incident(
+        site=doc.site,
+        data={
+            # Kind and severity are unknown from a checkbox. It opens as a
+            # near miss so that nothing is overstated, and the investigation
+            # corrects it — an incident that exists gets classified, one that
+            # was never raised does not.
+            "kind": "NEAR_MISS", "severity": "MEDIUM",
+            "occurred_at": timezone.now(),
+            "location": "",
+            "description": f"[{doc.ref}] {details or 'Reported on the daily report — no detail given.'}",
+            "immediate_action": "",
+        },
+        user=actor, project=doc.project)
+    if err:                                 # pragma: no cover - defensive
+        log.error("could not raise an incident from %s: %s", doc.ref, err)
+        return None
+    link_documents(doc, incident.document, "DPR_INC")
+    audit("document", doc.id, "INCIDENT_RAISED_FROM_DPR", actor=actor,
+          detail={"incident": incident.document.ref})
+    return incident.document
 
 
 def _update_programme_progress(doc, actor):

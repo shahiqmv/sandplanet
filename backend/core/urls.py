@@ -6,6 +6,7 @@ from . import views, views_biometric as biometric_api, views_bom as bom_api, vie
     views_cost as cost, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
+    views_hse as hse_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
@@ -52,6 +53,24 @@ urlpatterns = [
     path("notifications", notify_api.notifications_list, name="notifications"),
     path("notifications/read", notify_api.notifications_read,
          name="notifications-read"),
+    # HSE — the incident register and the one open-actions list
+    path("hse/incidents", hse_api.incidents, name="hse-incidents"),
+    path("hse/incidents/<str:ref>", hse_api.incident_detail,
+         name="hse-incident"),
+    path("hse/incidents/<str:ref>/investigate", hse_api.incident_investigate,
+         name="hse-incident-investigate"),
+    path("hse/incidents/<str:ref>/close", hse_api.incident_close,
+         name="hse-incident-close"),
+    path("hse/incidents/<str:ref>/people", hse_api.incident_people,
+         name="hse-incident-people"),
+    path("hse/incidents/<str:ref>/actions", hse_api.incident_actions,
+         name="hse-incident-actions"),
+    path("hse/actions", hse_api.actions, name="hse-actions"),
+    path("hse/actions/<int:pk>/complete", hse_api.action_complete,
+         name="hse-action-complete"),
+    path("hse/actions/<int:pk>/verify", hse_api.action_verify,
+         name="hse-action-verify"),
+    path("hse/stats", hse_api.stats, name="hse-stats"),
     path("push/key", notify_api.push_key, name="push-key"),
     path("push/subscribe", notify_api.push_subscribe, name="push-subscribe"),
     path("push/unsubscribe", notify_api.push_unsubscribe,

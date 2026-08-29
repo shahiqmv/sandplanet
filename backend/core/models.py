@@ -340,6 +340,7 @@ class Document(models.Model):
         OBR = "OBR"  # onboarding request — expat recruitment/mobilisation
         PSC = "PSC"  # procurement schedule — per-project planning layer
         MTN = "MTN"  # material transfer note — stock/tools moving site to site
+        INC = "INC"  # safety incident / near miss (HSE, 2026-08-29)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -431,6 +432,15 @@ class Document(models.Model):
             "AUTHORISED": {"PAYMENT_PROCESSING", "PAID_PO_ISSUED", "DRAFT"},
             "PAYMENT_PROCESSING": {"PAID_PO_ISSUED"},
             "PAID_PO_ISSUED": {"CLOSED"},
+        },
+        # Safety incident. Everything that happened gets REPORTED; what it
+        # means is worked out in INVESTIGATING; what changes because of it is
+        # a corrective action. An incident cannot close while an action is
+        # still open — that guard is in hse.py, not here.
+        "INC": {
+            "REPORTED": {"INVESTIGATING", "CLOSED", "CANCELLED"},
+            "INVESTIGATING": {"ACTIONS_OPEN", "CLOSED", "REPORTED"},
+            "ACTIONS_OPEN": {"CLOSED"},
         },
         "LM": {
             "DRAFT": {"LOADING", "DEPARTED"},
@@ -5320,3 +5330,179 @@ class DevicePunch(models.Model):
 
     def __str__(self):
         return f"{self.device_user_id} @ {self.punched_at}"
+
+
+# ===== HSE — safety management (owner 2026-08-29) =====
+# The app's entire safety functionality was one checkbox and one free-text box
+# on the daily report, and the checkbox failed OPEN: ticking "accident today"
+# notified nobody and lived in an unvalidated JSON blob, so a malformed report
+# read as "no accident" (conformance audit 2026-08-28). Nothing here is
+# derived from that box; it is a register in its own right.
+
+
+class SafetyIncident(models.Model):
+    """What happened, what it meant, and what changed because of it.
+
+    Everything is reported — a near miss is the cheapest lesson available and
+    is deliberately the same record as an injury, so reporting one is never a
+    bigger decision than reporting the other."""
+
+    class Kind(models.TextChoices):
+        NEAR_MISS = "NEAR_MISS", "Near miss"
+        FIRST_AID = "FIRST_AID", "First aid"
+        MEDICAL = "MEDICAL", "Medical treatment"
+        LOST_TIME = "LOST_TIME", "Lost-time injury"
+        FATALITY = "FATALITY", "Fatality"
+        PROPERTY = "PROPERTY", "Property / plant damage"
+        ENVIRONMENTAL = "ENVIRONMENTAL", "Environmental"
+        DANGEROUS = "DANGEROUS", "Dangerous occurrence"
+
+    # Kinds that are never closed without an investigation: someone was hurt,
+    # or only luck stopped it.
+    MUST_INVESTIGATE = {"MEDICAL", "LOST_TIME", "FATALITY", "DANGEROUS"}
+
+    class Severity(models.TextChoices):
+        LOW = "LOW", "Low"
+        MEDIUM = "MEDIUM", "Medium"
+        HIGH = "HIGH", "High"
+        CRITICAL = "CRITICAL", "Critical"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="safety_incident")
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    severity = models.CharField(max_length=8, choices=Severity.choices,
+                                default=Severity.LOW)
+    occurred_at = models.DateTimeField()
+    location = models.TextField(blank=True)
+    description = models.TextField()
+    immediate_action = models.TextField(blank=True)
+    # Work stopped / area closed — the fact a client's HSE audit asks for.
+    work_stopped = models.BooleanField(default=False)
+
+    reported_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    reported_at = models.DateTimeField(auto_now_add=True)
+
+    # Reportable to the authorities. Recorded as a decision with a date, not
+    # inferred from severity, because the duty is a legal one.
+    is_reportable = models.BooleanField(default=False)
+    reported_to_authority_on = models.DateField(null=True, blank=True)
+    authority_reference = models.CharField(max_length=60, blank=True)
+
+    # Investigation
+    investigated_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                        null=True, blank=True,
+                                        related_name="+")
+    investigation_started_at = models.DateTimeField(null=True, blank=True)
+    root_cause = models.TextField(blank=True)
+    contributing_factors = models.TextField(blank=True)
+    lessons = models.TextField(blank=True)
+
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["-occurred_at"]
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.get_kind_display()}"
+
+    @property
+    def is_injury(self):
+        return self.kind in ("FIRST_AID", "MEDICAL", "LOST_TIME", "FATALITY")
+
+
+class IncidentPerson(models.Model):
+    """Someone involved. An employee where we know them, a free-text name
+    where we don't — a subcontractor's man or a third party is still our
+    incident."""
+
+    class Involvement(models.TextChoices):
+        INJURED = "INJURED", "Injured"
+        INVOLVED = "INVOLVED", "Involved"
+        WITNESS = "WITNESS", "Witness"
+
+    incident = models.ForeignKey(SafetyIncident, on_delete=models.CASCADE,
+                                 related_name="people")
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="+")
+    name = models.TextField(blank=True)          # when not an employee
+    employer = models.TextField(blank=True)      # subcontractor / third party
+    involvement = models.CharField(max_length=10, choices=Involvement.choices,
+                                   default=Involvement.INVOLVED)
+    injury = models.TextField(blank=True)
+    body_part = models.CharField(max_length=60, blank=True)
+    treatment = models.TextField(blank=True)
+    days_lost = models.IntegerField(default=0)
+    returned_to_work_on = models.DateField(null=True, blank=True)
+
+    def display_name(self):
+        if self.employee_id:
+            return self.employee.full_name
+        return self.name or "—"
+
+
+class CorrectiveAction(models.Model):
+    """Something that must change, owned by a person, with a date.
+
+    Deliberately generic over its SOURCE DOCUMENT rather than tied to
+    incidents: a non-conformance, a safety inspection and an audit finding all
+    raise the same thing, and a company's open-actions list has to be one list
+    (owner 2026-08-29). An incident cannot close while one of these is open."""
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN", "Open"
+        IN_PROGRESS = "IN_PROGRESS", "In progress"
+        DONE = "DONE", "Done — awaiting verification"
+        VERIFIED = "VERIFIED", "Verified closed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    class Priority(models.TextChoices):
+        LOW = "LOW", "Low"
+        MEDIUM = "MEDIUM", "Medium"
+        HIGH = "HIGH", "High"
+
+    source_document = models.ForeignKey(Document, on_delete=models.CASCADE,
+                                        related_name="corrective_actions")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="corrective_actions")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="corrective_actions")
+    description = models.TextField()
+    # Prevent the same thing happening again, vs. fix this instance of it.
+    is_preventive = models.BooleanField(default=False)
+    owner = models.ForeignKey(User, on_delete=models.PROTECT,
+                              related_name="corrective_actions")
+    due_date = models.DateField()
+    priority = models.CharField(max_length=8, choices=Priority.choices,
+                                default=Priority.MEDIUM)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.OPEN)
+
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    raised_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    completed_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     null=True, blank=True, related_name="+")
+    completion_note = models.TextField(blank=True)
+    # Someone other than the doer confirms it actually happened.
+    verified_at = models.DateTimeField(null=True, blank=True)
+    verified_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["due_date", "-priority"]
+        indexes = [models.Index(fields=["status", "due_date"])]
+
+    @property
+    def is_open(self):
+        return self.status in ("OPEN", "IN_PROGRESS", "DONE")
+
+    def days_overdue(self, as_of=None):
+        from django.utils import timezone
+        as_of = as_of or timezone.localdate()
+        if not self.is_open:
+            return 0
+        return max((as_of - self.due_date).days, 0)

@@ -15,6 +15,7 @@ import ClearancePage from "./ClearancePage.jsx";
 import ShipmentsPage from "./ShipmentsPage.jsx";
 import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
   ImportPaymentsDue, ImportTracker } from "./ImportOrders.jsx";
+import HsePage from "./HsePage.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import { VesselsPage } from "./Vessels.jsx";
 import ClientUsersPage from "./ClientUsersPage.jsx";
@@ -99,7 +100,11 @@ const NAV_GROUPS = [
   // and site staff reach their own camera from the same place they reach
   // their site (owner 2026-08-12). Backend scopes it to sites they can see.
   { key: "sitesGrp", label: "Sites", roles: null,
+    // Safety sits with Sites and is open to EVERY role on purpose: reporting
+    // a near miss must never be gated behind a permission (owner 2026-08-29).
+    // The backend scopes what each person sees to their own sites.
     subs: [["sites", "Sites", null],
+           ["hse", "Safety", null],
            ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
     // PM is here ONLY for the Procurement Schedule, which used to be its own
@@ -1173,6 +1178,11 @@ export default function App() {
           )}
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />
+          )}
+          {/* Open to every role — see the nav note: reporting must not be
+              gated. The API scopes the register to the user's own sites. */}
+          {!docView && !openSite && hoPage === "hse" && (
+            <HsePage me={me} sites={sites} />
           )}
           {/* not gated on is_ho — site staff watch their own site's cameras */}
           {!docView && !openSite && hoPage === "live-feeds" && (
