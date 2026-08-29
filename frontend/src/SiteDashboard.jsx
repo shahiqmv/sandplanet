@@ -16,7 +16,7 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onPettyCash, onStock, onTools,
                                         onCreateGrn, onNewPmr, onOpenDoc,
                                         onWorkforce, onVessels, onUnits,
-                                        refresh }) {
+                                        onTesting, refresh }) {
   const [dash, setDash] = useState(null);
   const [showShifts, setShowShifts] = useState(false);
   const [register, setRegister] = useState(null);
@@ -186,6 +186,13 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               <Btn variant="navy" onClick={() => onNewQa("MAR")}>+ MAR</Btn>
               <Btn variant="navy" onClick={() => onNewQa("SD")}>+ SD</Btn>
               <Btn variant="navy" onClick={() => onNewQa("MS")}>+ MS</Btn>
+              {/* A sample is taken at the pour, by the same person and on the
+                  same day as an IR — so it is raised from the same place
+                  (owner 2026-08-29). The cross-site register lives under
+                  Quality; this is where the record is made. */}
+              <Btn variant="navy" onClick={onTesting}
+                   title="Record a concrete cube, compaction, pressure or other test sample">
+                + Test</Btn>
             </>
           )}
           {canMr && (

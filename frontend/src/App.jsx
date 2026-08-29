@@ -18,6 +18,7 @@ import ImportOrders, { IprView, IprForm, IrnView, ShipmentView, StoreLots,
 import HsePage from "./HsePage.jsx";
 import QualityPage from "./QualityPage.jsx";
 import ContractPage from "./ContractPage.jsx";
+import TestingTab from "./TestingTab.jsx";
 import NotificationBell from "./NotificationBell.jsx";
 import { VesselsPage } from "./Vessels.jsx";
 import ClientUsersPage from "./ClientUsersPage.jsx";
@@ -1147,6 +1148,7 @@ export default function App() {
                 onPyrRegister={() => setDocView({ mode: "pyr-register" })}
                 onPettyCash={() => setDocView({ mode: "petty-cash" })}
                 onStock={() => setDocView({ mode: "stock" })}
+                onTesting={() => setDocView({ mode: "testing" })}
                 onTools={() => setDocView({ mode: "tools" })}
                 onCreateGrn={createGrn}
                 onNewPmr={() => setDocView({ mode: "line-form",
@@ -1381,6 +1383,27 @@ export default function App() {
           {docView?.mode === "petty-cash" && openSite && (
             <PettyCashPage site={openSite} me={me} onOpenDoc={openDoc}
               onClose={closeDoc} />
+          )}
+          {/* Materials & site testing for THIS site. The cross-site register
+              (overdue results, failures) stays under Quality — a different
+              job for a different person. */}
+          {docView?.mode === "testing" && openSite && (
+            <section style={{ background: "var(--paper)",
+                              border: "1px solid var(--line)",
+                              borderRadius: 12, padding: 24 }}>
+              <div style={{ display: "flex", alignItems: "baseline",
+                            gap: 12, marginBottom: 10 }}>
+                <h2 style={{ margin: 0, color: "var(--navy)" }}>
+                  Testing — {openSite.code}</h2>
+                <button onClick={closeDoc}
+                        style={{ marginLeft: "auto", background: "transparent",
+                                 border: "1px solid #BFD6E6", borderRadius: 8,
+                                 padding: "6px 14px", cursor: "pointer",
+                                 fontSize: 13, color: "var(--navy)" }}>
+                  ← Back</button>
+              </div>
+              <TestingTab me={me} sites={sites} siteFilter={openSite.id} />
+            </section>
           )}
           {docView?.mode === "stock" && openSite && (
             <>
