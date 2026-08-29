@@ -365,3 +365,88 @@ def tws_context(document, revision):
             {"title": ""},
         ],
     }
+
+
+def tr_context(document, revision):
+    """Test request / report. One document carries both halves: the request
+    the consultant is asked to witness, and every result that came back
+    against it — so the sheet handed over at the end is the same sheet the
+    lab was asked for (owner 2026-08-29)."""
+    test = document.material_test
+    results = list(test.results.select_related("recorded_by"))
+    approvals = list(document.approvals.select_related("actor"))
+    unit = test.unit or ""
+
+    sections = [
+        {"kind": "kv", "title": "Sample", "rows": [
+            ["Element", test.element, "Location", test.location or "—"],
+            ["Pour / batch ref", test.pour_ref or "—",
+             "Grade / mix", test.grade or "—"],
+            ["Quantity represented", test.quantity or "—",
+             "Sampled on", test.sampled_on],
+        ]},
+        {"kind": "kv", "title": "Requirement", "rows": [
+            ["Specification", test.spec_reference or "—",
+             "Required",
+             f"{test.required_value} {unit}" if test.required_value
+             else "—"],
+            ["Acceptance criteria", test.acceptance_criteria or "—",
+             "Laboratory", test.lab_name or "—"],
+        ]},
+    ]
+    if results:
+        sections.append({
+            "kind": "table", "title": "Results",
+            "headers": ["Age (days)", "Tested", "Specimen", "Result",
+                        "Outcome", "Lab report"],
+            "rows": [[
+                r.age_days if r.age_days is not None else "—",
+                r.tested_on or "—",
+                r.specimen_ref or "—",
+                f"{r.value} {r.unit or unit}" if r.value is not None else "—",
+                r.get_outcome_display(),
+                r.report_ref or "—",
+            ] for r in results],
+        })
+    else:
+        sections.append({
+            "kind": "text", "title": "Results",
+            "text": "No results received yet."
+                    + (f" The {test.final_age_days()}-day result is due "
+                       f"{test.result_due_on()}."
+                       if test.result_due_on() else ""),
+        })
+    if test.notes:
+        sections.append({"kind": "text", "title": "Notes",
+                         "text": test.notes})
+    if test.ncr_id:
+        sections.append({
+            "kind": "text", "title": "Non-conformance",
+            "text": f"This failure is covered by {test.ncr.ref}.",
+        })
+
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "TEST REQUEST / REPORT",
+        "form_subline": f"Form No: FRM-QAQ-01  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Test", test.get_kind_display(), "Status",
+             document.get_status_display() if hasattr(document,
+                                                      "get_status_display")
+             else document.status],
+            ["Project",
+             document.project.code if document.project_id else "Site-wide",
+             "Witnessed by", test.witnessed_by or "—"],
+        ],
+        "sections": sections,
+        "sig_blocks": [
+            {"title": "Requested By — Site Engineer / QA-QC",
+             "stamp": _stamp_for(approvals, "SUBMIT"),
+             "text": test.requested_by.full_name},
+            {"title": "Witnessed By — Client / Consultant",
+             "text": test.witnessed_by or ""},
+            {"title": "Reviewed By — Project Manager",
+             "stamp": _stamp_for(approvals, "APPROVE")},
+        ],
+    }

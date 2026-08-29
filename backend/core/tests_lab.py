@@ -232,3 +232,99 @@ class TestsInHandoverTests(TestCase):
         rows = self.client.get(
             f"/api/v1/projects/{self.project.id}/handover/candidates").data
         self.assertEqual(rows, [])
+
+
+class TestRequestSheetTests(TestCase):
+    """A request is raised BEFORE the sample so the lab can attend, it has a
+    sheet that can be sent, and the certificate comes back against it
+    (owner 2026-08-29)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="LB3", name="Sheet site",
+                                        status=Site.Status.ACTIVE)
+        self.se = make_user("se_lb3", User.Role.SITE_ENGINEER, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.se)
+
+    def _request(self, **extra):
+        body = {"site_id": self.site.id, "kind": "CUBE",
+                "element": "Villa 3 ground floor slab",
+                "required_by": str(date.today() + timedelta(days=1)),
+                "required_value": "30.00", "unit": "N/mm2",
+                "lab_name": "Maldives Testing Lab"}
+        body.update(extra)
+        return self.client.post("/api/v1/quality/tests", body, format="json")
+
+    def test_a_request_opens_before_the_sample_is_taken(self):
+        r = self._request()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["status"], "REQUESTED")
+        self.assertIsNone(r.data["sampled_on"])
+        self.assertIsNone(r.data["result_due_on"])
+
+    def test_giving_the_sampling_date_up_front_opens_it_sampled(self):
+        """Retrospective entry stays one step."""
+        r = self._request(sampled_on=str(date.today()))
+        self.assertEqual(r.data["status"], "SAMPLED")
+
+    def test_a_result_cannot_land_before_the_sample_does(self):
+        ref = self._request().data["ref"]
+        r = self.client.post(f"/api/v1/quality/tests/{ref}/results",
+                             {"age_days": 28, "value": "35.0"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Confirm the sample", r.data["detail"])
+
+    def test_confirming_the_sample_starts_the_result_clock(self):
+        ref = self._request().data["ref"]
+        r = self.client.post(f"/api/v1/quality/tests/{ref}/sampled",
+                             {"sampled_on": str(date.today()),
+                              "witnessed_by": "Consultant QA"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SAMPLED")
+        self.assertEqual(str(r.data["result_due_on"]),
+                         str(date.today() + timedelta(days=28)))
+        self.assertEqual(r.data["witnessed_by"], "Consultant QA")
+
+    def test_it_cannot_be_sampled_twice(self):
+        ref = self._request().data["ref"]
+        self.client.post(f"/api/v1/quality/tests/{ref}/sampled", {},
+                         format="json")
+        r = self.client.post(f"/api/v1/quality/tests/{ref}/sampled", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_an_unsampled_request_is_never_overdue(self):
+        self._request(requested_on=str(date.today() - timedelta(days=90)))
+        self.assertEqual(
+            len(self.client.get("/api/v1/quality/tests?overdue=1").data), 0)
+
+    def test_the_request_sheet_renders(self):
+        """The paper the lab is sent, and the sheet that reaches handover."""
+        from .models import Document
+        from .pdf import _render_target
+        ref = self._request().data["ref"]
+        doc = Document.objects.get(ref=ref)
+        target = _render_target(doc, doc.current_revision)
+        self.assertIsNotNone(target)
+        template, context = target
+        self.assertEqual(template, "qa_form.html")
+        self.assertEqual(context["form_title"], "TEST REQUEST / REPORT")
+        self.assertIn("Villa 3 ground floor slab", str(context["sections"]))
+        self.assertIn("No results received yet", str(context["sections"]))
+
+    def test_the_sheet_carries_every_result_once_they_land(self):
+        from .models import Document
+        from .pdf import _render_target
+        ref = self._request(sampled_on=str(date.today())).data["ref"]
+        for age, value in ((7, "24.00"), (28, "33.50")):
+            self.client.post(f"/api/v1/quality/tests/{ref}/results",
+                             {"age_days": age, "value": value},
+                             format="json")
+        doc = Document.objects.get(ref=ref)
+        _, context = _render_target(doc, doc.current_revision)
+        results = next(s for s in context["sections"]
+                       if s.get("title") == "Results")
+        self.assertEqual(len(results["rows"]), 2)
+        self.assertIn("33.50 N/mm2", str(results["rows"]))

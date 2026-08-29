@@ -15,7 +15,8 @@ const KINDS = [
   ["PRESSURE", "Pressure / leak test"], ["WATER", "Water quality"],
   ["OTHER", "Other"],
 ];
-const STATUS_LABEL = { SAMPLED: "Awaiting results", PARTIAL: "Part results",
+const STATUS_LABEL = { REQUESTED: "Requested — not yet sampled",
+                       SAMPLED: "Awaiting results", PARTIAL: "Part results",
                        PASSED: "Passed", FAILED: "Failed",
                        CANCELLED: "Cancelled" };
 const box = { background: "var(--sand,#f7f4ee)", padding: 14,
@@ -51,6 +52,7 @@ export default function TestingTab({ me, sites, siteFilter }) {
   const load = useCallback(() => {
     const q = [];
     if (siteFilter) q.push(`site=${siteFilter}`);
+    if (filter === "requested") q.push("status=REQUESTED");
     if (filter === "awaiting") q.push("status=awaiting");
     if (filter === "failed") q.push("status=FAILED");
     if (filter === "overdue") q.push("overdue=1");
@@ -59,6 +61,19 @@ export default function TestingTab({ me, sites, siteFilter }) {
     api("/quality/tests/stats").then(setStats).catch(() => setStats(null));
   }, [siteFilter, filter]);
   useEffect(load, [load]);
+
+  async function confirmSampled(ref) {
+    const on = window.prompt("Sample taken on (YYYY-MM-DD)",
+                             new Date().toISOString().slice(0, 10));
+    if (!on) return;
+    const witness = window.prompt("Witnessed by (optional)") || "";
+    try {
+      await api(`/quality/tests/${ref}/sampled`,
+                { method: "POST",
+                  body: { sampled_on: on, witnessed_by: witness } });
+      load();
+    } catch (e) { setError(e.message); }
+  }
 
   async function raiseNcr(ref) {
     if (!window.confirm("Raise a non-conformance for this failed test?")) return;
@@ -73,6 +88,7 @@ export default function TestingTab({ me, sites, siteFilter }) {
       {stats && (
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
                       marginBottom: 16 }}>
+          <Stat value={stats.requested} label="Requested" />
           <Stat value={stats.awaiting} label="Awaiting results" />
           <Stat value={stats.overdue} label="Results overdue" alarm />
           <Stat value={stats.failed} label="Failed" alarm />
@@ -91,10 +107,11 @@ export default function TestingTab({ me, sites, siteFilter }) {
       <div style={{ display: "flex", gap: 12, alignItems: "center",
                     marginBottom: 12, flexWrap: "wrap" }}>
         <button onClick={() => setAdding(true)} style={BTN.primary}>
-          Record a sample</button>
+          Request a test</button>
         <select value={filter} onChange={(e) => setFilter(e.target.value)}
                 style={{ ...inputStyle, width: "auto" }}>
           <option value="">All tests</option>
+          <option value="requested">Requested — not yet sampled</option>
           <option value="awaiting">Awaiting results</option>
           <option value="overdue">Results overdue</option>
           <option value="failed">Failed</option>
@@ -135,7 +152,12 @@ export default function TestingTab({ me, sites, siteFilter }) {
                       .join(" · ")}
                   </div>
                 </td>
-                <td style={td}>{r.sampled_on}</td>
+                <td style={td}>
+                  {r.sampled_on || (
+                    <span style={{ color: "#8a5200" }}>
+                      requested {r.requested_on}</span>
+                  )}
+                </td>
                 <td style={{ ...td, color: r.is_overdue ? "#a3271b" : undefined,
                              fontWeight: r.is_overdue ? 700 : 400 }}>
                   {r.result_due_on || "—"}
@@ -157,7 +179,9 @@ export default function TestingTab({ me, sites, siteFilter }) {
                                            background: "var(--sand,#f7f4ee)" }}>
                     <ResultBlock test={r} onChanged={load}
                                  onError={setError}
-                                 onRaiseNcr={() => raiseNcr(r.ref)} />
+                                 onRaiseNcr={() => raiseNcr(r.ref)}
+                                 onConfirmSampled={
+                                   () => confirmSampled(r.ref)} />
                   </td>
                 </tr>
               )}
@@ -169,8 +193,10 @@ export default function TestingTab({ me, sites, siteFilter }) {
   );
 }
 
-function ResultBlock({ test, onChanged, onError, onRaiseNcr }) {
+function ResultBlock({ test, onChanged, onError, onRaiseNcr,
+                       onConfirmSampled }) {
   const [adding, setAdding] = useState(false);
+  const requested = test.status === "REQUESTED";
 
   return (
     <>
@@ -182,8 +208,17 @@ function ResultBlock({ test, onChanged, onError, onRaiseNcr }) {
         {test.lab_name}
         {test.witnessed_by && <> · witnessed by {test.witnessed_by}</>}
       </div>
+      {requested && (
+        <p style={{ fontSize: 13, margin: "0 0 8px", color: "#8a5200" }}>
+          Requested {test.requested_on}
+          {test.required_by && <> · needed by {test.required_by}</>}.
+          Send the request sheet to the lab, then confirm once the sample has
+          been taken.
+        </p>
+      )}
       {test.results.length === 0 ? (
-        <p style={{ fontSize: 13, margin: "0 0 8px" }}>No results yet.</p>
+        <p style={{ fontSize: 13, margin: "0 0 8px" }}>
+          {requested ? "" : "No results yet."}</p>
       ) : (
         <table style={{ width: "100%", borderCollapse: "collapse",
                         marginBottom: 8 }}>
@@ -224,10 +259,22 @@ function ResultBlock({ test, onChanged, onError, onRaiseNcr }) {
           </tbody>
         </table>
       )}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {!adding && (
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                    alignItems: "center" }}>
+        {test.pdf_url && (
+          <a href={test.pdf_url} target="_blank" rel="noreferrer"
+             onClick={(e) => e.stopPropagation()}
+             style={{ ...ghostButton, textDecoration: "none",
+                      display: "inline-block" }}>
+            Request sheet (PDF)</a>
+        )}
+        {requested && (
+          <button onClick={(e) => { e.stopPropagation(); onConfirmSampled(); }}
+                  style={BTN.primary}>Sample taken</button>
+        )}
+        {!adding && !requested && (
           <button onClick={(e) => { e.stopPropagation(); setAdding(true); }}
-                  style={ghostButton}>Record a result</button>
+                  style={ghostButton}>Upload a result</button>
         )}
         {test.status === "FAILED" && !test.ncr_ref && (
           <button onClick={(e) => { e.stopPropagation(); onRaiseNcr(); }}
@@ -325,7 +372,8 @@ function TestForm({ sites, siteFilter, onClose, onSaved }) {
   const [f, setF] = useState({
     site_id: siteFilter || "", project_id: "", kind: "CUBE", element: "",
     location: "", pour_ref: "", grade: "", quantity: "",
-    sampled_on: today, required_value: "", unit: "N/mm2",
+    required_by: "", sampled_on: "", required_value: "",
+    unit: "N/mm2",
     spec_reference: "", acceptance_criteria: "", lab_name: "",
     witnessed_by: "",
   });
@@ -386,7 +434,16 @@ function TestForm({ sites, siteFilter, onClose, onSaved }) {
             {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </label>
-        <label style={{ fontSize: 13 }}>Sampled on
+        <label style={{ fontSize: 13 }}
+               title="When the lab or consultant is needed">
+          Needed by
+          <input type="date" value={f.required_by}
+                 onChange={(e) => set("required_by", e.target.value)}
+                 style={inputStyle} />
+        </label>
+        <label style={{ fontSize: 13 }}
+               title="Leave blank to raise the request first and confirm sampling later">
+          Already sampled on
           <input type="date" value={f.sampled_on}
                  onChange={(e) => set("sampled_on", e.target.value)}
                  style={inputStyle} />
@@ -441,14 +498,17 @@ function TestForm({ sites, siteFilter, onClose, onSaved }) {
                style={inputStyle} />
       </label>
       <p style={{ fontSize: 12, color: "#5a6b78", margin: "8px 0 0" }}>
-        A cube is expected to have its 28-day result; the register flags any
-        sample whose result never came back. Passed tests can be pulled
-        straight into the project's handover pack.
+        Leave <em>already sampled</em> blank to raise the request first — the
+        sheet can then be sent to the lab, and you confirm sampling when it
+        happens. Fill it in to record a sample already taken. A cube is
+        expected to have its 28-day result; the register flags any sample
+        whose result never came back, and passed tests pull straight into the
+        project's handover pack.
       </p>
       <Err>{error}</Err>
       <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
         <button onClick={save} disabled={busy} style={buttonStyle}>
-          {busy ? "Saving…" : "Record the sample"}</button>
+          {busy ? "Saving…" : "Raise the request"}</button>
         <button onClick={onClose} style={ghostButton}>Cancel</button>
       </div>
     </div>

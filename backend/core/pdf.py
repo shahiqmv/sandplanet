@@ -318,13 +318,14 @@ def _render_target(document, revision, filters=None):
         return "po.html", _po_context(document, revision)
     if document.doc_type in LINE_FORMS:
         return "lines_form.html", _lines_context(document, revision)
-    if document.doc_type in ("IR", "MAR", "SD", "MS", "TWS", "DMA"):
+    if document.doc_type in ("IR", "MAR", "SD", "MS", "TWS", "DMA", "TR"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
                    "SD": pdf_qa.sd_context, "MS": pdf_qa.ms_context,
                    "TWS": pdf_qa.tws_context,
-                   "DMA": pdf_qa.dma_context}[document.doc_type]
+                   "DMA": pdf_qa.dma_context,
+                   "TR": pdf_qa.tr_context}[document.doc_type]
         return "qa_form.html", builder(document, revision)
     return None
 

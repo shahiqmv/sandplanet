@@ -16,10 +16,14 @@ from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
+import logging
+
 from .audit import audit
 from .models import Document, DocumentRevision, MaterialTest, TestResult
 from .notify import notify_user
 from .numbering import next_ref
+
+log = logging.getLogger(__name__)
 
 REQUESTER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN",
                    "QS", "PA"}
@@ -46,21 +50,26 @@ def _as_decimal(value):
 
 @transaction.atomic
 def request_test(*, site, data, user, project=None):
+    """Raise the request. It is issued BEFORE the sample is taken so the lab
+    or the consultant can attend — that is what makes it a request rather
+    than a note of something that already happened. Supplying the sampling
+    date up front opens it already sampled, which keeps retrospective entry
+    to one step (owner 2026-08-29)."""
     kind = data.get("kind")
     if kind not in dict(MaterialTest.Kind.choices):
         return None, "What kind of test is this?"
     if not (data.get("element") or "").strip():
-        return None, "What was sampled? Name the element."
+        return None, "What is to be sampled? Name the element."
+    requested_on = _as_date(data.get("requested_on")) or timezone.localdate()
     sampled_on = _as_date(data.get("sampled_on"))
-    if not sampled_on:
-        return None, "When was the sample taken?"
-    if sampled_on > timezone.localdate():
-        return None, "A sample cannot be taken in the future."
+    if sampled_on and sampled_on > timezone.localdate():
+        return None, "A sample cannot have been taken in the future."
 
     ref = next_ref("TR", site)
     doc = Document.objects.create(
         doc_type="TR", ref=ref, site=site, project=project,
-        doc_date=sampled_on, status="SAMPLED", created_by=user)
+        doc_date=requested_on,
+        status="SAMPLED" if sampled_on else "REQUESTED", created_by=user)
     revision = DocumentRevision.objects.create(
         document=doc, rev_label="R0", payload={}, created_by=user)
     doc.current_revision = revision
@@ -76,17 +85,62 @@ def request_test(*, site, data, user, project=None):
         acceptance_criteria=(data.get("acceptance_criteria") or "").strip(),
         required_value=_as_decimal(data.get("required_value")),
         unit=(data.get("unit") or "")[:20],
+        requested_on=requested_on,
+        required_by=_as_date(data.get("required_by")),
         sampled_on=sampled_on,
         lab_name=(data.get("lab_name") or "").strip(),
         witnessed_by=(data.get("witnessed_by") or "").strip(),
         itp_item_id=data.get("itp_item_id") or None,
         notes=(data.get("notes") or "").strip(),
         requested_by=user)
-    audit("document", doc.id, "TEST_SAMPLED", actor=user, to_state="SAMPLED",
+    audit("document", doc.id,
+          "TEST_SAMPLED" if sampled_on else "TEST_REQUESTED", actor=user,
+          to_state=doc.status,
           detail={"ref": ref, "kind": kind,
                   "element": test.element[:80],
+                  "required_by": str(test.required_by or ""),
                   "due": str(test.result_due_on() or "")})
+    _render(test, "requested" if not sampled_on else "sampled")
     return test, None
+
+
+def _render(test, milestone):
+    """Archive the request/report sheet. This is the paper the lab is sent
+    and the sheet that ends up in the handover pack — the same document
+    throughout, re-rendered as results land."""
+    from .pdf import generate_pdf
+
+    doc = test.document
+    try:
+        return generate_pdf(doc, doc.current_revision, milestone)
+    except Exception:                       # pragma: no cover - defensive
+        log.exception("could not render the test sheet for %s", doc.ref)
+        return None
+
+
+@transaction.atomic
+def confirm_sampling(*, test, data, user):
+    """The sample has been taken. Until this, the request is something the
+    lab is being asked for; after it, the result clock is running."""
+    doc = test.document
+    if doc.status != "REQUESTED":
+        return "This request has already been sampled."
+    sampled_on = _as_date(data.get("sampled_on")) or timezone.localdate()
+    if sampled_on > timezone.localdate():
+        return "A sample cannot have been taken in the future."
+    test.sampled_on = sampled_on
+    test.sampled_note = (data.get("sampled_note") or "").strip()
+    if data.get("witnessed_by"):
+        test.witnessed_by = data["witnessed_by"].strip()
+    test.save(update_fields=["sampled_on", "sampled_note", "witnessed_by"])
+    doc.status = "SAMPLED"
+    doc.save(update_fields=["status"])
+    audit("document", doc.id, "TEST_SAMPLED", actor=user,
+          from_state="REQUESTED", to_state="SAMPLED",
+          detail={"on": str(sampled_on),
+                  "due": str(test.result_due_on() or "")})
+    _render(test, "sampled")
+    return None
 
 
 def _grade(test, value):
@@ -100,6 +154,9 @@ def _grade(test, value):
 
 @transaction.atomic
 def record_result(*, test, data, user, certificate=None):
+    if test.document.status == "REQUESTED":
+        return None, ("Confirm the sample was taken before recording a "
+                      "result against it.")
     value = _as_decimal(data.get("value"))
     outcome = data.get("outcome")
     graded = _grade(test, value)
@@ -122,6 +179,7 @@ def record_result(*, test, data, user, certificate=None):
                   "value": str(value or ""),
                   "required": str(test.required_value or ""),
                   "graded_automatically": graded is not None})
+    _render(test, "result")
     if outcome == "FAIL":
         _alert_failure(test, result, user)
     return result, None
@@ -207,7 +265,8 @@ def raise_ncr_for(test, data, user):
 def overdue(site_ids=None, as_of=None):
     """Samples whose defining result never came back."""
     as_of = as_of or timezone.localdate()
-    qs = MaterialTest.objects.exclude(
+    qs = MaterialTest.objects.filter(
+        sampled_on__isnull=False).exclude(
         document__status__in=["PASSED", "FAILED", "CANCELLED"]).select_related(
         "document", "document__site")
     if site_ids is not None:
@@ -222,6 +281,8 @@ def statistics(site_ids=None):
     rows = list(qs)
     return {
         "total": len(rows),
+        "requested": sum(1 for t in rows
+                         if t.document.status == "REQUESTED"),
         "passed": sum(1 for t in rows if t.document.status == "PASSED"),
         "failed": sum(1 for t in rows if t.document.status == "FAILED"),
         "awaiting": sum(1 for t in rows

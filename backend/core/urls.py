@@ -109,6 +109,8 @@ urlpatterns = [
     path("quality/tests/stats", lab_api.test_stats, name="quality-test-stats"),
     path("quality/tests/<str:ref>", lab_api.test_detail,
          name="quality-test"),
+    path("quality/tests/<str:ref>/sampled", lab_api.test_sampled,
+         name="quality-test-sampled"),
     path("quality/tests/<str:ref>/results", lab_api.test_results,
          name="quality-test-results"),
     path("quality/tests/<str:ref>/ncr", lab_api.test_ncr,

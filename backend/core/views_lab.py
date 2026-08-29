@@ -44,14 +44,27 @@ class MaterialTestSerializer(serializers.ModelSerializer):
     result_due_on = serializers.SerializerMethodField()
     is_overdue = serializers.SerializerMethodField()
 
+    pdf_url = serializers.SerializerMethodField()
+
     class Meta:
         model = MaterialTest
         fields = ["id", "ref", "status", "site_code", "project_code", "kind",
                   "kind_display", "element", "location", "pour_ref", "grade",
                   "quantity", "spec_reference", "acceptance_criteria",
-                  "required_value", "unit", "sampled_on", "lab_name",
+                  "required_value", "unit", "requested_on", "required_by",
+                  "sampled_on", "sampled_note", "lab_name",
                   "witnessed_by", "notes", "requested_by_name", "ncr_ref",
-                  "results", "result_due_on", "is_overdue"]
+                  "results", "result_due_on", "is_overdue", "pdf_url"]
+
+    def get_pdf_url(self, obj):
+        """The request sheet itself — what gets sent to the lab, and what
+        ends up in the handover pack."""
+        latest = obj.document.attachments.filter(
+            kind="GENERATED_PDF").order_by("-id").first()
+        try:
+            return latest.file.url if latest and latest.file else None
+        except ValueError:                  # pragma: no cover - storage edge
+            return None
 
     def get_result_due_on(self, obj):
         return obj.result_due_on()
@@ -142,6 +155,23 @@ def test_results(request, ref):
         return Response({"detail": problem}, status=400)
     test.refresh_from_db()
     return Response(MaterialTestSerializer(test).data, status=201)
+
+
+@api_view(["POST"])
+def test_sampled(request, ref):
+    """Confirm the sample was taken. Until this the request is something the
+    lab is being asked for; after it the result clock is running."""
+    test, err = _get_test(request, ref)
+    if err:
+        return err
+    if request.user.role not in lab.REQUESTER_ROLES:
+        return Response({"detail": "Not allowed."}, status=403)
+    problem = lab.confirm_sampling(test=test, data=request.data,
+                                   user=request.user)
+    if problem:
+        return Response({"detail": problem}, status=400)
+    test.refresh_from_db()
+    return Response(MaterialTestSerializer(test).data)
 
 
 @api_view(["POST"])

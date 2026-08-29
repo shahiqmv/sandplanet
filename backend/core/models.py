@@ -2,6 +2,7 @@ from decimal import Decimal
 
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from django.utils.timezone import localdate
 
 
 class User(AbstractUser):
@@ -6466,7 +6467,14 @@ class MaterialTest(models.Model):
                                          null=True, blank=True)
     unit = models.CharField(max_length=20, blank=True)       # N/mm², %, bar
 
-    sampled_on = models.DateField()
+    # A request is raised BEFORE the sample is taken, so the lab or the
+    # consultant can attend — `sampled_on` is empty until it actually is
+    # (owner 2026-08-29). Retrospective entry is still one step: supply the
+    # sampling date on the request and it opens already sampled.
+    requested_on = models.DateField(default=localdate)
+    required_by = models.DateField(null=True, blank=True)
+    sampled_on = models.DateField(null=True, blank=True)
+    sampled_note = models.TextField(blank=True)
     lab_name = models.TextField(blank=True)
     witnessed_by = models.TextField(blank=True)   # consultant who attended
     # The inspection-and-test-plan point this satisfies, where there is one.
@@ -6482,23 +6490,28 @@ class MaterialTest(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-sampled_on", "-id"]
+        ordering = ["-requested_on", "-id"]
         indexes = [models.Index(fields=["kind", "sampled_on"])]
 
     def final_age_days(self):
         return self.FINAL_AGE_DAYS.get(self.kind)
 
     def result_due_on(self):
+        """Only meaningful once the sample exists — an unsampled request has
+        no clock to run."""
         age = self.final_age_days()
         from datetime import timedelta
-        return self.sampled_on + timedelta(days=age) if age else None
+        if not (age and self.sampled_on):
+            return None
+        return self.sampled_on + timedelta(days=age)
 
     def is_overdue(self, as_of=None):
         """Sampled, past the age its defining result is due, and still without
         one. A cube sampled in June with no 28-day result is either a lost
         certificate or a failure nobody chased."""
         from django.utils import timezone
-        if self.document.status in ("PASSED", "FAILED", "CANCELLED"):
+        if self.document.status in ("REQUESTED", "PASSED", "FAILED",
+                                    "CANCELLED"):
             return False
         due = self.result_due_on()
         return bool(due and due < (as_of or timezone.localdate()))
