@@ -14,13 +14,15 @@ Two rules carry most of the weight here:
 Both are enforced server-side. A safety system whose closure rules live only
 in the interface is a safety system that closes itself.
 """
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date, parse_datetime
 
 from .audit import audit
 from .models import (CorrectiveAction, Document, DocumentRevision,
-                     IncidentPerson, SafetyIncident, User)
+                     IncidentPerson, SafetyIncident, Site, User)
 from .notify import notify_user
 from .numbering import next_ref
 
@@ -284,3 +286,194 @@ def statistics(site_ids=None, date_from=None, date_to=None):
         "open": sum(1 for r in rows if r.document.status != "CLOSED"),
         "reportable": sum(1 for r in rows if r.is_reportable),
     }
+
+
+# ---- people records: toolbox talks, inductions, training, PPE -----------
+# The records the HSE officer on a bigger site already keeps. These are
+# registers rather than workflows — the officer runs the process, the app
+# holds the evidence (owner 2026-08-29).
+
+RECORDER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN",
+                  "HO_HR", "PA"}
+
+
+def workers_present(site, day):
+    """Everyone marked present at a site on a day. A toolbox talk is given to
+    the men who are there, and they were all ticked into the attendance
+    register that morning — asking for the same list twice is how a hundred
+    checkboxes become nobody's job (owner 2026-08-29)."""
+    from .models import Attendance
+    rows = (Attendance.objects
+            .filter(site=site, day=day,
+                    remark__in=["PRESENT", "HALF_DAY"])
+            .select_related("employee"))
+    return [r.employee for r in rows]
+
+
+@transaction.atomic
+def create_toolbox_talk(*, site, data, user, project=None):
+    from .models import ToolboxAttendee, ToolboxTalk
+
+    topic = (data.get("topic") or "").strip()
+    if not topic:
+        return None, "What was the talk about?"
+    delivered_at = data.get("delivered_at")
+    if isinstance(delivered_at, str):
+        delivered_at = parse_datetime(delivered_at)
+    if not delivered_at:
+        return None, "When was it given?"
+    if timezone.is_naive(delivered_at):
+        delivered_at = timezone.make_aware(delivered_at)
+
+    ref = next_ref("TBT", site)
+    doc = Document.objects.create(
+        doc_type="TBT", ref=ref, site=site, project=project,
+        doc_date=timezone.localdate(delivered_at),
+        status="RECORDED", created_by=user)
+    revision = DocumentRevision.objects.create(
+        document=doc, rev_label="R0", payload={}, created_by=user)
+    doc.current_revision = revision
+    doc.save(update_fields=["current_revision"])
+
+    talk = ToolboxTalk.objects.create(
+        document=doc, topic=topic, delivered_by=user,
+        presenter_name=(data.get("presenter_name") or "").strip(),
+        delivered_at=delivered_at,
+        duration_min=data.get("duration_min") or None,
+        location=(data.get("location") or "").strip(),
+        key_points=(data.get("key_points") or "").strip())
+
+    seen = set()
+    for row in data.get("attendees") or []:
+        emp_id = row.get("employee_id") or None
+        if emp_id and emp_id in seen:
+            continue
+        if emp_id:
+            seen.add(emp_id)
+        ToolboxAttendee.objects.create(
+            talk=talk, employee_id=emp_id,
+            name=(row.get("name") or "").strip(),
+            employer=(row.get("employer") or "").strip())
+
+    audit("document", doc.id, "TOOLBOX_TALK_RECORDED", actor=user,
+          to_state="RECORDED",
+          detail={"ref": ref, "topic": topic[:80],
+                  "attendees": talk.attendees.count()})
+    return talk, None
+
+
+@transaction.atomic
+def record_induction(*, employee, site, data, user):
+    from .models import SafetyInduction
+
+    inducted_on = data.get("inducted_on")
+    if isinstance(inducted_on, str):
+        inducted_on = parse_date(inducted_on)
+    if not inducted_on:
+        return None, "When were they inducted?"
+    induction = SafetyInduction.objects.create(
+        employee=employee, site=site, inducted_on=inducted_on,
+        inducted_by=user, topics=(data.get("topics") or "").strip(),
+        valid_until=parse_date(data["valid_until"])
+        if isinstance(data.get("valid_until"), str) and data["valid_until"]
+        else data.get("valid_until") or None,
+        notes=(data.get("notes") or "").strip())
+    audit("employee", employee.id, "INDUCTION_RECORDED", actor=user,
+          detail={"site": site.code, "on": str(inducted_on)})
+    return induction, None
+
+
+@transaction.atomic
+def record_training(*, employee, data, user):
+    from .models import TrainingRecord
+
+    title = (data.get("title") or "").strip()
+    if not title:
+        return None, "What training was it?"
+    record = TrainingRecord.objects.create(
+        employee=employee, title=title,
+        category=data.get("category") or "GENERAL",
+        issuer=(data.get("issuer") or "").strip(),
+        reference=(data.get("reference") or "")[:60],
+        issued_on=_as_date(data.get("issued_on")),
+        expires_on=_as_date(data.get("expires_on")),
+        notes=(data.get("notes") or "").strip(),
+        recorded_by=user)
+    audit("employee", employee.id, "TRAINING_RECORDED", actor=user,
+          detail={"title": title[:80], "expires": str(record.expires_on or "")})
+    return record, None
+
+
+def _as_date(value):
+    if isinstance(value, str) and value:
+        return parse_date(value)
+    return value or None
+
+
+@transaction.atomic
+def issue_ppe(*, employee, site, data, user):
+    from .models import PpeIssue
+
+    item = (data.get("item") or "").strip()
+    if not item:
+        return None, "What was issued?"
+    issue = PpeIssue.objects.create(
+        employee=employee, site=site, item=item[:80],
+        qty=int(data.get("qty") or 1),
+        issued_on=_as_date(data.get("issued_on")) or timezone.localdate(),
+        issued_by=user, replacement=bool(data.get("replacement")),
+        notes=(data.get("notes") or "").strip())
+    audit("employee", employee.id, "PPE_ISSUED", actor=user,
+          detail={"item": item[:60], "qty": issue.qty})
+    return issue, None
+
+
+# ---- training expiry sweep ---------------------------------------------
+# An expired plant-operator ticket is a man on an excavator he is no longer
+# certified to drive — an operational risk today, not only a certification
+# one. Escalating stages, watermarked so a reminder does not repeat daily.
+
+# Ascending, because the sweep takes the FIRST threshold the record falls
+# inside — ordered the other way every record matches "60 days" and the
+# reminder never escalates as the date closes in.
+TRAINING_STAGES = [(0, "OVERDUE"), (7, "D7"), (30, "D30"), (60, "D60")]
+
+
+def sweep_training_expiry():
+    """Fire renewal reminders for training that is running out. Returns how
+    many fired. Run daily from cron."""
+    from .models import TrainingRecord
+
+    today = timezone.localdate()
+    fired = 0
+    qs = (TrainingRecord.objects
+          .filter(expires_on__isnull=False,
+                  expires_on__lte=today + timedelta(days=60))
+          .select_related("employee"))
+    for record in qs:
+        days = record.days_to_expiry(today)
+        stage = None
+        for threshold, name in TRAINING_STAGES:
+            if days <= threshold:
+                stage = name
+                break
+        if stage is None or record.last_alert_stage == stage:
+            continue
+        site_id = record.employee.current_site_id()
+        targets = []
+        if site_id:
+            site = Site.objects.filter(pk=site_id).first()
+            if site is not None:
+                targets += [p for p in site.current_pms() if p.is_active]
+        targets += list(User.objects.filter(role="HO_HR", is_active=True))
+        when = ("has expired" if days < 0 else
+                "expires today" if days == 0 else f"expires in {days} days")
+        for u in {t.id: t for t in targets}.values():
+            notify_user(
+                u, f"Training {when} — {record.employee.full_name}",
+                f"{record.get_category_display()}: {record.title}",
+                category="alert")
+        record.last_alert_stage = stage
+        record.save(update_fields=["last_alert_stage"])
+        fired += 1
+    return fired

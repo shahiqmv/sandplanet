@@ -3,6 +3,8 @@
 Site-scoped like every other document surface: a site user sees their own
 site's records, Head Office sees all of them.
 """
+from datetime import timedelta
+
 from django.utils import timezone
 from rest_framework import serializers
 from rest_framework.decorators import api_view
@@ -10,8 +12,9 @@ from rest_framework.response import Response
 
 from . import hse
 from .audit import audit
-from .models import (CorrectiveAction, IncidentPerson, Project,
-                     SafetyIncident, Site)
+from .models import (CorrectiveAction, Employee, IncidentPerson, PpeIssue,
+                     Project, SafetyIncident, SafetyInduction, Site,
+                     ToolboxAttendee, ToolboxTalk, TrainingRecord)
 from .permissions import scoped_site_ids
 
 
@@ -305,3 +308,228 @@ def stats(request):
         status__in=["OPEN", "IN_PROGRESS", "DONE"],
         **({} if site_ids is None else {"site_id__in": site_ids})).count()
     return Response(data)
+
+
+# ---- people records ------------------------------------------------------
+
+class ToolboxAttendeeSerializer(serializers.ModelSerializer):
+    display_name = serializers.SerializerMethodField()
+    emp_no = serializers.CharField(source="employee.emp_no", read_only=True,
+                                   default=None)
+
+    class Meta:
+        model = ToolboxAttendee
+        fields = ["id", "employee", "emp_no", "name", "display_name",
+                  "employer"]
+
+    def get_display_name(self, obj):
+        return obj.display_name()
+
+
+class ToolboxTalkSerializer(serializers.ModelSerializer):
+    ref = serializers.CharField(source="document.ref", read_only=True)
+    site_code = serializers.CharField(source="document.site.code",
+                                      read_only=True)
+    delivered_by_name = serializers.CharField(source="delivered_by.full_name",
+                                              read_only=True)
+    attendees = ToolboxAttendeeSerializer(many=True, read_only=True)
+    attendee_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ToolboxTalk
+        fields = ["id", "ref", "site_code", "topic", "delivered_at",
+                  "delivered_by_name", "presenter_name", "duration_min",
+                  "location", "key_points", "attendees", "attendee_count"]
+
+    def get_attendee_count(self, obj):
+        return obj.attendees.count()
+
+
+class InductionSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name",
+                                          read_only=True)
+    emp_no = serializers.CharField(source="employee.emp_no", read_only=True)
+    site_code = serializers.CharField(source="site.code", read_only=True)
+    inducted_by_name = serializers.CharField(source="inducted_by.full_name",
+                                             read_only=True)
+
+    class Meta:
+        model = SafetyInduction
+        fields = ["id", "employee", "employee_name", "emp_no", "site_code",
+                  "inducted_on", "inducted_by_name", "topics", "valid_until",
+                  "notes"]
+
+
+class TrainingSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name",
+                                          read_only=True)
+    emp_no = serializers.CharField(source="employee.emp_no", read_only=True)
+    category_display = serializers.CharField(source="get_category_display",
+                                             read_only=True)
+    days_to_expiry = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TrainingRecord
+        fields = ["id", "employee", "employee_name", "emp_no", "category",
+                  "category_display", "title", "issuer", "reference",
+                  "issued_on", "expires_on", "notes", "days_to_expiry"]
+
+    def get_days_to_expiry(self, obj):
+        return obj.days_to_expiry()
+
+
+class PpeSerializer(serializers.ModelSerializer):
+    employee_name = serializers.CharField(source="employee.full_name",
+                                          read_only=True)
+    emp_no = serializers.CharField(source="employee.emp_no", read_only=True)
+    site_code = serializers.CharField(source="site.code", read_only=True)
+    issued_by_name = serializers.CharField(source="issued_by.full_name",
+                                           read_only=True)
+
+    class Meta:
+        model = PpeIssue
+        fields = ["id", "employee", "employee_name", "emp_no", "site_code",
+                  "item", "qty", "issued_on", "issued_by_name", "replacement",
+                  "notes"]
+
+
+def _site_or_error(request, site_id):
+    try:
+        site = Site.objects.get(pk=site_id)
+    except (Site.DoesNotExist, ValueError, TypeError):
+        return None, Response({"detail": "Choose the site."}, status=400)
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None and site.id not in allowed:
+        return None, Response({"detail": "Not your site."}, status=403)
+    return site, None
+
+
+@api_view(["GET", "POST"])
+def toolbox_talks(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        talk, problem = hse.create_toolbox_talk(
+            site=site, data=request.data, user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(ToolboxTalkSerializer(talk).data, status=201)
+
+    qs = ToolboxTalk.objects.select_related(
+        "document", "document__site", "delivered_by").prefetch_related(
+        "attendees", "attendees__employee")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(document__site_id=request.GET["site"])
+    if request.GET.get("from"):
+        qs = qs.filter(delivered_at__date__gte=request.GET["from"])
+    return Response(ToolboxTalkSerializer(qs[:200], many=True).data)
+
+
+@api_view(["GET"])
+def present_today(request):
+    """Who was marked present at a site on a day — the attendance register is
+    already the list of men who were there for the talk."""
+    site, err = _site_or_error(request, request.GET.get("site"))
+    if err:
+        return err
+    day = request.GET.get("day") or str(timezone.localdate())
+    people = hse.workers_present(site, day)
+    return Response([{"employee_id": e.id, "emp_no": e.emp_no,
+                      "full_name": e.full_name,
+                      "trade": getattr(e.job_category, "name", "")}
+                     for e in people])
+
+
+@api_view(["GET", "POST"])
+def inductions(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        employee = Employee.objects.filter(
+            pk=request.data.get("employee_id")).first()
+        if employee is None:
+            return Response({"detail": "Unknown worker."}, status=400)
+        induction, problem = hse.record_induction(
+            employee=employee, site=site, data=request.data,
+            user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(InductionSerializer(induction).data, status=201)
+
+    qs = SafetyInduction.objects.select_related("employee", "site",
+                                                "inducted_by")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(site_id=request.GET["site"])
+    if request.GET.get("employee"):
+        qs = qs.filter(employee_id=request.GET["employee"])
+    return Response(InductionSerializer(qs[:400], many=True).data)
+
+
+@api_view(["GET", "POST"])
+def training(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        employee = Employee.objects.filter(
+            pk=request.data.get("employee_id")).first()
+        if employee is None:
+            return Response({"detail": "Unknown worker."}, status=400)
+        record, problem = hse.record_training(
+            employee=employee, data=request.data, user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(TrainingSerializer(record).data, status=201)
+
+    qs = TrainingRecord.objects.select_related("employee")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(employee__site_allocations__site_id__in=allowed,
+                       employee__site_allocations__to_date__isnull=True)
+    if request.GET.get("employee"):
+        qs = qs.filter(employee_id=request.GET["employee"])
+    if request.GET.get("expiring"):
+        horizon = timezone.localdate() + timedelta(
+            days=int(request.GET["expiring"]))
+        qs = qs.filter(expires_on__isnull=False, expires_on__lte=horizon)
+    return Response(TrainingSerializer(qs.distinct()[:400], many=True).data)
+
+
+@api_view(["GET", "POST"])
+def ppe(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        employee = Employee.objects.filter(
+            pk=request.data.get("employee_id")).first()
+        if employee is None:
+            return Response({"detail": "Unknown worker."}, status=400)
+        issue, problem = hse.issue_ppe(employee=employee, site=site,
+                                       data=request.data, user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(PpeSerializer(issue).data, status=201)
+
+    qs = PpeIssue.objects.select_related("employee", "site", "issued_by")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(site_id=request.GET["site"])
+    if request.GET.get("employee"):
+        qs = qs.filter(employee_id=request.GET["employee"])
+    return Response(PpeSerializer(qs[:400], many=True).data)

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { BTN, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import { ToolboxTab, TrainingTab, WorkerRecordsTab } from "./HseRecords.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
 // on the daily report that notified nobody, so "how many incidents last
@@ -152,7 +153,10 @@ export default function HsePage({ me, sites, site }) {
                     flexWrap: "wrap", alignItems: "flex-end",
                     borderBottom: "2px solid var(--line)" }}>
         {[["incidents", `Incidents (${rows.length})`],
-          ["actions", `Corrective actions (${actions.length})`]].map(
+          ["actions", `Corrective actions (${actions.length})`],
+          ["toolbox", "Toolbox talks"],
+          ["training", "Competency"],
+          ["workers", "Worker records"]].map(
           ([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
                   style={{ background: "transparent", border: "none",
@@ -167,15 +171,18 @@ export default function HsePage({ me, sites, site }) {
             {label}
           </button>
         ))}
-        <label style={{ marginLeft: "auto", fontSize: 12.5, color: "#5a6b78",
-                        display: "flex", alignItems: "center", gap: 6,
-                        paddingBottom: 6 }}>
-          <input type="checkbox" checked={openOnly}
-                 onChange={(e) => setOpenOnly(e.target.checked)} />
-          Unfinished only
-        </label>
+        {tab === "incidents" && (
+          <label style={{ marginLeft: "auto", fontSize: 12.5,
+                          color: "#5a6b78", display: "flex",
+                          alignItems: "center", gap: 6, paddingBottom: 6 }}>
+            <input type="checkbox" checked={openOnly}
+                   onChange={(e) => setOpenOnly(e.target.checked)} />
+            Unfinished only
+          </label>
+        )}
         {!site && (sites || []).length > 1 && (
-          <select value={siteFilter}
+          <select value={siteFilter} style={{ marginLeft: tab === "incidents"
+            ? 10 : "auto" }}
                   onChange={(e) => setSiteFilter(e.target.value)}
                   style={{ ...inputStyle, width: "auto", marginBottom: 5,
                            marginLeft: 10 }}>
@@ -230,6 +237,16 @@ export default function HsePage({ me, sites, site }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {tab === "toolbox" && (
+        <ToolboxTab me={me} sites={sites} siteFilter={siteFilter} />
+      )}
+
+      {tab === "training" && <TrainingTab siteFilter={siteFilter} />}
+
+      {tab === "workers" && (
+        <WorkerRecordsTab sites={sites} siteFilter={siteFilter} />
       )}
 
       {tab === "actions" && (
@@ -443,24 +460,7 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
         </>)}
       </dl>
 
-      {(incident.people || []).length > 0 && (
-        <>
-          <h3 style={{ fontSize: 14, margin: "16px 0 6px" }}>People</h3>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <tbody>
-              {incident.people.map((p) => (
-                <tr key={p.id}>
-                  <td style={{ ...td, fontWeight: 600 }}>{p.display_name}</td>
-                  <td style={td}>{p.involvement}</td>
-                  <td style={td}>{p.injury || "—"}</td>
-                  <td style={td}>
-                    {p.days_lost ? `${p.days_lost} days lost` : ""}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </>
-      )}
+      <PeopleBlock incident={incident} onChanged={onChanged} />
 
       {canInvestigate && !closed && (
         <>
@@ -566,6 +566,131 @@ function IncidentDetail({ incident, me, canInvestigate, onClose, onChanged }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+// Who was hurt, involved or watching. An injury record without the injured
+// person is not a record of anything.
+function PeopleBlock({ incident, onChanged }) {
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ name: "", employer: "",
+                               involvement: "INJURED", injury: "",
+                               body_part: "", treatment: "", days_lost: 0 });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const closed = incident.status === "CLOSED";
+
+  async function save() {
+    if (!f.name.trim()) return setError("Who was it?");
+    setBusy(true); setError(null);
+    try {
+      const fresh = await api(`/hse/incidents/${incident.ref}/people`,
+                              { method: "POST", body: f });
+      onChanged(fresh);
+      setAdding(false);
+      setF({ name: "", employer: "", involvement: "INJURED", injury: "",
+             body_part: "", treatment: "", days_lost: 0 });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <h3 style={{ fontSize: 14, margin: "16px 0 6px" }}>People</h3>
+      {(incident.people || []).length === 0 && (
+        <p style={{ fontSize: 13, color: "#8a97a1", margin: "0 0 8px" }}>
+          Nobody recorded yet.</p>
+      )}
+      {(incident.people || []).length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <tbody>
+            {incident.people.map((p) => (
+              <tr key={p.id}>
+                <td style={{ ...td, fontWeight: 600 }}>
+                  {p.display_name}
+                  {p.employer && (
+                    <span style={{ fontWeight: 400, color: "#5a6b78" }}>
+                      {" "}· {p.employer}</span>
+                  )}
+                </td>
+                <td style={{ ...td, width: 90 }}>{p.involvement}</td>
+                <td style={td}>
+                  {p.injury || "—"}
+                  {p.body_part && ` (${p.body_part})`}
+                </td>
+                <td style={{ ...td, width: 110 }}>
+                  {p.days_lost ? `${p.days_lost} days lost` : ""}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {!closed && !adding && (
+        <button onClick={() => setAdding(true)}
+                style={{ ...ghostButton, marginTop: 6 }}>Add a person</button>
+      )}
+      {adding && (
+        <div style={{ background: "var(--sand,#f7f4ee)", padding: 12,
+                      borderRadius: 8, marginTop: 8 }}>
+          <div style={{ display: "grid", gap: 10,
+                        gridTemplateColumns:
+                          "repeat(auto-fit,minmax(150px,1fr))" }}>
+            <label style={{ fontSize: 13 }}>Name
+              <input value={f.name}
+                     onChange={(e) => setF({ ...f, name: e.target.value })}
+                     style={inputStyle} />
+            </label>
+            <label style={{ fontSize: 13 }}>Employer
+              <input value={f.employer} placeholder="Us, or the subcontractor"
+                     onChange={(e) => setF({ ...f, employer: e.target.value })}
+                     style={inputStyle} />
+            </label>
+            <label style={{ fontSize: 13 }}>Involvement
+              <select value={f.involvement}
+                      onChange={(e) => setF({ ...f,
+                                              involvement: e.target.value })}
+                      style={inputStyle}>
+                {INVOLVEMENT.map(([v, l]) => (
+                  <option key={v} value={v}>{l}</option>
+                ))}
+              </select>
+            </label>
+            {f.involvement === "INJURED" && (
+              <>
+                <label style={{ fontSize: 13 }}>Injury
+                  <input value={f.injury}
+                         onChange={(e) => setF({ ...f,
+                                                 injury: e.target.value })}
+                         style={inputStyle} />
+                </label>
+                <label style={{ fontSize: 13 }}>Body part
+                  <input value={f.body_part}
+                         onChange={(e) => setF({ ...f,
+                                                 body_part: e.target.value })}
+                         style={inputStyle} />
+                </label>
+                <label style={{ fontSize: 13 }}>Days lost
+                  <input type="number" min="0" value={f.days_lost}
+                         onChange={(e) => setF({ ...f,
+                                                 days_lost: e.target.value })}
+                         style={inputStyle} />
+                </label>
+              </>
+            )}
+          </div>
+          {error && <p style={{ color: "#a3271b", fontSize: 13 }}>{error}</p>}
+          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+            <button onClick={save} disabled={busy} style={buttonStyle}>
+              Add</button>
+            <button onClick={() => setAdding(false)} style={ghostButton}>
+              Cancel</button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

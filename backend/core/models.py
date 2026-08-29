@@ -341,6 +341,7 @@ class Document(models.Model):
         PSC = "PSC"  # procurement schedule — per-project planning layer
         MTN = "MTN"  # material transfer note — stock/tools moving site to site
         INC = "INC"  # safety incident / near miss (HSE, 2026-08-29)
+        TBT = "TBT"  # toolbox talk — briefing + who attended (HSE)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -437,6 +438,10 @@ class Document(models.Model):
         # means is worked out in INVESTIGATING; what changes because of it is
         # a corrective action. An incident cannot close while an action is
         # still open — that guard is in hse.py, not here.
+        # A toolbox talk is a record of something that already happened —
+        # it is delivered, not approved (owner 2026-08-29: the module is for
+        # record purposes; the HSE officer runs the process).
+        "TBT": {"RECORDED": {"CANCELLED"}},
         "INC": {
             "REPORTED": {"INVESTIGATING", "CLOSED", "CANCELLED"},
             "INVESTIGATING": {"ACTIONS_OPEN", "CLOSED", "REPORTED"},
@@ -5506,3 +5511,151 @@ class CorrectiveAction(models.Model):
         if not self.is_open:
             return 0
         return max((as_of - self.due_date).days, 0)
+
+
+# --- HSE people records: what each worker was told, trained and issued -----
+# The records an HSE officer already keeps on the bigger sites, and that a
+# resort client's HSE audit asks for first (owner 2026-08-29). These are
+# registers, not workflows: the officer is running the process, the app is
+# holding the evidence.
+
+
+def training_cert_path(instance, filename):
+    """Unique per record — S3 file_overwrite would otherwise silently replace
+    another worker's certificate of the same name."""
+    return f"training/{instance.employee_id}/{instance.pk or 'new'}-{filename}"
+
+
+class ToolboxTalk(models.Model):
+    """A briefing given on site, and who was standing there for it."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="toolbox_talk")
+    topic = models.TextField()
+    delivered_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    presenter_name = models.TextField(blank=True)   # if not an app user
+    delivered_at = models.DateTimeField()
+    duration_min = models.IntegerField(null=True, blank=True)
+    location = models.TextField(blank=True)
+    key_points = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-delivered_at"]
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.topic[:50]}"
+
+
+class ToolboxAttendee(models.Model):
+    """One person at a talk. An employee where we know them, free text where
+    the man belongs to a subcontractor — their attendance is still our record."""
+
+    talk = models.ForeignKey(ToolboxTalk, on_delete=models.CASCADE,
+                             related_name="attendees")
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="+")
+    name = models.TextField(blank=True)
+    employer = models.TextField(blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["talk", "employee"],
+                condition=models.Q(employee__isnull=False),
+                name="uniq_attendee_per_talk"),
+        ]
+
+    def display_name(self):
+        if self.employee_id:
+            return self.employee.full_name
+        return self.name or "—"
+
+
+class SafetyInduction(models.Model):
+    """A worker was inducted onto a site before starting. One per worker per
+    site; re-inducting supersedes rather than duplicates."""
+
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 related_name="inductions")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="inductions")
+    inducted_on = models.DateField()
+    inducted_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    topics = models.TextField(blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-inducted_on"]
+        indexes = [models.Index(fields=["employee", "site"])]
+
+
+class TrainingRecord(models.Model):
+    """Training and competency, with an expiry. Plant-operator licences are
+    the operational risk here, not just the certification one: an expired
+    ticket is a man on an excavator he is no longer certified to drive."""
+
+    class Category(models.TextChoices):
+        PLANT = "PLANT", "Plant / equipment operator"
+        HEIGHT = "HEIGHT", "Working at height"
+        CONFINED = "CONFINED", "Confined space"
+        LIFTING = "LIFTING", "Lifting / rigging"
+        ELECTRICAL = "ELECTRICAL", "Electrical"
+        HOT_WORK = "HOT_WORK", "Hot work"
+        FIRST_AID = "FIRST_AID", "First aid"
+        SCAFFOLD = "SCAFFOLD", "Scaffolding"
+        DIVING = "DIVING", "Diving / marine"
+        GENERAL = "GENERAL", "General safety"
+
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 related_name="training")
+    category = models.CharField(max_length=12, choices=Category.choices,
+                                default=Category.GENERAL)
+    title = models.TextField()
+    issuer = models.TextField(blank=True)
+    reference = models.CharField(max_length=60, blank=True)
+    issued_on = models.DateField(null=True, blank=True)
+    expires_on = models.DateField(null=True, blank=True)
+    certificate = models.FileField(upload_to=training_cert_path, null=True,
+                                   blank=True)
+    notes = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    # Watermark so the expiry sweep does not re-fire the same reminder daily.
+    last_alert_stage = models.CharField(max_length=8, blank=True)
+
+    class Meta:
+        ordering = ["expires_on", "employee"]
+        indexes = [models.Index(fields=["expires_on"])]
+
+    def days_to_expiry(self, as_of=None):
+        from django.utils import timezone
+        if not self.expires_on:
+            return None
+        return (self.expires_on - (as_of or timezone.localdate())).days
+
+
+class PpeIssue(models.Model):
+    """PPE handed to a worker. Kept per issue, not as a running balance: the
+    question an audit asks is "when was he last given a harness", and a
+    balance cannot answer it."""
+
+    employee = models.ForeignKey("Employee", on_delete=models.PROTECT,
+                                 related_name="ppe_issues")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="ppe_issues")
+    item = models.CharField(max_length=80)
+    qty = models.IntegerField(default=1)
+    issued_on = models.DateField()
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    replacement = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-issued_on"]
+        indexes = [models.Index(fields=["employee", "issued_on"])]
