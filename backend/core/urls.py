@@ -7,6 +7,7 @@ from . import views, views_biometric as biometric_api, views_bom as bom_api, vie
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
     views_hse as hse_api, \
+    views_quality as quality_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
@@ -84,6 +85,22 @@ urlpatterns = [
     path("hse/inspections/<str:ref>/actions", hse_api.inspection_actions,
          name="hse-inspection-actions"),
     path("hse/stats", hse_api.stats, name="hse-stats"),
+    # QA / QC
+    path("quality/itps", quality_api.itps, name="quality-itps"),
+    path("quality/itp-items/<int:pk>/record", quality_api.itp_item_record,
+         name="quality-itp-record"),
+    path("quality/ncrs", quality_api.ncrs, name="quality-ncrs"),
+    path("quality/ncrs/<str:ref>", quality_api.ncr_detail, name="quality-ncr"),
+    path("quality/ncrs/<str:ref>/disposition", quality_api.ncr_disposition,
+         name="quality-ncr-disposition"),
+    path("quality/ncrs/<str:ref>/close", quality_api.ncr_close,
+         name="quality-ncr-close"),
+    path("quality/ncrs/<str:ref>/actions", quality_api.ncr_actions,
+         name="quality-ncr-actions"),
+    path("quality/supplier-evaluations", quality_api.supplier_evaluations,
+         name="quality-supplier-evaluations"),
+    path("quality/supplier-scorecards", quality_api.supplier_scorecards,
+         name="quality-supplier-scorecards"),
     path("push/key", notify_api.push_key, name="push-key"),
     path("push/subscribe", notify_api.push_subscribe, name="push-subscribe"),
     path("push/unsubscribe", notify_api.push_unsubscribe,

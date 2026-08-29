@@ -345,6 +345,8 @@ class Document(models.Model):
         PTW = "PTW"  # permit to work — hot work, confined space, height (HSE)
         RAS = "RAS"  # risk assessment — hazards and controls (HSE)
         HSI = "HSI"  # safety inspection — walk round + findings (HSE)
+        ITP = "ITP"  # inspection & test plan — hold/witness points (QA/QC)
+        NCR = "NCR"  # non-conformance report (QA/QC)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -453,6 +455,14 @@ class Document(models.Model):
         },
         "RAS": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
         "HSI": {"RECORDED": {"CANCELLED"}},
+        "ITP": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
+        # A non-conformance is open until somebody decides what happens to
+        # the work (the disposition) AND the work is done and verified. The
+        # guards for both live in quality.py, not here.
+        "NCR": {
+            "OPEN": {"IN_PROGRESS", "CLOSED", "CANCELLED"},
+            "IN_PROGRESS": {"CLOSED", "OPEN"},
+        },
         "INC": {
             "REPORTED": {"INVESTIGATING", "CLOSED", "CANCELLED"},
             "INVESTIGATING": {"ACTIONS_OPEN", "CLOSED", "REPORTED"},
@@ -5806,3 +5816,205 @@ class SafetyInspection(models.Model):
             if key in ("ok", "not_ok", "na"):
                 out[key] += 1
         return out
+
+
+# ===== QA / QC — inspection & test plans, non-conformance, suppliers =====
+# The audit found real submittal and inspection workflows but no NCR register
+# and no supplier evaluation, so a quality failure had nowhere to live and a
+# supplier who kept causing them was never rated (conformance audit
+# 2026-08-28).
+
+
+class InspectionTestPlan(models.Model):
+    """What will be inspected, when, by whom, and against what.
+
+    Superseded rather than edited once issued: a consultant who signed off
+    against revision A must still be able to see revision A."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="itp")
+    title = models.TextField()
+    discipline = models.CharField(max_length=60, blank=True)
+    prepared_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    prepared_on = models.DateField()
+    notes = models.TextField(blank=True)
+    supersedes = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["-prepared_on"]
+
+
+class ItpItem(models.Model):
+    """One inspection point.
+
+    The point TYPE is the whole value of an ITP: a hold point stops the work
+    until it is signed off, a witness point invites attendance but does not
+    stop anything. Getting that distinction into the record is what lets a
+    consultant trust the plan."""
+
+    class PointType(models.TextChoices):
+        HOLD = "HOLD", "Hold — work stops until signed"
+        WITNESS = "WITNESS", "Witness — invited to attend"
+        REVIEW = "REVIEW", "Review — records reviewed after"
+        MONITOR = "MONITOR", "Monitor — surveillance only"
+
+    class Party(models.TextChoices):
+        US = "US", "Us"
+        CONSULTANT = "CONSULTANT", "Consultant"
+        CLIENT = "CLIENT", "Client"
+        THIRD_PARTY = "THIRD_PARTY", "Third party"
+
+    plan = models.ForeignKey(InspectionTestPlan, on_delete=models.CASCADE,
+                             related_name="items")
+    sort_order = models.IntegerField(default=0)
+    activity = models.TextField()
+    reference = models.TextField(blank=True)      # spec clause / drawing
+    acceptance_criteria = models.TextField(blank=True)
+    point_type = models.CharField(max_length=8, choices=PointType.choices,
+                                  default=PointType.REVIEW)
+    responsible = models.CharField(max_length=12, choices=Party.choices,
+                                   default=Party.US)
+    frequency = models.CharField(max_length=80, blank=True)
+    record_required = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["plan", "sort_order"]
+
+
+class ItpRecord(models.Model):
+    """Evidence that an inspection point was actually carried out."""
+
+    class Result(models.TextChoices):
+        PASS = "PASS", "Pass"
+        FAIL = "FAIL", "Fail"
+        NA = "NA", "Not applicable"
+
+    item = models.ForeignKey(ItpItem, on_delete=models.CASCADE,
+                             related_name="records")
+    location = models.TextField(blank=True)       # villa 3, grid B-4
+    inspected_on = models.DateField()
+    inspected_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    inspector_name = models.TextField(blank=True)
+    result = models.CharField(max_length=4, choices=Result.choices)
+    note = models.TextField(blank=True)
+    # The client-facing inspection request this point was signed off through,
+    # where one was raised — evidence by linkage, not a second copy of it.
+    inspection_request = models.ForeignKey(Document, on_delete=models.SET_NULL,
+                                           null=True, blank=True,
+                                           related_name="itp_records")
+
+    class Meta:
+        ordering = ["-inspected_on"]
+
+
+class NonConformance(models.Model):
+    """Work, material or process that does not meet its requirement.
+
+    Corrective actions hang off the same register the safety module uses, so
+    the company's open-actions list stays one list."""
+
+    class Category(models.TextChoices):
+        WORKMANSHIP = "WORKMANSHIP", "Workmanship"
+        MATERIAL = "MATERIAL", "Material"
+        DOCUMENTATION = "DOCUMENTATION", "Documentation"
+        PROCESS = "PROCESS", "Process"
+        SUPPLIER = "SUPPLIER", "Supplier / subcontractor"
+
+    class Severity(models.TextChoices):
+        MINOR = "MINOR", "Minor"
+        MAJOR = "MAJOR", "Major"
+        CRITICAL = "CRITICAL", "Critical"
+
+    class Disposition(models.TextChoices):
+        REWORK = "REWORK", "Rework to specification"
+        REPAIR = "REPAIR", "Repair"
+        USE_AS_IS = "USE_AS_IS", "Use as is (concession)"
+        REGRADE = "REGRADE", "Re-grade / re-use elsewhere"
+        REJECT = "REJECT", "Reject / remove"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="ncr")
+    category = models.CharField(max_length=14, choices=Category.choices)
+    severity = models.CharField(max_length=8, choices=Severity.choices,
+                                default=Severity.MINOR)
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    raised_on = models.DateField()
+    location = models.TextField(blank=True)
+    description = models.TextField()
+    # What it breaches — the clause, drawing or standard. An NCR without this
+    # is an opinion.
+    requirement = models.TextField(blank=True)
+    # Whose failure it was, where that is someone we buy from.
+    supplier = models.ForeignKey("Supplier", on_delete=models.PROTECT,
+                                 null=True, blank=True, related_name="ncrs")
+    subcontract_agreement = models.ForeignKey(
+        "Document", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="subcontract_ncrs")
+
+    disposition = models.CharField(max_length=10,
+                                   choices=Disposition.choices, blank=True)
+    disposition_note = models.TextField(blank=True)
+    disposition_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                       null=True, blank=True,
+                                       related_name="+")
+    disposition_at = models.DateTimeField(null=True, blank=True)
+    root_cause = models.TextField(blank=True)
+    cost_impact = models.DecimalField(max_digits=14, decimal_places=2,
+                                      null=True, blank=True)
+
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    verification_note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-raised_on"]
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.get_category_display()}"
+
+
+class SupplierEvaluation(models.Model):
+    """A periodic rating of a supplier, closing the ISO 9001 gap the audit
+    found. Scores are entered by a person; the non-conformance count against
+    that supplier is counted by the system, so the rating has evidence beside
+    it rather than only an opinion."""
+
+    supplier = models.ForeignKey("Supplier", on_delete=models.CASCADE,
+                                 related_name="evaluations")
+    period_start = models.DateField()
+    period_end = models.DateField()
+    quality = models.IntegerField(default=3)          # 1..5
+    delivery = models.IntegerField(default=3)
+    price = models.IntegerField(default=3)
+    responsiveness = models.IntegerField(default=3)
+    documentation = models.IntegerField(default=3)
+    score = models.DecimalField(max_digits=4, decimal_places=2, default=0)
+    band = models.CharField(max_length=12, blank=True)
+    ncr_count = models.IntegerField(default=0)
+    notes = models.TextField(blank=True)
+    evaluated_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    evaluated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-period_end", "supplier"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["supplier", "period_start", "period_end"],
+                name="uniq_supplier_evaluation_period"),
+        ]
+
+    @staticmethod
+    def band_for(score):
+        if score >= 4.5:
+            return "PREFERRED"
+        if score >= 3.5:
+            return "APPROVED"
+        if score >= 2.5:
+            return "CONDITIONAL"
+        return "UNACCEPTABLE"

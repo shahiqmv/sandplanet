@@ -47,9 +47,15 @@ def _people(incident):
     return list(incident.people.select_related("employee"))
 
 
-def open_actions(incident):
-    return incident.document.corrective_actions.filter(
+def open_actions_for(document):
+    """Actions still owed against any document — an incident, an inspection,
+    a non-conformance. One register, so one query."""
+    return document.corrective_actions.filter(
         status__in=["OPEN", "IN_PROGRESS", "DONE"])
+
+
+def open_actions(incident):
+    return open_actions_for(incident.document)
 
 
 @transaction.atomic
