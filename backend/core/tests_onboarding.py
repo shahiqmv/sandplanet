@@ -2085,7 +2085,7 @@ class ConversionPendingLabelTests(TestCase):
     def setUp(self):
         from datetime import date
         from django.utils import timezone
-        from .models import Document, OnboardingCase, Site, User
+        from .models import Site, User
         from .tests import make_user
         from . import onboarding as ob
         self.ob = ob

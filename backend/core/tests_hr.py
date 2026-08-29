@@ -585,10 +585,8 @@ class OnePassportOneRecordTests(TestCase):
     """
 
     def setUp(self):
-        from datetime import date
         from decimal import Decimal
-        from .models import (Employee, ManpowerCategory, Site, Subcontractor,
-                             User)
+        from .models import (Employee, ManpowerCategory, Site, User)
         self.User = User
         self.Employee = Employee
         self.admin = make_user("pp_admin", User.Role.ADMIN)
@@ -794,3 +792,19 @@ class Wave1ControlsTests(TestCase):
                       format="json")
         self.assertEqual(r.status_code, 429)
         self.assertIn("Too many", r.data["detail"])
+
+
+class DuplicateMergeImportTests(TestCase):
+    """`User` was referenced in views_hr but never imported, so both
+    duplicate-passport endpoints raised NameError and returned 500. Ruff had
+    been reporting it as F821 for weeks into a CI run nobody could read,
+    because the pipeline was already red (2026-08-29)."""
+
+    def setUp(self):
+        self.admin = make_user("adm_dup", User.Role.ADMIN)
+        self.client = APIClient()
+        self.client.force_authenticate(self.admin)
+
+    def test_the_duplicate_passport_list_answers(self):
+        r = self.client.get("/api/v1/employees/duplicate-passports")
+        self.assertEqual(r.status_code, 200, r.data)

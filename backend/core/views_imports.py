@@ -1247,7 +1247,6 @@ def clearance_setup(request):
     Purchasing/Admin edit."""
     from django.core.validators import validate_email
     from django.core.exceptions import ValidationError
-    from django.utils import timezone as _tz
     from datetime import date as _date, timedelta as _td
     from .models import (AuditLog, CompanyParameter, ImportShipment,
                          Supplier)

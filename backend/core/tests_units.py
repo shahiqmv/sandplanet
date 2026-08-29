@@ -1,6 +1,5 @@
 """Unit progress tracking on a unit-based BOQ project (owner 2026-08-23)."""
 from datetime import date
-from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -116,7 +115,6 @@ class UnitSetupTests(UnitBoardBase):
             self.assertIn(k, r.data, f"generate-units is missing {k}")
         self.assertTrue(r.data["is_unit_project"])
         unit = ProjectUnit.objects.first()
-        stage = self.cat.stages.first()
         for resp in (
             self.client.post(f"/api/v1/boq-categories/{self.cat.id}/stages",
                              {"stages": [{"name": "A", "weight": 1}]},
@@ -198,7 +196,7 @@ class StageLadderTests(UnitBoardBase):
         figures already reported (owner 2026-08-23)."""
         self._generate()
         unit = ProjectUnit.objects.first()
-        first, second = self.cat.stages.all()[0], self.cat.stages.all()[1]
+        second = self.cat.stages.all()[1]
         self.client.post(f"/api/v1/units/{unit.id}/progress",
                          {"stage_id": second.id, "percent": "100"},
                          format="json")

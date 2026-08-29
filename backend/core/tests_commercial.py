@@ -1409,7 +1409,6 @@ class BoqCannotBeRewrittenUnderAClaimTests(TestCase):
     """
 
     def setUp(self):
-        from datetime import date
         from decimal import Decimal
 
         from .models import (Boq, BoqItem, Project, ProgressClaim,

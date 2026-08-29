@@ -1394,7 +1394,6 @@ class RegisterOutranksPaperworkTests(TestCase):
         self.assertLess(self._days(e), 31.0)
 
     def test_the_run_reports_what_the_register_holds(self):
-        from .models import PayrollRun
         e = self._emp("REG-0006")
         self.Alloc.objects.create(employee=e, site=self.site,
                                   from_date=date(2026, 7, 1))
@@ -1974,7 +1973,6 @@ class PayrollReopenTests(TestCase):
         self.assertIsNotNone(run.payment_request_id)
 
     def test_a_paid_payroll_cannot_be_reopened_behind_the_payment(self):
-        from django.utils import timezone
         run = self._run()
         pr = run.payment_request.payment_request
         pr.amount_paid, pr.paid_date = pr.amount_requested, date(2026, 8, 1)

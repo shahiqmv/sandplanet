@@ -19,7 +19,7 @@ import re
 from django.db import transaction
 from django.utils import timezone
 
-from .models import BaselineActivity, ProgrammeActivity, ProgrammeBaseline
+from .models import BaselineActivity, ProgrammeBaseline
 
 _PUNCT = re.compile(r"[^a-z0-9]+")
 

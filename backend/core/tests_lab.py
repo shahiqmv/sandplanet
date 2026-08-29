@@ -9,8 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from . import lab
-from .models import Document, MaterialTest, Project, Site, User
+from .models import Document, Project, Site, User
 from .tests import make_user
 
 

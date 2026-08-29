@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 
 from django.db.models import Q
 
-from .models import EmployeeShiftAssignment, SiteShift
+from .models import EmployeeShiftAssignment
 
 
 def site_shifts(site):

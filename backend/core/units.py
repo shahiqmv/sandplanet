@@ -15,7 +15,7 @@ from decimal import Decimal
 from django.db import transaction
 
 from .audit import audit
-from .models import (Boq, BoqCategory, ProjectUnit, UnitStage,
+from .models import (Boq, ProjectUnit, UnitStage,
                      UnitStageProgress)
 
 ZERO = Decimal("0")

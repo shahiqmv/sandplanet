@@ -11,7 +11,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import stock, transfers
-from .models import (Item, SiteTransfer, SitePmHistory, Site, StockMovement,
+from .models import (Item, SitePmHistory, Site, StockMovement,
                      ToolAsset, User)
 from .tests import make_user
 

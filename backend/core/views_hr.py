@@ -25,6 +25,7 @@ from .models import (
     OvertimeRate,
     Site,
     TimesheetMonth,
+    User,
 )
 from . import leave as _leave
 from .permissions import PAY_ROLES, scoped_site_ids
@@ -947,7 +948,7 @@ def site_shifts_view(request, pk):
         ot_raw = request.data.get("ot_counts_from")
         ot_from = (datetime.strptime(str(ot_raw)[:5], "%H:%M").time()
                    if ot_raw else None)
-        shift = SiteShift.objects.create(
+        SiteShift.objects.create(
             site=site, name=name, start=start, end=end,
             ot_counts_from=ot_from)
         audit("site", site.id, "SHIFT_DEFINED", actor=request.user,

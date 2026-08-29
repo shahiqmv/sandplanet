@@ -105,7 +105,9 @@ APPROVABLE = {
 }
 
 
-from .views_documents import queue_amount as _card_amount
+# Imported here, not at the top: views_documents imports from this
+# module, and hoisting this makes the cycle bite at startup.
+from .views_documents import queue_amount as _card_amount  # noqa: E402
 
 
 @api_view(["GET"])

@@ -359,7 +359,6 @@ class PrAuthorisationTests(PrCostingBase):
         understated what we owe by the difference (owner 2026-08-23)."""
         from decimal import Decimal
 
-        from .models import Document, DocumentLine
         pr = self.make_pr()
         po = self.sign_orders(pr)[0]
         payable = Payable.objects.get(document=pr)

@@ -8,8 +8,7 @@ from datetime import date, timedelta
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from . import contract
-from .models import Document, ProgrammeActivity, Project, Site, User
+from .models import ProgrammeActivity, Project, Site, User
 from .tests import make_user
 
 

@@ -1,7 +1,7 @@
 """The app's own screens for the terminals: registry, health, the raw punch log
 and enrolment (owner 2026-08-23). Read-only with respect to attendance — Phase 1
 does not touch a day grid."""
-from datetime import date, timedelta
+from datetime import date
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated

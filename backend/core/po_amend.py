@@ -18,12 +18,13 @@ Two rules shape the design:
 
 import logging
 
-log = logging.getLogger(__name__)
 from django.db import transaction
 
 from .audit import audit
 from .models import DocumentLine, DocumentRevision
 from .notify import _role_users, notify_user
+
+log = logging.getLogger(__name__)
 
 PROPOSE_ROLES = ("HO_PURCHASING", "ADMIN")
 DECIDE_ROLES = ("DIRECTOR", "ADMIN")

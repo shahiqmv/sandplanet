@@ -214,7 +214,6 @@ class ProfileEditableContentTests(TestCase):
     def test_the_cover_photo_is_chosen_not_inherited(self):
         """Without one it falls back to the first ongoing project — which is
         the behaviour that made the cover change on reorder."""
-        from . import profile_render as pr
         from .models import ProfileSettings
         entry = self.client.post("/api/v1/profile/entries",
                                  {"project_name": "Vakkaru"},

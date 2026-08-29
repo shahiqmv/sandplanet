@@ -3,7 +3,7 @@
 Phase 1 is listen-only, so the load-bearing tests here are about not losing and
 not double-counting punches — and about attendance being untouched.
 """
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
@@ -422,7 +422,8 @@ class DayProposalTests(TestCase):
         self.assertIsNone(d["proposal"])
 
     def test_a_stranger_at_the_gate_is_listed_not_rostered(self):
-        other = Employee.objects.create(
+        # Created for its side effect: the man exists, but is not rostered.
+        Employee.objects.create(
             emp_no="EMP-0800", full_name="Other Site Man",
             job_category=self.cat, is_active=True)
         self._push("800\t2026-08-24 08:05:00\t255\t1",

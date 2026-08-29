@@ -259,7 +259,6 @@ class SubmittalCompressionTests(TestCase):
     """
 
     def test_a_large_merge_skips_the_slow_pass(self):
-        import fitz
 
         from core import pdf as pdf_mod
 

@@ -814,7 +814,7 @@ def create_shipment(order, data, actor):
     shipment carries the whole remaining order (single-shipment / 'ship the
     rest' default)."""
     from . import tracking as trk
-    from .models import ImportShipment, ImportShipmentLine, Supplier
+    from .models import ImportShipmentLine, Supplier
     # Reject a malformed tracking key at data entry (D40, AC5).
     mode = data.get("mode") or "SEA"
     key_err = trk.validate_shipment_keys(
@@ -896,7 +896,7 @@ def create_consolidated_shipment(data, actor):
     consolidating several suppliers into one container.
     data["rows"] = [{ipr_line_id, qty}] across orders."""
     from . import tracking as trk
-    from .models import (ImportOrderLine, ImportShipment, ImportShipmentLine,
+    from .models import (ImportOrderLine, ImportShipmentLine,
                          Supplier)
     mode = data.get("mode") or "SEA"
     key_err = trk.validate_shipment_keys(
@@ -1317,7 +1317,7 @@ def share_with_agent(shipment, actor):
               "Please proceed with clearance and revert with the duty and "
               "charge figures.",
               "",
-              f"Best regards,",
+              "Best regards,",
               f"{actor.full_name or actor.username}",
               "Sand Planet Pvt Ltd"]
 

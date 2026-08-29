@@ -1778,7 +1778,6 @@ class ShipmentChargePyrTests(IprBase):
         """Port dues go to the port and duty to customs — not to the agents,
         who may not even be on file. IPR-020's port charge sat unraisable
         because the payee dropdown offered agents only (owner 2026-08-24)."""
-        from decimal import Decimal
 
         from core import imports
         sh = self._shipment()          # no forwarder, no agents at all

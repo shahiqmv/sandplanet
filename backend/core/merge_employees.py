@@ -17,7 +17,7 @@ so the audit trail and any paper referring to it still resolve.
 from django.db import transaction
 
 from .audit import audit
-from .models import (Attendance, Employee, EmployeeSiteAllocation, PayrollLine,
+from .models import (Attendance, EmployeeSiteAllocation, PayrollLine,
                      SalaryAdvance, SalaryRevision, WorkerChangeItem,
                      WorkPermitRenewal)
 

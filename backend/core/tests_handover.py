@@ -11,7 +11,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from . import handover
-from .models import Document, HandoverItem, Project, Site, User
+from .models import Document, Project, Site, User
 from .tests import make_user
 
 
