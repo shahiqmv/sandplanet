@@ -105,7 +105,7 @@ ensure_crons() {
     "$C onboarding_clocks >> /var/log/onboarding_clocks.log 2>&1" \
     "onboarding medical / visa expiry alerts"
   add_cron "# planet-training-expiry" "45 6 * * *" \
-    "$C training_expiry >> /var/log/planet-cron.log 2>&1" \
+    "$C training_expiry >> /var/log/training_expiry.log 2>&1" \
     "training/competency expiry reminders"
 
   add_cron "# planet-bonds-expiry" "30 6 * * *" \
