@@ -464,13 +464,19 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   };
 
   // ---- payment recording (reuses the per-document endpoints) ----------
+  // No setPayFx here: the per-payment FX field was removed when the rate
+  // became a peg in Company settings (owner 2026-08-13) and these two calls
+  // were left behind, referencing a setter that does not exist. From a click
+  // handler React logs that and carries on, so it sat unnoticed; called from
+  // an effect it unmounts the whole tree and the page goes blank, which is
+  // how it finally showed itself (2026-08-29).
   const startPay = (key, amount) => {
-    setPayKey(key); setPayRef(""); setPayVariance(""); setPayFx("");
+    setPayKey(key); setPayRef(""); setPayVariance("");
     setPayAmount(amount != null ? String(amount) : ""); setPaySlip(null);
   };
   const cancelPay = () => {
     setPayKey(null); setPayRef(""); setPayAmount(""); setPayVariance("");
-    setPayFx(""); setPaySlip(null);
+    setPaySlip(null);
   };
 
   const payPyr = (ref, requested, isUsd) => run(async () => {
