@@ -76,10 +76,27 @@ class IncidentTests(TestCase):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "CLOSED")
 
-    def test_a_site_admin_cannot_close_an_incident(self):
+    def test_the_site_team_runs_its_own_incidents(self):
+        """The HSE officer on a bigger site works under a Site Engineer or
+        Site Admin login (owner 2026-08-29)."""
         ref = self._report().data["ref"]
-        r = self.client.post(f"/api/v1/hse/incidents/{ref}/close")
-        self.assertEqual(r.status_code, 403)
+        self.assertEqual(
+            self.client.post(f"/api/v1/hse/incidents/{ref}/investigate")
+            .status_code, 200)
+        self.assertEqual(
+            self.client.post(f"/api/v1/hse/incidents/{ref}/close")
+            .status_code, 200)
+
+    def test_a_site_still_only_sees_its_own_incidents(self):
+        """Opening up the role must not open up the scope."""
+        ref = self._report().data["ref"]
+        other = Site.objects.create(code="EL5", name="Elsewhere",
+                                    status=Site.Status.ACTIVE)
+        outsider = make_user("se_el5", User.Role.SITE_ENGINEER, site=other)
+        self.client.force_authenticate(outsider)
+        self.assertEqual(
+            self.client.post(f"/api/v1/hse/incidents/{ref}/close")
+            .status_code, 404)
 
     def test_another_site_cannot_see_it(self):
         ref = self._report().data["ref"]
@@ -379,3 +396,131 @@ class TrainingExpiryTests(TestCase):
     def test_training_far_out_is_left_alone(self):
         self._record(200)
         self.assertEqual(hse.sweep_training_expiry(), 0)
+
+
+class WorkRecordTests(TestCase):
+    """Permits, risk assessments and inspections (owner 2026-08-29)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="WRK", name="Work site",
+                                        status=Site.Status.ACTIVE)
+        self.se = make_user("se_wrk", User.Role.SITE_ENGINEER, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.se)
+
+    # -- permits
+    def _permit(self, **extra):
+        now = timezone.now()
+        body = {"site_id": self.site.id, "kind": "HOT_WORK",
+                "location": "Plant room", "description": "Welding brackets",
+                "valid_from": now.isoformat(),
+                "valid_to": (now + timedelta(hours=6)).isoformat(),
+                "precautions": "Fire watch, extinguisher, gas test"}
+        body.update(extra)
+        return self.client.post("/api/v1/hse/permits", body, format="json")
+
+    def test_a_permit_is_issued_for_a_window(self):
+        r = self._permit()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["ref"].startswith("PTW-"))
+        self.assertEqual(r.data["status"], "ISSUED")
+        self.assertFalse(r.data["is_expired"])
+
+    def test_a_permit_must_end_after_it_starts(self):
+        now = timezone.now()
+        r = self._permit(valid_from=now.isoformat(),
+                         valid_to=(now - timedelta(hours=1)).isoformat())
+        self.assertEqual(r.status_code, 400)
+
+    def test_an_open_permit_past_its_end_time_is_flagged(self):
+        """The one thing the register exists to surface."""
+        now = timezone.now()
+        self._permit(valid_from=(now - timedelta(hours=9)).isoformat(),
+                     valid_to=(now - timedelta(hours=3)).isoformat())
+        rows = self.client.get("/api/v1/hse/permits?expired=1").data
+        self.assertEqual(len(rows), 1)
+        self.assertTrue(rows[0]["is_expired"])
+        stats = self.client.get("/api/v1/hse/stats").data
+        self.assertEqual(stats["permits_expired"], 1)
+
+    def test_handing_a_permit_back_closes_it(self):
+        ref = self._permit().data["ref"]
+        r = self.client.post(f"/api/v1/hse/permits/{ref}/close",
+                             {"note": "Area cleared, fire watch stood down."},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "CLOSED")
+        self.assertEqual(
+            self.client.get("/api/v1/hse/stats").data["permits_open"], 0)
+
+    # -- risk assessments
+    def _assessment(self, **extra):
+        body = {"site_id": self.site.id, "activity": "Roof sheeting",
+                "assessed_on": str(date.today()),
+                "hazards": [
+                    {"hazard": "Fall from height", "who_at_risk": "Roofers",
+                     "existing_controls": "Edge protection",
+                     "likelihood": 3, "severity": 5,
+                     "further_controls": "Harness + anchor points",
+                     "residual_likelihood": 1, "residual_severity": 5}]}
+        body.update(extra)
+        return self.client.post("/api/v1/hse/risk-assessments", body,
+                                format="json")
+
+    def test_a_risk_assessment_rates_its_hazards(self):
+        r = self._assessment()
+        self.assertEqual(r.status_code, 201, r.data)
+        hazard = r.data["hazards"][0]
+        self.assertEqual(hazard["rating"], 15)
+        self.assertEqual(hazard["band"], "CRITICAL")
+        self.assertEqual(hazard["residual_rating"], 5)
+        self.assertEqual(hazard["residual_band"], "MEDIUM")
+
+    def test_the_headline_band_follows_the_residual_risk(self):
+        r = self._assessment()
+        self.assertEqual(r.data["highest_band"], "MEDIUM")
+
+    def test_an_assessment_with_no_hazards_is_refused(self):
+        self.assertEqual(self._assessment(hazards=[]).status_code, 400)
+
+    def test_out_of_range_scores_are_clamped_not_rejected(self):
+        """A 9 typed into a 1-5 box should not lose the whole assessment."""
+        r = self._assessment(hazards=[{"hazard": "x", "likelihood": 9,
+                                       "severity": 0}])
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data["hazards"][0]["likelihood"], 5)
+        self.assertEqual(r.data["hazards"][0]["severity"], 1)
+
+    def test_a_revision_supersedes_the_previous_assessment(self):
+        first = self._assessment().data
+        second = self._assessment(supersedes_id=first["id"]).data
+        self.assertEqual(second["supersedes_ref"], first["ref"])
+        self.assertEqual(Document.objects.get(ref=first["ref"]).status,
+                         "SUPERSEDED")
+
+    # -- inspections
+    def test_an_inspection_counts_its_checklist(self):
+        r = self.client.post("/api/v1/hse/inspections", {
+            "site_id": self.site.id, "area": "Villa 3 scaffold",
+            "inspected_on": str(date.today()),
+            "checklist": [{"item": "Guard rails", "result": "OK"},
+                          {"item": "Toe boards", "result": "NOT_OK",
+                           "note": "Missing on east side"},
+                          {"item": "Ladder tie", "result": "NA"}]},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["counts"], {"ok": 1, "not_ok": 1, "na": 1})
+
+    def test_a_finding_raises_an_action_on_the_same_register(self):
+        ref = self.client.post("/api/v1/hse/inspections", {
+            "site_id": self.site.id, "area": "Scaffold",
+            "checklist": []}, format="json").data["ref"]
+        r = self.client.post(f"/api/v1/hse/inspections/{ref}/actions", {
+            "description": "Fit toe boards to the east side",
+            "owner_id": self.se.id,
+            "due_date": str(date.today() + timedelta(days=2))},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        rows = self.client.get("/api/v1/hse/actions?status=open").data
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source_ref"], ref)

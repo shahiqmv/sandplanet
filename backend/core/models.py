@@ -342,6 +342,9 @@ class Document(models.Model):
         MTN = "MTN"  # material transfer note — stock/tools moving site to site
         INC = "INC"  # safety incident / near miss (HSE, 2026-08-29)
         TBT = "TBT"  # toolbox talk — briefing + who attended (HSE)
+        PTW = "PTW"  # permit to work — hot work, confined space, height (HSE)
+        RAS = "RAS"  # risk assessment — hazards and controls (HSE)
+        HSI = "HSI"  # safety inspection — walk round + findings (HSE)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -442,6 +445,14 @@ class Document(models.Model):
         # it is delivered, not approved (owner 2026-08-29: the module is for
         # record purposes; the HSE officer runs the process).
         "TBT": {"RECORDED": {"CANCELLED"}},
+        # A permit is live for a window and must be handed back. EXPIRED is
+        # not a state anyone sets — it is what an open permit past its end
+        # time IS, and the register surfaces it (owner 2026-08-29).
+        "PTW": {
+            "ISSUED": {"CLOSED", "CANCELLED"},
+        },
+        "RAS": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
+        "HSI": {"RECORDED": {"CANCELLED"}},
         "INC": {
             "REPORTED": {"INVESTIGATING", "CLOSED", "CANCELLED"},
             "INVESTIGATING": {"ACTIONS_OPEN", "CLOSED", "REPORTED"},
@@ -5659,3 +5670,139 @@ class PpeIssue(models.Model):
     class Meta:
         ordering = ["-issued_on"]
         indexes = [models.Index(fields=["employee", "issued_on"])]
+
+
+# --- HSE work records: permits, risk assessments, inspections -------------
+
+
+class WorkPermit(models.Model):
+    """Permission to do something dangerous, for a stated window, with stated
+    precautions — and handed back when the work is done. An open permit past
+    its end time is the exception the register exists to surface."""
+
+    class Kind(models.TextChoices):
+        HOT_WORK = "HOT_WORK", "Hot work"
+        CONFINED = "CONFINED", "Confined space"
+        HEIGHT = "HEIGHT", "Working at height"
+        LIFTING = "LIFTING", "Lifting operation"
+        EXCAVATION = "EXCAVATION", "Excavation"
+        ELECTRICAL = "ELECTRICAL", "Electrical / isolation"
+        DIVING = "DIVING", "Diving / marine"
+        OTHER = "OTHER", "Other"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="work_permit")
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    location = models.TextField()
+    description = models.TextField()
+    valid_from = models.DateTimeField()
+    valid_to = models.DateTimeField()
+    # Free text rather than a fixed checklist: the precautions for hot work in
+    # a plant room are not the precautions for hot work on a jetty, and the
+    # HSE officer decides them, not the software (owner 2026-08-29).
+    precautions = models.TextField(blank=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    # Who took it on — usually a supervisor, sometimes a subcontractor's man.
+    accepted_by_name = models.TextField(blank=True)
+    accepted_by_employee = models.ForeignKey("Employee",
+                                             on_delete=models.PROTECT,
+                                             null=True, blank=True,
+                                             related_name="+")
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    closing_note = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-valid_from"]
+
+    def is_expired(self, now=None):
+        from django.utils import timezone
+        return (self.document.status == "ISSUED"
+                and self.valid_to < (now or timezone.now()))
+
+
+class RiskAssessment(models.Model):
+    """The hazards in a task and what is done about them. Superseded rather
+    than edited once issued, so what the crew was working to on a given day
+    stays answerable."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="risk_assessment")
+    activity = models.TextField()
+    assessed_on = models.DateField()
+    assessed_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    assessor_name = models.TextField(blank=True)      # the HSE officer
+    review_on = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    supersedes = models.ForeignKey("self", on_delete=models.SET_NULL,
+                                   null=True, blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["-assessed_on"]
+
+
+class RiskHazard(models.Model):
+    """One hazard line. Rating is likelihood x severity on a 5x5 matrix —
+    stored, not computed on read, so a later change to the banding cannot
+    silently re-rate an assessment that was already issued."""
+
+    BANDS = [(4, "LOW"), (9, "MEDIUM"), (14, "HIGH"), (25, "CRITICAL")]
+
+    assessment = models.ForeignKey(RiskAssessment, on_delete=models.CASCADE,
+                                   related_name="hazards")
+    hazard = models.TextField()
+    who_at_risk = models.TextField(blank=True)
+    existing_controls = models.TextField(blank=True)
+    likelihood = models.IntegerField(default=1)       # 1..5
+    severity = models.IntegerField(default=1)         # 1..5
+    rating = models.IntegerField(default=1)
+    band = models.CharField(max_length=8, blank=True)
+    further_controls = models.TextField(blank=True)
+    residual_likelihood = models.IntegerField(null=True, blank=True)
+    residual_severity = models.IntegerField(null=True, blank=True)
+    residual_rating = models.IntegerField(null=True, blank=True)
+    residual_band = models.CharField(max_length=8, blank=True)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["assessment", "sort_order"]
+
+    @classmethod
+    def band_for(cls, rating):
+        for ceiling, name in cls.BANDS:
+            if rating <= ceiling:
+                return name
+        return "CRITICAL"
+
+
+class SafetyInspection(models.Model):
+    """A walk round: what was looked at, what was found, and what had to
+    change. Findings become corrective actions on this document, through the
+    same register everything else uses."""
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="safety_inspection")
+    area = models.TextField()
+    inspected_on = models.DateField()
+    inspected_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    inspector_name = models.TextField(blank=True)
+    # Rows of {item, result: OK|NOT_OK|NA, note} — the checklist an HSE
+    # officer already uses, kept as data rather than as a fixed form.
+    checklist = models.JSONField(default=list, blank=True)
+    summary = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-inspected_on"]
+
+    def counts(self):
+        rows = self.checklist if isinstance(self.checklist, list) else []
+        out = {"ok": 0, "not_ok": 0, "na": 0}
+        for row in rows:
+            key = str((row or {}).get("result", "")).lower()
+            if key in ("ok", "not_ok", "na"):
+                out[key] += 1
+        return out

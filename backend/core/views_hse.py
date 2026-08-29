@@ -13,8 +13,9 @@ from rest_framework.response import Response
 from . import hse
 from .audit import audit
 from .models import (CorrectiveAction, Employee, IncidentPerson, PpeIssue,
-                     Project, SafetyIncident, SafetyInduction, Site,
-                     ToolboxAttendee, ToolboxTalk, TrainingRecord)
+                     Project, RiskAssessment, RiskHazard, SafetyIncident,
+                     SafetyInduction, SafetyInspection, Site, ToolboxAttendee,
+                     ToolboxTalk, TrainingRecord, WorkPermit)
 from .permissions import scoped_site_ids
 
 
@@ -161,8 +162,8 @@ def incident_detail(request, ref):
         return Response(IncidentSerializer(incident).data)
 
     if request.user.role not in hse.INVESTIGATOR_ROLES:
-        return Response({"detail": "PM / Director / HR record the "
-                                   "investigation."}, status=403)
+        return Response({"detail": "The site team, PM, Director or HR "
+                                   "record the investigation."}, status=403)
     if incident.document.status == "CLOSED":
         return Response({"detail": "This incident is closed."}, status=400)
     editable = ["severity", "location", "immediate_action", "root_cause",
@@ -187,7 +188,7 @@ def incident_investigate(request, ref):
     if err:
         return err
     if request.user.role not in hse.INVESTIGATOR_ROLES:
-        return Response({"detail": "PM / Director / HR investigate."},
+        return Response({"detail": "Not allowed to investigate incidents."},
                         status=403)
     problem = hse.start_investigation(incident, request.user)
     if problem:
@@ -201,7 +202,7 @@ def incident_close(request, ref):
     if err:
         return err
     if request.user.role not in hse.INVESTIGATOR_ROLES:
-        return Response({"detail": "PM / Director / HR close incidents."},
+        return Response({"detail": "Not allowed to close incidents."},
                         status=403)
     problem = hse.close_incident(incident, request.user)
     if problem:
@@ -262,7 +263,7 @@ def action_complete(request, pk):
         return Response({"detail": "Not found."}, status=404)
     if action.owner_id != request.user.id \
             and request.user.role not in hse.INVESTIGATOR_ROLES:
-        return Response({"detail": "Only the owner (or a PM/Director) can "
+        return Response({"detail": "Only the owner, or the site team, can "
                                    "complete this action."}, status=403)
     problem = hse.complete_action(action, request.user,
                                   request.data.get("note", ""))
@@ -277,7 +278,7 @@ def action_verify(request, pk):
     if action is None:
         return Response({"detail": "Not found."}, status=404)
     if request.user.role not in hse.INVESTIGATOR_ROLES:
-        return Response({"detail": "PM / Director / HR verify actions."},
+        return Response({"detail": "Not allowed to verify actions."},
                         status=403)
     problem = hse.verify_action(action, request.user)
     if problem:
@@ -304,6 +305,13 @@ def stats(request):
                           request.GET.get("to"))
     overdue = hse.overdue_actions(site_ids)
     data["actions_overdue"] = overdue.count()
+    # An issued permit past its end time was never handed back — the single
+    # thing the permit register exists to surface.
+    data["permits_expired"] = hse.expired_permits(site_ids).count()
+    data["permits_open"] = WorkPermit.objects.filter(
+        document__status="ISSUED",
+        **({} if site_ids is None
+           else {"document__site_id__in": site_ids})).count()
     data["actions_open"] = CorrectiveAction.objects.filter(
         status__in=["OPEN", "IN_PROGRESS", "DONE"],
         **({} if site_ids is None else {"site_id__in": site_ids})).count()
@@ -533,3 +541,203 @@ def ppe(request):
     if request.GET.get("employee"):
         qs = qs.filter(employee_id=request.GET["employee"])
     return Response(PpeSerializer(qs[:400], many=True).data)
+
+
+# ---- work records: permits, risk assessments, inspections ---------------
+
+class PermitSerializer(serializers.ModelSerializer):
+    ref = serializers.CharField(source="document.ref", read_only=True)
+    status = serializers.CharField(source="document.status", read_only=True)
+    site_code = serializers.CharField(source="document.site.code",
+                                      read_only=True)
+    kind_display = serializers.CharField(source="get_kind_display",
+                                         read_only=True)
+    issued_by_name = serializers.CharField(source="issued_by.full_name",
+                                           read_only=True)
+    is_expired = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkPermit
+        fields = ["id", "ref", "status", "site_code", "kind", "kind_display",
+                  "location", "description", "valid_from", "valid_to",
+                  "precautions", "issued_by_name", "accepted_by_name",
+                  "closed_at", "closing_note", "is_expired"]
+
+    def get_is_expired(self, obj):
+        return obj.is_expired()
+
+
+class HazardSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RiskHazard
+        fields = ["id", "hazard", "who_at_risk", "existing_controls",
+                  "likelihood", "severity", "rating", "band",
+                  "further_controls", "residual_likelihood",
+                  "residual_severity", "residual_rating", "residual_band"]
+
+
+class RiskAssessmentSerializer(serializers.ModelSerializer):
+    ref = serializers.CharField(source="document.ref", read_only=True)
+    status = serializers.CharField(source="document.status", read_only=True)
+    site_code = serializers.CharField(source="document.site.code",
+                                      read_only=True)
+    assessed_by_name = serializers.CharField(source="assessed_by.full_name",
+                                             read_only=True)
+    hazards = HazardSerializer(many=True, read_only=True)
+    supersedes_ref = serializers.CharField(source="supersedes.document.ref",
+                                           read_only=True, default=None)
+    highest_band = serializers.SerializerMethodField()
+
+    class Meta:
+        model = RiskAssessment
+        fields = ["id", "ref", "status", "site_code", "activity",
+                  "assessed_on", "assessed_by_name", "assessor_name",
+                  "review_on", "notes", "hazards", "supersedes_ref",
+                  "highest_band"]
+
+    def get_highest_band(self, obj):
+        best = 0
+        for h in obj.hazards.all():
+            best = max(best, h.residual_rating or h.rating)
+        return RiskHazard.band_for(best) if best else None
+
+
+class InspectionSerializer(serializers.ModelSerializer):
+    ref = serializers.CharField(source="document.ref", read_only=True)
+    site_code = serializers.CharField(source="document.site.code",
+                                      read_only=True)
+    inspected_by_name = serializers.CharField(source="inspected_by.full_name",
+                                              read_only=True)
+    counts = serializers.SerializerMethodField()
+    actions = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SafetyInspection
+        fields = ["id", "ref", "site_code", "area", "inspected_on",
+                  "inspected_by_name", "inspector_name", "checklist",
+                  "summary", "counts", "actions"]
+
+    def get_counts(self, obj):
+        return obj.counts()
+
+    def get_actions(self, obj):
+        return ActionSerializer(obj.document.corrective_actions.all(),
+                                many=True).data
+
+
+@api_view(["GET", "POST"])
+def permits(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        permit, problem = hse.issue_permit(site=site, data=request.data,
+                                           user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(PermitSerializer(permit).data, status=201)
+
+    qs = WorkPermit.objects.select_related("document", "document__site",
+                                           "issued_by")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(document__site_id=request.GET["site"])
+    if request.GET.get("status") == "open":
+        qs = qs.filter(document__status="ISSUED")
+    if request.GET.get("expired"):
+        qs = qs.filter(document__status="ISSUED",
+                       valid_to__lt=timezone.now())
+    return Response(PermitSerializer(qs[:300], many=True).data)
+
+
+@api_view(["POST"])
+def permit_close(request, ref):
+    qs = WorkPermit.objects.select_related("document")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    permit = qs.filter(document__ref=ref).first()
+    if permit is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in hse.RECORDER_ROLES:
+        return Response({"detail": "Not allowed."}, status=403)
+    problem = hse.close_permit(permit, request.user,
+                               request.data.get("note", ""))
+    if problem:
+        return Response({"detail": problem}, status=400)
+    return Response(PermitSerializer(permit).data)
+
+
+@api_view(["GET", "POST"])
+def risk_assessments(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        assessment, problem = hse.create_risk_assessment(
+            site=site, data=request.data, user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(RiskAssessmentSerializer(assessment).data, status=201)
+
+    qs = RiskAssessment.objects.select_related(
+        "document", "document__site", "assessed_by",
+        "supersedes__document").prefetch_related("hazards")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(document__site_id=request.GET["site"])
+    if request.GET.get("status") == "current":
+        qs = qs.filter(document__status="RECORDED")
+    return Response(RiskAssessmentSerializer(qs[:200], many=True).data)
+
+
+@api_view(["GET", "POST"])
+def inspections(request):
+    if request.method == "POST":
+        if request.user.role not in hse.RECORDER_ROLES:
+            return Response({"detail": "Not allowed."}, status=403)
+        site, err = _site_or_error(request, request.data.get("site_id"))
+        if err:
+            return err
+        inspection, problem = hse.create_inspection(
+            site=site, data=request.data, user=request.user)
+        if problem:
+            return Response({"detail": problem}, status=400)
+        return Response(InspectionSerializer(inspection).data, status=201)
+
+    qs = SafetyInspection.objects.select_related("document",
+                                                 "document__site",
+                                                 "inspected_by")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    if request.GET.get("site"):
+        qs = qs.filter(document__site_id=request.GET["site"])
+    return Response(InspectionSerializer(qs[:200], many=True).data)
+
+
+@api_view(["POST"])
+def inspection_actions(request, ref):
+    """A finding becomes a corrective action on the same register everything
+    else uses — one open-actions list, whatever raised the item."""
+    qs = SafetyInspection.objects.select_related("document")
+    allowed = scoped_site_ids(request.user)
+    if allowed is not None:
+        qs = qs.filter(document__site_id__in=allowed)
+    inspection = qs.filter(document__ref=ref).first()
+    if inspection is None:
+        return Response({"detail": "Not found."}, status=404)
+    action, problem = hse.raise_action(
+        source_document=inspection.document, data=request.data,
+        user=request.user)
+    if problem:
+        return Response({"detail": problem}, status=400)
+    return Response(ActionSerializer(action).data, status=201)

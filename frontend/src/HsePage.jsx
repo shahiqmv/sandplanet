@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { BTN, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 import { ToolboxTab, TrainingTab, WorkerRecordsTab } from "./HseRecords.jsx";
+import { AssessmentsTab, InspectionsTab, PermitsTab } from "./HseWork.jsx";
 
 // Safety (HSE). The app's whole safety functionality used to be one checkbox
 // on the daily report that notified nobody, so "how many incidents last
@@ -26,7 +27,11 @@ const SEVERITIES = [["LOW", "Low"], ["MEDIUM", "Medium"], ["HIGH", "High"],
                     ["CRITICAL", "Critical"]];
 const INVOLVEMENT = [["INJURED", "Injured"], ["INVOLVED", "Involved"],
                      ["WITNESS", "Witness"]];
-const CAN_INVESTIGATE = ["PM", "DIRECTOR", "ADMIN", "HO_HR"];
+// The HSE officer on a bigger site works under a Site Engineer or Site Admin
+// login, so the site team investigates and closes its own incidents
+// (owner 2026-08-29). The API scopes them to their own site regardless.
+const CAN_INVESTIGATE = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR",
+                         "ADMIN", "HO_HR"];
 
 const SEVERITY_TONE = {
   LOW: { bg: "#eef4fb", fg: "#16527E" },
@@ -142,6 +147,9 @@ export default function HsePage({ me, sites, site }) {
           <Stat value={stats.open} label="Open incidents" alarm />
           <Stat value={stats.actions_overdue} label="Actions overdue" alarm />
           <Stat value={stats.actions_open} label="Actions open" />
+          <Stat value={stats.permits_expired} label="Permits not handed back"
+                alarm />
+          <Stat value={stats.permits_open} label="Permits open" />
           <Stat value={stats.near_misses} label="Near misses" />
           <Stat value={stats.injuries} label="Injuries" />
           <Stat value={stats.lost_time} label="Lost-time injuries" />
@@ -154,6 +162,9 @@ export default function HsePage({ me, sites, site }) {
                     borderBottom: "2px solid var(--line)" }}>
         {[["incidents", `Incidents (${rows.length})`],
           ["actions", `Corrective actions (${actions.length})`],
+          ["permits", "Permits"],
+          ["inspections", "Inspections"],
+          ["assessments", "Risk assessments"],
           ["toolbox", "Toolbox talks"],
           ["training", "Competency"],
           ["workers", "Worker records"]].map(
@@ -237,6 +248,18 @@ export default function HsePage({ me, sites, site }) {
             ))}
           </tbody>
         </table>
+      )}
+
+      {tab === "permits" && (
+        <PermitsTab sites={sites} siteFilter={siteFilter} />
+      )}
+
+      {tab === "inspections" && (
+        <InspectionsTab me={me} sites={sites} siteFilter={siteFilter} />
+      )}
+
+      {tab === "assessments" && (
+        <AssessmentsTab sites={sites} siteFilter={siteFilter} />
       )}
 
       {tab === "toolbox" && (

@@ -34,7 +34,13 @@ ESCALATE_SEVERITIES = {"HIGH", "CRITICAL"}
 
 REPORTER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN",
                   "HO_HR", "QS", "PA"}
-INVESTIGATOR_ROLES = {"PM", "DIRECTOR", "ADMIN", "HO_HR"}
+# The bigger sites have an HSE officer, and they work under a Site Engineer or
+# Site Admin login — so the site team investigates and closes its own
+# incidents (owner 2026-08-29). Consistent with the standing rule that a Site
+# Engineer has full parity with a Site Admin on site tasks. Scoping still
+# applies: a site only ever sees its own incidents.
+INVESTIGATOR_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR",
+                      "ADMIN", "HO_HR"}
 
 
 def _people(incident):
@@ -477,3 +483,191 @@ def sweep_training_expiry():
         record.save(update_fields=["last_alert_stage"])
         fired += 1
     return fired
+
+
+# ---- work records: permits, risk assessments, inspections ---------------
+
+def _new_hse_document(doc_type, site, user, doc_date, status, project=None):
+    """Every HSE record is a numbered document like everything else in the
+    app — same gap-free refs, same audit trail, same site scoping."""
+    ref = next_ref(doc_type, site)
+    doc = Document.objects.create(
+        doc_type=doc_type, ref=ref, site=site, project=project,
+        doc_date=doc_date, status=status, created_by=user)
+    revision = DocumentRevision.objects.create(
+        document=doc, rev_label="R0", payload={}, created_by=user)
+    doc.current_revision = revision
+    doc.save(update_fields=["current_revision"])
+    return doc
+
+
+@transaction.atomic
+def issue_permit(*, site, data, user, project=None):
+    from .models import WorkPermit
+
+    kind = data.get("kind")
+    if kind not in dict(WorkPermit.Kind.choices):
+        return None, "What kind of permit is this?"
+    valid_from = _as_datetime(data.get("valid_from"))
+    valid_to = _as_datetime(data.get("valid_to"))
+    if not valid_from or not valid_to:
+        return None, "A permit needs a start and an end time."
+    if valid_to <= valid_from:
+        return None, "The permit must end after it starts."
+    if not (data.get("location") or "").strip():
+        return None, "Where is the work?"
+
+    doc = _new_hse_document("PTW", site, user,
+                            timezone.localdate(valid_from), "ISSUED", project)
+    permit = WorkPermit.objects.create(
+        document=doc, kind=kind,
+        location=data["location"].strip(),
+        description=(data.get("description") or "").strip(),
+        valid_from=valid_from, valid_to=valid_to,
+        precautions=(data.get("precautions") or "").strip(),
+        issued_by=user,
+        accepted_by_name=(data.get("accepted_by_name") or "").strip(),
+        accepted_by_employee_id=data.get("accepted_by_employee_id") or None)
+    audit("document", doc.id, "PERMIT_ISSUED", actor=user, to_state="ISSUED",
+          detail={"ref": doc.ref, "kind": kind,
+                  "until": str(valid_to)})
+    return permit, None
+
+
+@transaction.atomic
+def close_permit(permit, user, note=""):
+    """Handing the permit back. An open permit past its end time is the thing
+    the register is watching for, so closing it is the point."""
+    doc = permit.document
+    if doc.status != "ISSUED":
+        return "This permit is not open."
+    permit.closed_at = timezone.now()
+    permit.closed_by = user
+    permit.closing_note = (note or "").strip()
+    permit.save(update_fields=["closed_at", "closed_by", "closing_note"])
+    doc.status = "CLOSED"
+    doc.save(update_fields=["status"])
+    audit("document", doc.id, "PERMIT_CLOSED", actor=user,
+          from_state="ISSUED", to_state="CLOSED",
+          detail={"late": permit.valid_to < permit.closed_at})
+    return None
+
+
+def expired_permits(site_ids=None):
+    """Issued, past their end time, never handed back."""
+    from .models import WorkPermit
+    qs = WorkPermit.objects.filter(
+        document__status="ISSUED",
+        valid_to__lt=timezone.now()).select_related("document",
+                                                    "document__site")
+    if site_ids is not None:
+        qs = qs.filter(document__site_id__in=site_ids)
+    return qs
+
+
+def _as_datetime(value):
+    if isinstance(value, str) and value:
+        parsed = parse_datetime(value)
+        if parsed and timezone.is_naive(parsed):
+            return timezone.make_aware(parsed)
+        return parsed
+    return value or None
+
+
+@transaction.atomic
+def create_risk_assessment(*, site, data, user, project=None):
+    from .models import RiskAssessment
+
+    activity = (data.get("activity") or "").strip()
+    if not activity:
+        return None, "What activity is being assessed?"
+    assessed_on = _as_date(data.get("assessed_on")) or timezone.localdate()
+    hazards = data.get("hazards") or []
+    if not hazards:
+        return None, "A risk assessment with no hazards is not one."
+
+    doc = _new_hse_document("RAS", site, user, assessed_on, "RECORDED",
+                            project)
+    supersedes = None
+    if data.get("supersedes_id"):
+        supersedes = RiskAssessment.objects.filter(
+            pk=data["supersedes_id"], document__site=site).first()
+    assessment = RiskAssessment.objects.create(
+        document=doc, activity=activity, assessed_on=assessed_on,
+        assessed_by=user,
+        assessor_name=(data.get("assessor_name") or "").strip(),
+        review_on=_as_date(data.get("review_on")),
+        notes=(data.get("notes") or "").strip(),
+        supersedes=supersedes)
+    for i, row in enumerate(hazards):
+        _add_hazard(assessment, row, i)
+    if supersedes is not None:
+        old = supersedes.document
+        old.status = "SUPERSEDED"
+        old.save(update_fields=["status"])
+    audit("document", doc.id, "RISK_ASSESSMENT_RECORDED", actor=user,
+          to_state="RECORDED",
+          detail={"ref": doc.ref, "activity": activity[:80],
+                  "hazards": len(hazards),
+                  "supersedes": supersedes.document.ref if supersedes else ""})
+    return assessment, None
+
+
+def _clamp(value, low=1, high=5):
+    try:
+        return max(low, min(int(value), high))
+    except (TypeError, ValueError):
+        return low
+
+
+def _add_hazard(assessment, row, order=0):
+    from .models import RiskHazard
+
+    likelihood = _clamp(row.get("likelihood", 1))
+    severity = _clamp(row.get("severity", 1))
+    rating = likelihood * severity
+    res_l = row.get("residual_likelihood")
+    res_s = row.get("residual_severity")
+    residual_rating = None
+    residual_band = ""
+    if res_l is not None and res_s is not None:
+        residual_rating = _clamp(res_l) * _clamp(res_s)
+        residual_band = RiskHazard.band_for(residual_rating)
+    return RiskHazard.objects.create(
+        assessment=assessment, hazard=(row.get("hazard") or "").strip(),
+        who_at_risk=(row.get("who_at_risk") or "").strip(),
+        existing_controls=(row.get("existing_controls") or "").strip(),
+        likelihood=likelihood, severity=severity, rating=rating,
+        band=RiskHazard.band_for(rating),
+        further_controls=(row.get("further_controls") or "").strip(),
+        residual_likelihood=_clamp(res_l) if res_l is not None else None,
+        residual_severity=_clamp(res_s) if res_s is not None else None,
+        residual_rating=residual_rating, residual_band=residual_band,
+        sort_order=order)
+
+
+@transaction.atomic
+def create_inspection(*, site, data, user, project=None):
+    from .models import SafetyInspection
+
+    area = (data.get("area") or "").strip()
+    if not area:
+        return None, "What area was inspected?"
+    inspected_on = _as_date(data.get("inspected_on")) or timezone.localdate()
+    checklist = data.get("checklist")
+    if not isinstance(checklist, list):
+        checklist = []
+
+    doc = _new_hse_document("HSI", site, user, inspected_on, "RECORDED",
+                            project)
+    inspection = SafetyInspection.objects.create(
+        document=doc, area=area, inspected_on=inspected_on,
+        inspected_by=user,
+        inspector_name=(data.get("inspector_name") or "").strip(),
+        checklist=checklist,
+        summary=(data.get("summary") or "").strip())
+    audit("document", doc.id, "INSPECTION_RECORDED", actor=user,
+          to_state="RECORDED",
+          detail={"ref": doc.ref, "area": area[:80],
+                  **inspection.counts()})
+    return inspection, None
