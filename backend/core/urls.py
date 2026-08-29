@@ -9,6 +9,7 @@ from . import views, views_biometric as biometric_api, views_bom as bom_api, vie
     views_hse as hse_api, \
     views_contract as contract_api, \
     views_handover as handover_api, \
+    views_lab as lab_api, \
     views_quality as quality_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
@@ -103,6 +104,15 @@ urlpatterns = [
          name="quality-supplier-evaluations"),
     path("quality/supplier-scorecards", quality_api.supplier_scorecards,
          name="quality-supplier-scorecards"),
+    # Materials & site testing
+    path("quality/tests", lab_api.tests, name="quality-tests"),
+    path("quality/tests/stats", lab_api.test_stats, name="quality-test-stats"),
+    path("quality/tests/<str:ref>", lab_api.test_detail,
+         name="quality-test"),
+    path("quality/tests/<str:ref>/results", lab_api.test_results,
+         name="quality-test-results"),
+    path("quality/tests/<str:ref>/ncr", lab_api.test_ncr,
+         name="quality-test-ncr"),
     # Contract & time
     path("contract/correspondence", contract_api.correspondence,
          name="contract-correspondence"),

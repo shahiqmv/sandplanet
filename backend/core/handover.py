@@ -52,9 +52,15 @@ DOC_SECTION = {
     "SD": "SUBMITTAL",
     "MS": "SUBMITTAL",
     "ITP": "TEST",
+    # Cube tests, compaction, pressure tests: recorded as they happen and
+    # PULLED into the pack, not uploaded at the end (owner 2026-08-29).
+    "TR": "TEST",
 }
 ACCEPTED_STATUSES = {"APPROVED", "APPROVED_WITH_COMMENTS", "VERIFIED",
-                     "CLOSED", "RECORDED"}
+                     "CLOSED", "RECORDED",
+                     # A passed test is handover evidence. A failed one is
+                     # not, and is deliberately never offered.
+                     "PASSED"}
 
 
 def _as_date(value):

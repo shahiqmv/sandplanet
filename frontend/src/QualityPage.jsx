@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { BTN, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import TestingTab from "./TestingTab.jsx";
 
 // Quality. Non-conformance had nowhere to live and suppliers were never
 // rated, so a supplier who kept causing failures carried no record of it.
@@ -97,7 +98,8 @@ export default function QualityPage({ me, sites, site }) {
       <div style={{ display: "flex", gap: 2, marginBottom: 12,
                     flexWrap: "wrap", alignItems: "flex-end",
                     borderBottom: "2px solid var(--line)" }}>
-        {[["ncrs", "Non-conformance"], ["itps", "Inspection & test plans"],
+        {[["ncrs", "Non-conformance"], ["testing", "Testing"],
+          ["itps", "Inspection & test plans"],
           ["suppliers", "Supplier performance"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
                   style={{ background: "transparent", border: "none",
@@ -125,6 +127,9 @@ export default function QualityPage({ me, sites, site }) {
 
       {tab === "ncrs" && (
         <NcrTab me={me} sites={sites} siteFilter={siteFilter} />
+      )}
+      {tab === "testing" && (
+        <TestingTab me={me} sites={sites} siteFilter={siteFilter} />
       )}
       {tab === "itps" && <ItpTab sites={sites} siteFilter={siteFilter} />}
       {tab === "suppliers" && <SupplierTab me={me} />}

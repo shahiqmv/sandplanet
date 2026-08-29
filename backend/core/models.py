@@ -355,6 +355,7 @@ class Document(models.Model):
         NTC = "NTC"  # contractual notice
         DLY = "DLY"  # delay event
         EOT = "EOT"  # extension of time application
+        TR = "TR"    # material / site test request (QA/QC, 2026-08-29)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -464,6 +465,16 @@ class Document(models.Model):
         "RAS": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
         "HSI": {"RECORDED": {"CANCELLED"}},
         "ITP": {"RECORDED": {"SUPERSEDED", "CANCELLED"}},
+        # A test is requested, the sample is taken, and results come back —
+        # often in stages. Concrete cubes are the reason PARTIAL exists: the
+        # 7-day result lands three weeks before the 28-day one, and a request
+        # sitting at PARTIAL with a sample older than its final age is the
+        # exception the register watches for.
+        "TR": {
+            "REQUESTED": {"SAMPLED", "CANCELLED"},
+            "SAMPLED": {"PARTIAL", "PASSED", "FAILED", "CANCELLED"},
+            "PARTIAL": {"PASSED", "FAILED"},
+        },
         # Correspondence is OPEN while a reply is owed, CLOSED once it lands
         # or once it never needed one.
         "RFI": {"OPEN": {"ANSWERED", "CLOSED", "CANCELLED"},
@@ -6404,3 +6415,120 @@ class SnagItem(models.Model):
     @property
     def is_open(self):
         return self.status in ("OPEN", "IN_PROGRESS", "FIXED")
+
+
+# --- Materials & site testing --------------------------------------------
+# Cube tests, compaction, pressure tests and the rest were recorded nowhere:
+# the reports existed as paper and only reached the app when somebody
+# uploaded them into the handover pack at the end. They belong in the record
+# as they are produced, so handover can PULL them like any other document
+# (owner 2026-08-29).
+
+
+def test_certificate_path(instance, filename):
+    return (f"testing/{instance.test.document.site_id}/"
+            f"{instance.pk or 'new'}-{filename}")
+
+
+class MaterialTest(models.Model):
+    """A request for a test, and the sample it was taken from.
+
+    One request can carry several results — concrete cubes are tested at 7
+    and 28 days from the same sample, and both belong to the same pour."""
+
+    class Kind(models.TextChoices):
+        CUBE = "CUBE", "Concrete cube (compressive strength)"
+        SLUMP = "SLUMP", "Slump / workability"
+        CORE = "CORE", "Concrete core"
+        COMPACTION = "COMPACTION", "Compaction / field density"
+        CBR = "CBR", "CBR / bearing"
+        SIEVE = "SIEVE", "Sieve / grading"
+        STEEL = "STEEL", "Steel tensile / bend"
+        PRESSURE = "PRESSURE", "Pressure / leak test"
+        WATER = "WATER", "Water quality"
+        OTHER = "OTHER", "Other"
+
+    # How long after sampling the defining result is due. Used to flag a
+    # sample whose final result never came back.
+    FINAL_AGE_DAYS = {"CUBE": 28, "CORE": 7}
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="material_test")
+    kind = models.CharField(max_length=10, choices=Kind.choices)
+    element = models.TextField()               # "Villa 3 ground floor slab"
+    location = models.TextField(blank=True)    # grid reference / chainage
+    pour_ref = models.CharField(max_length=60, blank=True)
+    grade = models.CharField(max_length=40, blank=True)      # C30/20, MS 25
+    quantity = models.CharField(max_length=60, blank=True)   # m3 represented
+    spec_reference = models.TextField(blank=True)
+    acceptance_criteria = models.TextField(blank=True)
+    required_value = models.DecimalField(max_digits=10, decimal_places=2,
+                                         null=True, blank=True)
+    unit = models.CharField(max_length=20, blank=True)       # N/mm², %, bar
+
+    sampled_on = models.DateField()
+    lab_name = models.TextField(blank=True)
+    witnessed_by = models.TextField(blank=True)   # consultant who attended
+    # The inspection-and-test-plan point this satisfies, where there is one.
+    itp_item = models.ForeignKey("ItpItem", on_delete=models.SET_NULL,
+                                 null=True, blank=True,
+                                 related_name="material_tests")
+    # Raised when a result fails, so the failure has somewhere to go.
+    ncr = models.ForeignKey("Document", on_delete=models.SET_NULL, null=True,
+                            blank=True, related_name="failed_tests")
+    notes = models.TextField(blank=True)
+    requested_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-sampled_on", "-id"]
+        indexes = [models.Index(fields=["kind", "sampled_on"])]
+
+    def final_age_days(self):
+        return self.FINAL_AGE_DAYS.get(self.kind)
+
+    def result_due_on(self):
+        age = self.final_age_days()
+        from datetime import timedelta
+        return self.sampled_on + timedelta(days=age) if age else None
+
+    def is_overdue(self, as_of=None):
+        """Sampled, past the age its defining result is due, and still without
+        one. A cube sampled in June with no 28-day result is either a lost
+        certificate or a failure nobody chased."""
+        from django.utils import timezone
+        if self.document.status in ("PASSED", "FAILED", "CANCELLED"):
+            return False
+        due = self.result_due_on()
+        return bool(due and due < (as_of or timezone.localdate()))
+
+
+class TestResult(models.Model):
+    """One result against a request. Several per request is normal."""
+
+    class Outcome(models.TextChoices):
+        PASS = "PASS", "Pass"
+        FAIL = "FAIL", "Fail"
+        PENDING = "PENDING", "Awaited"
+
+    test = models.ForeignKey(MaterialTest, on_delete=models.CASCADE,
+                             related_name="results")
+    report_ref = models.CharField(max_length=80, blank=True)  # the lab's
+    specimen_ref = models.CharField(max_length=60, blank=True)  # cube id
+    age_days = models.IntegerField(null=True, blank=True)     # 7 / 28
+    tested_on = models.DateField(null=True, blank=True)
+    value = models.DecimalField(max_digits=10, decimal_places=2, null=True,
+                                blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    outcome = models.CharField(max_length=7, choices=Outcome.choices,
+                               default=Outcome.PENDING)
+    certificate = models.FileField(upload_to=test_certificate_path,
+                                   null=True, blank=True)
+    remarks = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["test", "age_days", "id"]
