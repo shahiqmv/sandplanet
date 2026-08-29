@@ -16,6 +16,13 @@ const money = (v) => v == null ? "—"
 const cur = (v, c) => `${c || "MVR"} ${money(v)}`;
 
 const mono = { fontFamily: "var(--font-mono)" };
+// The voucher's own date. It was in the payload all along and shown nowhere,
+// so a page of 574 vouchers gave no sense of when any of them was raised
+// (owner 2026-08-29).
+const shortDate = (d) => (d
+  ? new Date(d).toLocaleDateString(undefined,
+      { day: "2-digit", month: "short", year: "numeric" })
+  : "—");
 const TABS = [["all", "All"], ["DRAFT", "Draft"],
               ["SUBMITTED", "Awaiting signatory"], ["APPROVED", "Approved"]];
 
@@ -102,6 +109,26 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
         .then((r) => setBanks(r.accounts)).catch(() => {});
   }, [isFinance]);
 
+  // The voucher on screen. It may not be in the loaded page at all — a
+  // signatory following a link from My Tasks to PV-113 of 574 — so it is
+  // fetched on its own rather than hoping it was in the first 25.
+  const [openPv, setOpenPv] = useState(null);
+  useEffect(() => {
+    if (!open) { setOpenPv(null); return; }
+    const known = vouchers.find((v) => v.ref === open);
+    if (known) { setOpenPv(known); return; }
+    api(`/payment-vouchers?q=${encodeURIComponent(open)}&limit=1`)
+      .then((r) => setOpenPv((r.vouchers || [])[0] || null))
+      .catch(() => setOpenPv(null));
+  }, [open, vouchers]);
+
+  // Arriving from My Tasks while the page is already mounted must still open
+  // the voucher — as a mount-time initial value it did nothing, which is how
+  // a signatory ended up looking at the whole list (owner 2026-08-29).
+  useEffect(() => {
+    if (openRef) openVoucher(openRef);
+  }, [openRef]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const pickedRows = awaiting.filter((d) => picked[awKey(d)]);
   const pickedTotal = pickedRows.reduce((s, d) => s + Number(d.amount || 0), 0);
   const pickedCurrencies = [...new Set(pickedRows.map(
@@ -186,9 +213,254 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       voucherAction(pv.ref, "decline-void", {});
   };
 
+  // Opening a voucher used to expand it in place, so a signatory scrolled a
+  // 574-row page to find the one they had just been sent, worked on it, and
+  // scrolled again for the next. It opens in its own window now, and closes
+  // itself once the decision is made (owner 2026-08-29).
   const openVoucher = (ref) => {
-    setOpen(open === ref ? null : ref);
+    setOpen(ref || null);
     setQueries({}); setNote(""); setError(null); cancelPay();
+  };
+  const closeVoucher = () => openVoucher(null);
+
+  const perms = (pv) => {
+    const notPaid = !pv.is_void && !(pv.paid_count > 0);
+    return {
+      canSubmit: isFinance && pv.status === "DRAFT",
+      canApprove: isSignatory && pv.status === "SUBMITTED",
+      canPay: isFinance && pv.status === "APPROVED",
+      // Void (owner 2026-07-16). A submitted-but-unauthorised voucher
+      // Finance voids directly with a reason. An authorised one is a
+      // two-step: Finance requests the void, a signatory authorises it.
+      canVoid: notPaid && pv.status === "SUBMITTED"
+        && (isFinance || isSignatory),
+      canRequestVoid: notPaid && pv.status === "APPROVED" && isFinance
+        && !pv.void_requested,
+      canAuthoriseVoid: notPaid && pv.status === "APPROVED" && isSignatory
+        && pv.void_requested,
+      payable: pv.lines.filter((l) => l.status === "APPROVED"
+        && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE"),
+    };
+  };
+
+  const renderVoucherBody = (pv) => {
+    const { canSubmit, canApprove, canPay, canVoid, canRequestVoid,
+            canAuthoriseVoid, payable } = perms(pv);
+    return (
+                  <div style={{ padding: "4px 16px 16px" }}>
+                    <div style={{ overflowX: "auto" }}>
+                      <table style={{ width: "100%",
+                                      borderCollapse: "collapse" }}>
+                        <thead><tr>
+                          {canApprove && <th style={{ ...th, width: 54,
+                            textAlign: "center" }}>Query</th>}
+                          <th style={th}>Ref</th><th style={th}>Site</th>
+                          <th style={th}>Detail</th>
+                          <th style={{ ...th, textAlign: "right" }}>
+                            Amount ({pv.currency})</th>
+                          <th style={th}></th>
+                        </tr></thead>
+                        <tbody>
+                          {pv.lines.map((l) => (
+                            <tr key={l.line_id}>
+                              {canApprove && (
+                                <td style={{ ...td, textAlign: "center" }}>
+                                  <input type="checkbox"
+                                         checked={!!queries[l.line_id]}
+                                         onChange={(e) => setQueries({
+                                           ...queries,
+                                           [l.line_id]: e.target.checked })} />
+                                </td>
+                              )}
+                              <td style={td}>
+                                <a href="#" onClick={(e) => {
+                                     e.preventDefault(); onOpenDoc(l.ref); }}
+                                   style={{ textDecoration: "none" }}>
+                                  <RefStamp small>{l.ref}</RefStamp></a>
+                              </td>
+                              <td style={td}>{l.site_code}</td>
+                              <td style={{ ...td, color: (l.doc_type === "IPR"
+                                || l.doc_type === "MILESTONE")
+                                ? "#8a6d00" : "inherit" }}>{lineDetail(l)}</td>
+                              <td style={{ ...td, textAlign: "right", ...mono }}>
+                                {money(l.amount)}</td>
+                              <td style={td}>
+                                {l.status !== "INCLUDED"
+                                  ? <StatusChip status={l.status} /> : ""}
+                                {l.query_note && (
+                                  <div style={{ fontSize: 11.5,
+                                                color: "var(--red-fg)" }}>
+                                    {l.query_note}</div>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {canApprove && (
+                      <div style={{ marginTop: 12, background: "#fff",
+                        border: "1px solid var(--line)", borderRadius: 8,
+                        padding: 12 }}>
+                        <textarea rows={2} value={note}
+                          onChange={(e) => setNote(e.target.value)}
+                          placeholder="Note to the raiser for any queried line"
+                          style={{ ...inputStyle, width: "100%" }} />
+                        <div style={{ display: "flex", gap: 10, marginTop: 10,
+                                      alignItems: "center", flexWrap: "wrap" }}>
+                          <Btn variant="primary" disabled={busy}
+                               onClick={() => approve(pv)}>
+                            Approve voucher</Btn>
+                          <span style={{ fontSize: 12.5,
+                                         color: "var(--muted)" }}>
+                            Ticked lines go back to their raiser; the rest are
+                            authorised.</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {canSubmit && (
+                      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                        <Btn variant="primary" disabled={busy}
+                             onClick={() => voucherAction(pv.ref, "submit")}>
+                          Submit to signatory</Btn>
+                        <Btn variant="secondary" disabled={busy}
+                             onClick={() => voucherAction(pv.ref, "cancel")}>
+                          Cancel</Btn>
+                      </div>
+                    )}
+
+                    {canVoid && (
+                      <div style={{ marginTop: 12 }}>
+                        <button disabled={busy} onClick={() => voidVoucher(pv)}
+                          style={{ ...ghostButton, color: "#c0392b",
+                                   borderColor: "#e3b7b0" }}>
+                          Void voucher</button>
+                      </div>
+                    )}
+                    {canRequestVoid && (
+                      <div style={{ marginTop: 12 }}>
+                        <button disabled={busy}
+                          onClick={() => requestVoid(pv)}
+                          style={{ ...ghostButton, color: "#c0392b",
+                                   borderColor: "#e3b7b0" }}>
+                          Request void</button>
+                        <span style={{ fontSize: 12, color: "var(--muted)",
+                                       marginLeft: 10 }}>
+                          a signatory must authorise; blocked once any line is
+                          paid
+                        </span>
+                      </div>
+                    )}
+                    {pv.void_requested && (
+                      <div style={{ marginTop: 12, padding: "10px 12px",
+                                    background: "#fdf3e7", borderRadius: 8,
+                                    border: "1px solid #f0d9b5" }}>
+                        <p style={{ margin: 0, fontSize: 13, color: "#8a5a00" }}>
+                          Void requested{pv.void_requested_by
+                            ? ` by ${pv.void_requested_by}` : ""}
+                          {pv.void_reason ? ` — ${pv.void_reason}` : ""}
+                        </p>
+                        {canAuthoriseVoid && (
+                          <div style={{ display: "flex", gap: 10,
+                                        marginTop: 10 }}>
+                            <button disabled={busy}
+                              onClick={() => authoriseVoid(pv)}
+                              style={{ ...ghostButton, color: "#c0392b",
+                                       borderColor: "#e3b7b0" }}>
+                              Authorise void</button>
+                            <button disabled={busy}
+                              onClick={() => declineVoid(pv)}
+                              style={ghostButton}>
+                              Decline</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {pv.is_void && pv.void_reason && (
+                      <p style={{ marginTop: 10, fontSize: 13,
+                                  color: "#b0402f" }}>
+                        Voided — {pv.void_reason}</p>
+                    )}
+
+                    {/* Finance disbursement — record each payment + slip */}
+                    {canPay && payable.length > 0 && (
+                      <div style={{ marginTop: 14 }}>
+                        <h4 style={{ margin: "0 0 4px", fontSize: 14,
+                                     color: "var(--navy)" }}>
+                          Record payments</h4>
+                        {payable.map((l) => (
+                          <div key={l.line_id}
+                               style={{ borderTop: "1px solid var(--line)",
+                                        padding: "10px 0" }}>
+                            {l.doc_type === "PYR" && (
+                              <PayLinePyr l={l} payKey={payKey}
+                                startPay={startPay}
+                                form={payFormFields({ amount: true,
+                                  usd: l.currency === "USD",
+                                  onSave: () => payPyr(l.ref, l.amount,
+                                    l.currency === "USD") })} />
+                            )}
+                            {l.doc_type === "PR" && (
+                              <PayLinePr l={l} payKey={payKey}
+                                startPay={startPay}
+                                fields={(row) => payFormFields({
+                                  onSave: () => payVendor(l.ref,
+                                                          row.line_id) })} />
+                            )}
+                            {l.doc_type === "PAYABLE" && (
+                              <div>
+                                <div style={{ display: "flex", gap: 10,
+                                  alignItems: "baseline", flexWrap: "wrap" }}>
+                                  <strong>{l.payee}</strong>
+                                  <span style={{ fontSize: 12.5,
+                                    color: "var(--muted)" }}>{l.purpose}</span>
+                                  <span style={{ marginLeft: "auto",
+                                    fontFamily: "var(--mono, monospace)" }}>
+                                    MVR {money(l.amount)}</span>
+                                </div>
+                                {payKey === `pay:${l.payable_id}`
+                                  ? payFormFields({ onSave: () =>
+                                      settlePayable(pv.ref, l.payable_id) })
+                                  : (
+                                    <div style={{ marginTop: 6 }}>
+                                      <Btn variant="primary"
+                                        onClick={() => startPay(
+                                          `pay:${l.payable_id}`)}>
+                                        Record payment</Btn>
+                                    </div>
+                                  )}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {canPay && pv.lines.some((l) => (l.doc_type === "IPR"
+                      || l.doc_type === "MILESTONE")
+                      && l.status === "APPROVED") && (
+                      <p style={{ marginTop: 10, fontSize: 12.5,
+                                  color: "#8a6d00" }}>
+                        Overseas orders and TTs authorised on this voucher are
+                        executed on the <strong>Import Payments</strong> page
+                        against their milestones, not here.</p>
+                    )}
+
+                    {pv.approvals?.length > 0 && (
+                      <div style={{ marginTop: 14, paddingTop: 10,
+                        borderTop: "1px solid var(--line)" }}>
+                        {pv.approvals.map((a, i) => (
+                          <div key={i} style={{ fontSize: 12.5,
+                            color: "var(--muted)", padding: "2px 0" }}>
+                            <strong style={{ color: "var(--navy)" }}>
+                              {a.action}</strong> — {a.by} ({a.role})
+                            {a.comment ? ` · ${a.comment}` : ""}</div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+    );
   };
 
   // ---- payment recording (reuses the per-document endpoints) ----------
@@ -444,35 +716,22 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {shown.map((pv) => {
-            const isOpen = open === pv.ref;
-            const canSubmit = isFinance && pv.status === "DRAFT";
-            const canApprove = isSignatory && pv.status === "SUBMITTED";
-            const canPay = isFinance && pv.status === "APPROVED";
-            // Void (owner 2026-07-16). A submitted-but-unauthorised voucher
-            // Finance voids directly with a reason. An authorised one is a
-            // two-step: Finance requests the void, a signatory authorises it.
-            const notPaid = !pv.is_void && !(pv.paid_count > 0);
-            const canVoid = notPaid && pv.status === "SUBMITTED"
-              && (isFinance || isSignatory);
-            const canRequestVoid = notPaid && pv.status === "APPROVED"
-              && isFinance && !pv.void_requested;
-            const canAuthoriseVoid = notPaid && pv.status === "APPROVED"
-              && isSignatory && pv.void_requested;
-            const payable = pv.lines.filter((l) => l.status === "APPROVED"
-              && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE");
+            const { canApprove, canPay } = perms(pv);
+            const needsMe = canApprove || (canPay && !pv.settled);
             return (
               <div key={pv.ref} style={{ border: "1px solid var(--line)",
                 borderRadius: 10, overflow: "hidden",
-                boxShadow: isOpen ? "0 2px 10px rgba(0,0,0,.06)" : "none" }}>
+                boxShadow: "none",
+                borderLeft: needsMe ? "3px solid var(--sky)"
+                  : "1px solid var(--line)" }}>
                 {/* header */}
                 <div style={{ display: "flex", alignItems: "center", gap: 12,
                               cursor: "pointer", flexWrap: "wrap",
                               padding: "12px 16px",
-                              background: isOpen ? "var(--sky-soft)"
-                                : "transparent" }}
+                              background: "transparent" }}
                      onClick={() => openVoucher(pv.ref)}>
                   <span style={{ color: "var(--muted)", fontSize: 13,
-                                 width: 14 }}>{isOpen ? "▾" : "▸"}</span>
+                                 width: 14 }} aria-hidden="true">›</span>
                   <RefStamp>{pv.ref}</RefStamp>
                   <StatusChip status={pv.status} />
                   {pv.status === "APPROVED" && (
@@ -484,6 +743,12 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                       {pv.settled ? "✓ all paid"
                         : `${pv.paid_count}/${pv.approved_count} paid`}</span>
                   )}
+                  {needsMe && (
+                    <span style={{ fontSize: 12, fontWeight: 700,
+                                   color: "var(--sky)" }}>
+                      {canApprove ? "needs your approval" : "ready to pay"}
+                    </span>
+                  )}
                   <span style={{ marginLeft: "auto", fontSize: 17,
                                  fontWeight: 700, color: "var(--navy)",
                                  ...mono }}>
@@ -493,8 +758,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                 <div style={{ display: "flex", gap: 12, alignItems: "center",
                   flexWrap: "wrap", padding: "0 16px 10px 40px",
                   fontSize: 12.5, color: "var(--muted)",
-                  background: isOpen ? "var(--sky-soft)" : "transparent" }}>
-                  <span>{pv.lines.length} line
+                  background: "transparent" }}>
+                  <span style={{ fontWeight: 600, color: "var(--navy)" }}>
+                    {shortDate(pv.doc_date)}</span>
+                  <span>· {pv.lines.length} line
                     {pv.lines.length === 1 ? "" : "s"}</span>
                   {pv.prepared_by && <span>· prepared by {pv.prepared_by}</span>}
                   <span onClick={(e) => e.stopPropagation()}
@@ -530,221 +797,6 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                      style={{ marginLeft: "auto" }}>📄 PDF</a>
                 </div>
 
-                {isOpen && (
-                  <div style={{ padding: "4px 16px 16px" }}>
-                    <div style={{ overflowX: "auto" }}>
-                      <table style={{ width: "100%",
-                                      borderCollapse: "collapse" }}>
-                        <thead><tr>
-                          {canApprove && <th style={{ ...th, width: 54,
-                            textAlign: "center" }}>Query</th>}
-                          <th style={th}>Ref</th><th style={th}>Site</th>
-                          <th style={th}>Detail</th>
-                          <th style={{ ...th, textAlign: "right" }}>
-                            Amount ({pv.currency})</th>
-                          <th style={th}></th>
-                        </tr></thead>
-                        <tbody>
-                          {pv.lines.map((l) => (
-                            <tr key={l.line_id}>
-                              {canApprove && (
-                                <td style={{ ...td, textAlign: "center" }}>
-                                  <input type="checkbox"
-                                         checked={!!queries[l.line_id]}
-                                         onChange={(e) => setQueries({
-                                           ...queries,
-                                           [l.line_id]: e.target.checked })} />
-                                </td>
-                              )}
-                              <td style={td}>
-                                <a href="#" onClick={(e) => {
-                                     e.preventDefault(); onOpenDoc(l.ref); }}
-                                   style={{ textDecoration: "none" }}>
-                                  <RefStamp small>{l.ref}</RefStamp></a>
-                              </td>
-                              <td style={td}>{l.site_code}</td>
-                              <td style={{ ...td, color: (l.doc_type === "IPR"
-                                || l.doc_type === "MILESTONE")
-                                ? "#8a6d00" : "inherit" }}>{lineDetail(l)}</td>
-                              <td style={{ ...td, textAlign: "right", ...mono }}>
-                                {money(l.amount)}</td>
-                              <td style={td}>
-                                {l.status !== "INCLUDED"
-                                  ? <StatusChip status={l.status} /> : ""}
-                                {l.query_note && (
-                                  <div style={{ fontSize: 11.5,
-                                                color: "var(--red-fg)" }}>
-                                    {l.query_note}</div>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {canApprove && (
-                      <div style={{ marginTop: 12, background: "#fff",
-                        border: "1px solid var(--line)", borderRadius: 8,
-                        padding: 12 }}>
-                        <textarea rows={2} value={note}
-                          onChange={(e) => setNote(e.target.value)}
-                          placeholder="Note to the raiser for any queried line"
-                          style={{ ...inputStyle, width: "100%" }} />
-                        <div style={{ display: "flex", gap: 10, marginTop: 10,
-                                      alignItems: "center", flexWrap: "wrap" }}>
-                          <Btn variant="primary" disabled={busy}
-                               onClick={() => approve(pv)}>
-                            Approve voucher</Btn>
-                          <span style={{ fontSize: 12.5,
-                                         color: "var(--muted)" }}>
-                            Ticked lines go back to their raiser; the rest are
-                            authorised.</span>
-                        </div>
-                      </div>
-                    )}
-
-                    {canSubmit && (
-                      <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-                        <Btn variant="primary" disabled={busy}
-                             onClick={() => voucherAction(pv.ref, "submit")}>
-                          Submit to signatory</Btn>
-                        <Btn variant="secondary" disabled={busy}
-                             onClick={() => voucherAction(pv.ref, "cancel")}>
-                          Cancel</Btn>
-                      </div>
-                    )}
-
-                    {canVoid && (
-                      <div style={{ marginTop: 12 }}>
-                        <button disabled={busy} onClick={() => voidVoucher(pv)}
-                          style={{ ...ghostButton, color: "#c0392b",
-                                   borderColor: "#e3b7b0" }}>
-                          Void voucher</button>
-                      </div>
-                    )}
-                    {canRequestVoid && (
-                      <div style={{ marginTop: 12 }}>
-                        <button disabled={busy}
-                          onClick={() => requestVoid(pv)}
-                          style={{ ...ghostButton, color: "#c0392b",
-                                   borderColor: "#e3b7b0" }}>
-                          Request void</button>
-                        <span style={{ fontSize: 12, color: "var(--muted)",
-                                       marginLeft: 10 }}>
-                          a signatory must authorise; blocked once any line is
-                          paid
-                        </span>
-                      </div>
-                    )}
-                    {pv.void_requested && (
-                      <div style={{ marginTop: 12, padding: "10px 12px",
-                                    background: "#fdf3e7", borderRadius: 8,
-                                    border: "1px solid #f0d9b5" }}>
-                        <p style={{ margin: 0, fontSize: 13, color: "#8a5a00" }}>
-                          Void requested{pv.void_requested_by
-                            ? ` by ${pv.void_requested_by}` : ""}
-                          {pv.void_reason ? ` — ${pv.void_reason}` : ""}
-                        </p>
-                        {canAuthoriseVoid && (
-                          <div style={{ display: "flex", gap: 10,
-                                        marginTop: 10 }}>
-                            <button disabled={busy}
-                              onClick={() => authoriseVoid(pv)}
-                              style={{ ...ghostButton, color: "#c0392b",
-                                       borderColor: "#e3b7b0" }}>
-                              Authorise void</button>
-                            <button disabled={busy}
-                              onClick={() => declineVoid(pv)}
-                              style={ghostButton}>
-                              Decline</button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {pv.is_void && pv.void_reason && (
-                      <p style={{ marginTop: 10, fontSize: 13,
-                                  color: "#b0402f" }}>
-                        Voided — {pv.void_reason}</p>
-                    )}
-
-                    {/* Finance disbursement — record each payment + slip */}
-                    {canPay && payable.length > 0 && (
-                      <div style={{ marginTop: 14 }}>
-                        <h4 style={{ margin: "0 0 4px", fontSize: 14,
-                                     color: "var(--navy)" }}>
-                          Record payments</h4>
-                        {payable.map((l) => (
-                          <div key={l.line_id}
-                               style={{ borderTop: "1px solid var(--line)",
-                                        padding: "10px 0" }}>
-                            {l.doc_type === "PYR" && (
-                              <PayLinePyr l={l} payKey={payKey}
-                                startPay={startPay}
-                                form={payFormFields({ amount: true,
-                                  usd: l.currency === "USD",
-                                  onSave: () => payPyr(l.ref, l.amount,
-                                    l.currency === "USD") })} />
-                            )}
-                            {l.doc_type === "PR" && (
-                              <PayLinePr l={l} payKey={payKey}
-                                startPay={startPay}
-                                fields={(row) => payFormFields({
-                                  onSave: () => payVendor(l.ref,
-                                                          row.line_id) })} />
-                            )}
-                            {l.doc_type === "PAYABLE" && (
-                              <div>
-                                <div style={{ display: "flex", gap: 10,
-                                  alignItems: "baseline", flexWrap: "wrap" }}>
-                                  <strong>{l.payee}</strong>
-                                  <span style={{ fontSize: 12.5,
-                                    color: "var(--muted)" }}>{l.purpose}</span>
-                                  <span style={{ marginLeft: "auto",
-                                    fontFamily: "var(--mono, monospace)" }}>
-                                    MVR {money(l.amount)}</span>
-                                </div>
-                                {payKey === `pay:${l.payable_id}`
-                                  ? payFormFields({ onSave: () =>
-                                      settlePayable(pv.ref, l.payable_id) })
-                                  : (
-                                    <div style={{ marginTop: 6 }}>
-                                      <Btn variant="primary"
-                                        onClick={() => startPay(
-                                          `pay:${l.payable_id}`)}>
-                                        Record payment</Btn>
-                                    </div>
-                                  )}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                    {canPay && pv.lines.some((l) => (l.doc_type === "IPR"
-                      || l.doc_type === "MILESTONE")
-                      && l.status === "APPROVED") && (
-                      <p style={{ marginTop: 10, fontSize: 12.5,
-                                  color: "#8a6d00" }}>
-                        Overseas orders and TTs authorised on this voucher are
-                        executed on the <strong>Import Payments</strong> page
-                        against their milestones, not here.</p>
-                    )}
-
-                    {pv.approvals?.length > 0 && (
-                      <div style={{ marginTop: 14, paddingTop: 10,
-                        borderTop: "1px solid var(--line)" }}>
-                        {pv.approvals.map((a, i) => (
-                          <div key={i} style={{ fontSize: 12.5,
-                            color: "var(--muted)", padding: "2px 0" }}>
-                            <strong style={{ color: "var(--navy)" }}>
-                              {a.action}</strong> — {a.by} ({a.role})
-                            {a.comment ? ` · ${a.comment}` : ""}</div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )}
               </div>
             );
           })}
@@ -763,6 +815,80 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
           </div>
         )}
       </section>
+
+      {openPv && (
+        <VoucherModal pv={openPv} onClose={closeVoucher} error={error}>
+          {renderVoucherBody(openPv)}
+        </VoucherModal>
+      )}
+    </div>
+  );
+}
+
+// One voucher, on its own, with nothing else on screen. Closing is handled by
+// the backdrop, the button and Escape; an action closes it from the outside
+// (voucherAction clears `open`), so a decision returns you to the queue.
+function VoucherModal({ pv, onClose, error, children }) {
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, zIndex: 300, padding: 20,
+                  background: "rgba(16,28,38,.42)", display: "flex",
+                  alignItems: "flex-start", justifyContent: "center",
+                  overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()}
+           role="dialog" aria-modal="true"
+           style={{ background: "var(--paper)", borderRadius: 12,
+                    width: "100%", maxWidth: 900, margin: "24px 0",
+                    boxShadow: "0 18px 60px rgba(16,28,38,.28)",
+                    overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12,
+                      flexWrap: "wrap", padding: "14px 18px",
+                      background: "var(--sky-soft)",
+                      borderBottom: "1px solid var(--line)" }}>
+          <RefStamp>{pv.ref}</RefStamp>
+          <StatusChip status={pv.status} />
+          {pv.status === "APPROVED" && (
+            <span style={{ fontSize: 12.5, padding: "2px 10px",
+              borderRadius: 20, fontWeight: 600,
+              background: pv.settled ? "var(--green-bg)"
+                : "var(--amber-bg, #fff4e0)",
+              color: pv.settled ? "var(--green-fg)" : "#8a6d00" }}>
+              {pv.settled ? "\u2713 all paid"
+                : `${pv.paid_count}/${pv.approved_count} paid`}</span>
+          )}
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            <strong style={{ color: "var(--navy)" }}>
+              {shortDate(pv.doc_date)}</strong>
+            {" · "}{pv.lines.length} line{pv.lines.length === 1 ? "" : "s"}
+            {pv.prepared_by && ` · prepared by ${pv.prepared_by}`}
+          </span>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 12,
+                         alignItems: "center" }}>
+            <span style={{ fontSize: 19, fontWeight: 700,
+                           color: "var(--navy)", ...mono }}>
+              {cur(pv.total, pv.currency)}</span>
+            <a href={`/api/v1/payment-vouchers/${pv.ref}/pdf`}
+               target="_blank" rel="noreferrer"
+               style={{ fontSize: 13, color: "var(--navy)" }}>📄 PDF</a>
+            <Btn variant="ghost" onClick={onClose}>Close</Btn>
+          </span>
+        </div>
+        {error && (
+          <p style={{ margin: 0, padding: "10px 18px", fontSize: 13,
+                      color: "#a3271b", background: "#f9e8e6" }}>{error}</p>
+        )}
+        {children}
+      </div>
     </div>
   );
 }
