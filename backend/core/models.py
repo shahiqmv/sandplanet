@@ -554,6 +554,14 @@ class Document(models.Model):
         "Project", on_delete=models.PROTECT, null=True, blank=True,
         related_name="documents",
     )
+    # A cost the site genuinely shares between its projects — site transport,
+    # the site office, common freight. It is DECLARED, never inferred: without
+    # this flag a null project is merely unknown, and the apportionment that
+    # spreads shared cost over the projects would be spreading ignorance
+    # (owner 2026-08-29). Set on MR and PYR when the raiser picks "common
+    # cost"; apportionment itself happens at reporting time, so the basis can
+    # be changed and re-run without touching the ledger.
+    shared_cost = models.BooleanField(default=False)
     doc_date = models.DateField()  # the form's principal date
     status = models.CharField(max_length=30, default="DRAFT")
     current_revision = models.ForeignKey(

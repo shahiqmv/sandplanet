@@ -246,6 +246,39 @@ def document_create(request):
                                        "materials for — or mark it General "
                                        "site works."}, status=400)
 
+    # PYR: which job is this money for? Cost is otherwise recorded against the
+    # site alone, and on a site running several projects nobody can say later
+    # which one it belonged to — 328 site-raised payments had already reached
+    # that state by 2026-08-29, growing by the week, because the person who
+    # knew stops remembering (owner 2026-08-29). Materials already carry it:
+    # an MR names its project and its lines point forward to the PR that
+    # ordered them, so 669 of 734 procurement postings resolve on their own.
+    # Payments were the hole.
+    #
+    # One active project = fill it in silently, no extra click. Several = the
+    # raiser chooses, or DECLARES it general site works, exactly as an MR
+    # does. Onboarding, payroll and petty-cash PYRs are raised on their own
+    # paths and are company-level by nature; they never come through here.
+    if doc_type == "PYR":
+        active = list(site.projects.filter(status="ACTIVE"))
+        project_id = request.data.get("project_id")
+        if project_id:
+            try:
+                project = Project.objects.get(pk=project_id, site=site)
+            except Project.DoesNotExist:
+                return Response({"detail": "Unknown project for this site."},
+                                status=400)
+            if project.status == "CLOSED":
+                return Response({"detail": "Project is closed — no new "
+                                           "documents."}, status=400)
+        elif not request.data.get("general_works"):
+            if len(active) == 1:
+                project = active[0]
+            elif len(active) > 1:
+                return Response({"detail": "Pick the project this payment is "
+                                           "for — or mark it General site "
+                                           "works."}, status=400)
+
     doc_date = request.data.get("doc_date") or date.today().isoformat()
     if doc_type in ("DPR", "TWS", "DMA"):  # one per SITE per day (R8/R5)
         clash = Document.objects.filter(
@@ -345,6 +378,8 @@ def document_create(request):
             doc_type=doc_type, ref=ref, site=site, doc_date=doc_date,
             status="DRAFT", created_by=request.user, previous_ir=previous_ir,
             project=project,
+            shared_cost=(doc_type in ("MR", "PYR") and project is None
+                         and bool(request.data.get("general_works"))),
         )
         revision = DocumentRevision.objects.create(
             document=doc, rev_label="R0", payload=payload, created_by=request.user

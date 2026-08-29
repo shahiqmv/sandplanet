@@ -39,6 +39,11 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
 
   const [heads, setHeads] = useState([]);
   const [employees, setEmployees] = useState([]);
+  // Which job the money is for. Cost is otherwise filed against the site
+  // alone, and on a site running several projects nobody can say afterwards
+  // which one it belonged to (owner 2026-08-29). Same choice an MR asks for.
+  const [projects, setProjects] = useState([]);
+  const [projectId, setProjectId] = useState("");
   const [f, setF] = useState({
     payment_type: "DIRECT", cost_head_id: "", payee: "",
     payment_method: "BANK", payee_account: "", amount_requested: "",
@@ -68,6 +73,13 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         .catch(() => {});
       api(`/subcontract-agreements?site=${activeSite.id}`)
         .then(setScas).catch(() => setScas([]));
+      api(`/sites/${activeSite.id}/projects`).then((list) => {
+        setProjects(list || []);
+        // One live project = pre-fill it. The choice only costs a click on
+        // the sites that genuinely run several jobs.
+        const active = (list || []).filter((pr) => pr.status === "ACTIVE");
+        setProjectId(active.length === 1 ? active[0].id : "");
+      }).catch(() => setProjects([]));
     }
   }, [activeSite?.id]);
 
@@ -90,6 +102,10 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
       if (!f.amount_requested) missing.push("amount");
     }
     if (!f.purpose.trim() && !isSalary) missing.push("purpose");
+    const liveProjects = projects.filter((pr) => pr.status === "ACTIVE");
+    if (liveProjects.length > 1 && !projectId) {
+      missing.push("the project this is for (or General site works)");
+    }
     if (missing.length) {
       setError(`Please fill in: ${missing.join(", ")}.`);
       return;
@@ -110,6 +126,8 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         has_supporting_doc: f.has_supporting_doc && !!file,
         no_doc_reason: f.no_doc_reason,
       };
+      if (projectId === "GENERAL") body.general_works = true;
+      else if (projectId) body.project_id = projectId;
       if (isSalary) {
         body.subcontract_agreement_id = f.subcontract_agreement_id || null;
         body.salary_lines = salaryLines
@@ -190,6 +208,24 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
             {heads.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
           </select>
         </label>
+        {projects.filter((pr) => pr.status === "ACTIVE").length > 0 && (
+          <label style={{ fontSize: 13 }}
+                 title="Which job this money is for. Costs shared across several jobs — site transport, site office, common freight — are Common cost, and get apportioned to the projects later.">
+            Charge to
+            <select value={projectId}
+                    onChange={(e) => { const v = e.target.value;
+                      setProjectId(v === "GENERAL" || v === "" ? v : +v); }}
+                    style={inputStyle}>
+              <option value="">— choose where this is charged —</option>
+              {projects.filter((pr) => pr.status !== "CLOSED").map((pr) => (
+                <option key={pr.id} value={pr.id}>{pr.code} — {pr.title}</option>
+              ))}
+              <option value="GENERAL">
+                Common cost — shared across this site's projects
+              </option>
+            </select>
+          </label>
+        )}
         {!isSalary && (
         <label style={{ fontSize: 13 }}>Payee / vendor
           <input value={f.payee} onChange={(e) => set("payee", e.target.value)}

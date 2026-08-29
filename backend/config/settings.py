@@ -218,20 +218,33 @@ LOGGING = {
             "class": "logging.StreamHandler",
             "formatter": "standard",
         },
+        # Emails whoever is in ERROR_ALERT_TO when the server breaks. Silent
+        # when that is unset (dev, tests) because ADMINS is then empty.
+        "mail_admins": {
+            "class": "core.alerting.ThrottledAdminEmailHandler",
+            "level": "ERROR",
+            "include_html": False,
+        },
     },
     "root": {"handlers": ["console"], "level": "INFO"},
     "loggers": {
         # 500s with the traceback, which Django otherwise only emails.
-        "django.request": {"handlers": ["console"], "level": "ERROR",
-                           "propagate": False},
+        "django.request": {"handlers": ["console", "mail_admins"],
+                           "level": "ERROR", "propagate": False},
         "django.security": {"handlers": ["console"], "level": "WARNING",
                             "propagate": False},
-        # Our own modules log at INFO; SQL stays off.
-        "core": {"handlers": ["console"], "level": "INFO",
+        # Our own modules log at INFO; SQL stays off. Anything we log at
+        # ERROR — a failed push, a swallowed integration failure — alerts too.
+        "core": {"handlers": ["console", "mail_admins"], "level": "INFO",
                  "propagate": False},
         "django.db.backends": {"level": "WARNING"},
     },
 }
+
+# Who hears about a server error. Comma-separated addresses; unset = nobody,
+# which is the dev and test default (owner 2026-08-29).
+ADMINS = [("Planet alerts", a.strip())
+          for a in os.environ.get("ERROR_ALERT_TO", "").split(",") if a.strip()]
 
 # Email (SMTP) — set EMAIL_HOST etc. in production (e.g. Zoho:
 # smtp.zoho.com, port 465, SSL, an app-specific password). Without it, dev
@@ -249,6 +262,9 @@ else:
 DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL", os.environ.get("EMAIL_HOST_USER",
                                          "no-reply@sandplanet.mv"))
+# Error alerts send From here (Django's own setting for server messages).
+SERVER_EMAIL = os.environ.get("SERVER_EMAIL", DEFAULT_FROM_EMAIL)
+
 # App emails send From DEFAULT_FROM_EMAIL with the acting user's name + a
 # Reply-To to that user; a reply with no user routes to this office inbox.
 REPLY_TO_FALLBACK = os.environ.get("REPLY_TO_FALLBACK", DEFAULT_FROM_EMAIL)
