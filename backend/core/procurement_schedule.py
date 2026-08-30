@@ -34,9 +34,17 @@ VIEW_ROLES = ("HO_PURCHASING", "DIRECTOR", "SIGNATORY", "FINANCE", "QS",
               "ADMIN", "PA")                    # HO roles that see all schedules
 
 # Planning fields the PM owns; commercial fields Purchasing owns.
+# Country and the three lead legs are PLANNING facts, not commercial ones:
+# they come off the consultant's spec and the PM's own schedule, and the PM
+# has them before Purchasing is involved. They sat behind the commercial gate
+# — role Purchasing AND status Submitted — so on a draft schedule literally
+# nobody could enter a country or a lead time, and the order-by date that
+# depends on them could never be worked out (owner 2026-08-30).
 _PLAN_FIELDS = ("bundle", "category", "description", "make_brand",
                 "specification", "uom", "trade", "remarks")
-_COMM_FIELDS = ("planned_supplier", "source_country")
+_COMM_FIELDS = ("planned_supplier",)
+# Written from both sides — see _apply_sourcing.
+_SOURCING_FIELDS = ("source_country",)
 
 
 def _dec(v):
@@ -182,6 +190,7 @@ def add_line(sched, data, actor):
                             created_by=actor)
         _apply_plan(line, data)
         _apply_required(line, data)
+        _apply_sourcing(line, data)
         line.save()
         _renumber(section)
     audit("document", doc.id, "PSC_LINE_ADDED", actor=actor,
@@ -238,6 +247,7 @@ def update_line(line, data, actor):
     if role in PROPOSE_ROLES and doc.status == "DRAFT":
         _apply_plan(line, data)
         _apply_required(line, data)
+        _apply_sourcing(line, data)
         if "supply_by" in data and data["supply_by"] in ("CONTRACTOR", "CLIENT"):
             line.supply_by = data["supply_by"]
         if "section_id" in data or "section_code" in data:
@@ -405,6 +415,26 @@ def _apply_required(line, data):
         line.tds_required = bool(data.get("tds_required"))
 
 
+def _apply_sourcing(line, data):
+    """Where it comes from, how long each leg takes, and the date to order by.
+
+    Written from BOTH sides, which is the whole point: the PM plans these off
+    the consultant's spec, and Purchasing refines them when a supplier quotes
+    a real lead time. Belonging to one branch is what broke them — as
+    commercial-only fields they were unreachable on a draft schedule, and
+    moving them wholesale to the planning side would have made Purchasing's
+    edits vanish silently instead."""
+    for f in _SOURCING_FIELDS:
+        if f in data:
+            setattr(line, f, (data.get(f) or "").strip())
+    for field in ("lead_time_days", "shipping_days", "clearance_days"):
+        if field in data:
+            v = data.get(field)
+            setattr(line, field, int(v) if str(v).strip().isdigit() else None)
+    if "order_by_date" in data:
+        line.order_by_date = data["order_by_date"] or None
+
+
 def _apply_commercial(line, data):
     for f in _COMM_FIELDS:
         if f in data:
@@ -413,12 +443,7 @@ def _apply_commercial(line, data):
         line.estimated_value = _dec(data.get("estimated_value"))
     if "currency" in data:
         line.currency = (data.get("currency") or "USD")[:3].upper()
-    for field in ("lead_time_days", "shipping_days", "clearance_days"):
-        if field in data:
-            v = data.get(field)
-            setattr(line, field, int(v) if str(v).strip().isdigit() else None)
-    if "order_by_date" in data:
-        line.order_by_date = data["order_by_date"] or None
+    _apply_sourcing(line, data)
     if "inspection_required" in data:
         line.inspection_required = bool(data["inspection_required"])
     if "inspection_done_on" in data:

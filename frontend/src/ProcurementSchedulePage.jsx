@@ -165,6 +165,45 @@ function OrderByCell({ ln }) {
 
 // Offered only when the PM has stated all three legs themselves. Filling the
 // field from a country-table guess would dress a guess as a deadline.
+// Country and the three legs, plus the date to order by. Shared by both
+// halves of the editor: the PM plans them from the consultant's spec, and
+// Purchasing refines them when a supplier quotes a real lead time. They used
+// to sit only behind the commercial gate, which meant nobody could enter them
+// on a draft schedule at all (owner 2026-08-30).
+function LeadTimeFields({ f, set, setF }) {
+  return (
+    <>
+        <L k="Source country"><input style={inputStyle}
+          value={f.source_country || ""} onChange={set("source_country")} /></L>
+        <L k="Manufacturing (days)"><input type="number" style={inputStyle}
+          value={f.lead_time_days ?? ""} onChange={set("lead_time_days")} /></L>
+        <L k="Shipping (days)"><input type="number" style={inputStyle}
+          placeholder="by country if blank"
+          value={f.shipping_days ?? ""} onChange={set("shipping_days")} /></L>
+        <L k="Customs clearance (days)"><input type="number"
+          style={inputStyle}
+          value={f.clearance_days ?? ""}
+          onChange={set("clearance_days")} /></L>
+        <L k="Order by" wide>
+          <div style={{ display: "flex", gap: 8, alignItems: "center",
+                        flexWrap: "wrap" }}>
+            <input type="date" style={{ ...inputStyle, width: "auto" }}
+              value={f.order_by_date || ""}
+              onChange={set("order_by_date")} />
+            <SuggestOrderBy f={f} onUse={(d) =>
+              setF((p) => ({ ...p, order_by_date: d }))} />
+          </div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)",
+                        marginTop: 3 }}>
+            Your call. Production, sailing and clearing all move with the
+            product, the season and whatever the lanes are doing — the app
+            does not guess this.
+          </div>
+        </L>
+    </>
+  );
+}
+
 function SuggestOrderBy({ f, onUse }) {
   const legs = [f.lead_time_days, f.shipping_days, f.clearance_days];
   const ready = f.required_date && legs.every(
@@ -1481,6 +1520,7 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
             </select></L>
           <L k="Required on site"><input type="date" style={inputStyle}
             value={f.required_date || ""} onChange={set("required_date")} /></L>
+          <LeadTimeFields f={f} set={set} setF={setF} />
           <L k="Specification" wide><input style={inputStyle}
             value={f.specification} onChange={set("specification")} /></L>
           <L k="Remarks" wide><input style={inputStyle} value={f.remarks || ""}
@@ -1494,38 +1534,14 @@ function LineForm({ mode, c, me, line, onCancel, onSaved }) {
           <L k="Planned supplier" wide><input style={inputStyle}
             value={f.planned_supplier || ""}
             onChange={set("planned_supplier")} /></L>
-          <L k="Source country"><input style={inputStyle}
-            value={f.source_country || ""} onChange={set("source_country")} /></L>
-          <L k="Manufacturing (days)"><input type="number" style={inputStyle}
-            value={f.lead_time_days ?? ""} onChange={set("lead_time_days")} /></L>
-          <L k="Shipping (days)"><input type="number" style={inputStyle}
-            placeholder="by country if blank"
-            value={f.shipping_days ?? ""} onChange={set("shipping_days")} /></L>
-          <L k="Customs clearance (days)"><input type="number"
-            style={inputStyle}
-            value={f.clearance_days ?? ""}
-            onChange={set("clearance_days")} /></L>
-          <L k="Order by" wide>
-            <div style={{ display: "flex", gap: 8, alignItems: "center",
-                          flexWrap: "wrap" }}>
-              <input type="date" style={{ ...inputStyle, width: "auto" }}
-                value={f.order_by_date || ""}
-                onChange={set("order_by_date")} />
-              <SuggestOrderBy f={f} onUse={(d) =>
-                setF((p) => ({ ...p, order_by_date: d }))} />
-            </div>
-            <div style={{ fontSize: 11.5, color: "var(--muted)",
-                          marginTop: 3 }}>
-              Your call. Production, sailing and clearing all move with the
-              product, the season and whatever the lanes are doing — the app
-              does not guess this.
-            </div>
-          </L>
           <L k="Estimated value"><input type="number" style={inputStyle}
             value={f.estimated_value ?? ""}
             onChange={set("estimated_value")} /></L>
           <L k="Currency"><input style={inputStyle} value={f.currency || "USD"}
             onChange={set("currency")} /></L>
+          {/* Purchasing sees these too: the PM plans them from the spec, and
+              a supplier's quote is where the real lead time turns up. */}
+          <LeadTimeFields f={f} set={set} setF={setF} />
         </div>
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
