@@ -63,7 +63,8 @@ export function PendingInbox({ onOpen, onCount }) {
                 {it.project_code && <span className="chip">{it.project_code}</span>}
                 <span style={{ marginLeft: "auto" }} />
                 {it.amount != null && (
-                  <span className="amount">{money(it.amount)}</span>
+                  <span className="amount">
+                    {money(it.amount, it.currency)}</span>
                 )}
               </div>
             </div>

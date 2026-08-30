@@ -36,8 +36,12 @@ function RowText({ item }) {
   return (
     <>
       {item.amount != null && (
+        // Never hard-code the currency here. An import order is priced in the
+        // supplier's currency and a payment request can be raised in USD, so
+        // a printed "MVR" showed a signatory a figure fifteen times smaller
+        // than the one they were authorising (owner 2026-08-30).
         <b style={{ color: "var(--sp-navy)" }}>
-          MVR {money(item.amount)}
+          {item.currency || "MVR"} {money(item.amount)}
         </b>
       )}
       {item.amount != null && (where || item.hint) && " · "}

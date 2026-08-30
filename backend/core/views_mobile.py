@@ -107,7 +107,8 @@ APPROVABLE = {
 
 # Imported here, not at the top: views_documents imports from this
 # module, and hoisting this makes the cycle bite at startup.
-from .views_documents import queue_amount as _card_amount  # noqa: E402
+from .views_documents import (queue_amount as _card_amount,  # noqa: E402
+                              queue_currency as _card_currency)
 
 
 @api_view(["GET"])
@@ -124,8 +125,10 @@ def m_queue(request):
         for it in g["items"]:
             if (it["doc_type"], it["status"]) not in APPROVABLE:
                 continue
-            cards.append({**it, "amount": _card_amount(it["ref"],
-                                                        it["doc_type"])})
+            amount = _card_amount(it["ref"], it["doc_type"])
+            cards.append({**it, "amount": amount,
+                          "currency": it.get("currency")
+                          or _card_currency(it["ref"], it["doc_type"])})
     return Response({"count": len(cards), "items": cards})
 
 

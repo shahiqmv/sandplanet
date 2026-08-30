@@ -814,6 +814,36 @@ def queue_amount(ref, doc_type):
     return None
 
 
+def queue_currency(ref, doc_type):
+    """What currency `queue_amount` is denominated in.
+
+    The approvals list printed "MVR" in front of every figure, hard-coded in
+    the template. An import order is priced in the supplier's currency, and a
+    payment request or a voucher can be raised in USD — so a signatory was
+    shown "MVR 27,129.80" for an order actually worth USD 27,129.80, a figure
+    roughly fifteen times larger than it read (owner 2026-08-30).
+    """
+    from .models import Document, PaymentVoucherLine
+
+    try:
+        d = Document.objects.get(ref=ref)
+    except Document.DoesNotExist:
+        return "MVR"
+    if doc_type == "IPR" and hasattr(d, "import_order"):
+        return d.import_order.order_currency or "MVR"
+    if doc_type == "PYR" and hasattr(d, "payment_request"):
+        return d.payment_request.currency or "MVR"
+    if doc_type == "PV":
+        line = PaymentVoucherLine.objects.filter(voucher=d).first()
+        return (line.currency if line else "MVR") or "MVR"
+    if doc_type == "SVC" and hasattr(d, "subcontract_valuation"):
+        agreement = d.subcontract_valuation.agreement
+        return agreement.currency or "MVR"
+    # PR is local procurement and has no currency of its own; everything else
+    # falls back rather than guessing.
+    return "MVR"
+
+
 MONEY_TYPES = ("PR", "PYR", "PV", "IPR", "SVC")
 
 
@@ -1107,6 +1137,8 @@ def pending_groups(user):
         for it in g["items"]:
             if it.get("doc_type") in MONEY_TYPES and "amount" not in it:
                 it["amount"] = queue_amount(it["ref"], it["doc_type"])
+            if it.get("amount") is not None and "currency" not in it:
+                it["currency"] = queue_currency(it["ref"], it["doc_type"])
     return sorted(groups, key=lambda g: queue_band(g["title"]))
 
 
