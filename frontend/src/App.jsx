@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { decodeView, encodeView } from "./urlState.js";
 import BusyBar from "./BusyBar.jsx";
+import NewReleaseBanner from "./NewReleaseBanner.jsx";
 import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
@@ -717,6 +718,9 @@ export default function App() {
       {/* Mounted once, above everything: it reports any request the app makes,
           wherever it was started from. */}
       <BusyBar />
+      {/* Above the header so it is seen, and outside the auth check so a tab
+          left open on the sign-in screen can still tell it is stale. */}
+      <NewReleaseBanner />
       <header className="topbar">
         {showHoNav && (
           <button className="navtoggle" aria-label="Menu"

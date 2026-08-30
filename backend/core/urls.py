@@ -1,7 +1,8 @@
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from . import views, views_biometric as biometric_api, views_bom as bom_api, views_cameras as cameras_api, \
+from . import version as version_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_documents as docs, \
@@ -42,6 +43,8 @@ router.register("employees", hr.EmployeeViewSet, basename="employee")
 
 urlpatterns = [
     path("health", views.health, name="health"),
+    # What build the client should be running. Open, and cheap.
+    path("version", version_api.app_version, name="app-version"),
     path("auth/login", views.auth_login, name="auth-login"),
     path("auth/logout", views.auth_logout, name="auth-logout"),
     path("auth/change-password", views.auth_change_password,
