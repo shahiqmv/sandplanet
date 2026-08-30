@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import UserDetail from "./UserDetail.jsx";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 const ROLES = [
@@ -23,6 +24,7 @@ const EMPTY = { username: "", full_name: "", email: "", phone: "", role: "",
                 password: "" };
 
 export default function UsersPage({ me, sites }) {
+  const [openUser, setOpenUser] = useState(null);
   const [users, setUsers] = useState([]);
   const [draft, setDraft] = useState(EMPTY);
   const [draftSite, setDraftSite] = useState("");
@@ -225,6 +227,7 @@ export default function UsersPage({ me, sites }) {
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead><tr>
           <th style={th}>Username</th><th style={th}>Name</th>
+          <th style={th}>Email</th>
           <th style={th}>Role</th>
           <th style={th}>Sites</th>
           <th style={th}>Allocate</th><th style={th}>PM of…</th>
@@ -233,8 +236,15 @@ export default function UsersPage({ me, sites }) {
         <tbody>
           {users.map((user) => (
             <tr key={user.id} style={user.is_active ? {} : { opacity: 0.5 }}>
-              <td style={{ ...td, fontWeight: 600,
-                           color: "var(--sp-navy)" }}>{user.username}</td>
+              <td style={{ ...td, fontWeight: 600 }}>
+                {/* The page had no way in: four separate prompts edited four
+                    fields, and email was not among them (owner 2026-08-30). */}
+                <a href="#" onClick={(e) => { e.preventDefault();
+                                              setOpenUser(user); }}
+                   style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
+                  {user.username}
+                </a>
+              </td>
               <td style={td}>{user.full_name}
                 {(user.designation || ["SIGNATORY", "DIRECTOR", "ADMIN"]
                     .includes(user.role)) && (
@@ -250,6 +260,17 @@ export default function UsersPage({ me, sites }) {
                     )}
                   </div>
                 )}</td>
+              <td style={{ ...td, fontSize: 12.5 }}>
+                {user.email || (
+                  <span style={{ color: "var(--amber-fg)" }}>
+                    none on file</span>
+                )}
+                {user.employee_detail && (
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {user.employee_detail.emp_no}
+                  </div>
+                )}
+              </td>
               <td style={td}>
                 {roleEdit?.id === user.id ? (
                   <div style={{ display: "flex", flexDirection: "column",
@@ -356,6 +377,11 @@ export default function UsersPage({ me, sites }) {
           ))}
         </tbody>
       </table>
+
+      {openUser && (
+        <UserDetail user={openUser} me={me} onClose={() => setOpenUser(null)}
+          onSaved={(saved) => { setOpenUser(saved); load(); }} />
+      )}
     </section>
   );
 }

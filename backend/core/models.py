@@ -52,6 +52,15 @@ class User(AbstractUser):
     # e.g. "Managing Director" / "Director" for the two signatories (owner
     # 2026-08-09). Falls back to a role-derived title when blank.
     designation = models.CharField(max_length=80, blank=True)
+    # The person behind the login. A User is an account; an Employee is the
+    # man on the payroll — the same human held twice, with no thread between
+    # them, so their name was typed separately in each and nothing noticed
+    # when the two disagreed. One-to-one because two logins onto one employee
+    # record is a duplicate account, which is the thing worth refusing
+    # (owner 2026-08-30).
+    employee = models.OneToOneField(
+        "Employee", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="user_account")
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]

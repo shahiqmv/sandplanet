@@ -10,8 +10,11 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
 from .audit import audit
+from django.db.models import Q
+
 from .models import (
     CompanyParameter,
+    Employee,
     Holiday,
     ManpowerCategory,
     Site,
@@ -348,6 +351,45 @@ class UserViewSet(viewsets.ModelViewSet):
             return True, None
         except Exception as exc:  # noqa: BLE001 — surface send failures to admin
             return False, str(exc)
+
+    @action(detail=True, methods=["get"], url_path="employee-options")
+    def employee_options(self, request, pk=None):
+        """Employees this login could belong to.
+
+        Anyone whose name resembles the account's comes first — 11 of the 39
+        live accounts match an employee exactly — then the rest, searchable.
+        Already-linked employees are dropped: one employee, one account."""
+        import re
+
+        user = self.get_object()
+        q = (request.GET.get("q") or "").strip().lower()
+        taken = set(User.objects.exclude(pk=user.pk).exclude(
+            employee__isnull=True).values_list("employee_id", flat=True))
+
+        def norm(v):
+            return re.sub(r"[^a-z]", "", (v or "").lower())
+
+        mine = norm(user.full_name)
+        rows = Employee.objects.filter(is_active=True).select_related(
+            "job_category").order_by("emp_no")
+        if q:
+            rows = rows.filter(
+                Q(full_name__icontains=q) | Q(emp_no__icontains=q))
+        out = []
+        for e in rows:
+            if e.id in taken:
+                continue
+            n = norm(e.full_name)
+            out.append({
+                "id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+                "employment_type": e.employment_type,
+                "job_category": (e.job_category.name
+                                 if e.job_category_id else ""),
+                "suggested": bool(mine) and (n == mine or mine in n
+                                             or n in mine),
+            })
+        out.sort(key=lambda r: (not r["suggested"], r["emp_no"] or ""))
+        return Response(out[:60])
 
     def perform_update(self, serializer):
         user = serializer.save()

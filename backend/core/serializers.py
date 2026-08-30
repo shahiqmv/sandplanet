@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from .models import (
     CompanyParameter,
+    Employee,
     Holiday,
     ManpowerCategory,
     Site,
@@ -77,15 +78,52 @@ class AllocationSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
     allocations = serializers.SerializerMethodField()
+    employee_detail = serializers.SerializerMethodField()
+    # Declared so DRF's automatic unique validator does not pre-empt
+    # validate_employee below: "user with this employee already exists" tells
+    # an admin nothing, whereas naming the account that holds it tells them
+    # where to go and look.
+    employee = serializers.PrimaryKeyRelatedField(
+        queryset=Employee.objects.all(), required=False, allow_null=True,
+        validators=[])
 
     class Meta:
         model = User
         fields = [
             "id", "username", "full_name", "email", "phone", "notify_external",
             "role", "is_active", "last_login", "password", "allocations",
-            "must_change_password", "designation",
+            "must_change_password", "designation", "employee",
+            "employee_detail",
         ]
         read_only_fields = ["last_login", "is_active", "must_change_password"]
+
+    def get_employee_detail(self, user):
+        """The HR record behind the login, so the admin screen can show who
+        this account actually is."""
+        e = user.employee
+        if e is None:
+            return None
+        return {"id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+                "employment_type": e.employment_type,
+                "job_category": (e.job_category.name
+                                 if e.job_category_id else ""),
+                "is_active": e.is_active, "left_on": e.left_on}
+
+    def validate_employee(self, value):
+        """A second login onto one employee record is a duplicate account —
+        the error names the account already holding it, so the admin can go
+        and look rather than guess."""
+        if value is None:
+            return value
+        taken = User.objects.filter(employee=value)
+        if self.instance is not None:
+            taken = taken.exclude(pk=self.instance.pk)
+        other = taken.first()
+        if other:
+            raise serializers.ValidationError(
+                f"{value.emp_no} is already linked to the login "
+                f"'{other.username}'. One employee, one account.")
+        return value
 
     def get_allocations(self, user):
         qs = user.site_allocations.filter(to_date__isnull=True).select_related("site")
