@@ -186,6 +186,22 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               <Btn variant="navy" onClick={() => onNewQa("MAR")}>+ MAR</Btn>
               <Btn variant="navy" onClick={() => onNewQa("SD")}>+ SD</Btn>
               <Btn variant="navy" onClick={() => onNewQa("MS")}>+ MS</Btn>
+              {/* Civil submittals behind one control: three more buttons on
+                  an already busy row would cost more than they gain
+                  (owner 2026-08-30). */}
+              <select value="" title="Civil submittals"
+                      onChange={(e) => { if (e.target.value)
+                                           onNewQa(e.target.value); }}
+                      style={{ padding: "7px 10px", borderRadius: 8,
+                               border: "1px solid #BFD6E6", fontSize: 13.5,
+                               background: "var(--paper)",
+                               color: "var(--navy)", cursor: "pointer",
+                               fontFamily: "inherit" }}>
+                <option value="">+ Civil submittal…</option>
+                <option value="MXD">Concrete mix design</option>
+                <option value="BBS">Bar bending schedule</option>
+                <option value="TWD">Temporary works design</option>
+              </select>
               {/* A sample is taken at the pour, by the same person and on the
                   same day as an IR — so it is raised from the same place
                   (owner 2026-08-29). The cross-site register lives under

@@ -8,6 +8,9 @@ export const QA_LABELS = {
   MAR: "Material Approval Request",
   SD: "Shop Drawing Submittal",
   MS: "Method Statement",
+  MXD: "Concrete Mix Design",
+  BBS: "Bar Bending Schedule",
+  TWD: "Temporary Works Design",
   TWS: "Tomorrow Work Schedule",
 };
 
@@ -66,7 +69,67 @@ const MS_FIELDS = [
   ["remarks", "Remarks", "textarea"],
 ];
 
-const FIELDS_BY_TYPE = { MAR: MAR_FIELDS, SD: SD_FIELDS, MS: MS_FIELDS };
+// Concrete mix design — a MAR describes a product, this describes a RECIPE,
+// and it is what a cube result is judged against (owner 2026-08-30).
+const MXD_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["mix_ref", "Mix reference", "text"],
+  ["grade", "Grade", "text"],
+  ["application", "Where it is used", "text"],
+  ["design_strength", "Design strength at 28 days (N/mm²)", "text"],
+  ["batching_plant", "Batching plant / supplier", "text"],
+  ["cement_type", "Cement type", "text"],
+  ["cement_content", "Cement content (kg/m³)", "text"],
+  ["wc_ratio", "Water / cement ratio", "text"],
+  ["target_slump", "Target slump (mm)", "text"],
+  ["coarse_aggregate", "Coarse aggregate", "text"],
+  ["fine_aggregate", "Fine aggregate", "text"],
+  ["admixture", "Admixture", "text"],
+  ["trial_ref", "Trial mix reference", "text"],
+  ["trial_result", "Trial mix result", "text"],
+  ["spec_ref", "Specification Ref", "text"],
+  ["boq_ref", "BOQ Ref", "text"],
+  ["remarks", "Remarks", "textarea"],
+];
+
+// Bar bending schedule — approved before the steel is cut, because once it
+// is cut it is cut.
+const BBS_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["element", "Element", "text"],
+  ["location", "Location", "text"],
+  ["drawing_ref", "Structural drawing", "text"],
+  ["drawing_rev", "Drawing revision", "text"],
+  ["steel_grade", "Steel grade", "text"],
+  ["bar_marks", "Number of bar marks", "text"],
+  ["total_weight", "Total weight (kg)", "text"],
+  ["spec_ref", "Specification Ref", "text"],
+  ["confirms_design", "Scheduled from the approved drawing", "checkbox"],
+  ["remarks", "Remarks", "textarea"],
+];
+
+// Temporary works — the independent design CHECK is the field that matters.
+// Temporary works fail while people are standing on them.
+const TWD_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["tw_type", "Type", "select",
+   ["Formwork", "Falsework", "Shoring / propping", "Scaffolding",
+    "Excavation support", "Lifting / craneage", "Other"]],
+  ["location", "Location", "text"],
+  ["supports", "Permanent works supported", "text"],
+  ["in_use", "In use from / to", "text"],
+  ["designed_by", "Designed by", "text"],
+  ["design_loading", "Design loading", "text"],
+  ["checked_by", "Independently checked by", "text"],
+  ["check_date", "Check date", "date"],
+  ["striking", "Striking / dismantling criteria", "textarea"],
+  ["spec_ref", "Specification / standard", "text"],
+  ["remarks", "Remarks", "textarea"],
+];
+
+const FIELDS_BY_TYPE = { MAR: MAR_FIELDS, SD: SD_FIELDS, MS: MS_FIELDS,
+                         MXD: MXD_FIELDS, BBS: BBS_FIELDS,
+                         TWD: TWD_FIELDS };
 
 // Per-type attachment slots (files uploaded here are compiled into the PDF).
 const ENCLOSURES_BY_TYPE = {
@@ -78,9 +141,22 @@ const ENCLOSURES_BY_TYPE = {
        ["reference", "Reference"]],
   MS: [["method_statement", "Method Statement"],
        ["risk_assessment", "Risk Assessment"], ["itp", "ITP"]],
+  MXD: [["mix_design", "Mix design certificate"],
+        ["trial_results", "Trial mix results"],
+        ["aggregate_tests", "Aggregate test reports"],
+        ["cement_cert", "Cement certificate"],
+        ["admixture_data", "Admixture data sheet"]],
+  BBS: [["schedule", "Bar bending schedule"],
+        ["reinforcement_drawing", "Reinforcement drawing"],
+        ["shape_codes", "Bar shape codes"]],
+  TWD: [["design_drawings", "Design drawings"],
+        ["calculations", "Calculations"],
+        ["check_certificate", "Design check certificate"],
+        ["risk_assessment", "Risk assessment"],
+        ["method_statement", "Method statement"]],
 };
 
-const SUBMITTAL_TYPES = ["MAR", "SD", "MS"];   // MAR-family submittals
+const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD"];
 
 const RESULT_OPTIONS = {
   IR: [["APPROVED", "Approved"],
@@ -93,6 +169,11 @@ const RESULT_OPTIONS = {
 };
 RESULT_OPTIONS.SD = RESULT_OPTIONS.MAR;
 RESULT_OPTIONS.MS = RESULT_OPTIONS.MAR;
+// The civil submittals take the same four results as a material approval:
+// approved, approved with comments, revise & resubmit, rejected.
+RESULT_OPTIONS.MXD = RESULT_OPTIONS.MAR;
+RESULT_OPTIONS.BBS = RESULT_OPTIONS.MAR;
+RESULT_OPTIONS.TWD = RESULT_OPTIONS.MAR;
 
 const SITE_TEAM = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"];
 

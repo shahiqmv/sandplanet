@@ -357,6 +357,11 @@ class Document(models.Model):
         DLY = "DLY"  # delay event
         EOT = "EOT"  # extension of time application
         TR = "TR"    # material / site test request (QA/QC, 2026-08-29)
+        # Civil submittals — the MAR/SD/MS family, same approval chain
+        # (owner 2026-08-30).
+        MXD = "MXD"  # concrete mix design
+        BBS = "BBS"  # bar bending schedule
+        TWD = "TWD"  # temporary works design (formwork, falsework, shoring)
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -415,6 +420,30 @@ class Document(models.Model):
                        "REVISE_RESUBMIT", "REJECTED"},
         },
         "MS": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        # Civil submittals ride the same chain: the site prepares, the PM
+        # approves, it is issued to the consultant, and the consultant's
+        # result comes back on it.
+        "MXD": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        "BBS": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        "TWD": {
             "DRAFT": {"SUBMITTED"},
             "SUBMITTED": {"PM_APPROVED", "DRAFT"},
             "PM_APPROVED": {"ISSUED"},
@@ -6511,6 +6540,13 @@ class MaterialTest(models.Model):
     itp_item = models.ForeignKey("ItpItem", on_delete=models.SET_NULL,
                                  null=True, blank=True,
                                  related_name="material_tests")
+    # The approved mix this concrete was batched from. A strength figure on
+    # its own says little — 32 N/mm² is a pass against a C30 mix and a
+    # failure against a C40 one, and the consultant will ask which was
+    # poured (owner 2026-08-30).
+    mix_design = models.ForeignKey("Document", on_delete=models.SET_NULL,
+                                   null=True, blank=True,
+                                   related_name="tests_from_mix")
     # Raised when a result fails, so the failure has somewhere to go.
     ncr = models.ForeignKey("Document", on_delete=models.SET_NULL, null=True,
                             blank=True, related_name="failed_tests")

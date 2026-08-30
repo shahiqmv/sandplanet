@@ -56,6 +56,10 @@ CREATE_ROLES = {  # spec §3 "can create"
     "MAR": {"SITE_ENGINEER", "PM"},      # SE submits with QS
     "SD": {"SITE_ENGINEER", "PM"},       # shop drawing submittal
     "MS": {"SITE_ENGINEER", "PM"},       # method statement submittal
+    # Civil submittals — same hands as a shop drawing (owner 2026-08-30).
+    "MXD": {"SITE_ENGINEER", "PM"},      # concrete mix design
+    "BBS": {"SITE_ENGINEER", "PM"},      # bar bending schedule
+    "TWD": {"SITE_ENGINEER", "PM"},      # temporary works design
     # Site Engineer has full site-task parity with Site Admin (owner,
     # 2026-07-13): both raise MRs, receive goods, etc.
     "MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
@@ -77,6 +81,12 @@ RESULTS = {  # client results per type (spec §5.3/§5.4)
     "MAR": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
     "SD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
     "MS": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT", "REJECTED"},
+    "MXD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
+            "REJECTED"},
+    "BBS": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
+            "REJECTED"},
+    "TWD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
+            "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN", "PMR"}
 MIN_DPR_PHOTOS = 0  # owner (Phase C): no photo floor — attach any number
@@ -212,7 +222,8 @@ def document_create(request):
     # IR/MAR belong to a project (R4). DPR/TWS are SITE-WIDE — one daily
     # report to the one client per site, each work/planned row tagged with
     # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
-    PROJECT_TYPES = ("IR", "MAR", "SD", "MS", "PMR")  # per project
+    PROJECT_TYPES = ("IR", "MAR", "SD", "MS", "PMR",
+                     "MXD", "BBS", "TWD")            # per project
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")

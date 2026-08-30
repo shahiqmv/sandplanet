@@ -40,6 +40,8 @@ class MaterialTestSerializer(serializers.ModelSerializer):
                                               read_only=True)
     ncr_ref = serializers.CharField(source="ncr.ref", read_only=True,
                                     default=None)
+    mix_design_ref = serializers.CharField(source="mix_design.ref",
+                                           read_only=True, default=None)
     results = TestResultSerializer(many=True, read_only=True)
     result_due_on = serializers.SerializerMethodField()
     is_overdue = serializers.SerializerMethodField()
@@ -54,6 +56,7 @@ class MaterialTestSerializer(serializers.ModelSerializer):
                   "required_value", "unit", "requested_on", "required_by",
                   "sampled_on", "sampled_note", "lab_name",
                   "witnessed_by", "notes", "requested_by_name", "ncr_ref",
+                  "mix_design", "mix_design_ref",
                   "results", "result_due_on", "is_overdue", "pdf_url"]
 
     def get_pdf_url(self, obj):

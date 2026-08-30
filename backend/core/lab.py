@@ -91,6 +91,7 @@ def request_test(*, site, data, user, project=None):
         lab_name=(data.get("lab_name") or "").strip(),
         witnessed_by=(data.get("witnessed_by") or "").strip(),
         itp_item_id=data.get("itp_item_id") or None,
+        mix_design_id=data.get("mix_design_id") or None,
         notes=(data.get("notes") or "").strip(),
         requested_by=user)
     audit("document", doc.id,

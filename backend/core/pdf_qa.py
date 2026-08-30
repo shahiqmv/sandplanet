@@ -450,3 +450,177 @@ def tr_context(document, revision):
              "stamp": _stamp_for(approvals, "APPROVE")},
         ],
     }
+
+
+def mxd_context(document, revision):
+    """Concrete mix design. A MAR describes a product; this describes a
+    RECIPE, and the consultant approves it before anything is poured. It is
+    also what a cube result is judged against — a strength figure means
+    nothing without the mix it came from (owner 2026-08-30)."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    sections = [
+        {"kind": "kv", "title": "1. Mix", "rows": [
+            ["Mix reference", payload.get("mix_ref", ""),
+             "Grade", payload.get("grade", "")],
+            ["Where it is used", payload.get("application", ""),
+             "Design strength (28 day)",
+             payload.get("design_strength", "")],
+            ["Batching plant / supplier", payload.get("batching_plant", ""),
+             "Target slump", payload.get("target_slump", "")],
+        ]},
+        {"kind": "kv", "title": "2. Proportions", "rows": [
+            ["Cement type", payload.get("cement_type", ""),
+             "Cement content (kg/m³)", payload.get("cement_content", "")],
+            ["Water / cement ratio", payload.get("wc_ratio", ""),
+             "Admixture", payload.get("admixture", "")],
+            ["Coarse aggregate", payload.get("coarse_aggregate", ""),
+             "Fine aggregate", payload.get("fine_aggregate", "")],
+        ]},
+        {"kind": "kv", "title": "3. Trial mix", "rows": [
+            ["Trial mix reference", payload.get("trial_ref", ""),
+             "Trial result", payload.get("trial_result", "")],
+            ["Specification Ref", payload.get("spec_ref", ""),
+             "BOQ Ref", payload.get("boq_ref", "")],
+        ]},
+        {"kind": "enclosures", "title": "4. Attachments",
+         "items": _enclosure_rows(payload, [
+             ("mix_design", "Mix design certificate"),
+             ("trial_results", "Trial mix results"),
+             ("aggregate_tests", "Aggregate test reports"),
+             ("cement_cert", "Cement certificate"),
+             ("admixture_data", "Admixture data sheet")])},
+        {"kind": "text", "title": "5. Contractor confirmation",
+         "text": payload.get("remarks", "")
+         or "We confirm the mix above meets the specified requirements."},
+    ]
+    sections += _result_section(payload, "Client / Consultant result")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "CONCRETE MIX DESIGN SUBMITTAL",
+        "form_subline": f"Form No: FRM-CIV-01  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention", payload.get("attention_to", ""),
+             "Project", document.project.code if document.project_id else "—"],
+            ["Grade", payload.get("grade", ""),
+             "Where it is used", payload.get("application", "")],
+        ],
+        "sections": sections,
+        "sig_blocks": _submittal_signatures(approvals, payload),
+    }
+
+
+def bbs_context(document, revision):
+    """Bar bending schedule. Approved before steel is cut and bent, because
+    once it is cut it is cut."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    sections = [
+        {"kind": "kv", "title": "1. Schedule details", "rows": [
+            ["Element", payload.get("element", ""),
+             "Location", payload.get("location", "")],
+            ["Structural drawing", payload.get("drawing_ref", ""),
+             "Drawing revision", payload.get("drawing_rev", "")],
+            ["Steel grade", payload.get("steel_grade", ""),
+             "Bar marks", payload.get("bar_marks", "")],
+            ["Total weight (kg)", payload.get("total_weight", ""),
+             "Specification Ref", payload.get("spec_ref", "")],
+        ]},
+        {"kind": "enclosures", "title": "2. Attachments",
+         "items": _enclosure_rows(payload, [
+             ("schedule", "Bar bending schedule"),
+             ("reinforcement_drawing", "Reinforcement drawing"),
+             ("shape_codes", "Bar shape codes")])},
+        {"kind": "kv", "title": "3. Contractor confirmation", "rows": [
+            ["Scheduled from the approved drawing",
+             _yesno(payload.get("confirms_design")),
+             "Remarks", payload.get("remarks", "")],
+        ]},
+    ]
+    sections += _result_section(payload, "Client / Consultant result")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "BAR BENDING SCHEDULE SUBMITTAL",
+        "form_subline": f"Form No: FRM-CIV-02  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention", payload.get("attention_to", ""),
+             "Project", document.project.code if document.project_id else "—"],
+            ["Element", payload.get("element", ""),
+             "Drawing", payload.get("drawing_ref", "")],
+        ],
+        "sections": sections,
+        "sig_blocks": _submittal_signatures(approvals, payload),
+    }
+
+
+def twd_context(document, revision):
+    """Temporary works — formwork, falsework, shoring, scaffolding.
+
+    The independent design CHECK is the field that matters: temporary works
+    fail while people are standing on them, and the check is what a consultant
+    asks for first."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    sections = [
+        {"kind": "kv", "title": "1. The works", "rows": [
+            ["Type", payload.get("tw_type", ""),
+             "Location", payload.get("location", "")],
+            ["Permanent works supported", payload.get("supports", ""),
+             "In use from / to", payload.get("in_use", "")],
+        ]},
+        {"kind": "kv", "title": "2. Design", "rows": [
+            ["Designed by", payload.get("designed_by", ""),
+             "Design loading", payload.get("design_loading", "")],
+            ["Independently checked by", payload.get("checked_by", ""),
+             "Check date", payload.get("check_date", "")],
+            ["Specification / standard", payload.get("spec_ref", ""),
+             "Striking / dismantling criteria",
+             payload.get("striking", "")],
+        ]},
+        {"kind": "enclosures", "title": "3. Attachments",
+         "items": _enclosure_rows(payload, [
+             ("design_drawings", "Design drawings"),
+             ("calculations", "Calculations"),
+             ("check_certificate", "Design check certificate"),
+             ("risk_assessment", "Risk assessment"),
+             ("method_statement", "Method statement")])},
+        {"kind": "text", "title": "4. Contractor confirmation",
+         "text": payload.get("remarks", "")
+         or "We confirm the temporary works above have been designed and "
+            "independently checked for the loads stated."},
+    ]
+    sections += _result_section(payload, "Client / Consultant result")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "TEMPORARY WORKS SUBMITTAL",
+        "form_subline": f"Form No: FRM-CIV-03  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention", payload.get("attention_to", ""),
+             "Project", document.project.code if document.project_id else "—"],
+            ["Type", payload.get("tw_type", ""),
+             "Location", payload.get("location", "")],
+        ],
+        "sections": sections,
+        "sig_blocks": _submittal_signatures(approvals, payload),
+    }
+
+
+def _enclosure_rows(payload, pairs):
+    """(label, present?) for the attachment checklist, from the payload's
+    enclosures map — the same shape MAR and SD build inline."""
+    enclosures = payload.get("enclosures") or {}
+    return [(label, bool(enclosures.get(key))) for key, label in pairs]
+
+
+def _submittal_signatures(approvals, payload):
+    return [
+        {"title": "Submitted By — Site Engineer / QA-QC",
+         "stamp": _stamp_for(approvals, "SUBMIT")},
+        {"title": "Approved By — Project Manager",
+         "stamp": _stamp_for(approvals, "APPROVE")},
+        {"title": "Reviewed By — Client / Consultant",
+         "text": _client_by(payload)},
+    ]
