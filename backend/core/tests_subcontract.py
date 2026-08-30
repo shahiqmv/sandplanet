@@ -730,10 +730,17 @@ class SubcontractPaymentNettingTests(TestCase):
         return doc.subcontract_agreement
 
     def _pay(self, amount, status="PAID"):
-        """A PYR raised against the agreement and taken to `status`."""
+        """A PYR raised against the agreement and taken to `status`.
+
+        The ref is a short counter, not the amount and status: Document.ref is
+        varchar(20) and "PYR-NET-4000-DIRECTOR_APPROVED" is 31 characters.
+        SQLite does not enforce column widths, so this passed locally for
+        months and failed the first time CI ran the suite against PostgreSQL
+        (2026-08-30) — the same trap as the varchar(8) link_type."""
         from .models import Document, PaymentRequest
+        self._seq = getattr(self, "_seq", 0) + 1
         doc = Document.objects.create(
-            doc_type="PYR", ref=f"PYR-NET-{amount}-{status}", site=self.site,
+            doc_type="PYR", ref=f"PYR-NET-{self._seq:03d}", site=self.site,
             doc_date=date.today(), status=status, created_by=self.sa)
         PaymentRequest.objects.create(
             document=doc, cost_head=self.head, currency="MVR",

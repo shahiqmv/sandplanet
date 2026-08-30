@@ -204,7 +204,16 @@ class MeetingTests(TestCase):
         self.assertEqual(rec["note"], "session 1")
         d = self.client.get(f"/api/v1/meetings/{mid}/audio/{rec['id']}")
         self.assertEqual(d.status_code, 200)
-        d.close()          # release the streamed file handle (Windows lock)
+        # Drain the stream and close the FILE, never the response. A
+        # FileResponse is a StreamingHttpResponse, and its .close() fires
+        # Django's request_finished signal, which closes the database
+        # connection — inside a TestCase's atomic block on PostgreSQL that
+        # kills it for every remaining test in the class. SQLite reopens
+        # silently, so it passed locally and failed the moment CI ran the
+        # suite against Postgres: 105 errors from this one line (2026-08-30).
+        b"".join(d.streaming_content)
+        if getattr(d, "file_to_stream", None) is not None:
+            d.file_to_stream.close()
         x = self.client.delete(f"/api/v1/meetings/{mid}/audio/{rec['id']}")
         self.assertEqual(x.status_code, 204)
 

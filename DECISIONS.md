@@ -346,3 +346,22 @@ CLIENT auth realm standalone → portal documents → portal video/manpower →
 hardening. Gating risks are outside the code: pilot-site uplink bandwidth, a
 second droplet to operate, and a real client domain (prod is still the
 sslip.io IP domain today). Full plan in the client-portal-cameras memory.
+
+## Running the tests the way CI does
+
+CI runs the suite against **PostgreSQL**; local dev defaults to SQLite, which
+does not enforce column widths and quietly reopens a closed connection. Two
+bugs hid there for months and only surfaced the first time CI got as far as
+the test step (2026-08-30): a `varchar(20)` overflow, and a `FileResponse`
+whose `.close()` fires `request_finished` and closes the database connection
+mid-test-class.
+
+Before pushing anything that touches models or responses:
+
+    brew install postgresql@16 && brew services start postgresql@16
+    createuser -s sandplanet && createdb -O sandplanet sandplanet
+    psql -d sandplanet -c "ALTER USER sandplanet PASSWORD 'devpass';"
+
+    cd backend && POSTGRES_HOST=localhost POSTGRES_DB=sandplanet \
+      POSTGRES_USER=sandplanet POSTGRES_PASSWORD=devpass \
+      .venv/bin/python3 manage.py test core
