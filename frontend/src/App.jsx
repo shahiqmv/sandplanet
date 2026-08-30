@@ -222,7 +222,7 @@ function landingPage(me) {
   return "sites";
 }
 import { LineDocForm, LineDocView } from "./LineDoc.jsx";
-import { QADocView, QAForm } from "./QADocs.jsx";
+import { QADocView, QAForm, SUBMITTAL_TYPES } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
@@ -601,24 +601,24 @@ export default function App() {
     setDocView(null);
   }
 
-  async function openDoc(ref) {
+  async function openDoc(ref, returnTo = null) {
     setError(null);
     try {
       const doc = await api(`/documents/${ref}`);
       if (doc.doc_type === "IPR") {
-        setDocView({ mode: "ipr-view", doc });
+        setDocView({ mode: "ipr-view", doc, returnTo });
         return;
       }
       if (doc.doc_type === "IRN") {
-        setDocView({ mode: "irn-view", doc });
+        setDocView({ mode: "irn-view", doc, returnTo });
         return;
       }
       const mode = doc.doc_type === "DPR" ? "dpr-view"
-                 : ["IR", "MAR", "SD", "MS", "TWS"].includes(doc.doc_type)
+                 : ["IR", "TWS", ...SUBMITTAL_TYPES].includes(doc.doc_type)
                    ? "qa-view"
                  : doc.doc_type === "PYR" ? "pyr-view"
                  : "line-view";
-      setDocView({ mode, doc });
+      setDocView({ mode, doc, returnTo });
     } catch (e) {
       setError(e.message);
     }
@@ -629,6 +629,7 @@ export default function App() {
     delete payload.client_result;
     delete payload.closure;
     setDocView({ mode: "qa-form", docType: "IR", doc: null,
+                 returnTo: docView?.returnTo,
                  prefill: { previous_ir_ref: doc.ref, payload } });
   }
 
@@ -644,8 +645,12 @@ export default function App() {
     setRefresh((n) => n + 1);
   }
 
+  // Closing a document returns you to the page you opened it from. Without
+  // this, raising a submittal from the submittals page and closing it landed
+  // you on the site dashboard, and you had to walk back in
+  // (owner 2026-08-30).
   function closeDoc() {
-    setDocView(null);
+    setDocView(docView?.returnTo ? { mode: docView.returnTo } : null);
     bump();
   }
 
@@ -980,14 +985,16 @@ export default function App() {
                     projects={projects}
                     existing={docView.doc} prefill={docView.prefill}
                     onSaved={(doc) => { bump();
-                      setDocView({ mode: "qa-view", doc }); }}
+                      setDocView({ mode: "qa-view", doc,
+                                   returnTo: docView.returnTo }); }}
                     onCancel={closeDoc} />
           )}
           {docView?.mode === "qa-view" && (
             <QADocView doc={docView.doc} me={me} onClose={closeDoc}
                        onChanged={bump} onResubmit={resubmitIr}
                        onEdit={(doc) => setDocView({
-                         mode: "qa-form", docType: doc.doc_type, doc })} />
+                         mode: "qa-form", docType: doc.doc_type, doc,
+                         returnTo: docView.returnTo })} />
           )}
 
           {docView?.mode === "programme" && (
@@ -1369,9 +1376,11 @@ export default function App() {
           )}
           {docView?.mode === "submittals" && openSite && (
             <SubmittalsPage site={openSite} project={project} me={me}
-              onOpenDoc={openDoc} onClose={closeDoc}
+              onOpenDoc={(ref) => openDoc(ref, "submittals")}
+              onClose={() => setDocView(null)}
               onNewQa={(t) => setDocView({ mode: "qa-form", docType: t,
-                                           doc: null })} />
+                                           doc: null,
+                                           returnTo: "submittals" })} />
           )}
 
           {/* Materials & site testing for THIS site. The cross-site register

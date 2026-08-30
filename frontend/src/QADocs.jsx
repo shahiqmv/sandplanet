@@ -177,7 +177,11 @@ const ENCLOSURES_BY_TYPE = {
         ["method_statement", "Method statement"]],
 };
 
-const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC"];
+// Exported: App routes an opened document to the QA viewer off this list.
+// Hand-copying it there is what left MXD/BBS/TWD/MOC opening as line
+// documents (owner 2026-08-30).
+export const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD",
+                                "MOC"];
 
 const RESULT_OPTIONS = {
   IR: [["APPROVED", "Approved"],
