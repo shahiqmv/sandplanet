@@ -232,8 +232,17 @@ def settlement_create(request):
 
 @api_view(["GET"])
 def settlement_candidates(request):
-    """Workers at a site who can be settled — anyone on the roster, since a
-    demobilisation is usually recorded on the system after the fact."""
+    """Workers at a site who can be settled, grouped by when they left.
+
+    A site's full roster is useless for this: VKR has 41 men still working
+    and 67 who have passed through, and the batch you want is the twenty
+    demobilised together. That batch is already on record — their allocations
+    were all closed on the same day — so the list is grouped by that date and
+    the whole batch is one click (owner 2026-08-30: "how can i figure out
+    those 20 from this settlement list").
+
+    Still-active workers are listed too, last: a demobilisation is often
+    settled before anyone records it."""
     from .models import Employee
 
     site_id = request.GET.get("site")
@@ -243,11 +252,25 @@ def settlement_candidates(request):
         site_allocations__site_id=site_id,
         engagement_type="DIRECT").exclude(
         payroll_lines__run__kind="SETTLEMENT",
-        payroll_lines__run__status="LOCKED").distinct().order_by("emp_no")
-    return Response([{"id": e.id, "emp_no": e.emp_no,
-                      "full_name": e.full_name, "is_active": e.is_active,
-                      "basic_pay": e.basic_pay, "left_on": e.left_on}
-                     for e in people])
+        payroll_lines__run__status="LOCKED").distinct().prefetch_related(
+        "site_allocations")
+
+    rows = []
+    for e in people:
+        # The day this site's roster let him go — the latest closed
+        # allocation here. Open allocation = still working.
+        closes = [a.to_date for a in e.site_allocations.all()
+                  if str(a.site_id) == str(site_id)]
+        left = None if any(c is None for c in closes) else (
+            max(closes) if closes else None)
+        rows.append({"id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+                     "is_active": e.is_active, "basic_pay": e.basic_pay,
+                     "left_on": e.left_on, "removed_on": left})
+    rows.sort(key=lambda r: (r["removed_on"] is None,
+                             -(r["removed_on"].toordinal()
+                               if r["removed_on"] else 0),
+                             r["emp_no"] or ""))
+    return Response(rows)
 
 
 @api_view(["POST"])

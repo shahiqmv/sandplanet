@@ -15,6 +15,7 @@ export default function SettlementPanel({ sites, onCreated, onClose }) {
   const [people, setPeople] = useState([]);
   const [picked, setPicked] = useState([]);
   const [preview, setPreview] = useState(null);
+  const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
 
@@ -52,6 +53,43 @@ export default function SettlementPanel({ sites, onCreated, onClose }) {
       onCreated?.(run);
     } catch (e) { setError(e.message); setBusy(false); }
   }
+
+  // Group by the day this site's roster let them go. A batch demobilised
+  // together shares that date, which is what makes "those twenty" findable
+  // in a roster of a hundred.
+  const needle = q.trim().toLowerCase();
+  const groups = [];
+  for (const p of people) {
+    if (needle && !`${p.emp_no} ${p.full_name}`.toLowerCase()
+        .includes(needle)) continue;
+    const key = p.removed_on || "active";
+    let g = groups.find((x) => x.key === key);
+    if (!g) {
+      g = { key, rows: [],
+            label: p.removed_on
+              ? `Left the site ${new Date(p.removed_on)
+                  .toLocaleDateString(undefined, { day: "numeric",
+                    month: "short", year: "numeric" })}`
+              : "Still on the roster" };
+      groups.push(g);
+    }
+    g.rows.push(p);
+  }
+
+  const selectGroup = (g) => {
+    setPreview(null);
+    const ids = g.rows.map((r) => r.id);
+    const all = ids.every((id) => picked.includes(id));
+    setPicked((cur) => all ? cur.filter((id) => !ids.includes(id))
+                           : [...new Set([...cur, ...ids])]);
+  };
+
+  // What the system already thinks — shown, never prefilled. At VKR the
+  // recorded date is the day someone got round to the paperwork, five days
+  // after the men actually stopped, and prefilling it would launder that
+  // mistake into the pay run.
+  const pickedDates = [...new Set(people.filter((p) => picked.includes(p.id))
+    .map((p) => p.removed_on).filter(Boolean))];
 
   const ready = siteId && lastDay && picked.length > 0;
 
@@ -101,37 +139,73 @@ export default function SettlementPanel({ sites, onCreated, onClose }) {
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "0 0 8px" }}>
         The last working day caps every man&rsquo;s pay, whatever the register
         says after it — that is what corrects a demobilisation recorded late.
+        {pickedDates.length === 1 && (
+          <> The system has them leaving{" "}
+            <b>{new Date(pickedDates[0]).toLocaleDateString(undefined,
+              { day: "numeric", month: "short", year: "numeric" })}</b>
+            {" "}— that is the day the removal was filed, which is often
+            later than the day they stopped.</>
+        )}
       </p>
 
       {people.length > 0 && (
-        <div style={{ maxHeight: 210, overflowY: "auto", border:
-                      "1px solid var(--line)", borderRadius: 8, padding: 8,
-                      marginBottom: 12 }}>
-          <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-            <Btn variant="ghost" style={{ fontSize: 12, padding: "3px 10px" }}
-                 onClick={() => { setPreview(null);
-                                  setPicked(people.map((p) => p.id)); }}>
-              Select all {people.length}</Btn>
+        <>
+          <div style={{ display: "flex", gap: 8, alignItems: "center",
+                        marginBottom: 8, flexWrap: "wrap" }}>
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+                   placeholder="Find a worker by name or number…"
+                   style={{ ...inputStyle, width: 260 }} />
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              {picked.length} selected of {people.length}
+            </span>
             {picked.length > 0 && (
-              <Btn variant="ghost" style={{ fontSize: 12, padding: "3px 10px" }}
+              <Btn variant="ghost"
+                   style={{ fontSize: 12, padding: "3px 10px" }}
                    onClick={() => { setPicked([]); setPreview(null); }}>
                 Clear</Btn>
             )}
           </div>
-          {people.map((p) => (
-            <label key={p.id} style={{ display: "flex", gap: 8, fontSize: 13,
-                                       padding: "3px 4px", cursor: "pointer" }}>
-              <input type="checkbox" checked={picked.includes(p.id)}
-                     onChange={() => toggle(p.id)} />
-              <span style={{ width: 92 }}>{p.emp_no}</span>
-              <span style={{ flex: 1 }}>{p.full_name}</span>
-              {!p.is_active && (
-                <span style={{ fontSize: 11, color: "var(--muted)" }}>
-                  already off the roster</span>
-              )}
-            </label>
-          ))}
-        </div>
+          <div style={{ maxHeight: 300, overflowY: "auto",
+                        border: "1px solid var(--line)", borderRadius: 8,
+                        padding: 8, marginBottom: 12 }}>
+            {groups.map((g) => (
+              <div key={g.key} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center",
+                              flexWrap: "wrap", padding: "4px 2px",
+                              borderBottom: "1px solid var(--line)",
+                              marginBottom: 4 }}>
+                  <b style={{ fontSize: 12.5, color: "var(--sp-navy)" }}>
+                    {g.label}
+                  </b>
+                  <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                    {g.rows.length} worker{g.rows.length === 1 ? "" : "s"}
+                  </span>
+                  <Btn variant="ghost"
+                       style={{ fontSize: 11.5, padding: "2px 9px",
+                                marginLeft: "auto" }}
+                       onClick={() => selectGroup(g)}>
+                    {g.rows.every((r) => picked.includes(r.id))
+                      ? "Deselect" : `Select these ${g.rows.length}`}
+                  </Btn>
+                </div>
+                {g.rows.map((p) => (
+                  <label key={p.id}
+                         style={{ display: "flex", gap: 8, fontSize: 13,
+                                  padding: "3px 4px", cursor: "pointer" }}>
+                    <input type="checkbox" checked={picked.includes(p.id)}
+                           onChange={() => toggle(p.id)} />
+                    <span style={{ width: 92 }}>{p.emp_no}</span>
+                    <span style={{ flex: 1 }}>{p.full_name}</span>
+                  </label>
+                ))}
+              </div>
+            ))}
+            {groups.length === 0 && (
+              <p style={{ fontSize: 13, color: "var(--muted)", margin: 4 }}>
+                Nobody matches “{q}”.</p>
+            )}
+          </div>
+        </>
       )}
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
