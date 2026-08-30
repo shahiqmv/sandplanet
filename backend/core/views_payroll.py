@@ -1,12 +1,14 @@
 """Monthly payroll runs (owner's salary sheet). MVR runs are per site; the USD
 run is a single combined run across all sites. HO HR / Finance / Admin only."""
 import logging
+from datetime import date
 from decimal import Decimal
 
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
 from . import payroll
+from . import payroll_settlement as settlement
 from . import thermal
 from .audit import audit
 from .models import PayrollLine, PayrollRun, Site
@@ -76,6 +78,9 @@ def _run_info(run, lines=True):
         "site_code": run.site.code if run.site_id else None,
         "currency": run.currency, "year": run.year, "month": run.month,
         "working_days": run.working_days, "status": run.status,
+        "kind": run.kind,
+        "last_working_day": run.last_working_day,
+        "settlement_reason": run.settlement_reason,
         "locked_by": run.locked_by.full_name if run.locked_by_id else None,
         "locked_at": run.locked_at,
         "status_label": run.get_status_display(),
@@ -90,8 +95,13 @@ def _run_info(run, lines=True):
         # Named in the register, but with no payable day — an August joiner
         # with a stray July mark against him. Off the run, not out of sight
         # (owner 2026-08-15).
-        "marked_but_unpayable": payroll.marked_but_unpayable(
-            run.site, run.currency, run.year, run.month),
+        # Only meaningful for a monthly run: a settlement covers a named
+        # batch, so "named in the register but not on the run" is everyone
+        # else at the site.
+        "marked_but_unpayable": (
+            payroll.marked_but_unpayable(run.site, run.currency, run.year,
+                                         run.month)
+            if run.kind == PayrollRun.Kind.MONTHLY else []),
     }
     if lines:
         register = payroll.register_summary(run)
@@ -153,6 +163,91 @@ def payroll_runs(request):
     if month:
         qs = qs.filter(month=month)
     return Response([_run_info(r, lines=False) for r in qs])
+
+
+def _settlement_inputs(request):
+    """(site, employees, last working day, reason) or (None, error)."""
+    from .models import Employee, Site
+
+    try:
+        site = Site.objects.get(pk=request.data.get("site_id"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return None, Response({"detail": "Unknown site."}, status=400)
+    raw = request.data.get("last_working_day")
+    try:
+        lwd = date.fromisoformat(raw)
+    except (TypeError, ValueError):
+        return None, Response({"detail": "A last working day is required."},
+                              status=400)
+    ids = request.data.get("employee_ids") or []
+    people = list(Employee.objects.filter(id__in=ids))
+    if len(people) != len(set(ids)):
+        return None, Response({"detail": "Unknown worker on the batch."},
+                              status=400)
+    return (site, people, lwd, request.data.get("reason", "")), None
+
+
+@api_view(["POST"])
+def settlement_preview(request):
+    """What a demobilised batch would be paid — writes nothing.
+
+    Shows the days the register carries AFTER the stated last working day
+    alongside the money, because those two records contradicting each other is
+    exactly what a late demobilisation produces, and the PM has to settle it
+    before the payment goes out, not after (owner 2026-08-30)."""
+    if not (_guard(request) or request.user.role in ("PM", "DIRECTOR")):
+        return Response({"detail": "HR / PM / Director only."}, status=403)
+    parsed, err = _settlement_inputs(request)
+    if err:
+        return err
+    site, people, lwd, _reason = parsed
+    rows = settlement.preview(site, people, lwd)
+    return Response({
+        "last_working_day": lwd, "site_code": site.code, "rows": rows,
+        "total_net": sum((r["net"] for r in rows), Decimal("0")),
+        "conflict_count": sum(1 for r in rows if r["conflicts"]),
+    })
+
+
+@api_view(["POST"])
+def settlement_create(request):
+    """Raise the settlement run for a demobilised batch."""
+    if not _guard(request):
+        return Response({"detail": "HO HR / Finance / Admin only."},
+                        status=403)
+    parsed, err = _settlement_inputs(request)
+    if err:
+        return err
+    site, people, lwd, reason = parsed
+    run, msg = settlement.generate_settlement(
+        site=site, employees=people, last_working_day=lwd, reason=reason,
+        actor=request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    audit("payroll_run", run.id, "SETTLEMENT_CREATED", actor=request.user,
+          detail={"site": site.code, "workers": len(people),
+                  "last_working_day": lwd.isoformat()})
+    return Response(_run_info(run), status=201)
+
+
+@api_view(["GET"])
+def settlement_candidates(request):
+    """Workers at a site who can be settled — anyone on the roster, since a
+    demobilisation is usually recorded on the system after the fact."""
+    from .models import Employee
+
+    site_id = request.GET.get("site")
+    if not site_id:
+        return Response({"detail": "site is required."}, status=400)
+    people = Employee.objects.filter(
+        site_allocations__site_id=site_id,
+        engagement_type="DIRECT").exclude(
+        payroll_lines__run__kind="SETTLEMENT",
+        payroll_lines__run__status="LOCKED").distinct().order_by("emp_no")
+    return Response([{"id": e.id, "emp_no": e.emp_no,
+                      "full_name": e.full_name, "is_active": e.is_active,
+                      "basic_pay": e.basic_pay, "left_on": e.left_on}
+                     for e in people])
 
 
 @api_view(["POST"])

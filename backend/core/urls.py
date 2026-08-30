@@ -754,6 +754,14 @@ urlpatterns = [
     path("leaves/<int:pk>/return", leave_api.leave_return, name="leave-return"),
     path("leaves/<int:pk>/cancel", leave_api.leave_cancel, name="leave-cancel"),
     path("payroll/runs", payroll_api.payroll_runs, name="payroll-runs"),
+    # Final settlement for a demobilised batch — a payroll run of its own
+    # kind, so it rides the same PM/Director chain, voucher and payslip.
+    path("payroll/settlements/candidates", payroll_api.settlement_candidates,
+         name="settlement-candidates"),
+    path("payroll/settlements/preview", payroll_api.settlement_preview,
+         name="settlement-preview"),
+    path("payroll/settlements", payroll_api.settlement_create,
+         name="settlement-create"),
     path("payroll/generate", payroll_api.payroll_generate,
          name="payroll-generate"),
     path("payroll/readiness", payroll_api.payroll_readiness,

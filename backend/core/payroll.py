@@ -235,11 +235,23 @@ def eligible_workers(site, currency, year, month):
             is_active=True, currency=currency)
     # Nobody is paid for a month they had not joined yet — unless the site
     # marked them in it, which outranks a join date that says otherwise.
-    return qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end)
-                     | Q(id__in=marked_ids))
+    qs = qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end)
+                   | Q(id__in=marked_ids))
+    # ...and nobody is paid twice. A worker settled in full on the way out is
+    # off every monthly run for the periods that settlement covered. This used
+    # to be a flag somebody had to remember to tick, and the once it was
+    # forgotten BVR's July run paid three men a second time (owner
+    # 2026-08-14). A locked settlement's last working day cannot be forgotten.
+    from .models import PayrollRun
+    settled = PayrollRun.objects.filter(
+        kind=PayrollRun.Kind.SETTLEMENT, status="LOCKED",
+        last_working_day__gte=m_start).values_list("lines__employee_id",
+                                                   flat=True)
+    return qs.exclude(id__in=[i for i in settled if i])
 
 
-def _attendance_prefill(employee, site, year, month, working_days):
+def _attendance_prefill(employee, site, year, month, working_days,
+                        cap=None):
     """Days worked (expected − absences), approved OT hours, and Fridays
     (rest days) worked for a worker in a month, from attendance. A rest day is
     any weekday not in the site's working week; being PRESENT on one is the
@@ -262,6 +274,14 @@ def _attendance_prefill(employee, site, year, month, working_days):
     work_week = set(site_obj.working_days) if site_obj else {6, 7, 1, 2, 3, 4}
 
     start, last = paid_window(employee, site, year, month)
+    # A final settlement caps the window at the man's last working day. It is
+    # the one place a stated date outranks the register, because a register
+    # that keeps marking men after they have gone is exactly what a late
+    # demobilisation produces (owner 2026-08-30). Passed in rather than
+    # forked: these rules carry a year of corrections about rest days, half
+    # days and absent weeks, and a second copy would drift from them.
+    if cap is not None and cap < last:
+        last = cap
 
     fridays = 0
     ot = Decimal("0")
@@ -816,6 +836,12 @@ def lock_run(run, actor):
         run.locked_by = actor
         run.locked_at = timezone.now()
         run.save(update_fields=["status", "locked_by", "locked_at"])
+        if run.kind == "SETTLEMENT":
+            # Locking a settlement is the moment the exit becomes a fact: the
+            # men are deactivated and their allocations closed on the real
+            # last working day, not on whatever day the paperwork landed.
+            from .payroll_settlement import apply_settlement
+            apply_settlement(run, actor)
 
 
 # Authorisation on a payment voucher is the commitment point — the cash goes

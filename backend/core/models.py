@@ -1986,6 +1986,13 @@ class Employee(models.Model):
     emergency_contact = models.TextField(blank=True)
     join_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)  # deactivate, never delete
+    # When they actually stopped working, and why. Demobilisation used to
+    # record neither: it flipped is_active and closed allocations at
+    # date.today(), so a batch approved five days late paid five days too
+    # many. VKR's 20 August leavers were recorded on the 29th with a real
+    # last day of the 24th (owner 2026-08-30).
+    left_on = models.DateField(null=True, blank=True)
+    left_reason = models.CharField(max_length=200, blank=True)
     # Workforce classification (subcontractor module). DIRECT = payroll worker;
     # SUBCONTRACT = engaged through a Subcontractor, payroll-excluded, no pay
     # fields. Never renders on client-facing documents (D-a).
@@ -2699,8 +2706,20 @@ class SalaryAdvance(models.Model):
 
 
 class PayrollRun(models.Model):
-    """A monthly salary run. MVR runs are per site; the USD run is a single
-    combined run across all sites (site=NULL) — middle management and above."""
+    """A salary run. MVR runs are per site; the USD run is a single combined
+    run across all sites (site=NULL) — middle management and above.
+
+    Two kinds. A MONTHLY run pays everyone for a calendar month. A SETTLEMENT
+    pays a named batch of demobilised workers everything still owed to them up
+    to their last working day, so they can be paid on the way out instead of
+    waiting for a month-end run they will not be here for. A settlement is a
+    run rather than a thing of its own because it needs every part a run
+    already has — the PM/Director chain, the payment voucher, the cost
+    posting, the payslip — and none of those should exist twice."""
+
+    class Kind(models.TextChoices):
+        MONTHLY = "MONTHLY", "Monthly run"
+        SETTLEMENT = "SETTLEMENT", "Final settlement"
 
     class Status(models.TextChoices):
         DRAFT = "DRAFT", "Draft"
@@ -2727,10 +2746,18 @@ class PayrollRun(models.Model):
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
                              blank=True, related_name="payroll_runs")
+    kind = models.CharField(max_length=10, choices=Kind.choices,
+                            default=Kind.MONTHLY)
     currency = models.CharField(max_length=3, default="MVR")
     year = models.IntegerField()
     month = models.IntegerField()
     working_days = models.IntegerField()  # divisor for pro-rating
+    # Settlement only: the day the batch stopped working. It CAPS every
+    # line's paid window, which is the one place a stated date outranks the
+    # register — the register is what over-counts when demobilisation is
+    # filed late, and that is precisely what this date exists to correct.
+    last_working_day = models.DateField(null=True, blank=True)
+    settlement_reason = models.CharField(max_length=200, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.DRAFT)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT,
@@ -2758,8 +2785,13 @@ class PayrollRun(models.Model):
 
     class Meta:
         constraints = [
+            # One MONTHLY run per site/currency/month. Settlements are
+            # excluded: a site can settle more than one batch in a month, and
+            # a settlement must be able to sit alongside the monthly run for
+            # the same period.
             models.UniqueConstraint(fields=["site", "currency", "year",
-                                            "month"], name="uniq_payroll_run")
+                                            "month"], name="uniq_payroll_run",
+                                    condition=models.Q(kind="MONTHLY"))
         ]
         ordering = ["-year", "-month"]
 
