@@ -156,14 +156,16 @@ class Command(BaseCommand):
                     f" = {total:>3}d  need {required}")
 
         # Park the BOM-seeded local materials under their own heading.
-        loose = sched.lines.filter(section__isnull=True)
-        if loose.exists():
+        # Listed, not a live queryset: counting it after the moves would
+        # count the rows that are no longer loose, i.e. always zero.
+        loose = list(sched.lines.filter(section__isnull=True).order_by("id"))
+        if loose:
             code, title = LOCAL_SECTION
             section, _ = ScheduleSection.objects.get_or_create(
                 schedule=sched, code=code,
                 defaults={"title": title, "sort_order": 900})
             self.stdout.write(f"\n  {code} — {title}")
-            for i, line in enumerate(loose.order_by("id"), start=1):
+            for i, line in enumerate(loose, start=1):
                 self.stdout.write(f"    move   {i}. {line.description[:38]}")
                 if not dry:
                     line.section = section
@@ -171,7 +173,7 @@ class Command(BaseCommand):
                     line.save(update_fields=["section", "s_no"])
 
         self.stdout.write(f"\n{made} created, {updated} updated, "
-                          f"{loose.count()} moved into {LOCAL_SECTION[0]}.")
+                          f"{len(loose)} moved into {LOCAL_SECTION[0]}.")
         if dry:
             self.stdout.write(self.style.WARNING("DRY RUN — nothing written."))
             transaction.set_rollback(True)
