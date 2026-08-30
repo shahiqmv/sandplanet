@@ -37,9 +37,26 @@ PAY_DO_ROLES = ("FINANCE", "ADMIN")         # who raises the PYR
 
 
 def is_staff(employee):
-    """Staff, not labour. The leave system is theirs (owner 2026-08-30)."""
-    return bool(employee.job_category_id
-                and employee.job_category.grp == "STAFF")
+    """Staff, not labour. The leave system is theirs (owner 2026-08-30).
+
+    Two ways to be staff, because the categories are site-shaped. A
+    ManpowerCategory in the STAFF group covers the people on a site —
+    engineers, foremen, supervisors — but there is no category for a
+    Signatory, HR, Finance or Purchasing, and inventing one would be worse
+    than the gap: those rows feed the DPR and TWS manpower pickers, so a
+    "Finance" category would turn up in the daily report as somebody to
+    allocate to a task.
+
+    Head Office is the app's own marker for those people already — HO staff
+    are the employees allocated to the head-office site — so being allocated
+    there is the second way in. Seven of the first nine linked head-office
+    logins had no usable category and would otherwise have been refused
+    (found 2026-08-30, checking the real links)."""
+    if employee.job_category_id and employee.job_category.grp == "STAFF":
+        return True
+    alloc = (employee.site_allocations.filter(to_date__isnull=True)
+             .select_related("site").first())
+    return bool(alloc and alloc.site.is_head_office)
 
 
 def create(user, data):

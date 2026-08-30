@@ -235,10 +235,9 @@ class StaffRequestTests(TestCase):
         self.client.force_authenticate(self.pd)
         self.client.post(f"/api/v1/staff-requests/{req.id}/decide",
                          {"approve": True}, format="json")
-        doc = Document.objects.create(doc_type="PYR", ref="PYR-REQ-001",
-                                      site=self.site, status="SUBMITTED",
-                                      doc_date=date.today(),
-                                      created_by=self.fin)
+        Document.objects.create(doc_type="PYR", ref="PYR-REQ-001",
+                                site=self.site, status="SUBMITTED",
+                                doc_date=date.today(), created_by=self.fin)
         self.client.force_authenticate(self.fin)
         r = self.client.post(
             f"/api/v1/staff-requests/{req.id}/link-payment",
@@ -265,3 +264,67 @@ class StaffRequestTests(TestCase):
         self.client.force_authenticate(self.fin)
         self.assertEqual(
             self.client.get("/api/v1/staff-requests/queue").data, [])
+
+
+class HeadOfficeStaffTests(TestCase):
+    """Head Office is the app's own marker for staff who are not on a site.
+
+    The STAFF manpower categories are site-shaped — engineer, foreman,
+    supervisor — with nothing for a Signatory, HR or Finance. Inventing those
+    categories would put head-office roles into the DPR and TWS manpower
+    pickers, so being allocated to Head Office is the second way to be staff
+    (owner 2026-08-30).
+    """
+
+    def setUp(self):
+        self.ho = Site.objects.create(code="MLE", name="Head Office",
+                                      status=Site.Status.ACTIVE,
+                                      is_head_office=True)
+        self.site = Site.objects.create(code="SIT", name="A site",
+                                        status=Site.Status.ACTIVE)
+        self.labour_cat = ManpowerCategory.objects.create(
+            name="Skilled Labour", list_type="DPR", grp="LABOUR",
+            sort_order=1)
+        self.client = APIClient()
+
+    def _person(self, no, site, cat=None):
+        e = Employee.objects.create(
+            emp_no=no, full_name=f"P {no}", basic_pay=Decimal("9000"),
+            currency="MVR", job_category=cat, employment_type="PERMANENT",
+            engagement_type="DIRECT", join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(employee=e, site=site,
+                                              from_date=date(2026, 1, 1))
+        u = make_user(f"u{no.lower().replace('-', '')}", User.Role.HO_HR)
+        u.employee = e
+        u.save(update_fields=["employee"])
+        return u
+
+    def _ask(self, user):
+        self.client.force_authenticate(user)
+        return self.client.post("/api/v1/me/requests", {
+            "kind": "LEAVE_ANNUAL",
+            "from_date": (timezone.localdate() + timedelta(days=10))
+            .isoformat(),
+            "to_date": (timezone.localdate() + timedelta(days=14))
+            .isoformat()}, format="json")
+
+    def test_head_office_with_no_category_counts_as_staff(self):
+        u = self._person("EMP-H01", self.ho)
+        self.assertEqual(self._ask(u).status_code, 201)
+
+    def test_head_office_with_a_labour_category_still_counts(self):
+        """Finance and Purchasing carry Skilled Labour on their records."""
+        u = self._person("EMP-H02", self.ho, self.labour_cat)
+        self.assertEqual(self._ask(u).status_code, 201)
+
+    def test_a_labourer_on_a_site_still_cannot(self):
+        u = self._person("EMP-H03", self.site, self.labour_cat)
+        r = self._ask(u)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("staff", r.data["detail"])
+
+    def test_a_site_person_with_no_category_still_cannot(self):
+        """No category and not at Head Office says nothing either way, and
+        guessing in favour would open leave to the whole workforce."""
+        u = self._person("EMP-H04", self.site)
+        self.assertEqual(self._ask(u).status_code, 400)
