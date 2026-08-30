@@ -16,6 +16,37 @@ import { api } from "./api.js";
 const POLL_MS = 10 * 60 * 1000;          // ten minutes
 const DISMISSED_KEY = "planet.release.dismissed";
 
+// A release note is a list of what changed, so it reads as one. Lines
+// starting with "-" or a bullet become list items; anything else stays a
+// paragraph, so an older note written as prose still renders (owner
+// 2026-08-30).
+function ReleaseBody({ text }) {
+  const lines = String(text).split("\n").map((l) => l.trim())
+    .filter(Boolean);
+  const bullets = lines.filter((l) => /^[-*\u2022]\s+/.test(l));
+  if (bullets.length === 0) {
+    return (
+      <p style={{ margin: "5px 0 0", fontSize: 13.5,
+                  whiteSpace: "pre-wrap" }}>{text}</p>
+    );
+  }
+  const lead = lines.filter((l) => !/^[-*\u2022]\s+/.test(l));
+  return (
+    <div style={{ margin: "5px 0 0", fontSize: 13.5 }}>
+      {lead.map((l, i) => (
+        <p key={i} style={{ margin: "0 0 6px" }}>{l}</p>
+      ))}
+      <ul style={{ margin: 0, paddingLeft: 20 }}>
+        {bullets.map((l, i) => (
+          <li key={i} style={{ margin: "3px 0" }}>
+            {l.replace(/^[-*\u2022]\s+/, "")}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function NewReleaseBanner() {
   const booted = useRef(null);           // the build this tab started on
   const [fresh, setFresh] = useState(null);
@@ -145,10 +176,7 @@ export function ReleaseNotes({ onClose }) {
               <span style={{ marginLeft: "auto", fontSize: 12,
                              color: "#5a6b78" }}>{n.released_on}</span>
             </div>
-            {n.body && (
-              <p style={{ margin: "5px 0 0", fontSize: 13.5,
-                          whiteSpace: "pre-wrap" }}>{n.body}</p>
-            )}
+            {n.body && <ReleaseBody text={n.body} />}
           </div>
         ))}
       </div>
