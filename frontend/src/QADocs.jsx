@@ -259,8 +259,18 @@ export function QAForm({ docType, site, project, projects = [], existing,
   // TWS is SITE-WIDE (R8): planned rows are tagged per project; IR/MAR
   // remain project documents.
   const activeProjects = projects.filter((pr) => pr.status === "ACTIVE");
+  // Every submittal belongs to a project; a TWS is site-wide. The backend
+  // only demands one when the site actually has an active project, so the
+  // form asks on exactly the same condition.
+  const needsProject = docType !== "TWS" && activeProjects.length > 0;
   const [payload, setPayload] = useState(existing?.payload ||
                                          prefill?.payload || {});
+  // The document's project is a field ON the form. It used to be inherited
+  // invisibly from the chip selected on the site page, which worked only
+  // while submittals were raised from there — off the submittals page you
+  // filled the whole form and lost it to a 400 on save (owner 2026-08-30).
+  const [projectId, setProjectId] = useState(
+    String(existing?.project_id || project?.id || ""));
   const [docDate, setDocDate] = useState(
     existing?.doc_date ||
     (docType === "TWS" ? twsDefaultDate()
@@ -336,6 +346,11 @@ export function QAForm({ docType, site, project, projects = [], existing,
         mpRows.filter((r) => r.category_id && +r.count > 0)
           .map((r) => [r.category_id, +r.count]));
     }
+    if (needsProject && !existing && !projectId) {
+      setError("Select the project this submittal belongs to.");
+      setBusy(false);
+      return;
+    }
     try {
       let doc;
       if (existing) {
@@ -345,7 +360,7 @@ export function QAForm({ docType, site, project, projects = [], existing,
       } else {
         const req = { doc_type: docType, site_id: site.id, doc_date: docDate,
                       project_id: docType === "TWS" ? null
-                                  : project?.id || null,
+                                  : projectId || null,
                       payload: body };
         if (prefill?.previous_ir_ref) {
           req.previous_ir_ref = prefill.previous_ir_ref;
@@ -382,6 +397,24 @@ export function QAForm({ docType, site, project, projects = [], existing,
                  onChange={(e) => setDocDate(e.target.value)}
                  style={inputStyle} />
         </label>
+        {needsProject && (
+          <label style={{ fontSize: 13 }}>
+            Project
+            {/* Locked once the document exists: moving a raised submittal to
+                another project is a different act from filling this in. */}
+            <select value={projectId} disabled={!!existing}
+                    onChange={(e) => setProjectId(e.target.value)}
+                    style={{ ...inputStyle,
+                             borderColor: projectId ? undefined : "#b35900" }}>
+              <option value="">— select the project —</option>
+              {activeProjects.map((pr) => (
+                <option key={pr.id} value={pr.id}>
+                  {pr.code} — {pr.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {fields.map((def) => (
           <Field key={def[0]} def={def} value={payload[def[0]]}
                  onChange={(v) => setP(def[0], v)} />

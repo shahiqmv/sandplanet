@@ -96,7 +96,7 @@ export default function SubmittalsPage({ site, project, me, onOpenDoc,
         </h2>
         {counts && (
           <span style={{ fontSize: 13, color: "var(--muted)" }}>
-            {counts.total} on record
+            {project ? `${project.code} · ` : ""}{counts.total} on record
             {counts.open > 0 && <> · <b style={{ color: "var(--amber-fg)" }}>
               {counts.open} open</b></>}
             {counts.with_client > 0 && <> · {counts.with_client} with the
@@ -167,6 +167,7 @@ export default function SubmittalsPage({ site, project, me, onOpenDoc,
                 <th style={th}>Ref</th>
                 <th style={th}>Type</th>
                 <th style={th}>Date</th>
+                <th style={th}>Project</th>
                 <th style={th}>Subject</th>
                 <th style={{ ...th, textAlign: "right" }}>Status</th>
               </tr>
@@ -186,6 +187,11 @@ export default function SubmittalsPage({ site, project, me, onOpenDoc,
                     {SHORT[d.doc_type] || d.doc_type}
                   </td>
                   <td style={{ ...td, width: 100 }}>{d.doc_date}</td>
+                  <td style={{ ...td, width: 90, fontSize: 12.5 }}
+                      title={d.project_title || ""}>
+                    {d.project_code
+                      || <span style={{ color: "var(--faint)" }}>—</span>}
+                  </td>
                   <td style={td}>{subjectOf(d).slice(0, 90)}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     <StatusChip status={d.is_void ? "VOID" : d.status} />

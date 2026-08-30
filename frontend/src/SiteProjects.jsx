@@ -54,11 +54,12 @@ export default function SiteProjects({ projects = [], project, onProject,
           Projects
         </span>
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+          {/* This picker filters what you are looking at. It no longer
+              decides what a new submittal belongs to — the form asks for
+              that itself (owner 2026-08-30). */}
           {project ? `Showing ${project.code} only`
-                   : projects.length
-                     ? "Showing the whole site — pick a project to raise an "
-                       + "IR / MAR / SD / MS"
-                     : "No projects yet"}
+                   : projects.length ? "Showing the whole site"
+                                     : "No projects yet"}
         </span>
         {project && (
           <Btn variant="secondary" onClick={onOpenProject}
