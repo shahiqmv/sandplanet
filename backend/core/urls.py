@@ -19,6 +19,7 @@ from . import version as version_api, \
     views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
     views_me as me_api, \
+    views_staff_requests as sreq_api, \
     views_vouchers as vouchers, \
     views_receivables as receivables_api, \
     views_onboarding as onboarding_api, \
@@ -64,6 +65,19 @@ urlpatterns = [
     path("me/pin/unlock", me_api.unlock_my_pay, name="my-pin-unlock"),
     path("me/pin/lock", me_api.lock_my_pay, name="my-pin-lock"),
     path("me/leave", me_api.my_leave, name="my-leave"),
+    # Asking for an advance or for leave: the request, the Director's
+    # decision, and the hand-off to HR or Finance.
+    path("me/requests", sreq_api.my_requests, name="my-requests"),
+    path("staff-requests/queue", sreq_api.request_queue,
+         name="staff-request-queue"),
+    path("staff-requests/<int:pk>/decide", sreq_api.decide_request,
+         name="staff-request-decide"),
+    path("staff-requests/<int:pk>/cancel", sreq_api.cancel_request,
+         name="staff-request-cancel"),
+    path("staff-requests/<int:pk>/grant-leave", sreq_api.grant_request_leave,
+         name="staff-request-grant-leave"),
+    path("staff-requests/<int:pk>/link-payment",
+         sreq_api.link_request_payment, name="staff-request-link-payment"),
     path("directory", views.user_directory, name="user-directory"),
     # Client Portal accounts — HO admin manages who logs into the portal.
     path("client-users", client_admin.client_users, name="client-users"),

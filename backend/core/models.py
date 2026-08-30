@@ -6696,3 +6696,84 @@ class ReleaseNote(models.Model):
 
     def __str__(self):
         return f"{self.released_on} — {self.title[:60]}"
+
+
+class StaffRequest(models.Model):
+    """Something a person asks the company for: an advance, or leave.
+
+    A request layer in front of machinery that already exists, deliberately.
+    An advance already has a money path — an HR-origin PYR that waits for the
+    Director and then clears to a Payment Voucher — and leave already has an
+    execution path in core.leave. What neither had was the person asking:
+    both started with HR raising it on somebody's behalf (owner 2026-08-30).
+
+    So this model carries the ASK and the decision, and hands off. It never
+    moves money and never moves a man between sites; it records which PYR and
+    which WorkerLeave settled it, so the trail runs from the request through
+    to the payment or the roster change.
+    """
+
+    class Kind(models.TextChoices):
+        ADVANCE = "ADVANCE", "Salary advance"
+        LEAVE_ANNUAL = "LEAVE_ANNUAL", "Annual leave"
+        LEAVE_EMERGENCY = "LEAVE_EMERGENCY", "Emergency leave"
+
+    class Status(models.TextChoices):
+        SUBMITTED = "SUBMITTED", "Waiting for the Director"
+        APPROVED = "APPROVED", "Approved"
+        DECLINED = "DECLINED", "Declined"
+        DONE = "DONE", "Done"
+        CANCELLED = "CANCELLED", "Withdrawn"
+
+    LEAVE_KINDS = ("LEAVE_ANNUAL", "LEAVE_EMERGENCY")
+
+    kind = models.CharField(max_length=16, choices=Kind.choices)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.SUBMITTED)
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="staff_requests")
+    raised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                  related_name="+")
+    reason = models.TextField(blank=True)
+
+    # Advance. Always recovered in one month (owner 2026-08-30), so there is
+    # no instalment count to carry.
+    amount = models.DecimalField(max_digits=12, decimal_places=2, null=True,
+                                 blank=True)
+    # Leave.
+    from_date = models.DateField(null=True, blank=True)
+    to_date = models.DateField(null=True, blank=True)
+
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.TextField(blank=True)
+
+    done_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+    done_at = models.DateTimeField(null=True, blank=True)
+    # What settled it: the payment request Finance raised, or the leave HR
+    # granted. Either way the trail continues into the existing record.
+    payment_request = models.ForeignKey("Document", on_delete=models.SET_NULL,
+                                        null=True, blank=True,
+                                        related_name="staff_requests")
+    worker_leave = models.ForeignKey("WorkerLeave", on_delete=models.SET_NULL,
+                                     null=True, blank=True,
+                                     related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.kind} — {self.employee.full_name} ({self.status})"
+
+    @property
+    def is_leave(self):
+        return self.kind in self.LEAVE_KINDS
+
+    @property
+    def days(self):
+        if self.from_date and self.to_date:
+            return (self.to_date - self.from_date).days + 1
+        return 0

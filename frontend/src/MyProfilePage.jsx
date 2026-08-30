@@ -3,6 +3,7 @@ import { api } from "./api.js";
 import { StatusChip, card, td, th } from "./ui.jsx";
 import { LockBar, PinGate, PinSettings, useSalaryLock }
   from "./SalaryPin.jsx";
+import { MyRequests } from "./StaffRequests.jsx";
 
 const MONTHS = ["", "January", "February", "March", "April", "May", "June",
                 "July", "August", "September", "October", "November",
@@ -58,6 +59,7 @@ export default function MyProfilePage() {
   const [slips, setSlips] = useState(null);
   const [cash, setCash] = useState(null);
   const [leave, setLeave] = useState(null);
+  const [reqInfo, setReqInfo] = useState(null);
   const [tab, setTab] = useState("employment");
   const lock = useSalaryLock();
 
@@ -72,6 +74,7 @@ export default function MyProfilePage() {
   useEffect(() => {
     loadMoney();
     api("/me/leave").then(setLeave).catch(() => setLeave(null));
+    api("/me/requests").then(setReqInfo).catch(() => setReqInfo(null));
   }, [loadMoney]);
 
   // The server closes the window on its own clock; when the countdown here
@@ -124,7 +127,8 @@ export default function MyProfilePage() {
         {[["employment", "Employment"], ["pay", "Pay"],
           ["payslips", `Payslips${slips?.payslips?.length
             ? ` (${slips.payslips.length})` : ""}`],
-          ["leave", "Leave"]].map(([id, label]) => (
+          ["leave", "Leave"], ["requests", "Requests"]]
+          .map(([id, label]) => (
           <button key={id} onClick={() => setTab(id)}
                   style={{ padding: "8px 14px", background: "transparent",
                            border: 0, marginBottom: -1, cursor: "pointer",
@@ -285,6 +289,10 @@ export default function MyProfilePage() {
 
       {tab === "pay" && p.pay && (
         <PinSettings lock={lock} onChanged={loadMoney} />
+      )}
+
+      {tab === "requests" && (
+        <MyRequests isStaff={!!reqInfo?.is_staff} />
       )}
 
       {tab === "leave" && (

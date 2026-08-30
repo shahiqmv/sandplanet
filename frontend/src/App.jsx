@@ -12,6 +12,7 @@ import LiveFeedsPage from "./LiveFeedsPage.jsx";
 import SubmittalsPage from "./SubmittalsPage.jsx";
 import SiteProjects from "./SiteProjects.jsx";
 import MyProfilePage from "./MyProfilePage.jsx";
+import { StaffRequestQueue } from "./StaffRequests.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
@@ -902,6 +903,11 @@ export default function App() {
             </div>
           )}
 
+          {/* Advance and leave requests waiting on this role — beside the
+              other things they have to act on. */}
+          {!docView && !openSite && hoPage === "approvals" && (
+            <StaffRequestQueue me={me} />
+          )}
           {!docView && !openSite && APPROVERS.includes(me.role) &&
             hoPage === "approvals" && (
             <ApprovalsPage me={me} refresh={refresh}
