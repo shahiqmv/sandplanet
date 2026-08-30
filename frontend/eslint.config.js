@@ -1,10 +1,14 @@
 // A deliberately small lint gate. Its whole job is `no-undef`.
 //
-// Two bugs have now shipped from an identifier that nothing defines:
+// Three bugs have now shipped from an identifier that nothing defines:
 // `setPayFx`, left behind when the per-payment FX field was removed, which
 // blanked the payment-vouchers page for signatories; and `ghostButton`, used
 // in the procurement planner without being imported, caught only because the
-// first one had just taught us to look. Vite bundles both happily — they are
+// first one had just taught us to look; and `<SettlementPanel>` used without
+// its import, which base `no-undef` sailed past because it does not traverse
+// JSX element names — the exact bug this gate exists for, walking straight
+// through it. Hence `react/jsx-no-undef`. Vite bundles them all happily —
+// they are
 // valid JavaScript, they just throw at runtime, and React turns a throw
 // inside an effect into a white screen.
 //
@@ -13,6 +17,7 @@
 import js from "@eslint/js";
 import globals from "globals";
 import reactHooks from "eslint-plugin-react-hooks";
+import react from "eslint-plugin-react";
 
 export default [
   {
@@ -23,10 +28,13 @@ export default [
       parserOptions: { ecmaFeatures: { jsx: true } },
       globals: { ...globals.browser, ...globals.serviceworker },
     },
-    plugins: { "react-hooks": reactHooks },
+    plugins: { "react-hooks": reactHooks, react },
     rules: {
       ...js.configs.recommended.rules,
       "no-undef": "error",
+      // `no-undef` does not see JSX element names, so a component used
+      // without its import is invisible to it.
+      "react/jsx-no-undef": "error",
       // Registered so the existing eslint-disable comments resolve, and
       // warn-only: dependency arrays are a judgement call, an identifier
       // that does not exist is not.

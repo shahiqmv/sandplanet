@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiDownload } from "./api.js";
+import SettlementPanel from "./SettlementPanel.jsx";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
 // Monthly payroll runs (owner's salary sheet). MVR runs are per site; the USD
@@ -24,6 +25,7 @@ export default function PayrollRunPage({ me, sites, initialRunId,
   const [busy, setBusy] = useState(false);
 
   const canGenerate = ["HO_HR", "ADMIN"].includes(me.role);
+  const [settling, setSettling] = useState(false);
 
   function loadRuns() {
     api(`/payroll/runs?year=${year}&month=${month}`).then(setRuns)
@@ -153,6 +155,22 @@ export default function PayrollRunPage({ me, sites, initialRunId,
         </div>
       )}
 
+      {/* Demobilised men cannot wait for a month-end run they will not be
+          here for, so this sits beside it rather than inside it. */}
+      {canGenerate && !settling && (
+        <div style={{ margin: "12px 0" }}>
+          <Btn variant="secondary" onClick={() => setSettling(true)}>
+            + Final settlement for a demobilised batch</Btn>
+        </div>
+      )}
+      {settling && (
+        <div style={{ margin: "12px 0" }}>
+          <SettlementPanel sites={sites} onClose={() => setSettling(false)}
+            onCreated={(run) => { setSettling(false); loadRuns();
+                                  setOpenRun(run); }} />
+        </div>
+      )}
+
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <thead><tr>
           <th style={th}>Run</th><th style={th}>Currency</th>
@@ -162,7 +180,18 @@ export default function PayrollRunPage({ me, sites, initialRunId,
         <tbody>
           {runs.map((r) => (
             <tr key={r.id}>
-              <td style={td}>{r.site_code || "USD — all sites"}</td>
+              <td style={td}>
+                {r.site_code || "USD — all sites"}
+                {r.kind === "SETTLEMENT" && (
+                  <span style={{ marginLeft: 6, padding: "1px 8px",
+                                 borderRadius: 999, fontSize: 11,
+                                 fontWeight: 700, background: "#E8F1F8",
+                                 color: "var(--sp-navy)" }}
+                        title={`Final settlement to ${r.last_working_day}`}>
+                    settlement
+                  </span>
+                )}
+              </td>
               <td style={td}>{r.currency}</td>
               <td style={td}>{r.working_days}</td>
               <td style={td}>{r.status === "LOCKED"
