@@ -11,6 +11,7 @@ import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import LiveFeedsPage from "./LiveFeedsPage.jsx";
 import SubmittalsPage from "./SubmittalsPage.jsx";
 import SiteProjects from "./SiteProjects.jsx";
+import MyProfilePage from "./MyProfilePage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
@@ -788,10 +789,18 @@ export default function App() {
                     title="What changed in recent releases">
               What&rsquo;s new
             </button>
-            <span className="user-chip">
+            {/* Your own name opens your own record — employment, pay,
+                payslips. Everyone has one, so it belongs on the person
+                rather than in a role-gated nav group. */}
+            <button className="user-chip"
+                    onClick={() => { setDocView({ mode: "my-record" });
+                                     setOpenSite(null); }}
+                    title="My employment and salary record"
+                    style={{ border: 0, cursor: "pointer",
+                             font: "inherit", background: "none" }}>
               <span className="u-name">{me.full_name}</span>
               <span className="u-role">{me.role.replace(/_/g, " ")}</span>
-            </span>
+            </button>
             <button className="signout-btn" onClick={logoutUser}>
               Sign out
             </button>
@@ -1373,6 +1382,9 @@ export default function App() {
           {docView?.mode === "petty-cash" && openSite && (
             <PettyCashPage site={openSite} me={me} onOpenDoc={openDoc}
               onClose={closeDoc} />
+          )}
+          {docView?.mode === "my-record" && (
+            <MyProfilePage />
           )}
           {docView?.mode === "submittals" && openSite && (
             <SubmittalsPage site={openSite} project={project} me={me}

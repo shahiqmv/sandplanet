@@ -61,6 +61,17 @@ class User(AbstractUser):
     employee = models.OneToOneField(
         "Employee", on_delete=models.SET_NULL, null=True, blank=True,
         related_name="user_account")
+    # A short PIN in front of a person's own pay. Site phones and tablets are
+    # shared and shoulder-surfed, so opening your own record in front of the
+    # crew should not put your wage on the screen (owner 2026-08-30).
+    #
+    # It is a privacy screen, NOT an authentication boundary: the session is
+    # already signed in, so anyone holding the session could reach the API
+    # directly. It stops the person standing behind you, which is the actual
+    # threat on a site. Hashed with the same hasher as a password, because a
+    # four-digit secret in a database column is still a secret people reuse.
+    salary_pin = models.CharField(max_length=128, blank=True, default="")
+    salary_pin_set_at = models.DateTimeField(null=True, blank=True)
     # employee FK added in M5 (employees module)
 
     REQUIRED_FIELDS = ["full_name", "role"]

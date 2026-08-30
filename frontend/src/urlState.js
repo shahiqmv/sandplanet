@@ -27,6 +27,9 @@ export function encodeView({ hoPage, siteId, docView }) {
       return `#/site/${siteId}/${m}`;
     }
     if (m === "vessels") return "#/vessels";
+    // Your own record. A mode with no route here is silently
+    // reset by the hash listener on the next tick.
+    if (m === "my-record") return "#/me";
     // a form or another transient view — keep the page behind it
   }
   if (siteId) return `#/site/${siteId}`;
@@ -48,6 +51,7 @@ export function decodeView(hash) {
     return { openRef: decodeURIComponent(parts[1]) };
   }
   if (parts[0] === "vessels") return { docView: { mode: "vessels" } };
+  if (parts[0] === "me") return { docView: { mode: "my-record" } };
   if (parts[0] === "project" && parts[1]) {
     return { docView: { mode: "project", projectId: Number(parts[1]) } };
   }

@@ -18,6 +18,7 @@ from . import version as version_api, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
+    views_me as me_api, \
     views_vouchers as vouchers, \
     views_receivables as receivables_api, \
     views_onboarding as onboarding_api, \
@@ -51,6 +52,18 @@ urlpatterns = [
     path("auth/change-password", views.auth_change_password,
          name="auth-change-password"),
     path("auth/me", views.auth_me, name="auth-me"),
+    # A person's own record. Nothing here takes an employee id — see
+    # views_me: the narrowness IS the security model.
+    path("me/profile", me_api.my_profile, name="my-profile"),
+    path("me/payslips", me_api.my_payslips, name="my-payslips"),
+    path("me/payslips/<int:pk>.pdf", me_api.my_payslip_pdf,
+         name="my-payslip-pdf"),
+    path("me/money", me_api.my_money, name="my-money"),
+    path("me/pin", me_api.my_pin, name="my-pin"),
+    path("me/pin/set", me_api.set_my_pin, name="my-pin-set"),
+    path("me/pin/unlock", me_api.unlock_my_pay, name="my-pin-unlock"),
+    path("me/pin/lock", me_api.lock_my_pay, name="my-pin-lock"),
+    path("me/leave", me_api.my_leave, name="my-leave"),
     path("directory", views.user_directory, name="user-directory"),
     # Client Portal accounts — HO admin manages who logs into the portal.
     path("client-users", client_admin.client_users, name="client-users"),
