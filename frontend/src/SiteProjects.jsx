@@ -7,23 +7,29 @@ function ProjectCard({ p, on, onClick }) {
   const pct = Math.max(0, Math.min(100, p.overall_progress ?? 0));
   return (
     <button onClick={onClick} title={p.title}
-            style={{ textAlign: "left", padding: "9px 13px", borderRadius: 10,
-                     cursor: "pointer", fontFamily: "inherit", minWidth: 150,
+            style={{ textAlign: "left", padding: "8px 10px", borderRadius: 10,
+                     cursor: "pointer", fontFamily: "inherit",
+                     // The card was as wide as its longest title. Sized to
+                     // the code instead, with the title truncating — six
+                     // projects now sit on one line (owner 2026-08-30).
+                     width: 132,
                      border: `1px solid ${on ? "var(--sp-navy)"
                                              : "var(--line)"}`,
                      background: on ? "var(--sp-navy)" : "#fff",
                      color: on ? "#fff" : "var(--sp-navy)" }}>
-      <span style={{ display: "block", fontSize: 13, fontWeight: 700 }}>
+      <span style={{ display: "block", fontSize: 13, fontWeight: 700,
+                     whiteSpace: "nowrap", overflow: "hidden",
+                     textOverflow: "ellipsis" }}>
         {p.code}
       </span>
-      <span style={{ display: "block", fontSize: 11.5, marginTop: 1,
+      <span style={{ display: "block", fontSize: 11, marginTop: 1,
                      opacity: .78, whiteSpace: "nowrap", overflow: "hidden",
-                     textOverflow: "ellipsis", maxWidth: 170 }}>
+                     textOverflow: "ellipsis" }}>
         {p.title}
       </span>
       {/* Progress as a bar as well as a number: a row of percentages is read
           one at a time, a row of bars is read at a glance. */}
-      <span style={{ display: "block", marginTop: 7, height: 4,
+      <span style={{ display: "block", marginTop: 6, height: 4,
                      borderRadius: 3, overflow: "hidden",
                      background: on ? "rgba(255,255,255,.3)"
                                     : "var(--line)" }}>
@@ -31,9 +37,9 @@ function ProjectCard({ p, on, onClick }) {
                        borderRadius: 3,
                        background: on ? "#fff" : "var(--sp-sky, #1B7FB8)" }} />
       </span>
-      <span style={{ display: "block", fontSize: 11, marginTop: 3,
-                     opacity: .78, fontVariantNumeric: "tabular-nums" }}>
-        {pct}% complete
+      <span style={{ display: "block", fontSize: 10.5, marginTop: 3,
+                     opacity: .7, fontVariantNumeric: "tabular-nums" }}>
+        {pct}%
       </span>
     </button>
   );
@@ -74,9 +80,9 @@ export default function SiteProjects({ projects = [], project, onProject,
           // project by clicking it a second time was the only way out, and
           // nothing on screen said so.
           <button onClick={() => onProject(null)}
-                  style={{ padding: "9px 15px", borderRadius: 10,
+                  style={{ padding: "8px 10px", borderRadius: 10,
                            cursor: "pointer", fontFamily: "inherit",
-                           fontSize: 13, fontWeight: 600, minWidth: 96,
+                           fontSize: 12.5, fontWeight: 600, width: 92,
                            border: `1px solid ${!project ? "var(--sp-navy)"
                                                          : "var(--line)"}`,
                            background: !project ? "var(--sp-navy)" : "#fff",
@@ -91,9 +97,9 @@ export default function SiteProjects({ projects = [], project, onProject,
         ))}
         {canAdd && !adding && (
           <button onClick={onAddProject}
-                  style={{ padding: "9px 15px", borderRadius: 10,
+                  style={{ padding: "8px 10px", borderRadius: 10,
                            cursor: "pointer", fontFamily: "inherit",
-                           fontSize: 13, fontWeight: 600, minWidth: 96,
+                           fontSize: 12.5, fontWeight: 600, width: 92,
                            border: "1px dashed var(--line)",
                            background: "transparent",
                            color: "var(--muted)" }}>
