@@ -11,6 +11,7 @@ import logging
 import os
 import sys
 
+from . import submittals
 from django.conf import settings
 
 if sys.platform == "win32":  # point WeasyPrint at a GTK3 runtime (D4)
@@ -319,7 +320,7 @@ def _render_target(document, revision, filters=None):
     if document.doc_type in LINE_FORMS:
         return "lines_form.html", _lines_context(document, revision)
     if document.doc_type in ("IR", "MAR", "SD", "MS", "TWS", "DMA", "TR",
-                             "MXD", "BBS", "TWD"):
+                             "MXD", "BBS", "TWD", "MOC"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
@@ -329,7 +330,8 @@ def _render_target(document, revision, filters=None):
                    "TR": pdf_qa.tr_context,
                    "MXD": pdf_qa.mxd_context,
                    "BBS": pdf_qa.bbs_context,
-                   "TWD": pdf_qa.twd_context}[document.doc_type]
+                   "TWD": pdf_qa.twd_context,
+                   "MOC": pdf_qa.moc_context}[document.doc_type]
         return "qa_form.html", builder(document, revision)
     return None
 
@@ -442,7 +444,7 @@ def compile_enclosures(document, pdf_bytes):
     note rather than failing the whole PDF. Applies to the MAR / Shop Drawing /
     Method Statement submittals. Returns the input unchanged when there are no
     enclosures or PyMuPDF is unavailable."""
-    if document.doc_type not in ("MAR", "SD", "MS") or not pdf_bytes:
+    if document.doc_type not in submittals.TO_CLIENT or not pdf_bytes:
         return pdf_bytes
     encs = list(document.attachments.filter(kind="ENCLOSURE").order_by("id"))
     if not encs:

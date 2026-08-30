@@ -11,6 +11,7 @@ export const QA_LABELS = {
   MXD: "Concrete Mix Design",
   BBS: "Bar Bending Schedule",
   TWD: "Temporary Works Design",
+  MOC: "Sample / Mock-up Approval",
   TWS: "Tomorrow Work Schedule",
 };
 
@@ -127,9 +128,27 @@ const TWD_FIELDS = [
   ["remarks", "Remarks", "textarea"],
 ];
 
+// A mock-up approves the BUILT result, not the product on paper — so what
+// matters is where it stands, what it represents, and whether it is kept as
+// the benchmark the rest of the work is judged against (owner 2026-08-30).
+const MOC_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["mockup_title", "Mock-up", "text"],
+  ["represents", "Represents (scope it sets the standard for)", "textarea"],
+  ["location", "Location on site", "text"],
+  ["built_on", "Built on", "date"],
+  ["spec_ref", "Specification Ref", "text"],
+  ["drawing_ref", "Drawing Ref", "text"],
+  ["materials", "Materials used / approved MAR refs", "textarea"],
+  ["workmanship", "Workmanship notes", "textarea"],
+  ["retained", "Retained on site as the benchmark", "checkbox"],
+  ["retain_until", "Retained until", "date"],
+  ["remarks", "Remarks", "textarea"],
+];
+
 const FIELDS_BY_TYPE = { MAR: MAR_FIELDS, SD: SD_FIELDS, MS: MS_FIELDS,
                          MXD: MXD_FIELDS, BBS: BBS_FIELDS,
-                         TWD: TWD_FIELDS };
+                         TWD: TWD_FIELDS, MOC: MOC_FIELDS };
 
 // Per-type attachment slots (files uploaded here are compiled into the PDF).
 const ENCLOSURES_BY_TYPE = {
@@ -149,6 +168,8 @@ const ENCLOSURES_BY_TYPE = {
   BBS: [["schedule", "Bar bending schedule"],
         ["reinforcement_drawing", "Reinforcement drawing"],
         ["shape_codes", "Bar shape codes"]],
+  MOC: [["photographs", "Photographs"], ["drawings", "Drawings"],
+        ["material_list", "Material list"]],
   TWD: [["design_drawings", "Design drawings"],
         ["calculations", "Calculations"],
         ["check_certificate", "Design check certificate"],
@@ -156,7 +177,7 @@ const ENCLOSURES_BY_TYPE = {
         ["method_statement", "Method statement"]],
 };
 
-const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD"];
+const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC"];
 
 const RESULT_OPTIONS = {
   IR: [["APPROVED", "Approved"],
@@ -174,6 +195,7 @@ RESULT_OPTIONS.MS = RESULT_OPTIONS.MAR;
 RESULT_OPTIONS.MXD = RESULT_OPTIONS.MAR;
 RESULT_OPTIONS.BBS = RESULT_OPTIONS.MAR;
 RESULT_OPTIONS.TWD = RESULT_OPTIONS.MAR;
+RESULT_OPTIONS.MOC = RESULT_OPTIONS.MAR;
 
 const SITE_TEAM = ["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN"];
 

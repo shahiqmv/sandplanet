@@ -320,6 +320,10 @@ urlpatterns = [
     path("documents/<str:ref>/revisions", docs.document_revise,
          name="document-revise"),
     path("registers/dpr-tws", docs.register_dpr_tws, name="register-dpr-tws"),
+    # Ahead of the <doc_type> catch-all below, which would otherwise swallow
+    # this as a document type named "submittals".
+    path("registers/submittals", docs.register_submittals,
+         name="register-submittals"),
     path("registers/<str:doc_type>", docs.register_generic,
          name="register-generic"),
     path("pending-items", docs.pending_items, name="pending-items"),

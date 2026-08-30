@@ -15,14 +15,15 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onManpower, onNewPyr, onPyrRegister,
                                         onPettyCash, onStock, onTools,
                                         onCreateGrn, onNewPmr, onOpenDoc,
+                                        onSubmittals,
                                         onWorkforce, onVessels, onUnits,
                                         onTesting, refresh }) {
   const [dash, setDash] = useState(null);
+  const [moreQa, setMoreQa] = useState(false);
   const [showShifts, setShowShifts] = useState(false);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
   const [pmrs, setPmrs] = useState([]);
-  const [qaDocs, setQaDocs] = useState([]);
   const [incomingLms, setIncomingLms] = useState([]);
   const [grns, setGrns] = useState([]);
   const [pyrs, setPyrs] = useState([]);
@@ -30,31 +31,32 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
 
   const projectParam = project ? `&project=${project.id}` : "";
 
-  const load = useCallback(() => {
+  // Two loads, not one. Only the DPR/TWS register is project-scoped, but it
+  // used to share a callback with the other seven requests — so the moment
+  // the project list resolved and projectParam went from "" to "&project=N",
+  // every one of them fired a second time. Switching project re-fetched the
+  // whole page for the same reason (owner 2026-08-30: the site page is slow).
+  const loadSite = useCallback(() => {
     api(`/dashboards/site/${site.id}`).then(setDash);
-    api(`/registers/dpr-tws?site=${site.id}${projectParam}`)
-      .then(setRegister);
     api(`/documents/list?site=${site.id}&doc_type=MR`).then(setMrs);
     api(`/documents/list?site=${site.id}&doc_type=PMR`).then(setPmrs)
       .catch(() => setPmrs([]));
     api(`/documents/list?site=${site.id}&doc_type=PYR`).then(setPyrs)
       .catch(() => setPyrs([]));
-    Promise.all([
-      api(`/documents/list?site=${site.id}&doc_type=IR${projectParam}`),
-      api(`/documents/list?site=${site.id}&doc_type=MAR${projectParam}`),
-      api(`/documents/list?site=${site.id}&doc_type=SD${projectParam}`),
-      api(`/documents/list?site=${site.id}&doc_type=MS${projectParam}`),
-    ]).then((lists) => setQaDocs(
-      lists.flat().sort((a, b) => b.created_at.localeCompare(a.created_at))
-    ));
     api(`/documents/list?site=${site.id}&doc_type=LM&status=DEPARTED`)
       .then(setIncomingLms);
     api(`/documents/list?site=${site.id}&doc_type=GRN`).then(setGrns)
       .catch(() => setGrns([]));
     api(`/stock/${site.id}`).then(setStock).catch(() => setStock(null));
+  }, [site.id]);
+
+  const loadRegister = useCallback(() => {
+    api(`/registers/dpr-tws?site=${site.id}${projectParam}`)
+      .then(setRegister);
   }, [site.id, projectParam]);
 
-  useEffect(load, [load, refresh]);
+  useEffect(loadSite, [loadSite, refresh]);
+  useEffect(loadRegister, [loadRegister, refresh]);
 
   const canCreate = CAN_CREATE_DPR.includes(me.role);
   const canMr = CAN_CREATE_MR.includes(me.role);
@@ -186,22 +188,40 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               <Btn variant="navy" onClick={() => onNewQa("MAR")}>+ MAR</Btn>
               <Btn variant="navy" onClick={() => onNewQa("SD")}>+ SD</Btn>
               <Btn variant="navy" onClick={() => onNewQa("MS")}>+ MS</Btn>
-              {/* Civil submittals behind one control: three more buttons on
-                  an already busy row would cost more than they gain
-                  (owner 2026-08-30). */}
-              <select value="" title="Civil submittals"
-                      onChange={(e) => { if (e.target.value)
-                                           onNewQa(e.target.value); }}
-                      style={{ padding: "7px 10px", borderRadius: 8,
-                               border: "1px solid #BFD6E6", fontSize: 13.5,
-                               background: "var(--paper)",
-                               color: "var(--navy)", cursor: "pointer",
-                               fontFamily: "inherit" }}>
-                <option value="">+ Civil submittal…</option>
-                <option value="MXD">Concrete mix design</option>
-                <option value="BBS">Bar bending schedule</option>
-                <option value="TWD">Temporary works design</option>
-              </select>
+              {/* The extra submittal types behind one control — eight
+                  buttons on an already busy row would cost more than they
+                  gain. A native select next to the buttons looked like a
+                  different kind of control because it is one, so this is a
+                  button that opens a menu (owner 2026-08-30). */}
+              <span style={{ position: "relative" }}>
+                <Btn variant="navy" onClick={() => setMoreQa((v) => !v)}
+                     title="Civil submittals and mock-ups">
+                  + More {moreQa ? "\u25B4" : "\u25BE"}</Btn>
+                {moreQa && (
+                  <div style={{ position: "absolute", top: "calc(100% + 6px)",
+                                left: 0, zIndex: 40, minWidth: 210,
+                                background: "var(--paper)",
+                                border: "1px solid var(--line)",
+                                borderRadius: 10, padding: 5,
+                                boxShadow: "0 8px 24px rgba(16,42,67,.16)" }}>
+                    {[["MXD", "Concrete mix design"],
+                      ["BBS", "Bar bending schedule"],
+                      ["TWD", "Temporary works design"],
+                      ["MOC", "Sample / mock-up"]].map(([t, label]) => (
+                      <button key={t}
+                              onClick={() => { setMoreQa(false); onNewQa(t); }}
+                              style={{ display: "block", width: "100%",
+                                       textAlign: "left", padding: "8px 12px",
+                                       background: "transparent", border: 0,
+                                       borderRadius: 7, cursor: "pointer",
+                                       fontFamily: "inherit", fontSize: 13.5,
+                                       color: "var(--navy)" }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </span>
               {/* A sample is taken at the pour, by the same person and on the
                   same day as an IR — so it is raised from the same place
                   (owner 2026-08-29). The cross-site register lives under
@@ -267,34 +287,49 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         </span>
       </section>
 
-      {qaDocs.length > 0 && (
+      {/* The register itself moved to its own page. Eight submittal types
+          on one dashboard meant eight list requests before the page could
+          paint, and a list that only ever grows (owner 2026-08-30). What
+          stays here is the state of it, which rides along on the dashboard
+          request that was already being made. */}
+      {dash?.submittals?.total > 0 && onSubmittals && (
         <section style={card}>
-          <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 15 }}>
-            Inspections &amp; Material Approvals
-          </h2>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <tbody>
-              {qaDocs.slice(0, 8).map((d) => (
-                <tr key={d.ref}>
-                  <td style={{ ...td, width: 130 }}>
-                    <a href="#" onClick={(e) => { e.preventDefault();
-                                                  onOpenDoc(d.ref); }}
-                       style={{ color: "var(--sp-navy)", fontWeight: 600 }}>
-                      {d.ref}
-                    </a>
-                  </td>
-                  <td style={td}>{d.doc_date}</td>
-                  <td style={td}>
-                    {d.payload?.discipline || d.payload?.material_description
-                      ?.slice(0, 50) || ""}
-                  </td>
-                  <td style={{ ...td, textAlign: "right" }}>
-                    <StatusChip status={d.is_void ? "VOID" : d.status} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                        flexWrap: "wrap" }}>
+            <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 15 }}>
+              Submittals
+            </h2>
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              {dash.submittals.total} on record
+              {dash.submittals.open > 0 && (
+                <> · <b style={{ color: "var(--amber-fg)" }}>
+                  {dash.submittals.open} open</b></>
+              )}
+              {dash.submittals.with_client > 0 && (
+                <> · {dash.submittals.with_client} awaiting the client</>
+              )}
+            </span>
+            <Btn variant="secondary" style={{ marginLeft: "auto" }}
+                 onClick={onSubmittals}>Open register</Btn>
+          </div>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap",
+                        marginTop: 12 }}>
+            {dash.submittals.types.map((t) => (
+              <button key={t.doc_type} onClick={onSubmittals}
+                      title={t.label}
+                      style={{ padding: "5px 12px", borderRadius: 999,
+                               fontSize: 12.5, cursor: "pointer",
+                               fontFamily: "inherit", color: "var(--muted)",
+                               border: "1px solid var(--line)",
+                               background: "transparent" }}>
+                {t.doc_type} <b style={{ color: "var(--navy)" }}>{t.total}</b>
+                {t.open > 0 && (
+                  <span style={{ color: "var(--amber-fg)" }}>
+                    {" "}· {t.open} open</span>
+                )}
+              </button>
+            ))}
+          </div>
         </section>
       )}
 

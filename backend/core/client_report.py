@@ -5,13 +5,14 @@ print PDF in a frame. Each builder returns plain JSON primitives through an
 explicit allowlist — no Django objects, no file:// paths, no commercial or
 engagement data. The print PDF stays available for download via pdf.py.
 """
+from . import submittals
 from .models import Document, ManpowerCategory
 
 # Submittals shown to the client once ISSUED to them (view-only, owner
 # 2026-08-05). The 4 result states keep an issued submittal visible with its
 # outcome; a REVISE_RESUBMIT drops off once the site opens the next revision
 # (its status returns to DRAFT).
-SUBMITTAL_TYPES = ("MAR", "SD", "MS")
+SUBMITTAL_TYPES = submittals.TO_CLIENT
 SUBMITTAL_STATES = ("ISSUED", "APPROVED", "APPROVED_WITH_COMMENTS",
                      "REVISE_RESUBMIT", "REJECTED")
 _SUBMITTAL_LABEL = {"MAR": "Material Approval", "SD": "Shop Drawing",

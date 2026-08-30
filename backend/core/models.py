@@ -362,6 +362,7 @@ class Document(models.Model):
         MXD = "MXD"  # concrete mix design
         BBS = "BBS"  # bar bending schedule
         TWD = "TWD"  # temporary works design (formwork, falsework, shoring)
+        MOC = "MOC"  # sample / mock-up approval — the agreed benchmark
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -444,6 +445,13 @@ class Document(models.Model):
                        "REVISE_RESUBMIT", "REJECTED"},
         },
         "TWD": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        "MOC": {
             "DRAFT": {"SUBMITTED"},
             "SUBMITTED": {"PM_APPROVED", "DRAFT"},
             "PM_APPROVED": {"ISSUED"},

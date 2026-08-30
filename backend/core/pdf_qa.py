@@ -624,3 +624,56 @@ def _submittal_signatures(approvals, payload):
         {"title": "Reviewed By — Client / Consultant",
          "text": _client_by(payload)},
     ]
+
+
+def moc_context(document, revision):
+    """Sample / mock-up approval.
+
+    Distinct from a material approval: a MAR approves a product on paper, a
+    mock-up approves the BUILT result — the tiling, the joint, the finish —
+    and once signed it becomes the benchmark the rest of the work is measured
+    against. Whether it is retained on site matters, because an argument
+    about workmanship six months later is settled by walking to it
+    (owner 2026-08-30)."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    sections = [
+        {"kind": "kv", "title": "1. What was built", "rows": [
+            ["Mock-up", payload.get("mockup_title", ""),
+             "Represents", payload.get("represents", "")],
+            ["Location on site", payload.get("location", ""),
+             "Built on", payload.get("built_on", "")],
+            ["Specification Ref", payload.get("spec_ref", ""),
+             "Drawing Ref", payload.get("drawing_ref", "")],
+        ]},
+        {"kind": "kv", "title": "2. Materials used", "rows": [
+            ["Materials / approved MARs", payload.get("materials", ""),
+             "Workmanship notes", payload.get("workmanship", "")],
+        ]},
+        {"kind": "enclosures", "title": "3. Attachments",
+         "items": _enclosure_rows(payload, [
+             ("photographs", "Photographs"),
+             ("drawings", "Drawings"),
+             ("material_list", "Material list")])},
+        {"kind": "kv", "title": "4. After approval", "rows": [
+            ["Retained on site as the benchmark",
+             _yesno(payload.get("retained")),
+             "Retained until", payload.get("retain_until", "")],
+            ["Remarks", payload.get("remarks", ""), "", ""],
+        ]},
+    ]
+    sections += _result_section(payload, "Client / Consultant result")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "SAMPLE / MOCK-UP APPROVAL",
+        "form_subline": f"Form No: FRM-CIV-04  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention", payload.get("attention_to", ""),
+             "Project", document.project.code if document.project_id else "—"],
+            ["Mock-up", payload.get("mockup_title", ""),
+             "Location", payload.get("location", "")],
+        ],
+        "sections": sections,
+        "sig_blocks": _submittal_signatures(approvals, payload),
+    }

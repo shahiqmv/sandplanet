@@ -9,6 +9,7 @@ import HODashboard from "./HODashboard.jsx";
 import ItemsPage from "./ItemsPage.jsx";
 import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import LiveFeedsPage from "./LiveFeedsPage.jsx";
+import SubmittalsPage from "./SubmittalsPage.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
@@ -1160,6 +1161,7 @@ export default function App() {
                 onPettyCash={() => setDocView({ mode: "petty-cash" })}
                 onStock={() => setDocView({ mode: "stock" })}
                 onTesting={() => setDocView({ mode: "testing" })}
+                onSubmittals={() => setDocView({ mode: "submittals" })}
                 onTools={() => setDocView({ mode: "tools" })}
                 onCreateGrn={createGrn}
                 onNewPmr={() => setDocView({ mode: "line-form",
@@ -1395,6 +1397,13 @@ export default function App() {
             <PettyCashPage site={openSite} me={me} onOpenDoc={openDoc}
               onClose={closeDoc} />
           )}
+          {docView?.mode === "submittals" && openSite && (
+            <SubmittalsPage site={openSite} project={project} me={me}
+              onOpenDoc={openDoc} onClose={closeDoc}
+              onNewQa={(t) => setDocView({ mode: "qa-form", docType: t,
+                                           doc: null })} />
+          )}
+
           {/* Materials & site testing for THIS site. The cross-site register
               (overdue results, failures) stays under Quality — a different
               job for a different person. */}

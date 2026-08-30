@@ -9,6 +9,7 @@ mobile companion, owner 2026-07-14.)
 """
 import logging
 
+from . import submittals
 from .models import Notification, User
 
 log = logging.getLogger(__name__)
@@ -35,7 +36,7 @@ def targets_for(doc):
     """(user, hint) pairs who must act on `doc` in its current state. Mirrors
     the per-role 'waiting on you' queue (approvals_pending)."""
     t, s = doc.doc_type, doc.status
-    if t in ("MR", "IR", "MAR", "SD", "MS", "PMR") and s == "SUBMITTED":
+    if t in submittals.PM_GATED and s == "SUBMITTED":
         return [(u, "needs your approval") for u in _pm_for(doc)]
     if t == "PYR" and s == "SUBMITTED":
         # Only a site request waits at SUBMITTED — on its PM. Head-Office

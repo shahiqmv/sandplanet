@@ -10,7 +10,8 @@
 const REF_MODES = ["ipr-view", "irn-view", "line-view", "qa-view",
                    "shipment-view", "pr-match"];
 const SITE_MODES = ["attendance", "dma", "workforce", "stock", "tools",
-                    "units", "manpower", "petty-cash", "testing"];
+                    "units", "manpower", "petty-cash", "testing",
+                    "submittals"];
 
 export function encodeView({ hoPage, siteId, docView }) {
   if (docView) {

@@ -2,6 +2,8 @@ import logging
 from datetime import date, timedelta
 
 from django.db import transaction
+from django.db.models import Q, TextField
+from django.db.models.functions import Cast
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.decorators import api_view, parser_classes
@@ -25,6 +27,7 @@ from .models import (
 from .numbering import next_ref
 from .pdf import generate_pdf
 from .permissions import scoped_site_ids
+from . import submittals
 from .procurement import (
     sync_pr_vendor_rows,
     grn_lines_from_lm,
@@ -60,6 +63,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "MXD": {"SITE_ENGINEER", "PM"},      # concrete mix design
     "BBS": {"SITE_ENGINEER", "PM"},      # bar bending schedule
     "TWD": {"SITE_ENGINEER", "PM"},      # temporary works design
+    "MOC": {"SITE_ENGINEER", "PM"},      # sample / mock-up approval
     # Site Engineer has full site-task parity with Site Admin (owner,
     # 2026-07-13): both raise MRs, receive goods, etc.
     "MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
@@ -86,6 +90,8 @@ RESULTS = {  # client results per type (spec §5.3/§5.4)
     "BBS": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
             "REJECTED"},
     "TWD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
+            "REJECTED"},
+    "MOC": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
             "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN", "PMR"}
@@ -177,7 +183,7 @@ def _is_pm_for(user, doc):
 # non-finance operator, so procurement/finance docs (PR/LM/PO/PV) are untouched
 # — the Director stays read-only there (owner 2026-08-01).
 SITE_DOC_TYPES = {"DPR", "TWS", "IR", "MAR", "SD", "MS", "MR", "GRN", "PMR",
-                  "SCA", "DMA"}
+                  "SCA", "DMA", "MXD", "BBS", "TWD", "MOC"}
 
 
 def _can(request, doc_type, roles):
@@ -223,7 +229,7 @@ def document_create(request):
     # report to the one client per site, each work/planned row tagged with
     # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
     PROJECT_TYPES = ("IR", "MAR", "SD", "MS", "PMR",
-                     "MXD", "BBS", "TWD")            # per project
+                     "MXD", "BBS", "TWD", "MOC")     # per project
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")
@@ -495,7 +501,7 @@ def document_revise(request, ref):
     doc, err = _get_scoped_document(request, ref)
     if err:
         return err
-    if doc.doc_type not in ("MR", "MAR", "SD", "MS"):
+    if doc.doc_type not in ("MR",) + submittals.TO_CLIENT:
         return Response({"detail": "Only MR/MAR use revisions; IR gets a new "
                                    "number quoting the previous IR."}, status=400)
     if doc.is_void:
@@ -741,7 +747,7 @@ def _do_issue(request, doc, comment):
         return Response({"detail": "Send the order for the signatory's "
                                    "approval; approving it issues it."},
                         status=400)
-    if doc.doc_type in ("DPR", "TWS", "IR", "MAR", "SD", "MS", "PO"):
+    if doc.doc_type in ("DPR", "TWS", "IR", "PO") + submittals.TO_CLIENT:
         # DPR/TWS issue from DRAFT; IR/MAR issue after the PM gate (§7.1)
         err = _apply(request, doc, "ISSUED", "ISSUE",
                      roles=CREATE_ROLES[doc.doc_type], lock_revision=True,
@@ -890,9 +896,9 @@ def pending_groups(user):
     base = Document.objects.filter(is_void=False).order_by("doc_date", "id")
     if user.role in ("PM", "ADMIN"):
         mine = [d for d in scoped(base.filter(
-                    doc_type__in=("MR", "IR", "MAR", "SD", "MS"),
+                    doc_type__in=submittals.PM_GATED,
                     status="SUBMITTED"))
-                .select_related("site", "project")
+                .select_related("site", "project", "current_revision")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To approve — submitted MR / IR / MAR",
             [{"ref": d.ref, "doc_type": d.doc_type, "site_code": d.site.code,
@@ -910,7 +916,7 @@ def pending_groups(user):
               "status": d.status, "hint": "PM approval"} for d in pyrs])
         pmrs = [d for d in scoped(base.filter(doc_type="PMR",
                                               status="SUBMITTED"))
-                .select_related("site", "project")
+                .select_related("site", "project", "current_revision")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To approve — submitted import requests (PMR)",
             [{"ref": d.ref, "doc_type": "PMR", "site_code": d.site.code,
@@ -919,7 +925,7 @@ def pending_groups(user):
               "hint": "PM approval"} for d in pmrs])
         dprs = [d for d in scoped(base.filter(doc_type="DPR",
                                               status="ISSUED"))
-                .select_related("site", "project")
+                .select_related("site", "project", "current_revision")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To verify — issued DPRs",
             [{"ref": d.ref, "doc_type": "DPR", "site_code": d.site.code,
@@ -937,7 +943,7 @@ def pending_groups(user):
              for d in dmas])
         scas = [d for d in scoped(base.filter(doc_type="SCA",
                                               status="SUBMITTED"))
-                .select_related("site", "project")
+                .select_related("site", "project", "current_revision")
                 if user.role == "ADMIN" or _is_pm_for(user, d)]
         add("To approve — submitted subcontract agreements",
             [{"ref": d.ref, "doc_type": "SCA", "site_code": d.site.code,
@@ -1080,7 +1086,7 @@ def pending_groups(user):
         # Local credit orders go for signature; an import order's PO was
         # already authorised on its IPR, so Purchasing just issues it.
         draft_pos = list(scoped(base.filter(doc_type="PO", status="DRAFT"))
-                         .select_related("site", "project"))
+                         .select_related("site", "project", "current_revision"))
         local = [d for d in draft_pos if is_local_credit_po(d)]
         imported = [d for d in draft_pos if d not in local]
         add("To send for approval — draft POs",
@@ -1347,7 +1353,13 @@ def _do_submit(request, doc, comment):
              "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},
              "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
              "PO": {"HO_PURCHASING"},
-             "IPR": {"HO_PURCHASING"}}.get(doc.doc_type)
+             "IPR": {"HO_PURCHASING"},
+             # Every submittal is submitted by whoever may raise it. Spelling
+             # the family out here is what stranded the civil types in DRAFT
+             # for a day — they were created and rendered, but no verb knew
+             # them (owner 2026-08-30).
+             **{t: CREATE_ROLES[t] for t in submittals.TO_CLIENT
+                if t in CREATE_ROLES}}.get(doc.doc_type)
     if roles is None:
         return Response({"detail": "Submit applies to MR/PR/IR/MAR/PMR/SCA/"
                                    "PO/IPR."}, status=400)
@@ -1390,7 +1402,7 @@ def _do_submit(request, doc, comment):
 
 
 def _do_approve(request, doc, comment):
-    if doc.doc_type in ("MR", "IR", "MAR", "SD", "MS", "PMR"):  # PM gate
+    if doc.doc_type in submittals.PM_GATED:  # PM gate
         return _apply(request, doc, "PM_APPROVED", "APPROVE", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "SCA":  # subcontractor module: PM then Director
@@ -1523,7 +1535,7 @@ def _do_return(request, doc, comment):
                       roles={"SIGNATORY", "ADMIN"}, comment=comment)
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
-    if doc.doc_type in ("MR", "IR", "MAR", "SD", "MS"):
+    if doc.doc_type in ("MR", "IR") + submittals.TO_CLIENT:
         return _apply(request, doc, "DRAFT", "RETURN", pm_gate=True,
                       comment=comment)
     if doc.doc_type == "PMR":
@@ -1599,7 +1611,7 @@ def _do_record_result(request, doc, comment):
         "position": request.data.get("position", ""),
         "inspection_date": request.data.get("inspection_date", ""),
     }
-    if doc.doc_type in ("MAR", "SD", "MS") and result in (
+    if doc.doc_type in submittals.TO_CLIENT and result in (
             "APPROVED", "APPROVED_WITH_COMMENTS"):
         block["approval_date"] = date.today().isoformat()  # spec §5.4
     _set_workflow_payload(doc.current_revision, "client_result", block)
@@ -2316,7 +2328,64 @@ def dashboard_site(request, site_id):
         "materials_in_transit_count": len(in_transit),
         "pending_materials": pending_materials,
         "pending_materials_count": pending_qs.count(),
+        "submittals": submittals.summary(site.id),
     })
+
+
+@api_view(["GET"])
+def register_submittals(request):
+    """The site's submittal register — every type, one paged query.
+
+    Replaces the four (soon eight) separate /documents/list calls the site
+    dashboard used to fire. Paged, because a busy site is already at 59 and
+    a register nobody can page through is a register people re-sort by
+    exporting it (owner 2026-08-30)."""
+    site_id = request.GET.get("site")
+    if not site_id:
+        return Response({"detail": "site is required."}, status=400)
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and int(site_id) not in site_ids:
+        return Response({"detail": "Not your site."}, status=403)
+
+    qs = (Document.objects
+          .filter(site_id=site_id, doc_type__in=submittals.TYPES)
+          .select_related("site", "project", "current_revision")
+          .order_by("-doc_date", "-id"))
+    types = [t for t in (request.GET.get("types") or "").upper().split(",")
+             if t in submittals.TYPES]
+    if types:
+        qs = qs.filter(doc_type__in=types)
+    if request.GET.get("project"):
+        qs = qs.filter(project_id=request.GET["project"])
+    state = request.GET.get("state")
+    if state == "open":
+        qs = qs.exclude(status__in=submittals.SETTLED).filter(is_void=False)
+    elif state == "with_client":
+        qs = qs.filter(status__in=submittals.WITH_CLIENT, is_void=False)
+    elif state == "settled":
+        qs = qs.filter(status__in=submittals.SETTLED)
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        # People search by the reference they were given verbally, or by the
+        # thing the submittal is about — one is a column, the other lives
+        # inside the payload, so the payload is matched as text.
+        qs = qs.annotate(
+            _hay=Cast("current_revision__payload", TextField())
+        ).filter(Q(ref__icontains=q) | Q(_hay__icontains=q))
+
+    try:
+        limit = min(int(request.GET.get("limit", 40)), 200)
+        offset = max(int(request.GET.get("offset", 0)), 0)
+    except ValueError:
+        return Response({"detail": "Bad paging."}, status=400)
+    total = qs.count()
+    rows = DocumentSerializer(qs[offset:offset + limit], many=True,
+                              context={"request": request}).data
+    return Response({"results": rows, "total": total,
+                     "offset": offset, "limit": limit,
+                     "labels": submittals.LABELS,
+                     "counts": submittals.summary(
+                         site_id, request.GET.get("project"))})
 
 
 @api_view(["GET"])
