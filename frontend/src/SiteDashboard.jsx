@@ -19,7 +19,6 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                                         onWorkforce, onVessels, onUnits,
                                         onTesting, refresh }) {
   const [dash, setDash] = useState(null);
-  const [moreQa, setMoreQa] = useState(false);
   const [showShifts, setShowShifts] = useState(false);
   const [register, setRegister] = useState(null);
   const [mrs, setMrs] = useState([]);
@@ -182,54 +181,32 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
         <span style={{ display: "flex", gap: 8, flexWrap: "wrap",
                        alignItems: "center" }}>
           {/* Raise a document — navy (authority chain starts here) */}
+          {/* One button for the whole submittal family, not one per type.
+              There were six here — IR, MAR, SD, MS, the civil menu and Test —
+              and the row grew with every module we added. They all live on
+              the submittals page now, which is where you raise them and where
+              the register is (owner 2026-08-30). */}
+          {["SITE_ENGINEER", "SITE_ADMIN", "PM", "DIRECTOR", "ADMIN", "QS"]
+            .includes(me.role) && onSubmittals && (
+            <Btn variant="navy" onClick={onSubmittals}
+                 title="Inspections, material approvals, drawings, method statements, civil submittals and mock-ups">
+              <Icon name="clipboard" />Submittals
+              {dash?.submittals?.open > 0 && (
+                <span style={{ marginLeft: 6, padding: "1px 7px",
+                               borderRadius: 999, fontSize: 11.5,
+                               fontWeight: 700, background: "rgba(255,255,255,.22)" }}>
+                  {dash.submittals.open}
+                </span>
+              )}
+            </Btn>
+          )}
+          {/* A sample is taken at the pour, by the same person and on the
+              same day as an IR — so it is raised from the same place
+              (owner 2026-08-29). The cross-site register lives under Quality. */}
           {["SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN"].includes(me.role) && (
-            <>
-              <Btn variant="navy" onClick={() => onNewQa("IR")}>+ IR</Btn>
-              <Btn variant="navy" onClick={() => onNewQa("MAR")}>+ MAR</Btn>
-              <Btn variant="navy" onClick={() => onNewQa("SD")}>+ SD</Btn>
-              <Btn variant="navy" onClick={() => onNewQa("MS")}>+ MS</Btn>
-              {/* The extra submittal types behind one control — eight
-                  buttons on an already busy row would cost more than they
-                  gain. A native select next to the buttons looked like a
-                  different kind of control because it is one, so this is a
-                  button that opens a menu (owner 2026-08-30). */}
-              <span style={{ position: "relative" }}>
-                <Btn variant="navy" onClick={() => setMoreQa((v) => !v)}
-                     title="Civil submittals and mock-ups">
-                  + More {moreQa ? "\u25B4" : "\u25BE"}</Btn>
-                {moreQa && (
-                  <div style={{ position: "absolute", top: "calc(100% + 6px)",
-                                left: 0, zIndex: 40, minWidth: 210,
-                                background: "var(--paper)",
-                                border: "1px solid var(--line)",
-                                borderRadius: 10, padding: 5,
-                                boxShadow: "0 8px 24px rgba(16,42,67,.16)" }}>
-                    {[["MXD", "Concrete mix design"],
-                      ["BBS", "Bar bending schedule"],
-                      ["TWD", "Temporary works design"],
-                      ["MOC", "Sample / mock-up"]].map(([t, label]) => (
-                      <button key={t}
-                              onClick={() => { setMoreQa(false); onNewQa(t); }}
-                              style={{ display: "block", width: "100%",
-                                       textAlign: "left", padding: "8px 12px",
-                                       background: "transparent", border: 0,
-                                       borderRadius: 7, cursor: "pointer",
-                                       fontFamily: "inherit", fontSize: 13.5,
-                                       color: "var(--navy)" }}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </span>
-              {/* A sample is taken at the pour, by the same person and on the
-                  same day as an IR — so it is raised from the same place
-                  (owner 2026-08-29). The cross-site register lives under
-                  Quality; this is where the record is made. */}
-              <Btn variant="navy" onClick={onTesting}
-                   title="Record a concrete cube, compaction, pressure or other test sample">
-                + Test</Btn>
-            </>
+            <Btn variant="navy" onClick={onTesting}
+                 title="Record a concrete cube, compaction, pressure or other test sample">
+              + Test</Btn>
           )}
           {canMr && (
             <Btn variant="navy" onClick={onNewMr}>+ MR</Btn>

@@ -10,6 +10,7 @@ import ItemsPage from "./ItemsPage.jsx";
 import ItemCategoriesPage from "./ItemCategoriesPage.jsx";
 import LiveFeedsPage from "./LiveFeedsPage.jsx";
 import SubmittalsPage from "./SubmittalsPage.jsx";
+import SiteProjects from "./SiteProjects.jsx";
 import WorkerCategoriesPage from "./WorkerCategoriesPage.jsx";
 import OvertimeRatesPage from "./OvertimeRatesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
@@ -1017,47 +1018,16 @@ export default function App() {
                 )}
               </div>
 
-              {/* Projects within the site (R4) */}
-              <div style={{ display: "flex", gap: 6, alignItems: "center",
-                            flexWrap: "wrap", marginBottom: 16 }}>
-                {projects.map((p) => (
-                  <button key={p.id}
-                          onClick={() => setProject(
-                            project?.id === p.id ? null : p)}
-                          title={p.title}
-                          style={{
-                            ...ghostButton, padding: "4px 14px", fontSize: 13,
-                            background: project?.id === p.id
-                              ? "var(--sp-navy)" : "#fff",
-                            color: project?.id === p.id ? "#fff"
-                              : "var(--sp-navy)",
-                          }}>
-                    {p.code} · {p.overall_progress}%
-                  </button>
-                ))}
-                {project && (
-                  <button onClick={() => setDocView({ mode: "project",
-                                                      projectId: project.id })}
-                          style={{ ...ghostButton, padding: "4px 12px",
-                                   fontSize: 13 }}>
-                    Open project →
-                  </button>
-                )}
-                {["PM", "DIRECTOR", "ADMIN"].includes(me.role) &&
-                  !addingProject && (
-                  <button onClick={() => { setAddingProject(true);
-                            api("/pms").then(setPms).catch(() => {}); }}
-                          style={{ ...ghostButton, padding: "4px 12px",
-                                   fontSize: 13 }}>
-                    + Project
-                  </button>
-                )}
-                {projects.length > 0 && !project && (
-                  <span style={{ fontSize: 12, color: "#b35900" }}>
-                    Select a project to create IR / MAR / SD / MS.
-                  </span>
-                )}
-              </div>
+              {/* Projects within the site (R4) — a proper box, with the
+                  create action inside it where it belongs. */}
+              <SiteProjects
+                projects={projects} project={project} onProject={setProject}
+                adding={addingProject}
+                canAdd={["PM", "DIRECTOR", "ADMIN"].includes(me.role)}
+                onAddProject={() => { setAddingProject(true);
+                  api("/pms").then(setPms).catch(() => {}); }}
+                onOpenProject={() => setDocView({ mode: "project",
+                                                 projectId: project.id })} />
 
               {/* Full project creation (owner: a project deserves more
                   than a one-line form) — dates, PM and scope up front */}
