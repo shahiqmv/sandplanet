@@ -330,10 +330,18 @@ def notify_subcontractor(sub, actor=None):
 
 
 def notify_user(user, title, body="", doc=None, category="alert"):
-    """Ad-hoc notification (e.g. an import payment falling due)."""
+    """Ad-hoc notification (e.g. an import payment falling due).
+
+    Title and body are TRIMMED to the column widths rather than allowed to
+    overflow. A notification is an alert, not a record of truth, so a long
+    body should cost the tail of a sentence — not the whole message. A
+    release announcement with a 950-character body silently notified nobody:
+    Postgres refused every insert on varchar(300), and the except below
+    turned 39 failures into a quiet "0 of 39" (owner 2026-08-30)."""
     try:
         n = Notification.objects.create(
-            recipient=user, title=title, body=body, category=category,
+            recipient=user, title=(title or "")[:140],
+            body=(body or "")[:300], category=category,
             doc_ref=getattr(doc, "ref", "") or "",
             doc_type=getattr(doc, "doc_type", "") or "",
             doc_status=getattr(doc, "status", "") or "")

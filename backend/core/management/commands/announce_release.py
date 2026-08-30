@@ -34,6 +34,9 @@ class Command(BaseCommand):
                             help="Notify without recording a release note.")
         parser.add_argument("--dry-run", action="store_true",
                             help="List who would be told, and send nothing.")
+        parser.add_argument("--force", action="store_true",
+                            help="Announce again even if the same title has "
+                                 "already gone out today.")
 
     def handle(self, *args, **options):
         people = User.objects.filter(is_active=True)
@@ -57,6 +60,21 @@ class Command(BaseCommand):
                 self.stdout.write(f"   {u.username:<18} {u.role:<16}{mark}")
             return
 
+        # Running the command twice is easy to do and hard to undo: the
+        # second run leaves a duplicate in "what's new" and sends everyone a
+        # second alert about the same release (owner 2026-08-30, having done
+        # exactly that).
+        if not options["force"]:
+            from django.utils import timezone as _tz
+            twin = ReleaseNote.objects.filter(
+                title=options["title"],
+                released_on=_tz.localdate()).first()
+            if twin is not None:
+                self.stderr.write(self.style.ERROR(
+                    f'"{options["title"]}" was already announced today '
+                    f"(note #{twin.id}). Use --force to send it again."))
+                return
+
         # The announcement IS the note: writing it twice is how the "what's
         # new" list ends up empty three releases in.
         if not options["no_note"]:
@@ -66,11 +84,25 @@ class Command(BaseCommand):
                 area=options["area"], released_on=timezone.localdate())
             self.stdout.write("Release note recorded.")
 
+        # The alert carries a short version; the full text lives on the note
+        # and is read in "what's new". notify_user trims anyway, but saying
+        # so here is what stops the next person writing 900 words into a
+        # phone notification.
+        blurb = " ".join((options["body"] or "").split())
+        if len(blurb) > 280:
+            blurb = blurb[:277].rsplit(" ", 1)[0] + "…"
+
         sent = 0
         for u in people:
             # notify_user writes the in-app alert AND pushes to whichever of
             # their devices are subscribed, so one call covers both.
-            if notify_user(u, options["title"], options["body"],
-                           category="alert"):
+            if notify_user(u, options["title"], blurb, category="alert"):
                 sent += 1
-        self.stdout.write(f"Announced to {sent} of {len(people)} people.")
+        if sent == len(people):
+            self.stdout.write(self.style.SUCCESS(
+                f"Announced to {sent} people."))
+        else:
+            # Silence here is how nobody noticed the last one reached no one.
+            self.stderr.write(self.style.ERROR(
+                f"Only {sent} of {len(people)} were notified — the rest "
+                "failed. Check the log for notify_user errors."))
