@@ -140,10 +140,12 @@ class ShipmentPaymentSerializer(serializers.ModelSerializer):
                                     default=None)
     pyr_status = serializers.CharField(source="pyr.status", read_only=True,
                                        default=None)
+    display_label = serializers.CharField(read_only=True)
 
     class Meta:
         model = ShipmentPayment
-        fields = ["id", "kind", "kind_display", "payee", "payee_name",
+        fields = ["id", "kind", "kind_display", "label", "display_label",
+                  "payee", "payee_name",
                   "payee_display", "amount", "currency", "invoice_url",
                   "invoice_ref", "pyr_ref", "pyr_status", "notes"]
 
@@ -487,8 +489,15 @@ def ipr_shipment_payment_raise(request, ref, pk, kind):
     s = _get_shipment(doc, pk)
     if not s:
         return Response({"detail": "Not found."}, status=404)
-    payment = ShipmentPayment.objects.filter(
-        shipment=s, kind=kind.upper()).first()
+    # With several charges of a kind on one shipment, say which. Falling back
+    # to the un-raised one keeps the single-charge case a one-click action.
+    charge_id = request.data.get("charge_id")
+    if charge_id:
+        payment = ShipmentPayment.objects.filter(
+            pk=charge_id, shipment=s).first()
+    else:
+        payment = ShipmentPayment.objects.filter(
+            shipment=s, kind=kind.upper(), pyr__isnull=True).first()
     if not payment:
         return Response({"detail": "Enter the charge first."}, status=400)
     _, msg = ipr_svc.raise_charge_pyr(payment, request.user)

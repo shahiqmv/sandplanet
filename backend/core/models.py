@@ -1446,6 +1446,10 @@ class ShipmentPayment(models.Model):
     invoice = models.FileField(upload_to=shipment_invoice_path, null=True,
                                blank=True)
     invoice_ref = models.CharField(max_length=60, blank=True)
+    # What this particular charge is for, when a shipment is billed more than
+    # once for the same kind: "container shifting", "demurrage 3 days". A port
+    # does not bill once and stop (owner 2026-08-30).
+    label = models.CharField(max_length=80, blank=True)
     # The PYR raised to pay this charge; its status is the payment status.
     pyr = models.ForeignKey("Document", on_delete=models.SET_NULL, null=True,
                             blank=True, related_name="shipment_payments")
@@ -1456,14 +1460,17 @@ class ShipmentPayment(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["kind"]
-        constraints = [
-            models.UniqueConstraint(fields=["shipment", "kind"],
-                                    name="uniq_shipment_payment_kind"),
-        ]
+        # No unique constraint on (shipment, kind). A port bills a container
+        # more than once — handling, then shifting, then demurrage while it
+        # sits — and each invoice needs its own payment. One row per kind
+        # meant the second invoice had nowhere to go (owner 2026-08-30).
+        ordering = ["kind", "created_at", "id"]
 
     def __str__(self):
         return f"{self.kind} on shipment {self.shipment_id}"
+
+    def display_label(self):
+        return self.label or self.get_kind_display()
 
     def resolved_payee(self):
         return self.payee.name if self.payee_id else self.payee_name

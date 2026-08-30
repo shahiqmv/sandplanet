@@ -1524,7 +1524,11 @@ const CHARGE_KINDS = [
 
 function ChargePayments({ s, refIpr, canManage, onChanged, onError, agents = [],
                           onOpenDoc, supplierChargesFreight }) {
-  const byKind = Object.fromEntries((s.payments || []).map((p) => [p.kind, p]));
+  // A kind can carry several charges. A port bills a container more than
+  // once — handling, then shifting, then demurrage while it sits — and each
+  // invoice needs its own payment (owner 2026-08-30).
+  const [extra, setExtra] = useState({});      // kind -> show a blank row
+  const all = s.payments || [];
   return (
     <div style={{ marginBottom: 6 }}>
       {CHARGE_KINDS.map(([kind, label]) => {
@@ -1535,11 +1539,41 @@ function ChargePayments({ s, refIpr, canManage, onChanged, onError, agents = [],
               {label}: n/a — the supplier charges freight on the order</div>
           );
         }
-        return <ChargeRow key={kind} kind={kind} label={label}
-                          p={byKind[kind]} s={s} refIpr={refIpr}
-                          canManage={canManage} onChanged={onChanged}
-                          onError={onError} agents={agents}
-                          onOpenDoc={onOpenDoc} />;
+        const rows = all.filter((p) => p.kind === kind);
+        const blank = rows.length === 0 || extra[kind];
+        return (
+          <Fragment key={kind}>
+            {rows.map((p, i) => (
+              <ChargeRow key={p.id} kind={kind}
+                         label={rows.length > 1
+                           ? `${label} — ${p.display_label || `#${i + 1}`}`
+                           : label}
+                         p={p} s={s} refIpr={refIpr}
+                         canManage={canManage} onChanged={onChanged}
+                         onError={onError} agents={agents}
+                         onOpenDoc={onOpenDoc} />
+            ))}
+            {blank && (
+              <ChargeRow key={`${kind}-new`} kind={kind}
+                         label={rows.length ? `${label} — another` : label}
+                         p={undefined} isNew={rows.length > 0} s={s}
+                         refIpr={refIpr} canManage={canManage}
+                         onChanged={() => { setExtra((x) => ({ ...x,
+                                              [kind]: false })); onChanged(); }}
+                         onError={onError} agents={agents}
+                         onOpenDoc={onOpenDoc} />
+            )}
+            {canManage && rows.length > 0 && !extra[kind] && (
+              <button onClick={() => setExtra((x) => ({ ...x, [kind]: true }))}
+                      style={{ background: "transparent", border: "none",
+                               color: "var(--navy)", cursor: "pointer",
+                               fontSize: 12, padding: "2px 0 8px",
+                               fontFamily: "inherit" }}>
+                + another {label.toLowerCase()} (shifting, demurrage…)
+              </button>
+            )}
+          </Fragment>
+        );
       })}
     </div>
   );
@@ -1554,7 +1588,7 @@ const DIRECT_PAYEES = {
 };
 
 function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
-                    onError, agents = [], onOpenDoc }) {
+                    onError, agents = [], onOpenDoc, isNew = false }) {
   // Forwarder freight is always paid to the shipment's forwarder — no picker.
   const freightToForwarder = kind === "FREIGHT" && !!s.forwarder;
   const directs = DIRECT_PAYEES[kind] || [];
@@ -1567,6 +1601,7 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
   const [amount, setAmount] = useState(p?.amount ?? "");
   const [currency, setCurrency] = useState(p?.currency || "MVR");
   const [invRef, setInvRef] = useState(p?.invoice_ref || "");
+  const [chargeLabel, setChargeLabel] = useState(p?.label || "");
   const [file, setFile] = useState(null);
   const fileRef = useRef(null);
   const raised = !!p?.pyr_ref;
@@ -1581,6 +1616,11 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
     }
     fd.append("amount", amount);
     fd.append("currency", currency); fd.append("invoice_ref", invRef);
+    fd.append("label", chargeLabel);
+    // Say which charge. Without an id the server edits the open one, and a
+    // blank "another" row must start a fresh one rather than overwrite it.
+    if (p?.id) fd.append("charge_id", p.id);
+    else if (isNew) fd.append("new", "1");
     if (file) fd.append("invoice", file);
     try {
       await apiUpload(`/ipr/${refIpr}/shipments/${s.id}/payments/${kind}`, fd);
@@ -1591,7 +1631,7 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
     onError(null);
     try {
       await api(`/ipr/${refIpr}/shipments/${s.id}/payments/${kind}/raise`,
-                { method: "POST" });
+                { method: "POST", body: p?.id ? { charge_id: p.id } : {} });
       onChanged();
     } catch (e) { onError(e.message); }
   }
@@ -1664,6 +1704,13 @@ function ChargeRow({ kind, label, p, s, refIpr, canManage, onChanged,
             <input placeholder="Inv #" value={invRef} disabled={!canManage}
                    style={{ ...inputStyle, width: 80 }}
                    onChange={(e) => setInvRef(e.target.value)} />
+            {/* What this particular invoice is for, when a kind is billed
+                more than once. */}
+            <input placeholder="what for?" value={chargeLabel}
+                   disabled={!canManage}
+                   title="Container shifting, demurrage, storage…"
+                   style={{ ...inputStyle, width: 118 }}
+                   onChange={(e) => setChargeLabel(e.target.value)} />
             <input ref={fileRef} type="file" style={{ display: "none" }}
                    onChange={(e) => setFile(e.target.files[0])} />
             {canManage && (

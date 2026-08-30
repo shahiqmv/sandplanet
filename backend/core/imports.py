@@ -1097,10 +1097,29 @@ def set_shipment_payment(shipment, kind, data, actor):
     from .models import ShipmentPayment, Supplier
     if kind not in ShipmentPayment.Kind.values:
         return None, "Unknown charge type."
-    payment, _ = ShipmentPayment.objects.get_or_create(
-        shipment=shipment, kind=kind, defaults={"created_by": actor})
+    # Which row to write. An explicit id edits that charge; otherwise the
+    # open (un-raised) charge of this kind is reused, and if every charge of
+    # this kind has already been paid, a NEW one is started — which is how a
+    # second port invoice gets somewhere to go without a separate button
+    # (owner 2026-08-30). `new` forces a fresh row regardless.
+    payment = None
+    if data.get("charge_id"):
+        payment = ShipmentPayment.objects.filter(
+            pk=data["charge_id"], shipment=shipment).first()
+        if payment is None:
+            return None, "That charge is not on this shipment."
+    elif not data.get("new"):
+        payment = ShipmentPayment.objects.filter(
+            shipment=shipment, kind=kind, pyr__isnull=True).first()
+    if payment is None:
+        payment = ShipmentPayment.objects.create(
+            shipment=shipment, kind=kind, created_by=actor)
     if payment.pyr_id:
-        return None, "This charge already has a PYR — it can't be edited."
+        return None, ("This charge already has a PYR — it can't be edited. "
+                      "Add another charge of the same kind for a new "
+                      "invoice.")
+    if "label" in data:
+        payment.label = (data.get("label") or "").strip()[:80]
     # A charge is paid EITHER to an agent on file (payee_id) OR directly to a
     # named body — the port, customs — typed as payee_name. The two must never
     # both be set: the supplier FK would silently win over the typed name
@@ -1143,15 +1162,31 @@ _LANDED_FIELD = {"FREIGHT": "freight", "DO": "agent_charges",
 
 
 def _mirror_charge_to_landed_cost(payment):
+    """Capitalize EVERY charge of this kind, not just the latest one.
+
+    This used to assign the single charge's amount straight onto the field.
+    With one row per kind that was the same thing; now that a port can bill a
+    container three times — handling, shifting, demurrage — assigning would
+    silently drop the earlier invoices out of the landed cost, and the
+    material would look cheaper than it was (owner 2026-08-30)."""
+    from .models import ShipmentPayment
+
     field = _LANDED_FIELD.get(payment.kind)
     if not field:
         return
-    amt = payment.amount
-    if amt is not None and payment.currency != "MVR":
-        amt = (amt * payment.shipment.order.exchange_rate).quantize(
-            Decimal("0.01"))
-    setattr(payment.shipment, field, amt)
-    payment.shipment.save(update_fields=[field])
+    shipment = payment.shipment
+    rate = shipment.order.exchange_rate
+    total = ZERO
+    for row in ShipmentPayment.objects.filter(shipment=shipment,
+                                              kind=payment.kind):
+        if row.amount is None:
+            continue
+        amt = row.amount
+        if row.currency != "MVR":
+            amt = (amt * rate).quantize(Decimal("0.01"))
+        total += amt
+    setattr(shipment, field, total or None)
+    shipment.save(update_fields=[field])
 
 
 def raise_charge_pyr(payment, actor):
