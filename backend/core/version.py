@@ -39,6 +39,24 @@ def build_id():
 
 
 @api_view(["GET"])
+def release_notes(request):
+    """The last few releases, newest first — the "what changed" behind the
+    reload prompt."""
+    from .models import ReleaseNote
+
+    try:
+        limit = min(int(request.GET.get("limit", 12)), 50)
+    except (TypeError, ValueError):
+        limit = 12
+    rows = ReleaseNote.objects.all()[:limit]
+    return Response([{
+        "id": n.id, "title": n.title, "body": n.body, "area": n.area,
+        "released_on": n.released_on,
+        "published_by": n.published_by.full_name if n.published_by_id else "",
+    } for n in rows])
+
+
+@api_view(["GET"])
 @authentication_classes([])
 @permission_classes([])
 def app_version(request):

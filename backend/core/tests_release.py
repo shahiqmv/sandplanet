@@ -74,3 +74,51 @@ class AnnounceReleaseTests(TestCase):
         self.fin.save(update_fields=["is_active"])
         self._run("Anyone there?")
         self.assertEqual(Notification.objects.count(), 2)
+
+
+class ReleaseNotesTests(TestCase):
+    """What changed, not just that something did."""
+
+    def setUp(self):
+        self.user = make_user("pm_note", User.Role.PM)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def test_announcing_records_a_note(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from .models import ReleaseNote
+        call_command("announce_release", "Safety module is live",
+                     body="Report incidents from the site page.",
+                     area="HSE", stdout=StringIO())
+        note = ReleaseNote.objects.get()
+        self.assertEqual(note.title, "Safety module is live")
+        self.assertEqual(note.area, "HSE")
+
+    def test_no_note_skips_it(self):
+        from io import StringIO
+
+        from django.core.management import call_command
+
+        from .models import ReleaseNote
+        call_command("announce_release", "Quiet one", no_note=True,
+                     stdout=StringIO())
+        self.assertEqual(ReleaseNote.objects.count(), 0)
+
+    def test_the_list_reads_newest_first(self):
+        from datetime import date, timedelta
+
+        from .models import ReleaseNote
+        today = date.today()
+        ReleaseNote.objects.create(title="Older", released_on=today
+                                   - timedelta(days=5))
+        ReleaseNote.objects.create(title="Newer", released_on=today)
+        rows = self.client.get("/api/v1/releases").data
+        self.assertEqual([r["title"] for r in rows], ["Newer", "Older"])
+
+    def test_an_empty_list_is_not_an_error(self):
+        r = self.client.get("/api/v1/releases")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data, [])

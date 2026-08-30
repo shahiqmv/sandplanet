@@ -2,6 +2,7 @@
 add / remove / transfer BATCHES for a site's DIRECT workforce; the PM (and,
 for new hires, the Director) approve or return a whole batch. See
 worker_mgmt.py for the rules."""
+from django.db.models import Q
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -310,7 +311,13 @@ def worker_photo(request, pk):
     from rest_framework.parsers import FormParser, MultiPartParser  # noqa
     from .audit import audit
 
-    emp = Employee.objects.filter(pk=pk, is_active=True).first()
+    # A worker awaiting approval counts too. The site takes the photograph
+    # when the man is standing in front of them on his first day, which is
+    # before the Director has activated him — insisting on an active record
+    # meant the photo had to wait for an approval and was then never taken
+    # (owner 2026-08-30).
+    emp = Employee.objects.filter(pk=pk).filter(
+        Q(is_active=True) | Q(hire_pending=True)).first()
     if emp is None:
         return Response({"detail": "Not found."}, status=404)
     user = request.user
@@ -318,10 +325,17 @@ def worker_photo(request, pk):
         pass
     elif user.role in ("SITE_ADMIN", "SITE_ENGINEER", "PM"):
         ids = scoped_site_ids(user)
-        if ids is not None and not emp.site_allocations.filter(
-                to_date__isnull=True, site_id__in=ids).exists():
-            return Response({"detail": "Not one of your site's workers."},
-                            status=403)
+        if ids is not None:
+            on_my_site = emp.site_allocations.filter(
+                to_date__isnull=True, site_id__in=ids).exists()
+            # A pending hire has no allocation until activation, so fall back
+            # to the batch that asked for him.
+            if not on_my_site:
+                on_my_site = WCR.objects.filter(
+                    items__employee=emp, site_id__in=ids).exists()
+            if not on_my_site:
+                return Response({"detail": "Not one of your site's workers."},
+                                status=403)
     else:
         return Response({"detail": "Site team or HR updates worker photos."},
                         status=403)

@@ -20,6 +20,7 @@ export default function NewReleaseBanner() {
   const booted = useRef(null);           // the build this tab started on
   const [fresh, setFresh] = useState(null);
   const [dismissed, setDismissed] = useState("");
+  const [showNotes, setShowNotes] = useState(false);
 
   useEffect(() => {
     try {
@@ -62,6 +63,12 @@ export default function NewReleaseBanner() {
       <span style={{ opacity: .9 }}>
         Reload to pick it up — nothing you have open will be lost.
       </span>
+      <button onClick={() => setShowNotes(true)}
+              style={{ background: "transparent", border: "none",
+                       color: "#fff", textDecoration: "underline",
+                       cursor: "pointer", fontSize: 13,
+                       fontFamily: "inherit", padding: 0 }}>
+        What changed?</button>
       <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
         <button onClick={() => window.location.reload()}
                 style={{ background: "#fff", color: "var(--navy, #14507C)",
@@ -80,6 +87,71 @@ export default function NewReleaseBanner() {
                          fontFamily: "inherit" }}>
           Later</button>
       </span>
+      {showNotes && <ReleaseNotes onClose={() => setShowNotes(false)} />}
+    </div>
+  );
+}
+
+// What actually changed. The banner says a release exists; this says why
+// anyone should care (owner 2026-08-30).
+export function ReleaseNotes({ onClose }) {
+  const [rows, setRows] = useState(null);
+
+  useEffect(() => {
+    api("/releases").then(setRows).catch(() => setRows([]));
+  }, []);
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, zIndex: 320, padding: 20,
+                  background: "rgba(16,28,38,.42)", display: "flex",
+                  alignItems: "flex-start", justifyContent: "center",
+                  overflowY: "auto" }}>
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true"
+           style={{ background: "var(--paper, #fff)", color: "var(--ink,#16232E)",
+                    borderRadius: 12, width: "100%", maxWidth: 620,
+                    margin: "32px 0", padding: 22,
+                    boxShadow: "0 18px 60px rgba(16,28,38,.28)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          <h2 style={{ margin: 0, fontSize: 18, color: "var(--navy)" }}>
+            What&rsquo;s new</h2>
+          <button onClick={onClose}
+                  style={{ marginLeft: "auto", background: "transparent",
+                           border: "1px solid #BFD6E6", borderRadius: 8,
+                           padding: "5px 13px", cursor: "pointer",
+                           fontSize: 13, color: "var(--navy)",
+                           fontFamily: "inherit" }}>Close</button>
+        </div>
+        {rows === null && (
+          <p style={{ fontSize: 13.5, color: "#5a6b78" }}>Loading…</p>
+        )}
+        {rows?.length === 0 && (
+          <p style={{ fontSize: 13.5, color: "#5a6b78" }}>
+            Nothing recorded yet. Releases worth reading about appear here.
+          </p>
+        )}
+        {(rows || []).map((n) => (
+          <div key={n.id} style={{ borderTop: "1px solid var(--line,#e2e8f0)",
+                                   padding: "14px 0 2px" }}>
+            <div style={{ display: "flex", gap: 10, alignItems: "baseline",
+                          flexWrap: "wrap" }}>
+              <strong style={{ fontSize: 14.5 }}>{n.title}</strong>
+              {n.area && (
+                <span style={{ fontSize: 11, fontWeight: 700,
+                               padding: "2px 8px", borderRadius: 999,
+                               background: "#eef4fb", color: "#16527E" }}>
+                  {n.area}</span>
+              )}
+              <span style={{ marginLeft: "auto", fontSize: 12,
+                             color: "#5a6b78" }}>{n.released_on}</span>
+            </div>
+            {n.body && (
+              <p style={{ margin: "5px 0 0", fontSize: 13.5,
+                          whiteSpace: "pre-wrap" }}>{n.body}</p>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

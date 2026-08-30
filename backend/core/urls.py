@@ -45,6 +45,7 @@ urlpatterns = [
     path("health", views.health, name="health"),
     # What build the client should be running. Open, and cheap.
     path("version", version_api.app_version, name="app-version"),
+    path("releases", version_api.release_notes, name="release-notes"),
     path("auth/login", views.auth_login, name="auth-login"),
     path("auth/logout", views.auth_logout, name="auth-logout"),
     path("auth/change-password", views.auth_change_password,

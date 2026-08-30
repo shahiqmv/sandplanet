@@ -14,7 +14,7 @@ stays a decision. A push on every deploy is a push people switch off.
 """
 from django.core.management.base import BaseCommand
 
-from core.models import PushSubscription, User
+from core.models import PushSubscription, ReleaseNote, User
 from core.notify import notify_user
 
 
@@ -28,6 +28,10 @@ class Command(BaseCommand):
                             help="Comma-separated roles; default everyone.")
         parser.add_argument("--push-only", action="store_true",
                             help="Only people who have push switched on.")
+        parser.add_argument("--area", default="",
+                            help='Which part moved — "HSE", "Quality".')
+        parser.add_argument("--no-note", action="store_true",
+                            help="Notify without recording a release note.")
         parser.add_argument("--dry-run", action="store_true",
                             help="List who would be told, and send nothing.")
 
@@ -52,6 +56,15 @@ class Command(BaseCommand):
                 mark = " (push)" if u.id in pushable else ""
                 self.stdout.write(f"   {u.username:<18} {u.role:<16}{mark}")
             return
+
+        # The announcement IS the note: writing it twice is how the "what's
+        # new" list ends up empty three releases in.
+        if not options["no_note"]:
+            from django.utils import timezone
+            ReleaseNote.objects.create(
+                title=options["title"], body=options["body"],
+                area=options["area"], released_on=timezone.localdate())
+            self.stdout.write("Release note recorded.")
 
         sent = 0
         for u in people:

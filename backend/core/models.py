@@ -6575,3 +6575,28 @@ class TestResult(models.Model):
 
     class Meta:
         ordering = ["test", "age_days", "id"]
+
+
+class ReleaseNote(models.Model):
+    """What changed, in the words of whoever shipped it.
+
+    The banner tells people a new build exists; it cannot tell them why they
+    should care. A line per release is cheap to write and is the difference
+    between "reload, I suppose" and "the safety module is live" (owner
+    2026-08-30)."""
+
+    title = models.CharField(max_length=140)
+    body = models.TextField(blank=True)
+    released_on = models.DateField()
+    # Free text — "HSE", "Quality" — so a reader can see which part moved.
+    area = models.CharField(max_length=40, blank=True)
+    published_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                     null=True, blank=True,
+                                     related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-released_on", "-id"]
+
+    def __str__(self):
+        return f"{self.released_on} — {self.title[:60]}"

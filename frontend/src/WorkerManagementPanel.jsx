@@ -439,7 +439,47 @@ function RevisionCard({ rev, me, onChanged }) {
 // never from the site batch. The server enforces this too.
 const BLANK = { full_name: "", passport_no: "", nationality: "",
   job_category_id: "", basic_pay: "", currency: "MVR",
-  employment_type: "CONTRACT", work_permit_no: "", work_permit_expiry: "" };
+  employment_type: "CONTRACT", work_permit_no: "", work_permit_expiry: "",
+  // Held on the row and uploaded once the batch has created the worker: the
+  // photo is taken with the man standing there on his first day, not after
+  // an approval that may be days away (owner 2026-08-30).
+  photo: null };
+
+// Take the man's photograph while he is standing there. The only way to add
+// one used to be from the workforce list after the hire was approved, or
+// through an onboarding case — so for a site hire it was days late, and
+// usually never (owner 2026-08-30).
+function HirePhoto({ file, onPick }) {
+  const [preview, setPreview] = useState(null);
+  useEffect(() => {
+    if (!file) { setPreview(null); return undefined; }
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+
+  return (
+    <label title="Photo — camera or camera roll"
+           style={{ display: "flex", alignItems: "center", gap: 6,
+                    cursor: "pointer", fontSize: 12 }}>
+      {preview ? (
+        <img src={preview} alt="" style={{ width: 30, height: 30,
+                                           borderRadius: "50%",
+                                           objectFit: "cover" }} />
+      ) : (
+        <span style={{ width: 30, height: 30, borderRadius: "50%",
+                       background: "#e8eef3", display: "inline-flex",
+                       alignItems: "center", justifyContent: "center",
+                       color: "#8a97a3", fontSize: 14 }}>👤</span>
+      )}
+      <span style={{ color: "var(--navy)", textDecoration: "underline" }}>
+        {file ? "change" : "add photo"}</span>
+      <input type="file" accept="image/*" capture="environment"
+             style={{ display: "none" }}
+             onChange={(e) => onPick(e.target.files[0] || null)} />
+    </label>
+  );
+}
 
 function HiresForm({ site, onCancel, onDone }) {
   const [rows, setRows] = useState([{ ...BLANK }]);
@@ -462,11 +502,32 @@ function HiresForm({ site, onCancel, onDone }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const workers = rows.filter((r) => r.full_name.trim())
-        .map((r) => { const w = { ...r };
-          if (!w.job_category_id) delete w.job_category_id; return w; });
-      await api(`/sites/${site.id}/worker-batches`,
-                { method: "POST", body: { kind: "ADD", workers } });
+      const kept = rows.filter((r) => r.full_name.trim());
+      const workers = kept.map((r) => { const w = { ...r };
+        delete w.photo;
+        if (!w.job_category_id) delete w.job_category_id; return w; });
+      const batch = await api(`/sites/${site.id}/worker-batches`,
+                              { method: "POST",
+                                body: { kind: "ADD", workers } });
+      // The batch creates the worker records, so the photos go up against
+      // the ids it hands back — matched on passport number rather than
+      // position, so a reordered response cannot put a face on the wrong man.
+      const created = batch?.workers || [];
+      for (const r of kept) {
+        if (!r.photo) continue;
+        const match = created.find(
+          (w) => (w.passport_no || "").trim().toUpperCase()
+                 === (r.passport_no || "").trim().toUpperCase());
+        if (!match) continue;
+        try {
+          const fd = new FormData();
+          fd.append("photo", await shrinkPhoto(r.photo));
+          await apiUpload(`/workers/${match.id}/photo`, fd);
+        } catch {
+          // A failed photo must not lose the hire — it can be added from the
+          // workforce list afterwards.
+        }
+      }
       onDone();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
@@ -489,6 +550,12 @@ function HiresForm({ site, onCancel, onDone }) {
                         marginBottom: 4 }}>
             <b style={{ fontSize: 12, color: "var(--muted)" }}>
               Worker {i + 1}</b>
+            <HirePhoto file={r.photo}
+                       onPick={(file) => {
+                         const next = rows.slice();
+                         next[i] = { ...next[i], photo: file };
+                         setRows(next);
+                       }} />
             {rows.length > 1 && (
               <a href="#" onClick={(e) => { e.preventDefault();
                 setRows(rows.filter((_, j) => j !== i)); }}

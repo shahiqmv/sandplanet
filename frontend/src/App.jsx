@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import { decodeView, encodeView } from "./urlState.js";
 import BusyBar from "./BusyBar.jsx";
-import NewReleaseBanner from "./NewReleaseBanner.jsx";
+import NewReleaseBanner, { ReleaseNotes } from "./NewReleaseBanner.jsx";
 import DPRForm from "./DPRForm.jsx";
 import DPRView from "./DPRView.jsx";
 import HODashboard from "./HODashboard.jsx";
@@ -444,6 +444,7 @@ export default function App() {
   // hold on to the event so the offer lives in our own header rather than an
   // address-bar icon nobody notices (owner 2026-08-28).
   const [installPrompt, setInstallPrompt] = useState(null);
+  const [showNotes, setShowNotes] = useState(false);
   const [refresh, setRefresh] = useState(0);
   const [error, setError] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
@@ -721,6 +722,7 @@ export default function App() {
       {/* Above the header so it is seen, and outside the auth check so a tab
           left open on the sign-in screen can still tell it is stale. */}
       <NewReleaseBanner />
+      {showNotes && <ReleaseNotes onClose={() => setShowNotes(false)} />}
       <header className="topbar">
         {showHoNav && (
           <button className="navtoggle" aria-label="Menu"
@@ -774,6 +776,11 @@ export default function App() {
                 Install app
               </button>
             )}
+            {/* Reachable at any time, not only when a release banner is up. */}
+            <button onClick={() => setShowNotes(true)} className="signout-btn"
+                    title="What changed in recent releases">
+              What&rsquo;s new
+            </button>
             <span className="user-chip">
               <span className="u-name">{me.full_name}</span>
               <span className="u-role">{me.role.replace(/_/g, " ")}</span>
