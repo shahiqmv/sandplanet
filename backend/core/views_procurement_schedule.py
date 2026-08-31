@@ -205,6 +205,24 @@ def schedule_line_production(request, line_id):
     return Response(ps.schedule_dict(line.schedule, request.user))
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_line_delivered(request, line_id):
+    """Mark a line received without a GRN — or clear that mark.
+
+    For material that arrived before the import module existed, or a local
+    purchase that never had a receipt raised. Send `on` (and a `note`), or
+    `on: null` to reopen it."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    msg = pp.set_delivered(line, request.data.get("on"),
+                           request.data.get("note", ""), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
 @api_view(["POST", "DELETE"])
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])

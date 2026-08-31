@@ -280,6 +280,8 @@ def _today():
 def _delivered(line):
     if line.grn_id and line.grn.status in ("COMPLETE", "SHORTAGE_REPORTED"):
         return True
+    if line.delivered_on:
+        return True            # received without a GRN, marked by hand
     return bool(line.client_delivered_on)   # CLIENT lines are marked by hand
 
 
@@ -409,7 +411,15 @@ def line_stage(line):
         return {"label": "Delivered", "tone": "ok"}
     sh = _shipment_for(line)
     if sh is not None:
-        if sh.status in ("ARRIVED", "CLEARED"):
+        # A consignment being cleared has plainly landed. Reading only
+        # ARRIVED and CLEARED as arrived left BAO-LI's bridge showing
+        # "Shipped" while its agent was at customs with it (owner
+        # 2026-08-31).
+        if sh.status == "CLEARED":
+            return {"label": "Cleared", "tone": "ok"}
+        if sh.status == "UNDER_CLEARING":
+            return {"label": "Clearing", "tone": "info"}
+        if sh.status == "ARRIVED":
             return {"label": "Arrived", "tone": "ok"}
         return {"label": "Shipped", "tone": "info"}
     if line.production_status == "COMPLETED":
@@ -618,6 +628,55 @@ def set_production(line, status, actor):
     line.save(update_fields=["production_status", "updated_at"])
     audit("document", line.schedule.document_id, "PSC_LINE_PRODUCTION",
           actor=actor, detail={"line": line.id, "status": status})
+    return None
+
+
+def set_delivered(line, on, note, actor):
+    """Close a line that arrived without a GRN.
+
+    The pipeline normally learns of delivery from a GRN, which is right when
+    the goods passed through a store. Two cases never will: material bought
+    and installed before the import module existed, and a local purchase that
+    never had a receipt raised. Without this the line stays "Produced" and
+    flags Late forever, and the planner slowly fills with rows nobody can
+    close (owner 2026-08-31, BAO-LI's HDPE liner).
+
+    A note is required. A delivery asserted by hand should say who asserted
+    it and on what basis, because it is the one stage with no document
+    behind it. Passing on=None reopens the line."""
+    from datetime import date as _date
+
+    if actor.role not in LINK_ROLES:
+        return "Not permitted to mark a line delivered."
+    if line.grn_id:
+        return ("This line has a GRN — its delivery comes from the receipt, "
+                "not by hand.")
+    if on in (None, ""):
+        line.delivered_on = None
+        line.delivered_note = ""
+        line.delivered_by = None
+        line.save(update_fields=["delivered_on", "delivered_note",
+                                 "delivered_by", "updated_at"])
+        audit("document", line.schedule.document_id, "PSC_LINE_UNDELIVERED",
+              actor=actor, detail={"line": line.id})
+        return None
+    try:
+        when = on if isinstance(on, _date) else _date.fromisoformat(str(on))
+    except (TypeError, ValueError):
+        return "Give the date it was received."
+    if when > timezone.localdate():
+        return "A delivery date can't be in the future."
+    if not (note or "").strip():
+        return ("Say how this was received — it is being closed without a "
+                "goods receipt.")
+    line.delivered_on = when
+    line.delivered_note = (note or "").strip()[:200]
+    line.delivered_by = actor
+    line.save(update_fields=["delivered_on", "delivered_note", "delivered_by",
+                             "updated_at"])
+    audit("document", line.schedule.document_id, "PSC_LINE_DELIVERED",
+          actor=actor, detail={"line": line.id, "on": when.isoformat(),
+                               "note": line.delivered_note})
     return None
 
 

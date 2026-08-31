@@ -4859,6 +4859,17 @@ class ScheduleLine(models.Model):
     client_update_note = models.CharField(max_length=200, blank=True)
     # CLIENT lines never get a GRN — delivery is marked by hand.
     client_delivered_on = models.DateField(null=True, blank=True)
+    # Received without a GRN. Two real cases: work that predates the import
+    # module — BAO-LI's HDPE liner arrived and was installed before IPRs
+    # existed, with nothing to link and no way to say so — and a local
+    # purchase that never passed through a store. Requires a note, because a
+    # line closed by hand should say who closed it and why (owner
+    # 2026-08-31).
+    delivered_on = models.DateField(null=True, blank=True)
+    delivered_note = models.CharField(max_length=200, blank=True)
+    delivered_by = models.ForeignKey(User, on_delete=models.SET_NULL,
+                                     null=True, blank=True,
+                                     related_name="+")
     # Watermark for the staleness chase, so the PM isn't nagged daily.
     client_chased_on = models.DateField(null=True, blank=True)
 

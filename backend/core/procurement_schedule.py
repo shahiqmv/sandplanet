@@ -631,6 +631,11 @@ def line_dict(line, values=True):
     # value — it's the bundle key, so it's exposed to every role.
     d["bundle_supplier"] = effective_supplier(line)
     d["client_delivered_on"] = line.client_delivered_on
+    # Received without a GRN — the planner shows the note as the record.
+    d["delivered_on"] = line.delivered_on
+    d["delivered_note"] = line.delivered_note
+    d["delivered_by"] = (line.delivered_by.full_name
+                         if line.delivered_by_id else "")
     d["client_stale"] = client_is_stale(line)
     if values:
         d["estimated_value"] = line.estimated_value

@@ -383,6 +383,21 @@ function LineRow({ ln, c, member, sel, on }) {
           <button style={{ ...linkBtn, marginLeft: 8, color: "var(--sky)" }}
             title="Split this order across more than one IPR"
             onClick={() => on.split(ln.id)}>Split</button>}
+        {/* A line no document will ever close: material received before the
+            import module existed, or a local purchase with no GRN. Without
+            this it stays "Produced" and flags Late forever. */}
+        {c.can_link && !ln.grn_ref && ln.supply_by === "CONTRACTOR" && (
+          ln.delivered_on ? (
+            <button style={{ ...linkBtn, marginLeft: 8,
+                             color: "var(--muted)" }}
+              title={`Received ${ln.delivered_on}`
+                + (ln.delivered_note ? ` — ${ln.delivered_note}` : "")}
+              onClick={() => on.delivered(ln.id, null)}>Reopen</button>
+          ) : (
+            <button style={{ ...linkBtn, marginLeft: 8, color: "var(--sky)" }}
+              title="Mark received without a goods receipt"
+              onClick={() => on.delivered(ln.id)}>Received</button>
+          ))}
       </td>
     </tr>
   );
@@ -637,6 +652,31 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
     .catch((e) => setError(e.message));
   useEffect(() => { load(); }, [id]);
 
+  // Close a line that no document will close — material received before the
+  // import module existed, or a local purchase with no GRN. A note is
+  // required: this is the one stage with nothing behind it, so it should say
+  // on what basis it was asserted.
+  async function markDelivered(lineId, reopen) {
+    if (reopen === null) {
+      if (!window.confirm("Reopen this line? It stops counting as received."))
+        return;
+      await api(`/procurement-schedule-lines/${lineId}/delivered`,
+                { method: "POST", body: { on: null } }).then(load)
+        .catch((e) => setError(e.message));
+      return;
+    }
+    const on = window.prompt("Date received (YYYY-MM-DD):",
+                             new Date().toISOString().slice(0, 10));
+    if (!on) return;
+    const note = window.prompt("How was it received? There is no goods "
+                               + "receipt behind this, so the note is the "
+                               + "record.");
+    if (!note) return;
+    api(`/procurement-schedule-lines/${lineId}/delivered`,
+        { method: "POST", body: { on, note } }).then(load)
+      .catch((e) => setError(e.message));
+  }
+
   async function run(fn) {
     setBusy(true); setError(null);
     try { await fn(); await load(); } catch (e) { setError(e.message); }
@@ -777,7 +817,7 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
         if (!grows.length && sec.id !== "none") return null;
         const on = { openRef,
                      edit: setEditId, track: setTrackId, quotes: setQuotesId,
-          split: setSplitId };
+          split: setSplitId, delivered: markDelivered };
         const sel = { track: trackId, quotes: quotesId };
         return (
           <div key={sec.id} style={{ ...card, marginTop: 10, padding: 0,
