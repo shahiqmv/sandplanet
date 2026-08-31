@@ -117,11 +117,24 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           </div>
         </div>
       )}
-      <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
-                                + "the last two weeks" : null}
-               metaTone="alert">
-        Today's obligations
-      </Eyebrow>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 12,
+                    flexWrap: "wrap" }}>
+        <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
+                                  + "the last two weeks" : null}
+                 metaTone="alert">
+          Today's obligations
+        </Eyebrow>
+        {/* The week the dailies add up to — what the sites were typing out
+            by hand for the client (owner 2026-08-31). */}
+        <a href={`/api/v1/sites/${site.id}/weekly.pdf${
+             project ? `?project=${project.id}` : ""}`}
+           target="_blank" rel="noreferrer"
+           style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 600,
+                    color: "var(--sp-navy)", textDecoration: "none" }}
+           title="This week's site report, rolled up from the daily reports">
+          ⬇ Weekly report
+        </a>
+      </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginBottom: 14 }}>
         <StampTile title="Daily Progress Report"
