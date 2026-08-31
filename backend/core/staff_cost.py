@@ -26,9 +26,16 @@ def _param(key, default):
 
 
 def _day_weight(remark):
+    """What a day is worth for cost attribution.
+
+    Kept in step with payroll.PAID_MARKS: a day payroll pays for is a day the
+    project bears the cost of. When SICK moved to paid, leaving it at zero
+    here would have had payroll paying a man while the cost ledger recorded
+    the day as free, and the project P&L understating labour by exactly that
+    (owner 2026-08-31)."""
     if remark == "HALF_DAY":
         return Decimal("0.5")
-    if remark in ("ABSENT", "SICK", "LEAVE"):
+    if remark in ("ABSENT", "LEAVE"):
         return Decimal("0")
     return Decimal("1")
 

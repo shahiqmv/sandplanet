@@ -15,8 +15,13 @@ from .models import Attendance, CompanyParameter, Employee, SalaryAdvance
 TWO = Decimal("0.01")
 # LEAVE means leave WITHOUT pay and always has; PAID_LEAVE is the other kind
 # and is paid like a worked day (owner 2026-08-20).
-ABSENT_MARKS = ("ABSENT", "SICK", "LEAVE")
-PAID_MARKS = ("PRESENT", "PAID_LEAVE")
+#
+# SICK is paid. It sat in ABSENT_MARKS and so was deducted, which the sites
+# reported after the July run: 55 sick days across 34 men, MVR 11,911 of pay
+# withheld from people who were ill. A man granted sick leave is entitled to
+# his day (owner 2026-08-31).
+ABSENT_MARKS = ("ABSENT", "LEAVE")
+PAID_MARKS = ("PRESENT", "PAID_LEAVE", "SICK")
 FRIDAY_OT_HOURS_DEFAULT = Decimal("12")
 # A rest day is part of the monthly entitlement and is normally paid even
 # though nobody marks it — that is why the register shows a blank there. But a

@@ -1475,10 +1475,12 @@ class UnmarkedDaysAreNotWorkedTests(TestCase):
         self.assertEqual(self._days(), 31.0)
 
     def test_absences_still_come_off_a_full_register(self):
+        """Absence comes off; sick does not. Sick moved to the paid marks
+        after the July run deducted it (owner 2026-08-31)."""
         self._mark([d for d in range(1, 32) if d not in self.fridays])
         self.Att.objects.filter(day=date(2026, 7, 6)).update(remark="ABSENT")
         self.Att.objects.filter(day=date(2026, 7, 7)).update(remark="SICK")
-        self.assertEqual(self._days(), 29.0)
+        self.assertEqual(self._days(), 30.0)
 
     def test_a_half_day_is_half_a_day(self):
         """The cost ledger has always weighted it 0.5; payroll paid it whole."""
