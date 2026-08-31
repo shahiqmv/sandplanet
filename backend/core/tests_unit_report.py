@@ -224,3 +224,59 @@ class UnitReportTests(TestCase):
         # Mid-week it is a week to date, and says so.
         if end < start + timedelta(days=6):
             self.assertFalse(week_is_complete(start, end))
+
+    def test_a_manual_board_entry_is_recorded_like_any_other(self):
+        """The route the teams actually use. Programme activities do not
+        always map onto unit stages, so the board is edited by hand — and
+        those adjustments must land in the history exactly as a DPR's do
+        (owner 2026-08-31)."""
+        from datetime import date as _date
+
+        r = self.client.post(
+            f"/api/v1/units/{self.units[0].id}/progress",
+            {"stage_id": self.s1.id, "percent": 45}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        e = UnitProgressEvent.objects.get()
+        self.assertEqual(e.percent, Decimal("45.00"))
+        self.assertEqual(e.on, _date.today())
+        self.assertEqual(e.actor, self.pm)
+        self.assertIsNone(e.source)          # no DPR behind it
+
+    def test_a_manual_entry_shows_as_movement_in_the_week(self):
+        self._report(on=self.today - timedelta(days=20), pct=20)
+        self.client.post(
+            f"/api/v1/units/{self.units[0].id}/progress",
+            {"stage_id": self.s1.id, "percent": 60}, format="json")
+        row = [r for r in build(self.project)["rows"] if r["ref"] == "V200"][0]
+        self.assertEqual(row["moved"], 20.0)     # 20%→60% of one of two stages
+
+    def test_the_report_says_what_moved_a_unit(self):
+        """The teams report through the DPR where a programme activity maps
+        onto a unit stage, and edit the board by hand where it does not. A
+        PM should see which of the two moved a week (owner 2026-08-31)."""
+        from .models import Document
+
+        dpr = Document.objects.create(doc_type="DPR", ref="DPR-UPR-001",
+                                      site=self.site, status="ISSUED",
+                                      doc_date=self.today, created_by=self.pm)
+        svc.report_progress(self.units[0], self.s1, 55, document=dpr,
+                            on=self.today, actor=self.pm)
+        self.client.post(f"/api/v1/units/{self.units[1].id}/progress",
+                         {"stage_id": self.s1.id, "percent": 30},
+                         format="json")
+        r = build(self.project)
+        rows = {x["ref"]: x for x in r["rows"]}
+        self.assertEqual(rows["V200"]["source_label"], "DPR-UPR-001")
+        self.assertIn("1 manual adjustment", rows["V201"]["source_label"])
+        self.assertEqual(r["summary"]["moved_by_dpr"], 1)
+        self.assertEqual(r["summary"]["moved_by_hand"], 1)
+
+    def test_an_opening_balance_is_not_counted_as_movement(self):
+        """The backfill seeded one event per live figure so the history would
+        start at the truth. Those are positions, not progress."""
+        UnitProgressEvent.objects.create(
+            unit=self.units[0], stage=self.s1, percent=Decimal("70"),
+            previous=Decimal("70"), on=self.today)
+        row = [r for r in build(self.project)["rows"] if r["ref"] == "V200"][0]
+        self.assertEqual(row["source_label"], "")
+        self.assertEqual(build(self.project)["summary"]["moved_count"], 0)

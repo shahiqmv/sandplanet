@@ -67,15 +67,28 @@ def unit_rows(project, start, end):
     # One query for the whole project's history, then bucketed in memory —
     # a per-unit query would be 17 round trips for 17 pools.
     events = list(UnitProgressEvent.objects.filter(
-        unit__project=project, on__lte=end).select_related("stage")
+        unit__project=project, on__lte=end).select_related("stage", "source")
         .order_by("on", "id"))
     before, during = {}, {}
+    # Where this week's movement came from. The teams report through the DPR
+    # where a programme activity maps onto a unit stage, and edit the board
+    # by hand where it does not — so a client-facing figure should say which
+    # of the two moved it, and a PM should be able to see at a glance how
+    # much of a week was adjusted rather than reported (owner 2026-08-31).
+    moved_by = {}
     for e in events:
         key = (e.unit_id, e.stage_id)
         if e.on < start:
             before[key] = e.percent
         else:
             during.setdefault(key, e.previous)   # first move of the week
+            if e.percent != e.previous:          # an opening balance is not
+                m = moved_by.setdefault(e.unit_id,                # a movement
+                                        {"dprs": set(), "manual": 0})
+                if e.source_id:
+                    m["dprs"].add(e.source.ref)
+                else:
+                    m["manual"] += 1
 
     rows = []
     for u in units:
@@ -96,8 +109,12 @@ def unit_rows(project, start, end):
                 # from zero on the day history started.
                 was_map[s.stage_id] = s.percent
         was = _unit_percent(u, was_map)
+        src = moved_by.get(u.id)
         rows.append({
             "ref": u.ref, "unit": u,
+            "moved_by_dprs": sorted(src["dprs"]) if src else [],
+            "moved_by_manual": src["manual"] if src else 0,
+            "source_label": _source_label(src),
             "milestone": _milestone(u, stages),
             "now": now, "was": was, "moved": round(now - was, 1),
             "status": u.status,
@@ -106,6 +123,19 @@ def unit_rows(project, start, end):
                                   if s.updated_on), default=None),
         })
     return rows
+
+
+def _source_label(src):
+    """Plain words for who moved a unit this week."""
+    if not src:
+        return ""
+    bits = []
+    if src["dprs"]:
+        bits.append(", ".join(sorted(src["dprs"])))
+    if src["manual"]:
+        bits.append(f"{src['manual']} manual "
+                    f"adjustment{'' if src['manual'] == 1 else 's'}")
+    return " · ".join(bits)
 
 
 def _unit_percent(unit, by_stage):
@@ -148,7 +178,11 @@ def summary(project, rows, start, end):
     now = round(sum(r["now"] for r in rows) / total, 1) if total else 0.0
     was = round(sum(r["was"] for r in rows) / total, 1) if total else 0.0
     moved_rows = [r for r in rows if r["moved"] > 0]
+    by_dpr = sum(1 for r in moved_rows if r["moved_by_dprs"])
+    by_hand = sum(1 for r in moved_rows
+                  if r["moved_by_manual"] and not r["moved_by_dprs"])
     return {
+        "moved_by_dpr": by_dpr, "moved_by_hand": by_hand,
         "units": total, "complete": complete,
         "overall_now": now, "overall_was": was,
         "overall_moved": round(now - was, 1),

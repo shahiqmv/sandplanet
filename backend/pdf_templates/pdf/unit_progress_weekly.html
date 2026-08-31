@@ -66,7 +66,12 @@
   <td>
     <div class="k">Moved this week</div>
     <div class="v">{{ summary.moved_count }}</div>
-    <div class="k">{{ summary.still_count }} unchanged</div>
+    <div class="k">
+      {% if summary.moved_by_dpr %}{{ summary.moved_by_dpr }} on DPRs{% endif %}
+      {% if summary.moved_by_hand %}{% if summary.moved_by_dpr %} · {% endif %}
+        {{ summary.moved_by_hand }} adjusted{% endif %}
+      {% if not summary.moved_count %}{{ summary.still_count }} unchanged{% endif %}
+    </div>
   </td>
   <td>
     <div class="k">Started / finished</div>
@@ -90,7 +95,7 @@
   <thead><tr>
     <th>Unit</th><th>Milestone now</th>
     <th class="num">Start of week</th><th class="num">Now</th>
-    <th class="num">Moved</th><th>Last reported</th>
+    <th class="num">Moved</th><th>Reported by</th>
   </tr></thead>
   <tbody>
   {% for r in rows %}
@@ -103,7 +108,8 @@
         {% if r.moved > 0 %}<span class="up">+{{ r.moved }}</span>
         {% else %}<span class="flat">&mdash;</span>{% endif %}
       </td>
-      <td>{{ r.last_reported|date:"j M Y"|default:"&mdash;" }}</td>
+      <td>{% if r.source_label %}{{ r.source_label }}{% else %}
+        <span class="flat">&mdash;</span>{% endif %}</td>
     </tr>
   {% endfor %}
   </tbody>
