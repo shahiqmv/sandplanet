@@ -13,10 +13,11 @@ from and the day it was reported.
 from decimal import Decimal
 
 from django.db import transaction
+from django.utils import timezone
 
 from .audit import audit
 from .models import (Boq, ProjectUnit, UnitStage,
-                     UnitStageProgress)
+                     UnitProgressEvent, UnitStageProgress)
 
 ZERO = Decimal("0")
 MANAGE_ROLES = ("PM", "QS", "DIRECTOR", "ADMIN")
@@ -310,10 +311,19 @@ def report_progress(unit, stage, percent, document=None, on=None, actor=None):
         return "The progress must be a number."
     pct = max(ZERO, min(Decimal("100"), pct))
     row, _ = UnitStageProgress.objects.get_or_create(unit=unit, stage=stage)
+    was = row.percent or ZERO
     row.percent = pct
     row.updated_from = document
     row.updated_on = on
     row.save(update_fields=["percent", "updated_from", "updated_on"])
+    # The board keeps only where the unit is now; the history is what a
+    # client report reads to say how far it moved this week. Written even
+    # when the figure has not changed only if the day differs, so a stage
+    # re-confirmed daily does not fill the table with duplicates.
+    if was != pct:
+        UnitProgressEvent.objects.create(
+            unit=unit, stage=stage, percent=pct, previous=was,
+            on=on or timezone.localdate(), source=document, actor=actor)
     if pct > ZERO and unit.started_on is None:
         unit.started_on = on
         unit.save(update_fields=["started_on"])

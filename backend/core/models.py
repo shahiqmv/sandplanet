@@ -3518,6 +3518,50 @@ class UnitStageProgress(models.Model):
             fields=["unit", "stage"], name="uniq_unit_stage")]
 
 
+class UnitProgressEvent(models.Model):
+    """Every movement of a unit's stage figure, append-only.
+
+    UnitStageProgress holds only where a unit has got to NOW — one row per
+    unit and stage, overwritten each time. That answers "how far along is
+    V211", which is what the board asks, but it cannot answer "how much did
+    V211 move this week", which is what a client asks (owner 2026-08-31).
+
+    Reconstructing it from the DPRs was the obvious alternative and does not
+    work: of 106 live progress figures on 17POOL, 104 were typed on the board
+    by hand and only 2 came from a DPR. So the movement has to be recorded as
+    it happens, which is what this is.
+
+    Append-only, like the cost ledger and the audit log: a figure that was
+    reported and later corrected is two events, not one edited row, because
+    a client report that quietly rewrites last week's number is worse than
+    one that shows the correction.
+    """
+
+    unit = models.ForeignKey("ProjectUnit", on_delete=models.CASCADE,
+                             related_name="progress_events")
+    stage = models.ForeignKey("UnitStage", on_delete=models.CASCADE,
+                              related_name="+")
+    percent = models.DecimalField(max_digits=5, decimal_places=2)
+    # What it moved FROM, so a week's movement needs no lookbehind query.
+    previous = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    # The day the work happened (the DPR's date, or the day it was entered),
+    # not the moment the row was written — a DPR filed late still belongs to
+    # the day it reports on.
+    on = models.DateField()
+    source = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True,
+                               blank=True, related_name="+")
+    actor = models.ForeignKey(User, on_delete=models.SET_NULL, null=True,
+                              blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["on", "id"]
+        indexes = [models.Index(fields=["unit", "on"])]
+
+    def __str__(self):
+        return f"{self.unit} {self.stage} → {self.percent}% on {self.on}"
+
+
 class BoqImport(models.Model):
     """A staging area for importing a BOQ from a client PDF/Excel. The document
     is extracted (pdfplumber/openpyxl + Claude) into draft rows the QS reviews

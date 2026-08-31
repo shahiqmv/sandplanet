@@ -413,6 +413,9 @@ urlpatterns = [
     # Unit progress board (unit-based BOQ projects)
     path("projects/<int:pk>/units", units_api.project_units,
          name="project-units"),
+    # The week's movement as a client PDF, charts and all.
+    path("projects/<int:pk>/units/weekly.pdf",
+         units_api.unit_progress_weekly_pdf, name="project-units-weekly-pdf"),
     path("boq-categories/<int:pk>/stages", units_api.category_stages,
          name="category-stages"),
     path("boq-categories/<int:pk>/generate-units",

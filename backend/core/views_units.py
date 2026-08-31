@@ -255,3 +255,41 @@ def site_units(request, pk):
                 "stages": [{"id": s.id, "name": s.name}
                            for s in svc.stages_for(u)]})
     return Response(out)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def unit_progress_weekly_pdf(request, pk):
+    """The week's progress on a unit-based project, as a client PDF.
+
+    `week_ending=YYYY-MM-DD` reports an earlier week; the default is the
+    seven days ending today."""
+    from datetime import date as _date
+
+    from django.template.loader import render_to_string
+
+    from . import pdf as pdf_mod
+    from . import unit_report
+    from .views_payroll import _pdf_response
+
+    project, err = _get_project(request, pk)
+    if err:
+        return err
+    if not svc.tracks_units(project):
+        return Response({"detail": "This project does not track units."},
+                        status=400)
+    raw = request.GET.get("week_ending")
+    ending = None
+    if raw:
+        try:
+            ending = _date.fromisoformat(raw)
+        except ValueError:
+            return Response({"detail": "week_ending must be YYYY-MM-DD."},
+                            status=400)
+
+    ctx = unit_report.build(project, week_ending=ending)
+    ctx["logo_src"] = pdf_mod.logo_src()
+    ctx["co"] = pdf_mod.company_info()
+    html = render_to_string("pdf/unit_progress_weekly.html", ctx)
+    return _pdf_response(
+        html, f"progress-{project.code}-{ctx['end']}.pdf".replace(" ", "-"))
