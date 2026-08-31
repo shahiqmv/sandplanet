@@ -717,6 +717,25 @@ def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
     return (cum_pct or ZERO) / Decimal("100") * contract_amount
 
 
+def _deductions_to_date(claim):
+    """Every back charge raised on this claim or any earlier one.
+
+    Each claim restates the running deduction labels with their cumulative
+    amounts, so the latest claim carrying a label holds its true figure —
+    but a label dropped from a later claim must not be forgotten, which is
+    what made a claim's own net and the differenced cumulative disagree."""
+    seen = {}
+    chain, node = [], claim
+    while node is not None:
+        chain.append(node)
+        node = node.previous
+    for c in reversed(chain):                     # oldest first
+        for d in c.deductions.all():
+            seen[d.label.strip().lower()] = Decimal(
+                str(d.cumulative_amount or 0))
+    return sum(seen.values(), ZERO)
+
+
 def _claim_net(claim, _cache=None):
     """Net cumulative certified (waterfall line N) — used as the 'previously
     certified' figure of the following claim."""
@@ -969,7 +988,14 @@ def claim_valuation(claim, _cache=None):
     # "previous" column is the prior claim's cumulative, "present" = the delta).
     gst_cumulative = _q(claim.gst_pct / Decimal("100") * net_cumulative)
     total_cumulative = net_cumulative + gst_cumulative
-    net_to_pay_cumulative = total_cumulative - ded_cum
+    # ...less EVERY back charge raised to date, not only the labels repeated
+    # on this claim. A deduction convention where each claim restates the
+    # running labels works until a claim drops one: NORTH JT IPA-03 carried a
+    # back charge of 12,316.17 that IPA-04 did not repeat, so it fell out of
+    # the cumulative and reappeared as money owed when the invoice took
+    # cumulative-less-previous for its "this claim" column — overstating the
+    # amount due by exactly that back charge (owner 2026-08-31).
+    net_to_pay_cumulative = total_cumulative - _deductions_to_date(claim)
 
     secs = OrderedDict()
     for ln in lines:

@@ -1,5 +1,6 @@
 """Project commercial (QS) — BOQ (slice 1)."""
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -1480,3 +1481,76 @@ class BoqCannotBeRewrittenUnderAClaimTests(TestCase):
         boq, err = self.commercial.set_boq_items(self.project, self._rows(), self.qs)
         self.assertIsNone(err)
         self.assertEqual(self.BoqItem.objects.filter(boq=boq).count(), 1)
+
+
+class BackChargeCumulativeTests(TestCase):
+    """A back charge dropped from a later claim must not reappear as money
+    owed.
+
+    NORTH JT IPA-03 carried a back charge of 12,316.17 that IPA-04 did not
+    repeat. It fell out of the cumulative, so the invoice's "this claim"
+    column — taken as cumulative less previous — handed it back, and the
+    printed Net amount to pay disagreed with its own amount in words by
+    exactly that figure (owner 2026-08-31).
+
+    The gross value is irrelevant here: what is under test is that the
+    deductions subtracted from the cumulative are every one raised to date.
+    """
+
+    def setUp(self):
+        from .models import ClaimDeduction, ProgressClaim
+
+        self.site = Site.objects.create(code="BCC", name="Back charge site",
+                                        status=Site.Status.ACTIVE)
+        self.project = Project.objects.create(
+            site=self.site, code="BC", title="Back charges", status="ACTIVE")
+        Boq.objects.create(project=self.project, currency="USD")
+        self.ClaimDeduction = ClaimDeduction
+        self.ProgressClaim = ProgressClaim
+
+    def _claim(self, seq, previous=None, deductions=()):
+        c = self.ProgressClaim.objects.create(
+            project=self.project, seq=seq, ref=f"IPA-{seq:02d}",
+            claim_type="INTERIM", basis="PERCENT", gst_pct=Decimal("8"),
+            previous=previous, status="CERTIFIED")
+        for label, amt in deductions:
+            self.ClaimDeduction.objects.create(
+                claim=c, label=label, cumulative_amount=Decimal(str(amt)))
+        return c
+
+    def test_a_dropped_back_charge_does_not_come_back_as_money_owed(self):
+        from .commercial import _q2, claim_valuation
+
+        c3 = self._claim(3, deductions=[("July materials", "12316.17")])
+        c4 = self._claim(4, previous=c3,
+                         deductions=[("August materials", "11988.03")])
+        w3 = claim_valuation(c3)["waterfall"]
+        w4 = claim_valuation(c4)["waterfall"]
+        # The invoice's "this claim" column is the differenced cumulative; it
+        # must equal the claim's own net, which is what the words print.
+        self.assertEqual(
+            _q2(w4["net_to_pay_cumulative"] - w3["net_to_pay_cumulative"]),
+            _q2(w4["net_to_pay"]))
+
+    def test_the_cumulative_carries_every_back_charge_to_date(self):
+        from .commercial import _q2, claim_valuation
+
+        c3 = self._claim(3, deductions=[("July materials", "12316.17")])
+        c4 = self._claim(4, previous=c3,
+                         deductions=[("August materials", "11988.03")])
+        w4 = claim_valuation(c4)["waterfall"]
+        self.assertEqual(
+            _q2(w4["total_cumulative"] - w4["net_to_pay_cumulative"]),
+            Decimal("24304.20"))
+
+    def test_a_restated_label_is_not_double_counted(self):
+        """The convention is that a claim restates a running label with its
+        cumulative figure — that must still count once."""
+        from .commercial import _q2, claim_valuation
+
+        c3 = self._claim(3, deductions=[("Materials", "10000")])
+        c4 = self._claim(4, previous=c3, deductions=[("Materials", "15000")])
+        w4 = claim_valuation(c4)["waterfall"]
+        self.assertEqual(
+            _q2(w4["total_cumulative"] - w4["net_to_pay_cumulative"]),
+            Decimal("15000.00"))
