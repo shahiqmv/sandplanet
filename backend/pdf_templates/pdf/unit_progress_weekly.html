@@ -40,7 +40,12 @@
 <div class="sect" style="margin-top:8px">{{ project.title }}</div>
 <div class="lede">
   {{ project.code }} &middot; {{ site.code }} &mdash; {{ site.name }}<br>
-  Week ending {{ end|date:"j F Y" }} (from {{ start|date:"j F" }})
+  {% if complete_week %}
+    Week {{ start|date:"D j F" }} to {{ end|date:"D j F Y" }}
+  {% else %}
+    Week to date &mdash; {{ start|date:"D j F" }} to {{ end|date:"D j F Y" }}
+    ({{ days_covered }} day{{ days_covered|pluralize }} of 7)
+  {% endif %}
 </div>
 
 <table class="stats"><tr>
@@ -48,9 +53,9 @@
     <div class="k">Overall</div>
     <div class="v">{{ summary.overall_now }}%</div>
     {% if summary.overall_moved > 0 %}
-      <div class="sub">+{{ summary.overall_moved }} this week</div>
+      <div class="sub">+{{ summary.overall_moved }}{% if not complete_week %} so far{% endif %}</div>
     {% else %}
-      <div class="k">no change this week</div>
+      <div class="k">no change {% if complete_week %}this week{% else %}yet{% endif %}</div>
     {% endif %}
   </td>
   <td>

@@ -30,10 +30,30 @@ GREEN = "#1A7F37"
 BAND = "#EEF4F9"
 
 
-def week_window(week_ending=None):
-    """The seven days ending on `week_ending` (default: today)."""
-    end = week_ending or timezone.localdate()
-    return end - timedelta(days=6), end
+def week_window(on=None):
+    """The Maldivian working week containing `on`: Saturday to Friday.
+
+    The site working week is Saturday to Thursday with Friday the rest day,
+    so a week anchored anywhere else splits every site's week in two. This
+    was a rolling seven days ending today — anchored to no weekday at all,
+    so a report run on a Monday covered Tuesday to Monday and straddled two
+    weeks (owner 2026-08-31).
+
+    Clipped to today: a report never covers days that have not happened."""
+    today = timezone.localdate()
+    day = on or today
+    # isoweekday: Mon=1 … Sat=6, Sun=7. Days back to this week's Saturday.
+    start = day - timedelta(days=(day.isoweekday() - 6) % 7)
+    end = min(start + timedelta(days=6), max(day, start))
+    if end > today:
+        end = today
+    return start, end
+
+
+def week_is_complete(start, end):
+    """Whether the week has run its course — a client should be told when a
+    figure is a week to date rather than a full week."""
+    return (end - start).days >= 6
 
 
 def _pct(v):
@@ -229,6 +249,8 @@ def build(project, week_ending=None):
     return {
         "project": project, "site": project.site,
         "start": start, "end": end,
+        "complete_week": week_is_complete(start, end),
+        "days_covered": (end - start).days + 1,
         "rows": rows,
         "summary": summary(project, rows, start, end),
         "bar_chart": bar_chart(rows),

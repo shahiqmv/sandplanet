@@ -71,9 +71,13 @@ class UnitReportTests(TestCase):
 
     # ---- the week --------------------------------------------------------
 
-    def test_the_window_is_seven_days_to_the_given_day(self):
+    def test_a_midweek_day_gives_the_week_so_far(self):
+        """Monday 31 August sits in the week that began Saturday 29th — not
+        a rolling seven days back to the Tuesday before."""
         start, end = week_window(date(2026, 8, 31))
-        self.assertEqual((start, end), (date(2026, 8, 25), date(2026, 8, 31)))
+        self.assertEqual(start, date(2026, 8, 29))
+        self.assertEqual(start.strftime("%A"), "Saturday")
+        self.assertLessEqual(end, date(2026, 8, 31))
 
     def test_movement_is_measured_from_the_start_of_the_week(self):
         self._report(on=self.today - timedelta(days=20), pct=20)
@@ -191,3 +195,32 @@ class UnitReportTests(TestCase):
         self._report(pct=90, unit=0, stage=self.s2)   # Finishes, further on
         row = [r for r in build(self.project)["rows"] if r["ref"] == "V200"][0]
         self.assertEqual(row["milestone"], "Columns")
+
+    def test_the_week_runs_saturday_to_friday(self):
+        """Maldives, not Monday — and the site working week is Sat–Thu with
+        Friday the rest day (owner 2026-08-31)."""
+        from .unit_report import week_is_complete
+
+        start, end = week_window(date(2026, 8, 28))       # a Friday
+        self.assertEqual(start.strftime("%A"), "Saturday")
+        self.assertEqual(end.strftime("%A"), "Friday")
+        self.assertEqual((start, end), (date(2026, 8, 22), date(2026, 8, 28)))
+        self.assertTrue(week_is_complete(start, end))
+
+    def test_any_day_lands_in_its_own_saturday_week(self):
+        for day, sat in ((date(2026, 8, 29), date(2026, 8, 29)),   # Sat
+                         (date(2026, 8, 31), date(2026, 8, 29)),   # Mon
+                         (date(2026, 9, 3), date(2026, 8, 29)),    # Thu
+                         (date(2026, 9, 4), date(2026, 8, 29))):   # Fri
+            self.assertEqual(week_window(day)[0], sat, day.strftime("%A"))
+
+    def test_a_report_never_covers_days_that_have_not_happened(self):
+        from django.utils import timezone
+
+        from .unit_report import week_is_complete
+
+        start, end = week_window()
+        self.assertLessEqual(end, timezone.localdate())
+        # Mid-week it is a week to date, and says so.
+        if end < start + timedelta(days=6):
+            self.assertFalse(week_is_complete(start, end))
