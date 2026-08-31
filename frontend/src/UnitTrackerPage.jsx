@@ -74,9 +74,15 @@ export default function UnitTrackerPage({ site, me, onClose, onOpenProject }) {
                            color: "var(--sp-navy)" }}>{p.title}</h3>
               <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
                 {p.code} · {d.complete} of {d.unit_count} complete</span>
+              {/* The week's movement as a client PDF — charts and all. */}
+              <a href={`/api/v1/projects/${p.id}/units/weekly.pdf`}
+                 target="_blank" rel="noreferrer"
+                 style={{ ...ghostButton, padding: "2px 10px", fontSize: 12,
+                          marginLeft: "auto", textDecoration: "none" }}>
+                ⬇ Weekly report</a>
               {onOpenProject && (
                 <button style={{ ...ghostButton, padding: "2px 10px",
-                                 fontSize: 12, marginLeft: "auto" }}
+                                 fontSize: 12 }}
                         onClick={() => onOpenProject(p.id)}>
                   open project →</button>)}
             </div>
