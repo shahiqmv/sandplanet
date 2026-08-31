@@ -137,40 +137,11 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
           </div>
         </div>
       )}
-      <div style={{ display: "flex", alignItems: "baseline", gap: 12,
-                    flexWrap: "wrap" }}>
-        <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
-                                  + "the last two weeks" : null}
-                 metaTone="alert">
-          Today's obligations
-        </Eyebrow>
-        {/* What the dailies add up to — the report the sites were typing
-            out by hand for the client. Any range, because a month and a
-            fortnight are the same document over different dates
-            (owner 2026-08-31). */}
-        <span style={{ marginLeft: "auto", display: "flex", gap: 6,
-                       alignItems: "center", fontSize: 12 }}>
-          <input type="date" value={repFrom} aria-label="Report from"
-                 onChange={(e) => setRepFrom(e.target.value)}
-                 style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
-                          width: 132 }} />
-          <span style={{ color: "var(--muted)" }}>to</span>
-          <input type="date" value={repTo} aria-label="Report to"
-                 onChange={(e) => setRepTo(e.target.value)}
-                 style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
-                          width: 132 }} />
-          <a href={`/api/v1/sites/${site.id}/weekly.pdf?`
-               + [repFrom && `from=${repFrom}`, repTo && `to=${repTo}`,
-                  project && `project=${project.id}`]
-                 .filter(Boolean).join("&")}
-             target="_blank" rel="noreferrer"
-             style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
-                      color: "var(--sp-navy)", textDecoration: "none" }}
-             title="Site report with progress photos, rolled up from the daily reports">
-            ⬇ Report
-          </a>
-        </span>
-      </div>
+      <Eyebrow meta={gaps > 0 ? `${gaps} gap day${gaps === 1 ? "" : "s"} in `
+                                + "the last two weeks" : null}
+               metaTone="alert">
+        Today's obligations
+      </Eyebrow>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginBottom: 14 }}>
         <StampTile title="Daily Progress Report"
@@ -717,13 +688,43 @@ that adds your existing quantities to the system"
       )}
 
       <section style={card}>
-        <h2 style={{ marginTop: 0, color: "var(--sp-navy)", fontSize: 17 }}>
-          DPR &amp; TWS Register — last 14 days
-          {project && (
-            <span style={{ color: "#5a6b78", fontWeight: 400 }}>
-              {" "}· {project.code}</span>
-          )}
-        </h2>
+        <div style={{ display: "flex", alignItems: "center", gap: 12,
+                      flexWrap: "wrap", marginBottom: 10 }}>
+          <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
+            DPR &amp; TWS Register — last 14 days
+            {project && (
+              <span style={{ color: "#5a6b78", fontWeight: 400 }}>
+                {" "}· {project.code}</span>
+            )}
+          </h2>
+          {/* The report these dailies add up to — the one the sites were
+              typing out by hand for the client. It belongs beside the
+              documents it summarises, not up among today's obligations,
+              which are about today (owner 2026-08-31). */}
+          <span style={{ marginLeft: "auto", display: "flex", gap: 6,
+                         alignItems: "center", fontSize: 12 }}>
+            <span style={{ color: "var(--muted)" }}>Report</span>
+            <input type="date" value={repFrom} aria-label="Report from"
+                   onChange={(e) => setRepFrom(e.target.value)}
+                   style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
+                            width: 130 }} />
+            <span style={{ color: "var(--muted)" }}>to</span>
+            <input type="date" value={repTo} aria-label="Report to"
+                   onChange={(e) => setRepTo(e.target.value)}
+                   style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
+                            width: 130 }} />
+            <a href={`/api/v1/sites/${site.id}/weekly.pdf?`
+                 + [repFrom && `from=${repFrom}`, repTo && `to=${repTo}`,
+                    project && `project=${project.id}`]
+                   .filter(Boolean).join("&")}
+               target="_blank" rel="noreferrer"
+               style={{ ...buttonStyle, padding: "4px 12px", fontSize: 12,
+                        textDecoration: "none", whiteSpace: "nowrap" }}
+               title="Site report with man hours and progress photos, rolled up from these daily reports">
+              ⬇ Report
+            </a>
+          </span>
+        </div>
         <div style={{ overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
