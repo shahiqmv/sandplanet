@@ -170,3 +170,19 @@ class BackpayJulySickTests(TestCase):
         self.line.delete()
         out = self._run()
         self.assertIn("skip", out)
+
+    def test_a_signed_run_goes_back_for_re_approval(self):
+        """An approval must never outlive the numbers it was given."""
+        self.aug.status = "PD_REVIEW"
+        self.aug.verified_by = self.hr
+        self.aug.save(update_fields=["status", "verified_by"])
+        out = self._run()
+        self.aug.refresh_from_db()
+        self.assertEqual(self.aug.status, "DRAFT")
+        self.assertIsNone(self.aug.verified_by)
+        self.assertIn("returned to draft", out)
+
+    def test_a_draft_run_is_left_where_it_is(self):
+        self._run()
+        self.aug.refresh_from_db()
+        self.assertEqual(self.aug.status, "DRAFT")

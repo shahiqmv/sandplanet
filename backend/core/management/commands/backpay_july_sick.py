@@ -19,7 +19,8 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from core.models import Attendance, PayrollLine
+from core.models import Attendance, PayrollLine, User
+from core.payroll import reset_to_draft
 
 YEAR, MONTH = 2026, 7
 NOTE = "July sick leave paid (system deducted it in error)"
@@ -54,6 +55,9 @@ class Command(BaseCommand):
 
         paid = skipped = 0
         total = Decimal("0")
+        reopened = set()
+        actor = (User.objects.filter(role="HO_HR", is_active=True).first()
+                 or User.objects.filter(is_superuser=True).first())
         for emp_id, days in sorted(sick.items()):
             was = july.get(emp_id)
             now = target.get(emp_id)
@@ -87,9 +91,19 @@ class Command(BaseCommand):
                     x for x in [(now.remarks or "").strip(),
                                 f"{NOTE}: {days} day(s), {owed}"] if x)
                 now.save(update_fields=["allowance", "remarks"])
+                # An approval must never outlive the numbers it was given: a
+                # run already with the PM or the Director goes back to draft
+                # so it is signed again on the figures now in it.
+                if now.run.status not in ("DRAFT", "LOCKED"):
+                    reset_to_draft(now.run, actor, f"{NOTE} added")
+                    reopened.add(now.run_id)
 
         self.stdout.write(f"\n{paid} lines credited, {skipped} skipped. "
                           f"Total {total}")
+        if reopened:
+            self.stdout.write(self.style.WARNING(
+                f"{len(reopened)} run(s) returned to draft for re-approval — "
+                "their figures changed after they were signed."))
         if dry:
             self.stdout.write(self.style.WARNING("DRY RUN — nothing written."))
             transaction.set_rollback(True)
