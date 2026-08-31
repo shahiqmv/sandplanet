@@ -2600,12 +2600,28 @@ def dpr_weekly_pdf(request, site_id):
     except Site.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
 
-    on = None
-    if request.GET.get("on"):
+    def _day(key):
+        raw = request.GET.get(key)
+        if not raw:
+            return None, None
         try:
-            on = _date.fromisoformat(request.GET["on"])
+            return _date.fromisoformat(raw), None
         except ValueError:
-            return Response({"detail": "on must be YYYY-MM-DD."}, status=400)
+            return None, Response({"detail": f"{key} must be YYYY-MM-DD."},
+                                  status=400)
+
+    on, err = _day("on")
+    if err:
+        return err
+    start, err = _day("from")
+    if err:
+        return err
+    end, err = _day("to")
+    if err:
+        return err
+    if start and end and (end - start).days > 366:
+        return Response({"detail": "That range is longer than a year."},
+                        status=400)
     project = None
     if request.GET.get("project"):
         project = Project.objects.filter(pk=request.GET["project"],
@@ -2614,8 +2630,13 @@ def dpr_weekly_pdf(request, site_id):
             return Response({"detail": "Unknown project for this site."},
                             status=400)
 
-    ctx = dpr_weekly.build(site, on=on, project=project)
+    ctx = dpr_weekly.build(site, on=on, project=project, start=start,
+                           end=end,
+                           with_photos=request.GET.get("photos") != "0")
     ctx["logo_src"] = pdf_mod.logo_src()
     ctx["co"] = pdf_mod.company_info()
+    ctx["photo_subline"] = (f"{site.code}  |  {ctx['start']:%d %b} – "
+                            f"{ctx['end']:%d %b %Y}")
     html = render_to_string("pdf/dpr_weekly.html", ctx)
-    return _pdf_response(html, f"weekly-{site.code}-{ctx['end']}.pdf")
+    return _pdf_response(
+        html, f"report-{site.code}-{ctx['start']}-to-{ctx['end']}.pdf")

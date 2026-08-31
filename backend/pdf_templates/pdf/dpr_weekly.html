@@ -32,16 +32,28 @@
   .none { font-size: 8pt; color: #61707C; font-style: italic; }
   .note { font-size: 8pt; margin: 0 0 5px; }
   .note b { color: #10344F; }
+  .photos { margin-top: 4mm; }
+  .photo { width: 31%; display: inline-block; margin: 1%;
+           vertical-align: top; }
+  .photo img { width: 100%; border: 0.6px solid #A9B6C0; }
+  .photo .cap { border: 0.6px solid #A9B6C0; border-top: none;
+                padding: 2px 4px; font-size: 6.8pt; color: #45535f; }
 </style>
 </head>
 <body>
 {% include "pdf/_footer.html" with footer_doc="WEEKLY REPORT" %}
-{% include "pdf/_letterhead.html" with title="WEEKLY SITE REPORT" subline="Form No: FRM-PRJ-09  |  Rev: R0" %}
+{% if is_week %}
+  {% include "pdf/_letterhead.html" with title="WEEKLY SITE REPORT" subline="Form No: FRM-PRJ-09  |  Rev: R0" %}
+{% else %}
+  {% include "pdf/_letterhead.html" with title="SITE PROGRESS REPORT" subline="Form No: FRM-PRJ-09  |  Rev: R0" %}
+{% endif %}
 
 <div class="sect" style="margin-top:8px">{{ site.code }} — {{ site.name }}</div>
 <div class="lede">
   {% if project %}{{ project.title }} ({{ project.code }})<br>{% endif %}
-  Week {{ start|date:"D j F" }} to {{ end|date:"D j F Y" }},
+  {% if is_week %}Week{% else %}Period{% endif %}
+  {{ start|date:"D j F" }} to {{ end|date:"D j F Y" }}
+  ({{ days_covered }} day{{ days_covered|pluralize }}),
   compiled from the daily reports
 </div>
 
@@ -73,6 +85,9 @@
 
 <div class="sect">Men on site</div>
 <div>{{ manpower_chart|safe }}</div>
+
+<div class="sect">Manpower by designation</div>
+<div>{{ designation_chart|safe }}</div>
 
 <div class="sect">Work done this week</div>
 {% if work_done %}
@@ -115,6 +130,29 @@
       <td class="num"><b>{{ r.total }}</b></td>
     </tr>
   {% endfor %}
+  </tbody>
+</table>
+
+<div class="sect">Man hours</div>
+<table class="grid">
+  <thead><tr>
+    <th>Date</th><th class="num">Attendance</th>
+    <th class="num">Working hours</th><th class="num">Man hours</th>
+    <th>Working window</th>
+  </tr></thead>
+  <tbody>
+  {% for r in man_hours.rows %}
+    <tr>
+      <td>{{ r.date|date:"d/m/Y" }}</td>
+      <td class="num">{{ r.heads }}</td>
+      <td class="num">{{ r.hours|floatformat:"-2" }}</td>
+      <td class="num">{{ r.man_hours|floatformat:"-2" }}</td>
+      <td class="muted">{{ r.window|default:"—" }}</td>
+    </tr>
+  {% endfor %}
+    <tr><td colspan="3" style="font-weight:700">Total man hours</td>
+        <td class="num" style="font-weight:700">
+          {{ man_hours.total|floatformat:"-2" }}</td><td></td></tr>
   </tbody>
 </table>
 
@@ -198,7 +236,29 @@
 {% endfor %}
 {% endif %}
 
-<div class="sect">Daily reports in this week</div>
+{% if photos.items %}
+<div style="page-break-before: always"></div>
+{% if is_week %}
+  {% include "pdf/_letterhead.html" with title="PROGRESS PHOTOS" subline=photo_subline %}
+{% else %}
+  {% include "pdf/_letterhead.html" with title="PROGRESS PHOTOS" subline=photo_subline %}
+{% endif %}
+<p class="note" style="margin-top:6px">
+  {{ photos.total }} photo{{ photos.total|pluralize }} recorded on the daily
+  reports for this period{% if photos.omitted %}; the {{ photos.items|length }}
+  most recent are shown{% endif %}.
+</p>
+<div class="photos">
+  {% for p in photos.items %}
+    <div class="photo">
+      <img src="{{ p.src }}">
+      <div class="cap">{{ p.date|date:"D j M" }}{% if p.caption %} — {{ p.caption }}{% endif %}</div>
+    </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="sect">Daily reports in this period</div>
 <p class="note">
   {% for d in days %}{% if d.missing %}<span class="warn">{{ d.weekday }} {{ d.date|date:"j M" }} — none</span>{% else %}{{ d.weekday }} {{ d.date|date:"j M" }} — {{ d.ref }}{% endif %}{% if not forloop.last %} &middot; {% endif %}{% endfor %}
 </p>

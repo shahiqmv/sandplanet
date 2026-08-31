@@ -1,4 +1,9 @@
-"""Weekly site report, rolled up from the daily ones.
+"""Site report over a date range, rolled up from the daily ones.
+
+Any range, not only a week: a client asks for the week, but a monthly
+summary, a fortnight, or the stretch since the last site meeting are the same
+document over different dates (owner 2026-08-31). The default is still the
+current Saturday-to-Friday week, so the button means what it always did.
 
 The client asks for it every week and the sites have been typing it out by
 hand from their own DPRs — a week's worth of figures already sitting in the
@@ -189,6 +194,40 @@ def _rain_hours(a, b):
     return round(span / 60.0, 2)
 
 
+def man_hours(docs):
+    """Attendance × the day's working hours, and the period's total.
+
+    The team's own weekly report carries this table and computes it by hand
+    from the same dailies (owner 2026-08-31). Working hours are read from the
+    DPR's own "07:00 – 22:00" line, so if a figure looks wrong the report
+    behind it is the one to correct."""
+    rows, total = [], 0.0
+    for doc in docs:
+        p = _payload(doc)
+        counts = (p.get("manpower") or {}).values()
+        heads = sum(_int(v) for v in counts)
+        hrs = _span_hours(p.get("working_hours"))
+        mh = round(heads * hrs, 1)
+        total += mh
+        rows.append({"date": doc.doc_date, "ref": doc.ref, "heads": heads,
+                     "hours": hrs, "man_hours": mh,
+                     "window": (p.get("working_hours") or "").strip()})
+    return {"rows": rows, "total": round(total, 1)}
+
+
+def _span_hours(window):
+    """Hours in a "07:00 – 22:00" working window. Any dash will do, and a
+    window that ends before it starts ran past midnight."""
+    if not window:
+        return 0.0
+    text = str(window)
+    for dash in ("–", "—", "-", "to"):
+        if dash in text:
+            a, _, b = text.partition(dash)
+            return _rain_hours(a.strip(), b.strip())
+    return 0.0
+
+
 def machinery(docs):
     """Plant on site — the most any day carried, since the daily return is a
     count of what stood on site, not a delivery."""
@@ -269,8 +308,49 @@ def notes(docs):
     return out
 
 
-def build(site, on=None, project=None):
-    start, end = week_window(on)
+MAX_PHOTOS = 24
+
+
+def resolve_range(start=None, end=None, on=None):
+    """The range to report on, and whether it is a plain week.
+
+    Given explicit dates, they win. Given nothing, the current Saturday-to-
+    Friday week — so the weekly button keeps its meaning."""
+    if start or end:
+        a = start or end
+        b = end or start
+        if b < a:
+            a, b = b, a
+        return a, b
+    return week_window(on)
+
+
+def photos(docs, limit=MAX_PHOTOS):
+    """Progress photos from the range's daily reports.
+
+    Capped: a fortnight at a busy site runs to a hundred, and a client report
+    that takes a minute to open is one nobody opens. The count of what was
+    left out is shown rather than quietly dropped."""
+    from .models import Attachment
+
+    rows = (Attachment.objects.filter(document__in=docs, kind="PHOTO")
+            .select_related("document").order_by("document__doc_date", "id"))
+    total = rows.count()
+    out = []
+    for a in rows[:limit]:
+        try:
+            src = f"file:///{a.file.path}"      # filesystem storage
+        except (NotImplementedError, ValueError):
+            src = a.file.url                    # S3: the engine fetches it
+        out.append({"src": src, "caption": a.caption,
+                    "date": a.document.doc_date, "ref": a.document.ref})
+    return {"items": out, "total": total,
+            "omitted": max(total - len(out), 0)}
+
+
+def build(site, on=None, project=None, start=None, end=None,
+          with_photos=True):
+    start, end = resolve_range(start, end, on)
     docs = dprs_for(site, start, end, project=project)
     days = coverage(docs, start, end)
     mp = manpower(docs, project=project)
@@ -294,6 +374,12 @@ def build(site, on=None, project=None):
         "safety": safety(docs),
         "notes": notes(docs),
         "manpower_chart": manpower_chart(mp),
+        "designation_chart": designation_chart(mp, days),
+        "man_hours": man_hours(docs),
+        "photos": photos(docs) if with_photos else {"items": [], "total": 0,
+                                                    "omitted": 0},
+        "days_covered": (end - start).days + 1,
+        "is_week": (end - start).days == 6 and start.isoweekday() == 6,
     }
 
 
@@ -347,3 +433,72 @@ def manpower_chart(mp, width=740, height=150):
                    f'fill="{NAVY}" text-anchor="end">avg {avg}</text>')
     out.append("</svg>")
     return "".join(out)
+
+
+# A dozen distinguishable hues. The team's own report colours every
+# designation separately, and a client reads the shape of the crew from it.
+SERIES = ["#1685CC", "#1A7F37", "#E8703A", "#E8B93A", "#8A63D2", "#E86AA6",
+          "#2FA8B8", "#7A8B99", "#B02418", "#4C6EF5", "#12897A", "#C77DFF"]
+
+
+def designation_chart(mp, days, width=740, height=190):
+    """Men per day, split by designation — the shape of the crew.
+
+    Grouped bars rather than a stack: a client comparing Tuesday's masons to
+    Wednesday's wants two bars side by side, not two segments at different
+    heights up a column."""
+    rows = [r for r in mp["rows"] if r["total"]]
+    if not rows or not days:
+        return ""
+    top = max((max(r["cells"] or [0], key=lambda v: v or 0) or 0)
+              for r in rows) or 1
+    left, bottom = 30, 52
+    plot_w = width - left - 8
+    plot_h = height - bottom - 10
+    group = plot_w / len(days)
+    bar = max(min(group / (len(rows) + 1), 9), 2)
+
+    out = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
+           f'xmlns="http://www.w3.org/2000/svg" '
+           f'font-family="Helvetica, Arial, sans-serif">']
+    for g in (0, 0.5, 1):
+        y = 10 + plot_h * (1 - g)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - 8}" '
+                   f'y2="{y:.1f}" stroke="{LINE}" stroke-width="0.6" '
+                   f'stroke-dasharray="3 3"/>')
+        out.append(f'<text x="{left - 4}" y="{y + 3:.1f}" font-size="7" '
+                   f'fill="{GREY}" text-anchor="end">{int(top * g)}</text>')
+    for di, day in enumerate(days):
+        x0 = left + di * group
+        span = bar * len(rows)
+        for ri, r in enumerate(rows):
+            v = r["cells"][di] or 0
+            if not v:
+                continue
+            h = plot_h * v / top
+            x = x0 + (group - span) / 2 + ri * bar
+            out.append(f'<rect x="{x:.1f}" y="{10 + plot_h - h:.1f}" '
+                       f'width="{bar - 0.8:.1f}" height="{h:.1f}" '
+                       f'fill="{SERIES[ri % len(SERIES)]}" rx="1"/>')
+        out.append(f'<text x="{x0 + group / 2:.1f}" y="{10 + plot_h + 11:.1f}" '
+                   f'font-size="7" fill="{GREY}" text-anchor="middle">'
+                   f'{day["date"].strftime("%-d %b")}</text>')
+    # Legend, wrapped across the foot.
+    lx, ly = left, 10 + plot_h + 24
+    for ri, r in enumerate(rows):
+        label = r["name"][:22]
+        w = 9 + len(label) * 3.9 + 10
+        if lx + w > width - 4:
+            lx, ly = left, ly + 11
+        out.append(f'<circle cx="{lx + 3:.1f}" cy="{ly - 2.5:.1f}" r="3" '
+                   f'fill="{SERIES[ri % len(SERIES)]}"/>')
+        out.append(f'<text x="{lx + 9:.1f}" y="{ly:.1f}" font-size="6.8" '
+                   f'fill="{NAVY}">{_esc(label)}</text>')
+        lx += w
+    out.append("</svg>")
+    return "".join(out)
+
+
+def _esc(v):
+    return (str(v).replace("&", "&amp;").replace("<", "&lt;")
+            .replace(">", "&gt;"))

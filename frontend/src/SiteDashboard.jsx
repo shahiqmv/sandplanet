@@ -3,7 +3,23 @@ import { api } from "./api.js";
 import ShiftsEditor from "./ShiftsEditor.jsx";
 import { twsDefaultDate } from "./QADocs.jsx";
 import { Btn, Eyebrow, Icon, IssuedStamp, RefStamp, StampTile, StatusChip,
-         buttonStyle, card, ghostButton, td, th } from "./ui.jsx";
+         buttonStyle, card, ghostButton, inputStyle, td, th }
+  from "./ui.jsx";
+
+// The Saturday-to-Friday week that has just finished. Maldives runs Sat–Thu
+// with Friday the rest day, so the week ends on a Friday (owner 2026-08-31).
+function lastWeek() {
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const today = new Date();
+  const back = (today.getDay() + 1) % 7;          // getDay: Sun 0 … Sat 6
+  const thisSat = new Date(today);
+  thisSat.setDate(today.getDate() - back);        // the Saturday just gone
+  const from = new Date(thisSat);
+  from.setDate(thisSat.getDate() - 7);            // the Saturday before it
+  const to = new Date(from);
+  to.setDate(from.getDate() + 6);                 // its Friday
+  return [iso(from), iso(to)];
+}
 
 const CAN_SEE_SUBCONTRACTORS = ["SITE_ADMIN", "SITE_ENGINEER", "PM",
                                 "DIRECTOR", "ADMIN"];
@@ -27,6 +43,10 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
   const [grns, setGrns] = useState([]);
   const [pyrs, setPyrs] = useState([]);
   const [stock, setStock] = useState(null);
+  // The report range defaults to the last full Saturday-to-Friday week —
+  // the one a client is asking about on a Saturday morning.
+  const [repFrom, setRepFrom] = useState(() => lastWeek()[0]);
+  const [repTo, setRepTo] = useState(() => lastWeek()[1]);
 
   const projectParam = project ? `&project=${project.id}` : "";
 
@@ -124,16 +144,32 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
                  metaTone="alert">
           Today's obligations
         </Eyebrow>
-        {/* The week the dailies add up to — what the sites were typing out
-            by hand for the client (owner 2026-08-31). */}
-        <a href={`/api/v1/sites/${site.id}/weekly.pdf${
-             project ? `?project=${project.id}` : ""}`}
-           target="_blank" rel="noreferrer"
-           style={{ marginLeft: "auto", fontSize: 12.5, fontWeight: 600,
-                    color: "var(--sp-navy)", textDecoration: "none" }}
-           title="This week's site report, rolled up from the daily reports">
-          ⬇ Weekly report
-        </a>
+        {/* What the dailies add up to — the report the sites were typing
+            out by hand for the client. Any range, because a month and a
+            fortnight are the same document over different dates
+            (owner 2026-08-31). */}
+        <span style={{ marginLeft: "auto", display: "flex", gap: 6,
+                       alignItems: "center", fontSize: 12 }}>
+          <input type="date" value={repFrom} aria-label="Report from"
+                 onChange={(e) => setRepFrom(e.target.value)}
+                 style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
+                          width: 132 }} />
+          <span style={{ color: "var(--muted)" }}>to</span>
+          <input type="date" value={repTo} aria-label="Report to"
+                 onChange={(e) => setRepTo(e.target.value)}
+                 style={{ ...inputStyle, padding: "3px 6px", fontSize: 12,
+                          width: 132 }} />
+          <a href={`/api/v1/sites/${site.id}/weekly.pdf?`
+               + [repFrom && `from=${repFrom}`, repTo && `to=${repTo}`,
+                  project && `project=${project.id}`]
+                 .filter(Boolean).join("&")}
+             target="_blank" rel="noreferrer"
+             style={{ fontSize: 12.5, fontWeight: 600, whiteSpace: "nowrap",
+                      color: "var(--sp-navy)", textDecoration: "none" }}
+             title="Site report with progress photos, rolled up from the daily reports">
+            ⬇ Report
+          </a>
+        </span>
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginBottom: 14 }}>

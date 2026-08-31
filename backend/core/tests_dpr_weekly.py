@@ -212,3 +212,140 @@ class DprWeeklyTests(TestCase):
     def test_the_chart_is_svg(self):
         self._dpr(self.sat, {"manpower": {str(self.mason.id): 10}})
         self.assertIn("<svg", self._week()["manpower_chart"])
+
+
+class DateRangeAndPhotoTests(DprWeeklyTests):
+    """Any range, not only a week — and the photos the client actually looks
+    at first (owner 2026-08-31)."""
+
+    def test_an_explicit_range_wins(self):
+        a, b = wk.resolve_range(date(2026, 8, 3), date(2026, 8, 30))
+        self.assertEqual((a, b), (date(2026, 8, 3), date(2026, 8, 30)))
+
+    def test_a_backwards_range_is_put_the_right_way_round(self):
+        a, b = wk.resolve_range(date(2026, 8, 30), date(2026, 8, 3))
+        self.assertEqual((a, b), (date(2026, 8, 3), date(2026, 8, 30)))
+
+    def test_one_date_alone_is_a_single_day(self):
+        a, b = wk.resolve_range(start=date(2026, 8, 3))
+        self.assertEqual((a, b), (date(2026, 8, 3), date(2026, 8, 3)))
+
+    def test_no_dates_still_means_this_week(self):
+        """The weekly button must keep meaning what it did."""
+        a, b = wk.resolve_range(on=date(2026, 8, 26))
+        self.assertEqual((a, b), (date(2026, 8, 22), date(2026, 8, 28)))
+
+    def test_a_month_gathers_every_day_in_it(self):
+        for i in range(0, 20, 2):
+            day = date(2026, 8, 3) + timedelta(days=i)
+            self._dpr(day, {"manpower": {str(self.mason.id): 5}},
+                      ref=f"DPR-M-{i}")
+        r = wk.build(self.site, start=date(2026, 8, 1), end=date(2026, 8, 31))
+        self.assertEqual(r["reported"], 10)
+        self.assertEqual(r["expected"], 31)
+        self.assertEqual(r["days_covered"], 31)
+        self.assertFalse(r["is_week"])
+        self.assertEqual(r["manpower"]["man_days"], 50)
+
+    def test_a_saturday_to_friday_range_still_reads_as_a_week(self):
+        r = wk.build(self.site, start=date(2026, 8, 22),
+                     end=date(2026, 8, 28))
+        self.assertTrue(r["is_week"])
+
+    def test_photos_come_from_the_days_reports(self):
+        from django.core.files.base import ContentFile
+
+        from .models import Attachment
+
+        doc = self._dpr(self.sat, {"manpower": {}})
+        for i in range(3):
+            a = Attachment(document=doc, kind="PHOTO", caption=f"Pour {i}",
+                           uploaded_by=self.pm)
+            a.file.save(f"p{i}.jpg", ContentFile(b"x"), save=True)
+        r = self._week()
+        self.assertEqual(r["photos"]["total"], 3)
+        self.assertEqual(len(r["photos"]["items"]), 3)
+        self.assertEqual(r["photos"]["items"][0]["caption"], "Pour 0")
+        self.assertEqual(r["photos"]["items"][0]["date"], self.sat)
+
+    def test_photos_are_capped_and_the_rest_counted(self):
+        """A client report that takes a minute to open is one nobody opens —
+        but what was left out is said, not quietly dropped."""
+        from django.core.files.base import ContentFile
+
+        from .models import Attachment
+
+        doc = self._dpr(self.sat, {"manpower": {}})
+        for i in range(wk.MAX_PHOTOS + 5):
+            a = Attachment(document=doc, kind="PHOTO", uploaded_by=self.pm)
+            a.file.save(f"q{i}.jpg", ContentFile(b"x"), save=True)
+        ph = self._week()["photos"]
+        self.assertEqual(ph["total"], wk.MAX_PHOTOS + 5)
+        self.assertEqual(len(ph["items"]), wk.MAX_PHOTOS)
+        self.assertEqual(ph["omitted"], 5)
+
+    def test_photos_can_be_switched_off(self):
+        r = wk.build(self.site, on=self.sat, with_photos=False)
+        self.assertEqual(r["photos"]["items"], [])
+
+    def test_the_endpoint_takes_a_range(self):
+        self._dpr(date(2026, 8, 5), {"manpower": {str(self.mason.id): 4}})
+        r = self.client.get(f"/api/v1/sites/{self.site.id}/weekly.pdf"
+                            "?from=2026-08-01&to=2026-08-31")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("2026-08-01-to-2026-08-31", r["Content-Disposition"])
+
+    def test_a_bad_range_date_is_refused(self):
+        r = self.client.get(f"/api/v1/sites/{self.site.id}/weekly.pdf"
+                            "?from=august&to=2026-08-31")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("from", r.data["detail"])
+
+    def test_a_range_longer_than_a_year_is_refused(self):
+        r = self.client.get(f"/api/v1/sites/{self.site.id}/weekly.pdf"
+                            "?from=2024-01-01&to=2026-08-31")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("longer than a year", r.data["detail"])
+
+
+class ManHourTests(DprWeeklyTests):
+    """The team's own weekly report carries this table and computes it by
+    hand from the same dailies (owner 2026-08-31)."""
+
+    def test_man_hours_are_attendance_times_the_days_hours(self):
+        self._dpr(self.sat, {"manpower": {str(self.mason.id): 50,
+                                          str(self.eng.id): 8},
+                             "working_hours": "07:00 – 22:00"})
+        mh = self._week()["man_hours"]
+        self.assertEqual(mh["rows"][0]["heads"], 58)
+        self.assertEqual(mh["rows"][0]["hours"], 15.0)
+        self.assertEqual(mh["rows"][0]["man_hours"], 870.0)
+        self.assertEqual(mh["total"], 870.0)
+
+    def test_the_total_runs_across_the_period(self):
+        for i in range(3):
+            self._dpr(self.sat + timedelta(days=i),
+                      {"manpower": {str(self.mason.id): 10},
+                       "working_hours": "08:00 - 17:00"})
+        self.assertEqual(self._week()["man_hours"]["total"], 270.0)
+
+    def test_a_missing_working_window_costs_the_hours_not_the_row(self):
+        """The day still shows its attendance; the hours are simply zero and
+        the blank window says why."""
+        self._dpr(self.sat, {"manpower": {str(self.mason.id): 10}})
+        row = self._week()["man_hours"]["rows"][0]
+        self.assertEqual(row["heads"], 10)
+        self.assertEqual(row["man_hours"], 0.0)
+
+    def test_a_shift_past_midnight_is_not_negative(self):
+        self._dpr(self.sat, {"manpower": {str(self.mason.id): 4},
+                             "working_hours": "20:00 – 04:00"})
+        self.assertEqual(self._week()["man_hours"]["rows"][0]["hours"], 8.0)
+
+    def test_the_designation_chart_carries_a_series_per_trade(self):
+        self._dpr(self.sat, {"manpower": {str(self.mason.id): 10,
+                                          str(self.eng.id): 2}})
+        chart = self._week()["designation_chart"]
+        self.assertIn("<svg", chart)
+        self.assertIn("Mason", chart)
+        self.assertIn("Site Engineer", chart)
