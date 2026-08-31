@@ -50,8 +50,22 @@ class Command(BaseCommand):
         july = {ln.employee_id: ln for ln in PayrollLine.objects.filter(
             run__year=YEAR, run__month=MONTH,
             run__status="LOCKED").select_related("run")}
-        target = {ln.employee_id: ln for ln in PayrollLine.objects.filter(
-            run__year=pay_y, run__month=pay_m).select_related("run")}
+        # Where each man's back-pay goes. A man still working is credited on
+        # the MONTHLY run. A man who has been demobilised will never have
+        # another monthly run, so his settlement — his last payment — is the
+        # only place it can reach him, and it is credited there instead. The
+        # two are never mixed silently: the output says which each was
+        # (owner 2026-08-31, VKR's settlement for the batch of 20).
+        target, kind_of = {}, {}
+        for ln in PayrollLine.objects.filter(
+                run__year=pay_y, run__month=pay_m).select_related(
+                "run", "employee"):
+            existing = target.get(ln.employee_id)
+            if existing is None or (
+                    ln.run.kind == "MONTHLY" and existing.run.kind !=
+                    "MONTHLY"):
+                target[ln.employee_id] = ln
+                kind_of[ln.employee_id] = ln.run.kind
 
         paid = skipped = 0
         total = Decimal("0")
@@ -82,9 +96,11 @@ class Command(BaseCommand):
             owed = (daily * days).quantize(Decimal("0.01"))
             total += owed
             paid += 1
+            where = ("settlement" if kind_of.get(emp_id) == "SETTLEMENT"
+                     else "monthly")
             self.stdout.write(
                 f"   {now.employee.emp_no:<10} {now.employee.full_name[:24]:<24}"
-                f" {days}d  +{owed}")
+                f" {days}d  +{owed:<9} on the {where} run")
             if not dry:
                 now.allowance = (now.allowance or Decimal("0")) + owed
                 now.remarks = " · ".join(
@@ -100,6 +116,12 @@ class Command(BaseCommand):
 
         self.stdout.write(f"\n{paid} lines credited, {skipped} skipped. "
                           f"Total {total}")
+        settled = sum(1 for e in kind_of
+                      if kind_of[e] == "SETTLEMENT" and e in sick)
+        if settled:
+            self.stdout.write(
+                f"{settled} of these are demobilised men credited on their "
+                "settlement — they have no later monthly run.")
         if reopened:
             self.stdout.write(self.style.WARNING(
                 f"{len(reopened)} run(s) returned to draft for re-approval — "

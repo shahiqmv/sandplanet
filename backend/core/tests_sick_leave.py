@@ -186,3 +186,39 @@ class BackpayJulySickTests(TestCase):
         self._run()
         self.aug.refresh_from_db()
         self.assertEqual(self.aug.status, "DRAFT")
+
+    def test_a_leaver_is_credited_on_his_settlement(self):
+        """He will never have another monthly run — the settlement is his
+        last payment and the only place it can reach him."""
+        from .models import PayrollLine, PayrollRun
+
+        self.line.delete()                      # no monthly August line
+        stl = PayrollRun.objects.create(
+            site=self.site, currency="MVR", year=2026, month=8,
+            working_days=31, status="DRAFT", kind="SETTLEMENT",
+            last_working_day=date(2026, 8, 24), created_by=self.hr)
+        line = PayrollLine.objects.create(run=stl, employee=self.emp,
+                                          site=self.site,
+                                          basic_pay=Decimal("9300"))
+        out = self._run()
+        line.refresh_from_db()
+        self.assertEqual(line.allowance, Decimal("900.00"))
+        self.assertIn("settlement run", out)
+
+    def test_the_monthly_run_wins_when_a_man_has_both(self):
+        """A settlement for somebody else's batch must not divert a working
+        man's back-pay."""
+        from .models import PayrollLine, PayrollRun
+
+        stl = PayrollRun.objects.create(
+            site=self.site, currency="MVR", year=2026, month=8,
+            working_days=31, status="DRAFT", kind="SETTLEMENT",
+            last_working_day=date(2026, 8, 24), created_by=self.hr)
+        odd = PayrollLine.objects.create(run=stl, employee=self.emp,
+                                         site=self.site,
+                                         basic_pay=Decimal("9300"))
+        self._run()
+        self.line.refresh_from_db()
+        odd.refresh_from_db()
+        self.assertEqual(self.line.allowance, Decimal("900.00"))
+        self.assertEqual(odd.allowance, Decimal("0"))
