@@ -2576,3 +2576,46 @@ def po_amendment(request, ref):
                         status=404)
     data["can_decide"] = request.user.role in amend_svc.DECIDE_ROLES
     return Response(data)
+
+
+@api_view(["GET"])
+def dpr_weekly_pdf(request, site_id):
+    """The week's site report, rolled up from its daily ones.
+
+    `on=YYYY-MM-DD` picks the week containing that day (default: this week);
+    `project=<id>` narrows the activities to one project."""
+    from datetime import date as _date
+
+    from django.template.loader import render_to_string
+
+    from . import dpr_weekly, pdf as pdf_mod
+    from .models import Project
+    from .views_payroll import _pdf_response
+
+    site_ids = scoped_site_ids(request.user)
+    if site_ids is not None and int(site_id) not in site_ids:
+        return Response({"detail": "Not your site."}, status=403)
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    on = None
+    if request.GET.get("on"):
+        try:
+            on = _date.fromisoformat(request.GET["on"])
+        except ValueError:
+            return Response({"detail": "on must be YYYY-MM-DD."}, status=400)
+    project = None
+    if request.GET.get("project"):
+        project = Project.objects.filter(pk=request.GET["project"],
+                                         site=site).first()
+        if project is None:
+            return Response({"detail": "Unknown project for this site."},
+                            status=400)
+
+    ctx = dpr_weekly.build(site, on=on, project=project)
+    ctx["logo_src"] = pdf_mod.logo_src()
+    ctx["co"] = pdf_mod.company_info()
+    html = render_to_string("pdf/dpr_weekly.html", ctx)
+    return _pdf_response(html, f"weekly-{site.code}-{ctx['end']}.pdf")

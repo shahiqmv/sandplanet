@@ -1,0 +1,206 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_styles.html" %}
+<style>
+  @page { size: A4 portrait; }
+  .lede { font-size: 9pt; color: #45535f; margin: 2px 0 10px; }
+  .stats { width: 100%; border-collapse: separate; border-spacing: 6px 0;
+           margin: 4px 0 12px; }
+  .stats td { background: #EEF4F9; border-radius: 6px; padding: 8px 10px;
+              width: 25%; vertical-align: top; }
+  .stats .k { font-size: 7pt; letter-spacing: .06em; text-transform: uppercase;
+              color: #61707C; }
+  .stats .v { font-size: 15pt; font-weight: 700; color: #10344F;
+              line-height: 1.1; }
+  .stats .sub { font-size: 7.5pt; color: #61707C; }
+  .warn { color: #B35900; }
+  .sect { font-weight: 700; color: #10344F; font-size: 9.5pt;
+          margin: 13px 0 4px; }
+  table.grid { width: 100%; border-collapse: collapse; font-size: 7.6pt; }
+  table.grid th { background: #1685CC; color: #fff; text-align: left;
+                  padding: 4px 5px; font-size: 7pt; text-transform: uppercase;
+                  letter-spacing: .04em; }
+  table.grid td { padding: 3px 5px; border-bottom: .5px solid #D8E3EC;
+                  vertical-align: top; }
+  table.grid tr:nth-child(even) td { background: #F7FAFD; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .trade td { background: #E7F1F9 !important; font-weight: 700;
+              color: #10344F; }
+  .muted { color: #8A94A0; }
+  .none { font-size: 8pt; color: #61707C; font-style: italic; }
+  .note { font-size: 8pt; margin: 0 0 5px; }
+  .note b { color: #10344F; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="WEEKLY REPORT" %}
+{% include "pdf/_letterhead.html" with title="WEEKLY SITE REPORT" subline="Form No: FRM-PRJ-09  |  Rev: R0" %}
+
+<div class="sect" style="margin-top:8px">{{ site.code }} — {{ site.name }}</div>
+<div class="lede">
+  {% if project %}{{ project.title }} ({{ project.code }})<br>{% endif %}
+  Week {{ start|date:"D j F" }} to {{ end|date:"D j F Y" }},
+  compiled from the daily reports
+</div>
+
+<table class="stats"><tr>
+  <td>
+    <div class="k">Daily reports</div>
+    <div class="v">{{ reported }} of {{ expected }}</div>
+    {% if missing %}<div class="k warn">
+      {% for d in missing %}{{ d.weekday }}{% if not forloop.last %}, {% endif %}{% endfor %}
+      missing</div>
+    {% else %}<div class="k">complete week</div>{% endif %}
+  </td>
+  <td>
+    <div class="k">Man-days</div>
+    <div class="v">{{ manpower.man_days }}</div>
+    <div class="sub">avg {{ manpower.average }}/day</div>
+  </td>
+  <td>
+    <div class="k">Peak on site</div>
+    <div class="v">{{ manpower.peak }}</div>
+    <div class="sub">{{ manpower.peak_on|date:"D j M"|default:"—" }}</div>
+  </td>
+  <td>
+    <div class="k">Rain</div>
+    <div class="v">{{ weather.rain_hours }}<span style="font-size:9pt"> hrs</span></div>
+    <div class="sub">on {{ weather.rain_days }} day{{ weather.rain_days|pluralize }}</div>
+  </td>
+</tr></table>
+
+<div class="sect">Men on site</div>
+<div>{{ manpower_chart|safe }}</div>
+
+<div class="sect">Work done this week</div>
+{% if work_done %}
+<table class="grid">
+  <thead><tr>
+    <th>Activity</th><th>Location</th>
+    <th class="num">Days</th><th>From</th><th>To</th>
+  </tr></thead>
+  <tbody>
+  {% for t in work_done %}
+    <tr class="trade"><td colspan="5">{{ t.trade }}</td></tr>
+    {% for i in t.items %}
+    <tr>
+      <td>{{ i.activity }}</td>
+      <td>{{ i.location|default:"—" }}</td>
+      <td class="num">{{ i.day_count }}</td>
+      <td>{{ i.first|date:"D j M" }}</td>
+      <td>{{ i.last|date:"D j M" }}</td>
+    </tr>
+    {% endfor %}
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="none">No activities recorded this week.</p>{% endif %}
+
+<div class="sect">Manpower by trade</div>
+<table class="grid">
+  <thead><tr>
+    <th>Category</th>
+    {% for d in days %}<th class="num">{{ d.weekday }}</th>{% endfor %}
+    <th class="num">Man-days</th>
+  </tr></thead>
+  <tbody>
+  {% for r in manpower.rows %}
+    <tr>
+      <td>{{ r.name }}</td>
+      {% for n in r.cells %}
+        <td class="num">{% if n %}{{ n }}{% else %}<span class="muted">—</span>{% endif %}</td>
+      {% endfor %}
+      <td class="num"><b>{{ r.total }}</b></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<div class="sect">Weather</div>
+<p class="note">
+  {% for w, n in weather.halves %}{{ w }} &times;{{ n }}{% if not forloop.last %} &middot; {% endif %}{% empty %}Not recorded.{% endfor %}
+  {% if weather.rain_hours %} &mdash; {{ weather.rain_hours }} hours of rain across
+  {{ weather.rain_days }} day{{ weather.rain_days|pluralize }}.{% endif %}
+  <span class="muted">(counted per half-day, morning and afternoon)</span>
+</p>
+
+{% if machinery %}
+<div class="sect">Plant on site</div>
+<table class="grid">
+  <thead><tr><th>Item</th><th class="num">Nos</th><th>Remarks</th></tr></thead>
+  <tbody>
+  {% for m in machinery %}
+    <tr><td>{{ m.item }}</td><td class="num">{{ m.nos }}</td>
+        <td class="muted">{{ m.remarks|default:"" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if materials %}
+<div class="sect">Materials</div>
+<table class="grid">
+  <thead><tr>
+    <th>Material</th><th>Unit</th><th class="num">Opening</th>
+    <th class="num">Received</th><th class="num">Consumed</th>
+    <th class="num">Balance</th>
+  </tr></thead>
+  <tbody>
+  {% for m in materials %}
+    <tr>
+      <td>{{ m.material }}</td><td>{{ m.unit }}</td>
+      <td class="num">{{ m.opening|floatformat:"-2" }}</td>
+      <td class="num">{{ m.received|floatformat:"-2" }}</td>
+      <td class="num">{{ m.consumed|floatformat:"-2" }}</td>
+      <td class="num"><b>{{ m.balance|floatformat:"-2" }}</b></td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<div class="sect">Time lost</div>
+{% if time_lost.rows %}
+<table class="grid">
+  <thead><tr><th>Date</th><th class="num">Hours</th><th>Cause</th>
+             <th>Detail</th></tr></thead>
+  <tbody>
+  {% for r in time_lost.rows %}
+    <tr><td>{{ r.date|date:"D j M" }}</td>
+        <td class="num">{{ r.hours|floatformat:"-2" }}</td>
+        <td>{{ r.cause|default:"—" }}</td>
+        <td>{{ r.reason|default:"" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="none">No working time lost this week.</p>{% endif %}
+
+<div class="sect">Safety</div>
+{% if safety %}
+<table class="grid">
+  <thead><tr><th>Date</th><th>Report</th><th>Incident</th></tr></thead>
+  <tbody>
+  {% for s in safety %}
+    <tr><td>{{ s.date|date:"D j M" }}</td><td>{{ s.ref }}</td>
+        <td>{{ s.details|default:"Recorded on the daily report" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="none">No safety incidents reported this week.</p>{% endif %}
+
+{% if notes %}
+<div class="sect">Matters affecting progress &amp; instructions</div>
+{% for n in notes %}
+  <p class="note"><b>{{ n.date|date:"D j M" }} — {{ n.label }}:</b>
+    {{ n.text }} <span class="muted">({{ n.ref }})</span></p>
+{% endfor %}
+{% endif %}
+
+<div class="sect">Daily reports in this week</div>
+<p class="note">
+  {% for d in days %}{% if d.missing %}<span class="warn">{{ d.weekday }} {{ d.date|date:"j M" }} — none</span>{% else %}{{ d.weekday }} {{ d.date|date:"j M" }} — {{ d.ref }}{% endif %}{% if not forloop.last %} &middot; {% endif %}{% endfor %}
+</p>
+</body>
+</html>

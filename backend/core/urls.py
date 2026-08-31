@@ -347,6 +347,9 @@ urlpatterns = [
     path("documents/<str:ref>/revisions", docs.document_revise,
          name="document-revise"),
     path("registers/dpr-tws", docs.register_dpr_tws, name="register-dpr-tws"),
+    # The week's site report, rolled up from the daily ones.
+    path("sites/<int:site_id>/weekly.pdf", docs.dpr_weekly_pdf,
+         name="dpr-weekly-pdf"),
     # Ahead of the <doc_type> catch-all below, which would otherwise swallow
     # this as a document type named "submittals".
     path("registers/submittals", docs.register_submittals,
