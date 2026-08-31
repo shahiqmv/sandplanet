@@ -159,19 +159,6 @@
   <span class="muted">(counted per half-day, morning and afternoon)</span>
 </p>
 
-{% if machinery %}
-<div class="sect">Plant on site</div>
-<table class="grid">
-  <thead><tr><th>Item</th><th class="num">Nos</th><th>Remarks</th></tr></thead>
-  <tbody>
-  {% for m in machinery %}
-    <tr><td>{{ m.item }}</td><td class="num">{{ m.nos }}</td>
-        <td class="muted">{{ m.remarks|default:"" }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-
 <div class="sect">Time lost</div>
 {% if time_lost.rows %}
 <table class="grid">

@@ -256,25 +256,6 @@ def _span_hours(window):
     return 0.0
 
 
-def machinery(docs):
-    """Plant on site — the most any day carried, since the daily return is a
-    count of what stood on site, not a delivery."""
-    seen = OrderedDict()
-    for doc in docs:
-        for row in _payload(doc).get("machinery") or []:
-            item = (row.get("item") or "").strip()
-            if not item:
-                continue
-            n = _int(row.get("nos"))
-            cur = seen.setdefault(item, {"item": item, "nos": 0,
-                                         "remarks": ""})
-            cur["nos"] = max(cur["nos"], n)
-            note = (row.get("remarks") or "").strip()
-            if note and note not in cur["remarks"]:
-                cur["remarks"] = (cur["remarks"] + "; " + note).strip("; ")
-    return list(seen.values())
-
-
 def time_lost(docs):
     rows = []
     for doc in docs:
@@ -405,7 +386,6 @@ def build(site, on=None, project=None, start=None, end=None,
         "work_done": work_done(docs, project=project),
         "programme": programme(project, end),
         "weather": weather(docs),
-        "machinery": machinery(docs),
         "time_lost": time_lost(docs),
         "safety": safety(docs),
         "notes": notes(docs),

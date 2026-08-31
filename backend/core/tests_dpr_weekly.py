@@ -137,13 +137,6 @@ class DprWeeklyTests(TestCase):
         self._dpr(self.sat, {"rain_from": "23:00", "rain_to": "01:00"})
         self.assertEqual(self._week()["weather"]["rain_hours"], 2.0)
 
-    def test_plant_shows_the_most_any_day_carried(self):
-        """The daily return counts what stood on site, not what arrived."""
-        self._dpr(self.sat, {"machinery": [{"item": "Excavator", "nos": 2}]})
-        self._dpr(self.sat + timedelta(days=1),
-                  {"machinery": [{"item": "Excavator", "nos": 3}]})
-        self.assertEqual(self._week()["machinery"][0]["nos"], 3)
-
     # ---- exceptions ------------------------------------------------------
 
     def test_time_lost_and_safety_are_gathered(self):
@@ -426,8 +419,13 @@ class ProgrammeAndUnitWorkTests(DprWeeklyTests):
 
     # ---- materials are gone ---------------------------------------------
 
-    def test_materials_are_no_longer_reported(self):
-        """This is a progress report (owner 2026-08-31)."""
-        self._dpr(self.sat, {"materials": [
-            {"material": "Cement", "opening": 100, "balance": 90}]})
-        self.assertNotIn("materials", self._week())
+    def test_materials_and_plant_are_no_longer_reported(self):
+        """This is a progress report — what was on site and what was in the
+        store are a different question (owner 2026-08-31)."""
+        self._dpr(self.sat, {
+            "materials": [{"material": "Cement", "opening": 100,
+                           "balance": 90}],
+            "machinery": [{"item": "Excavator", "nos": 2}]})
+        week = self._week()
+        self.assertNotIn("materials", week)
+        self.assertNotIn("machinery", week)
