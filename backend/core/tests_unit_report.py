@@ -97,8 +97,12 @@ class UnitReportTests(TestCase):
         would credit this week with months of work."""
         from .models import UnitStageProgress
 
+        # Straight onto the board, with no event behind it — the state every
+        # unit was in the day the history table was created.
         UnitStageProgress.objects.create(unit=self.units[1], stage=self.s1,
                                          percent=Decimal("70"))
+        svc.recalc(self.units[1])
+        self.units[1].refresh_from_db()
         r = build(self.project)
         row = [x for x in r["rows"] if x["ref"] == "V201"][0]
         self.assertEqual(row["now"], 35.0)
@@ -156,3 +160,34 @@ class UnitReportTests(TestCase):
         r = self.client.get(
             f"/api/v1/projects/{theirs.id}/units/weekly.pdf")
         self.assertEqual(r.status_code, 404)
+
+    def test_the_report_agrees_with_the_board(self):
+        """The client reads both. Two ways of averaging the same numbers is
+        how a PDF says 30% while the portal says 28% (owner 2026-08-31)."""
+        self._report(pct=80, unit=0, stage=self.s1)
+        self._report(pct=40, unit=0, stage=self.s2)
+        self._report(pct=25, unit=1, stage=self.s1)
+
+        board = svc.board(self.project)
+        by_ref = {row["ref"]: row for row in board["units"]}
+
+        report = build(self.project)
+        # The headline figure too, not just the rows.
+        self.assertEqual(report["summary"]["overall_now"],
+                         round(float(board["overall_percent"]), 1))
+        self.assertEqual(report["summary"]["units"], board["unit_count"])
+        self.assertEqual(report["summary"]["complete"], board["complete"])
+
+        for row in report["rows"]:
+            b = by_ref[row["ref"]]
+            self.assertEqual(row["now"], round(float(b["percent"]), 1),
+                             f'{row["ref"]} percent')
+            self.assertEqual(row["milestone"], b["current_stage"] or "Not started",
+                             f'{row["ref"]} milestone')
+
+    def test_the_milestone_is_what_is_next_not_what_was_touched(self):
+        """A later stage often starts before an earlier one finishes."""
+        self._report(pct=50, unit=0, stage=self.s1)   # Columns, unfinished
+        self._report(pct=90, unit=0, stage=self.s2)   # Finishes, further on
+        row = [r for r in build(self.project)["rows"] if r["ref"] == "V200"][0]
+        self.assertEqual(row["milestone"], "Columns")

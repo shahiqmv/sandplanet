@@ -60,7 +60,9 @@ def unit_rows(project, start, end):
     rows = []
     for u in units:
         stages = list(u.stage_progress.all())
-        now = _unit_percent(u, {s.stage_id: s.percent for s in stages})
+        # The board's stored figure, not a recomputation of it: the client
+        # sees this number on the portal and must see the same one here.
+        now = round(float(u.percent or 0), 1)
         was_map = {}
         for s in stages:
             key = (u.id, s.stage_id)
@@ -87,31 +89,37 @@ def unit_rows(project, start, end):
 
 
 def _unit_percent(unit, by_stage):
-    """A unit's overall percent from its stage figures, weighted as the board
-    weights them."""
-    stages = list(unit.project.unit_stages.all()) or []
-    if unit.category_id:
-        cat_stages = [s for s in stages if s.category_id == unit.category_id]
-        if cat_stages:
-            stages = cat_stages
-    if not stages:
+    """A unit's overall percent from a set of stage figures.
+
+    Deliberately the same arithmetic as units.recalc — weight-averaged over
+    the unit's own stages — because this figure sits next to the board's in a
+    client's hands. Two ways of averaging the same numbers is how a PDF ends
+    up saying 30% while the portal says 28% (owner 2026-08-31)."""
+    from .units import stages_for
+
+    stages = stages_for(unit)
+    total_w = sum(float(s.weight or 0) for s in stages)
+    if total_w <= 0:
         return 0.0
-    total_w = sum(float(s.weight or 1) for s in stages) or 1.0
-    got = sum(float(s.weight or 1) * _pct(by_stage.get(s.id, ZERO)) / 100.0
+    got = sum(_pct(by_stage.get(s.id, ZERO)) * float(s.weight or 0)
               for s in stages)
-    return round(got / total_w * 100.0, 1)
+    return round(got / total_w, 1)
 
 
 def _milestone(unit, stages):
-    """The stage the unit is working on now — the furthest one started but
-    not finished, else the last one finished."""
-    done = [s for s in stages if _pct(s.percent) >= 100]
-    live = [s for s in stages if 0 < _pct(s.percent) < 100]
-    if live:
-        return sorted(live, key=lambda s: s.stage.sort_order)[-1].stage.name
-    if done:
-        return sorted(done, key=lambda s: s.stage.sort_order)[-1].stage.name
-    return "Not started"
+    """What the unit is working on: the first stage not yet finished.
+
+    The board's own rule — "what has to be done next" — not "the furthest
+    thing touched". They disagree whenever a later stage starts before an
+    earlier one finishes, which on a pool is most of the time."""
+    from .units import stages_for
+
+    done = {s.stage_id: s.percent for s in stages}
+    for st in stages_for(unit):
+        pc = done.get(st.id)
+        if pc is None or _pct(pc) < 100:
+            return st.name
+    return "Complete" if stages else "Not started"
 
 
 def summary(project, rows, start, end):
