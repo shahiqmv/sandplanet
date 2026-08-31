@@ -3,35 +3,8 @@
 <head>
 <meta charset="utf-8">
 {% include "pdf/_styles.html" %}
-<style>
-  @page { size: A4 portrait; }
-  .lede { font-size: 9pt; color: #45535f; margin: 2px 0 10px; }
-  .stats { width: 100%; border-collapse: separate; border-spacing: 6px 0;
-           margin: 4px 0 12px; }
-  .stats td { background: #EEF4F9; border-radius: 6px; padding: 8px 10px;
-              width: 25%; vertical-align: top; }
-  .stats .k { font-size: 7pt; letter-spacing: .06em; text-transform: uppercase;
-              color: #61707C; }
-  .stats .v { font-size: 15pt; font-weight: 700; color: #10344F;
-              line-height: 1.1; }
-  .stats .sub { font-size: 7.5pt; color: #1A7F37; }
-  .sect { font-weight: 700; color: #10344F; font-size: 9.5pt;
-          margin: 12px 0 4px; }
-  .chart { margin-bottom: 6px; }
-  table.grid { width: 100%; border-collapse: collapse; font-size: 7.5pt; }
-  table.grid th { background: #1685CC; color: #fff; text-align: left;
-                  padding: 4px 5px; font-size: 7pt; text-transform: uppercase;
-                  letter-spacing: .04em; }
-  table.grid td { padding: 3px 5px; border-bottom: .5px solid #D8E3EC;
-                  vertical-align: top; }
-  table.grid tr:nth-child(even) td { background: #F7FAFD; }
-  .num { text-align: right; }
-  .up { color: #1A7F37; font-weight: 700; }
-  .flat { color: #8A94A0; }
-  .key { font-size: 7pt; color: #61707C; margin: 2px 0 8px; }
-  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
-        vertical-align: -1px; margin: 0 3px 0 10px; }
-</style>
+{% include "pdf/_report_styles.html" %}
+<style>@page { size: A4 portrait; }</style>
 </head>
 <body>
 {% include "pdf/_footer.html" with footer_doc="UNIT PROGRESS" %}

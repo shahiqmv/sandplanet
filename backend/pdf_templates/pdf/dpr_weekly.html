@@ -3,42 +3,8 @@
 <head>
 <meta charset="utf-8">
 {% include "pdf/_styles.html" %}
-<style>
-  @page { size: A4 portrait; }
-  .lede { font-size: 9pt; color: #45535f; margin: 2px 0 10px; }
-  .stats { width: 100%; border-collapse: separate; border-spacing: 6px 0;
-           margin: 4px 0 12px; }
-  .stats td { background: #EEF4F9; border-radius: 6px; padding: 8px 10px;
-              width: 25%; vertical-align: top; }
-  .stats .k { font-size: 7pt; letter-spacing: .06em; text-transform: uppercase;
-              color: #61707C; }
-  .stats .v { font-size: 15pt; font-weight: 700; color: #10344F;
-              line-height: 1.1; }
-  .stats .sub { font-size: 7.5pt; color: #61707C; }
-  .warn { color: #B35900; }
-  .sect { font-weight: 700; color: #10344F; font-size: 9.5pt;
-          margin: 13px 0 4px; }
-  table.grid { width: 100%; border-collapse: collapse; font-size: 7.6pt; }
-  table.grid th { background: #1685CC; color: #fff; text-align: left;
-                  padding: 4px 5px; font-size: 7pt; text-transform: uppercase;
-                  letter-spacing: .04em; }
-  table.grid td { padding: 3px 5px; border-bottom: .5px solid #D8E3EC;
-                  vertical-align: top; }
-  table.grid tr:nth-child(even) td { background: #F7FAFD; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .trade td { background: #E7F1F9 !important; font-weight: 700;
-              color: #10344F; }
-  .muted { color: #8A94A0; }
-  .none { font-size: 8pt; color: #61707C; font-style: italic; }
-  .note { font-size: 8pt; margin: 0 0 5px; }
-  .note b { color: #10344F; }
-  .photos { margin-top: 4mm; }
-  .photo { width: 31%; display: inline-block; margin: 1%;
-           vertical-align: top; }
-  .photo img { width: 100%; border: 0.6px solid #A9B6C0; }
-  .photo .cap { border: 0.6px solid #A9B6C0; border-top: none;
-                padding: 2px 4px; font-size: 6.8pt; color: #45535f; }
-</style>
+{% include "pdf/_report_styles.html" %}
+<style>@page { size: A4 portrait; }</style>
 </head>
 <body>
 {% include "pdf/_footer.html" with footer_doc="WEEKLY REPORT" %}
@@ -83,35 +49,64 @@
   </td>
 </tr></table>
 
+{% if programme %}
+<div class="sect">Planned programme</div>
+<table class="grid">
+  <thead><tr>
+    <th>Activity</th><th>Planned start</th><th>Planned finish</th>
+    <th class="num">Progress</th><th>Status</th>
+  </tr></thead>
+  <tbody>
+  {% for a in programme %}
+    <tr{% if a.indent == 0 %} class="trade"{% endif %}>
+      <td{% if a.indent %} style="padding-left:16px"{% endif %}>
+        {{ a.name }}{% if a.milestone %} <span class="muted">◆</span>{% endif %}
+      </td>
+      <td>{{ a.start|date:"j M Y"|default:"—" }}</td>
+      <td>{{ a.finish|date:"j M Y"|default:"—" }}</td>
+      <td class="num">{{ a.percent|floatformat:"-2" }}%</td>
+      <td{% if a.state == "Overdue" %} class="warn"{% endif %}>{{ a.state }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
 <div class="sect">Men on site</div>
 <div>{{ manpower_chart|safe }}</div>
 
 <div class="sect">Manpower by designation</div>
 <div>{{ designation_chart|safe }}</div>
 
-<div class="sect">Work done this week</div>
+<div class="sect">Work done — by unit</div>
 {% if work_done %}
-<table class="grid">
-  <thead><tr>
-    <th>Activity</th><th>Location</th>
-    <th class="num">Days</th><th>From</th><th>To</th>
-  </tr></thead>
-  <tbody>
-  {% for t in work_done %}
-    <tr class="trade"><td colspan="5">{{ t.trade }}</td></tr>
-    {% for i in t.items %}
-    <tr>
-      <td>{{ i.activity }}</td>
-      <td>{{ i.location|default:"—" }}</td>
-      <td class="num">{{ i.day_count }}</td>
-      <td>{{ i.first|date:"D j M" }}</td>
-      <td>{{ i.last|date:"D j M" }}</td>
-    </tr>
+{% for b in work_done %}
+  <table class="grid" style="margin-bottom:5px">
+    <thead><tr>
+      <th style="width:38%">{{ b.ref }}{% if b.name %} — {{ b.name }}{% endif %}
+        {% if b.percent != None %}
+          <span style="float:right">{{ b.percent|floatformat:"-1" }}% complete</span>
+        {% endif %}</th>
+      <th>Location</th><th>From</th><th>To</th>
+      <th class="num">Days</th><th class="num">Progress</th>
+    </tr></thead>
+    <tbody>
+    {% for i in b.items %}
+      <tr>
+        <td>{{ i.activity }}{% if i.stage and i.stage != i.activity %}
+          <span class="muted"> · {{ i.stage }}</span>{% endif %}</td>
+        <td>{{ i.location|default:"—" }}</td>
+        <td>{{ i.first|date:"j M" }}</td>
+        <td>{{ i.last|date:"j M" }}</td>
+        <td class="num">{{ i.day_count }}</td>
+        <td class="num">{% if i.percent != None %}{{ i.percent|floatformat:"-2" }}%
+          {% else %}<span class="muted">—</span>{% endif %}</td>
+      </tr>
     {% endfor %}
-  {% endfor %}
-  </tbody>
-</table>
-{% else %}<p class="none">No activities recorded this week.</p>{% endif %}
+    </tbody>
+  </table>
+{% endfor %}
+{% else %}<p class="none">No activities recorded in this period.</p>{% endif %}
 
 <div class="sect">Manpower by trade</div>
 <table class="grid">
@@ -172,28 +167,6 @@
   {% for m in machinery %}
     <tr><td>{{ m.item }}</td><td class="num">{{ m.nos }}</td>
         <td class="muted">{{ m.remarks|default:"" }}</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-
-{% if materials %}
-<div class="sect">Materials</div>
-<table class="grid">
-  <thead><tr>
-    <th>Material</th><th>Unit</th><th class="num">Opening</th>
-    <th class="num">Received</th><th class="num">Consumed</th>
-    <th class="num">Balance</th>
-  </tr></thead>
-  <tbody>
-  {% for m in materials %}
-    <tr>
-      <td>{{ m.material }}</td><td>{{ m.unit }}</td>
-      <td class="num">{{ m.opening|floatformat:"-2" }}</td>
-      <td class="num">{{ m.received|floatformat:"-2" }}</td>
-      <td class="num">{{ m.consumed|floatformat:"-2" }}</td>
-      <td class="num"><b>{{ m.balance|floatformat:"-2" }}</b></td>
-    </tr>
   {% endfor %}
   </tbody>
 </table>

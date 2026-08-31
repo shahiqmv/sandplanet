@@ -128,33 +128,61 @@ def manpower(docs, project=None):
 
 
 def work_done(docs, project=None):
-    """The week's activities, grouped by trade, each with the days it ran.
+    """The range's activities, per unit, with the days each ran and where it
+    got to.
 
-    An activity repeated all week is one line saying so, not seven — a client
-    reading a weekly report wants the shape of the week, and the dailies are
-    there for the detail."""
-    trades = OrderedDict()
+    The team's own report is a table per villa — activity, start, finish,
+    percent — and that is what a client reads: not what the trades were busy
+    with, but where each pool has got to. Units are the spine; anything the
+    DPR records without a unit falls to a "General" block at the end so it is
+    not lost (owner 2026-08-31)."""
+    from .models import ProjectUnit, UnitStage
+
+    ids = {r.get("unit_id") for d in docs
+           for r in (_payload(d).get("work_done") or []) if r.get("unit_id")}
+    units = {str(u.id): u for u in ProjectUnit.objects.filter(
+        id__in=[i for i in ids if str(i).isdigit()]).select_related("project")}
+    stages = {str(st.id): st for st in UnitStage.objects.all()}
+
+    blocks = OrderedDict()
     for doc in docs:
         for row in _payload(doc).get("work_done") or []:
             if project is not None and row.get("project") not in (
                     None, "", project.code):
                 continue
-            trade = (row.get("trade") or "General").strip() or "General"
             act = (row.get("activity") or "").strip()
-            if not act:
+            stage = stages.get(str(row.get("stage_id") or ""))
+            label = act or (stage.name if stage else "")
+            if not label:
                 continue
-            loc = (row.get("location") or "").strip()
-            key = (act.lower(), loc.lower())
-            block = trades.setdefault(trade, OrderedDict())
-            item = block.setdefault(key, {"activity": act, "location": loc,
-                                          "days": [], "refs": []})
+            unit = units.get(str(row.get("unit_id") or ""))
+            key = unit.ref if unit else "General"
+            block = blocks.setdefault(key, {"unit": unit, "ref": key,
+                                            "items": OrderedDict()})
+            ik = (label.lower(), (row.get("location") or "").strip().lower())
+            item = block["items"].setdefault(ik, {
+                "activity": label, "stage": stage.name if stage else "",
+                "location": (row.get("location") or "").strip(),
+                "trade": (row.get("trade") or "").strip(),
+                "days": [], "percent": None})
             item["days"].append(doc.doc_date)
-            item["refs"].append(doc.ref)
-    return [{"trade": t,
-             "items": [{**i, "day_count": len(i["days"]),
-                        "first": min(i["days"]), "last": max(i["days"])}
-                       for i in items.values()]}
-            for t, items in trades.items()]
+            pct = row.get("progress_todate")
+            if pct not in (None, ""):
+                item["percent"] = _num(pct)      # the latest reported
+
+    out = []
+    for key, b in blocks.items():
+        items = [{**i, "day_count": len(i["days"]),
+                  "first": min(i["days"]), "last": max(i["days"])}
+                 for i in b["items"].values()]
+        out.append({"ref": key, "unit": b["unit"],
+                    "name": b["unit"].name if b["unit"] else "",
+                    "percent": (float(b["unit"].percent or 0)
+                                if b["unit"] else None),
+                    "items": items})
+    # Units first, in reference order; anything unassigned last.
+    out.sort(key=lambda b: (b["ref"] == "General", b["ref"]))
+    return out
 
 
 def weather(docs):
@@ -247,29 +275,6 @@ def machinery(docs):
     return list(seen.values())
 
 
-def materials(docs):
-    """Opening at the start of the week, what came in, what was used, and the
-    closing balance — the movement, not seven snapshots."""
-    rows = OrderedDict()
-    for doc in docs:
-        for r in _payload(doc).get("materials") or []:
-            name = (r.get("material") or "").strip()
-            if not name:
-                continue
-            cur = rows.get(name)
-            if cur is None:
-                cur = rows[name] = {"material": name,
-                                    "unit": (r.get("unit") or "").strip(),
-                                    "opening": _num(r.get("opening")),
-                                    "received": 0.0, "consumed": 0.0,
-                                    "balance": _num(r.get("balance"))}
-            cur["received"] += _num(r.get("received"))
-            cur["consumed"] += _num(r.get("consumed"))
-            cur["balance"] = _num(r.get("balance"))   # the latest day's
-    return [r for r in rows.values()
-            if r["received"] or r["consumed"] or r["opening"] or r["balance"]]
-
-
 def time_lost(docs):
     rows = []
     for doc in docs:
@@ -348,6 +353,37 @@ def photos(docs, limit=MAX_PHOTOS):
             "omitted": max(total - len(out), 0)}
 
 
+def programme(project, end):
+    """The planned programme, summarised — the top of the WBS with its dates
+    and where each part has got to.
+
+    The team's report opens with this, and it is the frame a client reads the
+    rest against: not "what happened", but "what was meant to happen by now".
+    Only the top two outline levels; the detail is the programme itself."""
+    if project is None:
+        return []
+    from .models import ProgrammeActivity
+
+    rows = []
+    for a in (ProgrammeActivity.objects.filter(project=project, indent__lte=1)
+              .order_by("sort_order")):
+        pct = float(a.progress or 0)
+        late = bool(a.finish and a.finish < end and pct < 100)
+        due = bool(a.start and a.start <= end and pct <= 0)
+        rows.append({
+            "name": a.name, "indent": a.indent,
+            "milestone": a.is_milestone,
+            "start": a.start, "finish": a.finish,
+            "percent": pct,
+            "state": ("Complete" if pct >= 100
+                      else "Overdue" if late
+                      else "Not started" if due
+                      else "In progress" if pct > 0
+                      else "Upcoming"),
+        })
+    return rows
+
+
 def build(site, on=None, project=None, start=None, end=None,
           with_photos=True):
     start, end = resolve_range(start, end, on)
@@ -367,9 +403,9 @@ def build(site, on=None, project=None, start=None, end=None,
         "missing": [d for d in days if d["missing"]],
         "manpower": mp,
         "work_done": work_done(docs, project=project),
+        "programme": programme(project, end),
         "weather": weather(docs),
         "machinery": machinery(docs),
-        "materials": materials(docs),
         "time_lost": time_lost(docs),
         "safety": safety(docs),
         "notes": notes(docs),
@@ -391,46 +427,52 @@ LINE = "#D8E3EC"
 GREY = "#8A94A0"
 
 
-def manpower_chart(mp, width=740, height=150):
+def manpower_chart(mp, width=740, height=175):
     """Men on site each day, with the week's average as a rule across it."""
     days = mp["per_day"]
     if not days:
         return ""
-    top = max(max(d["total"] for d in days), 1)
-    left, bottom = 34, 22
-    plot_w = width - left - 8
-    plot_h = height - bottom - 12
+    # Headroom above the tallest bar so the value labels and the average
+    # rule are not printed on top of each other. The baseline stays at zero:
+    # a headcount chart that starts anywhere else exaggerates the variation.
+    peak = max(max(d["total"] for d in days), 1)
+    top = peak * 1.18
+    left, bottom = 36, 26
+    right = 52                      # room for the average label, off the plot
+    plot_w = width - left - right
+    plot_h = height - bottom - 16
     step = plot_w / len(days)
-    bar_w = min(step * 0.6, 46)
+    bar_w = min(step * 0.52, 40)
     out = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
            f'xmlns="http://www.w3.org/2000/svg" '
            f'font-family="Helvetica, Arial, sans-serif">']
     for g in (0, 0.5, 1):
-        y = 12 + plot_h * (1 - g)
-        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - 8}" '
+        y = 16 + plot_h * (1 - g * peak / top)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" '
                    f'y2="{y:.1f}" stroke="{LINE}" stroke-width="0.6"/>')
-        out.append(f'<text x="{left - 5}" y="{y + 3:.1f}" font-size="7" '
-                   f'fill="{GREY}" text-anchor="end">{int(top * g)}</text>')
+        out.append(f'<text x="{left - 6}" y="{y + 3.5:.1f}" font-size="8" '
+                   f'fill="{GREY}" text-anchor="end">{int(peak * g)}</text>')
     for i, d in enumerate(days):
         h = plot_h * d["total"] / top
         x = left + i * step + (step - bar_w) / 2
-        y = 12 + plot_h - h
+        y = 16 + plot_h - h
         out.append(f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
                    f'height="{h:.1f}" fill="{SKY}" rx="2"/>')
-        out.append(f'<text x="{x + bar_w / 2:.1f}" y="{y - 3:.1f}" '
-                   f'font-size="7.5" fill="{NAVY}" text-anchor="middle">'
-                   f'{d["total"]}</text>')
-        out.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 8}" '
-                   f'font-size="7.5" fill="{GREY}" text-anchor="middle">'
-                   f'{d["date"].strftime("%a")}</text>')
+        out.append(f'<text x="{x + bar_w / 2:.1f}" y="{y - 4:.1f}" '
+                   f'font-size="8.5" font-weight="bold" fill="{NAVY}" '
+                   f'text-anchor="middle">{d["total"]}</text>')
+        out.append(f'<text x="{x + bar_w / 2:.1f}" y="{height - 10}" '
+                   f'font-size="8" fill="{GREY}" text-anchor="middle">'
+                   f'{d["date"].strftime("%a %-d")}</text>')
     avg = mp["average"]
     if avg:
-        y = 12 + plot_h * (1 - avg / top)
-        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - 8}" '
+        y = 16 + plot_h * (1 - avg / top)
+        out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{left + plot_w}" '
                    f'y2="{y:.1f}" stroke="{NAVY}" stroke-width="0.9" '
                    f'stroke-dasharray="4 3"/>')
-        out.append(f'<text x="{width - 10}" y="{y - 3:.1f}" font-size="7" '
-                   f'fill="{NAVY}" text-anchor="end">avg {avg}</text>')
+        # In the right margin, clear of the bars and their value labels.
+        out.append(f'<text x="{left + plot_w + 6}" y="{y + 3:.1f}" '
+                   f'font-size="8" fill="{NAVY}">avg {avg}</text>')
     out.append("</svg>")
     return "".join(out)
 
@@ -441,7 +483,7 @@ SERIES = ["#1685CC", "#1A7F37", "#E8703A", "#E8B93A", "#8A63D2", "#E86AA6",
           "#2FA8B8", "#7A8B99", "#B02418", "#4C6EF5", "#12897A", "#C77DFF"]
 
 
-def designation_chart(mp, days, width=740, height=190):
+def designation_chart(mp, days, width=740, height=225):
     """Men per day, split by designation — the shape of the crew.
 
     Grouped bars rather than a stack: a client comparing Tuesday's masons to
@@ -452,11 +494,13 @@ def designation_chart(mp, days, width=740, height=190):
         return ""
     top = max((max(r["cells"] or [0], key=lambda v: v or 0) or 0)
               for r in rows) or 1
-    left, bottom = 30, 52
-    plot_w = width - left - 8
-    plot_h = height - bottom - 10
+    left, bottom = 34, 62
+    plot_w = width - left - 10
+    plot_h = height - bottom - 12
     group = plot_w / len(days)
-    bar = max(min(group / (len(rows) + 1), 9), 2)
+    # Fill the group rather than leaving hairlines: with a handful of trades
+    # the bars should read as bars.
+    bar = max(min((group - 8) / len(rows), 16), 2.5)
 
     out = [f'<svg viewBox="0 0 {width} {height}" width="100%" '
            f'xmlns="http://www.w3.org/2000/svg" '
@@ -466,7 +510,7 @@ def designation_chart(mp, days, width=740, height=190):
         out.append(f'<line x1="{left}" y1="{y:.1f}" x2="{width - 8}" '
                    f'y2="{y:.1f}" stroke="{LINE}" stroke-width="0.6" '
                    f'stroke-dasharray="3 3"/>')
-        out.append(f'<text x="{left - 4}" y="{y + 3:.1f}" font-size="7" '
+        out.append(f'<text x="{left - 5}" y="{y + 3.5:.1f}" font-size="8" '
                    f'fill="{GREY}" text-anchor="end">{int(top * g)}</text>')
     for di, day in enumerate(days):
         x0 = left + di * group
@@ -480,19 +524,20 @@ def designation_chart(mp, days, width=740, height=190):
             out.append(f'<rect x="{x:.1f}" y="{10 + plot_h - h:.1f}" '
                        f'width="{bar - 0.8:.1f}" height="{h:.1f}" '
                        f'fill="{SERIES[ri % len(SERIES)]}" rx="1"/>')
-        out.append(f'<text x="{x0 + group / 2:.1f}" y="{10 + plot_h + 11:.1f}" '
-                   f'font-size="7" fill="{GREY}" text-anchor="middle">'
+        out.append(f'<text x="{x0 + group / 2:.1f}" y="{10 + plot_h + 13:.1f}" '
+                   f'font-size="8" fill="{GREY}" text-anchor="middle">'
                    f'{day["date"].strftime("%-d %b")}</text>')
     # Legend, wrapped across the foot.
-    lx, ly = left, 10 + plot_h + 24
+    lx, ly = left, 10 + plot_h + 31
     for ri, r in enumerate(rows):
-        label = r["name"][:22]
-        w = 9 + len(label) * 3.9 + 10
+        label = r["name"][:24]
+        w = 12 + len(label) * 4.6 + 14
         if lx + w > width - 4:
-            lx, ly = left, ly + 11
-        out.append(f'<circle cx="{lx + 3:.1f}" cy="{ly - 2.5:.1f}" r="3" '
+            lx, ly = left, ly + 13
+        out.append(f'<rect x="{lx:.1f}" y="{ly - 6.5:.1f}" width="7" '
+                   f'height="7" rx="1.5" '
                    f'fill="{SERIES[ri % len(SERIES)]}"/>')
-        out.append(f'<text x="{lx + 9:.1f}" y="{ly:.1f}" font-size="6.8" '
+        out.append(f'<text x="{lx + 11:.1f}" y="{ly:.1f}" font-size="8" '
                    f'fill="{NAVY}">{_esc(label)}</text>')
         lx += w
     out.append("</svg>")

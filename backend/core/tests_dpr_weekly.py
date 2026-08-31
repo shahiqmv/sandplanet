@@ -97,12 +97,12 @@ class DprWeeklyTests(TestCase):
     # ---- work done -------------------------------------------------------
 
     def test_a_repeated_activity_is_one_line_with_its_days(self):
-        """A client reading a weekly report wants the shape of the week; the
+        """A client reading the report wants the shape of the period; the
         dailies are there for the detail."""
         for i in range(3):
             self._dpr(self.sat + timedelta(days=i), {"work_done": [
                 {"trade": "Concrete", "activity": "Column pour",
-                 "location": "V211"}]})
+                 "location": "V211"}]}, ref=f"DPR-R-{i}")
         blocks = self._week()["work_done"]
         self.assertEqual(len(blocks), 1)
         item = blocks[0]["items"][0]
@@ -110,16 +110,10 @@ class DprWeeklyTests(TestCase):
         self.assertEqual(item["first"], self.sat)
         self.assertEqual(item["last"], self.sat + timedelta(days=2))
 
-    def test_activities_group_by_trade(self):
-        self._dpr(self.sat, {"work_done": [
-            {"trade": "Concrete", "activity": "Pour", "location": "A"},
-            {"trade": "MEP", "activity": "Conduits", "location": "B"}]})
-        self.assertEqual([b["trade"] for b in self._week()["work_done"]],
-                         ["Concrete", "MEP"])
-
     def test_a_project_filter_narrows_the_activities(self):
-        project = Project.objects.create(site=self.site, code="P1",
-                                         title="One", status="ACTIVE")
+        project, _ = Project.objects.get_or_create(
+            site=self.site, code="P1",
+            defaults={"title": "One", "status": "ACTIVE"})
         self._dpr(self.sat, {"work_done": [
             {"trade": "A", "activity": "Mine", "project": "P1"},
             {"trade": "B", "activity": "Theirs", "project": "P2"}]})
@@ -149,19 +143,6 @@ class DprWeeklyTests(TestCase):
         self._dpr(self.sat + timedelta(days=1),
                   {"machinery": [{"item": "Excavator", "nos": 3}]})
         self.assertEqual(self._week()["machinery"][0]["nos"], 3)
-
-    def test_materials_show_the_weeks_movement(self):
-        self._dpr(self.sat, {"materials": [
-            {"material": "Cement", "unit": "bag", "opening": 100,
-             "received": 50, "consumed": 20, "balance": 130}]})
-        self._dpr(self.sat + timedelta(days=1), {"materials": [
-            {"material": "Cement", "unit": "bag", "opening": 130,
-             "received": 0, "consumed": 30, "balance": 100}]})
-        m = self._week()["materials"][0]
-        self.assertEqual(m["opening"], 100)     # the week's opening
-        self.assertEqual(m["received"], 50)
-        self.assertEqual(m["consumed"], 50)
-        self.assertEqual(m["balance"], 100)     # the closing balance
 
     # ---- exceptions ------------------------------------------------------
 
@@ -349,3 +330,104 @@ class ManHourTests(DprWeeklyTests):
         self.assertIn("<svg", chart)
         self.assertIn("Mason", chart)
         self.assertIn("Site Engineer", chart)
+
+
+class ProgrammeAndUnitWorkTests(DprWeeklyTests):
+    """Shaped against the report the team actually issues (owner 2026-08-31):
+    it opens with the planned programme, and its body is a table per villa —
+    activity, dates, percent — not a list of what the trades were busy with.
+    """
+
+    def setUp(self):
+        super().setUp()
+        from .models import ProjectUnit, UnitStage
+        self.project = Project.objects.create(site=self.site, code="P1",
+                                              title="Pools", status="ACTIVE")
+        self.unit = ProjectUnit.objects.create(project=self.project,
+                                               ref="V211", name="Villa 211")
+        self.other = ProjectUnit.objects.create(project=self.project,
+                                                ref="V215")
+        self.stage = UnitStage.objects.create(project=self.project,
+                                              name="Waterproofing",
+                                              sort_order=1, weight=1)
+
+    def _work(self, day, unit, activity, pct=None, **kw):
+        row = {"trade": "Civil", "activity": activity,
+               "unit_id": str(unit.id), "stage_id": str(self.stage.id)}
+        row.update(kw)
+        if pct is not None:
+            row["progress_todate"] = pct
+        self._dpr(day, {"work_done": [row]}, ref=f"DPR-{unit.ref}-{day.day}")
+
+    # ---- work done, unit-wise -------------------------------------------
+
+    def test_work_is_grouped_by_unit_not_by_trade(self):
+        self._work(self.sat, self.unit, "1st coat")
+        self._work(self.sat + timedelta(days=1), self.other, "Surface prep")
+        blocks = self._week()["work_done"]
+        self.assertEqual([b["ref"] for b in blocks], ["V211", "V215"])
+        self.assertEqual(blocks[0]["name"], "Villa 211")
+
+    def test_each_activity_carries_its_date_range_and_percent(self):
+        self._work(self.sat, self.unit, "1st coat", pct=40)
+        self._work(self.sat + timedelta(days=2), self.unit, "1st coat",
+                   pct=85)
+        item = self._week()["work_done"][0]["items"][0]
+        self.assertEqual(item["first"], self.sat)
+        self.assertEqual(item["last"], self.sat + timedelta(days=2))
+        self.assertEqual(item["day_count"], 2)
+        self.assertEqual(item["percent"], 85.0)      # the latest reported
+
+    def test_work_with_no_unit_is_kept_under_general_and_last(self):
+        """Not lost — a DPR row without a unit is still work that happened."""
+        self._work(self.sat, self.unit, "1st coat")
+        self._dpr(self.sat + timedelta(days=1),
+                  {"work_done": [{"trade": "Civil", "activity": "Site clean"}]},
+                  ref="DPR-GEN-1")
+        refs = [b["ref"] for b in self._week()["work_done"]]
+        self.assertEqual(refs, ["V211", "General"])
+
+    # ---- the programme summary ------------------------------------------
+
+    def test_the_programme_summary_is_the_top_of_the_wbs(self):
+        from .models import ProgrammeActivity
+
+        ProgrammeActivity.objects.create(
+            project=self.project, sort_order=1, indent=0, name="Piling",
+            start=date(2026, 7, 1), finish=date(2026, 7, 20), progress=100)
+        ProgrammeActivity.objects.create(
+            project=self.project, sort_order=2, indent=1, name="Batch 1",
+            start=date(2026, 8, 1), finish=date(2026, 8, 20), progress=30)
+        ProgrammeActivity.objects.create(
+            project=self.project, sort_order=3, indent=4, name="Deep detail",
+            start=date(2026, 8, 1), finish=date(2026, 8, 5), progress=0)
+        rows = wk.build(self.site, on=self.sat,
+                        project=self.project)["programme"]
+        self.assertEqual([r["name"] for r in rows], ["Piling", "Batch 1"])
+
+    def test_the_programme_says_what_is_overdue(self):
+        from .models import ProgrammeActivity
+
+        ProgrammeActivity.objects.create(
+            project=self.project, sort_order=1, indent=0, name="Late one",
+            start=date(2026, 7, 1), finish=date(2026, 8, 1), progress=40)
+        ProgrammeActivity.objects.create(
+            project=self.project, sort_order=2, indent=0, name="Done one",
+            start=date(2026, 7, 1), finish=date(2026, 8, 1), progress=100)
+        rows = {r["name"]: r["state"] for r in
+                wk.build(self.site, start=date(2026, 8, 22),
+                         end=date(2026, 8, 28),
+                         project=self.project)["programme"]}
+        self.assertEqual(rows["Late one"], "Overdue")
+        self.assertEqual(rows["Done one"], "Complete")
+
+    def test_no_project_means_no_programme_rather_than_a_crash(self):
+        self.assertEqual(self._week()["programme"], [])
+
+    # ---- materials are gone ---------------------------------------------
+
+    def test_materials_are_no_longer_reported(self):
+        """This is a progress report (owner 2026-08-31)."""
+        self._dpr(self.sat, {"materials": [
+            {"material": "Cement", "opening": 100, "balance": 90}]})
+        self.assertNotIn("materials", self._week())

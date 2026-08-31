@@ -1,0 +1,79 @@
+{% comment %}
+Typography for the client-facing progress reports (weekly site report, unit
+progress). Deliberately NOT in _styles.html: that one is shared by invoices,
+payslips, claims and the DPR, and reflowing those to improve a report would
+be a large blast radius on documents already in clients' hands
+(owner 2026-08-31, "fonts and sizes ... a bit rigid").
+
+DejaVu Sans rather than Helvetica: it is actually installed on the server, so
+it renders as drawn instead of being substituted, and its wider counters and
+even colour hold up in a dense table where Helvetica closes in. One scale,
+used consistently — the rigidity came from everything sitting at the same
+size and weight with hard rules between.
+{% endcomment %}
+<style>
+  body { font-family: "DejaVu Sans", "Nimbus Sans", Helvetica, Arial,
+                      sans-serif;
+         font-size: 8.6pt; line-height: 1.38; color: #22303B; }
+
+  /* Section heading: the only thing that should stop the eye. */
+  .sect { font-size: 10.5pt; font-weight: 700; color: #10344F;
+          letter-spacing: .005em; margin: 15px 0 5px;
+          padding-bottom: 3px; border-bottom: 1.4px solid #1685CC; }
+  .sect:first-of-type { margin-top: 8px; }
+
+  .lede { font-size: 9pt; color: #45535f; margin: 3px 0 12px;
+          line-height: 1.5; }
+
+  /* Small caps label — used on the stat cards and nowhere else, so it keeps
+     its meaning. */
+  .k { font-size: 6.6pt; letter-spacing: .1em; text-transform: uppercase;
+       color: #61707C; font-weight: 600; }
+
+  .stats { width: 100%; border-collapse: separate; border-spacing: 7px 0;
+           margin: 6px 0 14px; }
+  .stats td { background: #F2F7FB; border-radius: 7px; padding: 9px 11px;
+              width: 25%; vertical-align: top; }
+  .stats .v { font-size: 17pt; font-weight: 700; color: #10344F;
+              line-height: 1.05; margin: 2px 0 1px;
+              font-variant-numeric: tabular-nums; }
+  .stats .sub { font-size: 7.4pt; color: #61707C; }
+
+  /* Tables: light rules and air, rather than a box around every cell. */
+  table.grid { width: 100%; border-collapse: collapse; font-size: 8.1pt;
+               margin-bottom: 4px; }
+  table.grid th { background: #1685CC; color: #fff; text-align: left;
+                  padding: 5px 7px; font-size: 6.9pt; font-weight: 700;
+                  text-transform: uppercase; letter-spacing: .07em; }
+  table.grid td { padding: 4.5px 7px; border-bottom: .4px solid #E3EBF1;
+                  vertical-align: top; }
+  table.grid tr:last-child td { border-bottom: .8px solid #C9D8E4; }
+  table.grid tr:nth-child(even) td { background: #FAFCFE; }
+  .num { text-align: right; font-variant-numeric: tabular-nums;
+         white-space: nowrap; }
+  .trade td { background: #E7F1F9 !important; font-weight: 700;
+              color: #10344F; letter-spacing: .01em; }
+
+  .muted { color: #8A94A0; }
+  .warn { color: #B35900; font-weight: 600; }
+  .none { font-size: 8.4pt; color: #61707C; font-style: italic;
+          margin: 3px 0 6px; }
+  .note { font-size: 8.4pt; margin: 0 0 6px; line-height: 1.5; }
+  .note b { color: #10344F; font-weight: 700; }
+
+  /* Charts and their legends. */
+  .chart { margin: 4px 0 8px; }
+  .key { font-size: 7.2pt; color: #61707C; margin: 1px 0 8px; }
+  .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px;
+        vertical-align: -1px; margin: 0 3px 0 10px; }
+  .up { color: #1A7F37; font-weight: 700; }
+  .flat { color: #8A94A0; }
+
+  .photos { margin-top: 5mm; }
+  .photo { width: 31.3%; display: inline-block; margin: 0.85%;
+           vertical-align: top; }
+  .photo img { width: 100%; border: .5px solid #C9D8E4; border-radius: 2px; }
+  .photo .cap { border: .5px solid #C9D8E4; border-top: none;
+                padding: 3px 5px; font-size: 6.9pt; color: #45535f;
+                line-height: 1.3; }
+</style>
