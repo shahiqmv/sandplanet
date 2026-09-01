@@ -145,6 +145,11 @@ def manual_invoice_dict(mi):
     amt = _q2(mi.amount)
     return {
         "id": mi.id, "origin": mi.origin, "invoice_no": mi.invoice_no,
+        # The claim taking this invoice over, and whether it has closed it.
+        "superseded_by": (mi.superseded_by.ref if mi.superseded_by_id
+                          else None),
+        "superseded_by_id": mi.superseded_by_id,
+        "superseded_at": mi.superseded_at,
         "project_id": mi.project_id, "project_code": mi.project.code,
         "project_title": mi.project.title, "site_id": mi.project.site_id,
         "invoice_date": mi.invoice_date, "due_date": mi.effective_due_date,
@@ -195,3 +200,60 @@ def manual_invoice_pdf_context(mi):
         "amount_f": _fmt_money(amount, 2),
         "amount_words": amount_in_words(amount, mi.currency),
     }
+
+
+def link_to_claim(mi, claim, actor):
+    """Tie an invoice to the claim that will take it over.
+
+    Work is often billed before the claim covering it can be raised — an
+    advance against a signed LOA, where the bonds and the advance claim take
+    weeks, so the QS invoices it directly. When that claim is eventually
+    certified it bills the same money, and receivables reads certified claims
+    AND manual invoices: the client would owe it twice. The link closes this
+    invoice at the moment the claim is certified, which is exactly when the
+    second bill appears (owner 2026-09-01, SFR CASUAL).
+    """
+    from django.utils import timezone
+
+    if actor.role not in CREATE_ROLES:
+        return "You can't change client invoices."
+    if mi.is_void:
+        return "This invoice is void."
+    if claim.project_id != mi.project_id:
+        return (f"{claim.ref} is a claim on {claim.project.code}, and this "
+                f"invoice is on {mi.project.code}.")
+    if mi.receipts.exists():
+        # The cash is allocated to this invoice. Closing it would leave the
+        # receipt pointing at something no longer owed, and the claim showing
+        # unpaid — so the receipt is moved first, deliberately, by a person.
+        return ("Receipts are recorded against this invoice — move them to "
+                f"{claim.ref} before linking it.")
+    other = mi.superseded_by
+    if other is not None and other.id != claim.id:
+        return f"This invoice is already linked to {other.ref}."
+
+    mi.superseded_by = claim
+    # If the claim is already certified there is no later moment to wait for:
+    # the second bill exists now.
+    mi.superseded_at = (timezone.now() if claim.status in ("CERTIFIED", "PAID")
+                        else None)
+    mi.save(update_fields=["superseded_by", "superseded_at", "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_LINKED", actor=actor,
+          detail={"invoice_no": mi.invoice_no, "claim": claim.ref,
+                  "closed": mi.superseded_at is not None})
+    return None
+
+
+def unlink_from_claim(mi, actor):
+    """Undo the link — the invoice stands on its own again."""
+    if actor.role not in CREATE_ROLES:
+        return "You can't change client invoices."
+    if mi.superseded_by_id is None:
+        return "This invoice isn't linked to a claim."
+    was = mi.superseded_by.ref
+    mi.superseded_by = None
+    mi.superseded_at = None
+    mi.save(update_fields=["superseded_by", "superseded_at", "updated_at"])
+    audit("project", mi.project_id, "MANUAL_INVOICE_UNLINKED", actor=actor,
+          detail={"invoice_no": mi.invoice_no, "was": was})
+    return None

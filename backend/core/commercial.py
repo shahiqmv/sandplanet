@@ -680,6 +680,16 @@ def set_claim_status(claim, to_status, actor):
             claim.invoice_no = _next_invoice_no()
             fields.append("invoice_no")
     claim.save(update_fields=fields)
+    # An invoice raised ahead of the claim that covers it is closed at the
+    # moment that claim is certified — that is when the same money becomes
+    # billed a second time, and the link is what stops it. Reopening a claim
+    # reopens them with it: an invoice must not sit closed against a
+    # certificate that no longer stands (owner 2026-09-01).
+    if to_status in ("CERTIFIED", "PAID"):
+        claim.superseded_invoices.filter(superseded_at__isnull=True).update(
+            superseded_at=timezone.now())
+    elif to_status == "DRAFT":
+        claim.superseded_invoices.update(superseded_at=None)
     audit("project", claim.project_id, f"CLAIM_{to_status}", actor=actor,
           detail={"ref": claim.ref})
     return claim, None

@@ -541,6 +541,39 @@ function ManualInvoices({ canManual }) {
     .then((r) => setList(r.invoices)).catch((e) => setError(e.message));
   useEffect(() => { load(); }, []);
 
+  // Tie an invoice to the claim that will take it over, or undo it. The
+  // claim list is fetched per invoice because it is its project's claims,
+  // and the invoice is where the QS is standing when they think of it.
+  async function linkClaim(mi) {
+    try {
+      const claims = await api(`/receivables/manual-invoices/${mi.id}/claims`);
+      if (!claims.length) {
+        window.alert(`${mi.project_code} has no claims yet. Raise the advance `
+          + "claim first, then link this invoice to it.");
+        return;
+      }
+      if (mi.superseded_by) {
+        if (!window.confirm(`Unlink ${mi.invoice_no} from `
+          + `${mi.superseded_by}? It goes back to standing on its own.`)) return;
+        await api(`/receivables/manual-invoices/${mi.id}/claim`,
+                  { method: "DELETE" });
+        load();
+        return;
+      }
+      const pick = window.prompt(
+        `Which claim will cover ${mi.invoice_no}?\n\n`
+        + claims.map((c) => `${c.ref} — ${c.claim_type}, ${c.status}`)
+            .join("\n") + "\n\nType the reference:");
+      if (!pick) return;
+      const c = claims.find((x) => x.ref.toLowerCase()
+        === pick.trim().toLowerCase());
+      if (!c) { window.alert(`No claim ${pick} on this project.`); return; }
+      await api(`/receivables/manual-invoices/${mi.id}/claim`,
+                { method: "POST", body: { claim_id: c.id } });
+      load();
+    } catch (e) { window.alert(e.message); }
+  }
+
   async function voidInvoice(mi) {
     if (!window.confirm(`Void invoice ${mi.invoice_no}? It will drop off the `
       + "receivables. This can't be undone.")) return;
@@ -616,6 +649,26 @@ function ManualInvoices({ canManual }) {
                       style={{ border: "none", background: "none",
                         cursor: "pointer", color: "var(--red-fg)",
                         fontSize: 12, marginLeft: 8 }}>Void</button>)}
+                  {/* Billed ahead of the claim that covers it — an advance
+                      against a signed LOA, say. Linking closes this invoice
+                      when that claim is certified, so the same money is not
+                      owed twice (owner 2026-09-01). */}
+                  {canManual && (mi.superseded_by ? (
+                    <button onClick={() => linkClaim(mi)}
+                      title={mi.superseded_at
+                        ? `Closed by ${mi.superseded_by}`
+                        : `Will close when ${mi.superseded_by} is certified`}
+                      style={{ border: "none", background: "none",
+                        cursor: "pointer", color: "var(--muted)",
+                        fontSize: 12, marginLeft: 8 }}>
+                      → {mi.superseded_by}</button>
+                  ) : (
+                    <button onClick={() => linkClaim(mi)}
+                      title="Link this invoice to the claim that will cover it"
+                      style={{ border: "none", background: "none",
+                        cursor: "pointer", color: "var(--sky)",
+                        fontSize: 12, marginLeft: 8 }}>Link to claim</button>
+                  ))}
                 </td>
               </tr>
             ))}

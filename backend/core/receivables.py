@@ -74,7 +74,11 @@ def _invoice_claims(site_id=None):
 def _manual_invoices(site_id=None):
     """Non-void manual invoices (historical + Planet-issued) — receivables that
     didn't come through the claim flow."""
-    qs = (ManualInvoice.objects.filter(is_void=False)
+    # A superseded invoice is not dropped from history, but it is no longer
+    # owed: the claim that took it over is the receivable, and counting both
+    # would have the client owing the same money twice.
+    qs = (ManualInvoice.objects.filter(is_void=False,
+                                       superseded_at__isnull=True)
           .select_related("project", "project__site"))
     if site_id is not None:
         qs = qs.filter(project__site_id=site_id)

@@ -4060,6 +4060,17 @@ class ManualInvoice(models.Model):
     attachment = models.FileField(upload_to="manual-invoices/", null=True,
                                   blank=True)
     is_void = models.BooleanField(default=False)
+    # The claim that takes this invoice over. Work is often billed before the
+    # claim that covers it can be raised — an advance against a signed LOA,
+    # where the bonds and the advance claim take weeks — so the QS invoices
+    # it directly. When that claim is finally certified it bills the same
+    # money, and without a link the client owes it twice: receivables reads
+    # certified claims AND manual invoices. Linking closes this one at the
+    # moment the claim is certified (owner 2026-09-01, SFR CASUAL).
+    superseded_by = models.ForeignKey(
+        "ProgressClaim", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="superseded_invoices")
+    superseded_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)

@@ -300,6 +300,55 @@ def manual_invoice_void(request, pk):
     return Response(mi_svc.manual_invoice_dict(mi))
 
 
+@api_view(["POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def manual_invoice_claim_link(request, pk):
+    """Link this invoice to the claim that will take it over (POST {claim_id})
+    or undo it (DELETE)."""
+    from .models import ProgressClaim
+
+    if (bad := _manual_gate(request)):
+        return bad
+    try:
+        mi = ManualInvoice.objects.select_related(
+            "project", "superseded_by").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        msg = mi_svc.unlink_from_claim(mi, request.user)
+    else:
+        claim = ProgressClaim.objects.filter(
+            pk=request.data.get("claim_id")).select_related("project").first()
+        if claim is None:
+            return Response({"detail": "Unknown claim."}, status=400)
+        msg = mi_svc.link_to_claim(mi, claim, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    mi.refresh_from_db()
+    return Response(mi_svc.manual_invoice_dict(mi))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def manual_invoice_claims(request, pk):
+    """Claims on this invoice's project that it could be linked to."""
+    from .models import ProgressClaim
+
+    if (bad := _gate(request)):
+        return bad
+    try:
+        mi = ManualInvoice.objects.select_related("project").get(pk=pk)
+    except ManualInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    return Response([
+        {"id": c.id, "ref": c.ref, "claim_type": c.claim_type,
+         "status": c.status, "invoice_no": c.invoice_no,
+         "certified_at": c.certified_at}
+        for c in ProgressClaim.objects.filter(
+            project=mi.project).order_by("seq")])
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def manual_invoice_pdf(request, pk):

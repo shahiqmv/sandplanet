@@ -560,6 +560,14 @@ urlpatterns = [
          name="rcv-manual-invoices"),
     path("receivables/manual-invoices/<int:pk>/void",
          receivables_api.manual_invoice_void, name="rcv-manual-invoice-void"),
+    # An invoice raised ahead of the claim that covers it, and the claim that
+    # will take it over.
+    path("receivables/manual-invoices/<int:pk>/claim",
+         receivables_api.manual_invoice_claim_link,
+         name="rcv-manual-invoice-claim"),
+    path("receivables/manual-invoices/<int:pk>/claims",
+         receivables_api.manual_invoice_claims,
+         name="rcv-manual-invoice-claims"),
     path("receivables/manual-invoices/<int:pk>.pdf",
          receivables_api.manual_invoice_pdf, name="rcv-manual-invoice-pdf"),
     # Official receipts + the company bank accounts credited
