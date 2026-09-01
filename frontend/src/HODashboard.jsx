@@ -3,6 +3,9 @@ import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
+const money = (v) => Number(v || 0).toLocaleString("en-US",
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                                      onNewPayment,
                                       onPmrRegister, onVessels, refresh }) {
@@ -12,6 +15,7 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
   // PO from the PO register, closed it, and landed on MR
   // (owner 2026-09-01).
   const setTab = onTab;
+  const isPo = tab === "PO";
   const [rows, setRows] = useState([]);
   const [pending, setPending] = useState([]);
 
@@ -141,8 +145,16 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
             <thead><tr>
               <th style={th}>Ref</th><th style={th}>Rev</th>
               <th style={th}>Date</th><th style={th}>Site</th>
+              {/* An order is read by who it is with and what it is worth
+                  (owner 2026-09-01). */}
+              {isPo && <th style={th}>Supplier</th>}
+              {isPo && <th style={{ ...th, textAlign: "right" }}>Value</th>}
+              {isPo && <th style={th}>Terms</th>}
               <th style={th}>Status</th><th style={th}>Refs</th>
-              <th style={th}>Details</th><th style={th}>By</th>
+              {/* Nothing in a PO payload reaches the summary whitelist, so
+                  on this tab the column is only width (owner 2026-09-01). */}
+              {!isPo && <th style={th}>Details</th>}
+              <th style={th}>By</th>
             </tr></thead>
             <tbody>
               {rows.map((row, i) => (
@@ -160,20 +172,66 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
                     {row.rev}</td>
                   <td style={td}>{row.date}</td>
                   <td style={td}>{row.site_code}</td>
+                  {isPo && (
+                    <td style={td}>
+                      <div style={{ fontWeight: 600 }}>
+                        {row.supplier || "—"}</div>
+                      {row.supplier_contact && (
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {row.supplier_contact}</div>
+                      )}
+                      {row.source_kind && (
+                        <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                          {row.source_kind === "IMPORT" ? "import" : "local"}
+                          {/* The ref only earns its place when Refs is not
+                              already showing it. */}
+                          {row.source_ref
+                           && !Object.values(row.links).flat()
+                                .includes(row.source_ref)
+                            ? ` · ${row.source_ref}` : ""}
+                        </div>
+                      )}
+                    </td>
+                  )}
+                  {isPo && (
+                    <td style={{ ...td, textAlign: "right",
+                                 whiteSpace: "nowrap",
+                                 fontVariantNumeric: "tabular-nums" }}>
+                      {Number(row.order_value) > 0 ? (
+                        <>
+                          {money(row.order_value)}
+                          <span style={{ fontSize: 10.5,
+                                         color: "var(--muted)" }}>
+                            {" "}{row.currency}</span>
+                        </>
+                      ) : "—"}
+                    </td>
+                  )}
+                  {isPo && (
+                    <td style={{ ...td, fontSize: 12 }}>
+                      {row.payment_terms || "—"}
+                      {row.expected_delivery && (
+                        <div style={{ fontSize: 10.5, color: "var(--muted)" }}>
+                          due {row.expected_delivery}</div>
+                      )}
+                    </td>
+                  )}
                   <td style={td}><StatusChip status={row.status} /></td>
                   <td style={{ ...td, fontSize: 12 }}>
                     {Object.values(row.links).flat().join(" · ")}
                   </td>
-                  <td style={{ ...td, fontSize: 12 }}>
-                    {Object.entries(row.payload_summary)
-                      .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
-                      .join(" · ")}
-                  </td>
+                  {!isPo && (
+                    <td style={{ ...td, fontSize: 12 }}>
+                      {Object.entries(row.payload_summary)
+                        .map(([k, v]) => `${k.replace(/_/g, " ")}: ${v}`)
+                        .join(" · ")}
+                    </td>
+                  )}
                   <td style={td}>{row.created_by}</td>
                 </tr>
               ))}
               {rows.length === 0 && (
-                <tr><td style={td} colSpan={8}>
+                <tr><td style={td} colSpan={isPo ? 10 : 8}>
                   No {DOC_LABELS[tab]}s yet.</td></tr>
               )}
             </tbody>

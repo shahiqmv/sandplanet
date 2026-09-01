@@ -2034,6 +2034,33 @@ def mr_export(request, ref):
     return response
 
 
+def _po_summary(revision, payload):
+    """The commercial face of a purchase order.
+
+    Order value is totalled from the lines rather than stored: the lines are
+    what the supplier is held to, and a total kept beside them is a total
+    that can drift from them."""
+    from decimal import Decimal
+
+    total = Decimal("0")
+    if revision is not None:
+        for line in revision.lines.all():
+            total += line.amount or Decimal("0")
+    return {
+        "supplier": (payload.get("supplier_name") or "").strip(),
+        "supplier_contact": (payload.get("supplier_contact") or "").strip(),
+        "payment_terms": (payload.get("payment_terms") or "").strip(),
+        "currency": (payload.get("currency") or "MVR").strip() or "MVR",
+        "order_value": total,
+        # Where the order came from: a local quote against a PR, or an
+        # overseas import request.
+        "source_ref": (payload.get("ipr_ref") or payload.get("pr_ref") or ""),
+        "source_kind": ("IMPORT" if payload.get("ipr_ref")
+                        else "LOCAL" if payload.get("pr_ref") else ""),
+        "expected_delivery": payload.get("expected_delivery") or "",
+    }
+
+
 @api_view(["GET"])
 def register_generic(request, doc_type):
     """Registers are views over document data (spec §6) — one row per
@@ -2045,6 +2072,11 @@ def register_generic(request, doc_type):
     qs = Document.objects.filter(doc_type=doc_type).select_related(
         "site", "current_revision", "created_by"
     ).prefetch_related("revisions").order_by("-id")
+    if doc_type == "PO":
+        # The order value is summed from the lines, so fetch them with the
+        # revisions rather than one query per order — 105 orders would
+        # otherwise be 105 extra round trips to draw one column.
+        qs = qs.prefetch_related("revisions__lines")
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None:
         qs = qs.filter(site_id__in=site_ids)
@@ -2055,6 +2087,11 @@ def register_generic(request, doc_type):
         qs = qs.filter(status=request.GET["status"])
 
     rows = []
+    # A purchase order is read by who it is with and what it is worth, and
+    # the register showed neither — every row was a reference, a date and a
+    # status, so finding one supplier's orders meant opening them one by one
+    # (owner 2026-09-01).
+    wants_supplier = doc_type == "PO"
     for doc in qs[:300]:
         # the current revision (prefer the is_current flag; fall back to the FK)
         current = next((r for r in doc.revisions.all() if r.is_current),
@@ -2087,6 +2124,7 @@ def register_generic(request, doc_type):
                 },
                 "prev_ir": doc.previous_ir.ref if doc.previous_ir else None,
                 "result": (payload.get("client_result") or {}).get("result"),
+                **(_po_summary(revision, payload) if wants_supplier else {}),
             })
     return Response({"doc_type": doc_type, "rows": rows})
 
