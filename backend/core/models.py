@@ -4345,6 +4345,12 @@ class PaymentVoucherLine(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.INCLUDED)
     query_note = models.TextField(blank=True)
+    # What the line was for, in words, kept for when the source itself is
+    # released. Voiding a voucher lets go of the milestone it held — a voided
+    # voucher should have no claim on anything — but the line still has to
+    # say what it was, or a void leaves an amount with no subject
+    # (owner 2026-08-31, IPR-047).
+    source_note = models.CharField(max_length=160, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

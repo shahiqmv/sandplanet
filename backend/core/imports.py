@@ -629,6 +629,18 @@ def set_milestones(order, rows):
     from .models import ImportPaymentMilestone
     if order.milestones.filter(status="PAID").exists():
         return "Some milestones are already paid — the schedule is locked."
+    # A milestone sitting on a live voucher cannot be deleted out from under
+    # it: the FK is PROTECT, so the replace below would raise rather than
+    # explain itself. Name the voucher instead — the fix is to void or
+    # withdraw it first (owner 2026-08-31).
+    held = order.milestones.exclude(status="PAID").filter(
+        voucher_lines__voucher__is_void=False).select_related().distinct()
+    if held.exists():
+        refs = sorted({ln.voucher.ref for m in held
+                       for ln in m.voucher_lines.select_related("voucher")
+                       if not ln.voucher.is_void})
+        return ("The schedule can't be changed while a payment voucher holds "
+                f"part of it: {', '.join(refs)}. Void or withdraw it first.")
     total = ipr_order_total(order)
     scheduled = ZERO
     cleaned = []

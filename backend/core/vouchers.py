@@ -453,17 +453,29 @@ def void_voucher(pv, actor, reason):
                 "reverse the payment before voiding it.")
     with transaction.atomic():
         for ln in lines:
-            if ln.status != "APPROVED":
-                continue                       # INCLUDED/QUERIED: no commitment
-            if ln.source_document_id:
-                _unauthorise_source(ln.source_document, actor)
-            elif ln.source_milestone_id:
+            if ln.status == "APPROVED":
+                if ln.source_document_id:
+                    _unauthorise_source(ln.source_document, actor)
+                elif ln.source_milestone_id:
+                    m = ln.source_milestone
+                    m.status = "DUE"
+                    m.voucher = None
+                    m.save(update_fields=["status", "voucher"])
+                # a payable line posted nothing at approval; marking the PV
+                # void (below) releases the payable to be vouchered again.
+            # Whatever its state, the line lets go of the milestone. The FK
+            # is PROTECT, so a voided voucher that keeps holding one freezes
+            # that order's payment schedule for good: the schedule is
+            # replaced by deleting its rows, and the delete cannot run. Only
+            # APPROVED lines were being unwound, so an INCLUDED line on a
+            # voucher voided before approval held on — which is exactly what
+            # happened to IPR-047 (owner 2026-08-31).
+            if ln.source_milestone_id:
                 m = ln.source_milestone
-                m.status = "DUE"
-                m.voucher = None
-                m.save(update_fields=["status", "voucher"])
-            # a payable line posted nothing at approval; marking the PV void
-            # (below) releases the payable to be vouchered again.
+                ln.source_note = (ln.source_note
+                                  or f"{m.order.document.ref} — {m.label}")
+                ln.source_milestone = None
+                ln.save(update_fields=["source_note", "source_milestone"])
         pv.is_void = True
         pv.void_reason = reason
         pv.voided_by = actor
