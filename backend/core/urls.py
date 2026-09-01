@@ -475,6 +475,9 @@ urlpatterns = [
     # The client-facing variation order (P5-style PDF)
     path("variations/<int:pk>/vo.pdf", commercial.variation_pdf,
          name="variation-pdf"),
+    # The QS's working copy — offered on a draft, unlike the PDF
+    path("variations/<int:pk>/vo.xlsx", commercial.variation_xlsx,
+         name="variation-xlsx"),
     path("variations/<int:pk>/employer-copy",
          commercial.variation_employer_copy, name="variation-employer-copy"),
     path("variations/<int:pk>", commercial.variation_delete,

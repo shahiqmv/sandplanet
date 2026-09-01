@@ -1410,6 +1410,7 @@ def variation_pdf_context(v):
             x.signed_total, 2)} for x in prior_pending],
         "prior_pending_refs": ", ".join(x.ref for x in prior_pending),
         "prior_pending_net_f": _fmt_money(pending_net, 2),
+        "prior_pending_net": pending_net,
         "anticipated_f": _fmt_money(anticipated, 2),
         "anticipated": anticipated,
         "logo_src": logo_src(), "co": company_info(),

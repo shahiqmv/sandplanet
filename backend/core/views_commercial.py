@@ -900,6 +900,35 @@ def variation_pdf(request, pk):
 
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+def variation_xlsx(request, pk):
+    """The variation as a spreadsheet the QS can work in.
+
+    Unlike the PDF this IS offered on a draft — working on the price before it
+    is one we stand behind is the whole point of it (owner 2026-09-01). The
+    sheet says so on its face, and its money is formulas, so a changed qty or
+    rate carries through to the contract sum.
+    """
+    from django.http import HttpResponse
+
+    from . import variation_export
+    v, err = _get_variation(request, pk)
+    if err:
+        return err
+    if not v.items.exists():
+        return Response({"detail": "This variation has no priced items."},
+                        status=400)
+    wb = variation_export.build_variation_xlsx(v)
+    resp = HttpResponse(
+        content_type="application/vnd.openxmlformats-officedocument."
+                     "spreadsheetml.sheet")
+    fname = f"{v.project.code}-{v.ref}-working.xlsx"
+    resp["Content-Disposition"] = f'attachment; filename="{fname}"'
+    wb.save(resp)
+    return resp
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
 def claim_invoice_pdf(request, pk):
     c, err = _get_claim(request, pk)
     if err:

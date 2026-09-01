@@ -152,6 +152,16 @@ export default function VariationsPanel({ projectId, me }) {
                                     display: "inline-block" }}>
                           ⬇ VO PDF</a>
                       )}
+                      {/* The working copy, unlike the PDF, IS offered on a
+                          draft — working the price before we stand behind it
+                          is the point of it (owner 2026-09-01). */}
+                      <a href={`/api/v1/variations/${v.id}/vo.xlsx`}
+                         title="Spreadsheet working copy — live formulas"
+                         style={{ ...ghostButton, padding: "2px 7px",
+                                  fontSize: 12, color: "var(--navy)",
+                                  textDecoration: "none",
+                                  display: "inline-block" }}>
+                        ⬇ Excel</a>
                       {canEdit && v.status === "DRAFT" && (<>
                         <A onClick={() => setEditId(
                           editId === v.id ? null : v.id)}>edit</A>
