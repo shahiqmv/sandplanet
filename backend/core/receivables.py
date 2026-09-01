@@ -59,6 +59,39 @@ def _received_by_manual(mi_ids):
     return {r["manual_invoice_id"]: (r["s"] or ZERO) for r in rows}
 
 
+def _site_contract_currency(site):
+    """The currency a client's statement is drawn in.
+
+    A statement is one client, one column of money, so where a site's
+    projects disagree the most common wins and the aging report — which
+    splits per (site, currency) — remains the place that shows both."""
+    from collections import Counter
+
+    from .models import Project
+
+    seen = Counter(contract_currency(p) for p in
+                   Project.objects.filter(site=site).select_related("boq",
+                                                                    "site"))
+    if not seen:
+        return site.currency or "USD"
+    return seen.most_common(1)[0][0]
+
+
+def contract_currency(project):
+    """What a project's contract is priced in.
+
+    The BOQ, not the site. Site.currency defaults to MVR and was never set on
+    any site, while every contract BOQ is USD — so every certified claim was
+    reported as MVR and the aging totalled USD money under an MVR heading
+    (owner 2026-09-01). The site is kept as the fallback for a project with
+    no BOQ, which is what the field was standing in for."""
+    boq = getattr(project, "boq", None)
+    if boq is not None and boq.currency:
+        return boq.currency
+    site = getattr(project, "site", None)
+    return (site.currency if site and site.currency else "USD")
+
+
 def _invoice_claims(site_id=None):
     """Certified/paid claims that carry a tax invoice (the receivables), newest
     invoice first is not needed — callers sort as they wish."""
@@ -122,11 +155,13 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
         # A certified claim bills in the CONTRACT's currency — an MVR project
         # (MRA) must not have its invoices counted as USD (audit 2026-08-28;
         # the manual-invoice path already carried its currency, this one did
-        # not).
+        # not). Read from the BOQ: reading it from the site had every claim
+        # in the ledger labelled MVR, because no site's currency was ever set
+        # off its MVR default (owner 2026-09-01).
         _add("CLAIM", c.id, c.invoice_no, c.ref, c.claim_type, c.project,
              invoice_date(c), due_date(c), invoiced_amount(c),
              _q2(rc.get(c.id, ZERO)),
-             currency=(c.project.site.currency or "USD"))
+             currency=contract_currency(c.project))
     for m in manual:
         _add("MANUAL", m.id, m.invoice_no, m.invoice_no, m.origin, m.project,
              m.invoice_date, m.effective_due_date, _q2(m.amount),
@@ -311,9 +346,11 @@ def client_statement(site, date_from=None, date_to=None):
               else site.name)
     return {
         "site_id": site.id, "site_code": site.code, "client": client,
-        # The statement's money is in the site's contract currency — MVR for
-        # an MVR-based project like MRA, USD otherwise (owner 2026-08-27).
-        "currency": (site.currency or "USD"),
+        # The statement's money is in the contract currency — MVR for an
+        # MVR-based project like MRA, USD otherwise (owner 2026-08-27). Taken
+        # from the site's own projects rather than the site field, for the
+        # same reason as the claim rows above.
+        "currency": _site_contract_currency(site),
         "client_address": site.client_address,
         "date_from": date_from, "date_to": date_to,
         "opening": opening, "rows": rows,
