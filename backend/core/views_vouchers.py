@@ -18,6 +18,8 @@ def _line_paid(ln):
         return ln.source_milestone.status == "PAID"
     if ln.source_payable_id:
         return ln.source_payable.status == "SETTLED"
+    if ln.source_document_id is None:
+        return False                    # released — see _released_line
     src = ln.source_document
     if src.doc_type == "PYR":
         return src.status == "PAID"
@@ -49,6 +51,25 @@ def _pv_pay_summary(pv):
             "settled": approved > 0 and paid == approved}
 
 
+def _released_line(line):
+    """A line whose source has been let go.
+
+    Voiding a voucher releases the milestone it held — otherwise the PROTECT
+    FK freezes that order's payment schedule for good (IPR-047). The line
+    stays on the voided voucher as a record of what was asked for, so it has
+    to be readable with nothing behind it (owner 2026-09-01)."""
+    note = (line.source_note or "").strip()
+    ref, _, purpose = note.partition(" — ")
+    if not purpose:                     # a free-form note is all purpose
+        ref, purpose = "", note
+    return {"line_id": line.id, "ref": ref or "—", "doc_type": "RELEASED",
+            "site_code": "HO", "amount": line.amount,
+            "currency": line.currency, "status": line.status,
+            "query_note": line.query_note, "source_status": "RELEASED",
+            "payee": "", "cost_head": "", "purpose": purpose or "Released",
+            "paid": False}
+
+
 def _line_info(line):
     if line.source_milestone_id:
         m = line.source_milestone
@@ -76,6 +97,8 @@ def _line_info(line):
                            f"{p.due_date or '—'}",
                 "payment_ref": p.settled_ref,
                 "paid": p.status == "SETTLED"}
+    if line.source_document_id is None:
+        return _released_line(line)
     src = line.source_document
     info = {"line_id": line.id, "ref": src.ref, "doc_type": src.doc_type,
             "site_code": src.site.code, "amount": line.amount,

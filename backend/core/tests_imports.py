@@ -652,6 +652,75 @@ class MilestonePaymentTests(IprBase):
         self.assertEqual(len(payload["lines"]), 1)
         self.assertIn("Advance", payload["lines"][0]["ref"])
 
+    def test_voiding_releases_the_milestone_and_the_register_still_loads(self):
+        """The whole IPR-047 sequence, end to end.
+
+        A voucher is raised against an import milestone and voided while
+        still submitted. Voiding lets go of the milestone — it has to, or the
+        PROTECT FK freezes that order's payment schedule for good. That
+        leaves a line with no source behind it, and the vouchers register
+        used to 500 on the page that line fell on (owner 2026-09-01)."""
+        from .models import PaymentVoucherLine
+        from .vouchers import create_voucher
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance  30%", "trigger": "ADVANCE", "percent": "30"},
+            {"label": "Balance", "trigger": "BL", "percent": "70"}]},
+            format="json").data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        pv, err = create_voucher([], self.finance, milestone_ids=[m["id"]])
+        self.assertIsNone(err, err)
+        self.client.force_authenticate(self.finance)
+        self.client.post(f"/api/v1/payment-vouchers/{pv.ref}/actions/submit",
+                         {}, format="json")
+        r = self.client.post(
+            f"/api/v1/payment-vouchers/{pv.ref}/actions/void",
+            {"reason": "amount wrong"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+        # the milestone is let go, but the line still says what it was for
+        line = PaymentVoucherLine.objects.get(voucher=pv)
+        self.assertIsNone(line.source_milestone_id)
+        self.assertIsNone(line.source_document_id)
+        self.assertIn("Advance", line.source_note)
+
+        # ...and the register renders it instead of falling over
+        self.client.force_authenticate(self.finance)
+        r = self.client.get("/api/v1/payment-vouchers?limit=25&offset=0")
+        self.assertEqual(r.status_code, 200)
+        row = next(v for v in r.data["vouchers"] if v["ref"] == pv.ref)
+        self.assertEqual(row["status"], "VOID")
+        shown = row["lines"][0]
+        self.assertEqual(shown["doc_type"], "RELEASED")
+        self.assertEqual(shown["ref"], ref)
+        self.assertIn("Advance", shown["purpose"])
+        self.assertFalse(shown["paid"])
+
+    def test_a_voided_voucher_cannot_be_approved(self):
+        """Voiding leaves `status` at SUBMITTED and raises is_void, so the
+        voucher still looked approvable to everything reading status alone."""
+        from .vouchers import approve_voucher, create_voucher
+        ref = self.create_and_authorise()
+        self.client.force_authenticate(self.ho)
+        m = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "percent": "100"}]}, format="json") \
+            .data["milestones"][0]
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{m['id']}/due", {},
+                         format="json")
+        pv, _ = create_voucher([], self.finance, milestone_ids=[m["id"]])
+        self.client.force_authenticate(self.finance)
+        self.client.post(f"/api/v1/payment-vouchers/{pv.ref}/actions/submit",
+                         {}, format="json")
+        self.client.post(f"/api/v1/payment-vouchers/{pv.ref}/actions/void",
+                         {"reason": "amount wrong"}, format="json")
+        pv.refresh_from_db()
+        self.assertEqual(pv.status, "SUBMITTED")   # the drift itself
+        self.assertTrue(pv.is_void)
+        self.assertEqual(approve_voucher(pv, self.signatory),
+                         "This voucher has been voided.")
+
     def test_credit_days_live_in_the_schedule_and_set_pay_by(self):
         """Credit terms are written into the milestone schedule itself: the
         row's own figure, else the supplier's agreed period. When a milestone

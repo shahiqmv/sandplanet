@@ -495,6 +495,11 @@ def approve_voucher(pv, actor, queried_ids=None, note=""):
     raiser; the rest commit their source requisition."""
     if pv.status != "SUBMITTED":
         return "Only a submitted voucher can be approved."
+    # Voiding leaves `status` where it stood and raises is_void, so a voided
+    # voucher still reads SUBMITTED. It is out of the approval queue, but
+    # nothing here said no (owner 2026-09-01).
+    if pv.is_void:
+        return "This voucher has been voided."
     queried_ids = set(queried_ids or [])
     with transaction.atomic():
         for line in pv.voucher_lines.filter(status="INCLUDED") \

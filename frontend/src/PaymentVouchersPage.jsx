@@ -33,6 +33,10 @@ function lineDetail(l) {
     return `Overseas TT · ${l.milestone_label || l.purpose || ""} `
       + "— paid on Import Payments";
   if (l.doc_type === "PR") return "Procurement — pay each vendor";
+  // Voiding a voucher lets go of the milestone it held, so the line is left
+  // with only the words of what it was for (owner 2026-09-01).
+  if (l.doc_type === "RELEASED")
+    return `${l.purpose || "Released"} — released when this voucher was voided`;
   return [l.payee, l.purpose].filter(Boolean).join(" · ");
 }
 
@@ -239,7 +243,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       canAuthoriseVoid: notPaid && pv.status === "APPROVED" && isSignatory
         && pv.void_requested,
       payable: pv.lines.filter((l) => l.status === "APPROVED"
-        && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE"),
+        && l.doc_type !== "IPR" && l.doc_type !== "MILESTONE"
+        && l.doc_type !== "RELEASED"),
     };
   };
 
@@ -273,15 +278,23 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                                 </td>
                               )}
                               <td style={td}>
-                                <a href="#" onClick={(e) => {
-                                     e.preventDefault(); onOpenDoc(l.ref); }}
-                                   style={{ textDecoration: "none" }}>
-                                  <RefStamp small>{l.ref}</RefStamp></a>
+                                {l.ref === "—" ? (
+                                  <span style={{ color: "var(--muted)" }}>
+                                    —</span>
+                                ) : (
+                                  <a href="#" onClick={(e) => {
+                                       e.preventDefault(); onOpenDoc(l.ref); }}
+                                     style={{ textDecoration: "none" }}>
+                                    <RefStamp small>{l.ref}</RefStamp></a>
+                                )}
                               </td>
                               <td style={td}>{l.site_code}</td>
                               <td style={{ ...td, color: (l.doc_type === "IPR"
                                 || l.doc_type === "MILESTONE")
-                                ? "#8a6d00" : "inherit" }}>{lineDetail(l)}</td>
+                                ? "#8a6d00"
+                                : l.doc_type === "RELEASED"
+                                ? "var(--muted)" : "inherit" }}>
+                                {lineDetail(l)}</td>
                               <td style={{ ...td, textAlign: "right", ...mono }}>
                                 {money(l.amount)}</td>
                               <td style={td}>
