@@ -3,10 +3,15 @@ import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
          ghostButton, td, th } from "./ui.jsx";
-export default function HODashboard({ me, onOpenDoc, onNew, onNewPayment,
+export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
+                                     onNewPayment,
                                       onPmrRegister, onVessels, refresh }) {
   const [stats, setStats] = useState(null);
-  const [tab, setTab] = useState("MR");
+  // The tab lives in App, not here. Opening a document unmounts this
+  // dashboard, so a tab held locally was lost on the way back: you opened a
+  // PO from the PO register, closed it, and landed on MR
+  // (owner 2026-09-01).
+  const setTab = onTab;
   const [rows, setRows] = useState([]);
   const [pending, setPending] = useState([]);
 

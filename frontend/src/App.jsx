@@ -450,6 +450,9 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [showNotes, setShowNotes] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  // Which register the HO dashboard is showing. Held here so it survives
+  // opening a document and coming back — see HODashboard.
+  const [hoTab, setHoTab] = useState("MR");
   const [error, setError] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
 
@@ -1165,7 +1168,9 @@ export default function App() {
           )}
 
           {!docView && !openSite && me.is_ho && hoPage === "dashboard" && (
-            <HODashboard me={me} refresh={refresh} onOpenDoc={openDoc}
+            <HODashboard me={me} refresh={refresh}
+                         tab={hoTab} onTab={setHoTab}
+                         onOpenDoc={(ref) => openDoc(ref)}
                          onNewPayment={() => setDocView({
                            mode: "central-pyr-form" })}
                          onPmrRegister={() => setHoPage("pmr-register")}
