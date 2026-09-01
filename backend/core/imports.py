@@ -305,11 +305,23 @@ def withdraw_blocked(doc):
     if order.shipments.exists():
         return ("This order already has a shipment — cancel the shipment "
                 "before withdrawing the authorisation.")
-    # A milestone past PENDING has a payment voucher raised against it (a
-    # voucher line PROTECT-references it), so it can't be unwound here.
-    if order.milestones.exclude(status="PENDING").exists():
-        return ("A payment voucher has been raised on this order's schedule — "
-                "cancel/void those payment vouchers before withdrawing the "
+    # What stops a withdrawal is a voucher line PROTECT-referencing a
+    # milestone — not the milestone's status. DUE means the trigger has been
+    # met and the milestone still NEEDS a voucher, so treating "past PENDING"
+    # as "vouchered" refused the withdrawal on an order where nothing had been
+    # raised, naming a voucher that did not exist (owner 2026-09-01, IPR-004).
+    vouchered = order.milestones.filter(
+        voucher_lines__isnull=False).distinct()
+    if vouchered.exists():
+        refs = sorted({ln.voucher.ref for m in vouchered
+                       for ln in m.voucher_lines.select_related("voucher")})
+        return (f"A payment voucher has been raised on this order's schedule "
+                f"({', '.join(refs)}) — cancel/void it before withdrawing the "
+                f"authorisation.")
+    # Money already committed or gone, even if the voucher itself is history.
+    if order.milestones.filter(status__in=("AUTHORISED", "PAID")).exists():
+        return ("A milestone on this order has already been authorised or "
+                "paid — reverse that payment before withdrawing the "
                 "authorisation.")
     return None
 
@@ -330,9 +342,12 @@ def reverse_ipr_authorisation(doc, actor):
     # order lines against the edit that follows. The withdrawal itself is
     # audited (IPR_AUTH_WITHDRAWN + the Draft transition record).
     CostPosting.objects.filter(document=doc, state="COMMITTED").delete()
-    # Only untouched (PENDING) schedule rows are removed; withdraw_blocked has
-    # already refused if any milestone carries a voucher.
-    order.milestones.filter(status="PENDING").delete()
+    # Every schedule row that nothing is holding goes — including a DUE one,
+    # which is simply a row whose trigger was met and which was never
+    # vouchered. withdraw_blocked has already refused if any milestone carries
+    # a voucher line, so this deletes the whole schedule in practice; the
+    # filter is what makes that safe rather than merely true today.
+    order.milestones.filter(voucher_lines__isnull=True).delete()
     link = DocumentLink.objects.filter(
         from_document=doc, link_type="IPR_PO").select_related(
         "to_document").first()

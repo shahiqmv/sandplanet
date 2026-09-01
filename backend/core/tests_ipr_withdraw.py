@@ -76,18 +76,59 @@ class IprWithdrawTests(IprBase):
         self.assertEqual(r.status_code, 400)
         self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
 
-    def test_withdraw_blocked_by_raised_voucher_milestone(self):
-        ref = self.create_and_authorise()
+    def _due_advance(self, ref):
+        """An advance milestone whose trigger has been met — DUE means it
+        still NEEDS a voucher, not that one exists."""
         order = Document.objects.get(ref=ref).import_order
-        ImportPaymentMilestone.objects.create(
+        return ImportPaymentMilestone.objects.create(
             order=order, seq=1, label="Advance", trigger="ADVANCE",
-            status="DUE")                        # a voucher was raised
+            status="DUE", percent="100")
+
+    def _withdraw(self, ref, comment="x"):
         self.client.force_authenticate(self.signatory)
-        r = self.client.post(
+        return self.client.post(
             f"/api/v1/documents/{ref}/actions/withdraw-authorisation",
-            {"comment": "x"}, format="json")
+            {"comment": comment}, format="json")
+
+    def test_withdraw_blocked_by_raised_voucher_milestone(self):
+        """A milestone actually batched onto a voucher blocks the withdrawal —
+        the voucher line PROTECT-references it."""
+        from .vouchers import create_voucher
+        ref = self.create_and_authorise()
+        m = self._due_advance(ref)
+        pv, err = create_voucher([], self.finance, milestone_ids=[m.id])
+        self.assertIsNone(err, err)
+        r = self._withdraw(ref)
         self.assertEqual(r.status_code, 400)     # clean refusal, not a 500
+        self.assertIn(pv.ref, r.data["detail"])  # says WHICH voucher
         self.assertEqual(Document.objects.get(ref=ref).status, "AUTHORISED")
+
+    def test_marking_a_milestone_due_does_not_block_the_withdrawal(self):
+        """DUE is the state BEFORE a voucher: the trigger has been met and it
+        still needs one. The guard read "past PENDING" as "vouchered" and
+        refused, naming a payment voucher that had never been raised — the
+        real IPR-004, where the only thing done was Mark due (owner
+        2026-09-01)."""
+        ref = self.create_and_authorise()
+        m = self._due_advance(ref)
+        self.assertEqual(m.voucher_lines.count(), 0)
+        r = self._withdraw(ref, "wrong supplier")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=ref).status, "DRAFT")
+        # the unvouchered row goes with the rest of the schedule
+        self.assertFalse(ImportPaymentMilestone.objects.filter(
+            id=m.id).exists())
+
+    def test_an_authorised_milestone_still_blocks(self):
+        """Money committed on a signatory-approved voucher, even if the
+        voucher line itself has since been released."""
+        ref = self.create_and_authorise()
+        m = self._due_advance(ref)
+        ImportPaymentMilestone.objects.filter(id=m.id).update(
+            status="AUTHORISED")
+        r = self._withdraw(ref)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("authorised or paid", r.data["detail"])
 
     def test_withdraw_clears_pending_schedule(self):
         ref = self.create_and_authorise()
