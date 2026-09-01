@@ -1354,8 +1354,13 @@ def variation_pdf_context(v):
     # becomes the anticipated sum if all of them are approved. Not shown on an
     # approved VO, whose bottom line is the revised contract sum itself.
     if approved:
+        # Variations approved before the date+ref rule carry neither, and
+        # formatting a missing date threw — the VO PDF 500'd on three live
+        # variations rather than printing without it (owner 2026-09-01).
+        when = (f" on {v.employer_approved_on:%d %b %Y}"
+                if v.employer_approved_on else "")
         status_note = (
-            f"Approved by the Employer on {v.employer_approved_on:%d %b %Y}"
+            f"Approved by the Employer{when}"
             + (f" · ref {v.employer_ref}" if v.employer_ref else "")
             + " — this variation forms part of the contract")
         client_status = "Approved by the Employer"

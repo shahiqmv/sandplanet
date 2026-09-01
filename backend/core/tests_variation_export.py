@@ -65,7 +65,7 @@ def _find(ws, text):
     raise AssertionError(f"no row starting {text!r}")
 
 
-class VariationWorkingCopyTests(TestCase):
+class _VariationBase(TestCase):
     def setUp(self):
         self.site = Site.objects.create(
             code="VKR", name="Vakkaru", status=Site.Status.ACTIVE,
@@ -86,6 +86,9 @@ class VariationWorkingCopyTests(TestCase):
             format="json")
         self.assertEqual(r.status_code, 201, r.data)
         return r.data["variations"][-1]
+
+
+class VariationWorkingCopyTests(_VariationBase):
 
     def test_the_sheet_totals_agree_with_the_variation(self):
         v = Variation.objects.get(pk=self._create("ADDITION")["id"])
@@ -164,3 +167,32 @@ class VariationWorkingCopyTests(TestCase):
         v.items.all().delete()
         r = self.client.get(f"/api/v1/variations/{v.id}/vo.xlsx")
         self.assertEqual(r.status_code, 400)
+
+
+class ApprovedWithoutADateTests(_VariationBase):
+    """Three live variations are APPROVED with no employer approval date —
+    approved before the rule that requires date + ref. Formatting the missing
+    date threw, so the VO PDF button 500'd on them (owner 2026-09-01)."""
+
+    def _approved_undated(self):
+        v = Variation.objects.get(pk=self._create("ADDITION")["id"])
+        Variation.objects.filter(pk=v.pk).update(
+            status="APPROVED", employer_approved_on=None, employer_ref="")
+        v.refresh_from_db()
+        return v
+
+    def test_the_pdf_context_prints_without_the_date(self):
+        from . import commercial
+        ctx = commercial.variation_pdf_context(self._approved_undated())
+        self.assertEqual(ctx["client_status"], "Approved by the Employer")
+        self.assertIn("forms part of the contract", ctx["status_note"])
+        self.assertNotIn("None", ctx["status_note"])
+
+    def test_both_documents_render(self):
+        v = self._approved_undated()
+        self.assertEqual(
+            self.client.get(f"/api/v1/variations/{v.id}/vo.pdf").status_code,
+            200)
+        self.assertEqual(
+            self.client.get(f"/api/v1/variations/{v.id}/vo.xlsx").status_code,
+            200)
