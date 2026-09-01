@@ -4,7 +4,6 @@ Site.currency defaults to MVR and was never set on any site, while every
 contract BOQ is USD — so every certified claim was reported as MVR and the
 aging totalled USD money under an MVR heading (owner 2026-09-01).
 """
-from datetime import date
 from decimal import Decimal
 
 from django.test import TestCase
@@ -19,8 +18,7 @@ class ContractCurrencyTests(TestCase):
         self.qs = make_user("qs_ccy", User.Role.QS)
         # As every real site is: the MVR default, never changed.
         self.site = Site.objects.create(code="CCY", name="Ccy site",
-                                        status=Site.Status.ACTIVE,
-                                        currency="MVR")
+                                        status=Site.Status.ACTIVE)
 
     def _project(self, code, boq_ccy="USD"):
         p = Project.objects.create(site=self.site, code=code, title=code,
@@ -45,11 +43,12 @@ class ContractCurrencyTests(TestCase):
         p = self._project("MVRP", "MVR")
         self.assertEqual(receivables.contract_currency(p), "MVR")
 
-    def test_without_a_boq_the_site_is_the_fallback(self):
-        """Nothing records a contract currency, so the field it stood in for
-        is what is left."""
+    def test_without_a_boq_the_house_default_applies(self):
+        """No BOQ means no contract recorded and nothing billed against it.
+        There is no site currency to fall back to any more — that second copy
+        is what drifted."""
         p = self._project("NOBOQ", None)
-        self.assertEqual(receivables.contract_currency(p), "MVR")
+        self.assertEqual(receivables.contract_currency(p), "USD")
 
     def test_a_claim_is_aged_in_the_contract_currency(self):
         p = self._project("USDP", "USD")
@@ -73,8 +72,13 @@ class ContractCurrencyTests(TestCase):
         self.assertEqual(
             receivables.client_statement(self.site)["currency"], "USD")
 
-    def test_a_site_with_no_projects_falls_back_to_its_own_field(self):
+    def test_a_site_with_no_projects_reports_the_house_default(self):
         empty = Site.objects.create(code="EMP", name="Empty",
-                                    status=Site.Status.ACTIVE, currency="MVR")
+                                    status=Site.Status.ACTIVE)
         self.assertEqual(
-            receivables.client_statement(empty)["currency"], "MVR")
+            receivables.client_statement(empty)["currency"], "USD")
+
+    def test_the_site_no_longer_carries_a_currency_at_all(self):
+        """One place, agreed with the client per project."""
+        self.assertNotIn("currency",
+                         [f.name for f in Site._meta.get_fields()])

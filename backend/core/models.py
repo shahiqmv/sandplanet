@@ -117,7 +117,11 @@ class Site(models.Model):
     contract_value = models.DecimalField(  # sensitive: HO/Admin/assigned PM only
         max_digits=14, decimal_places=2, null=True, blank=True
     )
-    currency = models.CharField(max_length=3, default="MVR")
+    # No currency here. What a contract is priced in is agreed with the
+    # client case by case and lives on the project's BOQ; a second copy on
+    # the site could only ever drift from it, and did — the field sat on its
+    # MVR default on every site, never shown in any screen, while every
+    # contract was USD, and receivables read it (owner 2026-09-01).
     award_date = models.DateField(null=True, blank=True)
     start_date = models.DateField(null=True, blank=True)
     duration_days = models.IntegerField(null=True, blank=True)

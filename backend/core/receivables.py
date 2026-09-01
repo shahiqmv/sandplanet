@@ -70,26 +70,25 @@ def _site_contract_currency(site):
     from .models import Project
 
     seen = Counter(contract_currency(p) for p in
-                   Project.objects.filter(site=site).select_related("boq",
-                                                                    "site"))
+                   Project.objects.filter(site=site).select_related("boq"))
     if not seen:
-        return site.currency or "USD"
+        return "USD"
     return seen.most_common(1)[0][0]
 
 
 def contract_currency(project):
     """What a project's contract is priced in.
 
-    The BOQ, not the site. Site.currency defaults to MVR and was never set on
-    any site, while every contract BOQ is USD — so every certified claim was
-    reported as MVR and the aging totalled USD money under an MVR heading
-    (owner 2026-09-01). The site is kept as the fallback for a project with
-    no BOQ, which is what the field was standing in for."""
+    The BOQ, and only the BOQ: what a contract is priced in is agreed with
+    the client case by case, so it belongs to the project, not the site. It
+    used to be read off Site.currency, which sat on its MVR default on every
+    site and was shown in no screen — so every USD claim in the ledger was
+    reported as MVR (owner 2026-09-01). A project with no BOQ has no contract
+    recorded and nothing billed against it; USD is the house default."""
     boq = getattr(project, "boq", None)
     if boq is not None and boq.currency:
         return boq.currency
-    site = getattr(project, "site", None)
-    return (site.currency if site and site.currency else "USD")
+    return "USD"
 
 
 def _invoice_claims(site_id=None):

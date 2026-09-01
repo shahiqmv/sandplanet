@@ -28,7 +28,7 @@ class SiteSerializer(serializers.ModelSerializer):
         model = Site
         fields = [
             "id", "code", "name", "is_head_office", "scope",
-            "contract_value", "currency",
+            "contract_value",
             "award_date", "start_date", "duration_days",
             "planned_completion", "actual_completion", "status",
             "client_name", "client_address", "client_tin", "client_contact",

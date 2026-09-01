@@ -213,7 +213,6 @@ class Command(BaseCommand):
         self.site.name = "Soneva Jani"
         self.site.status = Site.Status.ACTIVE
         self.site.contract_value = Decimal("18500000.00")
-        self.site.currency = "MVR"
         self.site.award_date = date(2026, 4, 10)
         self.site.start_date = date(2026, 4, 22)
         self.site.planned_completion = date(2026, 12, 5)
