@@ -196,3 +196,57 @@ class ApprovedWithoutADateTests(_VariationBase):
         self.assertEqual(
             self.client.get(f"/api/v1/variations/{v.id}/vo.xlsx").status_code,
             200)
+
+
+class SectionedVariationTests(_VariationBase):
+    """A variation the QS has grouped into sections keeps its subtotals; one
+    that is a flat list does not, or the subtotal and the gross would be the
+    same figure twice (owner 2026-09-01)."""
+
+    def _sectioned(self):
+        r = self.client.post(
+            f"/api/v1/projects/{self.project.id}/variations/create",
+            {"title": "Pool deck revisions", "kind": "ADDITION", "rows": [
+                {"section": "A — Coping", "is_heading": True,
+                 "description": "Stone coping"},
+                {"section": "A — Coping", "description": "Coping stone",
+                 "unit": "m", "qty": "40", "rate_supply": "35"},
+                {"section": "B — Drainage", "description": "Slot drain",
+                 "unit": "m", "qty": "36", "rate_supply": "63"},
+            ]}, format="json")
+        return Variation.objects.get(pk=r.data["variations"][-1]["id"])
+
+    def test_subtotals_appear_and_add_up(self):
+        v = self._sectioned()
+        ws = _load(v)
+        col = get_column_letter(ws.max_column)
+        sh = _Sheet(ws)
+        self.assertEqual(sh.value(f"{col}{_find(ws, 'Subtotal · A')}"),
+                         Decimal("1400"))
+        self.assertEqual(sh.value(f"{col}{_find(ws, 'Subtotal · B')}"),
+                         Decimal("2268"))
+        self.assertEqual(
+            sh.value(f"{col}{_find(ws, 'Gross value of this variation')}"),
+            v.gross)
+
+    def test_a_heading_row_is_not_counted(self):
+        """A heading carries no money — its cells stay genuinely empty so a
+        SUM over the block cannot pick anything up."""
+        v = self._sectioned()
+        ws = _load(v)
+        row = next(c.row for r in ws.iter_rows() for c in r
+                   if c.value == "Stone coping")
+        for letter in ("C", "D", "E", get_column_letter(ws.max_column)):
+            self.assertIsNone(ws[f"{letter}{row}"].value)
+
+    def test_a_flat_variation_has_no_subtotal_row(self):
+        v = Variation.objects.get(pk=self._create("ADDITION")["id"])
+        ws = _load(v)
+        text = " ".join(str(c.value) for r in ws.iter_rows() for c in r
+                        if c.value)
+        self.assertNotIn("Subtotal", text)
+        self.assertEqual(
+            _Sheet(ws).value(
+                f"{get_column_letter(ws.max_column)}"
+                f"{_find(ws, 'Gross value of this variation')}"),
+            v.gross)

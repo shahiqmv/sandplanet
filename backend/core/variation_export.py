@@ -123,7 +123,11 @@ def build_variation_xlsx(v):
     ws.freeze_panes = ws.cell(row=head + 1, column=1)
     r += 1
 
-    section_total_rows = []
+    # A single unnamed section has nothing to subtotal — its subtotal and the
+    # gross would be the same figure twice, which reads as a mistake.
+    show_subtotals = len(ctx["sections"]) > 1 or bool(
+        ctx["sections"] and ctx["sections"][0]["section"])
+    section_total_rows, line_rows = [], []
     for sec in ctx["sections"]:
         first_line = None
         if sec["section"]:
@@ -168,9 +172,12 @@ def build_variation_xlsx(v):
                 a.alignment = _RIGHT
                 if first_line is None:
                     first_line = r
+                line_rows.append(r)
             for i in range(1, last + 1):
                 ws.cell(row=r, column=i).border = _BORDER
             r += 1
+        if not show_subtotals:
+            continue
         # Section total — a SUM over its own block, so inserted rows count.
         ws.merge_cells(start_row=r, start_column=1, end_row=r,
                        end_column=last - 1)
@@ -197,9 +204,15 @@ def build_variation_xlsx(v):
     c.font = Font(bold=True, size=11, color=_WHITE)
     c.alignment = Alignment(horizontal="right", vertical="center")
     c.fill = PatternFill("solid", fgColor=_NAVY)
-    g = ws.cell(row=r, column=last, value=(
-        "=" + "+".join(f"{amt_letter}{x}" for x in section_total_rows)
-        if section_total_rows else 0))
+    if section_total_rows:
+        gross_formula = "=" + "+".join(f"{amt_letter}{x}"
+                                       for x in section_total_rows)
+    elif line_rows:
+        gross_formula = (f"=SUM({amt_letter}{line_rows[0]}"
+                         f":{amt_letter}{line_rows[-1]})")
+    else:
+        gross_formula = 0
+    g = ws.cell(row=r, column=last, value=gross_formula)
     g.font = Font(bold=True, size=11, color=_WHITE)
     g.fill = PatternFill("solid", fgColor=_NAVY)
     g.number_format = _money_fmt(ccy)
