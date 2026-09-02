@@ -2526,3 +2526,177 @@ class IprDropLineTests(IprBase):
         eff = r.data["charge_correction"]["effect"]
         self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1200"))
         self.assertEqual(Decimal(str(eff["delta"])), Decimal("0"))
+
+
+class IprAmendLineTests(IprDropLineTests):
+    """Amending quantity and price on an authorised, part-paid order.
+
+    Removal is the extreme case of this, not the other way round (owner
+    2026-09-02). Short supply and a repriced proforma are what actually
+    happen; before this the only line-level move was "take it off entirely".
+    """
+
+    def _amend(self, ref, line, **row):
+        body = {"reason": "Supplier short-supplied",
+                "line_amendments": [{"line_id": line.id, **row}]}
+        return self.client.post(f"/api/v1/ipr/{ref}/correct-charges", body,
+                                format="json")
+
+    def test_short_supply_reduces_the_order_and_the_balance(self):
+        """100 bags become 60: order 1200 → 1120, balance absorbs the 80."""
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._amend(ref, sand, order_qty="60", allocations=[
+            {"project_id": self.project.id, "qty": "60"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        eff = r.data["charge_correction"]["effect"]
+        self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1120"))
+        self.assertEqual([(Decimal(str(a["qty_from"])),
+                           Decimal(str(a["qty_to"]))) for a in eff["amended"]],
+                         [(Decimal("100"), Decimal("60"))])
+        self.assertEqual([(m["label"], Decimal(str(m["to"])))
+                          for m in eff["milestones"]],
+                         [("Balance", Decimal("720.00"))])
+        self._approve_all(ref)
+        sand.refresh_from_db()
+        self.assertEqual(sand.order_qty, Decimal("60"))
+        self.assertEqual(order.milestones.get(label="Balance").fixed_amount,
+                         Decimal("720.00"))
+
+    def test_a_repriced_proforma_moves_the_money_not_the_quantity(self):
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._amend(ref, sand, unit_price="1.50", allocations=[
+            {"project_id": self.project.id, "qty": "100"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(
+            Decimal(str(r.data["charge_correction"]["effect"]["new_total"])),
+            Decimal("1150"))                       # 1000 + 100 × 1.50
+        self._approve_all(ref)
+        sand.refresh_from_db()
+        self.assertEqual(sand.order_qty, Decimal("100"))
+        self.assertEqual(sand.unit_price, Decimal("1.5000"))
+
+    def test_the_split_must_be_re_entered_and_must_add_up(self):
+        """Guessing which project loses stock is exactly the silent decision
+        this refuses to make (owner 2026-09-02)."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._amend(ref, sand, order_qty="60")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("split", r.data["detail"])
+        r = self._amend(ref, sand, order_qty="60", allocations=[
+            {"project_id": self.project.id, "qty": "50"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("adds up to 50", r.data["detail"])
+
+    def test_the_split_can_move_between_project_and_stock(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._amend(ref, sand, order_qty="80", allocations=[
+            {"project_id": self.project.id, "qty": "30"},
+            {"project_id": None, "qty": "50"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        self._approve_all(ref)
+        allocs = {(a.project_id, a.qty) for a in sand.allocations.all()}
+        self.assertEqual(allocs, {(self.project.id, Decimal("30.00")),
+                                  (None, Decimal("50.00"))})
+
+    def test_the_cost_follows_the_new_split(self):
+        """The changed line's own postings are reversed, so cost does not get
+        smeared across lines that did not move."""
+        from .models import CostPosting
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        self._amend(ref, sand, order_qty="50", allocations=[
+            {"project_id": None, "qty": "50"}])       # all to general stock
+        self._approve_all(ref)
+        committed = CostPosting.objects.filter(document=order.document,
+                                               state="COMMITTED")
+        self.assertEqual(sum(p.amount for p in committed),
+                         Decimal("16500"))            # 1100 USD × 15
+        # nothing of the amended line is left against the project
+        self.assertEqual(
+            sum(p.amount for p in committed.filter(ipr_line=sand,
+                                                   is_stock_pool=False)),
+            Decimal("0"))
+
+    def test_a_quantity_cannot_fall_below_what_was_received(self):
+        """Those bags are on site. The order cannot pretend otherwise."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        sid = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {"location": ""}, format="json").data["ref"]
+        self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        r = self._amend(ref, sand, order_qty="10", allocations=[
+            {"project_id": self.project.id, "qty": "10"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already", r.data["detail"])
+        self.assertIn("on site", r.data["detail"])
+
+    def test_a_price_can_still_be_corrected_after_receipt(self):
+        """A revised proforma does not care whether the goods have sailed."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        sid = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {"location": ""}, format="json").data["ref"]
+        self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        r = self._amend(ref, sand, unit_price="2.40", allocations=[
+            {"project_id": self.project.id, "qty": "100"}])
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_a_zero_quantity_is_sent_to_the_removal_control(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        r = self._amend(ref, order.lines.get(line_no=2), order_qty="0",
+                        allocations=[{"project_id": None, "qty": "0"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("mark the line Remove", r.data["detail"])
+
+    def test_a_line_cannot_be_amended_and_removed_at_once(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/correct-charges",
+            {"reason": "both", "drop_line_ids": [sand.id],
+             "line_amendments": [{"line_id": sand.id, "order_qty": "60",
+                                  "allocations": [
+                                      {"project_id": None, "qty": "60"}]}]},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("taken off the order", r.data["detail"])
+
+    def test_an_amendment_that_changes_nothing_is_refused(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._amend(ref, sand, order_qty="100", unit_price="2",
+                        allocations=[{"project_id": self.project.id,
+                                      "qty": "100"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("nothing changed", r.data["detail"].lower())
+
+    def test_an_amendment_below_the_settled_amount_is_refused(self):
+        ref = self._authorised_two_line()
+        self._part_paid(ref)                       # 400 paid of 1200
+        order = self._order(ref)
+        pump = order.lines.get(line_no=1)
+        r = self._amend(ref, pump, order_qty="1", allocations=[
+            {"project_id": self.project.id, "qty": "1"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already vouchered or paid", r.data["detail"])

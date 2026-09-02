@@ -1572,6 +1572,15 @@ class ImportChargeCorrection(models.Model):
     # of the order is already paid (owner 2026-09-02, IPR-017).
     fold_line_ids = models.JSONField(default=list, blank=True)
     drop_line_ids = models.JSONField(default=list, blank=True)
+    # Quantity / price amendments, the general case removal is the extreme of
+    # (owner 2026-09-02: "should you have allowed price and qty also"). Short
+    # supply and a repriced PI are what actually happens most; a removal is
+    # just an amendment to nothing. Each entry:
+    #   {"line_id": n, "order_qty": "30", "unit_price": "420.38",
+    #    "allocations": [{"project_id": n or null, "qty": "18"}, ...]}
+    # The split is always re-entered, never inferred: guessing which project
+    # loses stock is exactly the kind of silent decision that goes unnoticed.
+    line_amendments = models.JSONField(default=list, blank=True)
     reason = models.TextField()
     status = models.CharField(max_length=17, choices=Status.choices,
                               default=Status.PENDING_DIRECTOR)

@@ -748,14 +748,24 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
                                misc_fee: "", reason: "" });
   const [foldIds, setFoldIds] = useState([]);
   const [dropIds, setDropIds] = useState([]);
+  // line.id -> { order_qty, unit_price, allocations: [{project_id, qty}] }
+  const [amend, setAmend] = useState({});
+  const [projects, setProjects] = useState([]);
+  useEffect(() => {
+    if (!open) return;
+    api("/ipr/context").then((c) => setProjects(c.projects || []))
+      .catch(() => setProjects([]));
+  }, [open]);
   if (!corr && !doc.can_correct) return null;
 
   async function propose() {
     onError(null);
     try {
       await api(`/ipr/${refIpr}/correct-charges`,
-                { method: "POST", body: { ...f, fold_line_ids: foldIds,
-                                          drop_line_ids: dropIds } });
+                { method: "POST", body: {
+                    ...f, fold_line_ids: foldIds, drop_line_ids: dropIds,
+                    line_amendments: Object.entries(amend).map(
+                      ([id, a]) => ({ line_id: Number(id), ...a })) } });
       setOpen(false); onChanged();
     } catch (e) { onError(e.message); }
   }
@@ -772,13 +782,33 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
                                  : foldIds.filter((i) => i !== line.id));
     setDropIds(intent === "drop" ? [...dropIds, line.id]
                                  : dropIds.filter((i) => i !== line.id));
+    const next = { ...amend };
+    if (intent === "amend") {
+      // The split is re-entered, never scaled — so it starts EMPTY rather
+      // than pre-filled with a guess at which project loses the stock
+      // (owner 2026-09-02).
+      next[line.id] = { order_qty: String(line.order_qty ?? ""),
+                        unit_price: String(line.unit_price ?? ""),
+                        allocations: [{ project_id: "", qty: "" }] };
+    } else {
+      delete next[line.id];
+    }
+    setAmend(next);
     // Folding seeds the freight box with the line's value, so the usual case
-    // (freight typed as a line) is one click. Removing must not.
+    // (freight typed as a line) is one click. Nothing else does.
     if (intent === "fold" && !wasFold) {
       setF({ ...f, freight_handling: String(cur + delta) });
     } else if (wasFold && intent !== "fold") {
       setF({ ...f, freight_handling: String(cur - delta) });
     }
+  }
+  function patchAmend(id, patch) {
+    setAmend({ ...amend, [id]: { ...amend[id], ...patch } });
+  }
+  function setAlloc(id, i, patch) {
+    const rows = amend[id].allocations.map(
+      (r, n) => (n === i ? { ...r, ...patch } : r));
+    patchAmend(id, { allocations: rows });
   }
   async function decide(action) {
     let reason = "";
@@ -815,6 +845,24 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
           <div style={{ color: "#8a6d00", marginTop: 2 }}>
             <strong>Removes from the order:</strong>{" "}
             {corr.drop_lines.map((l) => l.description).join(" · ")}</div>
+        )}
+        {corr.effect?.amended?.length > 0 && (
+          <div style={{ color: "#8a6d00", marginTop: 2 }}>
+            <strong>Amends:</strong>{" "}
+            {corr.effect.amended.map((a) => (
+              <span key={a.line_no} style={{ marginRight: 10 }}>
+                {a.description}
+                {Number(a.qty_from) !== Number(a.qty_to)
+                  && ` · qty ${a.qty_from} → ${a.qty_to}`}
+                {Number(a.price_from) !== Number(a.price_to)
+                  && ` · price ${money(a.price_from)} → ${money(a.price_to)}`}
+                {a.trims_manifest && (
+                  <em style={{ color: "#a3271b" }}>
+                    {" "}· trims the booked manifest</em>
+                )}
+              </span>
+            ))}
+          </div>
         )}
         {/* The approver is authorising a new committed total and a new
             schedule. Show them both rather than the inputs (owner
@@ -899,9 +947,12 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
       {o.lines.filter((l) => Number(l.line_value) > 0).length > 1 && (
         <div style={{ marginTop: 10 }}>
           <div style={{ fontSize: 11, color: "#5a6b78", marginBottom: 4 }}>
-            Taking a line off the order. Either way it is zeroed and comes off
-            the shipment manifest — the difference is what happens to the
-            money:
+            Changing what is on the order. <strong>Amend</strong> revises the
+            quantity or the price; <strong>Fold</strong> moves the line's
+            value into supplier freight and leaves the total alone;{" "}
+            <strong>Remove</strong> takes the item off and brings the total
+            down. Fold and Remove clear the line off the shipment manifest;
+            a reduced quantity trims it.
           </div>
           <table style={{ width: "100%", borderCollapse: "collapse",
                           fontSize: 12.5 }}>
@@ -909,8 +960,12 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
               <tr style={{ fontSize: 10.5, color: "#5a6b78",
                            textAlign: "left" }}>
                 <th style={{ fontWeight: 500 }}>Line</th>
-                <th style={{ fontWeight: 500, width: 62, textAlign: "center" }}>
+                <th style={{ fontWeight: 500, width: 54, textAlign: "center" }}>
                   Keep</th>
+                <th style={{ fontWeight: 500, width: 96, textAlign: "center" }}
+                    title="Change the quantity or the price — short supply, or
+                           a repriced proforma">
+                  Amend&nbsp;qty/price</th>
                 <th style={{ fontWeight: 500, width: 108, textAlign: "center" }}
                     title="Value moves into supplier freight — order total
                            unchanged">
@@ -924,22 +979,101 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
             <tbody>
               {o.lines.filter((l) => Number(l.line_value) > 0).map((l) => {
                 const intent = foldIds.includes(l.id) ? "fold"
-                  : dropIds.includes(l.id) ? "drop" : "keep";
+                  : dropIds.includes(l.id) ? "drop"
+                  : amend[l.id] ? "amend" : "keep";
+                const a = amend[l.id];
+                const split = a ? a.allocations.reduce(
+                  (t, r) => t + (Number(r.qty) || 0), 0) : 0;
                 return (
-                  <tr key={l.id}>
-                    <td style={{ padding: "2px 0" }}>
-                      {l.description}{" "}
-                      <span style={{ color: "#8a97a1" }}>
-                        {o.order_currency} {money(l.line_value)}</span>
-                    </td>
-                    {["keep", "fold", "drop"].map((v) => (
-                      <td key={v} style={{ textAlign: "center" }}>
-                        <input type="radio" name={`intent-${l.id}`}
-                               checked={intent === v}
-                               onChange={() => setIntent(l, v)} />
+                  <Fragment key={l.id}>
+                    <tr>
+                      <td style={{ padding: "2px 0" }}>
+                        {l.description}{" "}
+                        <span style={{ color: "#8a97a1" }}>
+                          {l.order_qty} × {money(l.unit_price)} ={" "}
+                          {o.order_currency} {money(l.line_value)}</span>
                       </td>
-                    ))}
-                  </tr>
+                      {["keep", "amend", "fold", "drop"].map((v) => (
+                        <td key={v} style={{ textAlign: "center" }}>
+                          <input type="radio" name={`intent-${l.id}`}
+                                 checked={intent === v}
+                                 onChange={() => setIntent(l, v)} />
+                        </td>
+                      ))}
+                    </tr>
+                    {a && (
+                      <tr>
+                        <td colSpan={5} style={{ padding: "4px 0 8px 14px" }}>
+                          <div style={{ display: "flex", gap: 8,
+                                        flexWrap: "wrap",
+                                        alignItems: "flex-end" }}>
+                            <label style={{ fontSize: 10.5,
+                                            color: "#5a6b78" }}>
+                              New quantity
+                              <input type="number" value={a.order_qty}
+                                     style={{ ...inputStyle, width: 96 }}
+                                     onChange={(e) => patchAmend(
+                                       l.id, { order_qty: e.target.value })} />
+                            </label>
+                            <label style={{ fontSize: 10.5,
+                                            color: "#5a6b78" }}>
+                              Unit price ({o.order_currency})
+                              <input type="number" value={a.unit_price}
+                                     style={{ ...inputStyle, width: 110 }}
+                                     onChange={(e) => patchAmend(
+                                       l.id, { unit_price: e.target.value })} />
+                            </label>
+                            <div style={{ fontSize: 12, color: "#5a6b78",
+                                          paddingBottom: 6 }}>
+                              = {o.order_currency}{" "}
+                              {money((Number(a.order_qty) || 0)
+                                     * (Number(a.unit_price) || 0))}
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 10.5, color: "#5a6b78",
+                                        marginTop: 6 }}>
+                            Project / stock split for the new quantity — type it in
+                            full; it is never scaled for you:
+                          </div>
+                          {a.allocations.map((r, i) => (
+                            <div key={i} style={{ display: "flex", gap: 8,
+                                                  marginTop: 4 }}>
+                              <select value={r.project_id}
+                                      style={{ ...inputStyle, width: 220 }}
+                                      onChange={(e) => setAlloc(
+                                        l.id, i,
+                                        { project_id: e.target.value })}>
+                                <option value="">General stock (no project)
+                                </option>
+                                {projects.map((pr) => (
+                                  <option key={pr.id} value={pr.id}>
+                                    {pr.code} · {pr.site_code}</option>
+                                ))}
+                              </select>
+                              <input type="number" value={r.qty}
+                                     placeholder="qty"
+                                     style={{ ...inputStyle, width: 96 }}
+                                     onChange={(e) => setAlloc(
+                                       l.id, i, { qty: e.target.value })} />
+                              {i === a.allocations.length - 1 && (
+                                <button type="button" style={ghostButton}
+                                        onClick={() => patchAmend(l.id, {
+                                          allocations: [...a.allocations,
+                                            { project_id: "", qty: "" }] })}>
+                                  + split</button>
+                              )}
+                            </div>
+                          ))}
+                          <div style={{ fontSize: 11, marginTop: 4,
+                                        color: split
+                                          === (Number(a.order_qty) || 0)
+                                          ? "#1a7f37" : "#a3271b" }}>
+                            split totals {split} of {a.order_qty || 0}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>

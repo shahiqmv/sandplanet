@@ -406,11 +406,15 @@ def propose_charge_correction(doc, data, actor):
         return None, ("A line is either folded into freight or dropped from "
                       "the order, not both.")
     off = fold_ids | drop_ids
-    if not off and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
-                       for f in CORRECTION_FIELDS):
+    amendments, amend_err = _validate_amendments(
+        order, data.get("line_amendments"), off)
+    if amend_err:
+        return None, amend_err
+    if not off and not amendments \
+            and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
+                    for f in CORRECTION_FIELDS):
         return None, "Nothing changed — the charges are already these values."
-    subtotal_after = sum((ln.line_value for ln in order.lines.all()
-                          if ln.id not in off), ZERO)
+    subtotal_after = _subtotal_after(order, off, amendments)
     if subtotal_after <= ZERO:
         return None, ("That would leave no goods on the order. Withdraw the "
                       "authorisation instead of emptying it.")
@@ -449,11 +453,13 @@ def propose_charge_correction(doc, data, actor):
                       "first, then propose the correction.")
     corr = ImportChargeCorrection.objects.create(
         order=order, reason=reason, created_by=actor,
-        fold_line_ids=sorted(fold_ids), drop_line_ids=sorted(drop_ids), **new)
+        fold_line_ids=sorted(fold_ids), drop_line_ids=sorted(drop_ids),
+        line_amendments=amendments, **new)
     audit("document", doc.id, "IPR_CORRECTION_PROPOSED", actor=actor,
           detail={"ref": doc.ref, "reason": reason,
                   "fold_lines": sorted(fold_ids),
                   "dropped_lines": sorted(drop_ids),
+                  "amended_lines": amendments,
                   "old_total": str(old_total), "new_total": str(new_total),
                   **{f: str(new[f] or 0) for f in CORRECTION_FIELDS}})
     return corr, None
@@ -488,6 +494,116 @@ def _validate_line_ids(order, ids, verb, field):
 
 def _validate_fold_lines(order, ids):
     return _validate_line_ids(order, ids, "folded", "fold_line_ids")
+
+
+def line_received_qty(line):
+    """What an IRN has actually taken into stock for this line — the floor a
+    quantity can never go below, because it is on site."""
+    from .models import ImportReceiptLine
+    return sum((r.received_qty or ZERO) for r in
+               ImportReceiptLine.objects.filter(ipr_line=line)) or ZERO
+
+
+def line_shipped_qty(line):
+    """What a booked manifest says is coming. A booking is a plan, not a fact,
+    so it is trimmed to a reduced order rather than blocking it."""
+    from .models import ImportShipmentLine
+    return sum((sl.qty or ZERO) for sl in
+               ImportShipmentLine.objects.filter(ipr_line=line)) or ZERO
+
+
+def _subtotal_after(order, off_ids, amendments):
+    """The line subtotal this correction would leave: lines taken off count
+    for nothing, amended lines count at their new quantity and price."""
+    amended = {int(a["line_id"]): a for a in (amendments or [])}
+    total = ZERO
+    for ln in order.lines.all():
+        if ln.id in off_ids:
+            continue
+        a = amended.get(ln.id)
+        if a:
+            total += _dec(a["order_qty"]) * _dec(a["unit_price"])
+        else:
+            total += ln.line_value
+    return total
+
+
+def _validate_amendments(order, rows, off_ids):
+    """Quantity / price amendments to an authorised order.
+
+    A quantity is only ever reduced to something real: never below what an
+    IRN has received. The project/stock split is re-entered in full rather
+    than scaled, and must sum to the new quantity — a split that silently
+    stops adding up is how cost lands on the wrong project.
+    """
+    if not rows:
+        return [], None
+    lines = {ln.id: ln for ln in order.lines.all()}
+    out = []
+    for row in rows:
+        try:
+            line = lines.get(int(row.get("line_id")))
+        except (TypeError, ValueError):
+            return None, "Bad line_id in an amendment."
+        if line is None:
+            return None, "An amended line does not belong to this order."
+        if line.id in off_ids:
+            return None, (f"Line {line.line_no} is being taken off the order "
+                          f"— it cannot also be amended.")
+        qty = (_dec(row.get("order_qty")) if row.get("order_qty") not in
+               (None, "") else line.order_qty)
+        price = (_dec(row.get("unit_price")) if row.get("unit_price") not in
+                 (None, "") else line.unit_price)
+        if qty <= ZERO:
+            return None, (f"Line {line.line_no}: a quantity of zero is a "
+                          f"removal — mark the line Remove instead.")
+        if price < ZERO:
+            return None, f"Line {line.line_no}: the price cannot be negative."
+        if qty == line.order_qty and price == line.unit_price:
+            return None, (f"Line {line.line_no}: nothing changed — the "
+                          f"quantity and price are already these.")
+        received = line_received_qty(line)
+        if qty < received:
+            return None, (f"Line {line.line_no}: {received:g} already "
+                          f"received on an IRN and on site, so the order "
+                          f"cannot be cut to {qty:g}. Reduce to {received:g} "
+                          f"or more, or raise a return for the difference.")
+        allocs, err = _validate_amendment_allocations(line, row, qty)
+        if err:
+            return None, err
+        out.append({"line_id": line.id, "order_qty": str(qty),
+                    "unit_price": str(price), "allocations": allocs})
+    return out, None
+
+
+def _validate_amendment_allocations(line, row, qty):
+    """The split must be given in full and must sum to the new quantity."""
+    raw = row.get("allocations")
+    if raw is None:
+        return None, (f"Line {line.line_no}: give the project / stock split "
+                      f"for the new quantity of {qty:g}.")
+    allocs, total = [], ZERO
+    for a in raw:
+        aq = _dec(a.get("qty"))
+        if aq <= ZERO:
+            continue
+        pid = a.get("project_id")
+        if pid not in (None, ""):
+            if not Project.objects.filter(pk=pid).exists():
+                return None, (f"Line {line.line_no}: unknown project in the "
+                              f"split.")
+            allocs.append({"project_id": int(pid), "qty": str(aq)})
+        else:
+            # No project = the general-stock share, held at head office.
+            allocs.append({"project_id": None, "qty": str(aq)})
+        total += aq
+    if not allocs:
+        return None, (f"Line {line.line_no}: give the project / stock split "
+                      f"for the new quantity of {qty:g}.")
+    if total != qty:
+        return None, (f"Line {line.line_no}: the split adds up to {total:g} "
+                      f"but the quantity is {qty:g}.")
+    return allocs, None
 
 
 def decide_charge_correction(doc, action, actor, reason=""):
@@ -556,18 +672,11 @@ def _apply_charge_correction(doc, corr, actor):
         line.allocations.all().delete()
         line.order_qty = ZERO
         line.save(update_fields=["order_qty"])
+    _apply_line_amendments(doc, order, corr, actor)
     for f in CORRECTION_FIELDS:
         setattr(order, f, getattr(corr, f))
     order.save(update_fields=list(CORRECTION_FIELDS))
-    # Reconcile: whatever history got the ledger here (original commitment,
-    # earlier deltas, the mirrors above), one spread brings the committed sum
-    # to exactly the corrected MVR total.
-    target = ipr_mvr_total(order)
-    posted = sum((p.amount for p in CostPosting.objects.filter(
-        document=doc, state="COMMITTED")), ZERO)
-    if target and target != posted:
-        _post_split(order, doc, "COMMITTED", (target - posted) / target,
-                    order.exchange_rate, actor)
+    _reconcile_committed(order, doc, actor)
     _revise_po_charges(doc, order, actor)
     _rescale_fixed_milestones(order, old_total, actor)
     corr.status = "APPLIED"
@@ -578,6 +687,101 @@ def _apply_charge_correction(doc, corr, actor):
                   "new_total": str(ipr_order_total(order)),
                   "folded_lines": corr.fold_line_ids or [],
                   "dropped_lines": corr.drop_line_ids or []})
+
+
+def _reconcile_committed(order, doc, actor):
+    """Bring the COMMITTED ledger to exactly the order's MVR total.
+
+    Whatever history got it here — the original commitment, earlier deltas,
+    the §4A mirrors above — one proportional spread does the bulk of the work.
+    But `_post_split` rounds every allocation row to the cent, so the parts
+    need not sum to the whole: an amended line left the ledger a cent short of
+    the order (owner 2026-09-02). A final rounding row closes it, because a
+    commitment that is 0.01 off its order is a discrepancy somebody has to
+    chase later.
+    """
+    from .models import CostPosting
+
+    def posted():
+        return sum((p.amount for p in CostPosting.objects.filter(
+            document=doc, state="COMMITTED")), ZERO)
+
+    target = ipr_mvr_total(order)
+    if not target:
+        return
+    now = posted()
+    if target != now:
+        _post_split(order, doc, "COMMITTED", (target - now) / target,
+                    order.exchange_rate, actor)
+    residual = target - posted()
+    if not residual:
+        return
+    # Land the rounding where the bulk of the cost already sits, so it is
+    # never a stray row against a site that has nothing to do with it.
+    biggest = (CostPosting.objects.filter(document=doc, state="COMMITTED")
+               .order_by("-amount").first())
+    if biggest is None:
+        return
+    costing.post(site=biggest.site, cost_head=biggest.cost_head,
+                 state="COMMITTED", source="IPR", amount=residual,
+                 currency="MVR", document=doc, ipr_line=biggest.ipr_line,
+                 is_stock_pool=biggest.is_stock_pool, actor=actor)
+    audit("document", doc.id, "IPR_COMMITMENT_ROUNDED", actor=actor,
+          detail={"amount": str(residual), "target": str(target)})
+
+
+def _apply_line_amendments(doc, order, corr, actor):
+    """Write the amended quantities, prices and splits.
+
+    The changed line's own COMMITTED postings are reversed first so its cost
+    is re-derived from the new figures. Without that, the global reconcile
+    that follows would spread the difference proportionally across every line
+    and quietly move cost between projects that did not change.
+
+    A booked manifest is trimmed to the new quantity: a booking is a plan, and
+    short supply is usually discovered at shipping. Anything already received
+    on an IRN is untouchable and the proposal was refused above.
+    """
+    from .models import (CostPosting, ImportAllocation, ImportShipmentLine,
+                         Project)
+    for a in corr.line_amendments or []:
+        line = order.lines.filter(pk=a["line_id"]).first()
+        if line is None:                    # deleted since the proposal
+            continue
+        qty, price = _dec(a["order_qty"]), _dec(a["unit_price"])
+        before = (line.order_qty, line.unit_price)
+        for p in CostPosting.objects.filter(
+                document=doc, ipr_line=line, state="COMMITTED",
+                reversal_of__isnull=True):
+            costing.post(site=p.site, cost_head=p.cost_head, state="COMMITTED",
+                         source="IPR", amount=-p.amount, document=doc,
+                         ipr_line=line, is_stock_pool=p.is_stock_pool,
+                         reversal_of=p, actor=actor)
+        line.order_qty, line.unit_price = qty, price
+        line.save(update_fields=["order_qty", "unit_price"])
+        line.allocations.all().delete()
+        for row in a.get("allocations") or []:
+            ImportAllocation.objects.create(
+                line=line, qty=_dec(row["qty"]),
+                project=(Project.objects.filter(pk=row["project_id"]).first()
+                         if row.get("project_id") else None))
+        # Trim any booked manifest down to what is now on order.
+        booked = ImportShipmentLine.objects.filter(ipr_line=line)
+        over = sum((sl.qty or ZERO) for sl in booked) - qty
+        for sl in booked.order_by("-id"):
+            if over <= ZERO:
+                break
+            cut = min(sl.qty or ZERO, over)
+            sl.qty = (sl.qty or ZERO) - cut
+            over -= cut
+            if sl.qty <= ZERO:
+                sl.delete()
+            else:
+                sl.save(update_fields=["qty"])
+        audit("document", doc.id, "IPR_LINE_AMENDED", actor=actor,
+              detail={"line": line.line_no, "qty_from": str(before[0]),
+                      "qty_to": str(qty), "price_from": str(before[1]),
+                      "price_to": str(price)})
 
 
 def _rescale_fixed_milestones(order, old_total, actor):
@@ -650,10 +854,27 @@ def correction_effect(order, corr):
     milestone that moves."""
     off = set(corr.fold_line_ids or []) | set(corr.drop_line_ids or [])
     old_total = ipr_order_total(order)
-    subtotal_after = sum((ln.line_value for ln in order.lines.all()
-                          if ln.id not in off), ZERO)
+    subtotal_after = _subtotal_after(order, off, corr.line_amendments)
     new_total = (subtotal_after - (corr.discount or ZERO)
                  + (corr.freight_handling or ZERO) + (corr.misc_fee or ZERO))
+    lines = {ln.id: ln for ln in order.lines.all()}
+    amended = []
+    for a in corr.line_amendments or []:
+        ln = lines.get(int(a["line_id"]))
+        if ln is None:
+            continue
+        qty, price = _dec(a["order_qty"]), _dec(a["unit_price"])
+        booked = line_shipped_qty(ln)
+        amended.append({
+            "line_no": ln.line_no, "description": ln.description,
+            "qty_from": ln.order_qty, "qty_to": qty,
+            "price_from": ln.unit_price, "price_to": price,
+            "value_from": ln.line_value, "value_to": qty * price,
+            # Say when a booked manifest gets cut back, rather than doing it
+            # quietly (owner 2026-09-02).
+            "trims_manifest": booked > qty,
+            "received": line_received_qty(ln),
+        })
     moves = [{"label": m.label, "from": m.fixed_amount, "to": amount}
              for m, amount in rescaled_milestones(order, old_total, new_total)
              if amount != m.fixed_amount]
@@ -665,6 +886,7 @@ def correction_effect(order, corr):
                         for m in order.milestones.all()
                         if milestone_is_committed(m)), ZERO),
         "milestones": moves,
+        "amended": amended,
     }
 
 
