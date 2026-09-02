@@ -12,6 +12,31 @@ function prettyField(key) {
 // {detail: "..."}, DRF field errors {field: ["msg", ...]}, plain strings,
 // and nested shapes — so users see "Code: no more than 6 characters" instead
 // of "Request failed (400)".
+// A session that has expired is not an error to print inside a panel — it is
+// the end of the session. The server tags it `not_authenticated`; we tell the
+// app once, and it goes back to the sign-in screen.
+//
+// A PM whose 12-hour session had lapsed spent a morning reading
+// "Authentication credentials were not provided." under his own name in the
+// corner, and reported it as having lost access to attendance (owner
+// 2026-09-02).
+export const SESSION_EXPIRED = "planet:session-expired";
+let expiredAnnounced = false;
+
+function noteExpiredSession(data, status) {
+  if (status !== 401 && status !== 403) return false;
+  if (!data || data.code !== "not_authenticated") return false;
+  if (!expiredAnnounced) {
+    expiredAnnounced = true;
+    window.dispatchEvent(new CustomEvent(SESSION_EXPIRED));
+  }
+  return true;
+}
+
+export function resetSessionNotice() {
+  expiredAnnounced = false;
+}
+
 function readError(data, status) {
   if (data == null) return `Request failed (${status})`;
   if (typeof data === "string") return data;
@@ -152,9 +177,13 @@ export async function api(path, { method = "GET", body } = {}) {
   }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
   if (!res.ok) {
-    const err = new Error(readError(data, res.status));
+    const expired = noteExpiredSession(data, res.status);
+    const err = new Error(expired
+      ? "Your session has expired. Please sign in again."
+      : readError(data, res.status));
     err.data = data;
     err.status = res.status;
+    err.sessionExpired = expired;
     throw err;
   }
   return data;

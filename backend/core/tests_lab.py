@@ -221,7 +221,10 @@ class TestsInHandoverTests(TestCase):
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual(r.data["section"], "TEST")
         self.assertEqual(r.data["document_ref"], ref)
-        self.assertEqual(r.data["status"], "PROVIDED")
+        # Holding the certificate is not submitting it: the item is ready to
+        # go on a transmittal and nothing more (owner 2026-09-01).
+        self.assertEqual(r.data["status"], "REQUIRED")
+        self.assertTrue(r.data["has_evidence"])
 
     def test_an_awaited_test_is_not_offered_yet(self):
         self.client.post("/api/v1/quality/tests", {

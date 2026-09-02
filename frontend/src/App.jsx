@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, resetSessionNotice, SESSION_EXPIRED } from "./api.js";
 import { decodeView, encodeView } from "./urlState.js";
 import BusyBar from "./BusyBar.jsx";
 import NewReleaseBanner, { ReleaseNotes } from "./NewReleaseBanner.jsx";
@@ -282,7 +282,7 @@ function ChangePassword({ forced, onDone }) {
   );
 }
 
-function Login({ onLogin }) {
+function Login({ onLogin, expired }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(null);
@@ -306,6 +306,14 @@ function Login({ onLogin }) {
     <div style={{ maxWidth: 380, margin: "10vh auto", padding: "0 16px" }}>
       <form onSubmit={submit} style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)" }}>Sign in</h2>
+        {expired && (
+          <p style={{ background: "#fdf8e7", border: "1px solid #e0c66b",
+                      borderRadius: 6, padding: "8px 10px", fontSize: 13,
+                      color: "#8a6d00", margin: "0 0 12px" }}>
+            Your session has expired — sign in again to carry on. Nothing has
+            changed about what you can see.
+          </p>
+        )}
         <label style={{ display: "block", fontSize: 13, marginBottom: 4 }}>
           Username</label>
         <input value={username} onChange={(e) => setUsername(e.target.value)}
@@ -478,6 +486,16 @@ export default function App() {
       .catch(() => {});
   }, [me, refresh]);
 
+  // The session can lapse while the app is open — a 12-hour cookie against a
+  // tab somebody leaves up all week. Until now every request simply failed and
+  // printed the server's words into whichever panel had asked, with the user's
+  // name still in the corner (owner 2026-09-02).
+  useEffect(() => {
+    const onExpired = () => endSession(true);
+    window.addEventListener(SESSION_EXPIRED, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED, onExpired);
+  }, []);
+
   useEffect(() => {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
   }, []);
@@ -600,7 +618,11 @@ export default function App() {
 
   async function logoutUser() {
     await api("/auth/logout", { method: "POST" });
-    setMe({ authenticated: false });
+    endSession();
+  }
+
+  function endSession(expired = false) {
+    setMe({ authenticated: false, expired });
     setSites([]);
     setOpenSite(null);
     setDocView(null);
@@ -849,7 +871,8 @@ export default function App() {
       )}
 
       {!me.authenticated ? (
-        <Login onLogin={setMe} />
+        <Login expired={me.expired}
+               onLogin={(u) => { resetSessionNotice(); setMe(u); }} />
       ) : me.must_change_password ? (
         <ChangePassword forced onDone={() =>
           api("/auth/me").then(setMe)} />

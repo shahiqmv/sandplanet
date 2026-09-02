@@ -149,6 +149,10 @@ REST_FRAMEWORK = {
     "DEFAULT_PERMISSION_CLASSES": [
         "rest_framework.permissions.IsAuthenticated",
     ],
+    # Session auth cannot use 401, so "not signed in" and "not allowed" are
+    # both 403. The handler tags every error with a code so the client can
+    # tell them apart without reading English.
+    "EXCEPTION_HANDLER": "core.exceptions.exception_handler",
 }
 
 # Shared secret in the biometric terminals' push URL. Set in the environment;
