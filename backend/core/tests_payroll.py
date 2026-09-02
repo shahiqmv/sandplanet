@@ -770,6 +770,55 @@ class PayrollRefreshTests(TestCase):
         self.assertEqual(summary["no_longer_eligible"], ["EMP-7001"])
         self.assertTrue(run.lines.filter(employee=self.emp).exists())
 
+    def test_a_worker_moved_to_usd_comes_off_the_mvr_run(self):
+        """He is not a leaver — he has moved runs. USD staff are paid on the
+        separate combined USD run, so his line here is a phantom that survived
+        every refresh because he HAD worked the month (owner 2026-09-02,
+        EMP-0600 on SJR July)."""
+        from core import payroll
+        run = self._run()
+        self.assertTrue(run.lines.filter(employee=self.emp).exists())
+        self.emp.currency = "USD"
+        self.emp.save(update_fields=["currency"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err, err)
+        self.assertFalse(run.lines.filter(employee=self.emp).exists())
+        self.assertIn("EMP-7001", summary["removed"])
+
+    def test_a_line_with_hr_money_on_it_is_never_dropped(self):
+        """HR's own entry is theirs to withdraw, not ours."""
+        from core import payroll
+        run = self._run()
+        line = run.lines.get(employee=self.emp)
+        line.allowance = Decimal("500")
+        line.save(update_fields=["allowance"])
+        self.emp.currency = "USD"
+        self.emp.save(update_fields=["currency"])
+        summary, _ = payroll.refresh_run(run, self.hr)
+        self.assertTrue(run.lines.filter(employee=self.emp).exists())
+        self.assertEqual(summary["no_longer_eligible"], ["EMP-7001"])
+
+    def test_a_split_pay_worker_stays_on_both_runs(self):
+        """Split pay is meant to appear on the MVR run and the USD one."""
+        from core import payroll
+        run = self._run()
+        self.emp.usd_basic_pay = Decimal("900")
+        self.emp.employment_type = "PERMANENT"
+        self.emp.save(update_fields=["usd_basic_pay", "employment_type"])
+        summary, _ = payroll.refresh_run(run, self.hr)
+        self.assertTrue(run.lines.filter(employee=self.emp).exists())
+
+    def test_a_leaver_who_worked_the_month_still_keeps_his_line(self):
+        """The rule this sits beside, unchanged: deactivating someone must not
+        delete the days he actually worked."""
+        from core import payroll
+        run = self._run()
+        self.emp.is_active = False
+        self.emp.save(update_fields=["is_active"])
+        summary, _ = payroll.refresh_run(run, self.hr)
+        self.assertTrue(run.lines.filter(employee=self.emp).exists())
+        self.assertEqual(summary["no_longer_eligible"], ["EMP-7001"])
+
     def test_locked_run_refuses_refresh(self):
         from core import payroll
         run = self._run()

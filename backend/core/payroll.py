@@ -748,11 +748,23 @@ def refresh_run(run, actor):
                 empty_line = not any([line.allowance, line.penalty,
                                       line.amount_to_site,
                                       line.amount_to_office])
-                # Only when there is genuinely no payable day in the month.
-                # "Not eligible" alone is too broad: a leaver whose allocation
-                # was never closed is ineligible yet worked the month, and
-                # deleting his line would be the very fault this run exposed.
-                if w_start > w_end and empty_line:
+                # Someone paid in another currency belongs on the OTHER
+                # run, not on this one — a site run takes one currency only.
+                # Correcting a man from MVR to USD left him sitting on the
+                # site's rufiyaa run through every refresh, because he had
+                # worked the month and so passed the payable-day test below
+                # (owner 2026-09-02, EMP-0600 on SJR July). He is not a
+                # leaver; he has simply moved runs, and his days will be paid
+                # on the USD one. Split-pay workers are excepted: they are
+                # meant to appear on both.
+                wrong_run = (site is not None and not is_split_pay(emp)
+                             and (emp.currency or "MVR") != currency)
+                # Otherwise only when there is genuinely no payable day in
+                # the month. "Not eligible" alone is too broad: a leaver whose
+                # allocation was never closed is ineligible yet worked the
+                # month, and deleting his line would be the very fault this
+                # run exposed.
+                if empty_line and (wrong_run or w_start > w_end):
                     line.delete()
                     removed.append(emp.emp_no)
                 continue
