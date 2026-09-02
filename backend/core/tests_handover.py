@@ -31,6 +31,14 @@ class DossierTests(TestCase):
     def _open(self):
         return self.client.post(self.url)
 
+    def _ready_item(self, ref="LAB-1", title="Cube test report — pour 14"):
+        """An item with evidence attached — ready to go on a transmittal."""
+        upload = SimpleUploadedFile("r.pdf", b"%PDF-1.4 x",
+                                    content_type="application/pdf")
+        return self.client.post(f"{self.url}/upload", {
+            "title": title, "section": "TEST", "discipline": "CIVIL",
+            "reference": ref, "file": upload}, format="multipart").data
+
     def test_opening_a_dossier_seeds_the_standard_pack(self):
         r = self._open()
         self.assertEqual(r.status_code, 201, r.data)
@@ -67,7 +75,7 @@ class DossierTests(TestCase):
         self.assertEqual(
             len(self.client.get(f"{self.url}/candidates").data), 0)
 
-    def test_pulling_a_record_in_marks_it_provided(self):
+    def test_pulling_a_record_in_readies_it_but_does_not_submit_it(self):
         self._open()
         doc = Document.objects.create(
             doc_type="MAR", ref="MAR-HO1-001", site=self.site,
@@ -76,7 +84,10 @@ class DossierTests(TestCase):
         r = self.client.post(f"{self.url}/items",
                              {"document_id": doc.id}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(r.data["status"], "PROVIDED")
+        # Holding a document is not submitting it — it is ready to go on a
+        # transmittal, and nothing more (owner 2026-09-01).
+        self.assertEqual(r.data["status"], "REQUIRED")
+        self.assertTrue(r.data["has_evidence"])
         self.assertEqual(r.data["section"], "SUBMITTAL")
         self.assertEqual(r.data["document_ref"], "MAR-HO1-001")
 
@@ -115,18 +126,22 @@ class DossierTests(TestCase):
             "reference": "LAB-2291", "file": upload},
             format="multipart")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(r.data["status"], "PROVIDED")
+        self.assertEqual(r.data["status"], "REQUIRED")
+        self.assertTrue(r.data["has_evidence"])
         self.assertIsNotNone(r.data["file_url"])
 
-    def test_completeness_climbs_as_the_pack_fills(self):
+    def test_a_status_the_client_owns_cannot_be_typed_in(self):
+        """Submitted, accepted and returned are what HAPPENED to a document.
+        The pack used to let staff pick "Accepted by the client" from a
+        dropdown, recording our opinion of the client's opinion (owner
+        2026-09-01)."""
         self._open()
-        first = self.client.get(self.url).data
-        self.assertEqual(first["completeness"]["pct"], 0)
-        item_id = first["items"][0]["id"]
-        self.client.patch(f"/api/v1/handover/items/{item_id}",
-                          {"status": "PROVIDED"}, format="json")
-        after = self.client.get(self.url).data
-        self.assertGreater(after["completeness"]["pct"], 0)
+        item_id = self.client.get(self.url).data["items"][0]["id"]
+        for status in ("SUBMITTED", "ACCEPTED", "RETURNED"):
+            r = self.client.patch(f"/api/v1/handover/items/{item_id}",
+                                  {"status": status}, format="json")
+            self.assertEqual(r.status_code, 400, status)
+            self.assertIn("through a transmittal", r.data["detail"])
 
     def test_not_applicable_items_leave_the_denominator(self):
         """A pond wall does not owe MEP commissioning records."""
@@ -138,12 +153,18 @@ class DossierTests(TestCase):
         after = self.client.get(self.url).data
         self.assertEqual(after["completeness"]["required"], before - 1)
 
-    def test_a_site_engineer_cannot_record_client_acceptance(self):
+    def test_a_site_engineer_cannot_issue_to_the_client(self):
+        """Issuing to the client, and recording what they said, is not data
+        entry."""
         self._open()
-        item_id = self.client.get(self.url).data["items"][0]["id"]
+        item = self._ready_item()
+        t = self.client.post(f"{self.url}/transmittals",
+                             {"addressed_to": "The Engineer",
+                              "item_ids": [item["id"]]},
+                             format="json").data
         self.client.force_authenticate(self.se)
-        r = self.client.patch(f"/api/v1/handover/items/{item_id}",
-                              {"status": "ACCEPTED"}, format="json")
+        r = self.client.post(f"/api/v1/handover/transmittals/{t['id']}/issue",
+                             {}, format="json")
         self.assertEqual(r.status_code, 403)
 
     def test_taking_over_starts_the_defects_liability_clock(self):
@@ -230,3 +251,235 @@ class SnagTests(TestCase):
         self.assertEqual(summary["total"], 2)
         self.assertEqual(summary["open"], 2)
         self.assertEqual(summary["overdue"], 1)
+
+
+class TransmittalTests(DossierTests):
+    """The submission itself — the step the pack was missing. A document is
+    not provided because somebody ticked it; it is provided when it goes to
+    the Engineer under a reference, on a date, with a review period running
+    (owner 2026-09-01)."""
+
+    def setUp(self):
+        super().setUp()
+        self._open()
+
+    def _draft(self, **extra):
+        item = self._ready_item()
+        body = {"addressed_to": "R. Fernando", "organisation": "Engineer Co",
+                "subject": "Handover documents — batch 1",
+                "item_ids": [item["id"]]}
+        body.update(extra)
+        r = self.client.post(f"{self.url}/transmittals", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data, item
+
+    def _issue(self, tid, **body):
+        return self.client.post(
+            f"/api/v1/handover/transmittals/{tid}/issue", body, format="json")
+
+    def _respond(self, line_id, result, **extra):
+        body = {"result": result, "reviewed_by": "R. Fernando",
+                "position": "Resident Engineer", "reply_ref": "ENG-LTR-88"}
+        body.update(extra)
+        return self.client.post(
+            f"/api/v1/handover/transmittal-lines/{line_id}/response",
+            body, format="json")
+
+    # ---- assembling ----------------------------------------------------
+    def test_a_transmittal_is_numbered_per_project(self):
+        first, _ = self._draft()
+        self.assertEqual(first["ref"], "HO-TR-01")
+        self.assertEqual(first["status"], "DRAFT")
+        second, _ = self._draft()
+        self.assertEqual(second["ref"], "HO-TR-02")
+
+    def test_only_evidenced_documents_can_be_sent(self):
+        """You cannot transmit a line that has no document behind it."""
+        empty = self.client.get(self.url).data["items"][0]
+        self.assertFalse(empty["has_evidence"])
+        cands = self.client.get(
+            f"{self.url}/transmittals/candidates").data
+        self.assertNotIn(empty["id"], [c["id"] for c in cands])
+        r = self.client.post(f"{self.url}/transmittals",
+                             {"addressed_to": "x",
+                              "item_ids": [empty["id"]]}, format="json")
+        self.assertEqual(r.status_code, 201)
+        self.assertEqual(r.data["lines"], [])      # silently not included
+
+    def test_an_empty_transmittal_cannot_be_issued(self):
+        r = self.client.post(f"{self.url}/transmittals",
+                             {"addressed_to": "x"}, format="json")
+        out = self._issue(r.data["id"])
+        self.assertEqual(out.status_code, 400)
+        self.assertIn("at least one document", out.data["detail"])
+
+    def test_a_transmittal_must_be_addressed_to_somebody(self):
+        item = self._ready_item()
+        t = self.client.post(f"{self.url}/transmittals",
+                             {"item_ids": [item["id"]]}, format="json").data
+        r = self._issue(t["id"])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("addressed to", r.data["detail"])
+
+    # ---- issuing -------------------------------------------------------
+    def test_issuing_submits_the_documents_and_starts_the_clock(self):
+        t, item = self._draft()
+        r = self._issue(t["id"], issued_on="2026-09-01", response_days=14)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "ISSUED")
+        self.assertEqual(r.data["response_due_on"], "2026-09-15")
+        after = self.client.get(self.url).data
+        row = next(i for i in after["items"] if i["id"] == item["id"])
+        self.assertEqual(row["status"], "SUBMITTED")
+        self.assertEqual(row["provided_on"], "2026-09-01")
+
+    def test_an_issued_transmittal_is_fixed(self):
+        t, _ = self._draft()
+        self._issue(t["id"])
+        r = self.client.patch(f"/api/v1/handover/transmittals/{t['id']}",
+                              {"subject": "changed"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("contents are fixed", r.data["detail"])
+        d = self.client.delete(f"/api/v1/handover/transmittals/{t['id']}")
+        self.assertEqual(d.status_code, 400)
+
+    def test_a_document_out_with_the_client_cannot_be_sent_twice(self):
+        t, item = self._draft()
+        self._issue(t["id"])
+        cands = self.client.get(f"{self.url}/transmittals/candidates").data
+        self.assertNotIn(item["id"], [c["id"] for c in cands])
+
+    def test_a_document_out_with_the_client_cannot_be_stood_down(self):
+        t, item = self._draft()
+        self._issue(t["id"])
+        r = self.client.patch(f"/api/v1/handover/items/{item['id']}",
+                              {"status": "NOT_APPLICABLE"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("out with the client", r.data["detail"])
+
+    # ---- the response --------------------------------------------------
+    def test_recording_approval_accepts_the_document(self):
+        t, item = self._draft()
+        issued = self._issue(t["id"]).data
+        line = issued["lines"][0]
+        r = self._respond(line["id"], "APPROVED", result_on="2026-09-10")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["item_status"], "ACCEPTED")
+        # who decided, and who wrote it down — the client has no login here
+        self.assertEqual(r.data["reviewed_by"], "R. Fernando")
+        self.assertEqual(r.data["recorded_by_name"], self.pm.full_name)
+        row = next(i for i in self.client.get(self.url).data["items"]
+                   if i["id"] == item["id"])
+        self.assertEqual(row["accepted_on"], "2026-09-10")
+
+    def test_a_rejected_document_comes_back_as_the_next_revision(self):
+        t, item = self._draft()
+        issued = self._issue(t["id"]).data
+        self.assertEqual(issued["lines"][0]["revision"], 0)
+        r = self._respond(issued["lines"][0]["id"], "REJECTED",
+                          comments="As-built does not match the survey.")
+        self.assertEqual(r.data["item_status"], "RETURNED")
+        row = next(i for i in self.client.get(self.url).data["items"]
+                   if i["id"] == item["id"])
+        self.assertEqual(row["revision"], 1)        # resubmit as Rev 1
+        # ...and it is owed again, so it comes back round as a candidate
+        cands = self.client.get(f"{self.url}/transmittals/candidates").data
+        self.assertIn(item["id"], [c["id"] for c in cands])
+
+    def test_a_returned_document_can_be_stood_down(self):
+        """It is back in our hands, so the PM may decide it is not owed after
+        all — unlike one still out with the client."""
+        t, item = self._draft()
+        issued = self._issue(t["id"]).data
+        self._respond(issued["lines"][0]["id"], "REJECTED")
+        r = self.client.patch(f"/api/v1/handover/items/{item['id']}",
+                              {"status": "NOT_APPLICABLE"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "NOT_APPLICABLE")
+
+    def test_a_resubmission_carries_the_new_revision(self):
+        t, item = self._draft()
+        issued = self._issue(t["id"]).data
+        self._respond(issued["lines"][0]["id"], "REJECTED")
+        again = self.client.post(f"{self.url}/transmittals",
+                                 {"addressed_to": "R. Fernando",
+                                  "item_ids": [item["id"]]},
+                                 format="json").data
+        out = self._issue(again["id"]).data
+        self.assertEqual(out["lines"][0]["revision"], 1)
+
+    def test_a_transmittal_closes_when_every_document_is_answered(self):
+        a, b = self._ready_item("L1", "Doc A"), self._ready_item("L2", "Doc B")
+        t = self.client.post(f"{self.url}/transmittals",
+                             {"addressed_to": "R. Fernando",
+                              "item_ids": [a["id"], b["id"]]},
+                             format="json").data
+        issued = self._issue(t["id"]).data
+        self.assertEqual(len(issued["lines"]), 2)
+        self._respond(issued["lines"][0]["id"], "APPROVED")
+        mid = self.client.get(
+            f"/api/v1/handover/transmittals/{t['id']}").data
+        self.assertEqual(mid["status"], "ISSUED")   # still one outstanding
+        self._respond(issued["lines"][1]["id"], "APPROVED_WITH_COMMENTS")
+        end = self.client.get(
+            f"/api/v1/handover/transmittals/{t['id']}").data
+        self.assertEqual(end["status"], "CLOSED")
+
+    def test_a_response_cannot_be_recorded_before_issue(self):
+        t, _ = self._draft()
+        full = self.client.get(
+            f"/api/v1/handover/transmittals/{t['id']}").data
+        r = self._respond(full["lines"][0]["id"], "APPROVED")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not been issued", r.data["detail"])
+
+    # ---- what the numbers mean ----------------------------------------
+    def test_accepted_is_reported_apart_from_merely_submitted(self):
+        """"Provided" only means it left the building. At taking-over the
+        number that matters is what the client has signed off."""
+        t, _ = self._draft()
+        issued = self._issue(t["id"]).data
+        c = self.client.get(self.url).data["completeness"]
+        self.assertEqual(c["provided"], 1)
+        self.assertEqual(c["accepted"], 0)
+        self.assertGreater(c["pct"], 0)
+        self.assertEqual(c["accepted_pct"], 0)
+        self._respond(issued["lines"][0]["id"], "APPROVED")
+        c = self.client.get(self.url).data["completeness"]
+        self.assertEqual(c["accepted"], 1)
+        self.assertGreater(c["accepted_pct"], 0)
+
+    def test_a_returned_document_stops_counting_as_done(self):
+        t, _ = self._draft()
+        issued = self._issue(t["id"]).data
+        self.assertEqual(
+            self.client.get(self.url).data["completeness"]["provided"], 1)
+        self._respond(issued["lines"][0]["id"], "REJECTED")
+        c = self.client.get(self.url).data["completeness"]
+        self.assertEqual(c["provided"], 0)      # back with us
+        self.assertEqual(c["returned"], 1)
+
+    def test_an_unanswered_transmittal_goes_overdue(self):
+        t, _ = self._draft()
+        self._issue(t["id"], issued_on=str(date.today() - timedelta(days=30)),
+                    response_days=14)
+        row = self.client.get(self.url).data["transmittals"][0]
+        self.assertTrue(row["overdue"])
+        self.assertEqual(row["answered"], 0)
+
+    def test_an_answered_transmittal_is_not_overdue(self):
+        t, _ = self._draft()
+        issued = self._issue(
+            t["id"], issued_on=str(date.today() - timedelta(days=30)),
+            response_days=14).data
+        self._respond(issued["lines"][0]["id"], "APPROVED")
+        row = self.client.get(self.url).data["transmittals"][0]
+        self.assertFalse(row["overdue"])
+
+    def test_the_transmittal_prints_for_the_engineer_to_sign(self):
+        t, _ = self._draft()
+        self._issue(t["id"])
+        r = self.client.get(
+            f"/api/v1/handover/transmittals/{t['id']}/transmittal.pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")

@@ -1,0 +1,98 @@
+<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+<style>
+  .brief { margin-top: 3mm; padding: 3mm 4mm; background: #F3F7FA;
+           border-left: 2.5px solid #29ABE2; font-size: 9.2pt;
+           line-height: 1.45; }
+  table.tr { width: 100%; border-collapse: collapse; margin-top: 3mm; }
+  table.tr th, table.tr td { border: 0.5px solid #C4D0DA; padding: 2.5px 6px;
+                             font-size: 8.4pt; vertical-align: top; }
+  table.tr thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+                      text-align: left; }
+  table.tr td.c { text-align: center; white-space: nowrap; }
+  table.tr tr.sec td { background: #F3F7FA; font-weight: 700; color: #10344F;
+                       text-transform: uppercase; letter-spacing: .03em;
+                       font-size: 8pt; }
+  table.tr tbody tr { page-break-inside: avoid; }
+  .due { margin-top: 4mm; font-size: 9pt; font-weight: 700; color: #10344F; }
+  .note { margin-top: 4mm; font-size: 8.4pt; color: #5a6b78;
+          line-height: 1.5; }
+  .sign { margin-top: 10mm; width: 100%; border-collapse: collapse; }
+  .sign td { width: 50%; font-size: 8.6pt; color: #10344F;
+             padding: 0 6mm 0 0; vertical-align: top; }
+  .sign .line { margin-top: 14mm; border-top: 0.6px solid #10344F;
+                padding-top: 1.5mm; }
+  .sign .hint { color: #5a6b78; font-size: 7.8pt; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="Handover Document Transmittal" %}
+{% include "pdf/_letterhead.html" with title="DOCUMENT TRANSMITTAL" subline=subline %}
+
+<table class="kv">
+  <tr><td class="k">To</td><td>{{ t.addressed_to|default:"—" }}</td>
+      <td class="k">Transmittal No</td><td>{{ t.ref }}</td></tr>
+  <tr><td class="k">Organisation</td><td>{{ t.organisation|default:"—" }}</td>
+      <td class="k">Date of issue</td>
+      <td>{% if t.issued_on %}{{ t.issued_on|date:"d M Y" }}{% else %}—{% endif %}</td></tr>
+  <tr><td class="k">Project</td><td>{{ project.title }}</td>
+      <td class="k">Project code</td><td>{{ project.code }}</td></tr>
+  <tr><td class="k">Contractor</td><td>{{ co.legal_name }}</td>
+      <td class="k">Documents enclosed</td><td>{{ lines|length }}</td></tr>
+</table>
+
+{% if t.subject %}<div class="brief">{{ t.subject|linebreaksbr }}</div>{% endif %}
+
+<h2>Documents transmitted</h2>
+<table class="tr">
+  <thead><tr>
+    <th style="width:8mm">#</th>
+    <th>Document</th>
+    <th style="width:30mm">Reference</th>
+    <th style="width:14mm">Rev</th>
+    <th style="width:26mm">Type</th>
+  </tr></thead>
+  <tbody>
+    {% for s in sections %}
+    <tr class="sec"><td colspan="5">{{ s.label }}</td></tr>
+    {% for ln in s.lines %}
+    <tr>
+      <td class="c">{{ forloop.parentloop.counter0|add:forloop.counter }}</td>
+      <td>{{ ln.item.title }}</td>
+      <td>{{ ln.item.reference|default:"—" }}</td>
+      <td class="c">{{ ln.revision }}</td>
+      <td>{{ ln.item.get_discipline_display }}</td>
+    </tr>
+    {% endfor %}
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if t.response_due_on %}
+<div class="due">Your review is requested by {{ t.response_due_on|date:"d M Y" }}
+  ({{ t.response_days }} days from issue).</div>
+{% endif %}
+
+{% if t.covering_note %}<div class="note">{{ t.covering_note|linebreaksbr }}</div>{% endif %}
+
+<div class="note">Please return each document marked approved, approved with
+  comments, or rejected for resubmission. Documents returned with comments or
+  rejected will be resubmitted as the next revision under a further
+  transmittal.</div>
+
+<table class="sign">
+  <tr>
+    <td>
+      <div class="line">Issued by — {{ co.legal_name }}</div>
+      <div class="hint">{{ t.issued_by.full_name|default:"" }}</div>
+    </td>
+    <td>
+      <div class="line">Received by — {{ t.organisation|default:"Client / Engineer" }}</div>
+      <div class="hint">Name, signature and date of receipt</div>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

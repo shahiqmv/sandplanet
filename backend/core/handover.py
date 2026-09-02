@@ -11,12 +11,15 @@ passed test point — become CANDIDATES for it as they are produced. Handover is
 then assembled by construction rather than reconstructed in the last
 fortnight, which is when it is always reconstructed badly.
 """
+from datetime import timedelta
+
 from django.db import transaction
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 
 from .audit import audit
-from .models import Document, HandoverDossier, HandoverItem, SnagItem
+from .models import (Document, HandoverDossier, HandoverItem,
+                     HandoverTransmittal, HandoverTransmittalLine, SnagItem)
 
 RECORDER_ROLES = {"SITE_ADMIN", "SITE_ENGINEER", "PM", "DIRECTOR", "ADMIN",
                   "QS", "PA"}
@@ -133,9 +136,10 @@ def add_item(dossier, data, user, file=None):
         title=title, reference=(data.get("reference") or "")[:80],
         description=(data.get("description") or "").strip(),
         document=document, file=file,
-        status=("PROVIDED" if (document or file) else "REQUIRED"),
-        provided_on=(timezone.localdate() if (document or file) else None),
-        provided_by=(user if (document or file) else None),
+        # Holding a document is not submitting it. An item with evidence is
+        # READY to go on a transmittal; it stays REQUIRED until one is issued
+        # (owner 2026-09-01).
+        status="REQUIRED",
         notes=(data.get("notes") or "").strip())
     audit("project", dossier.project_id, "HANDOVER_ITEM_ADDED", actor=user,
           detail={"section": section, "title": title[:80],
@@ -145,39 +149,50 @@ def add_item(dossier, data, user, file=None):
 
 @transaction.atomic
 def update_item(item, data, user, file=None):
+    """Edit an item's own particulars. Its STATUS is not one of them beyond
+    the two ends of the scale: submitted/accepted/returned are what happened
+    to the document, recorded through a transmittal (owner 2026-09-01)."""
     changed = []
     for field in ("section", "discipline", "title", "reference",
-                  "description", "notes", "status"):
+                  "description", "notes"):
         if field in data:
             setattr(item, field, data[field])
             changed.append(field)
+    if "status" in data:
+        wanted = data["status"]
+        if wanted not in HandoverItem.SETTABLE_BY_HAND:
+            return item, ("An item becomes submitted, accepted or returned "
+                          "through a transmittal — issue one, then record "
+                          "what the client said.")
+        # Standing a document down to Required/Not applicable while it is out
+        # with the client would hide it from the transmittal it is on.
+        if item.transmittal_lines.filter(result="",
+                                         transmittal__status="ISSUED").exists():
+            return item, ("This document is out with the client on "
+                          f"{item.transmittal_lines.filter(result='').first().transmittal.ref}"
+                          " — record their response first.")
+        item.status = wanted
+        changed.append("status")
     if file is not None:
         item.file = file
         changed.append("file")
-    if item.status in ("PROVIDED", "ACCEPTED") and item.provided_on is None:
-        item.provided_on = timezone.localdate()
-        item.provided_by = user
-        changed += ["provided_on", "provided_by"]
-    if item.status == "ACCEPTED" and item.accepted_on is None:
-        item.accepted_on = _as_date(data.get("accepted_on")) \
-            or timezone.localdate()
-        changed.append("accepted_on")
     if changed:
         item.save()
         audit("project", item.dossier.project_id, "HANDOVER_ITEM_UPDATED",
               actor=user, detail={"item": item.title[:60],
                                   "fields": sorted(set(changed))})
-    return item
+    return item, None
 
 
 def completeness(dossier):
     """How ready the pack is, by section — the number a PM is asked for at
     every progress meeting in the last month of a job."""
     rows = {}
-    total = satisfied = 0
+    total = satisfied = returned = 0
     for item in dossier.items.all():
         bucket = rows.setdefault(item.section, {"required": 0, "provided": 0,
-                                                "accepted": 0})
+                                                "accepted": 0,
+                                                "returned": 0})
         if item.status == "NOT_APPLICABLE":
             continue
         bucket["required"] += 1
@@ -187,14 +202,204 @@ def completeness(dossier):
             satisfied += 1
         if item.status == "ACCEPTED":
             bucket["accepted"] += 1
+        if item.status == "RETURNED":
+            bucket["returned"] = bucket.get("returned", 0) + 1
+            returned += 1
     for bucket in rows.values():
         bucket["pct"] = (round(100 * bucket["provided"] / bucket["required"])
                          if bucket["required"] else 0)
+    accepted = sum(b["accepted"] for b in rows.values())
     return {
         "sections": rows,
-        "required": total, "provided": satisfied,
+        "required": total, "provided": satisfied, "returned": returned,
+        "accepted": accepted,
         "pct": round(100 * satisfied / total) if total else 0,
+        # What the client has actually signed off, which is the number that
+        # matters at taking-over — "provided" only means it left the building.
+        "accepted_pct": round(100 * accepted / total) if total else 0,
     }
+
+
+# ---- transmittals: the act of submission ---------------------------------
+#
+# A document is not "provided" because somebody ticked it. It is provided when
+# it goes to the Engineer under a reference, on a date, with a review period
+# running — and it is accepted when they say so.
+
+TRANSMITTAL_EDITOR_ROLES = RECORDER_ROLES
+# Issuing to the client, and recording what they said back, is not data entry.
+TRANSMITTAL_ISSUER_ROLES = CLOSER_ROLES
+
+# What the client's verdict does to the document.
+RESULT_STATUS = {
+    "APPROVED": "ACCEPTED",
+    # Accepted, but a corrected copy is expected for the record — the same
+    # reading the MAR gives it, where Part C closes the comments.
+    "APPROVED_WITH_COMMENTS": "ACCEPTED",
+    "REJECTED": "RETURNED",
+}
+
+
+def next_transmittal_ref(dossier):
+    last = dossier.transmittals.order_by("-seq").first()
+    seq = (last.seq if last else 0) + 1
+    return seq, f"HO-TR-{seq:02d}"
+
+
+@transaction.atomic
+def create_transmittal(dossier, data, user):
+    seq, ref = next_transmittal_ref(dossier)
+    t = HandoverTransmittal.objects.create(
+        dossier=dossier, seq=seq, ref=ref,
+        subject=(data.get("subject") or "").strip(),
+        covering_note=(data.get("covering_note") or "").strip(),
+        addressed_to=(data.get("addressed_to") or "").strip(),
+        organisation=(data.get("organisation") or "").strip(),
+        response_days=int(data.get("response_days") or 14),
+        created_by=user)
+    problem = set_transmittal_items(t, data.get("item_ids") or [], user)
+    if problem:
+        raise ValueError(problem)
+    audit("project", dossier.project_id, "HANDOVER_TRANSMITTAL_CREATED",
+          actor=user, detail={"ref": t.ref})
+    return t
+
+
+def submittable(dossier):
+    """Documents that can go on a transmittal: owed, evidenced, and not
+    already out with the client. A returned one comes back round — that is
+    the resubmission."""
+    out = set(HandoverTransmittalLine.objects.filter(
+        transmittal__dossier=dossier, result="",
+        transmittal__status="ISSUED").values_list("item_id", flat=True))
+    return [i for i in dossier.items.exclude(status="NOT_APPLICABLE")
+            if i.id not in out and i.has_evidence]
+
+
+def set_transmittal_items(t, item_ids, user):
+    """Replace a draft transmittal's contents."""
+    if t.status != "DRAFT":
+        return "This transmittal has been issued — its contents are fixed."
+    allowed = {i.id: i for i in submittable(t.dossier)}
+    keep = []
+    for n, raw in enumerate(item_ids):
+        item = allowed.get(int(raw))
+        if item is None:
+            continue
+        line, _ = HandoverTransmittalLine.objects.get_or_create(
+            transmittal=t, item=item,
+            defaults={"revision": item.revision, "sort_order": n})
+        keep.append(line.id)
+    t.lines.exclude(id__in=keep).delete()
+    return None
+
+
+@transaction.atomic
+def issue_transmittal(t, data, user):
+    if t.status != "DRAFT":
+        return "This transmittal has already been issued."
+    if not t.lines.exists():
+        return "Add at least one document before issuing."
+    if not (t.addressed_to or t.organisation):
+        return "Say who the transmittal is addressed to."
+    t.issued_on = _as_date(data.get("issued_on")) or timezone.localdate()
+    t.response_days = int(data.get("response_days") or t.response_days or 14)
+    t.response_due_on = t.issued_on + timedelta(days=t.response_days)
+    t.issued_by = user
+    t.status = "ISSUED"
+    t.save()
+    for line in t.lines.select_related("item"):
+        item = line.item
+        # The revision is stamped at issue, not at drafting — the document may
+        # have been re-uploaded while the transmittal sat in draft.
+        line.revision = item.revision
+        line.save(update_fields=["revision"])
+        item.status = "SUBMITTED"
+        item.provided_on = t.issued_on
+        item.provided_by = user
+        item.save(update_fields=["status", "provided_on", "provided_by"])
+    audit("project", t.dossier.project_id, "HANDOVER_TRANSMITTAL_ISSUED",
+          actor=user, detail={"ref": t.ref, "documents": t.lines.count(),
+                              "due": str(t.response_due_on)})
+    return None
+
+
+@transaction.atomic
+def record_response(line, data, user):
+    """What the Engineer said about one document.
+
+    The client has no login here, so this is our record of their decision —
+    which is why it carries both who decided and who wrote it down.
+    """
+    result = data.get("result")
+    if result not in RESULT_STATUS:
+        return "Choose approved, approved with comments, or rejected."
+    if line.transmittal.status == "DRAFT":
+        return "This transmittal has not been issued yet."
+    line.result = result
+    line.result_on = _as_date(data.get("result_on")) or timezone.localdate()
+    line.reviewed_by = (data.get("reviewed_by") or "").strip()
+    line.position = (data.get("position") or "").strip()
+    line.reply_ref = (data.get("reply_ref") or "").strip()
+    line.comments = (data.get("comments") or "").strip()
+    line.recorded_by = user
+    line.recorded_at = timezone.now()
+    line.save()
+
+    item = line.item
+    item.status = RESULT_STATUS[result]
+    if item.status == "ACCEPTED":
+        item.accepted_on = line.result_on
+    else:
+        # Returned: it comes back as the next revision, and is owed again.
+        item.accepted_on = None
+        item.revision = line.revision + 1
+    item.save(update_fields=["status", "accepted_on", "revision"])
+
+    t = line.transmittal
+    if t.status == "ISSUED" and not t.lines.filter(result="").exists():
+        t.status = "CLOSED"
+        t.save(update_fields=["status"])
+    audit("project", t.dossier.project_id, "HANDOVER_RESPONSE_RECORDED",
+          actor=user, detail={"ref": t.ref, "item": item.title[:60],
+                              "result": result})
+    return None
+
+
+def transmittal_pdf_context(t):
+    """The transmittal as the Engineer receives it — grouped by section, with
+    a receipt block, because a transmittal's whole purpose is to be a thing
+    somebody signed for."""
+    from .pdf import company_info, logo_src
+    sections, current = [], None
+    for line in t.lines.select_related("item").order_by(
+            "item__section", "sort_order", "id"):
+        label = line.item.get_section_display()
+        if current is None or current["label"] != label:
+            current = {"label": label, "lines": []}
+            sections.append(current)
+        current["lines"].append(line)
+    return {
+        "t": t, "lines": list(t.lines.all()), "sections": sections,
+        "project": t.dossier.project,
+        "subline": f"{t.ref}  ·  {t.dossier.project.code}",
+        "logo_src": logo_src(), "co": company_info(),
+    }
+
+
+def transmittal_summary(dossier):
+    """What is out with the client, and what is late."""
+    rows = []
+    for t in dossier.transmittals.prefetch_related("lines"):
+        lines = list(t.lines.all())
+        rows.append({
+            "id": t.id, "ref": t.ref, "status": t.status,
+            "documents": len(lines),
+            "answered": sum(1 for x in lines if x.result),
+            "issued_on": t.issued_on, "due": t.response_due_on,
+            "overdue": t.is_overdue,
+        })
+    return rows
 
 
 # ---- snags --------------------------------------------------------------

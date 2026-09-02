@@ -24,10 +24,28 @@ const SECTIONS = [
 const DISCIPLINES = [["GENERAL", "General"], ["CIVIL", "Civil / structural"],
                      ["MEP", "MEP"], ["FINISHES", "Finishes"],
                      ["EXTERNAL", "External works"]];
-const STATUSES = [["REQUIRED", "Required"], ["PROVIDED", "Provided"],
-                  ["ACCEPTED", "Accepted by client"],
-                  ["REJECTED", "Returned"],
-                  ["NOT_APPLICABLE", "Not applicable"]];
+// What staff may set. Submitted / accepted / returned are what HAPPENED to a
+// document, recorded through a transmittal — not opinions to be typed in
+// (owner 2026-09-01).
+const HAND_STATUSES = [["REQUIRED", "Required"],
+                       ["NOT_APPLICABLE", "Not applicable"]];
+const STATUS_CHIP = {
+  REQUIRED: ["Required", "#5a6b78", "#eef2f5"],
+  SUBMITTED: ["With client", "#8a6d00", "#fff7e0"],
+  ACCEPTED: ["Accepted", "#1a7f37", "#e8f5ec"],
+  RETURNED: ["Returned", "#a3271b", "#fbeae8"],
+  NOT_APPLICABLE: ["N/A", "#8a94a0", "#f4f6f8"],
+};
+// A transmittal's own states. CLOSED means every document was ANSWERED —
+// not that every answer was yes.
+const TRANSMITTAL_CHIP = {
+  DRAFT: ["Draft", "#5a6b78", "#eef2f5"],
+  ISSUED: ["With client", "#8a6d00", "#fff7e0"],
+  CLOSED: ["Answered", "#1a7f37", "#e8f5ec"],
+};
+const RESULTS = [["APPROVED", "Approved"],
+                 ["APPROVED_WITH_COMMENTS", "Approved with comments"],
+                 ["REJECTED", "Rejected — resubmit"]];
 const SNAG_STATUSES = [["OPEN", "Open"], ["IN_PROGRESS", "In progress"],
                        ["FIXED", "Fixed — awaiting check"],
                        ["CLOSED", "Closed"],
@@ -39,6 +57,16 @@ const box = { background: "var(--sand,#f7f4ee)", padding: 14,
 function Err({ children }) {
   if (!children) return null;
   return <p style={{ color: "#a3271b", fontSize: 13 }}>{children}</p>;
+}
+
+function Chip({ status, map }) {
+  const [label, fg, bg] = (map || STATUS_CHIP)[status]
+    || [status, "#5a6b78", "#eee"];
+  return (
+    <span style={{ background: bg, color: fg, fontSize: 11.5,
+                   fontWeight: 700, padding: "2px 8px", borderRadius: 999,
+                   whiteSpace: "nowrap" }}>{label}</span>
+  );
 }
 
 function Bar({ pct }) {
@@ -105,7 +133,13 @@ export default function HandoverTab({ project, me }) {
                         fontFamily: "var(--font-mono, monospace)",
                         color: "var(--navy)" }}>{c.pct}%</div>
           <div style={{ fontSize: 12, color: "#5a6b78" }}>
-            {c.provided} of {c.required} provided</div>
+            {c.provided} of {c.required} submitted
+            {" · "}<strong>{c.accepted ?? 0} accepted</strong>
+            {c.returned > 0 && (
+              <strong style={{ color: "#a3271b" }}>
+                {" · "}{c.returned} returned</strong>
+            )}
+          </div>
         </div>
         <div style={{ flex: "1 1 220px", maxWidth: 320 }}>
           <Bar pct={c.pct} /></div>
@@ -131,6 +165,7 @@ export default function HandoverTab({ project, me }) {
                     flexWrap: "wrap", alignItems: "flex-end",
                     borderBottom: "2px solid var(--line)" }}>
         {[["pack", `Pack (${c.required})`],
+          ["transmittals", `Submissions (${(dossier.transmittals || []).length})`],
           ["snags", `Snags (${dossier.snags.open})`],
           ["milestones", "Taking over"]].map(([key, label]) => (
           <button key={key} onClick={() => setTab(key)}
@@ -152,6 +187,10 @@ export default function HandoverTab({ project, me }) {
       {tab === "pack" && (
         <PackTab project={project} me={me} dossier={dossier}
                  onChanged={load} onError={setError} />
+      )}
+      {tab === "transmittals" && (
+        <TransmittalTab project={project} me={me} dossier={dossier}
+                        onChanged={load} onError={setError} />
       )}
       {tab === "snags" && (
         <SnagTab project={project} me={me} onChanged={load}
@@ -250,7 +289,7 @@ function PackTab({ project, me, dossier, onChanged, onError }) {
       {SECTIONS.filter(([key]) => bySection[key]).map(([key, label]) => {
         const items = bySection[key];
         const done = items.filter((i) => i.status !== "REQUIRED"
-          && i.status !== "REJECTED").length;
+          && i.status !== "RETURNED").length;
         return (
           <div key={key} style={{ marginBottom: 18 }}>
             <div style={{ display: "flex", alignItems: "baseline", gap: 10,
@@ -286,18 +325,28 @@ function PackTab({ project, me, dossier, onChanged, onError }) {
                         </>
                       )}
                     </td>
-                    <td style={{ ...td, width: 190 }}>
-                      <select value={i.status}
-                              onChange={(e) => setStatus(i, e.target.value)}
-                              style={{ ...inputStyle, padding: "3px 6px",
-                                       fontSize: 12.5 }}>
-                        {STATUSES.map(([v, l]) => (
-                          <option key={v} value={v}
-                                  disabled={v === "ACCEPTED"
-                                    && !CAN_CLOSE.includes(me.role)}>
-                            {l}</option>
-                        ))}
-                      </select>
+                    <td style={{ ...td, width: 200 }}>
+                      <div style={{ display: "flex", gap: 8,
+                                    alignItems: "center" }}>
+                        <Chip status={i.status} />
+                        {i.revision > 0 && (
+                          <span style={{ fontSize: 11.5, color: "#5a6b78" }}>
+                            Rev {i.revision}</span>
+                        )}
+                        {/* Ours to set while the document is with us. A
+                            returned one is back in our hands; a submitted or
+                            accepted one is not. */}
+                        {!["SUBMITTED", "ACCEPTED"].includes(i.status) && (
+                          <select value={i.status}
+                                  onChange={(e) => setStatus(i, e.target.value)}
+                                  style={{ ...inputStyle, padding: "2px 4px",
+                                           fontSize: 11.5, width: 108 }}>
+                            {HAND_STATUSES.map(([v, l]) => (
+                              <option key={v} value={v}>{l}</option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -307,6 +356,317 @@ function PackTab({ project, me, dossier, onChanged, onError }) {
         );
       })}
     </>
+  );
+}
+
+// The submission log. A document is provided when it goes to the Engineer
+// under a reference, on a date, with a review period running — not when
+// somebody ticks it (owner 2026-09-01).
+function TransmittalTab({ project, me, dossier, onChanged, onError }) {
+  const [rows, setRows] = useState([]);
+  const [open, setOpen] = useState(null);
+  const [drafting, setDrafting] = useState(false);
+  const canIssue = CAN_CLOSE.includes(me.role);
+
+  const load = useCallback(() => {
+    api(`/projects/${project.id}/handover/transmittals`)
+      .then(setRows).catch(() => setRows([]));
+  }, [project.id]);
+  useEffect(load, [load]);
+
+  function refresh() { load(); onChanged(); }
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 10, marginBottom: 12,
+                    alignItems: "center", flexWrap: "wrap" }}>
+        <button onClick={() => setDrafting(true)} style={BTN.primary}>
+          New transmittal</button>
+        <span style={{ fontSize: 12.5, color: "#5a6b78" }}>
+          Documents go to the client in numbered batches. The review clock
+          starts when one is issued.
+        </span>
+      </div>
+
+      {drafting && (
+        <DraftTransmittal project={project} onClose={() => setDrafting(false)}
+                          onSaved={(t) => { setDrafting(false); refresh();
+                                            setOpen(t.id); }}
+                          onError={onError} />
+      )}
+
+      {rows.length === 0 && !drafting && (
+        <p style={{ fontSize: 13, color: "#5a6b78" }}>
+          Nothing submitted yet. Attach documents to the pack, then send them
+          to the client on a transmittal.</p>
+      )}
+
+      {rows.map((r) => (
+        <div key={r.id} style={{ ...box, marginBottom: 10 }}>
+          <div style={{ display: "flex", gap: 12, alignItems: "center",
+                        flexWrap: "wrap" }}>
+            <strong style={{ fontFamily: "var(--font-mono, monospace)",
+                             color: "var(--navy)" }}>{r.ref}</strong>
+            <Chip status={r.status} map={TRANSMITTAL_CHIP} />
+            <span style={{ fontSize: 12.5, color: "#5a6b78" }}>
+              {r.answered} of {r.lines.length} answered
+              {r.issued_on && ` · issued ${r.issued_on}`}
+              {r.response_due_on && ` · due ${r.response_due_on}`}
+            </span>
+            {r.is_overdue && (
+              <strong style={{ color: "#a3271b", fontSize: 12.5 }}>
+                overdue</strong>
+            )}
+            <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+              {r.status !== "DRAFT" && (
+                <a href={`/api/v1/handover/transmittals/${r.id}/transmittal.pdf`}
+                   target="_blank" rel="noreferrer"
+                   style={{ ...ghostButton, fontSize: 12,
+                            padding: "3px 10px", textDecoration: "none",
+                            color: "var(--navy)" }}>⬇ Transmittal</a>
+              )}
+              <button onClick={() => setOpen(open === r.id ? null : r.id)}
+                      style={{ ...ghostButton, fontSize: 12,
+                               padding: "3px 10px" }}>
+                {open === r.id ? "close" : "open"}</button>
+            </span>
+          </div>
+          {open === r.id && (
+            <TransmittalDetail id={r.id} canIssue={canIssue}
+                               onChanged={refresh} onError={onError} />
+          )}
+        </div>
+      ))}
+    </>
+  );
+}
+
+function DraftTransmittal({ project, onClose, onSaved, onError }) {
+  const [cands, setCands] = useState([]);
+  const [picked, setPicked] = useState([]);
+  const [f, setF] = useState({ addressed_to: "", organisation: "",
+                               subject: "", covering_note: "",
+                               response_days: 14 });
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api(`/projects/${project.id}/handover/transmittals/candidates`)
+      .then(setCands).catch(() => setCands([]));
+  }, [project.id]);
+
+  function toggle(id) {
+    setPicked((p) => p.includes(id) ? p.filter((x) => x !== id) : [...p, id]);
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      const t = await api(`/projects/${project.id}/handover/transmittals`,
+                          { method: "POST",
+                            body: { ...f, item_ids: picked } });
+      onSaved(t);
+    } catch (e) { onError(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={box}>
+      <h3 style={{ margin: "0 0 8px", fontSize: 14 }}>New transmittal</h3>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+                    marginBottom: 10 }}>
+        <input placeholder="Addressed to (name)" value={f.addressed_to}
+               onChange={(e) => setF({ ...f, addressed_to: e.target.value })}
+               style={{ ...inputStyle, flex: "1 1 180px" }} />
+        <input placeholder="Organisation" value={f.organisation}
+               onChange={(e) => setF({ ...f, organisation: e.target.value })}
+               style={{ ...inputStyle, flex: "1 1 180px" }} />
+        <input type="number" min="1" value={f.response_days}
+               onChange={(e) => setF({ ...f, response_days: e.target.value })}
+               title="Review period in days"
+               style={{ ...inputStyle, width: 90 }} />
+      </div>
+      <input placeholder="Subject" value={f.subject}
+             onChange={(e) => setF({ ...f, subject: e.target.value })}
+             style={{ ...inputStyle, width: "100%", marginBottom: 10 }} />
+
+      <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "0 0 6px" }}>
+        Documents ready to send. Anything already out with the client is not
+        offered; a returned document comes back round as the next revision.
+      </p>
+      <div style={{ maxHeight: 260, overflowY: "auto", marginBottom: 10 }}>
+        {cands.length === 0 && (
+          <p style={{ fontSize: 13, margin: 0 }}>
+            Nothing ready — attach a file or pull in an approved record
+            first.</p>
+        )}
+        {cands.map((c) => (
+          <label key={c.id}
+                 style={{ display: "flex", gap: 8, alignItems: "center",
+                          fontSize: 13, padding: "3px 0" }}>
+            <input type="checkbox" checked={picked.includes(c.id)}
+                   onChange={() => toggle(c.id)} />
+            <span>{c.title}
+              {c.reference && (
+                <span style={{ color: "#5a6b78" }}> · {c.reference}</span>
+              )}
+              {c.revision > 0 && (
+                <strong style={{ color: "#8a6d00" }}> · Rev {c.revision}</strong>
+              )}
+            </span>
+          </label>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={save} disabled={busy || picked.length === 0}
+                style={BTN.primary}>
+          Create with {picked.length} document{picked.length === 1 ? "" : "s"}
+        </button>
+        <button onClick={onClose} style={ghostButton}>Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+function TransmittalDetail({ id, canIssue, onChanged, onError }) {
+  const [t, setT] = useState(null);
+  const [responding, setResponding] = useState(null);
+
+  const load = useCallback(() => {
+    api(`/handover/transmittals/${id}`).then(setT).catch(() => setT(null));
+  }, [id]);
+  useEffect(load, [load]);
+
+  async function issue() {
+    try {
+      await api(`/handover/transmittals/${id}/issue`,
+                { method: "POST", body: {} });
+      load(); onChanged();
+    } catch (e) { onError(e.message); }
+  }
+
+  if (!t) return null;
+  return (
+    <div style={{ marginTop: 10, borderTop: "1px solid var(--line)",
+                  paddingTop: 10 }}>
+      {t.status === "DRAFT" && canIssue && (
+        <button onClick={issue} style={{ ...BTN.primary, marginBottom: 10 }}>
+          Issue to the client</button>
+      )}
+      {t.status === "DRAFT" && !canIssue && (
+        <p style={{ fontSize: 12.5, color: "#5a6b78" }}>
+          A PM, QS or Director issues a transmittal to the client.</p>
+      )}
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <thead><tr>
+          <th style={th}>Document</th><th style={{ ...th, width: 60 }}>Rev</th>
+          <th style={{ ...th, width: 210 }}>Client response</th>
+          <th style={{ ...th, width: 90 }} />
+        </tr></thead>
+        <tbody>
+          {t.lines.map((ln) => (
+            <tr key={ln.id}>
+              <td style={td}>{ln.title}
+                {ln.reference && (
+                  <span style={{ color: "#5a6b78" }}> · {ln.reference}</span>
+                )}
+              </td>
+              <td style={td}>{ln.revision}</td>
+              <td style={{ ...td, fontSize: 12.5 }}>
+                {ln.result ? (
+                  <>
+                    <Chip status={ln.result === "REJECTED"
+                      ? "RETURNED" : "ACCEPTED"} />
+                    <div style={{ color: "#5a6b78", marginTop: 2 }}>
+                      {RESULTS.find(([v]) => v === ln.result)?.[1]}
+                      {ln.result_on && ` · ${ln.result_on}`}
+                      {ln.reviewed_by && ` · ${ln.reviewed_by}`}
+                    </div>
+                    {ln.comments && (
+                      <div style={{ color: "#5a6b78", marginTop: 2 }}>
+                        {ln.comments}</div>
+                    )}
+                  </>
+                ) : (
+                  <span style={{ color: "#5a6b78" }}>awaiting the client</span>
+                )}
+              </td>
+              <td style={td}>
+                {!ln.result && t.status !== "DRAFT" && canIssue && (
+                  <button onClick={() => setResponding(
+                            responding === ln.id ? null : ln.id)}
+                          style={{ ...ghostButton, fontSize: 12,
+                                   padding: "2px 8px" }}>
+                    record</button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {responding && (
+        <ResponseForm lineId={responding}
+                      onClose={() => setResponding(null)}
+                      onSaved={() => { setResponding(null); load();
+                                       onChanged(); }}
+                      onError={onError} />
+      )}
+    </div>
+  );
+}
+
+function ResponseForm({ lineId, onClose, onSaved, onError }) {
+  const [f, setF] = useState({ result: "APPROVED", result_on: "",
+                               reviewed_by: "", position: "",
+                               reply_ref: "", comments: "" });
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    setBusy(true);
+    try {
+      await api(`/handover/transmittal-lines/${lineId}/response`,
+                { method: "POST", body: f });
+      onSaved();
+    } catch (e) { onError(e.message); } finally { setBusy(false); }
+  }
+
+  return (
+    <div style={{ ...box, marginTop: 10 }}>
+      <p style={{ fontSize: 12.5, color: "#5a6b78", margin: "0 0 8px" }}>
+        What the Engineer said. Recorded on their behalf — your name is kept
+        against it alongside theirs.
+      </p>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+                    marginBottom: 8 }}>
+        <select value={f.result}
+                onChange={(e) => setF({ ...f, result: e.target.value })}
+                style={{ ...inputStyle, flex: "1 1 200px" }}>
+          {RESULTS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <input type="date" value={f.result_on}
+               onChange={(e) => setF({ ...f, result_on: e.target.value })}
+               style={{ ...inputStyle, width: 150 }} />
+        <input placeholder="Their reply ref" value={f.reply_ref}
+               onChange={(e) => setF({ ...f, reply_ref: e.target.value })}
+               style={{ ...inputStyle, flex: "1 1 140px" }} />
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap",
+                    marginBottom: 8 }}>
+        <input placeholder="Reviewed by (their name)" value={f.reviewed_by}
+               onChange={(e) => setF({ ...f, reviewed_by: e.target.value })}
+               style={{ ...inputStyle, flex: "1 1 180px" }} />
+        <input placeholder="Position" value={f.position}
+               onChange={(e) => setF({ ...f, position: e.target.value })}
+               style={{ ...inputStyle, flex: "1 1 160px" }} />
+      </div>
+      <textarea placeholder="Comments" value={f.comments}
+                onChange={(e) => setF({ ...f, comments: e.target.value })}
+                rows={2}
+                style={{ ...inputStyle, width: "100%", marginBottom: 8 }} />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={save} disabled={busy} style={BTN.primary}>
+          Record</button>
+        <button onClick={onClose} style={ghostButton}>Cancel</button>
+      </div>
+    </div>
   );
 }
 

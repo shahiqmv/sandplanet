@@ -6511,12 +6511,19 @@ class HandoverItem(models.Model):
         EXTERNAL = "EXTERNAL", "External works"
         GENERAL = "GENERAL", "General"
 
+    # Everything between REQUIRED and NOT_APPLICABLE is DERIVED: an item
+    # becomes SUBMITTED by going out on a transmittal and ACCEPTED/RETURNED by
+    # the client's recorded response. Staff pick the two ends only — the pack
+    # used to let someone choose "Accepted by the client" from a dropdown,
+    # which recorded our opinion of the client's opinion (owner 2026-09-01).
     class Status(models.TextChoices):
         REQUIRED = "REQUIRED", "Required — not yet provided"
-        PROVIDED = "PROVIDED", "Provided"
+        SUBMITTED = "SUBMITTED", "Submitted to the client"
         ACCEPTED = "ACCEPTED", "Accepted by the client"
-        REJECTED = "REJECTED", "Returned for correction"
+        RETURNED = "RETURNED", "Returned for correction"
         NOT_APPLICABLE = "NOT_APPLICABLE", "Not applicable"
+
+    SETTABLE_BY_HAND = ("REQUIRED", "NOT_APPLICABLE")
 
     dossier = models.ForeignKey(HandoverDossier, on_delete=models.CASCADE,
                                 related_name="items")
@@ -6536,6 +6543,9 @@ class HandoverItem(models.Model):
     file = models.FileField(upload_to=handover_file_path, null=True,
                             blank=True)
 
+    # The revision currently with the client. A returned document comes back
+    # as the next one, which is what a transmittal line records.
+    revision = models.IntegerField(default=0)
     provided_on = models.DateField(null=True, blank=True)
     provided_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                     null=True, blank=True, related_name="+")
@@ -6556,7 +6566,118 @@ class HandoverItem(models.Model):
 
     @property
     def is_satisfied(self):
-        return self.status in ("PROVIDED", "ACCEPTED", "NOT_APPLICABLE")
+        """Out of our hands: submitted, accepted, or not owed at all. A
+        returned document is NOT satisfied — it is back with us."""
+        return self.status in ("SUBMITTED", "ACCEPTED", "NOT_APPLICABLE")
+
+    @property
+    def has_evidence(self):
+        return bool(self.file) or self.document_id is not None
+
+
+# The pack was assembled but never SENT: an item's status was a dropdown, so
+# "Accepted by the client" recorded our opinion of the client's opinion. There
+# was no record that a document had gone anywhere, under what reference, on
+# what date, or what came back (owner 2026-09-01).
+#
+# A transmittal is the act of submission. Documents go to the Engineer in
+# numbered batches, the response clock starts, and each document comes back
+# with its own result. It is the same shape as the MAR/IR client_result the
+# app already speaks, so handover does not invent a second vocabulary.
+
+
+class HandoverTransmittal(models.Model):
+    """A numbered batch of handover documents issued to the client."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft — being assembled"
+        ISSUED = "ISSUED", "Issued to the client"
+        CLOSED = "CLOSED", "Closed — every document answered"
+
+    dossier = models.ForeignKey(HandoverDossier, on_delete=models.CASCADE,
+                                related_name="transmittals")
+    seq = models.IntegerField()
+    ref = models.CharField(max_length=30)          # HO-TR-01
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.DRAFT)
+    subject = models.TextField(blank=True)
+    covering_note = models.TextField(blank=True)
+
+    # Who it goes to. The Engineer/Consultant is a person at an organisation,
+    # not a user of this app.
+    addressed_to = models.CharField(max_length=120, blank=True)
+    organisation = models.CharField(max_length=160, blank=True)
+
+    issued_on = models.DateField(null=True, blank=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    # The contract's review period. Default rather than rule — it varies by
+    # contract, the same way the notice time bars do.
+    response_days = models.IntegerField(default=14)
+    response_due_on = models.DateField(null=True, blank=True)
+
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-seq"]
+        constraints = [
+            models.UniqueConstraint(fields=["dossier", "seq"],
+                                    name="uniq_transmittal_seq_per_dossier"),
+        ]
+
+    @property
+    def is_overdue(self):
+        from django.utils import timezone
+        return bool(self.status == "ISSUED" and self.response_due_on
+                    and self.response_due_on < timezone.localdate()
+                    and self.lines.filter(result="").exists())
+
+
+class HandoverTransmittalLine(models.Model):
+    """One document on a transmittal, and what the client said about it."""
+
+    class Result(models.TextChoices):
+        APPROVED = "APPROVED", "Approved"
+        APPROVED_WITH_COMMENTS = ("APPROVED_WITH_COMMENTS",
+                                  "Approved with comments")
+        REJECTED = "REJECTED", "Rejected — resubmit"
+
+    transmittal = models.ForeignKey(HandoverTransmittal,
+                                    on_delete=models.CASCADE,
+                                    related_name="lines")
+    item = models.ForeignKey(HandoverItem, on_delete=models.CASCADE,
+                             related_name="transmittal_lines")
+    # The revision that went out on THIS transmittal — a returned document
+    # comes back as the next one, and the pack has to show which was answered.
+    revision = models.IntegerField(default=0)
+    sort_order = models.IntegerField(default=0)
+
+    # The client's response. Blank until they answer.
+    result = models.CharField(max_length=22, choices=Result.choices,
+                              blank=True)
+    result_on = models.DateField(null=True, blank=True)
+    reviewed_by = models.CharField(max_length=120, blank=True)
+    position = models.CharField(max_length=120, blank=True)
+    reply_ref = models.CharField(max_length=80, blank=True)
+    comments = models.TextField(blank=True)
+    # Who on OUR side typed it in. The client has no login: the response is
+    # hearsay unless we say whose hearsay it is.
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    recorded_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["transmittal", "sort_order", "id"]
+        constraints = [
+            models.UniqueConstraint(fields=["transmittal", "item"],
+                                    name="uniq_item_per_transmittal"),
+        ]
+
+    @property
+    def answered(self):
+        return bool(self.result)
 
 
 class SnagItem(models.Model):
