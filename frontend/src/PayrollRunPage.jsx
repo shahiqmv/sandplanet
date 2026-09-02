@@ -530,7 +530,15 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     catch (e) { setError(e.message); }
   }
 
-  if (!run) return <section style={card}>Loading…</section>;
+  if (!run) return (
+    <section style={card}>
+      <p style={{ margin: 0, color: "var(--sp-navy)", fontWeight: 600 }}>
+        Loading the salary sheet…</p>
+      <p style={{ margin: "6px 0 0", fontSize: 12.5, color: "var(--muted)" }}>
+        A large site is a few seconds. The whole sheet arrives at once, so
+        the page will stay blank until it does — it has not failed.</p>
+    </section>
+  );
   const lines = run.lines || [];
   const sum = (k) => lines.reduce((a, l) => a + Number(l[k] || 0), 0);
   const monthName = new Date(2000, run.month - 1)

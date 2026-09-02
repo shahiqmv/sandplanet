@@ -97,8 +97,39 @@ def month_days(year, month):
     return calendar.monthrange(year, month)[1]
 
 
-def paid_window(employee, site, year, month):
+def window_inputs(employee_ids, site, year, month):
+    """Everything paid_window needs for a whole run, in two queries.
+
+    paid_window is right per worker and was called per worker: two queries
+    each, so a 229-line site paid ~460 queries just to be told who had a
+    payable day, and the salary sheet took seconds to open on a site link
+    (owner 2026-09-02, SJR). Returns ({emp_id: [allocations]},
+    {emp_id: (first_mark, last_mark)}) for paid_window to take instead of
+    asking the database itself."""
+    from .models import EmployeeSiteAllocation
+
+    ids = list(employee_ids)
+    end = date(year, month, month_days(year, month))
+    allocs = {i: [] for i in ids}
+    if site is not None:
+        for a in EmployeeSiteAllocation.objects.filter(
+                employee_id__in=ids, site=site, from_date__lte=end):
+            allocs[a.employee_id].append(a)
+    marks = Attendance.objects.filter(employee_id__in=ids, day__year=year,
+                                      day__month=month)
+    if site is not None:
+        marks = marks.filter(site=site)
+    spans = {r["employee_id"]: (r["first"], r["last"]) for r in
+             marks.values("employee_id").annotate(first=Min("day"),
+                                                   last=Max("day"))}
+    return allocs, {i: spans.get(i, (None, None)) for i in ids}
+
+
+def paid_window(employee, site, year, month, allocs=None, span=None):
     """The days of `month` this worker is owed pay for AT THIS SITE.
+
+    `allocs` and `span` are the precomputed inputs from window_inputs; left
+    None, the function fetches its own (the per-worker path).
 
     Bounded by three things, because any of them can start or end mid-month:
       * the month itself,
@@ -136,9 +167,11 @@ def paid_window(employee, site, year, month):
     if site is not None:
         # the allocation to THIS site overlapping the month; if there are
         # several (transferred away and back), take the widest cover
-        allocs = [a for a in EmployeeSiteAllocation.objects.filter(
-            employee=employee, site=site, from_date__lte=end)
-            if a.to_date is None or a.to_date >= date(year, month, 1)]
+        if allocs is None:
+            allocs = EmployeeSiteAllocation.objects.filter(
+                employee=employee, site=site, from_date__lte=end)
+        allocs = [a for a in allocs
+                  if a.to_date is None or a.to_date >= date(year, month, 1)]
         if not allocs:
             # An empty window — but fall through, never return here: the
             # register below is exactly what rescues a worker whose
@@ -153,11 +186,14 @@ def paid_window(employee, site, year, month):
             end = min(end, a_end)
 
     work_week = set(site.working_days) if site is not None else {6, 7, 1, 2, 3, 4}
-    marks = Attendance.objects.filter(employee=employee, day__year=year,
-                                      day__month=month)
-    if site is not None:
-        marks = marks.filter(site=site)
-    span = marks.aggregate(first=Min("day"), last=Max("day"))
+    if span is None:
+        marks = Attendance.objects.filter(employee=employee, day__year=year,
+                                          day__month=month)
+        if site is not None:
+            marks = marks.filter(site=site)
+        agg = marks.aggregate(first=Min("day"), last=Max("day"))
+        span = (agg["first"], agg["last"])
+    span = {"first": span[0], "last": span[1]}
     if span["first"]:
         if empty:
             # No allocation covers the month at all, so the register is the
@@ -368,17 +404,24 @@ def marked_but_unpayable(site, currency, year, month):
 
     Returns [{"emp_no", "full_name", "marked", "join_date"}].
     """
+    from django.db.models import Count
+
+    workers = list(eligible_workers(site, currency, year, month))
+    allocs, spans = window_inputs([w.id for w in workers], site, year, month)
+    marks = Attendance.objects.filter(
+        employee_id__in=[w.id for w in workers], day__year=year,
+        day__month=month)
+    if site is not None:
+        marks = marks.filter(site=site)
+    counts = dict(marks.values_list("employee_id").annotate(
+        n=Count("id")).values_list("employee_id", "n"))
     out = []
-    for e in eligible_workers(site, currency, year, month).select_related(
-            "job_category"):
-        w_start, w_end = paid_window(e, site, year, month)
+    for e in workers:
+        w_start, w_end = paid_window(e, site, year, month,
+                                     allocs=allocs[e.id], span=spans[e.id])
         if w_start <= w_end:
             continue
-        qs = Attendance.objects.filter(employee=e, day__year=year,
-                                       day__month=month)
-        if site is not None:
-            qs = qs.filter(site=site)
-        n = qs.count()
+        n = counts.get(e.id, 0)
         if n:
             out.append({"emp_no": e.emp_no, "full_name": e.full_name,
                         "marked": n,
@@ -450,9 +493,14 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         run = PayrollRun.objects.create(
             site=site, currency=currency, year=year, month=month,
             working_days=working_days, created_by=actor)
-        workers = eligible_workers(site, currency, year, month)
-        for emp in workers.select_related("job_category").order_by("emp_no"):
-            w_start, w_end = paid_window(emp, site, year, month)
+        workers = list(eligible_workers(site, currency, year, month)
+                       .select_related("job_category").order_by("emp_no"))
+        allocs, spans = window_inputs([w.id for w in workers], site, year,
+                                      month)
+        for emp in workers:
+            w_start, w_end = paid_window(emp, site, year, month,
+                                         allocs=allocs[emp.id],
+                                         span=spans[emp.id])
             if w_start > w_end:
                 continue        # no payable day in this month at this site.
                                 # If the register names him anyway the run
@@ -718,11 +766,16 @@ def refresh_run(run, actor):
         return None, ("This run is locked — reopen it before refreshing.")
     site, currency = run.site, run.currency
     eligible = {}
-    for e in eligible_workers(site, currency, run.year,
-                              run.month).select_related("job_category"):
+    workers = list(eligible_workers(site, currency, run.year,
+                                    run.month).select_related("job_category"))
+    line_emp_ids = list(run.lines.values_list("employee_id", flat=True))
+    allocs, spans = window_inputs(
+        {w.id for w in workers} | set(line_emp_ids), site, run.year, run.month)
+    for e in workers:
         # An overlapping allocation is not enough: someone who joined after
         # the month ends has no payable days in it.
-        w_start, w_end = paid_window(e, site, run.year, run.month)
+        w_start, w_end = paid_window(e, site, run.year, run.month,
+                                     allocs=allocs[e.id], span=spans[e.id])
         if w_start <= w_end:
             eligible[e.id] = e
 
@@ -738,7 +791,9 @@ def refresh_run(run, actor):
                 # marked_but_unpayable. A line HR has put money on stays put
                 # and is reported instead: that is their entry to withdraw,
                 # not ours.
-                w_start, w_end = paid_window(emp, site, run.year, run.month)
+                w_start, w_end = paid_window(emp, site, run.year, run.month,
+                                             allocs=allocs[emp.id],
+                                             span=spans[emp.id])
                 # Only what a person typed counts as a reason to keep the
                 # line. `advance` and `loan` are derived from paid advance
                 # PYRs and recomputed on every refresh, so counting them kept

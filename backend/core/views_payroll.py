@@ -45,8 +45,10 @@ def _can_see_run(request, run):
                 and run.site.is_current_pm(request.user))
 
 
-def _line_info(line, register=None):
-    m = payroll.compute_line(line)
+def _line_info(line, register=None, fri_hours=None):
+    # fri_hours is the run's Friday-OT policy, read once by _run_info; per
+    # line it was one parameter query each — 229 of them on SJR.
+    m = payroll.compute_line(line, fri_hours)
     reg = (register or {}).get(line.employee_id,
                                {"marked": 0, "present": 0, "absent": 0,
                                 "joined_after": None})
@@ -105,7 +107,8 @@ def _run_info(run, lines=True):
     }
     if lines:
         register = payroll.register_summary(run)
-        data["lines"] = [_line_info(ln, register) for ln in
+        fri = payroll.friday_ot_hours()
+        data["lines"] = [_line_info(ln, register, fri) for ln in
                          run.lines.select_related("employee__job_category",
                                                   "site").all()]
     return data

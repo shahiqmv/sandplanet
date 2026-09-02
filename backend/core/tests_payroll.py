@@ -2462,3 +2462,98 @@ class PrinterToolDownloadTests(PayrollRunTests):
         self.assertEqual(body.count("{"), body.count("}"))
         for needed in ("TcpClient", "374DE290", "$env:SLIPFILE"):
             self.assertIn(needed, body)
+
+
+class PayrollSheetQueryTests(TestCase):
+    """The salary sheet must cost the same to build whether a site has 9
+    workers or 229. SJR's took ~700 queries and seconds to open on a site
+    link: paid_window was asked per worker and the Friday-OT parameter read
+    per line (owner 2026-09-02)."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, OvertimeRate)
+        self.hr = make_user("q_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="QRY", name="Query Isle",
+                                        status=Site.Status.ACTIVE)
+        cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=10)
+        OvertimeRate.objects.create(category=cat, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.emps = []
+        for i in range(12):
+            e = Employee.objects.create(
+                emp_no=f"EMP-9{i:03d}", full_name=f"Worker {i}",
+                basic_pay=6000, currency="MVR", job_category=cat)
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+            Attendance.objects.create(employee=e, site=self.site,
+                                      day=date(2026, 5, 4), remark="PRESENT")
+            self.emps.append(e)
+        # one man the register names but who joined after the month
+        late = Employee.objects.create(
+            emp_no="EMP-9999", full_name="Late Joiner", basic_pay=6000,
+            currency="MVR", job_category=cat, join_date=date(2026, 6, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=late, site=self.site, from_date=date(2026, 6, 1))
+        Attendance.objects.create(employee=late, site=self.site,
+                                  day=date(2026, 5, 20), remark="PRESENT")
+
+    def _queries(self, fn):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+        with CaptureQueriesContext(connection) as ctx:
+            out = fn()
+        return out, len(ctx.captured_queries)
+
+    def test_the_sheet_costs_the_same_at_any_headcount(self):
+        from core import payroll
+        from core.views_payroll import _run_info
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=5, working_days=31, actor=self.hr)
+        self.assertEqual(run.lines.count(), 12)
+        data, n = self._queries(lambda: _run_info(run))
+        self.assertEqual(len(data["lines"]), 12)
+        # A flat budget, not "fewer than before": one more line must not be
+        # one more query. 20 is generous; the old code took ~3 per line.
+        self.assertLess(n, 20, f"{n} queries to build a 12-line sheet")
+        self.assertEqual([m["emp_no"] for m in data["marked_but_unpayable"]],
+                         ["EMP-9999"])
+
+    def test_marked_but_unpayable_is_a_fixed_number_of_queries(self):
+        from core import payroll
+        rows, n = self._queries(lambda: payroll.marked_but_unpayable(
+            self.site, "MVR", 2026, 5))
+        self.assertEqual([r["emp_no"] for r in rows], ["EMP-9999"])
+        self.assertLess(n, 8, f"{n} queries")
+
+    def test_batched_window_agrees_with_the_per_worker_one(self):
+        """Same answer whichever way it is asked — including the cases the
+        per-worker path was written around: a late-filed allocation, a
+        register that outranks the dates, trailing rest days."""
+        from core import payroll
+        from .models import Attendance, EmployeeSiteAllocation
+        # a man whose allocation was filed a month late: register only
+        stray = Employee.objects.create(emp_no="EMP-9800", full_name="Stray",
+                                        basic_pay=6000, currency="MVR")
+        for d in (3, 4, 5, 6):
+            Attendance.objects.create(employee=stray, site=self.site,
+                                      day=date(2026, 5, d), remark="PRESENT")
+        # a transfer: allocated from the 12th, but marked from the 10th
+        moved = Employee.objects.create(emp_no="EMP-9801", full_name="Moved",
+                                        basic_pay=6000, currency="MVR")
+        EmployeeSiteAllocation.objects.create(
+            employee=moved, site=self.site, from_date=date(2026, 5, 12))
+        for d in (10, 11, 12, 13):
+            Attendance.objects.create(employee=moved, site=self.site,
+                                      day=date(2026, 5, d), remark="PRESENT")
+        people = self.emps + [stray, moved]
+        allocs, spans = payroll.window_inputs([e.id for e in people],
+                                              self.site, 2026, 5)
+        for e in people:
+            self.assertEqual(
+                payroll.paid_window(e, self.site, 2026, 5),
+                payroll.paid_window(e, self.site, 2026, 5,
+                                    allocs=allocs[e.id], span=spans[e.id]),
+                e.emp_no)

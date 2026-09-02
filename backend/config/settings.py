@@ -153,6 +153,11 @@ REST_FRAMEWORK = {
     # both 403. The handler tags every error with a code so the client can
     # tell them apart without reading English.
     "EXCEPTION_HANDLER": "core.exceptions.exception_handler",
+    # JSON only. A site PM landed on DRF's browsable HTML page for a payroll
+    # line — a form-filled developer view with the company's name on it —
+    # because a browser navigated to an API URL (owner 2026-09-02). The API
+    # is for the app; nobody should ever see it rendered.
+    "DEFAULT_RENDERER_CLASSES": ["rest_framework.renderers.JSONRenderer"],
 }
 
 # Shared secret in the biometric terminals' push URL. Set in the environment;
