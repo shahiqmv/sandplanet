@@ -355,6 +355,19 @@ export default function AttendancePage({ site, me, onClose }) {
                           title="No photo — add one on the Workforce page">
                       👤</span>}
                 {row.full_name}
+                {/* Not on this site's roster for the day — he is listed only
+                    because he carries a mark. Mark him OFF to take it back
+                    (owner 2026-09-02). */}
+                {row.off_roster && (
+                  <span title="Not allocated to this site on this day — shown
+                               so the mark can be corrected. Mark OFF to
+                               remove it."
+                        style={{ marginLeft: 6, fontSize: 10.5,
+                                 fontWeight: 700, color: "#a3271b",
+                                 background: "#fbeae8", borderRadius: 999,
+                                 padding: "1px 7px", whiteSpace: "nowrap" }}>
+                    not on roster</span>
+                )}
                 {sub && (
                   <span title={row.subcontractor || "Subcontract worker"}
                         style={{ marginLeft: 6, fontSize: 10.5,

@@ -808,3 +808,117 @@ class DuplicateMergeImportTests(TestCase):
     def test_the_duplicate_passport_list_answers(self):
         r = self.client.get("/api/v1/employees/duplicate-passports")
         self.assertEqual(r.status_code, 200, r.data)
+
+
+class StrayAttendanceTests(HrBase):
+    """A mark on a man who is no longer on the site's roster.
+
+    Somebody was added to SSL by mistake and three days marked present. The
+    clerk removed him from the site — and the month register still showed the
+    three days, while the day grid, built only from allocations, could not
+    show him at all. Attempts to mark him absent vanished without a word:
+    "I tried several times to put absence for him. But it failed."
+    (owner 2026-09-02, EMP-0524.)
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.day = working_day(self.site)
+        self.save_attendance(self.day)          # he is marked present
+        self.as_user(self.hr)
+
+    def _off_site(self):
+        """What the clerk did: took him off the site."""
+        alloc = self.mason.site_allocations.get(site=self.site,
+                                                to_date__isnull=True)
+        alloc.to_date = self.day - timedelta(days=1)
+        alloc.save(update_fields=["to_date"])
+
+    def _grid(self):
+        return self.client.get(
+            f"/api/v1/attendance?site={self.site.id}"
+            f"&date={self.day.isoformat()}").data
+
+    def _register(self):
+        return self.client.get(
+            f"/api/v1/attendance/register?site={self.site.id}"
+            f"&year={self.day.year}&month={self.day.month}").data
+
+    def test_a_mark_the_register_shows_can_be_reached_on_the_day(self):
+        self._off_site()
+        register = self._register()
+        self.assertIn(self.mason.emp_no,
+                      [r["emp_no"] for r in register["rows"]])
+        grid = self._grid()
+        row = next((r for r in grid["rows"]
+                    if r["employee_id"] == self.mason.id), None)
+        self.assertIsNotNone(row, "the register shows him; the grid must too")
+        self.assertTrue(row["off_roster"])
+        self.assertEqual(row["remark"], "PRESENT")
+
+    def test_marking_him_off_takes_the_record_back(self):
+        self._off_site()
+        self.as_user(self.sa)
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": self.day.isoformat(),
+            "rows": [{"employee_id": self.mason.id, "remark": "OFF"}],
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(Attendance.objects.filter(
+            employee=self.mason, day=self.day).exists())
+        # He stays listed for the month he was here — that is deliberate, a
+        # leaver must not vanish from the month he worked. What must go is the
+        # MARK, which is what gets counted and paid.
+        row = next(x for x in self._register()["rows"]
+                   if x["emp_no"] == self.mason.emp_no)
+        self.assertEqual([d for d in row["days"] if d], [],
+                         "no mark should survive on any day")
+
+    def test_someone_still_on_the_roster_is_not_flagged(self):
+        row = next(r for r in self._grid()["rows"]
+                   if r["employee_id"] == self.mason.id)
+        self.assertFalse(row["off_roster"])
+
+    def test_a_day_with_no_mark_does_not_summon_a_leaver(self):
+        """Off-roster people appear only where they left a mark."""
+        self._off_site()
+        clear = working_day(self.site, 1)
+        grid = self.client.get(
+            f"/api/v1/attendance?site={self.site.id}"
+            f"&date={clear.isoformat()}").data
+        self.assertNotIn(self.mason.id,
+                         [r["employee_id"] for r in grid["rows"]])
+
+
+class DeactivatedWorkerAttendanceTests(HrBase):
+    """A deactivated worker's save used to be dropped in silence."""
+
+    def setUp(self):
+        super().setUp()
+        self.day = working_day(self.site)
+        self.save_attendance(self.day)
+        Employee.objects.filter(pk=self.mason.pk).update(is_active=False)
+        self.as_user(self.sa)
+
+    def _put(self, remark):
+        return self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": self.day.isoformat(),
+            "rows": [{"employee_id": self.mason.id, "check_in": "07:00",
+                      "check_out": "18:00", "remark": remark}],
+        }, format="json")
+
+    def test_his_existing_mark_can_still_be_cleared(self):
+        r = self._put("OFF")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(Attendance.objects.filter(
+            employee=self.mason, day=self.day).exists())
+
+    def test_a_new_mark_is_refused_out_loud(self):
+        """It must not look like it worked."""
+        r = self._put("ABSENT")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data.get("refused"),
+                        "a dropped row has to be reported")
+        self.assertIn(self.mason.emp_no, " ".join(r.data["refused"]))
+        row = Attendance.objects.get(employee=self.mason, day=self.day)
+        self.assertEqual(row.remark, "PRESENT")     # unchanged, not silently

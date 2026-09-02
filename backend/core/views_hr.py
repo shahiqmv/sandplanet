@@ -616,12 +616,23 @@ def attendance_grid(request):
     # a man joined.
     on_day = EmployeeSiteAllocation.objects.filter(site=site).filter(
         Q(to_date__isnull=True) | Q(to_date__gte=day, from_date__lte=day))
-    roster = Employee.objects.filter(
-        id__in=on_day.values_list("employee_id", flat=True)).exclude(
-        join_date__gt=day).select_related("job_category", "subcontractor") \
-        .order_by("emp_no").distinct()
     existing = {a.employee_id: a for a in Attendance.objects.filter(
         site=site, day=day)}
+    # Anyone who ALREADY has a mark for this day, whatever the roster says.
+    # The month register reads the rows directly, so it showed a man whose
+    # allocation had since been closed — while this grid, built only from
+    # allocations, could not show him at all. His three wrong days were
+    # visible and uncorrectable at the same time, and the clerk's attempts to
+    # mark him absent vanished (owner 2026-09-02, EMP-0524 on SSL).
+    #
+    # Whatever the register displays has to be reachable here, or there is no
+    # way to take it back.
+    roster = Employee.objects.filter(
+        Q(id__in=on_day.values_list("employee_id", flat=True))
+        | Q(id__in=list(existing))).exclude(
+        join_date__gt=day).select_related("job_category", "subcontractor") \
+        .order_by("emp_no").distinct()
+    rostered = set(on_day.values_list("employee_id", flat=True))
     # What the gate terminals saw (phase 2, owner 2026-08-24). Proposals are
     # computed from the raw punch log at read time and never stored — the only
     # write path into attendance is still the clerk's save below, with every
@@ -666,6 +677,9 @@ def attendance_grid(request):
             "sub_extra_hours": att.sub_extra_hours if att else 0,
             "remark": att.remark if att else default_remark,
             "saved": att is not None,
+            # Here only because he carries a mark — no longer on the site's
+            # roster for this day. Mark him OFF to take the record back.
+            "off_roster": employee.id not in rostered,
             "device": (device["rows"].get(employee.id)
                        if device is not None else None),
         })
@@ -839,10 +853,22 @@ def attendance_bulk(request):
     changes = []
     for row in request.data.get("rows", []):
         try:
-            employee = Employee.objects.get(pk=row.get("employee_id"),
-                                            is_active=True)
+            employee = Employee.objects.get(pk=row.get("employee_id"))
         except Employee.DoesNotExist:
             continue
+        # A deactivated worker used to be skipped in silence, so a clerk
+        # trying to correct a leaver's day saw the save succeed and nothing
+        # change — "I tried several times to put absence for him. But it
+        # failed." (owner 2026-09-02). His history can still be TAKEN BACK;
+        # what he cannot get is a new mark.
+        if not employee.is_active:
+            has_row = Attendance.objects.filter(employee=employee,
+                                                day=day).exists()
+            if not (has_row and (row.get("remark") or "") == "OFF"):
+                refused.append(f"{employee.emp_no} is no longer active — his "
+                               f"existing marks can be cleared (mark him OFF), "
+                               f"but no new attendance can be recorded")
+                continue
         # A worker's engagement starts on their join date — no attendance
         # before it (owner 2026-07-31). Say so rather than dropping the row in
         # silence: the clerk needs to know the mark did not take.
