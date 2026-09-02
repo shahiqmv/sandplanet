@@ -390,20 +390,30 @@ def propose_charge_correction(doc, data, actor):
         return None, "A correction is already awaiting approval."
     reason = (data.get("reason") or "").strip()
     if not reason:
-        return None, ("Give the reason for the correction (e.g. the PI "
-                      "includes freight)."   )
+        return None, ("Give the reason for the correction (e.g. the item was "
+                      "removed from the order at the supplier's request).")
     new = {f: (_dec(data.get(f)) if data.get(f) not in (None, "") else None)
            for f in CORRECTION_FIELDS}
     fold_ids, fold_err = _validate_fold_lines(order, data.get("fold_line_ids"))
     if fold_err:
         return None, fold_err
-    if not fold_ids and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
-                            for f in CORRECTION_FIELDS):
+    drop_ids, drop_err = _validate_line_ids(
+        order, data.get("drop_line_ids"), "dropped", "drop_line_ids")
+    if drop_err:
+        return None, drop_err
+    both = fold_ids & drop_ids
+    if both:
+        return None, ("A line is either folded into freight or dropped from "
+                      "the order, not both.")
+    off = fold_ids | drop_ids
+    if not off and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
+                       for f in CORRECTION_FIELDS):
         return None, "Nothing changed — the charges are already these values."
     subtotal_after = sum((ln.line_value for ln in order.lines.all()
-                          if ln.id not in fold_ids), ZERO)
+                          if ln.id not in off), ZERO)
     if subtotal_after <= ZERO:
-        return None, "Folding every line would leave no goods on the order."
+        return None, ("That would leave no goods on the order. Withdraw the "
+                      "authorisation instead of emptying it.")
     new_total = (subtotal_after - (new["discount"] or ZERO)
                  + (new["freight_handling"] or ZERO)
                  + (new["misc_fee"] or ZERO))
@@ -419,56 +429,65 @@ def propose_charge_correction(doc, data, actor):
     settled = ZERO
     holders = []
     for m in order.milestones.all():
+        if not milestone_is_committed(m):
+            continue
+        settled += m.due_amount(old_total)
         line = (PaymentVoucherLine.objects
                 .filter(source_milestone=m, status="INCLUDED")
                 .select_related("voucher").first())
-        committed = (m.status in ("AUTHORISED", "PAID") or m.voucher_id
-                     or line is not None)
-        if committed:
-            settled += m.due_amount(old_total)
-            if m.status == "PAID":
-                holders.append(f"{m.label} (paid)")
-            elif line is not None:
-                holders.append(f"{m.label} on {line.voucher.ref}")
-            else:
-                holders.append(f"{m.label} ({m.status.lower()})")
+        if m.status == "PAID":
+            holders.append(f"{m.label} (paid)")
+        elif line is not None:
+            holders.append(f"{m.label} on {line.voucher.ref}")
+        else:
+            holders.append(f"{m.label} ({m.status.lower()})")
     if new_total < settled:
-        return None, (f"The corrected total ({new_total}) is below what is "
-                      f"already vouchered or paid ({settled}): "
-                      + "; ".join(holders) + ". Query or cancel the voucher "
-                      "line first, then propose the correction.")
+        return None, (f"That leaves an order total of {new_total}, below the "
+                      f"{settled} already vouchered or paid: "
+                      + "; ".join(holders) + ". You cannot take off more than "
+                      "the unpaid balance — void or query the voucher line "
+                      "first, then propose the correction.")
     corr = ImportChargeCorrection.objects.create(
         order=order, reason=reason, created_by=actor,
-        fold_line_ids=sorted(fold_ids), **new)
+        fold_line_ids=sorted(fold_ids), drop_line_ids=sorted(drop_ids), **new)
     audit("document", doc.id, "IPR_CORRECTION_PROPOSED", actor=actor,
           detail={"ref": doc.ref, "reason": reason,
                   "fold_lines": sorted(fold_ids),
+                  "dropped_lines": sorted(drop_ids),
+                  "old_total": str(old_total), "new_total": str(new_total),
                   **{f: str(new[f] or 0) for f in CORRECTION_FIELDS}})
     return corr, None
 
 
-def _validate_fold_lines(order, ids):
-    """Lines proposed to fold into supplier freight: must be live lines of
-    this order and not already counted into stock by an IRN."""
+def _validate_line_ids(order, ids, verb, field):
+    """Lines proposed to come off the order — folded into supplier freight or
+    dropped altogether. Either way they must be live lines of this order and
+    not already counted into stock by an IRN: once the goods are received the
+    order is what was received."""
     from .models import ImportReceiptLine
     if not ids:
         return set(), None
     try:
-        fold_ids = {int(i) for i in ids}
+        picked = {int(i) for i in ids}
     except (TypeError, ValueError):
-        return None, "Bad fold_line_ids."
+        return None, f"Bad {field}."
     lines = {ln.id: ln for ln in order.lines.all()}
-    for i in fold_ids:
+    for i in picked:
         ln = lines.get(i)
         if not ln:
-            return None, "A folded line does not belong to this order."
+            return None, f"A {verb} line does not belong to this order."
         if not ln.line_value:
             return None, (f"Line {ln.line_no} has no value — it is already "
-                          f"folded or empty.")
+                          f"off the order.")
         if ImportReceiptLine.objects.filter(ipr_line=ln).exists():
             return None, (f"Line {ln.line_no} has been received on an IRN — "
-                          f"it can no longer be folded into freight.")
-    return fold_ids, None
+                          f"it is on site, so it cannot be taken off the "
+                          f"order. Raise a return instead.")
+    return picked, None
+
+
+def _validate_fold_lines(order, ids):
+    return _validate_line_ids(order, ids, "folded", "fold_line_ids")
 
 
 def decide_charge_correction(doc, action, actor, reason=""):
@@ -519,7 +538,8 @@ def _apply_charge_correction(doc, corr, actor):
     from .models import CostPosting, ImportReceiptLine, ImportShipmentLine
     order = corr.order
     old_total = ipr_order_total(order)
-    for line in order.lines.filter(id__in=corr.fold_line_ids or []):
+    off_ids = list(corr.fold_line_ids or []) + list(corr.drop_line_ids or [])
+    for line in order.lines.filter(id__in=off_ids):
         # re-check receipt inside the transaction; the IRN may have landed
         # between propose and authorise
         if ImportReceiptLine.objects.filter(ipr_line=line).exists():
@@ -556,7 +576,8 @@ def _apply_charge_correction(doc, corr, actor):
     audit("document", doc.id, "IPR_CORRECTION_APPLIED", actor=actor,
           detail={"ref": doc.ref, "old_total": str(old_total),
                   "new_total": str(ipr_order_total(order)),
-                  "folded_lines": corr.fold_line_ids or []})
+                  "folded_lines": corr.fold_line_ids or [],
+                  "dropped_lines": corr.drop_line_ids or []})
 
 
 def _rescale_fixed_milestones(order, old_total, actor):
@@ -567,27 +588,50 @@ def _rescale_fixed_milestones(order, old_total, actor):
     editor. Milestones already committed (paid / authorised / on a voucher)
     are never touched; the still-movable fixed ones scale proportionally,
     with the last one absorbing rounding so the schedule sums exactly."""
-    from .models import PaymentVoucherLine
-    new_total = ipr_order_total(order)
-    ms = list(order.milestones.all())
+    for m, amount in rescaled_milestones(order, old_total,
+                                         ipr_order_total(order)):
+        if amount != m.fixed_amount:
+            audit("document", order.document_id, "IPR_MILESTONE_RESCALED",
+                  actor=actor, detail={"milestone": m.id, "label": m.label,
+                                       "from": str(m.fixed_amount),
+                                       "to": str(amount)})
+            m.fixed_amount = amount
+            m.save(update_fields=["fixed_amount"])
 
-    def committed(m):
-        return (m.status in ("AUTHORISED", "PAID") or m.voucher_id
+
+def milestone_is_committed(m):
+    """Money the company is actually on the hook for: paid, authorised, or
+    sitting on a live voucher line. Merely DUE is not committed — it is a
+    trigger that has been met and still needs a voucher."""
+    from .models import PaymentVoucherLine
+    return bool(m.status in ("AUTHORISED", "PAID") or m.voucher_id
                 or PaymentVoucherLine.objects.filter(
                     source_milestone=m, status="INCLUDED").exists())
 
-    kept = sum((m.due_amount(old_total) for m in ms if committed(m)), ZERO)
+
+def rescaled_milestones(order, old_total, new_total):
+    """What the movable milestones become at `new_total` — as (milestone,
+    amount) pairs, written by nobody.
+
+    The preview the approver reads and the rescale that runs on authorisation
+    come from this one function, so the schedule they were shown is the
+    schedule they get.
+    """
+    ms = list(order.milestones.all())
+    kept = sum((m.due_amount(old_total) for m in ms
+                if milestone_is_committed(m)), ZERO)
     pct_due = sum((m.due_amount(new_total) for m in ms
-                   if not committed(m) and m.fixed_amount is None), ZERO)
-    movable = [m for m in ms
-               if not committed(m) and m.fixed_amount is not None]
+                   if not milestone_is_committed(m)
+                   and m.fixed_amount is None), ZERO)
+    movable = [m for m in ms if not milestone_is_committed(m)
+               and m.fixed_amount is not None]
     if not movable:
-        return
+        return []
     target = new_total - kept - pct_due
     if target < ZERO:
         target = ZERO
     base = sum((m.fixed_amount for m in movable), ZERO)
-    running = ZERO
+    out, running = [], ZERO
     for i, m in enumerate(movable):
         if i == len(movable) - 1:
             amount = (target - running).quantize(Decimal("0.01"))
@@ -596,13 +640,32 @@ def _rescale_fixed_milestones(order, old_total, actor):
                 Decimal("1") / len(movable)
             amount = (target * share).quantize(Decimal("0.01"))
         running += amount
-        if amount != m.fixed_amount:
-            audit("document", order.document_id, "IPR_MILESTONE_RESCALED",
-                  actor=actor, detail={"milestone": m.id, "label": m.label,
-                                       "from": str(m.fixed_amount),
-                                       "to": str(amount)})
-            m.fixed_amount = amount
-            m.save(update_fields=["fixed_amount"])
+        out.append((m, amount))
+    return out
+
+
+def correction_effect(order, corr):
+    """What this correction does to the money, for the approver to read
+    before they authorise it: the order total before and after, and every
+    milestone that moves."""
+    off = set(corr.fold_line_ids or []) | set(corr.drop_line_ids or [])
+    old_total = ipr_order_total(order)
+    subtotal_after = sum((ln.line_value for ln in order.lines.all()
+                          if ln.id not in off), ZERO)
+    new_total = (subtotal_after - (corr.discount or ZERO)
+                 + (corr.freight_handling or ZERO) + (corr.misc_fee or ZERO))
+    moves = [{"label": m.label, "from": m.fixed_amount, "to": amount}
+             for m, amount in rescaled_milestones(order, old_total, new_total)
+             if amount != m.fixed_amount]
+    return {
+        "currency": order.order_currency,
+        "old_total": old_total, "new_total": new_total,
+        "delta": new_total - old_total,
+        "settled": sum((m.due_amount(old_total)
+                        for m in order.milestones.all()
+                        if milestone_is_committed(m)), ZERO),
+        "milestones": moves,
+    }
 
 
 def _revise_po_charges(doc, order, actor):

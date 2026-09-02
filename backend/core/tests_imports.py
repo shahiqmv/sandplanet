@@ -2,6 +2,7 @@
 (Project Material Requisition) requirement raised and tracked project→PM→HO→
 Director."""
 from datetime import date
+from decimal import Decimal
 
 from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
@@ -496,7 +497,7 @@ class MilestonePaymentTests(IprBase):
                              {"discount": "900", "reason": "wrong"},
                              format="json")
         self.assertEqual(r.status_code, 400)
-        self.assertIn("below what is already", r.data["detail"])
+        self.assertIn("already vouchered or paid", r.data["detail"])
         ImportPaymentMilestone.objects.filter(pk=m["id"]).update(status="DUE")
         # a valid proposal can be rejected by the Director with a reason
         r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
@@ -2327,3 +2328,201 @@ class BookingNeedsNoAmbientTransactionTests(TransactionTestCase):
         self.assertIsNone(err2)
         self.assertTrue(sh2.ref.startswith("SHP-"))
         self.assertNotEqual(sh.ref, sh2.ref)
+
+
+class IprDropLineTests(IprBase):
+    """Removing an item from an order that is already part paid.
+
+    IPR-017 (owner 2026-09-02): the advance was paid, the second balance was
+    on a voucher, and the supplier dropped an item at the last minute. The
+    machinery existed but only as "fold this line into supplier freight",
+    which keeps the total the SAME — the opposite of what a removal does.
+    """
+
+    def _two_line_body(self):
+        body = self.order_body()
+        body["lines"].append({
+            "free_text_desc": "Filtration sand", "unit": "bag",
+            "order_qty": "100", "unit_price": "2",
+            "cost_head_id": self.head.id,
+            "allocations": [{"project_id": self.project.id, "qty": "100"}],
+        })
+        return body
+
+    def _authorised_two_line(self):
+        """1000 + 200 = USD 1200 @ 15 = MVR 18000."""
+        self.client.force_authenticate(self.ho)
+        ref = self.client.post("/api/v1/ipr", self._two_line_body(),
+                               format="json").data["ref"]
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {},
+                         format="json")
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.signatory)
+        self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {},
+                         format="json")
+        self.client.force_authenticate(self.ho)   # HO proposes corrections
+        return ref
+
+    def _part_paid(self, ref):
+        """Advance paid, so only the balance is still movable — the shape
+        IPR-017 was actually in."""
+        from .vouchers import approve_voucher, create_voucher, submit_voucher
+        self.client.force_authenticate(self.ho)
+        r = self.client.post(f"/api/v1/ipr/{ref}/milestones", {"rows": [
+            {"label": "Advance", "trigger": "ADVANCE", "fixed_amount": "400"},
+            {"label": "Balance", "trigger": "BALANCE", "fixed_amount": "800"},
+        ]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        adv = next(m for m in r.data["milestones"] if m["label"] == "Advance")
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{adv['id']}/due", {},
+                         format="json")
+        pv, err = create_voucher([], self.finance, milestone_ids=[adv["id"]])
+        self.assertIsNone(err, err)
+        submit_voucher(pv, self.finance)
+        approve_voucher(pv, self.signatory)
+        self.client.force_authenticate(self.finance)
+        self.client.post(f"/api/v1/ipr/{ref}/milestones/{adv['id']}/pay",
+                         {"mvr_paid": "6000", "tt_ref": "TT-1"},
+                         format="json")
+        self.client.force_authenticate(self.ho)
+        return adv
+
+    def _drop(self, ref, line_id, **extra):
+        body = {"reason": "Supplier dropped the item",
+                "drop_line_ids": [line_id]}
+        body.update(extra)
+        return self.client.post(f"/api/v1/ipr/{ref}/correct-charges", body,
+                                format="json")
+
+    def _approve_all(self, ref):
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                         {"action": "approve"}, format="json")
+        self.client.force_authenticate(self.signatory)
+        return self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
+                                {"action": "approve"}, format="json")
+
+    def test_dropping_a_line_lowers_the_total_and_the_balance_follows(self):
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self._drop(ref, sand.id)
+        self.assertEqual(r.status_code, 200, r.data)
+        eff = r.data["charge_correction"]["effect"]
+        self.assertEqual(Decimal(str(eff["old_total"])), Decimal("1200"))
+        self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1000"))
+        self.assertEqual(Decimal(str(eff["delta"])), Decimal("-200"))
+        # the paid advance is untouched; the balance absorbs the whole drop
+        self.assertEqual([(m["label"], Decimal(str(m["from"])),
+                           Decimal(str(m["to"]))) for m in eff["milestones"]],
+                         [("Balance", Decimal("800.00"), Decimal("600.00"))])
+
+        r = self._approve_all(ref)
+        self.assertEqual(r.status_code, 200, r.data)
+        order.refresh_from_db()
+        from .imports import ipr_order_total
+        self.assertEqual(ipr_order_total(order), Decimal("1000"))
+        by_label = {m.label: m for m in order.milestones.all()}
+        self.assertEqual(by_label["Advance"].fixed_amount, Decimal("400"))
+        self.assertEqual(by_label["Balance"].fixed_amount, Decimal("600.00"))
+        # ...and the schedule still sums to the order total
+        self.assertEqual(sum(m.due_amount(Decimal("1000"))
+                             for m in order.milestones.all()),
+                         Decimal("1000"))
+
+    def test_the_preview_is_what_actually_happens(self):
+        """The approver authorises a number they were shown."""
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        r = self._drop(ref, order.lines.get(line_no=2).id)
+        promised = {m["label"]: Decimal(str(m["to"]))
+                    for m in r.data["charge_correction"]["effect"]["milestones"]}
+        self._approve_all(ref)
+        for label, amount in promised.items():
+            self.assertEqual(order.milestones.get(label=label).fixed_amount,
+                             amount)
+
+    def test_the_dropped_line_stops_costing_the_project(self):
+        """A removed item must not stay committed against the project."""
+        from .models import CostPosting
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        doc = order.document
+        before = sum((p.amount for p in CostPosting.objects.filter(
+            document=doc, state="COMMITTED")), Decimal("0"))
+        self.assertEqual(before, Decimal("18000"))       # 1200 USD @ 15
+        self._drop(ref, sand.id)
+        self._approve_all(ref)
+        after = sum((p.amount for p in CostPosting.objects.filter(
+            document=doc, state="COMMITTED")), Decimal("0"))
+        self.assertEqual(after, Decimal("15000"))        # 1000 USD @ 15
+        sand.refresh_from_db()
+        self.assertEqual(sand.order_qty, Decimal("0"))
+        self.assertEqual(sand.allocations.count(), 0)
+
+    def test_you_cannot_drop_more_than_the_unpaid_balance(self):
+        """Taking off 1000 of a 1200 order leaves 200 — less than the 400
+        already paid. It has to be refused, not left negative."""
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        order = self._order(ref)
+        r = self._drop(ref, order.lines.get(line_no=1).id)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already vouchered or paid", r.data["detail"])
+        self.assertIn("Advance (paid)", r.data["detail"])
+
+    def test_dropping_every_line_is_refused(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        r = self.client.post(
+            f"/api/v1/ipr/{ref}/correct-charges",
+            {"reason": "all of it",
+             "drop_line_ids": [ln.id for ln in order.lines.all()]},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Withdraw the authorisation", r.data["detail"])
+
+    def test_a_received_line_cannot_be_dropped(self):
+        """Once the goods are on site the order is what was received."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        sid = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                               {"location": ""}, format="json").data["ref"]
+        self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        r = self._drop(ref, sand.id)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("received on an IRN", r.data["detail"])
+
+    def test_a_line_cannot_be_folded_and_dropped_at_once(self):
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"reason": "make up your mind",
+                              "fold_line_ids": [sand.id],
+                              "drop_line_ids": [sand.id]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("not both", r.data["detail"])
+
+    def test_folding_still_keeps_the_total(self):
+        """The existing intent is untouched: fold moves value into freight."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)
+        r = self.client.post(f"/api/v1/ipr/{ref}/correct-charges",
+                             {"reason": "the PI shows it as freight",
+                              "fold_line_ids": [sand.id],
+                              "freight_handling": "200"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        eff = r.data["charge_correction"]["effect"]
+        self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1200"))
+        self.assertEqual(Decimal(str(eff["delta"])), Decimal("0"))

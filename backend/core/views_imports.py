@@ -283,9 +283,17 @@ def _serialize(doc, request):
         "id": corr.id, "status": corr.status, "reason": corr.reason,
         "discount": corr.discount, "freight_handling": corr.freight_handling,
         "misc_fee": corr.misc_fee,
-        "fold_lines": [{"id": ln.id, "description": ln.description}
+        "fold_lines": [{"id": ln.id, "description": ln.description,
+                        "line_value": ln.line_value}
                        for ln in order.lines.filter(
                            id__in=corr.fold_line_ids or [])],
+        "drop_lines": [{"id": ln.id, "description": ln.description,
+                        "line_value": ln.line_value}
+                       for ln in order.lines.filter(
+                           id__in=corr.drop_line_ids or [])],
+        # What the schedule will look like if this is authorised — the
+        # question the approver is actually being asked (owner 2026-09-02).
+        "effect": ipr_svc.correction_effect(order, corr),
         "created_by": corr.created_by.get_full_name() or corr.created_by.username,
     } if corr else None)
     data["can_correct"] = (request.user.role in CREATE_ROLES

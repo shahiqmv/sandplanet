@@ -747,25 +747,38 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
   const [f, setF] = useState({ discount: "", freight_handling: "",
                                misc_fee: "", reason: "" });
   const [foldIds, setFoldIds] = useState([]);
+  const [dropIds, setDropIds] = useState([]);
   if (!corr && !doc.can_correct) return null;
 
   async function propose() {
     onError(null);
     try {
       await api(`/ipr/${refIpr}/correct-charges`,
-                { method: "POST", body: { ...f, fold_line_ids: foldIds } });
+                { method: "POST", body: { ...f, fold_line_ids: foldIds,
+                                          drop_line_ids: dropIds } });
       setOpen(false); onChanged();
     } catch (e) { onError(e.message); }
   }
-  function toggleFold(line) {
-    const on = foldIds.includes(line.id);
-    setFoldIds(on ? foldIds.filter((i) => i !== line.id)
-                  : [...foldIds, line.id]);
-    // seed the freight box with the folded value so the usual case (freight
-    // typed as a line, amount right) is one click; still editable
+  // Two intents, and the difference is the whole point: FOLD moves the
+  // line's value into supplier freight (total unchanged); REMOVE takes the
+  // item off the order (total falls, the unpaid milestones absorb it). The
+  // form used to offer only the fold, worded for freight, so a last-minute
+  // deletion had nowhere to go (owner 2026-09-02, IPR-017).
+  function setIntent(line, intent) {
+    const wasFold = foldIds.includes(line.id);
     const delta = Number(line.line_value) || 0;
     const cur = Number(f.freight_handling) || 0;
-    setF({ ...f, freight_handling: String(on ? cur - delta : cur + delta) });
+    setFoldIds(intent === "fold" ? [...foldIds, line.id]
+                                 : foldIds.filter((i) => i !== line.id));
+    setDropIds(intent === "drop" ? [...dropIds, line.id]
+                                 : dropIds.filter((i) => i !== line.id));
+    // Folding seeds the freight box with the line's value, so the usual case
+    // (freight typed as a line) is one click. Removing must not.
+    if (intent === "fold" && !wasFold) {
+      setF({ ...f, freight_handling: String(cur + delta) });
+    } else if (wasFold && intent !== "fold") {
+      setF({ ...f, freight_handling: String(cur - delta) });
+    }
   }
   async function decide(action) {
     let reason = "";
@@ -798,6 +811,44 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
             Folds into supplier freight:{" "}
             {corr.fold_lines.map((l) => l.description).join(" · ")}</div>
         )}
+        {corr.drop_lines?.length > 0 && (
+          <div style={{ color: "#8a6d00", marginTop: 2 }}>
+            <strong>Removes from the order:</strong>{" "}
+            {corr.drop_lines.map((l) => l.description).join(" · ")}</div>
+        )}
+        {/* The approver is authorising a new committed total and a new
+            schedule. Show them both rather than the inputs (owner
+            2026-09-02). */}
+        {corr.effect && Number(corr.effect.delta) !== 0 && (
+          <div style={{ marginTop: 6, paddingTop: 6,
+                        borderTop: "1px solid #e8dcae" }}>
+            <div>
+              Order total {corr.effect.currency}{" "}
+              {money(corr.effect.old_total)} →{" "}
+              <strong>{money(corr.effect.new_total)}</strong>{" "}
+              <span style={{ color: Number(corr.effect.delta) < 0
+                ? "#a3271b" : "#1a7f37" }}>
+                ({Number(corr.effect.delta) > 0 ? "+" : ""}
+                {money(corr.effect.delta)})</span>
+            </div>
+            {corr.effect.milestones?.length > 0 ? (
+              <div style={{ marginTop: 2 }}>
+                Payment schedule re-adjusts:{" "}
+                {corr.effect.milestones.map((m) => (
+                  <span key={m.label} style={{ marginRight: 10 }}>
+                    {m.label} {money(m.from)} →{" "}
+                    <strong>{money(m.to)}</strong></span>
+                ))}
+              </div>
+            ) : (
+              <div style={{ marginTop: 2, color: "#5a6b78" }}>
+                No milestone moves — nothing unpaid is left to absorb it.</div>
+            )}
+            <div style={{ marginTop: 2, color: "#5a6b78" }}>
+              Already paid or vouchered: {corr.effect.currency}{" "}
+              {money(corr.effect.settled)} — untouched.</div>
+          </div>
+        )}
         <div style={{ color: "#5a6b78", marginTop: 2 }}>
           {corr.reason} — {corr.created_by}</div>
         {doc.can_decide_correction && (
@@ -818,19 +869,21 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
         onClick={() => { setF({ discount: o.discount ?? "",
           freight_handling: o.freight_handling ?? "",
           misc_fee: o.misc_fee ?? "", reason: "" }); setOpen(true); }}>
-        Correct charges…</button>
+        Correct order…</button>
       <span style={{ color: "#8a97a1", marginLeft: 8 }}>
-        wrong discount / freight / misc on an authorised order</span>
+        remove an item, or fix discount / freight / misc after authorisation
+      </span>
     </p>
   );
   return (
     <div style={{ border: "1px solid var(--sp-border)", borderRadius: 8,
                   padding: 10, margin: "10px 0" }}>
       <strong style={{ fontSize: 13, color: "var(--sp-navy)" }}>
-        Correct commercial charges</strong>
+        Correct the authorised order</strong>
       <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 8px" }}>
         Routed to the Director, then a Signatory who authorises the new
-        committed total. Percent milestones rescale automatically.</p>
+        committed total. The payment schedule re-adjusts with it — paid and
+        vouchered milestones stay exactly as they are.</p>
       <div style={{ display: "grid",
                     gridTemplateColumns: "repeat(3, 1fr)", gap: 8 }}>
         {[["discount", "Discount"], ["freight_handling", "Freight / handling"],
@@ -844,19 +897,60 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
         ))}
       </div>
       {o.lines.filter((l) => Number(l.line_value) > 0).length > 1 && (
-        <div style={{ marginTop: 8 }}>
-          <div style={{ fontSize: 11, color: "#5a6b78" }}>
-            Freight typed as a line item? Tick it to fold its value into
-            supplier freight — the line is zeroed and comes off the shipment
-            manifest:</div>
-          {o.lines.filter((l) => Number(l.line_value) > 0).map((l) => (
-            <label key={l.id} style={{ display: "block", fontSize: 12.5,
-                                       marginTop: 3, cursor: "pointer" }}>
-              <input type="checkbox" checked={foldIds.includes(l.id)}
-                     onChange={() => toggleFold(l)} />{" "}
-              {l.description} — {o.order_currency} {money(l.line_value)}
-            </label>
-          ))}
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 11, color: "#5a6b78", marginBottom: 4 }}>
+            Taking a line off the order. Either way it is zeroed and comes off
+            the shipment manifest — the difference is what happens to the
+            money:
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse",
+                          fontSize: 12.5 }}>
+            <thead>
+              <tr style={{ fontSize: 10.5, color: "#5a6b78",
+                           textAlign: "left" }}>
+                <th style={{ fontWeight: 500 }}>Line</th>
+                <th style={{ fontWeight: 500, width: 62, textAlign: "center" }}>
+                  Keep</th>
+                <th style={{ fontWeight: 500, width: 108, textAlign: "center" }}
+                    title="Value moves into supplier freight — order total
+                           unchanged">
+                  Fold&nbsp;to&nbsp;freight</th>
+                <th style={{ fontWeight: 500, width: 92, textAlign: "center" }}
+                    title="Item comes off the order — total falls and the
+                           unpaid milestones absorb it">
+                  Remove</th>
+              </tr>
+            </thead>
+            <tbody>
+              {o.lines.filter((l) => Number(l.line_value) > 0).map((l) => {
+                const intent = foldIds.includes(l.id) ? "fold"
+                  : dropIds.includes(l.id) ? "drop" : "keep";
+                return (
+                  <tr key={l.id}>
+                    <td style={{ padding: "2px 0" }}>
+                      {l.description}{" "}
+                      <span style={{ color: "#8a97a1" }}>
+                        {o.order_currency} {money(l.line_value)}</span>
+                    </td>
+                    {["keep", "fold", "drop"].map((v) => (
+                      <td key={v} style={{ textAlign: "center" }}>
+                        <input type="radio" name={`intent-${l.id}`}
+                               checked={intent === v}
+                               onChange={() => setIntent(l, v)} />
+                      </td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          {dropIds.length > 0 && (
+            <div style={{ fontSize: 11.5, color: "#8a6d00", marginTop: 5 }}>
+              Removing brings the order total down. Milestones already paid or
+              on a voucher are untouched; the unpaid ones re-adjust to the new
+              total, and you will see exactly how before anyone authorises it.
+            </div>
+          )}
         </div>
       )}
       <input placeholder="Reason (e.g. the PI includes freight)"

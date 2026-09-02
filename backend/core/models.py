@@ -1565,7 +1565,13 @@ class ImportChargeCorrection(models.Model):
     # zeroed (never deleted — COMMITTED postings PROTECT it), its shipment
     # manifest rows are removed, and its ledger value respreads across the
     # goods lines. Blocked once the line is on a received IRN.
+    # Two different intents, deliberately separate fields. Folding moves a
+    # line's value INTO supplier freight, so the order total is unchanged.
+    # Dropping takes the item off the order, so the total falls and the
+    # still-movable milestones absorb it — a last-minute deletion after part
+    # of the order is already paid (owner 2026-09-02, IPR-017).
     fold_line_ids = models.JSONField(default=list, blank=True)
+    drop_line_ids = models.JSONField(default=list, blank=True)
     reason = models.TextField()
     status = models.CharField(max_length=17, choices=Status.choices,
                               default=Status.PENDING_DIRECTOR)
