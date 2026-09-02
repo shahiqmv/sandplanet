@@ -7,6 +7,7 @@ without Docker (see DECISIONS.md D1).
 """
 
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -14,7 +15,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY", "insecure-local-dev-key-change-in-staging"
 )
-DEBUG = os.environ.get("DJANGO_DEBUG", "1") == "1"
+# Off unless somebody turns it on. The old default was ON, so a box that lost
+# its .env would have shown every visitor the settings and the traceback
+# (owner 2026-09-02). Local dev sets DJANGO_DEBUG=1 (see .claude/launch.json).
+DEBUG = os.environ.get("DJANGO_DEBUG", "0") == "1"
 
 # --- Shipment tracking (ShipsGo, D40). Secrets set in platform env, never here.
 SHIPSGO_BASE_URL = os.environ.get("SHIPSGO_BASE_URL",
@@ -296,7 +300,13 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ---- Production hardening (M8) ------------------------------------------
 # Applied whenever DEBUG is off. The app runs behind a TLS-terminating
 # reverse proxy (Caddy/nginx/platform LB) that sets X-Forwarded-Proto.
-if not DEBUG:
+#
+# Not during `manage.py test`: the test client speaks plain HTTP, and with
+# DEBUG now off by default the https redirect answered every API test with a
+# 301 page (owner 2026-09-02). Production sets DJANGO_DEBUG explicitly and is
+# unaffected; the deploy gate (check --deploy) still sees the real values.
+TESTING = len(sys.argv) > 1 and sys.argv[1] == "test"
+if not DEBUG and not TESTING:
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
     # Redirect http→https at the app unless the proxy already does it
     SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "1") == "1"

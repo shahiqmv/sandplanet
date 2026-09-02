@@ -4,6 +4,12 @@
 # gunicorn. Migrations and collectstatic are idempotent.
 set -e
 
+# Refuse to start if any production check fails — Django's own (DEBUG,
+# secret key, HTTPS, cookies) and ours in core/checks.py (no HTML API pages,
+# no admin, no developer apps). A regression is a deploy that does not
+# happen, not a page somebody finds later (owner 2026-09-02).
+python manage.py check --deploy --fail-level WARNING
+
 python manage.py migrate --noinput
 python manage.py collectstatic --noinput
 

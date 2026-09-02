@@ -21,6 +21,8 @@
 # 16MB covers the largest real upload (phone photos peak around 7MB); anything
 # larger falls back to streaming rather than being refused.
 (app) {
+	# The upstream's name is nobody's business.
+	header -Server
 	reverse_proxy web:8000 {
 		request_buffers 16MB
 	}

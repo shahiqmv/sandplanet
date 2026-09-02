@@ -5,6 +5,7 @@
       "name": "backend",
       "runtimeExecutable": "backend/.venv/bin/python",
       "runtimeArgs": ["backend/manage.py", "runserver", "127.0.0.1:8000"],
+      "env": { "DJANGO_DEBUG": "1" },
       "port": 8000
     },
     {
