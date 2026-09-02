@@ -16,6 +16,15 @@ from .audit import audit
 from .models import Attendance, CostPosting, EmployeeSiteAllocation
 
 
+def _basic_in_mvr(employee):
+    """An employee's monthly basic in MVR, whatever they are paid in."""
+    from . import fx
+    basic = employee.basic_pay or Decimal("0")
+    if (employee.currency or "MVR").upper() == "USD":
+        return (basic * fx.usd_rate()).quantize(Decimal("0.01"))
+    return basic
+
+
 def _param(key, default):
     from .models import CompanyParameter
 
@@ -67,7 +76,11 @@ def month_staff_cost(site, year, month):
 
     rows, total = [], Decimal("0")
     for eid, e in here.items():
-        basic = e["emp"].basic_pay or Decimal("0")
+        # The staff-cost ledger is kept in MVR, but basic_pay is held in the
+        # employee's OWN currency. A USD-paid man's 800 was being added
+        # straight into an MVR site total as 800 rufiyaa — about a fifteenth
+        # of what he costs (owner 2026-09-02, EMP-0060 at MXR).
+        basic = _basic_in_mvr(e["emp"])
         td = total_days.get(eid, Decimal("0"))
         prop = (e["days"] / td) if td else Decimal("0")
         basic_portion = (basic * prop).quantize(Decimal("0.01"))
@@ -78,6 +91,9 @@ def month_staff_cost(site, year, month):
         total += cost
         rows.append({"emp_no": e["emp"].emp_no,
                      "full_name": e["emp"].full_name,
+                     # Say what he is actually paid in, so an MVR figure
+                     # beside a USD man is not read as his salary.
+                     "pay_currency": e["emp"].currency or "MVR",
                      "days": e["days"], "ot_hours": e["ot"],
                      "basic_portion": basic_portion, "ot_amount": ot_amount,
                      "cost": cost})
