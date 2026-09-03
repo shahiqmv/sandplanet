@@ -13,7 +13,7 @@ from django.db.models import Count, Q
 
 # The register's order is the order of the work: inspect, approve materials,
 # then the drawings and calculations behind them.
-TYPES = ("IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC")
+TYPES = ("IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC", "ABD")
 
 LABELS = {
     "IR": "Inspection Request",
@@ -24,6 +24,11 @@ LABELS = {
     "BBS": "Bar Bending Schedule",
     "TWD": "Temporary Works Design",
     "MOC": "Sample / Mock-up",
+    # The record drawing: what was BUILT, reviewed by the Engineer with the
+    # same codes as a shop drawing, then filed in the handover pack by link
+    # (owner 2026-09-03). Before this it could only be uploaded as a file at
+    # the end, with no review cycle at all.
+    "ABD": "As-Built Drawing",
 }
 
 # The types that travel the submittal workflow: raised on site, gated by the
@@ -32,11 +37,11 @@ LABELS = {
 # every workflow verb, so the Approve button the screen offered returned a
 # 400 (found 2026-08-30, one day after they went live).
 PM_GATED = ("MR", "IR", "MAR", "SD", "MS", "PMR",
-            "MXD", "BBS", "TWD", "MOC")
+            "MXD", "BBS", "TWD", "MOC", "ABD")
 
 # Issued to the client for a result. IR is in the family but keeps its own
 # closure flow (Part C), so it is listed where that matters, not here.
-TO_CLIENT = ("MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC")
+TO_CLIENT = ("MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC", "ABD")
 
 # Where a submittal has come to rest. Everything else is still someone's job.
 SETTLED = ("APPROVED", "APPROVED_WITH_COMMENTS", "REJECTED", "CLOSED")

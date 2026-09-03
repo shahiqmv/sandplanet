@@ -12,6 +12,7 @@ export const QA_LABELS = {
   BBS: "Bar Bending Schedule",
   TWD: "Temporary Works Design",
   MOC: "Sample / Mock-up Approval",
+  ABD: "As-Built Drawing Submittal",
   TWS: "Tomorrow Work Schedule",
 };
 
@@ -130,6 +131,23 @@ const TWD_FIELDS = [
 
 // A mock-up approves the BUILT result, not the product on paper — so what
 // matters is where it stands, what it represents, and whether it is kept as
+// The record drawing — what was BUILT, reviewed with the same codes as a
+// shop drawing and filed in the handover pack by link (owner 2026-09-03).
+const ABD_FIELDS = [
+  ["attention_to", "Attention To", "text"],
+  ["drawing_title", "Drawing Title", "text"],
+  ["drawing_no", "Drawing No.", "text"],
+  ["drawing_rev", "As-Built Revision", "text"],
+  ["discipline", "Discipline / Trade", "select",
+   ["Civil", "Structural", "Architectural", "MEP", "Finishes", "Marine",
+    "Other"]],
+  ["supersedes_drawing", "Supersedes Drawing No.", "text"],
+  ["element", "Element / Area", "text"],
+  ["completed_on", "Works Complete As Of", "text"],
+  ["verified_against", "Verified Against (survey / measurement)", "text"],
+  ["confirms_as_built", "Reflects the Works as Constructed", "checkbox"],
+  ["remarks", "Remarks", "textarea"],
+];
 // the benchmark the rest of the work is judged against (owner 2026-08-30).
 const MOC_FIELDS = [
   ["attention_to", "Attention To", "text"],
@@ -148,7 +166,7 @@ const MOC_FIELDS = [
 
 const FIELDS_BY_TYPE = { MAR: MAR_FIELDS, SD: SD_FIELDS, MS: MS_FIELDS,
                          MXD: MXD_FIELDS, BBS: BBS_FIELDS,
-                         TWD: TWD_FIELDS, MOC: MOC_FIELDS };
+                         TWD: TWD_FIELDS, MOC: MOC_FIELDS, ABD: ABD_FIELDS };
 
 // Per-type attachment slots (files uploaded here are compiled into the PDF).
 const ENCLOSURES_BY_TYPE = {
@@ -170,6 +188,9 @@ const ENCLOSURES_BY_TYPE = {
         ["shape_codes", "Bar shape codes"]],
   MOC: [["photographs", "Photographs"], ["drawings", "Drawings"],
         ["material_list", "Material list"]],
+  ABD: [["as_built_drawing", "As-built drawing"],
+        ["survey_data", "Survey / measurement data"],
+        ["redline_markup", "Red-line markup"]],
   TWD: [["design_drawings", "Design drawings"],
         ["calculations", "Calculations"],
         ["check_certificate", "Design check certificate"],
@@ -181,7 +202,7 @@ const ENCLOSURES_BY_TYPE = {
 // Hand-copying it there is what left MXD/BBS/TWD/MOC opening as line
 // documents (owner 2026-08-30).
 export const SUBMITTAL_TYPES = ["MAR", "SD", "MS", "MXD", "BBS", "TWD",
-                                "MOC"];
+                                "MOC", "ABD"];
 
 const RESULT_OPTIONS = {
   IR: [["APPROVED", "Approved"],

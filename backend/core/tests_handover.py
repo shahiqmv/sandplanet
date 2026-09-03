@@ -76,20 +76,22 @@ class DossierTests(TestCase):
             len(self.client.get(f"{self.url}/candidates").data), 0)
 
     def test_pulling_a_record_in_readies_it_but_does_not_submit_it(self):
+        """An approved INSPECTION went to nobody outside the company, so
+        holding it is not submitting it — it is ready to go on a transmittal
+        and nothing more (owner 2026-09-01). A record the client already
+        approved is the other case: see ClientApprovedOnPullTests."""
         self._open()
         doc = Document.objects.create(
-            doc_type="MAR", ref="MAR-HO1-001", site=self.site,
+            doc_type="IR", ref="IR-HO1-001", site=self.site,
             project=self.project, doc_date=date.today(), status="APPROVED",
             created_by=self.se)
         r = self.client.post(f"{self.url}/items",
                              {"document_id": doc.id}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
-        # Holding a document is not submitting it — it is ready to go on a
-        # transmittal, and nothing more (owner 2026-09-01).
         self.assertEqual(r.data["status"], "REQUIRED")
         self.assertTrue(r.data["has_evidence"])
-        self.assertEqual(r.data["section"], "SUBMITTAL")
-        self.assertEqual(r.data["document_ref"], "MAR-HO1-001")
+        self.assertEqual(r.data["section"], "INSPECTION")
+        self.assertEqual(r.data["document_ref"], "IR-HO1-001")
 
     def test_the_same_record_cannot_be_added_twice(self):
         self._open()
@@ -483,3 +485,94 @@ class TransmittalTests(DossierTests):
             f"/api/v1/handover/transmittals/{t['id']}/transmittal.pdf")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r["Content-Type"], "application/pdf")
+
+
+class ClientApprovedOnPullTests(TestCase):
+    """A record the client already approved is accepted on arrival; one we
+    still have to hand over is not (owner 2026-09-03)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="HO2", name="Handover site 2",
+                                        status=Site.Status.ACTIVE)
+        self.pm = make_user("pm_ho2", User.Role.PM, site=self.site)
+        self.se = make_user("se_ho2", User.Role.SITE_ENGINEER, site=self.site)
+        self.project = Project.objects.create(
+            site=self.site, code="P2", title="Villas", status="ACTIVE",
+            defects_liability_months=12)
+        self.client = APIClient()
+        self.client.force_authenticate(self.pm)
+        self.url = f"/api/v1/projects/{self.project.id}/handover"
+
+    def _open(self):
+        return self.client.post(self.url)
+
+    def _doc(self, doc_type, status, ref, discipline=""):
+        from .models import DocumentRevision
+        d = Document.objects.create(
+            doc_type=doc_type, ref=ref, site=self.site, project=self.project,
+            doc_date=date.today(), status=status, created_by=self.se)
+        rev = DocumentRevision.objects.create(
+            document=d, rev_label="R0", created_by=self.se,
+            payload={"discipline": discipline,
+                     "client_result": {"result": status,
+                                       "approval_date": "2026-08-20"}})
+        d.current_revision = rev
+        d.save(update_fields=["current_revision"])
+        return d
+
+    def _pull(self, doc):
+        return self.client.post(f"{self.url}/items",
+                                {"document_id": doc.id}, format="json")
+
+    def test_an_approved_as_built_lands_in_the_as_built_section_accepted(self):
+        self._open()
+        d = self._doc("ABD", "APPROVED", "ABD-HO1-001", "MEP")
+        cands = self.client.get(f"{self.url}/candidates").data
+        self.assertEqual([c["suggested_section"] for c in cands
+                          if c["ref"] == d.ref], ["AS_BUILT"])
+        r = self._pull(d)
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["section"], "AS_BUILT")
+        self.assertEqual(r.data["status"], "ACCEPTED")
+        self.assertEqual(r.data["accepted_on"], "2026-08-20")
+
+    def test_it_fills_the_placeholder_the_pack_was_holding_open(self):
+        """Not a second row beside 'As-built drawings — MEP'."""
+        self._open()
+        before = self.client.get(self.url).data
+        mep = next(i for i in before["items"]
+                   if i["section"] == "AS_BUILT" and i["discipline"] == "MEP")
+        d = self._doc("ABD", "APPROVED", "ABD-HO1-002", "MEP services")
+        r = self._pull(d)
+        self.assertEqual(r.data["id"], mep["id"])          # same row
+        after = self.client.get(self.url).data
+        as_built = [i for i in after["items"] if i["section"] == "AS_BUILT"]
+        self.assertEqual(len(as_built), 2)                  # still two
+        c = after["completeness"]
+        self.assertEqual(c["accepted"], 1)
+
+    def test_approved_with_comments_still_counts_as_accepted(self):
+        self._open()
+        d = self._doc("ABD", "APPROVED_WITH_COMMENTS", "ABD-HO1-003")
+        self.assertEqual(self._pull(d).data["status"], "ACCEPTED")
+
+    def test_an_internal_record_is_still_ours_to_hand_over(self):
+        """An approved inspection went to nobody outside; it stays Required
+        until it goes out on a handover transmittal."""
+        self._open()
+        d = self._doc("IR", "APPROVED", "IR-HO1-009")
+        r = self._pull(d)
+        self.assertEqual(r.data["status"], "REQUIRED")
+        self.assertTrue(r.data["has_evidence"])
+
+    def test_a_second_pull_adds_a_row_once_the_placeholder_is_used(self):
+        self._open()
+        a = self._doc("ABD", "APPROVED", "ABD-HO1-004", "MEP")
+        b = self._doc("ABD", "APPROVED", "ABD-HO1-005", "MEP")
+        self._pull(a); self._pull(b)
+        rows = [i for i in self.client.get(self.url).data["items"]
+                if i["section"] == "AS_BUILT"]
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(sorted(r["document_ref"] for r in rows
+                                if r["document_ref"]),
+                         ["ABD-HO1-004", "ABD-HO1-005"])

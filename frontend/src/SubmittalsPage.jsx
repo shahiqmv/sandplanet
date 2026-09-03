@@ -4,14 +4,14 @@ import { QA_LABELS } from "./QADocs.jsx";
 import { Btn, StatusChip, card, inputStyle, td, th } from "./ui.jsx";
 
 // The order the work happens in, not alphabetical.
-const TYPES = ["IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC"];
+const TYPES = ["IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC", "ABD"];
 
 // Short labels for the filter row — the full names are too long to sit in a
 // row of eight, and everyone on site says "IR" and "MAR" out loud anyway.
 const SHORT = {
   IR: "Inspections", MAR: "Materials", SD: "Shop Drawings",
   MS: "Method Statements", MXD: "Mix Designs", BBS: "Bar Bending",
-  TWD: "Temporary Works", MOC: "Mock-ups",
+  TWD: "Temporary Works", MOC: "Mock-ups", ABD: "As-Builts",
 };
 
 const STATES = [["", "All"], ["open", "Open"],

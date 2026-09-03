@@ -204,6 +204,60 @@ def sd_context(document, revision):
     }
 
 
+def abd_context(document, revision):
+    """As-built (record) drawing submittal.
+
+    A shop drawing says what we intend to build; an as-built says what we
+    built. The Engineer reviews it with the same codes, but the questions are
+    different: what it supersedes, what it was measured against, and whether
+    the contractor stands behind it as the record (owner 2026-09-03)."""
+    payload = revision.payload or {}
+    approvals = list(document.approvals.select_related("actor"))
+    enclosures = payload.get("enclosures") or {}
+    sections = [
+        {"kind": "kv", "title": "1. Drawing Details", "rows": [
+            ["Drawing Title", payload.get("drawing_title", ""),
+             "Drawing No.", payload.get("drawing_no", "")],
+            ["As-Built Revision", payload.get("drawing_rev", ""),
+             "Discipline / Trade", payload.get("discipline", "")],
+            ["Supersedes Drawing No.", payload.get("supersedes_drawing", ""),
+             "Element / Area", payload.get("element", "")],
+            ["Works Complete As Of", payload.get("completed_on", ""),
+             "Verified Against", payload.get("verified_against", "")],
+        ]},
+        {"kind": "enclosures", "title": "2. Attachments / Drawings",
+         "items": [(name, bool(enclosures.get(key))) for name, key in [
+             ("As-Built Drawing", "as_built_drawing"),
+             ("Survey / Measurement Data", "survey_data"),
+             ("Red-line Markup", "redline_markup")]]},
+        {"kind": "kv", "title": "3. Contractor Confirmation", "rows": [
+            ["Reflects the Works as Constructed",
+             _yesno(payload.get("confirms_as_built")),
+             "Remarks", payload.get("remarks", "")],
+        ]},
+    ]
+    sections += _result_section(payload, "4. Client / Consultant Review")
+    return {
+        "doc": document, "rev": revision, "site": document.site,
+        "logo_src": _logo_src(), "co": company_info(),
+        "form_title": "AS-BUILT DRAWING SUBMITTAL",
+        "form_subline": f"Form No: FRM-PRJ-ABD  |  Rev: {revision.rev_label}",
+        "header_rows": [
+            ["Attention To", payload.get("attention_to", ""),
+             "Revision", revision.rev_label],
+        ],
+        "sections": sections,
+        "sig_blocks": [
+            {"title": "Submitted By — Site Engineer / QS",
+             "stamp": _stamp_for(approvals, "SUBMIT")},
+            {"title": "Approved By — Project Manager",
+             "stamp": _stamp_for(approvals, "APPROVE")},
+            {"title": "Reviewed By — Client / Consultant",
+             "text": _client_by(payload)},
+        ],
+    }
+
+
 def ms_context(document, revision):
     """Method Statement submittal — same transmittal form as the MAR; the
     prepared method-statement PDF rides along as the enclosure."""

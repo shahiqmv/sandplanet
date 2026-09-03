@@ -40,13 +40,14 @@ class SubmittalRegisterTests(TestCase):
 
     def test_one_call_returns_every_submittal_type(self):
         """The point of the endpoint: eight types, one request."""
-        for t in ("IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC"):
+        for t in ("IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC", "ABD"):
             self.assertEqual(self._create(t).status_code, 201, t)
         r = self._register()
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["total"], 8)
+        self.assertEqual(r.data["total"], 9)
         self.assertEqual({d["doc_type"] for d in r.data["results"]},
-                         {"IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC"})
+                         {"IR", "MAR", "SD", "MS", "MXD", "BBS", "TWD", "MOC",
+                          "ABD"})
 
     def test_it_pages_instead_of_returning_everything(self):
         for _ in range(5):
@@ -166,7 +167,7 @@ class MockUpTests(TestCase):
         """The civil types shipped able to be raised but not approved: the
         PM gate still listed only MR/IR/MAR/SD/MS/PMR, so the Approve button
         the screen offered returned a 400 (found 2026-08-30)."""
-        for doc_type in ("SD", "MS", "MXD", "BBS", "TWD", "MOC"):
+        for doc_type in ("SD", "MS", "MXD", "BBS", "TWD", "MOC", "ABD"):
             self.client.force_authenticate(self.se)
             r = self.client.post("/api/v1/documents", {
                 "doc_type": doc_type, "site_id": self.site.id,
@@ -198,3 +199,36 @@ class MockUpTests(TestCase):
         r = self.client.post(f"/api/v1/documents/{ref}/actions/approve")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(Document.objects.get(ref=ref).status, "PM_APPROVED")
+
+
+class AsBuiltTests(TestCase):
+    """The record drawing: reviewed like a shop drawing, filed by link."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="ABD", name="Record site",
+                                        status=Site.Status.ACTIVE)
+        self.se = make_user("se_abd", User.Role.SITE_ENGINEER, site=self.site)
+        self.pm = make_user("pm_abd", User.Role.PM, site=self.site)
+        self.project = Project.objects.create(
+            site=self.site, code="P1", title="Villas", status="ACTIVE",
+            pm=self.pm)
+        self.client = APIClient()
+        self.client.force_authenticate(self.se)
+
+    def test_an_as_built_can_be_raised_and_has_its_own_form(self):
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "ABD", "site_id": self.site.id,
+            "project_id": self.project.id, "payload": {
+                "drawing_title": "Villa 3 — drainage as built",
+                "drawing_no": "AB-DR-003", "supersedes_drawing": "SD-DR-003",
+                "verified_against": "Site survey 2026-08-20"}},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertTrue(r.data["ref"].startswith("ABD-"))
+        doc = Document.objects.get(ref=r.data["ref"])
+        template, context = _render_target(doc, doc.current_revision)
+        self.assertEqual(template, "qa_form.html")
+        self.assertEqual(context["form_title"], "AS-BUILT DRAWING SUBMITTAL")
+        body = str(context["sections"])
+        self.assertIn("Supersedes Drawing No.", body)
+        self.assertIn("SD-DR-003", body)

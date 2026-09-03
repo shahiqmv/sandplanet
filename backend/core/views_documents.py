@@ -64,6 +64,7 @@ CREATE_ROLES = {  # spec §3 "can create"
     "BBS": {"SITE_ENGINEER", "PM"},      # bar bending schedule
     "TWD": {"SITE_ENGINEER", "PM"},      # temporary works design
     "MOC": {"SITE_ENGINEER", "PM"},      # sample / mock-up approval
+    "ABD": {"SITE_ENGINEER", "PM"},      # as-built drawing
     # Site Engineer has full site-task parity with Site Admin (owner,
     # 2026-07-13): both raise MRs, receive goods, etc.
     "MR": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},
@@ -92,6 +93,8 @@ RESULTS = {  # client results per type (spec §5.3/§5.4)
     "TWD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
             "REJECTED"},
     "MOC": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
+            "REJECTED"},
+    "ABD": {"APPROVED", "APPROVED_WITH_COMMENTS", "REVISE_RESUBMIT",
             "REJECTED"},
 }
 LINE_TYPES = {"MR", "PR", "LM", "GRN", "PMR"}
@@ -183,7 +186,7 @@ def _is_pm_for(user, doc):
 # non-finance operator, so procurement/finance docs (PR/LM/PO/PV) are untouched
 # — the Director stays read-only there (owner 2026-08-01).
 SITE_DOC_TYPES = {"DPR", "TWS", "IR", "MAR", "SD", "MS", "MR", "GRN", "PMR",
-                  "SCA", "DMA", "MXD", "BBS", "TWD", "MOC"}
+                  "SCA", "DMA", "MXD", "BBS", "TWD", "MOC", "ABD"}
 
 
 def _can(request, doc_type, roles):
@@ -229,7 +232,7 @@ def document_create(request):
     # report to the one client per site, each work/planned row tagged with
     # its project (owner, R8 2026-07-08; supersedes R4's per-project DPR).
     PROJECT_TYPES = ("IR", "MAR", "SD", "MS", "PMR",
-                     "MXD", "BBS", "TWD", "MOC")     # per project
+                     "MXD", "BBS", "TWD", "MOC", "ABD")  # per project
     project = None
     if doc_type in PROJECT_TYPES:
         project_id = request.data.get("project_id")

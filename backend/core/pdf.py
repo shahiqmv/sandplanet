@@ -320,7 +320,7 @@ def _render_target(document, revision, filters=None):
     if document.doc_type in LINE_FORMS:
         return "lines_form.html", _lines_context(document, revision)
     if document.doc_type in ("IR", "MAR", "SD", "MS", "TWS", "DMA", "TR",
-                             "MXD", "BBS", "TWD", "MOC"):
+                             "MXD", "BBS", "TWD", "MOC", "ABD"):
         from . import pdf_qa
 
         builder = {"IR": pdf_qa.ir_context, "MAR": pdf_qa.mar_context,
@@ -331,7 +331,8 @@ def _render_target(document, revision, filters=None):
                    "MXD": pdf_qa.mxd_context,
                    "BBS": pdf_qa.bbs_context,
                    "TWD": pdf_qa.twd_context,
-                   "MOC": pdf_qa.moc_context}[document.doc_type]
+                   "MOC": pdf_qa.moc_context,
+                   "ABD": pdf_qa.abd_context}[document.doc_type]
         return "qa_form.html", builder(document, revision)
     return None
 

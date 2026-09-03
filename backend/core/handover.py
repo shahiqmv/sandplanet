@@ -58,7 +58,39 @@ DOC_SECTION = {
     # Cube tests, compaction, pressure tests: recorded as they happen and
     # PULLED into the pack, not uploaded at the end (owner 2026-08-29).
     "TR": "TEST",
+    # The record drawing lands where the pack has been waiting for it.
+    "ABD": "AS_BUILT",
 }
+
+# A pulled-in record the CLIENT has already approved is accepted on arrival —
+# it went to them as a submittal and came back approved; sending it again on
+# a handover transmittal would be asking twice (owner 2026-09-03). Internal
+# records (an inspection, a test) are ours to hand over, so they stay
+# Required until they do.
+CLIENT_APPROVED = {"APPROVED", "APPROVED_WITH_COMMENTS"}
+
+
+def _discipline_of(document):
+    text = ((document.current_revision.payload or {}).get("discipline", "")
+            if document.current_revision_id else "") or ""
+    t = text.lower()
+    if "mep" in t or "elec" in t or "plumb" in t or "mech" in t:
+        return "MEP"
+    if "civil" in t or "struct" in t:
+        return "CIVIL"
+    if "finish" in t:
+        return "FINISHES"
+    if "external" in t or "landscap" in t:
+        return "EXTERNAL"
+    return "GENERAL"
+
+
+def _client_approved_on(document):
+    block = ((document.current_revision.payload or {}).get("client_result")
+             or {}) if document.current_revision_id else {}
+    return (_as_date(block.get("approval_date"))
+            or _as_date(block.get("inspection_date"))
+            or timezone.localdate())
 ACCEPTED_STATUSES = {"APPROVED", "APPROVED_WITH_COMMENTS", "VERIFIED",
                      "CLOSED", "RECORDED",
                      # A passed test is handover evidence. A failed one is
@@ -130,20 +162,50 @@ def add_item(dossier, data, user, file=None):
     if section not in dict(HandoverItem.Section.choices):
         section = (DOC_SECTION.get(document.doc_type, "OTHER")
                    if document else "OTHER")
-    item = HandoverItem.objects.create(
-        dossier=dossier, section=section,
-        discipline=data.get("discipline") or "GENERAL",
-        title=title, reference=(data.get("reference") or "")[:80],
-        description=(data.get("description") or "").strip(),
-        document=document, file=file,
+    from .submittals import TO_CLIENT
+    discipline = data.get("discipline") or (
+        _discipline_of(document) if document else "GENERAL")
+    approved = bool(document and document.doc_type in TO_CLIENT
+                    and document.status in CLIENT_APPROVED)
+    # The pack was opened with placeholders — "As-built drawings — MEP" —
+    # waiting for exactly this record. Fill the placeholder rather than add
+    # a second row beside it, or the pack shows the drawing AND still asks
+    # for it (owner 2026-09-03). Same discipline only: a second MEP drawing
+    # must not quietly fill the architectural slot and stop the pack asking
+    # for the architectural set.
+    placeholder = None
+    if document:
+        placeholder = dossier.items.filter(
+            section=section, status="REQUIRED", discipline=discipline,
+            document__isnull=True, file="").first()
+    if placeholder is not None:
+        item = placeholder
+        item.document = document
+        item.reference = (data.get("reference") or document.ref)[:80]
+        if data.get("title"):
+            item.title = title
+    else:
+        item = HandoverItem(
+            dossier=dossier, section=section, discipline=discipline,
+            title=title, reference=(data.get("reference") or "")[:80],
+            description=(data.get("description") or "").strip(),
+            document=document, file=file,
+            notes=(data.get("notes") or "").strip())
+    if approved:
+        item.status = "ACCEPTED"
+        item.provided_on = item.accepted_on = _client_approved_on(document)
+        item.provided_by = user
+    else:
         # Holding a document is not submitting it. An item with evidence is
         # READY to go on a transmittal; it stays REQUIRED until one is issued
         # (owner 2026-09-01).
-        status="REQUIRED",
-        notes=(data.get("notes") or "").strip())
+        item.status = "REQUIRED"
+    item.save()
     audit("project", dossier.project_id, "HANDOVER_ITEM_ADDED", actor=user,
-          detail={"section": section, "title": title[:80],
-                  "document": document.ref if document else ""})
+          detail={"section": section, "title": item.title[:80],
+                  "document": document.ref if document else "",
+                  "accepted_on_pull": approved,
+                  "filled_placeholder": placeholder is not None})
     return item, None
 
 

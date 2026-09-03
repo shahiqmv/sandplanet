@@ -387,6 +387,7 @@ class Document(models.Model):
         BBS = "BBS"  # bar bending schedule
         TWD = "TWD"  # temporary works design (formwork, falsework, shoring)
         MOC = "MOC"  # sample / mock-up approval — the agreed benchmark
+        ABD = "ABD"  # as-built (record) drawing — reviewed like an SD
 
     # Per-type state machines (spec §7.1). Void is a flag, not a state.
     TRANSITIONS = {
@@ -476,6 +477,13 @@ class Document(models.Model):
                        "REVISE_RESUBMIT", "REJECTED"},
         },
         "MOC": {
+            "DRAFT": {"SUBMITTED"},
+            "SUBMITTED": {"PM_APPROVED", "DRAFT"},
+            "PM_APPROVED": {"ISSUED"},
+            "ISSUED": {"APPROVED", "APPROVED_WITH_COMMENTS",
+                       "REVISE_RESUBMIT", "REJECTED"},
+        },
+        "ABD": {
             "DRAFT": {"SUBMITTED"},
             "SUBMITTED": {"PM_APPROVED", "DRAFT"},
             "PM_APPROVED": {"ISSUED"},
