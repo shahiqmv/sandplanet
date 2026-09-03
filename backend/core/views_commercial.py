@@ -840,12 +840,10 @@ def receipt_delete(request, pk):
 
 def pdf_bytes(template, context):
     """Render a template to PDF bytes (raises if the engine is unavailable).
-    Shared by the download responses and the meeting-minutes email."""
-    from django.conf import settings
-    from django.template.loader import render_to_string
-    from weasyprint import HTML
-    html = render_to_string(template, context)
-    return HTML(string=html, base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    Shared by the download responses and the meeting-minutes email. Rendered
+    once per version of the content — see pdf_cache."""
+    from .pdf_cache import render_cached
+    return render_cached(template, context)
 
 
 def _render_pdf(template, context, filename):
