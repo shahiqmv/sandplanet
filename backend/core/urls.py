@@ -621,6 +621,7 @@ urlpatterns = [
     path("sites/<int:pk>/shifts", hr.site_shifts_view, name="site-shifts"),
     path("shifts/<int:pk>", hr.shift_update, name="shift-update"),
     path("attendance/ot-approve", hr.ot_approve, name="ot-approve"),
+    path("attendance/ot-review", hr.ot_review, name="ot-review"),
     path("timesheets/<int:site_id>/<int:year>/<int:month>/lock",
          hr.timesheet_lock, name="timesheet-lock"),
     path("timesheets/<int:site_id>/<int:year>/<int:month>/reopen",

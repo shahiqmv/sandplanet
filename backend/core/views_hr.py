@@ -846,6 +846,7 @@ def attendance_bulk(request):
                        request.data.get("rows", [])])
     saved = 0
     refused = []
+    withdrawn = []
     # Per-employee change record. The audit used to say only "this site,
     # this date, N rows" — you could prove someone edited the day but not
     # whose, from what, to what; and an OFF mark DELETED a record silently,
@@ -926,21 +927,41 @@ def attendance_bulk(request):
         record.normal_hours = _normal_hours(
             site, record.check_in, record.check_out, remark,
             shift=smap.get(employee.id))
-        record.save(update_fields=["normal_hours"])
+        fields = ["normal_hours"]
+        # An approval must never outlive the number it was given. The PM
+        # approved 6 hours; the clerk later corrected the request to 4 (or,
+        # on one BVR row, 47 became 6) — and payroll went on paying the
+        # approved figure, because the save wrote ot_requested and left
+        # ot_approved exactly where it was. 32 rows in a month across eight
+        # sites (owner 2026-09-03, "revising previous day's OT is not
+        # getting updated"). A changed request goes back to the PM.
+        if (before is not None and not is_sub
+                and before.ot_approved is not None
+                and (record.ot_requested or Decimal("0"))
+                != (before.ot_requested or Decimal("0"))):
+            record.ot_approved = None
+            record.ot_approved_by = None
+            record.ot_approved_at = None
+            fields += ["ot_approved", "ot_approved_by", "ot_approved_at"]
+            withdrawn.append(employee.emp_no)
+        record.save(update_fields=fields)
         now = {"remark": record.remark, "in": str(record.check_in or ""),
                "out": str(record.check_out or ""),
                "ot": str(record.ot_requested or 0)}
         if was != now:
             changes.append({"emp": employee.emp_no,
                             "action": "CREATED" if before is None else "EDITED",
-                            **({"was": was} if was else {}), "now": now})
+                            **({"was": was} if was else {}), "now": now,
+                            **({"ot_approval": "withdrawn"}
+                               if employee.emp_no in withdrawn else {})})
         saved += 1
     audit("attendance", site.id, "ATTENDANCE_SAVED", actor=request.user,
           detail={"site": site.code, "date": day.isoformat(), "rows": saved,
                   "late_edit": late_edit,
-                  "changed": len(changes), "changes": changes})
+                  "changed": len(changes), "changes": changes,
+                  "ot_approval_withdrawn": withdrawn})
     return Response({"saved": saved, "late_edit": late_edit,
-                     "refused": refused})
+                     "refused": refused, "ot_approval_withdrawn": withdrawn})
 
 
 @api_view(["GET", "POST"])
@@ -1070,8 +1091,20 @@ def shift_assign(request):
 def ot_approve(request):
     """PM approves OT per day or in batch; unapproved OT can never flow
     into payroll (spec §6A.2)."""
-    ids = request.data.get("ids") or []
-    rows = Attendance.objects.filter(pk__in=ids).select_related("site")
+    # Either the legacy shape — ids + one optional hours override — or a
+    # per-row decision: rows=[{id, hours}]. The PM reviews each man's hours
+    # against their cost; a single button over 200 rows is how OT got
+    # abused (owner 2026-09-03).
+    per_row = {}
+    for r in request.data.get("rows") or []:
+        try:
+            per_row[int(r.get("id"))] = Decimal(str(r.get("hours")))
+        except (TypeError, ValueError, ArithmeticError):
+            return Response({"detail": "Each row needs an id and hours."},
+                            status=400)
+    ids = list(per_row) or (request.data.get("ids") or [])
+    rows = Attendance.objects.filter(pk__in=ids).select_related(
+        "site", "employee__job_category")
     if not rows:
         return Response({"detail": "ids required."}, status=400)
     for row in rows:
@@ -1083,16 +1116,136 @@ def ot_approve(request):
         if _month_locked(row.site_id, row.day):
             return Response({"detail": "Month is locked."}, status=400)
     hours_override = request.data.get("hours")
+    decided, total_cost = [], Decimal("0")
     for row in rows:
-        row.ot_approved = Decimal(str(hours_override)) \
-            if hours_override is not None else row.ot_requested
+        if row.id in per_row:
+            hours = per_row[row.id]
+        elif hours_override is not None:
+            hours = Decimal(str(hours_override))
+        else:
+            hours = row.ot_requested or Decimal("0")
+        if hours < 0:
+            return Response({"detail": "Hours cannot be negative."},
+                            status=400)
+        row.ot_approved = hours
         row.ot_approved_by = request.user
         row.ot_approved_at = timezone.now()
         row.save(update_fields=["ot_approved", "ot_approved_by",
                                 "ot_approved_at"])
+        rate = row.employee.ot_rate()
+        cost = (hours * rate).quantize(Decimal("0.01"))
+        total_cost += cost
+        decided.append({"emp": row.employee.emp_no, "day": row.day.isoformat(),
+                        "requested": str(row.ot_requested or 0),
+                        "approved": str(hours), "rate": str(rate),
+                        "cost": str(cost)})
+    # The audit used to say only "count: 197". Payroll evidence needs the
+    # men, the hours and what they cost.
     audit("attendance", rows[0].site_id, "OT_APPROVED", actor=request.user,
-          detail={"count": len(rows)})
-    return Response({"approved": len(rows)})
+          detail={"count": len(rows), "total_cost": str(total_cost),
+                  "rows": decided})
+    return Response({"approved": len(rows), "total_cost": total_cost})
+
+
+def _ot_flag_hours():
+    """Requested hours above which a row is highlighted for the PM. A
+    company parameter, not a rule — it draws the eye, it decides nothing."""
+    from .models import CompanyParameter
+    try:
+        v = (CompanyParameter.objects.get(key="ot_flag_hours").value
+             or "").strip()
+        return Decimal(v) if v else Decimal("4")
+    except (CompanyParameter.DoesNotExist, ArithmeticError, ValueError):
+        return Decimal("4")
+
+
+@api_view(["GET"])
+def ot_review(request):
+    """The PM's OT approval table for a day: every request with its rate and
+    what it costs, the day's totals, and the month so far.
+
+    Approving used to be one button over the whole day — 170 to 200 rows at
+    a click, 455 times in a month — and the PM saw hours, never money.
+    A man's 6 hours is a number; 6 hours at MVR 45 beside a month already at
+    MVR 60,000 is a decision (owner 2026-09-03).
+    """
+    if request.user.role not in ("PM", "HO_HR", "ADMIN", "DIRECTOR", "PA",
+                                 "FINANCE", "SITE_ENGINEER", "SITE_ADMIN"):
+        return Response({"detail": "Not allowed."}, status=403)
+    try:
+        site = Site.objects.get(pk=request.GET.get("site"))
+        day = date.fromisoformat(request.GET.get("date"))
+    except (Site.DoesNotExist, TypeError, ValueError):
+        return Response({"detail": "site and date required."}, status=400)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+    from django.db.models import Q
+    flag = _ot_flag_hours()
+    rows, totals = [], {}
+
+    def bucket(ccy):
+        return totals.setdefault(ccy, {
+            "currency": ccy, "requested_hours": Decimal("0"),
+            "requested_cost": Decimal("0"), "approved_hours": Decimal("0"),
+            "approved_cost": Decimal("0"), "pending_rows": 0})
+
+    qs = (Attendance.objects.filter(site=site, day=day)
+          .exclude(employee__engagement_type=Employee.Engagement.SUBCONTRACT)
+          .filter(Q(ot_requested__gt=0) | Q(ot_approved__isnull=False))
+          .select_related("employee__job_category")
+          .order_by("employee__job_category__name", "employee__emp_no"))
+    for a in qs:
+        e = a.employee
+        rate = e.ot_rate()
+        req = a.ot_requested or Decimal("0")
+        appr = a.ot_approved
+        b = bucket(e.currency or "MVR")
+        b["requested_hours"] += req
+        b["requested_cost"] += req * rate
+        if appr is None:
+            b["pending_rows"] += 1
+        else:
+            b["approved_hours"] += appr
+            b["approved_cost"] += appr * rate
+        rows.append({
+            "attendance_id": a.id, "employee_id": e.id, "emp_no": e.emp_no,
+            "full_name": e.full_name, "photo_url": (e.photo.url if e.photo
+                                                    else None),
+            "category": e.job_category.name if e.job_category_id else "",
+            "check_in": a.check_in, "check_out": a.check_out,
+            "normal_hours": a.normal_hours,
+            "ot_requested": req, "ot_approved": appr,
+            "ot_rate": rate, "currency": e.currency or "MVR",
+            "cost_requested": (req * rate).quantize(Decimal("0.01")),
+            "cost_approved": ((appr * rate).quantize(Decimal("0.01"))
+                              if appr is not None else None),
+            "pending": appr is None,
+            "no_rate": rate == 0,
+            "flag": req > flag,
+        })
+    # The month so far: what this site has already committed to in OT.
+    mtd = {}
+    for a in (Attendance.objects.filter(site=site, day__year=day.year,
+                                        day__month=day.month,
+                                        ot_approved__isnull=False)
+              .exclude(employee__engagement_type=Employee.Engagement.SUBCONTRACT)
+              .select_related("employee__job_category")):
+        ccy = a.employee.currency or "MVR"
+        m = mtd.setdefault(ccy, {"currency": ccy, "hours": Decimal("0"),
+                                 "cost": Decimal("0")})
+        m["hours"] += a.ot_approved
+        m["cost"] += a.ot_approved * a.employee.ot_rate()
+    for b in totals.values():
+        for k in ("requested_cost", "approved_cost"):
+            b[k] = b[k].quantize(Decimal("0.01"))
+    for m in mtd.values():
+        m["cost"] = m["cost"].quantize(Decimal("0.01"))
+    return Response({
+        "site": site.code, "date": day.isoformat(),
+        "locked": _month_locked(site.id, day),
+        "flag_hours": flag, "rows": rows,
+        "totals": list(totals.values()), "month_to_date": list(mtd.values()),
+    })
 
 
 # ===== Overtime rate master (owner: managed, not hardcoded) =====

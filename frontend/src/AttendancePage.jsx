@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import ShiftAllocation from "./ShiftAllocation.jsx";
 import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import OtApprovalPanel from "./OtApprovalPanel.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
 const REST_REMARKS = ["OFF", "PRESENT", "HALF_DAY"];
@@ -96,7 +97,12 @@ export default function AttendancePage({ site, me, onClose }) {
       // confirmation never reaches the screen.
       load();
       setNotice(`Saved ${result.saved} row(s)` +
-                (result.late_edit ? " (late edit — audited)." : "."));
+                (result.late_edit ? " (late edit — audited)." : ".") +
+                (result.ot_approval_withdrawn?.length
+                  ? ` OT changed on ${result.ot_approval_withdrawn.length} ` +
+                    "row(s) — the earlier approval is withdrawn and the PM " +
+                    "must approve again."
+                  : ""));
       // The server refuses individual rows it cannot accept — a day before the
       // man joined, or a day of leave without pay. It was saying so and the
       // screen was throwing it away, which is how a mark silently fails to
@@ -108,26 +114,6 @@ export default function AttendancePage({ site, me, onClose }) {
       setError(e.message);
     } finally {
       setBusy(false);
-    }
-  }
-
-  async function approveAllOt() {
-    setError(null);
-    try {
-      const fresh = await api(`/attendance?site=${site.id}&date=${day}`);
-      const ids = fresh.rows
-        .filter((r) => r.attendance_id && parseFloat(r.ot_requested) > 0 &&
-                       r.ot_approved == null)
-        .map((r) => r.attendance_id);
-      if (!ids.length) {
-        setNotice("No requested OT awaiting approval.");
-        return;
-      }
-      await api("/attendance/ot-approve", { method: "POST", body: { ids } });
-      setNotice(`Approved OT on ${ids.length} row(s).`);
-      load();
-    } catch (e) {
-      setError(e.message);
     }
   }
 
@@ -176,6 +162,11 @@ export default function AttendancePage({ site, me, onClose }) {
         <button onClick={() => setMode("register")}
                 style={mode === "register" ? buttonStyle : ghostButton}>
           Month register</button>
+        {isPm && (
+          <button onClick={() => setMode("ot")}
+                  style={mode === "ot" ? buttonStyle : ghostButton}>
+            OT approval</button>
+        )}
         {(hasShifts || mode === "shifts") && (
           <button onClick={() => setMode("shifts")}
                   style={mode === "shifts" ? buttonStyle : ghostButton}>
@@ -205,6 +196,35 @@ export default function AttendancePage({ site, me, onClose }) {
     );
   }
 
+  // OT is approved on its own tab. It sat under the day grid for an
+  // afternoon; on a site with a few hundred men that is a long way down
+  // (owner 2026-09-03).
+  if (mode === "ot") {
+    return (
+      <section style={card}>
+        {header}
+        <div style={{ display: "flex", gap: 10, alignItems: "center",
+                      margin: "12px 0 4px", flexWrap: "wrap" }}>
+          <input type="date" value={day}
+                 onChange={(e) => setDay(e.target.value)}
+                 style={{ ...inputStyle, width: 140, padding: "4px 8px" }} />
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {new Date(day + "T00:00").toLocaleDateString("en",
+              { weekday: "long" })}</span>
+          {grid?.locked && (
+            <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
+              🔒 month signed off — nothing to approve</span>
+          )}
+        </div>
+        {error && <p style={{ color: "#a3271b", fontSize: 13 }}>{error}</p>}
+        {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
+        <OtApprovalPanel site={site} day={day} locked={!!grid?.locked}
+                         onChanged={load} onError={setError}
+                         onNotice={setNotice} />
+      </section>
+    );
+  }
+
   return (
     <section style={{ ...card, padding: "14px 18px 18px" }}>
       {/* One compact bar: everything above the roster in two thin lines, so
@@ -228,6 +248,11 @@ export default function AttendancePage({ site, me, onClose }) {
           <button onClick={() => setMode("register")}
                   style={{ ...ghostButton, padding: "4px 12px",
                            fontSize: 13 }}>Month register</button>
+          {isPm && (
+            <button onClick={() => setMode("ot")}
+                    style={{ ...ghostButton, padding: "4px 12px",
+                             fontSize: 13 }}>OT approval</button>
+          )}
           {hasShifts && (
             <button onClick={() => setMode("shifts")}
                     style={{ ...ghostButton, padding: "4px 12px",
@@ -520,9 +545,6 @@ export default function AttendancePage({ site, me, onClose }) {
         )}
         {isPm && !grid?.locked && (
           <>
-            <button onClick={approveAllOt} style={ghostButton}>
-              Approve all requested OT
-            </button>
             <button onClick={lockMonth}
                     style={{ ...ghostButton, color: "#b35900" }}>
               🔒 Sign off &amp; lock month

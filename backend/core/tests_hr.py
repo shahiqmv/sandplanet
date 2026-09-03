@@ -922,3 +922,95 @@ class DeactivatedWorkerAttendanceTests(HrBase):
         self.assertIn(self.mason.emp_no, " ".join(r.data["refused"]))
         row = Attendance.objects.get(employee=self.mason, day=self.day)
         self.assertEqual(row.remark, "PRESENT")     # unchanged, not silently
+
+
+class OtRevisionAndReviewTests(HrBase):
+    """A revised OT request goes back to the PM, and the PM approves with
+    the cost in front of them (owner 2026-09-03: 32 rows in a month had an
+    approval that outlived the number it was given, and approvals were
+    landing 200 rows at a click)."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import OvertimeRate
+        OvertimeRate.objects.create(category=self.mason_cat, currency="MVR",
+                                    rate_per_hour=Decimal("45"),
+                                    applies_by_default=True)
+
+    def _approve(self, att, **body):
+        self.as_user(self.pm)
+        return self.client.post("/api/v1/attendance/ot-approve",
+                                body or {"ids": [att.id]}, format="json")
+
+    def test_revising_requested_ot_withdraws_the_approval(self):
+        day = working_day(self.site, 2)
+        self.save_attendance(day, ot=6)
+        att = Attendance.objects.get(employee=self.mason, day=day)
+        self._approve(att)
+        att.refresh_from_db()
+        self.assertEqual(att.ot_approved, Decimal("6"))
+        r = self.save_attendance(day, ot=4)          # the clerk corrects it
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["ot_approval_withdrawn"], [self.mason.emp_no])
+        att.refresh_from_db()
+        self.assertEqual(att.ot_requested, Decimal("4"))
+        self.assertIsNone(att.ot_approved)          # back with the PM
+        self.assertIsNone(att.ot_approved_by)
+        log = AuditLog.objects.filter(event="ATTENDANCE_SAVED").latest("id")
+        self.assertEqual(log.detail["ot_approval_withdrawn"],
+                         [self.mason.emp_no])
+
+    def test_an_unchanged_ot_keeps_its_approval(self):
+        """Fixing the check-out time is not a new OT request."""
+        day = working_day(self.site, 2)
+        self.save_attendance(day, ot=3)
+        att = Attendance.objects.get(employee=self.mason, day=day)
+        self._approve(att)
+        r = self.save_attendance(day, ot=3, check_out="18:30")
+        self.assertEqual(r.data["ot_approval_withdrawn"], [])
+        att.refresh_from_db()
+        self.assertEqual(att.ot_approved, Decimal("3"))
+
+    def test_the_review_prices_every_request(self):
+        day = working_day(self.site, 1)
+        self.save_attendance(day, ot=5)
+        self.as_user(self.pm)
+        r = self.client.get(f"/api/v1/attendance/ot-review?site={self.site.id}"
+                            f"&date={day.isoformat()}")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = r.data["rows"][0]
+        self.assertEqual(Decimal(str(row["ot_rate"])), Decimal("45"))
+        self.assertEqual(Decimal(str(row["cost_requested"])),
+                         Decimal("225.00"))                 # 5 × 45
+        self.assertTrue(row["pending"])
+        self.assertTrue(row["flag"])                        # above 4 h
+        t = r.data["totals"][0]
+        self.assertEqual(Decimal(str(t["requested_cost"])), Decimal("225.00"))
+        self.assertEqual(t["pending_rows"], 1)
+
+    def test_the_pm_approves_a_row_with_its_own_hours(self):
+        day = working_day(self.site, 1)
+        self.save_attendance(day, ot=5)
+        att = Attendance.objects.get(employee=self.mason, day=day)
+        r = self._approve(att, rows=[{"id": att.id, "hours": "3"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        att.refresh_from_db()
+        self.assertEqual(att.ot_approved, Decimal("3"))
+        self.assertEqual(Decimal(str(r.data["total_cost"])), Decimal("135.00"))
+        log = AuditLog.objects.filter(event="OT_APPROVED").latest("id")
+        self.assertEqual(log.detail["rows"][0]["cost"], "135.00")
+        self.assertEqual(Decimal(log.detail["rows"][0]["requested"]),
+                         Decimal("5"))
+
+    def test_month_to_date_shows_what_is_already_committed(self):
+        d1, d2 = working_day(self.site, 1), working_day(self.site, 2)
+        for d in (d1, d2):
+            self.save_attendance(d, ot=2)
+            self._approve(Attendance.objects.get(employee=self.mason, day=d))
+        self.as_user(self.pm)
+        r = self.client.get(f"/api/v1/attendance/ot-review?site={self.site.id}"
+                            f"&date={d1.isoformat()}")
+        same_month = d1.month == d2.month
+        mtd = r.data["month_to_date"][0]
+        self.assertEqual(Decimal(str(mtd["hours"])),
+                         Decimal("4") if same_month else Decimal("2"))
