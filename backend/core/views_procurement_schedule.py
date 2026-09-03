@@ -353,6 +353,19 @@ def schedule_line_client_update(request, line_id):
     return Response(ps.schedule_dict(line.schedule, request.user))
 
 
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def schedule_line_eta(request, line_id):
+    """Enter (or clear) when a line is expected on site: {eta_date}."""
+    line, err = _get_line(request, line_id)
+    if err:
+        return err
+    msg = pp.set_eta(line, request.data.get("eta_date"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(ps.schedule_dict(line.schedule, request.user))
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def schedule_export(request, pk):

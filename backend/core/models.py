@@ -4902,6 +4902,19 @@ class ScheduleLine(models.Model):
     # --- manual stages ---
     production_status = models.CharField(
         max_length=14, choices=Production.choices, default=Production.PENDING)
+    # When the material is expected on site — ENTERED by the project team,
+    # never computed. The portal used to show a date built from lead-time
+    # guesses that nobody had typed and nobody could find (owner 2026-09-03:
+    # "better leave ETA to be manually entered"). Blank + shipped → the
+    # forwarder's ETA on the shipment block is used, since someone did enter
+    # that.
+    eta_date = models.DateField(null=True, blank=True)
+    # A signed line edited in a reopened change batch. It stays operational
+    # (state unchanged) but Purchasing must re-confirm and the Director
+    # re-sign it; cleared at sign-off. Without this a batch made only of
+    # edits had nothing "proposed" and could never be submitted (BVR,
+    # owner 2026-09-03).
+    amended_at = models.DateTimeField(null=True, blank=True)
     # CLIENT lines carry a last-client-update stamp (phase 4)
     client_last_update = models.DateField(null=True, blank=True)
     client_update_note = models.CharField(max_length=200, blank=True)

@@ -245,6 +245,8 @@ def update_line(line, data, actor):
     doc = line.schedule.document
     role = actor.role
     if role in PROPOSE_ROLES and doc.status == "DRAFT":
+        if line.state in ("CONFIRMED", "SIGNED_OFF") and not line.amended_at:
+            line.amended_at = timezone.now()     # a change batch edit
         _apply_plan(line, data)
         _apply_required(line, data)
         _apply_sourcing(line, data)
@@ -471,10 +473,20 @@ def submit(sched, actor):
         return "Only the PM submits the schedule."
     if doc.status != "DRAFT":
         return "Only a draft schedule can be submitted."
-    if not sched.lines.filter(state="PROPOSED").exists():
+    if not _has_batch(sched):
         return "Add at least one proposed line before submitting."
     _set_status(doc, "SUBMITTED", "SUBMIT", actor)
     return None
+
+
+def _has_batch(sched):
+    """Something for Purchasing to look at: a proposed line, a signed line
+    edited since reopening, or simply a reopened schedule — a team that
+    reopened by mistake must be able to send it back round rather than
+    leave it a draft forever."""
+    return (sched.lines.filter(state="PROPOSED").exists()
+            or sched.lines.filter(amended_at__isnull=False).exists()
+            or sched.baseline_signed_at is not None)
 
 
 def reopen(sched, actor):
@@ -510,6 +522,7 @@ def decide(sched, action, actor, note=""):
         if not _transition(doc, "SIGNED_OFF"):
             return f"Cannot sign off a {doc.status} schedule."
         sched.lines.filter(state="CONFIRMED").update(state="SIGNED_OFF")
+        sched.lines.filter(amended_at__isnull=False).update(amended_at=None)
         if sched.baseline_signed_at is None:
             sched.baseline_signed_at = timezone.now()
             sched.baseline_signed_by = actor
@@ -597,6 +610,7 @@ def line_dict(line, values=True):
         "quantity": line.quantity, "uom": line.uom,
         "trade": line.trade, "supply_by": line.supply_by,
         "required_date": line.required_date, "tds_required": line.tds_required,
+        "eta_date": line.eta_date, "amended": bool(line.amended_at),
         "remarks": line.remarks, "state": line.state,
         "reference_image": (line.reference_image.url
                             if line.reference_image else ""),
@@ -717,7 +731,9 @@ def schedule_dict(sched, user):
         "can_reopen": (user.role in PROPOSE_ROLES
                        and doc.status == "SIGNED_OFF"),
         "can_submit": (user.role in PROPOSE_ROLES and doc.status == "DRAFT"
-                       and any(ln.state == "PROPOSED" for ln in lines)),
+                       and (any(ln.state == "PROPOSED" or ln.amended_at
+                                for ln in lines)
+                            or sched.baseline_signed_at is not None)),
         "can_confirm": user.role in CONFIRM_ROLES and doc.status == "SUBMITTED",
         "can_sign_off": user.role in SIGNOFF_ROLES and doc.status == "CONFIRMED",
         "can_link": user.role in (*PROPOSE_ROLES, *CONFIRM_ROLES),

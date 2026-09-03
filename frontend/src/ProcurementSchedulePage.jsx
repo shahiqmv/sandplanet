@@ -353,6 +353,9 @@ function LineRow({ ln, c, member, sel, on }) {
               {ln.state.replace(/_/g, " ")}</Chip>}
         {ln.stage && <div style={{ fontSize: 9.5, color: "var(--muted)",
           marginTop: 2 }}>{ln.state.replace(/_/g, " ").toLowerCase()}</div>}
+        {ln.amended && <div style={{ fontSize: 9.5, color: "#b35900",
+          marginTop: 2 }} title="Edited after sign-off — goes round for re-confirmation and re-sign">
+          amended</div>}
         {/* The order ref, right on the row — click for the status card
             (site roles) or the full order (HO) (owner 2026-08-27). */}
         {ln.ipr_ref && (
@@ -1083,6 +1086,10 @@ function LinkPanel({ line, onClose, onSaved, onOpenDoc }) {
   const clientUpdate = (delivered) => run(() =>
     api(`/procurement-schedule-lines/${line.id}/client-update`,
       { method: "POST", body: { note, delivered } }));
+  // The ETA is the team's date — nothing computes it (owner 2026-09-03).
+  const setEta = (eta_date) => run(() =>
+    api(`/procurement-schedule-lines/${line.id}/eta`,
+      { method: "POST", body: { eta_date } }));
   async function suggest(slot) {
     if (openSlot === slot) { setOpenSlot(null); return; }
     setOpenSlot(slot); setCands([]); setRef("");
@@ -1200,6 +1207,23 @@ function LinkPanel({ line, onClose, onSaved, onOpenDoc }) {
             {PRODUCTION.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
+
+        {!isClient && (
+          <div style={{ flex: 1, minWidth: 240,
+            border: "1px solid var(--line)", borderRadius: 8, padding: 10 }}>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>
+              ETA to site (shown to the client)</div>
+            <input type="date" style={{ ...inputStyle, fontSize: 12 }}
+              disabled={busy} value={line.eta_date || ""}
+              onChange={(e) => setEta(e.target.value)} />
+            <div style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 4 }}>
+              {line.tracking?.current_eta
+                ? `Forwarder's ETA ${fmt(line.tracking.current_eta)} — used (+5d) until you enter a date`
+                : "Your date; the app does not guess it"}
+              {line.required_date ? ` · required ${fmt(line.required_date)}` : ""}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

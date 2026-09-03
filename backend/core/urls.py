@@ -788,6 +788,8 @@ urlpatterns = [
          name="psched-share"),
     path("procurement-schedule-lines/<int:line_id>", psched_api.schedule_line,
          name="psched-line"),
+    path("procurement-schedule-lines/<int:line_id>/eta",
+         psched_api.schedule_line_eta, name="psched-line-eta"),
     path("procurement-schedule-lines/<int:line_id>/cancel",
          psched_api.schedule_line_cancel, name="psched-line-cancel"),
     path("procurement-schedule-lines/<int:line_id>/link",

@@ -169,6 +169,75 @@ class ProcurementScheduleTests(TestCase):
             {"remarks": "typo fix"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
 
+    def _sign_off(self, pk):
+        self.client.force_authenticate(self.pm)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.client.force_authenticate(self.purch)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "confirm"}, format="json")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                             {"action": "sign_off"}, format="json")
+        self.assertEqual(r.data["status"], "SIGNED_OFF", r.data)
+        self.client.force_authenticate(self.pm)
+
+    def test_an_amended_signed_batch_goes_back_round(self):
+        # BVR 2026-09-03: reopened, one signed line edited, nothing
+        # "proposed" — and no button to send it back to Purchasing.
+        pk = self._open()
+        line_id = self._add_line(pk).data["lines"][0]["id"]
+        self._sign_off(pk)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/reopen")
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        self.assertTrue(d["can_submit"])          # reopened → can go round
+        r = self.client.patch(
+            f"/api/v1/procurement-schedule-lines/{line_id}",
+            {"remarks": "brand changed"}, format="json")
+        ln = next(x for x in r.data["lines"] if x["id"] == line_id)
+        self.assertEqual((ln["state"], ln["amended"]), ("SIGNED_OFF", True))
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/submit")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+        self.client.force_authenticate(self.purch)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                         {"action": "confirm"}, format="json")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
+                             {"action": "sign_off"}, format="json")
+        ln = next(x for x in r.data["lines"] if x["id"] == line_id)
+        self.assertEqual((r.data["status"], ln["state"], ln["amended"]),
+                         ("SIGNED_OFF", "SIGNED_OFF", False))
+
+    def test_eta_is_entered_by_the_team_not_computed(self):
+        pk = self._open()
+        line_id = self._add_line(pk, required_date="2026-10-01",
+                                 lead_time_days=30).data["lines"][0]["id"]
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        ln = next(x for x in d["lines"] if x["id"] == line_id)
+        self.assertIsNone(ln["risk"]["projected"])
+        self.assertEqual(ln["risk"]["reason"], "No ETA entered")
+        eta_stage = next(s for s in ln["pipeline"] if s["key"] == "eta")
+        self.assertEqual(eta_stage["detail"], "No ETA entered")
+        r = self.client.post(f"/api/v1/procurement-schedule-lines/{line_id}/eta",
+                             {"eta_date": "2026-10-05"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        ln = next(x for x in r.data["lines"] if x["id"] == line_id)
+        self.assertEqual(ln["eta_date"], date(2026, 10, 5))
+        self.assertEqual(ln["risk"]["level"], "LATE")   # after 1 Oct
+        eta_stage = next(s for s in ln["pipeline"] if s["key"] == "eta")
+        self.assertEqual(eta_stage["detail"], "Late — 2026-10-05")
+        from .models import ScheduleLine
+        from .procurement_client import client_row
+        self.assertEqual(client_row(ScheduleLine.objects.get(pk=line_id))["eta"],
+                         date(2026, 10, 5))
+        # Purchasing may enter it too; a Site Engineer may not.
+        self.client.force_authenticate(self.purch)
+        r = self.client.post(f"/api/v1/procurement-schedule-lines/{line_id}/eta",
+                             {"eta_date": ""}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(next(x for x in r.data["lines"]
+                               if x["id"] == line_id)["eta_date"])
+
     def test_reopen_only_from_signed_off_and_by_team(self):
         pk = self._open()                              # DRAFT
         self.client.force_authenticate(self.pm)

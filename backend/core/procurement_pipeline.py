@@ -149,17 +149,17 @@ def _delivery_stage(line):
 
 
 def _eta_stage(line):
-    sh = _shipment_for(line)
-    site_eta = _site_eta(sh)
     if line.grn_id and line.grn.status in ("COMPLETE", "SHORTAGE_REPORTED"):
         return _stage("eta", "ETA to site", "done", "Delivered")
-    if site_eta is None:
-        return _stage("eta", "ETA to site",
-                      "pending" if sh is not None else "none",
-                      "No ETA yet" if sh is not None else "—")
-    late = line.required_date and site_eta > line.required_date
+    eta = _projected_onsite(line)
+    if eta is None:
+        return _stage("eta", "ETA to site", "none", "No ETA entered")
+    late = line.required_date and eta > line.required_date
+    # The team's own date reads as a date; the forwarder's ETA (+ buffer)
+    # keeps its "~" so nobody mistakes an estimate for a commitment.
+    shown = eta.isoformat() if line.eta_date else "~" + eta.isoformat()
     return _stage("eta", "ETA to site", "warn" if late else "pending",
-                  ("Late — ~%s" if late else "~%s") % site_eta.isoformat())
+                  ("Late — %s" if late else "%s") % shown)
 
 
 def _client_pipeline(line):
@@ -349,16 +349,16 @@ def order_by(line):
 
 
 def _projected_onsite(line):
-    """Estimated arrival at site for a not-yet-delivered contractor line.
-    Shipped → tracker/shipment ETA + buffer; else base date (order date if
-    ordered, else today) + lead time + shipping allowance + site buffer."""
-    shipped_eta = _site_eta(_shipment_for(line))
-    if shipped_eta:
-        return shipped_eta
-    legs = lead_legs(line)
-    base = (line.ipr.doc_date if line.ipr_id and line.ipr.doc_date
-            else _today())
-    return base + timedelta(days=legs["total_days"])
+    """When a not-yet-delivered contractor line is expected on site: the
+    date the project team ENTERED, else the forwarder's ETA on the shipment
+    block (tracker-refined) plus the site buffer, else nothing.
+
+    Until 2026-09-03 this fell through to today + lead time + a per-country
+    shipping guess — a date nobody had typed, that crept forward daily and
+    that the client read as a commitment. Nothing computes an ETA now."""
+    if line.eta_date:
+        return line.eta_date
+    return _site_eta(_shipment_for(line))
 
 
 def line_risk(line):
@@ -380,8 +380,20 @@ def line_risk(line):
         return {"level": "NONE", "reason": "No required date",
                 "projected": None, "slack_days": None, "unordered": False}
     proj = _projected_onsite(line)
-    slack = (req - proj).days
     unordered = not line.ipr_id
+    if proj is None:
+        out = {"level": "NONE", "reason": "No ETA entered", "projected": None,
+               "slack_days": None, "unordered": unordered}
+        if req < _today():
+            out.update(level="LATE", reason="Required date passed, no ETA",
+                       slack_days=(req - _today()).days)
+        by = line.order_by_date
+        out["order_by"] = by
+        out["order_overdue_days"] = (
+            (_today() - by).days if (by and unordered and by < _today())
+            else 0)
+        return out
+    slack = (req - proj).days
     if proj > req:
         level = "LATE"
         reason = ("Can't make the date even if ordered today" if unordered
@@ -628,6 +640,28 @@ def set_production(line, status, actor):
     line.save(update_fields=["production_status", "updated_at"])
     audit("document", line.schedule.document_id, "PSC_LINE_PRODUCTION",
           actor=actor, detail={"line": line.id, "status": status})
+    return None
+
+
+def set_eta(line, on, actor):
+    """The team's expected-on-site date (blank clears it)."""
+    from datetime import date as _date
+    if actor.role not in LINK_ROLES:
+        return "Not permitted to set the ETA."
+    if line.supply_by == "CLIENT":
+        return "Client-supplied lines are due on their required date."
+    if on in (None, ""):
+        line.eta_date = None
+    else:
+        try:
+            line.eta_date = _date.fromisoformat(str(on))
+        except ValueError:
+            return "ETA must be a date (YYYY-MM-DD)."
+    line.save(update_fields=["eta_date", "updated_at"])
+    audit("document", line.schedule.document_id, "PSC_LINE_ETA",
+          actor=actor, detail={"line": line.id,
+                               "eta": line.eta_date.isoformat()
+                               if line.eta_date else None})
     return None
 
 
