@@ -369,6 +369,37 @@ def _attendance_prefill(employee, site, year, month, working_days,
     if not marked:
         return Decimal(0), Decimal("0"), 0, 0
 
+    # A week the register itself says he earned nothing in — every working
+    # day of it marked absent or leave-without-pay — owes him no rest day
+    # either. SSL had five men transferred to Vakkaru but never taken off the
+    # SSL roster; the PM marked their whole month leave-no-pay, not one day
+    # ABSENT, so the absence rule above never fired and a site the men had
+    # left paid them four Fridays each (owner 2026-09-03: "they are marked L
+    # throughout in SSL.. yet 4 fridays are counted").
+    #
+    # Marked unpaid is the whole of it. A blank week is missing data, and the
+    # owner's rule there is the opposite one — the rest days stand, because
+    # nothing says he was away (2026-08-14) — so a week is only forfeited on
+    # the strength of marks somebody actually made. Nor is this the
+    # sanctioned-leave rule in reverse (2026-08-13): a man who works his week
+    # and takes four days off keeps his Friday exactly as before. What he
+    # cannot do is draw a rest day from a week he was not here for at all.
+    # Counted in its own pass, because a Friday's ISO week runs on past it to
+    # the Saturday and Sunday.
+    week_working, week_unpaid = {}, {}
+    day = start
+    while day <= last:
+        if day.isoweekday() in work_week:
+            wk = day.isocalendar()[:2]
+            week_working[wk] = week_working.get(wk, 0) + 1
+            if marked.get(day) in ABSENT_MARKS:
+                week_unpaid[wk] = week_unpaid.get(wk, 0) + 1
+        day += timedelta(days=1)
+
+    def earned_nothing(wk):
+        worked = week_working.get(wk, 0)
+        return bool(worked) and week_unpaid.get(wk, 0) == worked
+
     limit = rest_day_absence_limit()
     days = Decimal(0)
     rest_paid = 0            # unworked rest days the PM may still strike
@@ -380,6 +411,7 @@ def _attendance_prefill(employee, site, year, month, working_days,
                 days += 1        # he turned up on his rest day; it is his
                                  # however the rest of the week went
             elif (mark not in ABSENT_MARKS
+                    and not earned_nothing(day.isocalendar()[:2])
                     and absent_by_week.get(day.isocalendar()[:2], 0) <= limit):
                 days += 1
                 if mark is None:

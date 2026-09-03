@@ -1063,3 +1063,85 @@ class OtPendingSignalTests(HrBase):
         self.as_user(self.sa)
         groups = self.client.get("/api/v1/approvals/pending").data["groups"]
         self.assertNotIn("OT awaiting approval", [x["title"] for x in groups])
+
+class OneSiteDayIsNotAnothersTests(HrBase):
+    """Two sites cannot both claim a man's day.
+
+    A worker has one attendance row per day wherever he is. OUT's clerk
+    marked MD SADAM HUSSAN absent for 1-6 August on an open-ended allocation
+    that only began on the 20th; SSL had him those days, could not mark them
+    because the rows existed, and he lost six days' pay (owner 2026-09-03).
+    """
+
+    def setUp(self):
+        super().setUp()
+        from .models import EmployeeSiteAllocation, Site, User
+        from .tests import make_user
+        self.day = working_day(self.site, 1)
+        self.other = Site.objects.create(code="OUT", name="Outsourced",
+                                         status=Site.Status.ACTIVE)
+        self.other_sa = make_user("out_sa", User.Role.SITE_ADMIN,
+                                  site=self.other)
+        # The man is this site's on that day; OUT gets him a fortnight later.
+        EmployeeSiteAllocation.objects.filter(
+            employee=self.mason, site=self.site).update(
+            from_date=self.day, to_date=self.day + timedelta(days=14))
+        EmployeeSiteAllocation.objects.create(
+            employee=self.mason, site=self.other,
+            from_date=self.day + timedelta(days=14))
+
+    def _mark(self, user, site, remark="PRESENT"):
+        self.as_user(user)
+        return self.client.put("/api/v1/attendance/bulk", {
+            "site": site.id, "date": self.day.isoformat(),
+            "rows": [{"employee_id": self.mason.id, "remark": remark,
+                      "check_in": "08:00", "check_out": "17:00"}],
+        }, format="json")
+
+    def test_the_other_site_is_refused_and_told_who_holds_the_day(self):
+        r = self._mark(self.other_sa, self.other)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["saved"], 0)
+        self.assertIn(self.site.code, r.data["refused"][0])
+        from .models import Attendance
+        self.assertFalse(Attendance.objects.filter(employee=self.mason,
+                                                   day=self.day).exists())
+
+    def test_he_is_not_even_offered_on_the_other_site_grid(self):
+        self.as_user(self.other_sa)
+        r = self.client.get(f"/api/v1/attendance?site={self.other.id}"
+                            f"&date={self.day.isoformat()}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertNotIn(self.mason.id,
+                         [row["employee_id"] for row in r.data["rows"]])
+        # ...while the site whose allocation covers the day still has him.
+        self.as_user(self.sa)
+        r = self.client.get(f"/api/v1/attendance?site={self.site.id}"
+                            f"&date={self.day.isoformat()}")
+        self.assertIn(self.mason.id,
+                      [row["employee_id"] for row in r.data["rows"]])
+
+    def test_the_site_whose_day_it_is_can_mark_and_take_it_back(self):
+        from .models import Attendance
+        # A row already sitting at the other site (as OUT's six days were).
+        Attendance.objects.create(employee=self.mason, site=self.other,
+                                  day=self.day, remark="ABSENT",
+                                  entered_by=self.other_sa)
+        r = self._mark(self.sa, self.site)
+        self.assertEqual(r.data["saved"], 1, r.data)
+        row = Attendance.objects.get(employee=self.mason, day=self.day)
+        self.assertEqual((row.site_id, row.remark), (self.site.id, "PRESENT"))
+
+    def test_a_late_filed_allocation_still_allows_back_entry(self):
+        from .models import Attendance, EmployeeSiteAllocation
+        # Nobody's allocation covers the day but this site's own, filed late
+        # (BVR's crew all carry the day the site was loaded).
+        EmployeeSiteAllocation.objects.filter(employee=self.mason).delete()
+        EmployeeSiteAllocation.objects.create(
+            employee=self.mason, site=self.site,
+            from_date=self.day + timedelta(days=3))
+        r = self._mark(self.sa, self.site)
+        self.assertEqual(r.data["saved"], 1, r.data)
+        self.assertTrue(Attendance.objects.filter(
+            employee=self.mason, day=self.day, site=self.site).exists())
+

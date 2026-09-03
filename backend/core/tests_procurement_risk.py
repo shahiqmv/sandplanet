@@ -26,10 +26,15 @@ class ProcurementRiskTests(TestCase):
         self.today = timezone.localdate()
 
     # -- helpers -----------------------------------------------------------
-    def _signed_line(self, commercial=None, **fields):
+    def _signed_line(self, commercial=None, eta=None, **fields):
         """A signed-off (operational) line via the real workflow. Planning
         fields via `fields`; commercial ones (lead_time_days…) set by
-        Purchasing during the SUBMITTED stage via `commercial`."""
+        Purchasing during the SUBMITTED stage via `commercial`.
+
+        `eta` is the team's expected-on-site date. Since 2026-09-03 nothing
+        computes one — a line without an entered ETA (and without a booked
+        shipment) has no projection and so no risk verdict at all, which is
+        the point: the client is shown the same date the risk is judged on."""
         self.client.force_authenticate(self.pm)
         pk = self.client.post(
             f"/api/v1/projects/{self.project.id}/procurement-schedule").data["id"]
@@ -49,7 +54,11 @@ class ProcurementRiskTests(TestCase):
         self.client.force_authenticate(self.director)
         self.client.post(f"/api/v1/procurement-schedules/{pk}/action",
                          {"action": "sign_off"}, format="json")
-        return ScheduleLine.objects.get(pk=line_id)
+        line = ScheduleLine.objects.get(pk=line_id)
+        if eta is not None:
+            line.eta_date = eta
+            line.save(update_fields=["eta_date"])
+        return line
 
     def _risk(self, line):
         return pp.line_risk(line)["level"]
@@ -58,36 +67,62 @@ class ProcurementRiskTests(TestCase):
     def test_late_when_unordered_cannot_make_date(self):
         line = self._signed_line(
             required_date=(self.today + timedelta(days=10)).isoformat(),
+            eta=self.today + timedelta(days=20),
             commercial={"lead_time_days": 30})
         r = pp.line_risk(line)
         self.assertEqual(r["level"], "LATE")
         self.assertTrue(r["unordered"])
 
+    def test_no_entered_eta_is_no_verdict(self):
+        """A line nobody has dated cannot be judged. The old projection —
+        today + lead time + a country guess — moved forward every day and
+        reached the client as a commitment (owner 2026-09-03)."""
+        line = self._signed_line(
+            required_date=(self.today + timedelta(days=10)).isoformat(),
+            commercial={"lead_time_days": 30})
+        r = pp.line_risk(line)
+        self.assertEqual((r["level"], r["projected"]), ("NONE", None))
+        self.assertEqual(r["reason"], "No ETA entered")
+
+    def test_a_required_date_gone_by_is_late_even_with_no_eta(self):
+        line = self._signed_line(
+            required_date=(self.today - timedelta(days=3)).isoformat(),
+            commercial={"lead_time_days": 30})
+        self.assertEqual(self._risk(line), "LATE")
+
     def test_on_track_when_far_out(self):
         line = self._signed_line(
             required_date=(self.today + timedelta(days=200)).isoformat(),
+            eta=self.today + timedelta(days=60),
             commercial={"lead_time_days": 30})
         self.assertEqual(self._risk(line), "ON_TRACK")
 
     def test_at_risk_inside_window(self):
-        # projected ≈ today+70 (make 30 + ship 25 + clear 10 + buffer 5);
-        # required a few days past that → thin slack → at risk.
-        #
-        # The customs leg was added on 2026-08-29, taken from a PM's own
-        # schedule where every line reads "shipping 30 days, customs 10 days".
-        # The shipping table had always been the SAIL, so clearance was simply
-        # missing and every projection ran about ten days optimistic.
+        # The ETA lands two days before the date it has to make: inside the
+        # 14-day window, so at risk rather than on track.
         line = self._signed_line(
             required_date=(self.today + timedelta(days=75)).isoformat(),
+            eta=self.today + timedelta(days=73),
             commercial={"lead_time_days": 30})
         self.assertEqual(self._risk(line), "AT_RISK")
 
     def test_the_customs_leg_is_counted_on_top_of_the_sail(self):
-        """What used to read as five days of slack is really five days late."""
+        """Clearance sits on top of the sail in the order-by arithmetic.
+
+        Taken from a PM's own schedule, where every line reads "shipping 30
+        days, customs 10 days": the shipping table had always been the SAIL,
+        so clearance was simply missing and the suggestion ran about ten days
+        optimistic (owner 2026-08-29). Since 2026-09-03 the legs no longer
+        project an ETA — that is the team's own date — but they still work
+        out the last day an order can go out."""
         line = self._signed_line(
             required_date=(self.today + timedelta(days=65)).isoformat(),
-            commercial={"lead_time_days": 30})
-        self.assertEqual(self._risk(line), "LATE")
+            commercial={"lead_time_days": 30, "shipping_days": 30,
+                        "clearance_days": 10})
+        legs = pp.lead_legs(line)
+        self.assertEqual(legs["total_days"], 30 + 30 + 10 + 5)
+        self.assertEqual(pp.suggested_order_by(line),
+                         line.required_date - timedelta(days=75))
 
     def test_delivered_via_grn(self):
         line = self._signed_line(
@@ -117,6 +152,7 @@ class ProcurementRiskTests(TestCase):
     def test_sweep_alerts_pm_purchasing_director_once(self):
         self._signed_line(
             required_date=(self.today + timedelta(days=10)).isoformat(),
+            eta=self.today + timedelta(days=20),
             commercial={"lead_time_days": 30})
         sent = pp.sweep_risk_alerts()
         self.assertEqual(sent, 1)
@@ -141,6 +177,7 @@ class ProcurementRiskTests(TestCase):
     def test_pd_digest_deduped_same_day(self):
         self._signed_line(
             required_date=(self.today + timedelta(days=10)).isoformat(),
+            eta=self.today + timedelta(days=20),
             commercial={"lead_time_days": 30})
         self.assertEqual(pp.send_pd_digest(), 1)
         digests = Notification.objects.filter(

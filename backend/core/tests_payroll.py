@@ -2557,3 +2557,68 @@ class PayrollSheetQueryTests(TestCase):
                 payroll.paid_window(e, self.site, 2026, 5,
                                     allocs=allocs[e.id], span=spans[e.id]),
                 e.emp_no)
+
+
+class UnpaidLeaveWholeMonthTests(TestCase):
+    """Five SSL men had moved to Vakkaru but were never taken off the SSL
+    roster, so the PM marked their whole month leave-no-pay — and each still
+    drew the month's four unmarked Fridays (owner 2026-09-03). A week the
+    register marks unpaid throughout earns no rest day."""
+
+    def setUp(self):
+        from datetime import date
+
+        from .models import Attendance, EmployeeSiteAllocation
+        self.hr = make_user("hr_lw", User.Role.HO_HR)
+        self.site = Site.objects.create(code="SSL", name="Soneva",
+                                        status=Site.Status.ACTIVE)
+        self.emp = Employee.objects.create(emp_no="EMP-9001", full_name="Omar",
+                                           basic_pay=7000, currency="MVR")
+        EmployeeSiteAllocation.objects.create(employee=self.emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        self.fridays = 0
+        for d in range(1, 32):
+            day = date(2026, 8, d)
+            if day.isoweekday() == 5:
+                self.fridays += 1              # nobody ever marks a rest day
+                continue
+            Attendance.objects.create(employee=self.emp, site=self.site,
+                                      day=day, remark="LEAVE")
+
+    def _days(self):
+        from core import payroll
+        run = payroll.generate_run(site=self.site, currency="MVR", year=2026,
+                                   month=8, working_days=31, actor=self.hr)
+        return float(run.lines.get(employee=self.emp).days_worked)
+
+    def test_a_month_of_leave_without_pay_pays_nothing(self):
+        self.assertEqual(self.fridays, 4)
+        self.assertEqual(self._days(), 0.0)
+
+    def test_absent_throughout_pays_nothing_either(self):
+        from .models import Attendance
+        Attendance.objects.filter(employee=self.emp).update(remark="ABSENT")
+        self.assertEqual(self._days(), 0.0)
+
+    def test_paid_leave_throughout_is_still_owed_in_full(self):
+        # Paid leave and sickness are days he is owed, so the Fridays stand.
+        from .models import Attendance
+        Attendance.objects.filter(employee=self.emp).update(
+            remark="PAID_LEAVE")
+        self.assertEqual(self._days(), 31.0)
+
+    def test_a_week_he_worked_keeps_its_rest_day_however_much_leave(self):
+        # The 2026-08-13 rule is untouched: leave costs the day itself, never
+        # the Friday of a week he was actually here for.
+        from datetime import date
+
+        from .models import Attendance
+        Attendance.objects.filter(employee=self.emp).update(remark="PRESENT")
+        for d in (10, 11, 12, 13):                   # Mon-Thu of one ISO week
+            Attendance.objects.filter(employee=self.emp,
+                                      day=date(2026, 8, d)).update(
+                remark="LEAVE")
+        # 31 − 4 days of leave; Friday the 14th is still his, because he
+        # worked the Saturday and Sunday of that same week.
+        self.assertEqual(self._days(), 27.0)
+

@@ -562,6 +562,34 @@ def _month_locked(site_id, day):
     ).exists()
 
 
+def _allocated_elsewhere(employee, site, day):
+    """The other site whose allocation covers `day`, when this site's doesn't.
+
+    A worker has one attendance row per day wherever he is, so when two sites
+    claim the same day one of them loses it — silently, because the second
+    save overwrites the first. OUT's clerk marked MD SADAM HUSSAN absent for
+    1–6 August on the strength of an open-ended allocation that only began on
+    the 20th; SSL had him all six days, could not mark them because the rows
+    already existed, and he lost six days' pay (owner 2026-09-03).
+
+    Late-filed allocations still allow the back-entry sites depend on — BVR's
+    whole crew carries the day the site was loaded into the app — because
+    this only speaks up when ANOTHER site's allocation actually covers the
+    day in question.
+    """
+    covers = EmployeeSiteAllocation.objects.filter(
+        employee=employee, from_date__lte=day).filter(
+        Q(to_date__isnull=True) | Q(to_date__gte=day))
+    if covers.filter(site=site).exists():
+        return None
+    # Head office is not a competing claim: leave parks a man on the MLE
+    # allocation while he is away, and his own site still has to be able to
+    # mark the day he comes back.
+    other = (covers.exclude(site=site).exclude(site__is_head_office=True)
+             .select_related("site").first())
+    return other.site.code if other else None
+
+
 def _normal_hours(site, check_in, check_out, remark, shift=None):
     """Hours inside the worker's window — his shift's if he has one, else
     the site's. A night shift's window (and its punches) run past midnight."""
@@ -619,6 +647,18 @@ def attendance_grid(request):
         Q(to_date__isnull=True) | Q(to_date__gte=day, from_date__lte=day))
     existing = {a.employee_id: a for a in Attendance.objects.filter(
         site=site, day=day)}
+    # A day another site's allocation covers is that site's day to mark, not
+    # this one's — see _allocated_elsewhere. Anyone already marked here stays
+    # on the grid, so an existing row can always be corrected or taken back.
+    covers_day = EmployeeSiteAllocation.objects.filter(
+        from_date__lte=day).filter(
+        Q(to_date__isnull=True) | Q(to_date__gte=day))
+    blocked = (set(covers_day.exclude(site=site)
+                   .exclude(site__is_head_office=True)
+                   .values_list("employee_id", flat=True))
+               - set(covers_day.filter(site=site)
+                     .values_list("employee_id", flat=True))
+               - set(existing))
     # Anyone who ALREADY has a mark for this day, whatever the roster says.
     # The month register reads the rows directly, so it showed a man whose
     # allocation had since been closed — while this grid, built only from
@@ -631,6 +671,7 @@ def attendance_grid(request):
     roster = Employee.objects.filter(
         Q(id__in=on_day.values_list("employee_id", flat=True))
         | Q(id__in=list(existing))).exclude(
+        id__in=blocked).exclude(
         join_date__gt=day).select_related("job_category", "subcontractor") \
         .order_by("emp_no").distinct()
     rostered = set(on_day.values_list("employee_id", flat=True))
@@ -885,6 +926,18 @@ def attendance_bulk(request):
             refused.append(f"{employee.emp_no} is on leave without pay "
                            f"({unpaid.from_date} to {unpaid.to_date})")
             continue
+        # Another site's day is not this site's to mark — or to clear. Skipped
+        # when the row is already this site's, so its own marks stay
+        # correctable (owner 2026-09-03; see _allocated_elsewhere).
+        if not Attendance.objects.filter(employee=employee, day=day,
+                                         site=site).exists():
+            held = _allocated_elsewhere(employee, site, day)
+            if held:
+                refused.append(
+                    f"{employee.emp_no} was allocated to {held} on {day}, so "
+                    f"{held} marks that day — move his allocation if he was "
+                    f"here")
+                continue
         remark = row.get("remark") or "PRESENT"
         if remark == "OFF":
             # Rest day, not worked — clear any existing record, create none.
@@ -893,7 +946,7 @@ def attendance_bulk(request):
             if gone is not None:
                 changes.append({
                     "emp": employee.emp_no, "action": "DELETED",
-                    "was": {"remark": gone.remark,
+                    "was": {"remark": gone.remark, "site": gone.site.code,
                             "in": str(gone.check_in or ""),
                             "out": str(gone.check_out or ""),
                             "ot": str(gone.ot_requested or 0)}})
@@ -920,8 +973,11 @@ def attendance_bulk(request):
             defaults["sub_extra_hours"] = Decimal("0")
         before = Attendance.objects.filter(employee=employee,
                                            day=day).first()
+        # The previous site is part of the change when a day moves between
+        # sites: that is a transfer of somebody's pay from one register to
+        # another and the trail has to name both ends.
         was = ({"remark": before.remark, "in": str(before.check_in or ""),
-                "out": str(before.check_out or ""),
+                "out": str(before.check_out or ""), "site": before.site.code,
                 "ot": str(before.ot_requested or 0)} if before else None)
         record, _created = Attendance.objects.update_or_create(
             employee=employee, day=day, defaults=defaults)
