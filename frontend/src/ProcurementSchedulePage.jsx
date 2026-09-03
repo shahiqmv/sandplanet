@@ -330,6 +330,13 @@ function LineRow({ ln, c, member, sel, on }) {
           <div>{ln.description}
             {ln.specification && <div style={{ color: "var(--muted)",
               fontSize: 11 }}>{ln.specification}</div>}
+            {/* The team writes the live story of a line here ("containers
+                booked, ETA Tuticorin") and the client's page shows it — so
+                the planner shows it too (owner 2026-09-03). */}
+            {ln.remarks && <div style={{ color: "var(--muted)", fontSize: 10.5,
+              fontStyle: "italic", marginTop: 2, maxWidth: 260 }}>
+              <span style={{ fontStyle: "normal", fontWeight: 600 }}>
+                Remark </span>{ln.remarks}</div>}
             {ln.client_stale && <div style={{ color: "var(--amber-fg)",
               fontSize: 10.5 }}>⚠ client update overdue</div>}</div>
         </div></td>

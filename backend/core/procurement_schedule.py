@@ -505,6 +505,54 @@ def reopen(sched, actor):
     return None
 
 
+def withdraw_signoff(sched, actor, reason=""):
+    """Undo a sign-off that should never have happened.
+
+    The admin account sits in all three role lists, so one person can submit,
+    confirm and sign off a plan in under a minute — which is what happened to
+    BVR on 2026-09-03, with neither Purchasing nor the Director looking at it
+    (owner: "admin did signed off by mistake"). A signed baseline nobody
+    reviewed is worse than no baseline: the late-risk sweep alerts on it and
+    the client's page presents it as agreed.
+
+    The lines the sign-off approved go back to PROPOSED — the state they held
+    before the batch was submitted, since the confirm was part of the same
+    mistake — and the baseline stamp goes with them. The document's own status
+    is left where it is when the team has already reopened it and is editing;
+    a schedule still sitting at SIGNED_OFF returns to DRAFT.
+
+    Refused when the schedule has been signed off more than once: line states
+    don't record WHICH sign-off approved them, so undoing all of them would
+    quietly unapprove a legitimate earlier baseline.
+    """
+    doc = sched.document
+    if actor.role not in SIGNOFF_ROLES:
+        return "Only the Director withdraws a sign-off."
+    if not (reason or "").strip():
+        return "A reason is required to withdraw a sign-off."
+    signs = doc.approvals.filter(action="SIGN_OFF").count()
+    if not signs:
+        return "This schedule has never been signed off."
+    if signs > 1:
+        return ("This schedule has been signed off more than once — undoing "
+                "them all would unapprove an earlier baseline too. Put the "
+                "lines right by hand instead.")
+    with transaction.atomic():
+        reverted = sched.lines.filter(state="SIGNED_OFF").update(
+            state="PROPOSED", amended_at=None, updated_at=timezone.now())
+        sched.baseline_signed_at = None
+        sched.baseline_signed_by = None
+        sched.save(update_fields=["baseline_signed_at", "baseline_signed_by"])
+        if doc.status == "SIGNED_OFF":
+            _set_status(doc, "DRAFT", "WITHDRAW_SIGNOFF", actor,
+                        comment=reason)
+        else:
+            _record(doc, "WITHDRAW_SIGNOFF", actor, comment=reason)
+    audit("document", doc.id, "PSC_SIGNOFF_WITHDRAWN", actor=actor,
+          detail={"lines": reverted, "reason": reason})
+    return None
+
+
 def decide(sched, action, actor, note=""):
     """Workflow action dispatch — shared by desktop and mobile."""
     doc = sched.document

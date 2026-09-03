@@ -238,6 +238,47 @@ class ProcurementScheduleTests(TestCase):
         self.assertIsNone(next(x for x in r.data["lines"]
                                if x["id"] == line_id)["eta_date"])
 
+    def test_a_mistaken_signoff_can_be_withdrawn(self):
+        pk = self._open()
+        line_id = self._add_line(pk).data["lines"][0]["id"]
+        self._sign_off(pk)
+        from .models import ProcurementSchedule
+        from .procurement_schedule import withdraw_signoff
+        sched = ProcurementSchedule.objects.get(document_id=pk)
+        # A reason is required, and only a sign-off role may withdraw.
+        self.assertIn("reason", withdraw_signoff(sched, self.director, "  "))
+        self.assertIsNotNone(withdraw_signoff(sched, self.pm, "oops"))
+        self.assertIsNone(withdraw_signoff(sched, self.director,
+                                           "signed off by mistake"))
+        sched.refresh_from_db()
+        self.assertIsNone(sched.baseline_signed_at)
+        self.assertEqual(sched.document.status, "DRAFT")
+        ln = sched.lines.get(pk=line_id)
+        self.assertEqual((ln.state, ln.amended_at), ("PROPOSED", None))
+        self.assertEqual(
+            sched.document.approvals.filter(
+                action="WITHDRAW_SIGNOFF").first().comment,
+            "signed off by mistake")
+        # The PM can take it round again from there.
+        d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
+        self.assertTrue(d["can_submit"])
+        self.assertTrue(d["can_edit_plan"])
+
+    def test_a_second_signoff_blocks_a_blind_withdrawal(self):
+        pk = self._open()
+        self._add_line(pk)
+        self._sign_off(pk)
+        self.client.post(f"/api/v1/procurement-schedules/{pk}/reopen")
+        self._add_line(pk, description="Second batch item")
+        self._sign_off(pk)
+        from .models import ProcurementSchedule
+        from .procurement_schedule import withdraw_signoff
+        sched = ProcurementSchedule.objects.get(document_id=pk)
+        err = withdraw_signoff(sched, self.director, "wrong one")
+        self.assertIn("more than once", err)
+        sched.refresh_from_db()
+        self.assertIsNotNone(sched.baseline_signed_at)
+
     def test_reopen_only_from_signed_off_and_by_team(self):
         pk = self._open()                              # DRAFT
         self.client.force_authenticate(self.pm)
