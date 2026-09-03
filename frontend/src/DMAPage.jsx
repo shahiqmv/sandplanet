@@ -7,7 +7,8 @@ import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
 // off the TWSs issued the previous evening plus general tasks (cleaning,
 // unloading, housekeeping). One per site per day; internal only.
 
-const EMPTY_TASK = { task: "", project: "", location: "", category: "",
+const EMPTY_TASK = { task: "", project: "", location: "", unit_id: "",
+                     category: "",
                      workers: "", remarks: "" };
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -19,6 +20,11 @@ export default function DMAPage({ site, me, onClose }) {
   const [hours, setHours] = useState("");
   const [twsRefs, setTwsRefs] = useState([]);
   const [categories, setCategories] = useState([]);
+  // The project is picked, never typed — a typo made a project nobody could
+  // report on — and a project that tracks units offers them as the location
+  // (owner 2026-09-03).
+  const [projects, setProjects] = useState([]);
+  const [units, setUnits] = useState([]);
   const [mp, setMp] = useState(null);  // roster/attendance per category
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -28,6 +34,9 @@ export default function DMAPage({ site, me, onClose }) {
     // Categories come strictly from the manpower list (owner, R9
     // addendum) — preferring the ones actually on THIS site's roster —
     // and attendance supplies who is available to allocate.
+    api(`/sites/${site.id}/projects?status=ACTIVE`)
+      .then(setProjects).catch(() => setProjects([]));
+    api(`/sites/${site.id}/units`).then(setUnits).catch(() => setUnits([]));
     Promise.all([
       api("/manpower-categories").catch(() => []),
       api(`/sites/${site.id}/manpower`).catch(() => null),
@@ -75,7 +84,7 @@ export default function DMAPage({ site, me, onClose }) {
     const s = tasks[i];
     setTasks([...tasks.slice(0, i + 1),
               { ...EMPTY_TASK, task: s.task, project: s.project,
-                location: s.location },
+                location: s.location, unit_id: s.unit_id || "" },
               ...tasks.slice(i + 1)]);
   }
 
@@ -240,17 +249,81 @@ export default function DMAPage({ site, me, onClose }) {
                              style={{ ...inputStyle, minWidth: 220 }} />
                     </td>
                     <td style={td}>
-                      <input value={t.project} placeholder="— general —"
-                             title="Project code; leave blank for general tasks"
-                             onChange={(e) => setTask(i, "project",
-                                                      e.target.value)}
-                             style={{ ...inputStyle, width: 100 }} />
+                      <select value={t.project || ""}
+                              onChange={(e) => setTasks(tasks.map((x, j) =>
+                                j === i ? { ...x, project: e.target.value,
+                                            unit_id: "" } : x))}
+                              title="Leave general for site-wide tasks"
+                              style={{ ...inputStyle, width: 120,
+                                       background: t.project && !projects.some(
+                                         (pr) => pr.code === t.project)
+                                         ? "#fff8e6" : "#fff" }}>
+                        <option value="">— general —</option>
+                        {projects.map((pr) => (
+                          <option key={pr.code} value={pr.code}>{pr.code}</option>
+                        ))}
+                        {t.project && !projects.some((pr) =>
+                            pr.code === t.project) && (
+                          <option value={t.project}>
+                            {t.project} (not on this site)</option>
+                        )}
+                      </select>
                     </td>
                     <td style={td}>
-                      <input value={t.location}
-                             onChange={(e) => setTask(i, "location",
-                                                      e.target.value)}
-                             style={{ ...inputStyle, width: 120 }} />
+                      {(() => {
+                        const mine = units.filter(
+                          (u) => u.project_code === t.project);
+                        if (!t.project || !mine.length) {
+                          return (
+                            <input value={t.location}
+                                   onChange={(e) => setTask(i, "location",
+                                                            e.target.value)}
+                                   style={{ ...inputStyle, width: 120 }} />
+                          );
+                        }
+                        // A unit-tracking project: the villa/pool is the
+                        // location. "Other" keeps the free text for the
+                        // jetty, the batching plant, the store.
+                        const other = t.unit_id === "" && t.location;
+                        return (
+                          <span style={{ display: "inline-flex", gap: 4 }}>
+                            <select value={other ? "__other" : (t.unit_id || "")}
+                                    onChange={(e) => {
+                                      const v = e.target.value;
+                                      if (v === "__other") {
+                                        setTasks(tasks.map((x, j) => j === i
+                                          ? { ...x, unit_id: "", location: x.location || " " }
+                                          : x));
+                                        return;
+                                      }
+                                      const u = mine.find(
+                                        (m) => String(m.id) === v);
+                                      setTasks(tasks.map((x, j) => j === i
+                                        ? { ...x, unit_id: v,
+                                            location: u ? (u.name
+                                              ? `${u.ref} · ${u.name}` : u.ref)
+                                              : "" }
+                                        : x));
+                                    }}
+                                    style={{ ...inputStyle, width: 150 }}>
+                              <option value="">— unit —</option>
+                              {mine.map((u) => (
+                                <option key={u.id} value={u.id}>
+                                  {u.ref}{u.name ? ` · ${u.name}` : ""}
+                                </option>
+                              ))}
+                              <option value="__other">other location…</option>
+                            </select>
+                            {other && (
+                              <input value={t.location.trim()}
+                                     placeholder="where"
+                                     onChange={(e) => setTask(i, "location",
+                                                              e.target.value)}
+                                     style={{ ...inputStyle, width: 110 }} />
+                            )}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td style={td}>
                       {/* Strictly the site's manpower categories (owner) —
@@ -380,6 +453,18 @@ export default function DMAPage({ site, me, onClose }) {
             {doc ? "Save" : "Create draft"}
           </button>
         )}
+        {/* A sheet per project for the client team that runs it — the
+            general rows ride along on every one. Offered on a locked sheet
+            too: that is when the client wants it (owner 2026-09-03). */}
+        {doc && [...new Set(tasks.map((t) => t.project).filter(Boolean))]
+          .map((code) => (
+            <a key={code} target="_blank" rel="noreferrer"
+               href={`/api/v1/dma/${doc.ref}/report.pdf?project=${encodeURIComponent(code)}`}
+               title={`${code} rows plus the general rows`}
+               style={{ ...ghostButton, textDecoration: "none",
+                        display: "inline-block" }}>
+              ⬇ {code} sheet</a>
+          ))}
         {canIssue && (
           <button onClick={issue} disabled={busy}
                   style={{ ...buttonStyle, background: "#1a7f37" }}>

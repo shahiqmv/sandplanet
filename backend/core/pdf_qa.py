@@ -299,13 +299,23 @@ def ms_context(document, revision):
     }
 
 
-def dma_context(document, revision):
+def dma_context(document, revision, filters=None):
     """Daily Manpower Allocation (R5) — internal notice-board sheet: the
     PM's morning task assignments off the previous day's TWSs, with the
-    manpower at work totalled by category."""
+    manpower at work totalled by category.
+
+    `filters={"project": code}` scopes it to one project — a big award run
+    by its own client team gets its own sheet — but the site's GENERAL rows
+    always ride along: unloading, cleaning and the jetty crew serve every
+    project, and a sheet without them under-reports the men at work
+    (owner 2026-09-03)."""
     payload = revision.payload or {}
     approvals = list(document.approvals.select_related("actor"))
     tasks = payload.get("tasks", [])
+    fp = ((filters or {}).get("project") or "").strip()
+    if fp:
+        tasks = [t for t in tasks
+                 if (t.get("project") or "").strip() in ("", fp)]
     # Worker-assignments per category across tasks. A crew reused on several
     # tasks is counted once per task, so this is an ALLOCATION count — NOT the
     # headcount on site. The real manpower on site comes from that day's
@@ -352,11 +362,13 @@ def dma_context(document, revision):
         "doc": document, "rev": revision, "site": document.site,
         "logo_src": _logo_src(), "co": company_info(),
         "form_title": "DAILY MANPOWER ALLOCATION",
-        "form_subline": "Form No: FRM-PRJ-06  |  Internal",
+        "form_subline": (f"Form No: FRM-PRJ-06  |  Project {fp} + general works"
+                         if fp else "Form No: FRM-PRJ-06  |  Internal"),
         "header_rows": [
             ["Allocation For", document.doc_date.strftime("%d/%m/%y"),
              "Based on TWS", ", ".join(tws_refs) or "—"],
-            ["Working Hours", payload.get("working_hours", ""), "", ""],
+            ["Working Hours", payload.get("working_hours", ""),
+             "Scope", (f"{fp} + general works" if fp else "Whole site")],
         ],
         "sections": sections,
         "sig_blocks": [

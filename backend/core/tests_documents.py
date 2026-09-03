@@ -323,6 +323,10 @@ class DprScopedReportTests(DocBase):
         from .models import Project
         Project.objects.create(site=self.site, code="VILLAS",
                                title="Overwater Villas", pm=self.pm)
+        # The DMA below tags rows to POOL as well; a row's project must be a
+        # real project on the site (owner 2026-09-03).
+        Project.objects.create(site=self.site, code="POOL", title="Pool",
+                               status="ACTIVE")
         payload = {"weather_am": "Sunny", "manpower": {}, "work_done": [
             {"project": "VILLAS", "trade": "MEP", "activity": "Cable pull",
              "progress_today": "10", "progress_todate": "40"},

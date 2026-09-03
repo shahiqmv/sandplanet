@@ -143,3 +143,76 @@ class SiteManpowerTests(TestCase):
         self.assertEqual(r.data["employees"][0]["today"], "PRESENT")
         # site users never see pay/passport on this view
         self.assertNotIn("basic_pay", r.data["employees"][0])
+
+
+class DmaProjectScopeTests(ProjectBase):
+    """A project field you pick, a location that can be the villa, and a
+    sheet per project that always carries the general rows (owner
+    2026-09-03)."""
+
+    ROWS = [
+        {"task": "Footing rebar", "location": "Pool 3", "project": "POOLS17",
+         "category": "Steel Fixer", "workers": 4, "remarks": ""},
+        {"task": "Spa tiling", "location": "Spa", "project": "SPA",
+         "category": "Mason", "workers": 3, "remarks": ""},
+        {"task": "Unloading (dhoni)", "location": "Jetty", "project": "",
+         "category": "Labourer", "workers": 6, "remarks": "General"},
+    ]
+
+    def _dma(self, rows=None):
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "DMA", "site_id": self.site.id,
+            "doc_date": date.today().isoformat(),
+            "payload": {"tasks": rows or self.ROWS}}, format="json")
+        return r
+
+    def test_a_project_that_is_not_on_the_site_is_refused(self):
+        rows = [dict(self.ROWS[0], project="POOLS71")]      # a typo
+        r = self._dma(rows)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("POOLS71", r.data["detail"])
+        self.assertIn("not a project on VKR", r.data["detail"])
+
+    def test_a_unit_must_belong_to_the_rows_project(self):
+        from .models import ProjectUnit
+        villa = ProjectUnit.objects.create(project=self.pools, ref="P-03",
+                                           name="Pool 3")
+        ok = self._dma([dict(self.ROWS[0], unit_id=villa.id)])
+        self.assertEqual(ok.status_code, 201, ok.data)
+        wrong = self._dma([dict(self.ROWS[1], unit_id=villa.id,
+                                project="SPA")])
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn("does not belong to SPA", wrong.data["detail"])
+
+    def test_the_project_sheet_carries_its_rows_and_the_general_rows(self):
+        from .pdf_qa import dma_context
+        from .models import Document
+        ref = self._dma().data["ref"]
+        doc = Document.objects.get(ref=ref)
+        ctx = dma_context(doc, doc.current_revision, {"project": "POOLS17"})
+        tasks = [row[1] for row in ctx["sections"][0]["rows"]]
+        self.assertEqual(tasks, ["Footing rebar", "Unloading (dhoni)"])
+        # the category totals are over THIS sheet's rows, not the site's
+        alloc = {row[0]: row[1] for row in ctx["sections"][1]["rows"]}
+        self.assertEqual(alloc.get("Steel Fixer"), 4)
+        self.assertEqual(alloc.get("Labourer"), 6)
+        self.assertNotIn("Mason", alloc)
+        self.assertIn("POOLS17 + general works", ctx["form_subline"])
+
+    def test_the_whole_site_sheet_is_unchanged(self):
+        from .pdf_qa import dma_context
+        from .models import Document
+        ref = self._dma().data["ref"]
+        doc = Document.objects.get(ref=ref)
+        ctx = dma_context(doc, doc.current_revision)
+        self.assertEqual(len(ctx["sections"][0]["rows"]), 3)
+        self.assertIn("Internal", ctx["form_subline"])
+
+    def test_the_report_route_scopes_and_refuses_the_unknown(self):
+        ref = self._dma().data["ref"]
+        r = self.client.get(f"/api/v1/dma/{ref}/report.pdf?project=POOLS17")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertIn(f"{ref}-POOLS17.pdf", r["Content-Disposition"])
+        bad = self.client.get(f"/api/v1/dma/{ref}/report.pdf?project=NOPE")
+        self.assertEqual(bad.status_code, 400)

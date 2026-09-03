@@ -303,6 +303,10 @@ def document_create(request):
                                            "works."}, status=400)
 
     doc_date = request.data.get("doc_date") or date.today().isoformat()
+    if doc_type == "DMA":
+        problem = _check_dma_tasks(site, request.data.get("payload"))
+        if problem:
+            return Response({"detail": problem}, status=400)
     if doc_type in ("DPR", "TWS", "DMA"):  # one per SITE per day (R8/R5)
         clash = Document.objects.filter(
             doc_type=doc_type, site=site, doc_date=doc_date, is_void=False
@@ -456,6 +460,10 @@ def document_detail(request, ref):
     if not _can(request, doc.doc_type, CREATE_ROLES.get(doc.doc_type, set())):
         return Response({"detail": "Role cannot edit this document."}, status=403)
     if "payload" in request.data:
+        if doc.doc_type == "DMA":
+            problem = _check_dma_tasks(doc.site, request.data["payload"])
+            if problem:
+                return Response({"detail": problem}, status=400)
         revision.payload = request.data["payload"]
         revision.save(update_fields=["payload"])
     if "lines" in request.data and doc.doc_type in LINE_TYPES:
@@ -2486,6 +2494,65 @@ def dpr_report_pdf(request, ref):
     resp = HttpResponse(pdf, content_type="application/pdf")
     resp["Content-Disposition"] = f'inline; filename="{name}.pdf"'
     return resp
+
+
+@api_view(["GET"])
+def dma_report_pdf(request, ref):
+    """On-demand DMA PDF, optionally scoped to one project — a big award run
+    by a separate client team gets its own sheet. General (site-wide) rows
+    are always included (owner 2026-09-03). ?project=<code>; no param = the
+    whole site."""
+    from django.conf import settings
+    from django.template.loader import render_to_string
+
+    from . import pdf_qa
+
+    doc, err = _get_scoped_document(request, ref)
+    if err or doc.doc_type != "DMA":
+        return err or Response({"detail": "Not a DMA."}, status=400)
+    rev = doc.current_revision
+    if not rev:
+        return Response({"detail": "Nothing to render yet."}, status=400)
+    fp = (request.GET.get("project") or "").strip()
+    if fp and not doc.site.projects.filter(code=fp).exists():
+        return Response({"detail": f"No project {fp} on {doc.site.code}."},
+                        status=400)
+    html = render_to_string(
+        "pdf/qa_form.html", pdf_qa.dma_context(doc, rev, {"project": fp}))
+    try:
+        from weasyprint import HTML
+
+        pdf = HTML(string=html,
+                   base_url=str(settings.MEDIA_ROOT)).write_pdf()
+    except Exception:                       # pragma: no cover - engine missing
+        return Response({"detail": "PDF engine unavailable."}, status=503)
+    name = f"{doc.ref}-{fp}" if fp else doc.ref
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{name}.pdf"'
+    return resp
+
+
+def _check_dma_tasks(site, payload):
+    """A DMA row's project is a code of THIS site or blank (general), and a
+    unit, if named, belongs to that project. The field was free text, so a
+    typo made a project nobody could report on (owner 2026-09-03)."""
+    from .models import ProjectUnit
+    tasks = (payload or {}).get("tasks") or []
+    codes = set(site.projects.values_list("code", flat=True))
+    for i, t in enumerate(tasks, 1):
+        code = (t.get("project") or "").strip()
+        if code and code not in codes:
+            return (f"Row {i}: '{code}' is not a project on {site.code}. "
+                    f"Pick one from the list, or leave it general.")
+        unit_id = t.get("unit_id")
+        if unit_id not in (None, ""):
+            ok = ProjectUnit.objects.filter(
+                pk=unit_id, project__site=site,
+                **({"project__code": code} if code else {})).exists()
+            if not ok:
+                return (f"Row {i}: that unit does not belong to "
+                        f"{code or 'a project on this site'}.")
+    return None
 
 
 # ===== Prefill conveniences (design §3) =====

@@ -374,6 +374,8 @@ urlpatterns = [
     path("pending-items/<int:pk>", docs.pending_items, name="pending-item"),
     path("mr/<str:ref>/export.xlsx", docs.mr_export, name="mr-export"),
     path("dpr/<str:ref>/report.pdf", docs.dpr_report_pdf, name="dpr-report-pdf"),
+    # A DMA sheet for one project's client team, general rows included
+    path("dma/<str:ref>/report.pdf", docs.dma_report_pdf, name="dma-report-pdf"),
     path("mr/<str:ref>/lm-prefill", docs.mr_lm_prefill, name="mr-lm-prefill"),
     path("mr/<str:ref>/related", docs.mr_related, name="mr-related"),
     path("lm/<str:ref>/grn-prefill", docs.lm_grn_prefill, name="lm-grn-prefill"),
