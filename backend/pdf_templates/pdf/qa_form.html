@@ -23,7 +23,11 @@
 <table class="kv">
   <tr><td class="k">Doc No.</td><td>{{ doc.ref }}{% if rev.rev_label != "R0" %} · {{ rev.rev_label }}{% endif %}</td>
       <td class="k">Date</td><td>{{ doc.doc_date|date:"d.m.Y" }}</td></tr>
-  <tr><td class="k">Project / Site</td><td>{% if doc.project %}{{ doc.project.title }} — {% endif %}{{ site.name }} ({{ site.code }})</td>
+  {% comment %}A site-wide sheet printed for ONE project names that project
+  here (owner 2026-09-03) — project_title is set only by a scoped DMA. Not a
+  {# #} comment: those are single-line, and a newline inside one turns it
+  into printed text.{% endcomment %}
+  <tr><td class="k">Project / Site</td><td>{% if project_title %}{{ project_title }} — {% elif doc.project %}{{ doc.project.title }} — {% endif %}{{ site.name }} ({{ site.code }})</td>
       <td class="k">Client</td><td>{{ site.client_name }}</td></tr>
   <tr><td class="k">Consultant</td><td colspan="3">{{ site.consultant_name }}</td></tr>
   {% for row in header_rows %}

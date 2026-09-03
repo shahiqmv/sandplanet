@@ -313,9 +313,15 @@ def dma_context(document, revision, filters=None):
     approvals = list(document.approvals.select_related("actor"))
     tasks = payload.get("tasks", [])
     fp = ((filters or {}).get("project") or "").strip()
+    project_title = ""
     if fp:
         tasks = [t for t in tasks
                  if (t.get("project") or "").strip() in ("", fp)]
+        # The header names the project the sheet is for — a DMA is
+        # site-wide, so the shared form would otherwise print only the site
+        # (owner 2026-09-03: "the project name should be there").
+        proj = document.site.projects.filter(code=fp).first()
+        project_title = f"{proj.title} ({fp})" if proj else fp
     # Worker-assignments per category across tasks. A crew reused on several
     # tasks is counted once per task, so this is an ALLOCATION count — NOT the
     # headcount on site. The real manpower on site comes from that day's
@@ -362,6 +368,7 @@ def dma_context(document, revision, filters=None):
         "doc": document, "rev": revision, "site": document.site,
         "logo_src": _logo_src(), "co": company_info(),
         "form_title": "DAILY MANPOWER ALLOCATION",
+        "project_title": project_title,
         "form_subline": (f"Form No: FRM-PRJ-06  |  Project {fp} + general works"
                          if fp else "Form No: FRM-PRJ-06  |  Internal"),
         "header_rows": [

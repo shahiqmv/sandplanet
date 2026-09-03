@@ -198,6 +198,15 @@ class DmaProjectScopeTests(ProjectBase):
         self.assertEqual(alloc.get("Labourer"), 6)
         self.assertNotIn("Mason", alloc)
         self.assertIn("POOLS17 + general works", ctx["form_subline"])
+        # the header names the project, not just the site
+        self.assertEqual(ctx["project_title"], "17 Swimming Pools (POOLS17)")
+        # The shared form must render clean: a multi-line {# #} comment once
+        # printed itself above the header table on every QA form.
+        from django.template.loader import render_to_string
+        html = render_to_string("pdf/qa_form.html", ctx)
+        self.assertNotIn("{#", html)
+        self.assertNotIn("{%", html)
+        self.assertIn("17 Swimming Pools (POOLS17) — ", html)
 
     def test_the_whole_site_sheet_is_unchanged(self):
         from .pdf_qa import dma_context
@@ -207,6 +216,7 @@ class DmaProjectScopeTests(ProjectBase):
         ctx = dma_context(doc, doc.current_revision)
         self.assertEqual(len(ctx["sections"][0]["rows"]), 3)
         self.assertIn("Internal", ctx["form_subline"])
+        self.assertEqual(ctx["project_title"], "")
 
     def test_the_report_route_scopes_and_refuses_the_unknown(self):
         ref = self._dma().data["ref"]
