@@ -129,7 +129,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         fields = ["id", "emp_no", "full_name", "photo", "photo_url",
                   "date_of_birth", "gender", "marital_status",
                   "passport_no", "passport_expiry", "nationality",
-                  "job_category", "job_category_name", "basic_pay",
+                  "job_category", "job_category_name", "job_title",
+                  "basic_pay",
                   "usd_basic_pay", "currency",
                   "ot_applies", "ot_rate", "ot_effective", "employment_type",
                   "work_permit_no", "work_permit_expiry", "work_visa_number",
@@ -1145,6 +1146,42 @@ def ot_approve(request):
           detail={"count": len(rows), "total_cost": str(total_cost),
                   "rows": decided})
     return Response({"approved": len(rows), "total_cost": total_cost})
+
+
+@api_view(["GET"])
+def attendance_range_pdf(request, site_id):
+    """The client's attendance record for a date range — headcount and
+    marks, no overtime (owner 2026-09-03: housekeeping and food)."""
+    from django.template.loader import render_to_string
+
+    from . import attendance_report, pdf as pdf_mod
+    from .views_payroll import _pdf_response
+    if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM", "QS",
+                                 "HO_HR", "FINANCE", "DIRECTOR", "PA",
+                                 "ADMIN"):
+        return Response({"detail": "Not allowed."}, status=403)
+    try:
+        site = Site.objects.get(pk=site_id)
+    except Site.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if not _site_scope_ok(request, site):
+        return Response({"detail": "Not found."}, status=404)
+    try:
+        start = date.fromisoformat(request.GET.get("from") or "")
+        end = date.fromisoformat(request.GET.get("to") or "")
+    except ValueError:
+        return Response({"detail": "from and to are required, YYYY-MM-DD."},
+                        status=400)
+    try:
+        ctx = attendance_report.build(site, start, end)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    ctx["logo_src"] = pdf_mod.logo_src()
+    ctx["co"] = pdf_mod.company_info()
+    ctx["subline"] = (f"{site.code}  |  {start:%d %b %Y} – {end:%d %b %Y}"
+                      "  |  for the client")
+    html = render_to_string("pdf/attendance_range.html", ctx)
+    return _pdf_response(html, f"{site.code}-attendance-{start}-to-{end}.pdf")
 
 
 def ot_pending_summary(site, days_back=31):

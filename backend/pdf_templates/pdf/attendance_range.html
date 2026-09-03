@@ -1,0 +1,115 @@
+<!doctype html>
+<html>
+<head>
+{% include "pdf/_report_styles.html" %}
+<style>
+  @page { size: A4 landscape; margin: 12mm 10mm 14mm; }
+  table.att { border-collapse: collapse; font-size: 7.2pt;
+              table-layout: fixed; }
+  table.att th, table.att td { box-sizing: border-box; overflow: hidden; }
+  table.att th { background: #1685CC; color: #fff; padding: 3px 1px;
+                 text-align: center; font-weight: 700; font-size: 6.8pt; }
+  table.att th.l, table.att td.l { text-align: left; padding-left: 5px; }
+  table.att td { padding: 2.5px 1px; text-align: center;
+                 border-bottom: .4px solid #E3EBF1; white-space: nowrap; }
+  table.att tr:nth-child(even) td { background: #FAFCFE; }
+  table.att th.rest { background: #10344F; }
+  table.att td.rest { background: #EEF3F7 !important; }
+  table.att td.P, table.att td.F { color: #1a7f37; font-weight: 700; }
+  table.att td.A { color: #b0402f; font-weight: 700; }
+  table.att td.L, table.att td.PL { color: #8a6d00; font-weight: 700; }
+  table.att td.S { color: #b35900; font-weight: 700; }
+  table.att td.h { color: #5a6b78; font-weight: 700; }
+  table.att td.tot { font-weight: 700; color: #10344F; background: #F2F7FB; }
+  table.att tr.head td { background: #E7F1F9; font-weight: 700;
+                         color: #10344F; }
+  table.att tbody tr { page-break-inside: avoid; }
+  thead { display: table-header-group; }
+  .block { page-break-inside: auto; margin-top: 8px; }
+  .sig { margin-top: 10mm; width: 100%; border-collapse: collapse; }
+  .sig td { width: 33%; font-size: 8pt; color: #10344F; padding-right: 8mm; }
+  .sig .line { margin-top: 12mm; border-top: .6px solid #10344F;
+               padding-top: 1.5mm; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="ATTENDANCE RECORD" %}
+{% include "pdf/_letterhead.html" with title="ATTENDANCE RECORD" subline=subline %}
+
+<div class="sect" style="margin-top:6px">{{ site.code }} — {{ site.name }}</div>
+<div class="lede">
+  {{ start|date:"D j F Y" }} to {{ end|date:"D j F Y" }}
+  ({{ days_covered }} day{{ days_covered|pluralize }}) ·
+  {{ workers|length }} on the site register ({{ staff_count }} staff, {{ worker_count }} workers) ·
+  prepared {{ prepared_on|date:"j F Y" }}.
+  For housekeeping and catering: headcount on site by day. Hours worked and
+  overtime are not part of this record.
+</div>
+
+<table class="stats"><tr>
+  <td><div class="k">Man-days on site</div>
+      <div class="v">{{ totals.on_site }}</div>
+      <div class="sub">present, rest days worked and half days</div></td>
+  <td><div class="k">Absent</div><div class="v">{{ totals.absent }}</div>
+      <div class="sub">man-days</div></td>
+  <td><div class="k">Leave</div>
+      <div class="v">{{ totals.leave|add:totals.paid_leave }}</div>
+      <div class="sub">{{ totals.leave }} unpaid · {{ totals.paid_leave }} paid</div></td>
+  <td><div class="k">Sick</div><div class="v">{{ totals.sick }}</div>
+      <div class="sub">man-days</div></td>
+</tr></table>
+<div class="key">{{ legend }}</div>
+
+{% for b in blocks %}
+<div class="block">
+  <div class="sect">{{ b.label }}
+    <span class="muted" style="font-weight:400;font-size:8pt">
+      · peak {{ b.peak }} on site · average {{ b.average }} per marked day</span></div>
+  <table class="att" style="width:{{ b.width_pct }}%">
+    <thead>
+      <tr>
+        <th class="l" style="width:{{ b.w.no }}%">No.</th>
+        <th class="l" style="width:{{ b.w.name }}%">Name</th>
+        <th class="l" style="width:{{ b.w.title }}%">Job title</th>
+        <th class="l" style="width:{{ b.w.kind }}%">Staff / Worker</th>
+        {% for d in b.days %}<th style="width:{{ b.w.day }}%"{% if d.rest %} class="rest"{% endif %}>{{ d.d }}<br><span style="font-weight:400">{{ d.dow|slice:":2" }}</span></th>{% endfor %}
+        <th style="width:{{ b.w.tot }}%">On site</th><th style="width:{{ b.w.tot }}%">Abs</th>
+        <th style="width:{{ b.w.tot }}%">Leave</th><th style="width:{{ b.w.tot }}%">Sick</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in b.rows %}
+      <tr>
+        <td class="l">{{ r.emp_no }}</td>
+        <td class="l">{{ r.full_name }}</td>
+        <td class="l" style="white-space:normal">{{ r.job_title }}</td>
+        <td class="l">{{ r.kind }}</td>
+        {% for x in r.cells %}<td class="{% if x.c == '½' %}h{% else %}{{ x.c }}{% endif %}{% if x.rest %} rest{% endif %}">{{ x.c }}</td>{% endfor %}
+        <td class="tot">{{ r.on_site }}</td>
+        <td class="tot">{{ r.absent }}</td>
+        <td class="tot">{{ r.leave|add:r.paid_leave }}</td>
+        <td class="tot">{{ r.sick }}</td>
+      </tr>
+      {% empty %}
+      <tr><td colspan="{{ b.days|length|add:8 }}" class="none l">Nobody marked at this site in {{ b.label }}.</td></tr>
+      {% endfor %}
+      <tr class="head">
+        <td class="l" colspan="4">Headcount on site</td>
+        {% for n in b.headcount %}<td>{{ n|default:"" }}</td>{% endfor %}
+        <td>{{ b.totals.on_site }}</td><td>{{ b.totals.absent }}</td>
+        <td>{{ b.totals.leave|add:b.totals.paid_leave }}</td><td>{{ b.totals.sick }}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<table class="sig">
+  <tr>
+    <td><div class="line">Prepared by — {{ co.legal_name }}</div></td>
+    <td><div class="line">Checked by — Project Manager</div></td>
+    <td><div class="line">Received by — Client</div></td>
+  </tr>
+</table>
+</body>
+</html>

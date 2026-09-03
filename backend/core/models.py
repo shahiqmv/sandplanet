@@ -2011,6 +2011,10 @@ class Employee(models.Model):
     # their site MVR line carries no basic (owner 2026-08-06).
     usd_basic_pay = models.DecimalField(max_digits=12, decimal_places=2,
                                         null=True, blank=True)  # sensitive
+    # The man's job title as the client should read it — "Site Engineer",
+    # "Steel Fixer" — typed by HR, printed on the client's attendance record
+    # (owner 2026-09-03). Blank falls back to the category name.
+    job_title = models.CharField(max_length=80, blank=True)
     # NULL = inherit the category's OT default; True/False overrides per worker
     ot_applies = models.BooleanField(null=True, blank=True)
 

@@ -570,6 +570,15 @@ function Register({ site, canEnter, onOpenDay }) {
   const [year, setYear] = useState(nowD.getFullYear());
   const [month, setMonth] = useState(nowD.getMonth() + 1);
   const [data, setData] = useState(null);
+  // The client's attendance record: any range the user picks, defaulting
+  // to the month on screen. Headcount and marks only — no OT (owner
+  // 2026-09-03, for housekeeping and food).
+  const [range, setRange] = useState({ from: "", to: "" });
+  const monthStart = `${year}-${String(month).padStart(2, "0")}-01`;
+  const monthEnd = `${year}-${String(month).padStart(2, "0")}-` +
+    String(new Date(year, month, 0).getDate()).padStart(2, "0");
+  const pdfFrom = range.from || monthStart;
+  const pdfTo = range.to || monthEnd;
   const [error, setError] = useState(null);
 
   const isPastMonth = year < nowD.getFullYear() ||
@@ -611,6 +620,25 @@ function Register({ site, canEnter, onOpenDay }) {
           P present · F Friday/rest worked · A absent · L leave (no pay) ·
           PL leave (paid) · S sick · ½ half
         </span>
+      </div>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
+        <span style={{ color: "var(--muted)" }}>Client attendance record</span>
+        <input type="date" value={pdfFrom}
+               onChange={(e) => setRange({ ...range, from: e.target.value })}
+               style={{ ...inputStyle, width: 140, padding: "3px 6px" }} />
+        <span style={{ color: "var(--muted)" }}>to</span>
+        <input type="date" value={pdfTo}
+               onChange={(e) => setRange({ ...range, to: e.target.value })}
+               style={{ ...inputStyle, width: 140, padding: "3px 6px" }} />
+        <a href={`/api/v1/sites/${site.id}/attendance.pdf?from=${pdfFrom}&to=${pdfTo}`}
+           target="_blank" rel="noreferrer"
+           title="Headcount and attendance marks for the client — no overtime"
+           style={{ ...ghostButton, padding: "3px 10px", fontSize: 12.5,
+                    textDecoration: "none", color: "var(--navy)" }}>
+          ⬇ PDF for client</a>
+        <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
+          headcount and marks only — no OT</span>
       </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {canEnter && onOpenDay && !data?.locked && (

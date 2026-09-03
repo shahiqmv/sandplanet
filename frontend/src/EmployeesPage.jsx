@@ -618,6 +618,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
     marital_status: employee.marital_status || "",
     nationality: employee.nationality || "",
     job_category: employee.job_category || "",
+    job_title: employee.job_title || "",
     basic_pay: employee.basic_pay ?? "",
     usd_basic_pay: employee.usd_basic_pay ?? "",
     currency: employee.currency || "MVR",
@@ -771,6 +772,13 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </select></L>
+          <L label="Job title">
+            <input value={f.job_title}
+                   onChange={(e) => set({ job_title: e.target.value })}
+                   placeholder="as the client should read it, e.g. Site Engineer"
+                   maxLength={80} style={inputStyle} />
+            <span style={{ fontSize: 11, color: "#5a6b78" }}>
+              Printed on the client attendance record; blank shows the job category</span></L>
           <L label="Employment type">
             <select value={f.employment_type}
                     onChange={(e) => {

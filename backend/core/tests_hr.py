@@ -50,9 +50,9 @@ class HrBase(TestCase):
     def as_user(self, user):
         self.client.force_authenticate(user)
 
-    def make_employee(self, name, basic_pay=None):
+    def make_employee(self, name, basic_pay=None, passport_no="N1234567"):
         r = self.client.post("/api/v1/employees", {
-            "full_name": name, "passport_no": "N1234567",
+            "full_name": name, "passport_no": passport_no,
             "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
             "basic_pay": basic_pay, "join_date": "2025-01-01",
         }, format="json")
