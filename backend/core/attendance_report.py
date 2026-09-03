@@ -140,9 +140,10 @@ def build(site, start, end):
         btot["on_site"] = btot["present"] + btot["rest_worked"] + btot["half"]
         days_with_marks = [d for d in headcount if headcount[d]]
         # Every column sized explicitly (fixed layout, border-box cells):
-        # identity 80 mm, four totals 8 mm, a day 5.2 mm. A two-day month
+        # identity 89 mm, four totals 9 mm, a day 5.2 mm (DejaVu on the
+        # server is wider than a desktop Helvetica). A two-day month
         # is a narrow grid; a 31-day month fills the 277 mm page width.
-        COLS = {"no": 16, "name": 30, "title": 21, "kind": 13, "tot": 8}
+        COLS = {"no": 19, "name": 36, "title": 21, "kind": 13, "tot": 9}
         total = sum(COLS.values()) + 3 * COLS["tot"] + 5.2 * len(block["days"])
         pct = {k: f"{v / total * 100:.2f}" for k, v in COLS.items()}
         pct["day"] = f"{5.2 / total * 100:.2f}"

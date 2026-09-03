@@ -69,7 +69,7 @@
       {% for r in b.rows %}
       <tr>
         <td class="l">{{ r.emp_no }}</td>
-        <td class="l">{{ r.full_name }}</td>
+        <td class="l" style="white-space:normal">{{ r.full_name }}</td>
         <td class="l" style="white-space:normal">{{ r.job_title }}</td>
         <td class="l">{{ r.kind }}</td>
         {% for x in r.cells %}<td class="{% if x.c == '½' %}h{% else %}{{ x.c }}{% endif %}{% if x.rest %} rest{% endif %}">{{ x.c }}</td>{% endfor %}
