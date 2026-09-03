@@ -1286,15 +1286,14 @@ def _fmt_money(v, dp=2):
     return f"({-v:,.{dp}f})" if v < 0 else f"{v:,.{dp}f}"
 
 
-def claim_payment_summary(claim, dp=2, _cache=None):
+def claim_payment_summary(claim, dp=2):
     """The 4-column Payment Summary (Contract / Cumulative / Previous / Present)
     the client's IPC uses — present = this claim's cumulative less the previous
     claim's. Amounts pre-formatted (dash for zero, parens for negatives). The IPA
     shows 3 dp (QS working precision); the tax invoice shows 2 dp."""
-    _cache = {} if _cache is None else _cache
-    val = claim_valuation(claim, _cache=_cache)
+    val = claim_valuation(claim)
     w = val["waterfall"]
-    wp = (claim_valuation(claim.previous, _cache=_cache)["waterfall"]
+    wp = (claim_valuation(claim.previous)["waterfall"]
           if claim.previous_id else None)
 
     def P(key):
@@ -1366,10 +1365,7 @@ def claim_pdf_context(claim):
     """Context for the interim payment application / certificate PDF."""
     from .pdf import company_info, logo_src
     project = claim.project
-    # One valuation cache for the whole document: the summary and the
-    # detail used to value the claim and its predecessor separately.
-    _cache = {}
-    val = claim_valuation(claim, _cache=_cache)
+    val = claim_valuation(claim)
     w = val["waterfall"]
     boq = getattr(project, "boq", None)
     ccy = boq.currency if boq else "USD"
@@ -1388,7 +1384,7 @@ def claim_pdf_context(claim):
         "lines": val["lines"], "sections": val["section_summary"],
         "detail_sections": detail_sections, "detail_totals": detail_totals,
         "deductions": val["deduction_lines"],
-        "summary": claim_payment_summary(claim, _cache=_cache, dp=3),
+        "summary": claim_payment_summary(claim, dp=3),
         "amount_words": amount_in_words(w["net_to_pay"], ccy),
         "type_label": dict(
             claim.Type.choices).get(claim.claim_type, claim.claim_type),

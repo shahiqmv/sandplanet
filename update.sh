@@ -117,11 +117,6 @@ ensure_crons() {
   add_cron "# planet-procurement-digest" "5 7 * * 1" \
     "$C procurement_risk --digest >> /var/log/procurement_risk.log 2>&1" \
     "the weekly procurement digest"
-  # Pre-render the application PDF of every submitted/certified claim so
-  # the first open does not pay a 40-second layout (2026-09-03).
-  add_cron "# planet-warm-claim-pdfs" "*/15 * * * *" \
-    "$C warm_claim_pdfs >> /var/log/warm_claim_pdfs.log 2>&1" \
-    "claim PDF warm-up"
   add_cron "# planet-meeting-reminders" "*/15 * * * *" \
     "$C meeting_reminders >> /var/log/meeting_reminders.log 2>&1" \
     "meeting reminders"

@@ -251,10 +251,6 @@ LOGGING = {
         "core": {"handlers": ["console", "mail_admins"], "level": "INFO",
                  "propagate": False},
         "django.db.backends": {"level": "WARNING"},
-        # WeasyPrint and fontTools narrate every glyph they subset at INFO —
-        # hundreds of lines per PDF in the container log (2026-09-03).
-        "weasyprint": {"level": "WARNING"},
-        "fontTools": {"level": "WARNING"},
     },
 }
 
