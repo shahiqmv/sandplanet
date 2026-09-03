@@ -565,3 +565,121 @@ class GstTests(PoGenerationTests):
                           {"gst_applicable": False}, format="json")
         r = self.client.post(f"/api/v1/pr/{pr['ref']}/sync-vendor-rows")
         self.assertEqual(float(r.data["lines"][0]["gst_amount"]), 0.0)
+
+
+class QuotesAfterWithdrawalTests(QuoteBase):
+    """PR-159 (BVR, 2026-09-03): authorised, then sent back to draft by
+    Finance — and from then on not one quotation could be added, edited or
+    removed. Every quote change rebuilt the vendor rows by deleting them,
+    and the cost ledger (the authorisation's postings and the withdrawal's
+    reversing mirrors) still pointed at those rows."""
+
+    def _authorised_pr(self):
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        cement, rebar = mr["lines"][0], mr["lines"][1]
+        self.add_quote(pr["ref"], self.hw, [
+            {"mr_line": cement["id"], "qty": 150, "rate": "120",
+             "awarded": True}])
+        # cash, like all three of PR-159's rows — so no PO is drafted and
+        # the whole PR travels on the payment voucher
+        self.add_quote(pr["ref"], self.steel, [
+            {"mr_line": rebar["id"], "qty": 500, "rate": "9",
+             "awarded": True}])
+        self.as_user(self.purchasing); self.act(pr["ref"], "submit")
+        self.as_user(self.director); self.act(pr["ref"], "approve")
+        # A PR is authorised on a payment voucher: Finance builds it, a
+        # signatory approves it.
+        self.as_user(self.finance)
+        pv = self.client.post("/api/v1/payment-vouchers",
+                              {"source_refs": [pr["ref"]]}, format="json")
+        self.assertEqual(pv.status_code, 201, pv.data)
+        pref = pv.data["ref"]
+        self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/submit",
+                         {}, format="json")
+        self.as_user(self.signatory)
+        r = self.client.post(f"/api/v1/payment-vouchers/{pref}/actions/approve",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        doc = Document.objects.get(ref=pr["ref"])
+        self.assertEqual(doc.status, "AUTHORISED")
+        return doc
+
+    def _withdrawn_pr(self):
+        from .models import CostPosting
+        pr = self._authorised_pr()
+        self.assertTrue(CostPosting.objects.filter(document=pr).exists())
+        self.as_user(self.finance)
+        r = self.act(pr.ref, "withdraw-authorisation",
+                     {"comment": "wrong vendor account"})
+        self.assertEqual(r.status_code, 200, r.data)
+        pr.refresh_from_db()
+        self.assertEqual(pr.status, "DRAFT")
+        return pr
+
+    def _rows(self, pr):
+        return {ln.vendor: ln for ln in pr.current_revision.lines.all()}
+
+    def test_a_new_quotation_can_be_captured_after_withdrawal(self):
+        from .models import CostPosting
+        pr = self._withdrawn_pr()
+        before = self._rows(pr)
+        ids_before = {v: ln.id for v, ln in before.items()}
+        third = Supplier.objects.create(name="Ace Hardware")
+        self.as_user(self.purchasing)
+        # add a third supplier's quote — the exact action that 500'd
+        r = self.client.post(f"/api/v1/pr/{pr.ref}/quotations", {
+            "supplier": third.id, "quote_ref": "NHW/4472",
+            "payment_terms": "", "lines": [
+                {"supplier_desc": "Adhesive", "qty": 10, "rate": "19.44",
+                 "awarded": True}]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        after = self._rows(pr)
+        self.assertIn("Ace Hardware", after)
+        # the rows the ledger points at are the SAME rows, not recreated
+        for vendor, lid in ids_before.items():
+            self.assertEqual(after[vendor].id, lid, vendor)
+        self.assertTrue(CostPosting.objects.filter(
+            document_line__in=list(ids_before.values())).exists())
+
+    def test_a_quotation_can_be_edited_and_removed_after_withdrawal(self):
+        pr = self._withdrawn_pr()
+        self.as_user(self.purchasing)
+        quotes = self.client.get(f"/api/v1/pr/{pr.ref}/quotations").data
+        steel = next(q for q in quotes
+                     if q["supplier_name"] == self.steel.name)
+        r = self.client.patch(f"/api/v1/quotations/{steel['id']}",
+                              {"quote_ref": "MST-777"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(self._rows(pr)[self.steel.name].quotation_ref,
+                         "MST-777")
+        r = self.client.delete(f"/api/v1/quotations/{steel['id']}")
+        self.assertIn(r.status_code, (200, 204), getattr(r, "data", None))
+
+    def test_a_removed_quotations_row_stays_at_zero_when_the_ledger_holds_it(self):
+        """Deleting it would take the postings' target with it. It stays,
+        empty, and says why."""
+        pr = self._withdrawn_pr()
+        self.as_user(self.purchasing)
+        row_id = self._rows(pr)[self.steel.name].id
+        steel = next(q for q in self.client.get(
+            f"/api/v1/pr/{pr.ref}/quotations").data
+            if q["supplier_name"] == self.steel.name)
+        r = self.client.delete(f"/api/v1/quotations/{steel['id']}")
+        self.assertIn(r.status_code, (200, 204), getattr(r, "data", None))
+        ln = pr.current_revision.lines.get(id=row_id)
+        self.assertIsNone(ln.amount_cash)
+        self.assertIsNone(ln.amount_credit)
+        self.assertIn("quotation removed", ln.remarks)
+
+    def test_a_draft_pr_still_drops_the_row_of_a_removed_quotation(self):
+        """No ledger, no reason to keep it — the ordinary case is unchanged."""
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        q = self.add_quote(pr["ref"], self.hw, [
+            {"mr_line": mr["lines"][0]["id"], "qty": 1, "rate": "5",
+             "awarded": True}])
+        doc = Document.objects.get(ref=pr["ref"])
+        self.assertIn(self.hw.name, self._rows(doc))
+        self.client.delete(f"/api/v1/quotations/{q['id']}")
+        self.assertNotIn(self.hw.name, self._rows(doc))

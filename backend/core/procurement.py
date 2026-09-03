@@ -663,11 +663,25 @@ def sync_pr_vendor_rows(pr):
     Totals count AWARDED lines only — what we actually intend to buy;
     quotes with nothing awarded still appear (total 0) for the record.
     GST is added per vendor (registered = quotation.gst_applicable) at the
-    company rate on the awarded net; amount_cash/amount_credit stay NET."""
+    company rate on the awarded net; amount_cash/amount_credit stay NET.
+
+    Rows are updated IN PLACE, never deleted and recreated. A PR that was
+    authorised and then withdrawn keeps its cost postings — the originals
+    and the reversing mirrors — and every one of them points at a vendor
+    row. Rebuilding by delete raised ProtectedError, and PR-159 could not
+    take, edit or remove a single quotation after Finance sent it back
+    (owner 2026-09-03). A row a quotation no longer backs is deleted only
+    when nothing in the ledger refers to it; otherwise it stays at zero,
+    saying why."""
+    from .models import CostPosting
     revision = pr.current_revision
-    revision.lines.all().delete()
+    existing = {}
+    for ln in revision.lines.all():
+        # Two quotations from one supplier used to make two rows; keep the
+        # first for the name and let the second fall through to create.
+        existing.setdefault((ln.vendor or "").strip(), ln)
     rate = company_gst_rate()
-    line_no = 0
+    keep, line_no = set(), 0
     for quotation in pr.quotations.select_related("supplier") \
             .prefetch_related("lines"):
         all_lines = list(quotation.lines.all())
@@ -677,17 +691,14 @@ def sync_pr_vendor_rows(pr):
                if quotation.gst_applicable else Decimal("0"))
         is_credit = "credit" in (quotation.payment_terms or "").lower()
         line_no += 1
-        DocumentLine.objects.create(
-            revision=revision, line_no=line_no,
-            free_text_desc=quotation.supplier.name,
-            vendor=quotation.supplier.name,
+        name = quotation.supplier.name
+        fields = dict(
+            line_no=line_no, free_text_desc=name, vendor=name,
             quotation_ref=quotation.quote_ref,
             payment_terms=quotation.payment_terms,
             # The supplier's agreed credit period, so the payable's due date
-            # follows it. The Suppliers page had recorded this for weeks and
-            # nothing read it: Sonee gives 60 days and every one of its orders
-            # was booked at the 30-day default (owner 2026-08-22). Purchasing
-            # can still override it on the row.
+            # follows it (owner 2026-08-22). Purchasing can still override
+            # it on the row.
             credit_days=(quotation.supplier.credit_days
                          if is_credit else None),
             purchase_type="CREDIT" if is_credit else "CASH",
@@ -696,6 +707,26 @@ def sync_pr_vendor_rows(pr):
             gst_amount=gst,
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
         )
+        ln = existing.pop(name.strip(), None) if name.strip() not in keep \
+            else None
+        if ln is None:
+            ln = DocumentLine.objects.create(revision=revision, **fields)
+        else:
+            for k, v in fields.items():
+                setattr(ln, k, v)
+            ln.save(update_fields=list(fields))
+        keep.add(ln.id)
+    for ln in existing.values():
+        if CostPosting.objects.filter(document_line=ln).exists():
+            line_no += 1
+            ln.line_no = line_no
+            ln.amount_cash = ln.amount_credit = None
+            ln.gst_amount = Decimal("0")
+            ln.remarks = "quotation removed — row kept for the cost ledger"
+            ln.save(update_fields=["line_no", "amount_cash", "amount_credit",
+                                   "gst_amount", "remarks"])
+        else:
+            ln.delete()
 
 
 # ===== PR signatory authorisation + cost postings (M6c) =====
