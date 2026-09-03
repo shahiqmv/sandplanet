@@ -361,6 +361,35 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               Full breakdown →
             </a>
           </div>
+          {/* OT waiting on the PM, with what it costs — the PM used to find
+              out only by opening the right day (owner 2026-09-03). */}
+          {dash?.ot_pending?.rows > 0 && (
+            <div style={{ marginTop: 8, padding: "6px 10px", borderRadius: 6,
+                          background: "#fff7e0", border: "1px solid #e0c66b",
+                          fontSize: 13, display: "flex", gap: 10,
+                          alignItems: "center", flexWrap: "wrap" }}>
+              <b style={{ color: "#8a6d00" }}>
+                ⏱ {dash.ot_pending.rows} OT row(s) awaiting your approval
+              </b>
+              <span style={{ color: "#5a6b78" }}>
+                over {dash.ot_pending.days} day(s)
+                {dash.ot_pending.oldest_day
+                  && dash.ot_pending.days > 1
+                  && ` since ${dash.ot_pending.oldest_day}`}
+                {" · "}{Number(dash.ot_pending.hours)} h
+                {dash.ot_pending.cost.length > 0 && " · "}
+                {dash.ot_pending.cost.map((c) =>
+                  `${c.currency} ${Number(c.amount).toLocaleString("en-US",
+                    { minimumFractionDigits: 2 })}`).join(" · ")}
+              </span>
+              <Btn variant="primary" style={{ marginLeft: "auto" }}
+                   onClick={() => onAttendance("ot",
+                                               dash.ot_pending.oldest_day)}>
+                Review &amp; approve</Btn>
+            </div>
+          )}
+          <div style={{ display: "none" }}>
+          </div>
           {dash.manpower.dpr_mismatch && (
             <p style={{ fontSize: 12, color: "var(--amber-fg)",
                         margin: "6px 0 0" }}>

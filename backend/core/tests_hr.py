@@ -1014,3 +1014,52 @@ class OtRevisionAndReviewTests(HrBase):
         mtd = r.data["month_to_date"][0]
         self.assertEqual(Decimal(str(mtd["hours"])),
                          Decimal("4") if same_month else Decimal("2"))
+
+
+class OtPendingSignalTests(HrBase):
+    """The PM sees pending OT without opening days: on the site dashboard
+    and in My Tasks (owner 2026-09-03)."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import OvertimeRate, SitePmHistory
+        OvertimeRate.objects.create(category=self.mason_cat, currency="MVR",
+                                    rate_per_hour=Decimal("45"),
+                                    applies_by_default=True)
+        SitePmHistory.objects.get_or_create(site=self.site, pm_user=self.pm,
+                                            defaults={"from_date": date(2025, 1, 1)})
+
+    def test_the_dashboard_counts_what_is_waiting(self):
+        d1, d2 = working_day(self.site, 1), working_day(self.site, 3)
+        self.save_attendance(d1, ot=3)
+        self.save_attendance(d2, ot=2)
+        self.as_user(self.pm)
+        p = self.client.get(f"/api/v1/dashboards/site/{self.site.id}").data["ot_pending"]
+        self.assertEqual((p["rows"], p["days"]), (2, 2))
+        self.assertEqual(Decimal(str(p["hours"])), Decimal("5"))
+        self.assertEqual([(c["currency"], Decimal(str(c["amount"])))
+                          for c in p["cost"]], [("MVR", Decimal("225.00"))])
+        self.assertEqual(p["oldest_day"], min(d1, d2).isoformat())
+
+    def test_my_tasks_lists_it_for_the_site_pm_and_not_when_clear(self):
+        day = working_day(self.site, 1)
+        self.save_attendance(day, ot=4)
+        self.as_user(self.pm)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        g = next((x for x in groups if x["title"] == "OT awaiting approval"), None)
+        self.assertIsNotNone(g, [x["title"] for x in groups])
+        item = g["items"][0]
+        self.assertEqual((item["doc_type"], item["site_code"], item["rows"]),
+                         ("OT", self.site.code, 1))
+        self.assertIn("MVR 180.00", item["hint"])
+        att = Attendance.objects.get(employee=self.mason, day=day)
+        self.client.post("/api/v1/attendance/ot-approve",
+                         {"rows": [{"id": att.id, "hours": "4"}]}, format="json")
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        self.assertNotIn("OT awaiting approval", [x["title"] for x in groups])
+
+    def test_a_site_admin_does_not_get_the_pm_queue_item(self):
+        self.save_attendance(working_day(self.site, 1), ot=4)
+        self.as_user(self.sa)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        self.assertNotIn("OT awaiting approval", [x["title"] for x in groups])

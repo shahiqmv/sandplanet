@@ -708,6 +708,16 @@ export default function App() {
       if (site) { setOpenSite(site); setDocView({ mode: "dma" }); }
       return;
     }
+    // Pending OT is not a document either: it opens the site's attendance
+    // page straight onto the OT approval tab (owner 2026-09-03).
+    if (item.doc_type === "OT") {
+      const site = sites.find((s) => s.code === item.site_code);
+      // ...on the OLDEST day that is waiting, not on today.
+      if (site) { setOpenSite(site);
+                  setDocView({ mode: "attendance", tab: "ot",
+                               day: item.oldest_day || undefined }); }
+      return;
+    }
     // A payroll run is not a Document — sending its label to the document
     // viewer is what made PMs see "Not found." Open the run itself.
     if (item.doc_type === "PAY") {
@@ -1169,7 +1179,9 @@ export default function App() {
                                             doc: null })}
                 onNewQa={(docType) => setDocView({ mode: "qa-form", docType,
                                                    doc: null })}
-                onAttendance={() => setDocView({ mode: "attendance" })}
+                onAttendance={(tab, day) => setDocView({ mode: "attendance",
+                  tab: typeof tab === "string" ? tab : "day",
+                  day: typeof day === "string" ? day : undefined })}
                 onWorkforce={() => setDocView({ mode: "workforce" })}
                 onUnits={() => setDocView({ mode: "units" })}
                 onDma={() => setDocView({ mode: "dma" })}
@@ -1377,7 +1389,9 @@ export default function App() {
             <MeetingsPage me={me} />
           )}
           {docView?.mode === "attendance" && openSite && (
-            <AttendancePage site={openSite} me={me} onClose={closeDoc} />
+            <AttendancePage site={openSite} me={me} onClose={closeDoc}
+                            initialMode={docView.tab || "day"}
+                            initialDay={docView.day} />
           )}
           {docView?.mode === "units" && openSite && (
             <UnitTrackerPage site={openSite} me={me} onClose={closeDoc}

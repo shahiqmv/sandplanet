@@ -1147,6 +1147,40 @@ def ot_approve(request):
     return Response({"approved": len(rows), "total_cost": total_cost})
 
 
+def ot_pending_summary(site, days_back=31):
+    """What is waiting for the PM's OT decision at a site: rows, days, hours
+    and cost, over the last month of unlocked days. The PM used to learn of
+    pending OT only by opening the right day — and a revised request that
+    had gone back to "awaiting" could sit unnoticed (owner 2026-09-03,
+    "how does pm see if there is any pending ot approval?")."""
+    from .models import TimesheetMonth
+    since = date.today() - timedelta(days=days_back)
+    locked = set(TimesheetMonth.objects.filter(
+        site=site, status="LOCKED").values_list("year", "month"))
+    qs = (Attendance.objects.filter(site=site, day__gte=since,
+                                    day__lte=date.today(),
+                                    ot_requested__gt=0, ot_approved__isnull=True)
+          .exclude(employee__engagement_type=Employee.Engagement.SUBCONTRACT)
+          .select_related("employee__job_category"))
+    rows, days, hours, cost = 0, set(), Decimal("0"), {}
+    for a in qs:
+        if (a.day.year, a.day.month) in locked:
+            continue
+        rows += 1
+        days.add(a.day)
+        hours += a.ot_requested
+        ccy = a.employee.currency or "MVR"
+        cost[ccy] = cost.get(ccy, Decimal("0")) + a.ot_requested * a.employee.ot_rate()
+    return {
+        "rows": rows, "days": len(days),
+        "oldest_day": min(days).isoformat() if days else None,
+        "newest_day": max(days).isoformat() if days else None,
+        "hours": hours,
+        "cost": [{"currency": c, "amount": v.quantize(Decimal("0.01"))}
+                 for c, v in sorted(cost.items())],
+    }
+
+
 def _ot_flag_hours():
     """Requested hours above which a row is highlighted for the PM. A
     company parameter, not a rule — it draws the eye, it decides nothing."""

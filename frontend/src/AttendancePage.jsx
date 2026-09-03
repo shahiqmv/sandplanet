@@ -14,9 +14,12 @@ const gtd = { padding: "3px 8px", fontSize: 13,
               verticalAlign: "middle" };
 const gin = { padding: "4px 6px", fontSize: 13 };
 
-export default function AttendancePage({ site, me, onClose }) {
-  const [mode, setMode] = useState("day");   // "day" | "register"
-  const [day, setDay] = useState(() => new Date().toISOString().slice(0, 10));
+export default function AttendancePage({ site, me, onClose,
+                                         initialMode = "day",
+                                         initialDay = null }) {
+  const [mode, setMode] = useState(initialMode);   // day | register | shifts | ot
+  const [day, setDay] = useState(() =>
+    initialDay || new Date().toISOString().slice(0, 10));
   const [grid, setGrid] = useState(null);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState(null);

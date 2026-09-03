@@ -905,6 +905,34 @@ def pending_groups(user):
             groups.append({"title": title, "items": items})
 
     base = Document.objects.filter(is_void=False).order_by("doc_date", "id")
+    # OT waiting on the PM: one line per site, with what it costs. A queue
+    # that lists documents only would never show it (owner 2026-09-03).
+    if user.role in ("PM", "ADMIN"):
+        from .views_hr import ot_pending_summary
+        ot_items = []
+        for site in Site.objects.filter(status=Site.Status.ACTIVE).order_by(
+                "code"):
+            if user.role != "ADMIN" and not site.is_current_pm(user):
+                continue
+            p = ot_pending_summary(site)
+            if not p["rows"]:
+                continue
+            money = " · ".join(f"{c['currency']} {c['amount']:,.2f}"
+                               for c in p["cost"]) or "no OT rate set"
+            ot_items.append({
+                "ref": f"OT-{site.code}", "doc_type": "OT",
+                "site_code": site.code, "site_id": site.id,
+                "project_code": "", "status": "AWAITING",
+                # the card ages an item by this; for OT it is the oldest
+                # day still waiting
+                "doc_date": p["oldest_day"],
+                "rows": p["rows"], "days": p["days"],
+                "oldest_day": p["oldest_day"], "hours": str(p["hours"]),
+                "cost": p["cost"],
+                "hint": (f"{p['rows']} row(s) over {p['days']} day(s) · "
+                         f"{money} — approve on the OT tab"),
+            })
+        add("OT awaiting approval", ot_items)
     if user.role in ("PM", "ADMIN"):
         mine = [d for d in scoped(base.filter(
                     doc_type__in=submittals.PM_GATED,
@@ -2362,8 +2390,11 @@ def dashboard_site(request, site_id):
                 for c in mp["categories"][:4]],
         "others_roster": sum(c["roster"] for c in mp["categories"][4:]),
     }
+    from .views_hr import ot_pending_summary
     return Response({
         "manpower": manpower,
+        # OT waiting on the PM — surfaced here, not found by opening days.
+        "ot_pending": ot_pending_summary(site),
         "site": site.code,
         "dpr_today": {"ref": dpr_today.ref, "status": dpr_today.status}
         if dpr_today else None,
