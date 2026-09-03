@@ -1,9 +1,10 @@
 <!doctype html>
 <html>
 <head>
+{% include "pdf/_styles.html" %}
 {% include "pdf/_report_styles.html" %}
 <style>
-  @page { size: A4 landscape; margin: 12mm 10mm 14mm; }
+  @page { size: A4 landscape; }
   table.att { border-collapse: collapse; font-size: 7.2pt;
               table-layout: fixed; }
   table.att th, table.att td { box-sizing: border-box; overflow: hidden; }
@@ -27,7 +28,9 @@
   thead { display: table-header-group; }
   .block { page-break-inside: auto; margin-top: 8px; }
   .sig { margin-top: 10mm; width: 100%; border-collapse: collapse; }
-  .sig td { width: 33%; font-size: 8pt; color: #10344F; padding-right: 8mm; }
+  .sig td { width: 33%; font-size: 8pt; color: #10344F; padding: 0 8mm 0 0;
+            border: none; background: none; }
+  .closing { page-break-inside: avoid; }
   .sig .line { margin-top: 12mm; border-top: .6px solid #10344F;
                padding-top: 1.5mm; }
 </style>
@@ -42,23 +45,8 @@
   ({{ days_covered }} day{{ days_covered|pluralize }}) ·
   {{ workers|length }} on the site register ({{ staff_count }} staff, {{ worker_count }} workers) ·
   prepared {{ prepared_on|date:"j F Y" }}.
-  For housekeeping and catering: headcount on site by day. Hours worked and
-  overtime are not part of this record.
 </div>
 
-<table class="stats"><tr>
-  <td><div class="k">Man-days on site</div>
-      <div class="v">{{ totals.on_site }}</div>
-      <div class="sub">present, rest days worked and half days</div></td>
-  <td><div class="k">Absent</div><div class="v">{{ totals.absent }}</div>
-      <div class="sub">man-days</div></td>
-  <td><div class="k">Leave</div>
-      <div class="v">{{ totals.leave|add:totals.paid_leave }}</div>
-      <div class="sub">{{ totals.leave }} unpaid · {{ totals.paid_leave }} paid</div></td>
-  <td><div class="k">Sick</div><div class="v">{{ totals.sick }}</div>
-      <div class="sub">man-days</div></td>
-</tr></table>
-<div class="key">{{ legend }}</div>
 
 {% for b in blocks %}
 <div class="block">
@@ -104,6 +92,21 @@
 </div>
 {% endfor %}
 
+<div class="closing">
+<div class="sect" style="margin-top:10px">Period summary · {{ start|date:"j M Y" }} – {{ end|date:"j M Y" }}</div>
+<table class="stats"><tr>
+  <td><div class="k">Man-days on site</div>
+      <div class="v">{{ totals.on_site }}</div>
+      <div class="sub">present, rest days worked and half days</div></td>
+  <td><div class="k">Absent</div><div class="v">{{ totals.absent }}</div>
+      <div class="sub">man-days</div></td>
+  <td><div class="k">Leave</div>
+      <div class="v">{{ totals.leave|add:totals.paid_leave }}</div>
+      <div class="sub">{{ totals.leave }} unpaid · {{ totals.paid_leave }} paid</div></td>
+  <td><div class="k">Sick</div><div class="v">{{ totals.sick }}</div>
+      <div class="sub">man-days</div></td>
+</tr></table>
+<div class="key">{{ legend }}</div>
 <table class="sig">
   <tr>
     <td><div class="line">Prepared by — {{ co.legal_name }}</div></td>
@@ -111,5 +114,6 @@
     <td><div class="line">Received by — Client</div></td>
   </tr>
 </table>
+</div>
 </body>
 </html>
