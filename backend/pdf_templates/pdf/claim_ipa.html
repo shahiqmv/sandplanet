@@ -77,7 +77,7 @@
       <td class="code">{{ ln.item_code }}</td>
       <td>{{ ln.description }}</td>
       <td class="num">{{ ln.contract_amount|floatformat:3 }}</td>
-      <td class="num">{% if ln.is_split %}M&nbsp;{{ ln.cumulative_qty|default_if_none:0|floatformat:2 }} · W&nbsp;{{ ln.cumulative_qty_install|default_if_none:0|floatformat:2 }}{% elif ln.cumulative_qty != None %}{{ ln.cumulative_qty|floatformat:2 }} {{ ln.unit }}{% elif ln.cumulative_pct != None %}{{ ln.cumulative_pct|floatformat:2 }}%{% else %}—{% endif %}</td>
+      <td class="num">{{ ln.done }}</td>
       <td class="num">{{ ln.previous_value|floatformat:3 }}</td>
       <td class="num">{{ ln.current_value|floatformat:3 }}</td>
       <td class="num">{{ ln.cumulative_value|floatformat:3 }}</td>

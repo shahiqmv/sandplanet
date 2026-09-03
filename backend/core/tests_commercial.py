@@ -1554,3 +1554,110 @@ class BackChargeCumulativeTests(TestCase):
         self.assertEqual(
             _q2(w4["total_cumulative"] - w4["net_to_pay_cumulative"]),
             Decimal("15000.00"))
+
+
+class ClaimBasisHygieneTests(ProgressClaimTests):
+    """A claim reads ONE basis. Figures in the other are leftovers, and they
+    used to print: IPA-02 on MXR A,C&F showed "200.00 mt" on a %-claim
+    beside amounts computed from 88% (owner 2026-09-03)."""
+
+    def _item_id(self, cid, code):
+        return next(ln["id"] for ln in self._detail(cid)["lines"]
+                    if ln["item_code"] == code)
+
+    def _post_rows(self, cid, rows):
+        return self.client.post(f"/api/v1/claims/{cid}/items",
+                                {"rows": rows}, format="json")
+
+    def test_done_is_the_percentage_on_a_percent_claim_even_with_a_stale_qty(self):
+        from core import commercial
+        from django.template.loader import render_to_string
+        from .models import ProgressClaim, ProgressClaimItem
+        c = self._create()
+        self.assertEqual(c["basis"], "PERCENT")
+        self._value_pct(c["id"], {"A": "88"})
+        ProgressClaimItem.objects.filter(id=self._item_id(c["id"], "A")).update(
+            cumulative_qty="200")
+        claim = ProgressClaim.objects.get(pk=c["id"])
+        line = next(ln for ln in commercial.claim_valuation(claim)["lines"]
+                    if ln["item_code"] == "A")
+        self.assertEqual(line["done"], "88.00%")
+        self.assertIsNone(line["cumulative_qty"])
+        html = render_to_string("pdf/claim_ipa.html",
+                                commercial.claim_pdf_context(claim))
+        self.assertIn("88.00%", html)
+        self.assertNotIn("200.00 no", html)
+        self.assertEqual(Decimal(str(line["cumulative_value"])), Decimal("880"))
+
+    def test_writing_a_percentage_clears_the_quantity(self):
+        from .models import ProgressClaimItem
+        c = self._create()
+        iid = self._item_id(c["id"], "A")
+        ProgressClaimItem.objects.filter(id=iid).update(cumulative_qty="200")
+        self._value_pct(c["id"], {"A": "50"})
+        ci = ProgressClaimItem.objects.get(pk=iid)
+        self.assertEqual(ci.cumulative_pct, Decimal("50"))
+        self.assertIsNone(ci.cumulative_qty)
+
+    def test_the_next_claim_carries_only_the_percentage(self):
+        from .models import ProgressClaimItem
+        c1 = self._create()
+        iid = self._item_id(c1["id"], "A")
+        self._value_pct(c1["id"], {"A": "40"})
+        ProgressClaimItem.objects.filter(id=iid).update(cumulative_qty="200")
+        self._status(c1["id"], "SUBMITTED")
+        self._status(c1["id"], "CERTIFIED")
+        c2 = self._create()
+        ci = ProgressClaimItem.objects.get(claim_id=c2["id"],
+                                           boq_item__item_code="A")
+        self.assertEqual(ci.cumulative_pct, Decimal("40"))
+        self.assertIsNone(ci.cumulative_qty)
+
+    def test_switching_a_draft_to_percent_clears_its_quantities(self):
+        from .models import ProgressClaimItem
+        c1 = self._create({"basis": "MEASURED"})
+        self.assertEqual(c1["basis"], "MEASURED")
+        iid = self._item_id(c1["id"], "A")
+        self._post_rows(c1["id"], [{"id": iid, "cumulative_qty": "30"}])
+        self._status(c1["id"], "SUBMITTED"); self._status(c1["id"], "CERTIFIED")
+        c2 = self._create()
+        iid2 = self._item_id(c2["id"], "A")
+        self.assertEqual(ProgressClaimItem.objects.get(pk=iid2).cumulative_qty,
+                         Decimal("30"))
+        r = self.client.post(f"/api/v1/claims/{c2['id']}/meta",
+                             {"basis": "PERCENT"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(ProgressClaimItem.objects.get(pk=iid2).cumulative_qty)
+
+    def test_a_measured_claim_shows_the_quantity_and_clears_a_stale_pct(self):
+        from core import commercial
+        from .models import ProgressClaim, ProgressClaimItem
+        c = self._create({"basis": "MEASURED"})
+        iid = self._item_id(c["id"], "A")
+        ProgressClaimItem.objects.filter(id=iid).update(cumulative_pct="99")
+        self._post_rows(c["id"], [{"id": iid, "cumulative_qty": "50"}])
+        self.assertIsNone(ProgressClaimItem.objects.get(pk=iid).cumulative_pct)
+        line = next(ln for ln in commercial.claim_valuation(
+            ProgressClaim.objects.get(pk=c["id"]))["lines"]
+            if ln["item_code"] == "A")
+        self.assertEqual(line["done"], "50.00 no")
+        self.assertEqual(Decimal(str(line["cumulative_value"])), Decimal("500"))
+
+    def test_the_cleanup_command_dry_runs_then_clears(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from .models import ProgressClaimItem
+        c = self._create()
+        iid = self._item_id(c["id"], "A")
+        self._value_pct(c["id"], {"A": "88"})
+        ProgressClaimItem.objects.filter(id=iid).update(cumulative_qty="200")
+        self._status(c["id"], "SUBMITTED")
+        out = StringIO()
+        call_command("clear_stale_claim_qty", project="POOLS17",
+                     claim=c["ref"], dry_run=True, stdout=out)
+        self.assertIn("1 line(s) carry a leftover quantity", out.getvalue())
+        self.assertEqual(ProgressClaimItem.objects.get(pk=iid).cumulative_qty,
+                         Decimal("200"))
+        call_command("clear_stale_claim_qty", project="POOLS17",
+                     claim=c["ref"], stdout=StringIO())
+        self.assertIsNone(ProgressClaimItem.objects.get(pk=iid).cumulative_qty)

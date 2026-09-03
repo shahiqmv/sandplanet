@@ -499,16 +499,12 @@ def create_claim(project, data, actor):
                     pci = prev_map.get(("BOQ", it.id, None, None))
                     new_items.append(ProgressClaimItem(
                         claim=claim, source="BOQ", boq_item=it,
-                        cumulative_pct=(pci.cumulative_pct if pci else None),
-                        cumulative_qty=(pci.cumulative_qty if pci else None)))
+                        **_carry(pci, claim.basis)))
             else:
                 pci = prev_map.get(("CAT", None, None, cat.id))
                 new_items.append(ProgressClaimItem(
                     claim=claim, source="CAT", boq_category=cat,
-                    cumulative_pct=(pci.cumulative_pct if pci else None),
-                    cumulative_qty=(pci.cumulative_qty if pci else None),
-                    cumulative_qty_install=(pci.cumulative_qty_install
-                                            if pci else None)))
+                    **_carry(pci, claim.basis)))
     if not is_advance and boq and boq.mode != "UNIT":
         for it in boq.items.all():
             if it.is_heading:
@@ -516,8 +512,7 @@ def create_claim(project, data, actor):
             pci = prev_map.get(("BOQ", it.id, None, None))
             new_items.append(ProgressClaimItem(
                 claim=claim, source="BOQ", boq_item=it,
-                cumulative_pct=(pci.cumulative_pct if pci else None),
-                cumulative_qty=(pci.cumulative_qty if pci else None)))
+                **_carry(pci, claim.basis)))
     if not is_advance and boq:
         for v in project.variations.filter(
                 status="APPROVED").prefetch_related("items"):
@@ -527,8 +522,7 @@ def create_claim(project, data, actor):
                 pci = prev_map.get(("VO", None, it.id, None))
                 new_items.append(ProgressClaimItem(
                     claim=claim, source="VO", variation_item=it,
-                    cumulative_pct=(pci.cumulative_pct if pci else None),
-                    cumulative_qty=(pci.cumulative_qty if pci else None)))
+                    **_carry(pci, claim.basis)))
         ProgressClaimItem.objects.bulk_create(new_items)
     # Carry the previous claim's back-charge lines forward (labels + cumulative
     # to date); the QS bumps the cumulative on the new claim.
@@ -562,6 +556,15 @@ def set_claim_items(claim, rows, actor):
             ci.cumulative_qty = _dec(r.get("cumulative_qty"))
         if "cumulative_qty_install" in r:
             ci.cumulative_qty_install = _dec(r.get("cumulative_qty_install"))
+        # A figure in the other basis is not "also true" — it is left over.
+        # Writing a % on a %-claim clears the quantity; writing a quantity on
+        # a measured claim clears the % (owner 2026-09-03).
+        if claim.basis == "MEASURED":
+            if "cumulative_qty" in r or "cumulative_qty_install" in r:
+                ci.cumulative_pct = None
+        elif "cumulative_pct" in r:
+            ci.cumulative_qty = None
+            ci.cumulative_qty_install = None
         changed.append(ci)
     if changed:
         ProgressClaimItem.objects.bulk_update(
@@ -623,9 +626,15 @@ def set_claim_meta(claim, data, actor):
         audit("project", claim.project_id, "CLAIM_BASIS_CHANGED", actor=actor,
               detail={"ref": claim.ref, "from": claim.basis,
                       "to": data["basis"]})
+    switched = ("basis" in data and data["basis"]
+                and data["basis"] != claim.basis)
     for f in ("ref", "claim_type", "basis", "note"):
         if f in data:
             setattr(claim, f, data.get(f) or getattr(claim, f))
+    if switched:
+        # The moment IPA-02 moved from measured to %, its quantities became
+        # leftovers. Clear them here rather than let them ride.
+        clear_other_basis(claim, actor)
     if "work_done_upto" in data:
         claim.work_done_upto = data.get("work_done_upto") or None
     for f in ("material_on_site", "material_off_site", "retention_released"):
@@ -717,6 +726,76 @@ def _effective_section(line, source, boq_head, vo_head):
         return own
     heading = (boq_head if source == "BOQ" else vo_head).get(line.id, "")
     return heading or "—"
+
+
+def _done_label(basis, ln):
+    """What the "Done" column says, decided by the CLAIM's basis.
+
+    It used to be decided by which field happened to hold a value: a
+    quantity keyed during a measured phase survived the switch to % and was
+    printed on a %-basis application beside amounts computed from the
+    percentage — 268 lines of IPA-02 on MXR A,C&F read "200.00 mt" against a
+    BOQ quantity of 30 (owner 2026-09-03)."""
+    def num(v, places=2):
+        return f"{(v or ZERO):,.{places}f}"
+    measured = basis == "MEASURED" and not ln.get("is_percent_only")
+    if measured and ln.get("is_split"):
+        return (f"M {num(ln.get('cumulative_qty'))} · "
+                f"W {num(ln.get('cumulative_qty_install'))}")
+    if measured:
+        return (f"{num(ln.get('cumulative_qty'))} {ln.get('unit') or ''}"
+                .rstrip())
+    if ln.get("cumulative_pct") is None:
+        return "—"
+    return f"{num(ln['cumulative_pct'])}%"
+
+
+def _apply_basis_to_lines(basis, lines):
+    """Label every line by basis and blank the OTHER basis's figures in the
+    dicts, so no renderer — PDF, Excel, portal — can show a stale one."""
+    for ln in lines:
+        ln["done"] = _done_label(basis, ln)
+        if basis != "MEASURED" or ln.get("is_percent_only"):
+            for k in ("cumulative_qty", "cumulative_qty_install",
+                      "previous_qty", "previous_qty_install"):
+                if k in ln:
+                    ln[k] = None
+    return lines
+
+
+def _carry(pci, basis):
+    """The figures a new claim inherits from the previous one — only the
+    ones its basis reads. Copying both let a stale quantity ride from claim
+    to claim forever."""
+    if pci is None:
+        return {"cumulative_pct": None, "cumulative_qty": None,
+                "cumulative_qty_install": None}
+    if basis == "MEASURED":
+        return {"cumulative_pct": pci.cumulative_pct,
+                "cumulative_qty": pci.cumulative_qty,
+                "cumulative_qty_install": pci.cumulative_qty_install}
+    return {"cumulative_pct": pci.cumulative_pct, "cumulative_qty": None,
+            "cumulative_qty_install": None}
+
+
+def clear_other_basis(claim, actor=None):
+    """Blank the figures a claim's basis does not read. Returns how many
+    lines changed. Money is unaffected: valuation already ignored them."""
+    from .models import ProgressClaimItem
+    if claim.basis == "MEASURED":
+        return 0            # a % on a measured claim serves percent-only lines
+    changed = list(ProgressClaimItem.objects.filter(claim=claim).filter(
+        Q(cumulative_qty__isnull=False)
+        | Q(cumulative_qty_install__isnull=False)))
+    for ci in changed:
+        ci.cumulative_qty = None
+        ci.cumulative_qty_install = None
+    if changed:
+        ProgressClaimItem.objects.bulk_update(
+            changed, ["cumulative_qty", "cumulative_qty_install"])
+        audit("project", claim.project_id, "CLAIM_STALE_QTY_CLEARED",
+              actor=actor, detail={"ref": claim.ref, "lines": len(changed)})
+    return len(changed)
 
 
 def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
@@ -1016,6 +1095,7 @@ def claim_valuation(claim, _cache=None):
         d["current"] += ln["current_value"]
         d["cumulative"] += ln["cumulative_value"]
 
+    _apply_basis_to_lines(claim.basis, lines)
     result = {
         "lines": lines,
         "section_summary": list(secs.values()),
