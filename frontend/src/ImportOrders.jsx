@@ -750,11 +750,17 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
   const [dropIds, setDropIds] = useState([]);
   // line.id -> { order_qty, unit_price, allocations: [{project_id, qty}] }
   const [amend, setAmend] = useState({});
+  // Items the supplier ADDED at shipment — the other half of a late change
+  // (owner 2026-09-04, IPR-026).
+  const [added, setAdded] = useState([]);
   const [projects, setProjects] = useState([]);
+  const [heads, setHeads] = useState([]);
   useEffect(() => {
     if (!open) return;
-    api("/ipr/context").then((c) => setProjects(c.projects || []))
-      .catch(() => setProjects([]));
+    api("/ipr/context").then((c) => {
+      setProjects(c.projects || []);
+      setHeads(c.cost_heads || c.heads || []);
+    }).catch(() => { setProjects([]); setHeads([]); });
   }, [open]);
   if (!corr && !doc.can_correct) return null;
 
@@ -765,7 +771,8 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
                 { method: "POST", body: {
                     ...f, fold_line_ids: foldIds, drop_line_ids: dropIds,
                     line_amendments: Object.entries(amend).map(
-                      ([id, a]) => ({ line_id: Number(id), ...a })) } });
+                      ([id, a]) => ({ line_id: Number(id), ...a })),
+                    new_lines: added } });
       setOpen(false); onChanged();
     } catch (e) { onError(e.message); }
   }
@@ -774,6 +781,28 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
   // item off the order (total falls, the unpaid milestones absorb it). The
   // form used to offer only the fold, worded for freight, so a last-minute
   // deletion had nowhere to go (owner 2026-09-02, IPR-017).
+  // The quantity of a single split row follows the line quantity, so the
+  // usual case (one destination) is not typed twice. The PROJECT is never
+  // inferred — that is the decision worth making deliberately.
+  function patchAdded(n, patch) {
+    setAdded(added.map((row, i) => {
+      if (i !== n) return row;
+      const next = { ...row, ...patch };
+      if (patch.order_qty !== undefined && next.allocations.length === 1) {
+        next.allocations = [{ ...next.allocations[0],
+                              qty: patch.order_qty }];
+      }
+      return next;
+    }));
+  }
+  function setAddedAlloc(n, i, patch) {
+    setAdded(added.map((row, ri) => ri !== n ? row : {
+      ...row,
+      allocations: row.allocations.map((a, ai) =>
+        ai === i ? { ...a, ...patch } : a),
+    }));
+  }
+
   function setIntent(line, intent) {
     const wasFold = foldIds.includes(line.id);
     const delta = Number(line.line_value) || 0;
@@ -845,6 +874,19 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
           <div style={{ color: "#8a6d00", marginTop: 2 }}>
             <strong>Removes from the order:</strong>{" "}
             {corr.drop_lines.map((l) => l.description).join(" · ")}</div>
+        )}
+        {corr.effect?.added?.length > 0 && (
+          <div style={{ color: "#8a6d00", marginTop: 2 }}>
+            <strong>Adds to the order:</strong>{" "}
+            {corr.effect.added.map((a, i) => (
+              <span key={i} style={{ marginRight: 10 }}>
+                {a.description} · {a.qty} × {money(a.unit_price)} ={" "}
+                {corr.effect.currency} {money(a.value)}</span>
+            ))}
+            <div style={{ color: "#5a6b78" }}>
+              Added items are on the order, not on any shipment manifest —
+              book them onto the shipment once this is authorised.</div>
+          </div>
         )}
         {corr.effect?.amended?.length > 0 && (
           <div style={{ color: "#8a6d00", marginTop: 2 }}>
@@ -919,7 +961,8 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
           misc_fee: o.misc_fee ?? "", reason: "" }); setOpen(true); }}>
         Correct order…</button>
       <span style={{ color: "#8a97a1", marginLeft: 8 }}>
-        remove an item, or fix discount / freight / misc after authorisation
+        add or remove an item the supplier changed at shipment, or fix
+        discount / freight / misc after authorisation
       </span>
     </p>
   );
@@ -1087,6 +1130,125 @@ function ChargeCorrectionPanel({ doc, refIpr, onChanged, onError }) {
           )}
         </div>
       )}
+      <div style={{ marginTop: 12, borderTop: "1px solid var(--sp-border)",
+                    paddingTop: 8 }}>
+        <div style={{ fontSize: 11, color: "#5a6b78", marginBottom: 6 }}>
+          <strong style={{ color: "var(--sp-navy)" }}>
+            Items the supplier added at shipment.</strong>{" "}
+          They join the order at their own value, so the shipment can be
+          received against it and the order matches the commercial
+          invoice. They are not put on a shipment manifest — book them
+          onto the shipment yourself once this is authorised.
+        </div>
+        {added.map((row, n) => {
+          const split = row.allocations.reduce(
+            (t, r) => t + (Number(r.qty) || 0), 0);
+          const qty = Number(row.order_qty) || 0;
+          return (
+            <div key={n} style={{ border: "1px solid var(--sp-border)",
+                                  borderRadius: 6, padding: 8,
+                                  marginBottom: 6 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                            alignItems: "flex-end" }}>
+                <label style={{ fontSize: 10.5, color: "#5a6b78",
+                                flex: "2 1 220px" }}>
+                  Description
+                  <input value={row.free_text_desc} style={inputStyle}
+                         placeholder="as the invoice describes it"
+                         onChange={(e) => patchAdded(
+                           n, { free_text_desc: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 10.5, color: "#5a6b78",
+                                width: 70 }}>
+                  Unit
+                  <input value={row.unit} style={inputStyle}
+                         placeholder="nos"
+                         onChange={(e) => patchAdded(
+                           n, { unit: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 10.5, color: "#5a6b78",
+                                width: 84 }}>
+                  Quantity
+                  <input type="number" value={row.order_qty}
+                         style={inputStyle}
+                         onChange={(e) => patchAdded(
+                           n, { order_qty: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 10.5, color: "#5a6b78",
+                                width: 104 }}>
+                  Unit price ({o.order_currency})
+                  <input type="number" value={row.unit_price}
+                         style={inputStyle}
+                         onChange={(e) => patchAdded(
+                           n, { unit_price: e.target.value })} />
+                </label>
+                <label style={{ fontSize: 10.5, color: "#5a6b78",
+                                flex: "1 1 150px" }}>
+                  Cost head
+                  <select value={row.cost_head_id} style={inputStyle}
+                          onChange={(e) => patchAdded(
+                            n, { cost_head_id: e.target.value })}>
+                    <option value="">choose…</option>
+                    {heads.map((h) => (
+                      <option key={h.id} value={h.id}>{h.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <div style={{ fontSize: 12, color: "#5a6b78",
+                              paddingBottom: 6 }}>
+                  = {o.order_currency}{" "}
+                  {money(qty * (Number(row.unit_price) || 0))}
+                </div>
+                <button type="button" style={ghostButton}
+                        onClick={() => setAdded(
+                          added.filter((_, i) => i !== n))}>
+                  Remove</button>
+              </div>
+              <div style={{ fontSize: 10.5, color: "#5a6b78",
+                            marginTop: 6 }}>
+                Project / stock split — which project the cost lands on:
+              </div>
+              {row.allocations.map((r, i) => (
+                <div key={i} style={{ display: "flex", gap: 8,
+                                      marginTop: 4 }}>
+                  <select value={r.project_id}
+                          style={{ ...inputStyle, width: 220 }}
+                          onChange={(e) => setAddedAlloc(
+                            n, i, { project_id: e.target.value })}>
+                    <option value="">General stock (no project)</option>
+                    {projects.map((pr) => (
+                      <option key={pr.id} value={pr.id}>
+                        {pr.code} · {pr.site_code}</option>
+                    ))}
+                  </select>
+                  <input type="number" value={r.qty} placeholder="qty"
+                         style={{ ...inputStyle, width: 96 }}
+                         onChange={(e) => setAddedAlloc(
+                           n, i, { qty: e.target.value })} />
+                  {i === row.allocations.length - 1 && (
+                    <button type="button" style={ghostButton}
+                            onClick={() => patchAdded(n, {
+                              allocations: [...row.allocations,
+                                { project_id: "", qty: "" }] })}>
+                      + split</button>
+                  )}
+                </div>
+              ))}
+              <div style={{ fontSize: 11, marginTop: 4,
+                            color: split === qty && qty > 0
+                              ? "#1a7f37" : "#a3271b" }}>
+                split totals {split} of {qty}
+              </div>
+            </div>
+          );
+        })}
+        <button type="button" style={ghostButton}
+                onClick={() => setAdded([...added, {
+                  free_text_desc: "", unit: "", order_qty: "",
+                  unit_price: "", cost_head_id: "",
+                  allocations: [{ project_id: "", qty: "" }] }])}>
+          + Add an item the supplier shipped</button>
+      </div>
       <input placeholder="Reason (e.g. the PI includes freight)"
         value={f.reason} style={{ ...inputStyle, width: "100%", marginTop: 8 }}
         onChange={(e) => setF({ ...f, reason: e.target.value })} />

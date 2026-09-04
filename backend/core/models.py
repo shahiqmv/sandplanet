@@ -1589,6 +1589,18 @@ class ImportChargeCorrection(models.Model):
     # The split is always re-entered, never inferred: guessing which project
     # loses stock is exactly the kind of silent decision that goes unnoticed.
     line_amendments = models.JSONField(default=list, blank=True)
+    # Items the supplier ADDED at shipment — the other half of a last-minute
+    # change, and until 2026-09-04 the half with nowhere to go. IPR-026 lost
+    # five cordless tools (their batteries could not ship) and gained six
+    # corded ones plus two part-quantities the supplier billed at a second
+    # price. Without them on the order the shipment cannot be received
+    # against it, and the invoice the clearing agent holds does not match the
+    # order it clears. Each entry:
+    #   {"item_id": n or null, "free_text_desc": "...", "unit": "pcs",
+    #    "spec": "", "order_qty": "6", "unit_price": "110.84",
+    #    "cost_head_id": n, "remarks": "",
+    #    "allocations": [{"project_id": n or null, "qty": "6"}]}
+    new_lines = models.JSONField(default=list, blank=True)
     reason = models.TextField()
     status = models.CharField(max_length=17, choices=Status.choices,
                               default=Status.PENDING_DIRECTOR)

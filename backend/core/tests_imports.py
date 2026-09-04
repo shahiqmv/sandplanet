@@ -7,6 +7,7 @@ from decimal import Decimal
 from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIClient
 
+from . import imports as imports_svc
 from .models import (CostHead, CostPosting, Document, DocumentRevision,
                      ImportPaymentMilestone, Project, SitePmHistory, Site,
                      Supplier, User)
@@ -2403,6 +2404,100 @@ class IprDropLineTests(IprBase):
         self.client.force_authenticate(self.signatory)
         return self.client.post(f"/api/v1/ipr/{ref}/correct-charges/decide",
                                 {"action": "approve"}, format="json")
+
+    def _add(self, ref, rows, **extra):
+        body = {"reason": "Supplier changed the shipment", "new_lines": rows}
+        body.update(extra)
+        return self.client.post(f"/api/v1/ipr/{ref}/correct-charges", body,
+                                format="json")
+
+    def _committed(self, ref, line=None):
+        from .models import CostPosting, Document
+        qs = CostPosting.objects.filter(document=Document.objects.get(ref=ref),
+                                        state="COMMITTED")
+        if line is not None:
+            qs = qs.filter(ipr_line=line)
+        return sum((p.amount for p in qs), Decimal("0"))
+
+    def test_an_added_line_joins_the_order_and_commits_its_own_value(self):
+        """The supplier ships something that was never ordered.
+
+        IPR-026 (owner 2026-09-04): five cordless tools came off at shipment
+        because their batteries could not travel, and six corded ones went on
+        in their place. Dropping was possible; adding was not, so the goods on
+        the invoice the clearing agent held could not be received against the
+        order at all.
+        """
+        ref = self._authorised_two_line()
+        self._part_paid(ref)
+        r = self._add(ref, [{
+            "free_text_desc": "Makita HP1630 hammer drill", "unit": "nos",
+            "order_qty": "6", "unit_price": "50",
+            "cost_head_id": self.head.id,
+            "allocations": [{"project_id": self.project.id, "qty": "6"}],
+        }])
+        self.assertEqual(r.status_code, 200, r.data)
+        eff = r.data["charge_correction"]["effect"]
+        self.assertEqual(Decimal(str(eff["old_total"])), Decimal("1200"))
+        self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1500"))
+        self.assertEqual([(a["description"], Decimal(str(a["value"])))
+                          for a in eff["added"]],
+                         [("Makita HP1630 hammer drill", Decimal("300"))])
+        before = self._committed(ref)
+        self._approve_all(ref)
+        order = self._order(ref)
+        line = order.lines.get(free_text_desc="Makita HP1630 hammer drill")
+        self.assertEqual(line.line_no, 3)              # after the two ordered
+        self.assertEqual(imports_svc.ipr_order_total(order), Decimal("1500"))
+        # Its own value is committed against its own line, not spread over
+        # the order: 6 x 50 x 15 = MVR 4,500.
+        self.assertEqual(self._committed(ref, line), Decimal("4500.00"))
+        self.assertEqual(self._committed(ref) - before, Decimal("4500.00"))
+        self.assertEqual(self._committed(ref),
+                         imports_svc.ipr_mvr_total(order))
+
+    def test_items_swapped_at_shipment_in_one_correction(self):
+        """The IPR-026 shape: some off, some on, in a single decision."""
+        ref = self._authorised_two_line()
+        order = self._order(ref)
+        sand = order.lines.get(line_no=2)               # 100 x 2 = 200
+        r = self._add(ref, [{
+            "free_text_desc": "Impact driver", "unit": "nos",
+            "order_qty": "2", "unit_price": "120",
+            "cost_head_id": self.head.id,
+            "allocations": [{"project_id": None, "qty": "2"}],
+        }], drop_line_ids=[sand.id])
+        self.assertEqual(r.status_code, 200, r.data)
+        eff = r.data["charge_correction"]["effect"]
+        # 1200 - 200 + 240
+        self.assertEqual(Decimal(str(eff["new_total"])), Decimal("1240"))
+        self.assertEqual(Decimal(str(eff["delta"])), Decimal("40"))
+        self._approve_all(ref)
+        order.refresh_from_db()
+        self.assertEqual(imports_svc.ipr_order_total(order), Decimal("1240"))
+        self.assertEqual(self._committed(ref), imports_svc.ipr_mvr_total(order))
+        sand.refresh_from_db()
+        self.assertEqual(sand.order_qty, Decimal("0"))   # off, never deleted
+        self.assertEqual(self._committed(ref, sand), Decimal("0.00"))
+
+    def test_an_added_line_has_to_be_complete(self):
+        ref = self._authorised_two_line()
+        good = {"free_text_desc": "Impact driver", "unit": "nos",
+                "order_qty": "2", "unit_price": "120",
+                "cost_head_id": self.head.id,
+                "allocations": [{"project_id": None, "qty": "2"}]}
+        for change, expect in (
+                ({"free_text_desc": ""}, "give a description"),
+                ({"order_qty": "0"}, "give the quantity"),
+                ({"unit_price": "-1"}, "cannot be negative"),
+                ({"cost_head_id": None}, "choose a cost head"),
+                ({"allocations": [{"project_id": None, "qty": "1"}]},
+                 "adds up to 1 but the quantity is 2"),
+                ({"allocations": None}, "give the project / stock split")):
+            r = self._add(ref, [{**good, **change}])
+            self.assertEqual(r.status_code, 400, (change, r.data))
+            self.assertIn(expect, r.data["detail"])
+        self.assertIsNone(self._order(ref).charge_corrections.first())
 
     def test_dropping_a_line_lowers_the_total_and_the_balance_follows(self):
         ref = self._authorised_two_line()

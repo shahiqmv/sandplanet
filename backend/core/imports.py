@@ -410,11 +410,14 @@ def propose_charge_correction(doc, data, actor):
         order, data.get("line_amendments"), off)
     if amend_err:
         return None, amend_err
-    if not off and not amendments \
+    added, add_err = _validate_new_lines(order, data.get("new_lines"))
+    if add_err:
+        return None, add_err
+    if not off and not amendments and not added \
             and all((new[f] or ZERO) == (getattr(order, f) or ZERO)
                     for f in CORRECTION_FIELDS):
         return None, "Nothing changed — the charges are already these values."
-    subtotal_after = _subtotal_after(order, off, amendments)
+    subtotal_after = _subtotal_after(order, off, amendments, added)
     if subtotal_after <= ZERO:
         return None, ("That would leave no goods on the order. Withdraw the "
                       "authorisation instead of emptying it.")
@@ -454,12 +457,12 @@ def propose_charge_correction(doc, data, actor):
     corr = ImportChargeCorrection.objects.create(
         order=order, reason=reason, created_by=actor,
         fold_line_ids=sorted(fold_ids), drop_line_ids=sorted(drop_ids),
-        line_amendments=amendments, **new)
+        line_amendments=amendments, new_lines=added, **new)
     audit("document", doc.id, "IPR_CORRECTION_PROPOSED", actor=actor,
           detail={"ref": doc.ref, "reason": reason,
                   "fold_lines": sorted(fold_ids),
                   "dropped_lines": sorted(drop_ids),
-                  "amended_lines": amendments,
+                  "amended_lines": amendments, "added_lines": added,
                   "old_total": str(old_total), "new_total": str(new_total),
                   **{f: str(new[f] or 0) for f in CORRECTION_FIELDS}})
     return corr, None
@@ -512,9 +515,10 @@ def line_shipped_qty(line):
                ImportShipmentLine.objects.filter(ipr_line=line)) or ZERO
 
 
-def _subtotal_after(order, off_ids, amendments):
+def _subtotal_after(order, off_ids, amendments, new_lines=None):
     """The line subtotal this correction would leave: lines taken off count
-    for nothing, amended lines count at their new quantity and price."""
+    for nothing, amended lines count at their new quantity and price, and
+    added lines count at theirs."""
     amended = {int(a["line_id"]): a for a in (amendments or [])}
     total = ZERO
     for ln in order.lines.all():
@@ -525,6 +529,8 @@ def _subtotal_after(order, off_ids, amendments):
             total += _dec(a["order_qty"]) * _dec(a["unit_price"])
         else:
             total += ln.line_value
+    for row in (new_lines or []):
+        total += _dec(row["order_qty"]) * _dec(row["unit_price"])
     return total
 
 
@@ -577,33 +583,83 @@ def _validate_amendments(order, rows, off_ids):
 
 
 def _validate_amendment_allocations(line, row, qty):
-    """The split must be given in full and must sum to the new quantity."""
-    raw = row.get("allocations")
+    return _validate_split(f"Line {line.line_no}", row.get("allocations"), qty)
+
+
+def _validate_split(label, raw, qty):
+    """The split must be given in full and must sum to the quantity."""
     if raw is None:
-        return None, (f"Line {line.line_no}: give the project / stock split "
-                      f"for the new quantity of {qty:g}.")
+        return None, (f"{label}: give the project / stock split for the "
+                      f"quantity of {qty:g}.")
     allocs, total = [], ZERO
     for a in raw:
-        aq = _dec(a.get("qty"))
+        try:
+            aq = _dec(a.get("qty"))
+        except (ArithmeticError, TypeError, ValueError):
+            return None, f"{label}: a split quantity is not a number."
         if aq <= ZERO:
             continue
         pid = a.get("project_id")
         if pid not in (None, ""):
             if not Project.objects.filter(pk=pid).exists():
-                return None, (f"Line {line.line_no}: unknown project in the "
-                              f"split.")
+                return None, f"{label}: unknown project in the split."
             allocs.append({"project_id": int(pid), "qty": str(aq)})
         else:
             # No project = the general-stock share, held at head office.
             allocs.append({"project_id": None, "qty": str(aq)})
         total += aq
     if not allocs:
-        return None, (f"Line {line.line_no}: give the project / stock split "
-                      f"for the new quantity of {qty:g}.")
+        return None, (f"{label}: give the project / stock split for the "
+                      f"quantity of {qty:g}.")
     if total != qty:
-        return None, (f"Line {line.line_no}: the split adds up to {total:g} "
-                      f"but the quantity is {qty:g}.")
+        return None, (f"{label}: the split adds up to {total:g} but the "
+                      f"quantity is {qty:g}.")
     return allocs, None
+
+
+def _validate_new_lines(order, rows):
+    """Items the supplier ADDED at shipment.
+
+    Held to what a line needs on the order form in the first place — a
+    description or a catalogue item, a quantity, a price, a cost head and a
+    split that adds up — because that is exactly what these become.
+    """
+    from .models import CostHead, Item
+    if not rows:
+        return [], None
+    out = []
+    for n, row in enumerate(rows, 1):
+        label = f"Added item {n}"
+        item_id = row.get("item_id") or None
+        desc = (row.get("free_text_desc") or "").strip()
+        if item_id and not Item.objects.filter(pk=item_id).exists():
+            return None, f"{label}: unknown catalogue item."
+        if not item_id and not desc:
+            return None, (f"{label}: give a description, or pick it from the "
+                          f"catalogue.")
+        try:
+            qty, price = _dec(row.get("order_qty")), _dec(row.get("unit_price"))
+        except (ArithmeticError, TypeError, ValueError):
+            return None, f"{label}: the quantity and price must be numbers."
+        if qty <= ZERO:
+            return None, f"{label}: give the quantity the supplier shipped."
+        if price < ZERO:
+            return None, f"{label}: the price cannot be negative."
+        head = row.get("cost_head_id")
+        if not head or not CostHead.objects.filter(pk=head,
+                                                   is_pool=False).exists():
+            return None, f"{label}: choose a cost head."
+        allocs, err = _validate_split(label, row.get("allocations"), qty)
+        if err:
+            return None, err
+        out.append({"item_id": int(item_id) if item_id else None,
+                    "free_text_desc": desc,
+                    "unit": (row.get("unit") or "").strip()[:10],
+                    "spec": (row.get("spec") or "").strip(),
+                    "remarks": (row.get("remarks") or "").strip(),
+                    "order_qty": str(qty), "unit_price": str(price),
+                    "cost_head_id": int(head), "allocations": allocs})
+    return out, None
 
 
 def decide_charge_correction(doc, action, actor, reason=""):
@@ -676,6 +732,7 @@ def _apply_charge_correction(doc, corr, actor):
     for f in CORRECTION_FIELDS:
         setattr(order, f, getattr(corr, f))
     order.save(update_fields=list(CORRECTION_FIELDS))
+    _apply_new_lines(doc, order, corr, actor)
     _reconcile_committed(order, doc, actor)
     _revise_po_charges(doc, order, actor)
     _rescale_fixed_milestones(order, old_total, actor)
@@ -686,7 +743,8 @@ def _apply_charge_correction(doc, corr, actor):
           detail={"ref": doc.ref, "old_total": str(old_total),
                   "new_total": str(ipr_order_total(order)),
                   "folded_lines": corr.fold_line_ids or [],
-                  "dropped_lines": corr.drop_line_ids or []})
+                  "dropped_lines": corr.drop_line_ids or [],
+                  "added_lines": len(corr.new_lines or [])})
 
 
 def _reconcile_committed(order, doc, actor):
@@ -784,6 +842,75 @@ def _apply_line_amendments(doc, order, corr, actor):
                       "price_to": str(price)})
 
 
+def _apply_new_lines(doc, order, corr, actor):
+    """Create the lines the supplier added, and commit their own value.
+
+    Posted line by line from their own figures, not left to the reconcile
+    that follows: that spreads a difference proportionally across the whole
+    order, which is right for a change of charges and wrong for goods that
+    were not there at all. Posting them here leaves the reconcile nothing to
+    do but round.
+
+    They are deliberately NOT put on a booked shipment manifest. The manifest
+    says what is on the boat, and only the person booking it knows which boat
+    that is — the correction says what was ordered.
+    """
+    from .models import CostHead, ImportAllocation, ImportOrderLine, Project
+    if not corr.new_lines:
+        return
+    for row in corr.new_lines:
+        # Re-checked inside the transaction: the head could have been retired
+        # between the proposal and the signature, and a broken foreign key
+        # would surface as a 500 rather than something anyone can act on.
+        if not CostHead.objects.filter(pk=row["cost_head_id"]).exists():
+            raise ValueError("A cost head on one of the added items no longer "
+                             "exists — propose the correction again.")
+    created = []
+    next_no = max((ln.line_no for ln in order.lines.all()), default=0) + 1
+    for row in corr.new_lines:
+        line = ImportOrderLine.objects.create(
+            order=order, line_no=next_no, item_id=row.get("item_id") or None,
+            free_text_desc=row.get("free_text_desc") or "",
+            unit=row.get("unit") or "", spec=row.get("spec") or "",
+            remarks=row.get("remarks") or "",
+            order_qty=_dec(row["order_qty"]),
+            unit_price=_dec(row["unit_price"]),
+            cost_head_id=row["cost_head_id"])
+        for a in row.get("allocations") or []:
+            ImportAllocation.objects.create(
+                line=line, qty=_dec(a["qty"]),
+                project=(Project.objects.filter(pk=a["project_id"]).first()
+                         if a.get("project_id") else None))
+        created.append(line)
+        next_no += 1
+    # After every line exists, so the discount/freight apportionment is the
+    # one the finished order carries.
+    gs_head = costing.head("General Stock")
+    ho = _ho_site()
+    subtotal = ipr_line_subtotal(order)
+    net_factor = (ipr_order_total(order) / subtotal) if subtotal else Decimal("1")
+    for line in created:
+        unit_mvr = (line.unit_price or ZERO) * order.exchange_rate * net_factor
+        for alloc in line.allocations.select_related("project__site"):
+            amount = (alloc.qty * unit_mvr).quantize(Decimal("0.01"))
+            if not amount:
+                continue
+            if alloc.project_id:
+                costing.post(site=alloc.project.site, cost_head=line.cost_head,
+                             state="COMMITTED", source="IPR", amount=amount,
+                             currency="MVR", document=doc, ipr_line=line,
+                             actor=actor)
+            else:
+                costing.post(site=ho, cost_head=gs_head, state="COMMITTED",
+                             source="IPR", amount=amount, currency="MVR",
+                             document=doc, ipr_line=line, is_stock_pool=True,
+                             actor=actor)
+        audit("document", doc.id, "IPR_LINE_ADDED", actor=actor,
+              detail={"line": line.line_no, "description": line.description,
+                      "qty": str(line.order_qty),
+                      "price": str(line.unit_price)})
+
+
 def _rescale_fixed_milestones(order, old_total, actor):
     """Bring FIXED milestones along with a charge correction (owner
     2026-08-27, IPR-037): percent milestones follow the total by
@@ -854,7 +981,8 @@ def correction_effect(order, corr):
     milestone that moves."""
     off = set(corr.fold_line_ids or []) | set(corr.drop_line_ids or [])
     old_total = ipr_order_total(order)
-    subtotal_after = _subtotal_after(order, off, corr.line_amendments)
+    subtotal_after = _subtotal_after(order, off, corr.line_amendments,
+                                     corr.new_lines)
     new_total = (subtotal_after - (corr.discount or ZERO)
                  + (corr.freight_handling or ZERO) + (corr.misc_fee or ZERO))
     lines = {ln.id: ln for ln in order.lines.all()}
@@ -875,6 +1003,16 @@ def correction_effect(order, corr):
             "trims_manifest": booked > qty,
             "received": line_received_qty(ln),
         })
+    from .models import Item
+    added = []
+    for row in corr.new_lines or []:
+        qty, price = _dec(row["order_qty"]), _dec(row["unit_price"])
+        desc = row.get("free_text_desc") or ""
+        if row.get("item_id"):
+            it = Item.objects.filter(pk=row["item_id"]).first()
+            desc = it.description if it else desc
+        added.append({"description": desc, "unit": row.get("unit") or "",
+                      "qty": qty, "unit_price": price, "value": qty * price})
     moves = [{"label": m.label, "from": m.fixed_amount, "to": amount}
              for m, amount in rescaled_milestones(order, old_total, new_total)
              if amount != m.fixed_amount]
@@ -887,6 +1025,10 @@ def correction_effect(order, corr):
                         if milestone_is_committed(m)), ZERO),
         "milestones": moves,
         "amended": amended,
+        "added": added,
+        # A line the supplier added is not on any manifest until somebody
+        # books it, so say so rather than let it look shipped.
+        "added_value": sum((a["value"] for a in added), ZERO),
     }
 
 
