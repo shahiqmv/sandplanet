@@ -516,12 +516,16 @@ MEDICAL_STAGES = {"WP_MEDICAL"}          # medical is a work-permit step only
 PAYMENT_STAGES = {"WP_DEPOSIT", "WP_TICKET", "BV_INSURANCE", "BV_VISA_FEE",
                   "BV_TICKET"}
 
-# Authorisation on a payment voucher is the commitment point — the money goes
-# out there, and Finance's PAID stamp is bookkeeping that follows it, often by
-# weeks. Waiting for the stamp left seven of the eight live cases parked at an
-# insurance or visa-fee stage that had already been settled (owner 2026-08-16,
-# the same rule already applied to salary-advance recovery).
-FEE_SETTLED = ("PAID", "AUTHORISED")
+# Raising the fee is the gate; settling it is not. Waiting for the PAID stamp
+# parked seven of eight live cases in August, so authorisation was accepted as
+# the commitment point instead (2026-08-16) — and that still was not enough.
+# Finance's queue is measured in weeks and the ticket in particular is often
+# bought by an agent and reimbursed afterwards, so the man has already flown
+# while the PYR waits: the case is held up by bookkeeping for a journey that
+# has happened (owner 2026-09-05). HR may now move on the moment the fee is
+# RAISED. Nothing is lost by it — the cost is captured on the PYR, Finance
+# still settles it in their own time, and `outstanding_fees` keeps every
+# unpaid fee on the case's screen until the money has actually gone.
 
 
 def _is_sri_lankan(case):
@@ -656,12 +660,8 @@ def _can_leave(case, stage):
         if case.medical_result != "PASS":
             return "Record the medical result (PASS) before advancing."
     if stage in PAYMENT_STAGES and stage not in (case.waived_stages or []):
-        fee = active_fee_for(case, stage)
-        if fee is None:
+        if active_fee_for(case, stage) is None:
             return "Raise the fee PYR for this stage first."
-        if fee.document.status not in FEE_SETTLED:
-            return (f"Awaiting payment of {fee.document.ref} before "
-                    "advancing.")
     return None
 
 
@@ -1297,10 +1297,12 @@ def on_fee_paid(pyr_doc, actor):
     Cases were getting stuck at payment for weeks with the money long gone
     (owner 2026-08-16).
 
-    Leaving a payment stage requires nothing but the payment, so the case is
-    moved on here. If the NEXT stage needs something from HR — an arrival
-    date, for instance — the advance declines and the case waits, exactly as
-    before; it is never forced past a gate.
+    Since 2026-09-05 HR no longer waits for the money, so by the time this
+    fires the case has usually walked on by itself and there is nothing to
+    move: the call then simply notifies. It still matters for the case that
+    was left sitting at its fee stage. If the NEXT stage needs something from
+    HR — an arrival date, for instance — the advance declines and the case
+    waits, exactly as before; it is never forced past a gate.
     """
     fee = getattr(pyr_doc, "onboarding_fee", None)
     if fee is None:

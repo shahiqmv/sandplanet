@@ -1173,8 +1173,10 @@ visa fee) — advance without a payment"
                   ✓ {c.fee.pyr_ref} paid — clear to advance.</div>
               ) : (
                 <div style={{ fontSize: 12.5, color: "var(--muted)" }}>
-                  Awaiting payment — {c.fee.pyr_ref} ({c.fee.pyr_status}). The
-                  Finance team settles the PYR before this stage can close.</div>
+                  {c.fee.pyr_ref} is with Finance ({(c.fee.pyr_status || "")
+                    .toLowerCase().replace(/_/g, " ")}) — carry on, the case
+                  does not wait for it. The amount stays on the case until it
+                  is paid.</div>
               )}
             </div>
           )}

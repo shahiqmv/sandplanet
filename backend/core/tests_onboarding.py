@@ -313,12 +313,17 @@ class OnboardingSpineTests(TestCase):
         self._adv(pk)                    # WP_APPROVED
         self._adv(pk)                    # WP_DEPOSIT
 
-    def test_payment_gate_blocks_until_fee_paid(self):
+    def test_the_fee_must_be_raised_but_not_paid(self):
+        """Raising the fee is the gate; settling it is Finance's business.
+
+        HR was parked at ticketing behind a Finance backlog, on a PYR that is
+        often a reimbursement for a ticket an agent already bought — the man
+        had flown and the case could not follow him (owner 2026-09-05).
+        """
         pk = self._approved()            # WP, Indian
         self._to_deposit(pk)
-        # blocked — no fee raised
+        # blocked — no fee raised at all
         self.assertEqual(self._adv(pk).status_code, 400)
-        # HR raises the fee PYR
         self.client.force_authenticate(self.hr)
         r = self.client.post(f"/api/v1/onboarding/{pk}/fee",
                              {"amount": "1500", "payee": "Immigration Maldives"},
@@ -327,14 +332,28 @@ class OnboardingSpineTests(TestCase):
         self.assertTrue(r.data["fee"]["raised"])
         self.assertTrue(r.data["fee"]["refundable"])   # deposit is refundable
         self.assertFalse(r.data["fee"]["paid"])
-        self.assertEqual(self._adv(pk).status_code, 400)   # not paid yet
         # the refundable deposit PYR is capitalized (posts nothing)
         fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
         self.assertTrue(fee.document.payment_request.is_capitalized)
-        # pay it → the gate opens
-        fee.document.status = "PAID"
-        fee.document.save(update_fields=["status"])
+        # raised and nowhere near settled — HR moves on anyway
+        self.assertNotIn(fee.document.status, ("PAID", "AUTHORISED"))
         self.assertEqual(self._adv(pk).data["stage"], "WP_TICKET")
+
+    def test_the_unpaid_fee_stays_on_the_case_after_it_moves_on(self):
+        """The money must not disappear with the gate."""
+        from core.onboarding import outstanding_fees
+        pk = self._approved()
+        self._to_deposit(pk)
+        self.client.force_authenticate(self.hr)
+        self.client.post(f"/api/v1/onboarding/{pk}/fee",
+                         {"amount": "1500", "payee": "Immigration Maldives"},
+                         format="json")
+        self._adv(pk)                                  # walks past it unpaid
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual(case.stage, "WP_TICKET")
+        owed = outstanding_fees(case)
+        self.assertEqual([f["stage"] for f in owed], ["WP_DEPOSIT"])
+        self.assertFalse(owed[0]["authorised"])        # not even authorised
 
     def test_fee_not_applicable_waives_and_advances(self):
         pk = self._approved()
@@ -1746,15 +1765,17 @@ class PaymentClearsTheGateTests(TestCase):
         OnboardingFee.objects.create(case=self.case, document=self.pyr,
                                      stage="BV_VISA_FEE")
 
-    def test_the_case_waits_while_the_fee_is_unsettled(self):
-        """Approved onto a voucher is not the same as authorised — nothing
-        has left the bank yet."""
+    def test_the_case_no_longer_waits_on_the_money(self):
+        """Nothing has left the bank yet, and it no longer matters: HR moves
+        on once the fee is raised, and Finance settles behind them (owner
+        2026-09-05). The obligation stays visible on the case."""
         self.pyr.status = "DIRECTOR_APPROVED"
         self.pyr.save(update_fields=["status"])
-        err = self.ob.advance_stage(self.case, {}, self.hr)
-        self.assertIn("Awaiting payment", err)
+        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
         self.case.refresh_from_db()
-        self.assertEqual(self.case.stage, "BV_VISA_FEE")
+        self.assertNotEqual(self.case.stage, "BV_VISA_FEE")
+        self.assertIn("BV_VISA_FEE",
+                      [f["stage"] for f in self.ob.outstanding_fees(self.case)])
 
     def test_paying_it_moves_the_case_on(self):
         self.pyr.status = "PAID"
@@ -1802,11 +1823,10 @@ class PaymentClearsTheGateTests(TestCase):
         self.case.refresh_from_db()
         self.assertNotEqual(self.case.stage, "BV_VISA_FEE")
 
-    def test_a_fee_still_awaiting_authorisation_holds_the_case(self):
+    def test_a_fee_still_awaiting_authorisation_no_longer_holds_the_case(self):
         self.pyr.status = "DIRECTOR_APPROVED"
         self.pyr.save(update_fields=["status"])
-        err = self.ob.advance_stage(self.case, {}, self.hr)
-        self.assertIn("Awaiting payment", err)
+        self.assertIsNone(self.ob.advance_stage(self.case, {}, self.hr))
 
     def test_it_will_not_lodge_an_application_without_the_portal_reference(self):
         """The decline path, with the case that shows it: an insurance fee
