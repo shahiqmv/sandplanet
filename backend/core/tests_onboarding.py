@@ -1,6 +1,7 @@
 """Onboarding case spine — raise → checklist-gated submit → PD (Director)
 approve / return / reject, with sensitive-document access control."""
 from datetime import date
+from decimal import Decimal
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -809,6 +810,50 @@ class OnboardingSpineTests(TestCase):
         self._adv(pk)                                    # → WP_TICKET
         self._pay_fee(pk, "WP_TICKET")
         return self._adv(pk, arrived_date=arrived)       # → WP_ARRIVED
+
+    def _raise_fee(self, pk, **extra):
+        self.client.force_authenticate(self.hr)
+        body = {"amount": "2954.47", "payee": "Travel agent", **extra}
+        return self.client.post(f"/api/v1/onboarding/{pk}/fee", body,
+                                format="json")
+
+    def test_a_ticket_fee_can_be_raised_in_dollars(self):
+        """The ticket is bought abroad and invoiced in dollars; the builder
+        hard-coded rufiyaa for every onboarding fee (owner 2026-09-05)."""
+        from .models import PaymentRequest
+        pk = self._approved()
+        self._begin(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                     # → WP_DEPOSIT
+        self._pay_fee(pk, "WP_DEPOSIT")
+        self._adv(pk)                                    # → WP_TICKET
+        r = self._raise_fee(pk, currency="USD")
+        self.assertEqual(r.status_code, 201, r.data)
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_TICKET")
+        pr = PaymentRequest.objects.get(document=fee.document)
+        self.assertEqual(pr.currency, "USD")
+        self.assertEqual(pr.amount_requested, Decimal("2954.47"))
+
+    def test_a_fee_is_still_rufiyaa_unless_asked_otherwise(self):
+        from .models import PaymentRequest
+        pk = self._approved()
+        self._begin(pk); self._adv(pk)
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                     # → WP_DEPOSIT
+        r = self._raise_fee(pk)
+        self.assertEqual(r.status_code, 201, r.data)
+        fee = OnboardingCase.objects.get(pk=pk).fees.get(stage="WP_DEPOSIT")
+        self.assertEqual(
+            PaymentRequest.objects.get(document=fee.document).currency, "MVR")
+
+    def test_an_unknown_currency_is_refused(self):
+        pk = self._approved()
+        self._begin(pk); self._adv(pk)
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)
+        r = self._raise_fee(pk, currency="EUR")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("MVR or USD", r.data["detail"])
 
     def test_the_job_title_on_the_case_reaches_the_employee(self):
         """The case states the occupation; the record never carried it — all

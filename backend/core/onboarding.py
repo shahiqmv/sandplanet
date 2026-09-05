@@ -1075,7 +1075,8 @@ INVOICE_LABEL = {
 
 
 def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
-                   refundable=False, invoice_label="Invoice"):
+                   refundable=False, invoice_label="Invoice",
+                   currency="MVR"):
     """Shared builder: draft + submit a purpose-coded fee PYR, link an
     OnboardingFee, and attach the supplier invoice. Returns (pyr, err). Must be
     called with validated inputs."""
@@ -1096,7 +1097,7 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
         pyr.save(update_fields=["current_revision"])
         pr, err = create_payment_request(pyr, {
             "cost_head_id": head.id, "amount_requested": str(amount),
-            "currency": "MVR", "payee": payee, "payment_method": "BANK",
+            "currency": currency, "payee": payee, "payment_method": "BANK",
             "purpose": f"{label} — {doc.ref} · {case.full_name}"
                        + (" (refundable deposit)" if refundable else ""),
             "has_supporting_doc": bool(invoice is not None),
@@ -1137,6 +1138,22 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
     return pyr, None
 
 
+def _fee_currency(data):
+    """The currency an onboarding fee is billed in.
+
+    Every fee was raised in rufiyaa because the builder hard-coded it, which
+    is wrong for the one that is almost never rufiyaa: the air ticket is
+    bought abroad and invoiced in dollars (owner 2026-09-05). Payment
+    requests have taken both currencies all along — this just stops the
+    onboarding fees from being the exception. Everyone who may raise a fee is
+    already allowed to raise a USD request, so the choice adds no new power.
+    """
+    currency = (data.get("currency") or "MVR").upper()[:3]
+    if currency not in ("MVR", "USD"):
+        return None, "The fee is billed in MVR or USD."
+    return currency, None
+
+
 def raise_fee(case, data, actor, invoice=None):
     """HR raises the fee PYR for the case's current payment stage, optionally
     attaching the supplier invoice for Finance. It rides the normal PYR approval
@@ -1157,14 +1174,19 @@ def raise_fee(case, data, actor, invoice=None):
     payee = (data.get("payee") or "").strip()
     if not payee:
         return None, "Enter the payee."
+    currency, cerr = _fee_currency(data)
+    if cerr:
+        return None, cerr
     label, refundable = FEE_META[stage]
     pyr, err = _build_fee_pyr(
         case, stage, label, amount, payee, actor, invoice=invoice,
-        refundable=refundable, invoice_label=INVOICE_LABEL.get(stage, "Invoice"))
+        refundable=refundable, invoice_label=INVOICE_LABEL.get(stage, "Invoice"),
+        currency=currency)
     if err:
         return None, err
     audit("document", doc.id, "OBR_FEE_RAISED", actor=actor,
-          detail={"stage": stage, "pyr": pyr.ref, "amount": str(amount)})
+          detail={"stage": stage, "pyr": pyr.ref, "amount": str(amount),
+                  "currency": currency})
     return pyr, None
 
 
@@ -1193,11 +1215,15 @@ def extend_visa(case, data, actor, invoice=None):
     payee = (data.get("payee") or "").strip()
     if not payee:
         return None, "Enter the payee."
+    currency, cerr = _fee_currency(data)
+    if cerr:
+        return None, cerr
     n = case.bv_renewals + 1
     stage = f"BV_EXT_{n}"
     pyr, err = _build_fee_pyr(
         case, stage, f"Business-visa extension #{n}", amount, payee, actor,
-        invoice=invoice, invoice_label="Visa extension invoice")
+        invoice=invoice, invoice_label="Visa extension invoice",
+        currency=currency)
     if err:
         return None, err
     case.bv_expiry = new_expiry

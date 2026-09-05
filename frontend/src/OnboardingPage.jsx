@@ -885,6 +885,9 @@ function Processing({ c, me, onReload }) {
   const [holdWhy, setHoldWhy] = useState("");
   const [medical, setMedical] = useState("PASS");
   const [amount, setAmount] = useState("");
+  // The air ticket is bought abroad and invoiced in dollars; every other fee
+  // is usually rufiyaa (owner 2026-09-05).
+  const [feeCcy, setFeeCcy] = useState("MVR");
   const [payee, setPayee] = useState("");
   const [invoice, setInvoice] = useState(null);
   const [arrEdit, setArrEdit] = useState("");
@@ -901,6 +904,8 @@ function Processing({ c, me, onReload }) {
   const raiseFee = () => run(() => {
     const fd = new FormData();
     fd.append("amount", amount);
+    fd.append("currency", feeCcy);
+    fd.append("currency", feeCcy);
     fd.append("payee", payee);
     if (invoice) fd.append("file", invoice);
     return apiUpload(`/onboarding/${c.id}/fee`, fd);
@@ -1133,9 +1138,14 @@ function Processing({ c, me, onReload }) {
               {!c.fee.raised ? (
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
                   alignItems: "center" }}>
-                  <input style={{ ...inputStyle, width: 130 }} type="number"
-                         placeholder="Amount (MVR)" value={amount}
+                  <input style={{ ...inputStyle, width: 120 }} type="number"
+                         placeholder="Amount" value={amount}
                          onChange={(e) => setAmount(e.target.value)} />
+                  <select style={{ ...inputStyle, width: 78 }} value={feeCcy}
+                          onChange={(e) => setFeeCcy(e.target.value)}>
+                    <option value="MVR">MVR</option>
+                    <option value="USD">USD</option>
+                  </select>
                   <input style={{ ...inputStyle, width: 200 }} placeholder="Pay to"
                          value={payee} onChange={(e) => setPayee(e.target.value)} />
                   <label style={{ fontSize: 11, color: "var(--navy)",
@@ -1240,6 +1250,7 @@ function VisaActions({ c, run, busy }) {
   const [open, setOpen] = useState(null);     // 'extend' | 'depart' | null
   const [expiry, setExpiry] = useState("");
   const [amount, setAmount] = useState("");
+  const [feeCcy, setFeeCcy] = useState("MVR");
   const [payee, setPayee] = useState("");
   const [invoice, setInvoice] = useState(null);
   const [departed, setDeparted] = useState("");
@@ -1279,9 +1290,14 @@ function VisaActions({ c, run, busy }) {
           <span style={{ fontSize: 11, color: "var(--muted)" }}>New expiry</span>
           <input type="date" style={inputStyle} value={expiry}
                  onChange={(e) => setExpiry(e.target.value)} />
-          <input style={{ ...inputStyle, width: 120 }} type="number"
-                 placeholder="Fee (MVR)" value={amount}
+          <input style={{ ...inputStyle, width: 110 }} type="number"
+                 placeholder="Fee" value={amount}
                  onChange={(e) => setAmount(e.target.value)} />
+          <select style={{ ...inputStyle, width: 78 }} value={feeCcy}
+                  onChange={(e) => setFeeCcy(e.target.value)}>
+            <option value="MVR">MVR</option>
+            <option value="USD">USD</option>
+          </select>
           <input style={{ ...inputStyle, width: 160 }} placeholder="Pay to"
                  value={payee} onChange={(e) => setPayee(e.target.value)} />
           <label style={{ fontSize: 11, color: "var(--navy)", cursor: "pointer",
