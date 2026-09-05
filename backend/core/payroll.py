@@ -262,22 +262,38 @@ def eligible_workers(site, currency, year, month):
         # exclude the long-gone whose allocation was never tidied up.
         left_ids = allocs.filter(to_date__gte=m_start).values_list(
             "employee_id", flat=True)
-        qs = Employee.objects.payroll_eligible().filter(
-            id__in=emp_ids, currency=currency).filter(
+        # A USD man's overtime is rufiyaa and is paid here, with the crew he
+        # worked beside — so he joins his site's run even though his salary is
+        # on the combined USD one (owner 2026-09-05). Only when he actually
+        # worked overtime this month: a USD man with none has nothing to pay
+        # here and belongs wholly to the USD sheet, which is the rule that
+        # took EMP-0600 off SJR's rufiyaa run in the first place
+        # (owner 2026-09-02). A subquery, so this stays one statement.
+        usd_ot_ids = Attendance.objects.filter(
+            site=site, day__year=year, day__month=month,
+            ot_approved__gt=0, employee__currency="USD").values_list(
+            "employee_id", flat=True)
+        qs = Employee.objects.payroll_eligible().filter(id__in=emp_ids).filter(
+            Q(currency=currency) | Q(id__in=usd_ot_ids)).filter(
             Q(is_active=True) | Q(id__in=left_ids))
     elif currency == "USD":                 # combined USD run
-        # full-USD workers + split-pay workers (their USD basic only)
+        # full-USD workers + split-pay workers (their USD basic only). A man
+        # who left during the month is kept, or his part-month would vanish
+        # with his active flag.
         qs = Employee.objects.payroll_eligible().filter(
-            is_active=True).filter(
+            Q(is_active=True) | Q(left_on__gte=m_start)).filter(
             Q(currency="USD")
             | Q(usd_basic_pay__gt=0, employment_type="PERMANENT"))
     else:
         qs = Employee.objects.payroll_eligible().filter(
             is_active=True, currency=currency)
     # Nobody is paid for a month they had not joined yet — unless the site
-    # marked them in it, which outranks a join date that says otherwise.
-    qs = qs.filter(Q(join_date__isnull=True) | Q(join_date__lte=m_end)
-                   | Q(id__in=marked_ids))
+    # marked them in it, which outranks a join date that says otherwise. The
+    # USD run never consults the register, so there the join date is the whole
+    # of it.
+    joined = Q(join_date__isnull=True) | Q(join_date__lte=m_end)
+    qs = qs.filter(joined if currency == "USD" else
+                   (joined | Q(id__in=marked_ids)))
     # ...and nobody is paid twice. A worker settled in full on the way out is
     # off every monthly run for the periods that settlement covered. This used
     # to be a flag somebody had to remember to tick, and the once it was
@@ -505,6 +521,52 @@ def register_summary(run):
     return out
 
 
+def _usd_deductions(employee, year, month):
+    """A USD line's advance and loan, converted from the rufiyaa they were
+    lent in at the company rate (owner's choice, 2026-09-05)."""
+    from . import fx
+    ded = deductions_for(employee, year, month)
+    rate = fx.usd_rate()
+    zero = Decimal("0")
+    return {"advance": q(ded["advance"] / rate) if ded["advance"] else zero,
+            "loan": q(ded["loan"] / rate) if ded["loan"] else zero}
+
+
+def usd_paid_days(employee, year, month):
+    """Days of the month a USD worker is owed — from his dates, not a register.
+
+    USD staff are salaried: engineers, PMs, office staff. They have no site
+    register to count and their pay does not move with days marked, so the
+    month is theirs unless they joined into it or left out of it, when it is
+    apportioned across the calendar days at each end (owner 2026-09-05: "no
+    attendance needed for their payroll to run. pay to be calculated based on
+    joined date"). Returning calendar days against a run whose working_days is
+    the length of the month makes a whole month exactly one salary.
+    """
+    start = date(year, month, 1)
+    end = date(year, month, month_days(year, month))
+    if employee.join_date and employee.join_date > start:
+        start = employee.join_date
+    if employee.left_on and employee.left_on < end:
+        end = employee.left_on
+    if start > end:
+        return Decimal("0")
+    return Decimal((end - start).days + 1)
+
+
+def usd_ot_on_mvr(emp, currency):
+    """A USD-salaried worker whose overtime belongs on this rufiyaa run.
+
+    His salary is USD and runs on the combined sheet; the overtime he works
+    beside the rufiyaa crew is earned and paid in rufiyaa, on his own site's
+    run, at his category's MVR rate (owner 2026-09-05). Entitlement is the
+    ordinary one — the category rate and the per-worker override — so a
+    manager on a category with no MVR rate is simply not entitled.
+    """
+    return bool(currency != "USD" and (emp.currency or "MVR") == "USD"
+                and not is_split_pay(emp) and emp.ot_rate("MVR") > 0)
+
+
 def is_split_pay(emp):
     """A worker paid their attendance-based basic in USD, everything else MVR
     with their site team. Permanent staff only (owner 2026-08-06)."""
@@ -537,29 +599,56 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                 continue        # no payable day in this month at this site.
                                 # If the register names him anyway the run
                                 # says so — see marked_but_unpayable.
-            days, ot, fridays, _rest = _attendance_prefill(
-                emp, site, year, month, working_days)
             split = is_split_pay(emp)
+            if (currency != "USD" and (emp.currency or "MVR") == "USD"
+                    and not split and not usd_ot_on_mvr(emp, currency)):
+                continue        # his pay is all on the USD sheet
+            if currency == "USD":
+                days, ot, fridays = (usd_paid_days(emp, year, month),
+                                     Decimal("0"), 0)
+            else:
+                days, ot, fridays, _rest = _attendance_prefill(
+                    emp, site, year, month, working_days)
             if currency == "USD" and split:
-                # basic-only, attendance-based, in USD — nothing else here
+                # basic-only, in USD — the rest of his pay is on his site run
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
                     basic_pay=emp.usd_basic_pay, ot_rate=Decimal("0"),
                     days_worked=days, ot_hours=Decimal("0"), fridays_worked=0)
+            elif currency == "USD":
+                # A full-USD salary. Rufiyaa advances and loans are recovered
+                # here at the company rate, because he has no rufiyaa line to
+                # recover them from unless he happens to work overtime (owner
+                # 2026-09-05).
+                ded = _usd_deductions(emp, year, month)
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=emp.basic_pay or 0, ot_rate=Decimal("0"),
+                    days_worked=days, ot_hours=Decimal("0"), fridays_worked=0,
+                    advance=ded["advance"], loan=ded["loan"])
+            elif usd_ot_on_mvr(emp, currency):
+                # His overtime only — earned beside the rufiyaa crew and paid
+                # with them. No basic: that is on the USD sheet. Deductions
+                # are recovered there too, so none here.
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
+                    days_worked=Decimal("0"), ot_hours=ot,
+                    fridays_worked=fridays)
             elif currency != "USD" and split:
                 # site MVR line: no basic (paid in USD); OT (incl. rest-day
                 # hours) + allowances + deductions stay MVR
                 ded = deductions_for(emp, year, month)
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
-                    basic_pay=Decimal("0"), ot_rate=emp.ot_rate(),
+                    basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=0,
                     advance=ded["advance"], loan=ded["loan"])
             else:
                 ded = deductions_for(emp, year, month)
                 PayrollLine.objects.create(
                     run=run, employee=emp, site_id=emp.current_site_id(),
-                    basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
+                    basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=fridays,
                     advance=ded["advance"], loan=ded["loan"])
     return run
@@ -844,6 +933,9 @@ def refresh_run(run, actor):
                 # leaver; he has simply moved runs, and his days will be paid
                 # on the USD one. Split-pay workers are excepted: they are
                 # meant to appear on both.
+                # Reaching here means eligible_workers has already decided he
+                # does not belong on this run — including the USD man whose
+                # overtime would have kept him, had he worked any.
                 wrong_run = (site is not None and not is_split_pay(emp)
                              and (emp.currency or "MVR") != currency)
                 # Otherwise only when there is genuinely no payable day in
@@ -855,11 +947,15 @@ def refresh_run(run, actor):
                     line.delete()
                     removed.append(emp.emp_no)
                 continue
-            days, ot, fridays, rest_paid = _attendance_prefill(
-                emp, site, run.year, run.month, run.working_days)
+            split = is_split_pay(emp)
+            if currency == "USD":
+                days, ot, fridays, rest_paid = (
+                    usd_paid_days(emp, run.year, run.month), Decimal("0"), 0, 0)
+            else:
+                days, ot, fridays, rest_paid = _attendance_prefill(
+                    emp, site, run.year, run.month, run.working_days)
             if line.rest_day_revoked:
                 days = max(days - rest_paid, 0)
-            split = is_split_pay(emp)
             before = (line.days_worked, line.ot_hours, line.fridays_worked,
                       line.ot_rate, line.basic_pay)
             if currency == "USD" and split:
@@ -867,8 +963,20 @@ def refresh_run(run, actor):
                 line.ot_rate = Decimal("0")
                 line.days_worked, line.ot_hours, line.fridays_worked = (
                     days, Decimal("0"), 0)
+            elif currency == "USD":
+                line.basic_pay = emp.basic_pay or 0
+                line.ot_rate = Decimal("0")
+                line.days_worked, line.ot_hours, line.fridays_worked = (
+                    days, Decimal("0"), 0)
+                ded = _usd_deductions(emp, run.year, run.month)
+                line.advance, line.loan = ded["advance"], ded["loan"]
+            elif usd_ot_on_mvr(emp, currency):
+                line.basic_pay = Decimal("0")
+                line.ot_rate = emp.ot_rate(currency)
+                line.days_worked, line.ot_hours, line.fridays_worked = (
+                    Decimal("0"), ot, fridays)
             else:
-                line.ot_rate = emp.ot_rate()
+                line.ot_rate = emp.ot_rate(currency)
                 line.days_worked, line.ot_hours = days, ot
                 if currency != "USD" and split:
                     line.basic_pay, line.fridays_worked = Decimal("0"), 0
@@ -887,12 +995,45 @@ def refresh_run(run, actor):
             if emp.id in have:
                 continue
             # A worker only just added to the run has no PM decision yet.
-            days, ot, fridays, _rest = _attendance_prefill(
-                emp, site, run.year, run.month, run.working_days)
-            ded = deductions_for(emp, run.year, run.month)
+            usd = (emp.currency or "MVR") == "USD"
+            if currency != "USD" and usd and not is_split_pay(emp):
+                # His salary is on the USD sheet. He joins this one only for
+                # overtime, and only if his category carries a rufiyaa rate —
+                # without that guard his USD basic would be created here as a
+                # rufiyaa line, which is the phantom EMP-0600 already was
+                # (owner 2026-09-02 / 2026-09-05).
+                if not usd_ot_on_mvr(emp, currency):
+                    continue
+                _d, ot, fridays, _rest = _attendance_prefill(
+                    emp, site, run.year, run.month, run.working_days)
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=Decimal("0"), ot_rate=emp.ot_rate(currency),
+                    days_worked=Decimal("0"), ot_hours=ot,
+                    fridays_worked=fridays)
+                added.append(emp.emp_no)
+                continue
+            if currency == "USD":
+                days, ot, fridays = (usd_paid_days(emp, run.year, run.month),
+                                     Decimal("0"), 0)
+            else:
+                days, ot, fridays, _rest = _attendance_prefill(
+                    emp, site, run.year, run.month, run.working_days)
+            if currency == "USD" and is_split_pay(emp):
+                PayrollLine.objects.create(
+                    run=run, employee=emp, site_id=emp.current_site_id(),
+                    basic_pay=emp.usd_basic_pay or 0, ot_rate=Decimal("0"),
+                    days_worked=days, ot_hours=Decimal("0"), fridays_worked=0)
+                added.append(emp.emp_no)
+                continue
+            ded = (_usd_deductions(emp, run.year, run.month)
+                   if currency == "USD"
+                   else deductions_for(emp, run.year, run.month))
             PayrollLine.objects.create(
                 run=run, employee=emp, site_id=emp.current_site_id(),
-                basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(),
+                basic_pay=emp.basic_pay or 0,
+                ot_rate=Decimal("0") if currency == "USD"
+                else emp.ot_rate(currency),
                 days_worked=days, ot_hours=ot, fridays_worked=fridays,
                 advance=ded["advance"], loan=ded["loan"])
             added.append(emp.emp_no)

@@ -139,11 +139,10 @@ def payroll_runs(request):
                 return Response({"detail": f"Lock {site.code}'s attendance for "
                                  "this month before running its payroll."},
                                 status=400)
-        else:  # combined USD run — every USD-staffed site must be locked
-            pending = payroll.unlocked_sites(year, month, currency="USD")
-            if pending:
-                return Response({"detail": "Lock attendance first for: "
-                                 + ", ".join(pending) + "."}, status=400)
+        # The USD run reads no register — a salary apportioned by the joining
+        # and leaving dates — so it waits on no site's attendance lock (owner
+        # 2026-09-05). Overtime for these workers is rufiyaa and is gated, as
+        # ever, on its own site's run.
         if PayrollRun.objects.filter(site=site, currency=currency, year=year,
                                      month=month).exists():
             return Response({"detail": "A run for this period already exists."},

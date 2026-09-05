@@ -3,8 +3,9 @@ import { api, apiDownload } from "./api.js";
 import SettlementPanel from "./SettlementPanel.jsx";
 import { Btn, buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
 
-// Monthly payroll runs (owner's salary sheet). MVR runs are per site; the USD
-// run is one combined run across sites. Generate → edit the grid → lock.
+// Monthly payroll runs (owner's salary sheet). MVR runs are per site and wait
+// on that site's attendance lock; the USD run is one combined run across sites,
+// reads no register, and pays by joining/leaving date. Generate → edit → lock.
 
 const money = (v) => v == null || v === "" ? ""
   : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2,
@@ -90,8 +91,10 @@ export default function PayrollRunPage({ me, sites, initialRunId,
 
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 12px" }}>
         Run each site on its own once its attendance is locked for the month —
-        no need to wait for the others. The USD / Head Office run is one combined
-        run and needs every USD-staffed site locked first.
+        no need to wait for the others. The USD / Head Office run is one
+        combined run and needs no attendance at all: those salaries are
+        apportioned by joining and leaving dates. Their overtime is rufiyaa and
+        is paid on their own site's run.
       </p>
 
       {summary && <AttendanceReview summary={summary} year={year}

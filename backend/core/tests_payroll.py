@@ -774,10 +774,13 @@ class PayrollRefreshTests(TestCase):
         """He is not a leaver — he has moved runs. USD staff are paid on the
         separate combined USD run, so his line here is a phantom that survived
         every refresh because he HAD worked the month (owner 2026-09-02,
-        EMP-0600 on SJR July)."""
+        EMP-0600 on SJR July). With no overtime there is nothing of his left
+        to pay in rufiyaa."""
         from core import payroll
+        from .models import Attendance
         run = self._run()
         self.assertTrue(run.lines.filter(employee=self.emp).exists())
+        Attendance.objects.filter(employee=self.emp).update(ot_approved=None)
         self.emp.currency = "USD"
         self.emp.save(update_fields=["currency"])
         summary, err = payroll.refresh_run(run, self.hr)
@@ -785,13 +788,66 @@ class PayrollRefreshTests(TestCase):
         self.assertFalse(run.lines.filter(employee=self.emp).exists())
         self.assertIn("EMP-7001", summary["removed"])
 
+    def test_a_usd_worker_with_no_rufiyaa_rate_is_never_added_here(self):
+        """His overtime is recorded but his category carries no rufiyaa rate,
+        so there is nothing to pay him here — and above all his USD salary
+        must not be created as a rufiyaa line (owner 2026-09-05)."""
+        from core import payroll
+        from .models import OvertimeRate
+        run = self._run()
+        run.lines.all().delete()                   # he must be re-added, or not
+        OvertimeRate.objects.filter(category=self.cat).delete()
+        self.emp.currency = "USD"
+        self.emp.save(update_fields=["currency"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err, err)
+        self.assertEqual(summary["added"], [])
+        self.assertFalse(run.lines.filter(employee=self.emp).exists())
+
+    def test_a_usd_worker_is_re_added_for_overtime_alone(self):
+        """Re-added from scratch he is still overtime-only — no basic."""
+        from core import payroll
+        run = self._run()
+        run.lines.all().delete()
+        self.emp.currency = "USD"
+        self.emp.save(update_fields=["currency"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err, err)
+        self.assertEqual(summary["added"], ["EMP-7001"])
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual((line.basic_pay, line.days_worked, line.ot_hours),
+                         (Decimal("0"), Decimal("0"), Decimal("2")))
+
+    def test_a_usd_worker_keeps_his_overtime_line_but_not_his_basic(self):
+        """The other half of the same rule (owner 2026-09-05): his salary is
+        USD and belongs on the combined run, but the overtime he worked beside
+        the rufiyaa crew is rufiyaa and is paid here — as overtime alone."""
+        from core import payroll
+        run = self._run()
+        self.emp.currency = "USD"                  # keeps his 2 approved hours
+        self.emp.save(update_fields=["currency"])
+        summary, err = payroll.refresh_run(run, self.hr)
+        self.assertIsNone(err, err)
+        line = run.lines.get(employee=self.emp)
+        self.assertEqual((line.basic_pay, line.days_worked, line.fridays_worked),
+                         (Decimal("0"), Decimal("0"), 0))
+        self.assertEqual((line.ot_hours, line.ot_rate),
+                         (Decimal("2"), Decimal("25")))
+        money = payroll.compute_line(line)
+        self.assertEqual((money["earned_basic"], money["ot_pay"]),
+                         (Decimal("0.00"), Decimal("50.00")))
+
     def test_a_line_with_hr_money_on_it_is_never_dropped(self):
         """HR's own entry is theirs to withdraw, not ours."""
         from core import payroll
+        from .models import Attendance
         run = self._run()
         line = run.lines.get(employee=self.emp)
         line.allowance = Decimal("500")
         line.save(update_fields=["allowance"])
+        # No overtime, so moving him to USD leaves him nothing to be paid
+        # here at all (see the two tests below).
+        Attendance.objects.filter(employee=self.emp).update(ot_approved=None)
         self.emp.currency = "USD"
         self.emp.save(update_fields=["currency"])
         summary, _ = payroll.refresh_run(run, self.hr)
@@ -2621,4 +2677,127 @@ class UnpaidLeaveWholeMonthTests(TestCase):
         # 31 − 4 days of leave; Friday the 14th is still his, because he
         # worked the Saturday and Sunday of that same week.
         self.assertEqual(self._days(), 27.0)
+
+
+class UsdSalaryRunTests(TestCase):
+    """USD staff are salaried, not marked.
+
+    Engineers, PMs and office staff paid in USD have no site register to
+    count. Their month is apportioned by the dates they joined and left, the
+    run waits on nobody's attendance lock, and the overtime the few of them do
+    work is rufiyaa, earned beside the rufiyaa crew and paid on that site's
+    run (owner 2026-09-05).
+    """
+
+    def setUp(self):
+        from .models import (EmployeeSiteAllocation, ManpowerCategory,
+                             OvertimeRate)
+        self.hr = make_user("usd_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="SJR", name="Jani",
+                                        status=Site.Status.ACTIVE)
+        self.trade = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Electrician", sort_order=1)
+        self.staff = ManpowerCategory.objects.create(
+            list_type="DPR", grp="STAFF", name="Project Manager", sort_order=2)
+        # Only the trade category has a rufiyaa OT rate; the staff one has none.
+        OvertimeRate.objects.create(category=self.trade, currency="MVR",
+                                    rate_per_hour=Decimal("25"),
+                                    applies_by_default=True)
+        self.pm = self._usd("USD-0001", "Salaried PM", self.staff, "1500")
+        self.spark = self._usd("USD-0002", "USD Electrician", self.trade, "700")
+        for e in (self.pm, self.spark):
+            EmployeeSiteAllocation.objects.create(
+                employee=e, site=self.site, from_date=date(2026, 1, 1))
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _usd(self, no, name, cat, pay, join=date(2026, 1, 1)):
+        return Employee.objects.create(
+            emp_no=no, full_name=name, job_category=cat,
+            basic_pay=Decimal(pay), currency="USD", join_date=join)
+
+    def _run(self, currency="USD", site=None, year=2026, month=7):
+        from core import payroll
+        return payroll.generate_run(
+            site=site, currency=currency, year=year, month=month,
+            working_days=payroll.month_days(year, month), actor=self.hr)
+
+    def test_a_full_month_pays_the_whole_salary_with_no_register(self):
+        from .models import Attendance
+        self.assertEqual(Attendance.objects.count(), 0)
+        run = self._run()
+        line = run.lines.get(employee=self.pm)
+        self.assertEqual(float(line.days_worked), 31.0)     # all of July
+        self.assertEqual(line.ot_hours, Decimal("0"))
+        self.assertEqual(line.fridays_worked, 0)
+        from core import payroll
+        self.assertEqual(payroll.compute_line(line)["earned_basic"],
+                         Decimal("1500.00"))
+
+    def test_the_month_is_apportioned_at_both_ends(self):
+        joiner = self._usd("USD-0003", "Mid-month joiner", self.staff, "3100",
+                           join=date(2026, 7, 11))
+        leaver = self._usd("USD-0004", "Mid-month leaver", self.staff, "3100")
+        leaver.left_on = date(2026, 7, 10)
+        leaver.save()
+        run = self._run()
+        # 11 July to 31 July inclusive = 21 days; 1 to 10 July = 10 days.
+        self.assertEqual(float(run.lines.get(employee=joiner).days_worked), 21.0)
+        self.assertEqual(float(run.lines.get(employee=leaver).days_worked), 10.0)
+
+    def test_the_run_needs_no_attendance_lock(self):
+        from .models import TimesheetMonth
+        self.assertFalse(TimesheetMonth.objects.filter(
+            site=self.site, year=2026, month=7, status="LOCKED").exists())
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"year": 2026, "month": 7, "currency": "USD"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        # ...while a rufiyaa run still does.
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"year": 2026, "month": 7, "currency": "MVR",
+                              "site_id": self.site.id}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Lock", r.data["detail"])
+
+    def test_overtime_is_rufiyaa_and_lands_on_the_site_run(self):
+        from .models import Attendance, TimesheetMonth
+        day = date(2026, 7, 6)                      # a Monday
+        Attendance.objects.create(employee=self.spark, site=self.site, day=day,
+                                  remark="PRESENT", ot_requested=Decimal("4"),
+                                  ot_approved=Decimal("4"))
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        usd = self._run()
+        mvr = self._run(currency="MVR", site=self.site)
+        # His salary: USD, no overtime on it.
+        u = usd.lines.get(employee=self.spark)
+        self.assertEqual((u.ot_hours, u.fridays_worked, u.ot_rate),
+                         (Decimal("0"), 0, Decimal("0")))
+        # His overtime: rufiyaa, on his site's run, at the MVR category rate,
+        # and carrying no basic — that is on the USD sheet.
+        m = mvr.lines.get(employee=self.spark)
+        self.assertEqual((m.basic_pay, m.days_worked, m.ot_hours, m.ot_rate),
+                         (Decimal("0"), Decimal("0"), Decimal("4"),
+                          Decimal("25")))
+        from core import payroll
+        money = payroll.compute_line(m)
+        self.assertEqual((money["earned_basic"], money["ot_pay"]),
+                         (Decimal("0.00"), Decimal("100.00")))
+        # The salaried PM has no rufiyaa rate, so no rufiyaa line at all.
+        self.assertFalse(mvr.lines.filter(employee=self.pm).exists())
+
+    def test_a_rufiyaa_advance_is_recovered_on_the_usd_line_converted(self):
+        from . import fx
+        from .models import Document, SalaryAdvance
+        doc = Document.objects.create(doc_type="PYR", ref="PYR-USD-001",
+                                      site=self.site, doc_date=date(2026, 7, 2),
+                                      status="PAID", created_by=self.hr)
+        SalaryAdvance.objects.create(
+            employee=self.pm, document=doc, amount=Decimal("15420"),
+            months=1, period_year=2026, period_month=7,
+            kind=SalaryAdvance.Kind.ADVANCE)
+        line = self._run().lines.get(employee=self.pm)
+        self.assertEqual(fx.usd_rate(), Decimal("15.42"))
+        self.assertEqual(line.advance, Decimal("1000.00"))   # 15,420 / 15.42
 

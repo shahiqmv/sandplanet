@@ -2115,14 +2115,20 @@ class Employee(models.Model):
         row = self.site_allocations.filter(to_date__isnull=True).first()
         return row.site_id if row else None
 
-    def ot_rate(self):
+    def ot_rate(self, currency=None):
         """The OT rate that applies to this worker (0 if none / not eligible):
         the category+currency rate from the OT master, gated by the per-worker
-        override which falls back to the category default."""
+        override which falls back to the category default.
+
+        `currency` asks for the rate in a currency other than the worker's own.
+        A USD-salaried man's overtime is worked alongside the rufiyaa crew and
+        paid with them, on the rufiyaa rate for his category (owner
+        2026-09-05)."""
         if not self.job_category_id:
             return Decimal("0")
         rate = OvertimeRate.objects.filter(
-            category_id=self.job_category_id, currency=self.currency).first()
+            category_id=self.job_category_id,
+            currency=currency or self.currency).first()
         if rate is None:
             return Decimal("0")
         applies = self.ot_applies
