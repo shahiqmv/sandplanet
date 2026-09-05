@@ -769,7 +769,9 @@ class Wave1ControlsTests(TestCase):
         ch = d["changes"][0]
         self.assertEqual(ch["action"], "EDITED")
         self.assertEqual(ch["was"]["out"], "17:00:00")
-        self.assertEqual(str(ch["now"]["ot"]), "3")
+        # Both sides are quantized the same way, so only a real change reads
+        # as one (owner 2026-09-05).
+        self.assertEqual((ch["was"]["ot"], ch["now"]["ot"]), ("0.00", "3.00"))
 
         # marking OFF deletes the day — and that is no longer silent
         self._save([{"employee_id": self.emp.id, "remark": "OFF"}])
@@ -1144,4 +1146,84 @@ class OneSiteDayIsNotAnothersTests(HrBase):
         self.assertEqual(r.data["saved"], 1, r.data)
         self.assertTrue(Attendance.objects.filter(
             employee=self.mason, day=self.day, site=self.site).exists())
+
+
+class TheAuditSaysWhatActuallyChangedTests(HrBase):
+    """A re-save that changes nothing is not an edit.
+
+    Overtime was compared as text — the 5.00 the database holds against the 5
+    the grid posts back — and the site added to the before-side had no
+    after-side to match, so every row of every save was logged as an edit.
+    SJR's July corrections recorded 21,337 overtime changes that never
+    happened (owner 2026-09-05).
+    """
+
+    def _last_changes(self):
+        from .models import AuditLog
+        a = AuditLog.objects.filter(entity="attendance",
+                                    event="ATTENDANCE_SAVED").order_by("-at").first()
+        return a.detail["changes"], a.detail["changed"]
+
+    def test_saving_the_same_day_again_records_nothing(self):
+        day = working_day(self.site, 1)
+        self.save_attendance(day, ot=5)
+        changes, n = self._last_changes()
+        self.assertEqual([c["action"] for c in changes], ["CREATED"])
+        self.save_attendance(day, ot=5)              # identical re-save
+        changes, n = self._last_changes()
+        self.assertEqual((changes, n), ([], 0))
+
+    def test_a_real_change_is_still_recorded_with_both_sides(self):
+        day = working_day(self.site, 1)
+        self.save_attendance(day, ot=5)
+        self.save_attendance(day, ot=3)
+        changes, n = self._last_changes()
+        self.assertEqual(n, 1)
+        self.assertEqual((changes[0]["was"]["ot"], changes[0]["now"]["ot"]),
+                         ("5.00", "3.00"))
+        self.assertEqual(changes[0]["was"]["site"], self.site.code)
+        self.assertEqual(changes[0]["now"]["site"], self.site.code)
+
+
+class PaIsFullHrTests(HrBase):
+    """PA is full HR (owner 2026-08-03). The API had said so for a month while
+    the screens still hid every control, so the Director's office could read
+    the employee list and change nothing on it (owner 2026-09-05)."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import User
+        from .tests import make_user
+        self.pa = make_user("hr_pa", User.Role.PA)
+
+    def test_pa_can_create_and_edit_an_employee(self):
+        self.as_user(self.pa)
+        r = self.client.post("/api/v1/employees", {
+            "full_name": "PA Hire", "passport_no": "N4455661",
+            "nationality": "Sri Lankan", "job_category": self.mason_cat.id,
+            "basic_pay": "7000", "join_date": "2026-01-01",
+        }, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        r = self.client.patch(f"/api/v1/employees/{r.data['id']}",
+                              {"job_title": "Steel Fixer"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["job_title"], "Steel Fixer")
+
+    def test_pa_can_record_attendance_and_assign_a_shift(self):
+        day = working_day(self.site, 1)
+        self.as_user(self.pa)
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": day.isoformat(),
+            "rows": [{"employee_id": self.mason.id, "remark": "PRESENT",
+                      "check_in": "08:00", "check_out": "17:00"}],
+        }, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["saved"], 1)
+
+    def test_pa_sees_pay_on_the_employee_record(self):
+        self.as_user(self.pa)
+        r = self.client.get(f"/api/v1/employees/{self.mason.id}")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("basic_pay", r.data)
+        self.assertIsNotNone(r.data["basic_pay"])
 

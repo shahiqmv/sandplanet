@@ -51,8 +51,11 @@ export default function EmployeesPage({ me, sites }) {
   const [fEmp, setFEmp] = useState("");
   const [fNat, setFNat] = useState("");
 
-  const isHr = ["HO_HR", "ADMIN"].includes(me.role);
-  const seesPay = ["HO_HR", "FINANCE", "ADMIN"].includes(me.role);
+  // PA is full HR (owner 2026-08-03). The API has said so since; these two
+  // screens never got the message, which is why the Director's office could
+  // read the employee list and change nothing on it (owner 2026-09-05).
+  const isHr = ["HO_HR", "ADMIN", "PA"].includes(me.role);
+  const seesPay = ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role);
 
   function load() {
     api("/employees").then(setEmployees);

@@ -14,8 +14,9 @@ const ROLES = [
   ["FINANCE", "Finance — builds payment vouchers, records payments & slips"],
   ["HO_HR", "HO HR / Payroll — employees, timesheet reopen, payroll export"],
   ["QS", "Quantity Surveyor — tenders, contracts, project financials (USD)"],
-  ["PA", "Personal Assistant (Director's Office) — meetings, onboarding entry, "
-   + "company profile; read-only projects, commercials & receivables"],
+  ["PA", "Personal Assistant (Director's Office) — full HR (employees, "
+   + "attendance, payroll), meetings, onboarding entry, company profile; "
+   + "read-only projects, commercials & receivables"],
   ["ADMIN", "Admin — user management, site configuration, full access"],
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];

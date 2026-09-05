@@ -25,7 +25,7 @@ export default function PayrollRunPage({ me, sites, initialRunId,
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
 
-  const canGenerate = ["HO_HR", "ADMIN"].includes(me.role);
+  const canGenerate = ["HO_HR", "ADMIN", "PA"].includes(me.role);
   const [settling, setSettling] = useState(false);
 
   function loadRuns() {
@@ -426,7 +426,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     }
   }
 
-  const canReopen = ["HO_HR", "ADMIN", "FINANCE"].includes(me.role);
+  const canReopen = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);
   // Draft salary verification (owner 2026-08-12): HR submits → the site PM
   // verifies → the PD approves → HR/Finance locks.
   const isHR = ["HO_HR", "ADMIN", "FINANCE", "PA"].includes(me.role);

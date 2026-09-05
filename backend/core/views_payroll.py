@@ -489,7 +489,7 @@ def payroll_run_detail(request, pk):
             return Response({"detail": "Locking is automatic — a run locks "
                                        "when the Director approves it."},
                             status=400)
-        if request.user.role not in ("HO_HR", "FINANCE", "ADMIN"):
+        if request.user.role not in ("HO_HR", "FINANCE", "ADMIN", "PA"):
             return Response({"detail": "HR, Finance or Admin reopen a run."},
                             status=403)
         _, err = payroll.reopen_run(run, request.user)

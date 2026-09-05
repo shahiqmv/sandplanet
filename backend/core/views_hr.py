@@ -562,6 +562,26 @@ def _month_locked(site_id, day):
     ).exists()
 
 
+def _mark_snapshot(a):
+    """One day's mark, as the audit records it on both sides of a change.
+
+    Both sides go through here so that "what changed" means what actually
+    changed. Two things had made every save look like an edit: overtime was
+    compared as text, so the 5.00 the database holds never equalled the 5 the
+    grid posts back, and the site added to the before-side on 2026-09-03 had
+    no after-side to match. SJR's July corrections logged 21,337 overtime
+    changes that were nothing of the sort, which is a poor state for the one
+    record that says who touched somebody's pay (owner 2026-09-05).
+    """
+    if a is None:
+        return None
+    return {"remark": a.remark, "in": str(a.check_in or ""),
+            "out": str(a.check_out or ""), "site": a.site.code,
+            # Quantized, never normalize(): Decimal("10.00").normalize() is
+            # "1E+1".
+            "ot": str(Decimal(a.ot_requested or 0).quantize(Decimal("0.01")))}
+
+
 def _allocated_elsewhere(employee, site, day):
     """The other site whose allocation covers `day`, when this site's doesn't.
 
@@ -857,7 +877,7 @@ def attendance_register(request):
 def attendance_bulk(request):
     """Day-grid upsert by Site Admin / SE; late edits audited (spec §6A.2)."""
     if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM",
-                                 "HO_HR", "DIRECTOR", "ADMIN"):
+                                 "HO_HR", "DIRECTOR", "ADMIN", "PA"):
         return Response({"detail": "Site team or HR records attendance."},
                         status=403)
     try:
@@ -973,12 +993,7 @@ def attendance_bulk(request):
             defaults["sub_extra_hours"] = Decimal("0")
         before = Attendance.objects.filter(employee=employee,
                                            day=day).first()
-        # The previous site is part of the change when a day moves between
-        # sites: that is a transfer of somebody's pay from one register to
-        # another and the trail has to name both ends.
-        was = ({"remark": before.remark, "in": str(before.check_in or ""),
-                "out": str(before.check_out or ""), "site": before.site.code,
-                "ot": str(before.ot_requested or 0)} if before else None)
+        was = _mark_snapshot(before)
         record, _created = Attendance.objects.update_or_create(
             employee=employee, day=day, defaults=defaults)
         record.normal_hours = _normal_hours(
@@ -1002,9 +1017,7 @@ def attendance_bulk(request):
             fields += ["ot_approved", "ot_approved_by", "ot_approved_at"]
             withdrawn.append(employee.emp_no)
         record.save(update_fields=fields)
-        now = {"remark": record.remark, "in": str(record.check_in or ""),
-               "out": str(record.check_out or ""),
-               "ot": str(record.ot_requested or 0)}
+        now = _mark_snapshot(record)
         if was != now:
             changes.append({"emp": employee.emp_no,
                             "action": "CREATED" if before is None else "EDITED",
@@ -1116,7 +1129,7 @@ def shift_assign(request):
     from . import shifts as shift_svc
 
     if request.user.role not in ("SITE_ADMIN", "SITE_ENGINEER", "PM",
-                                 "HO_HR", "DIRECTOR", "ADMIN"):
+                                 "HO_HR", "DIRECTOR", "ADMIN", "PA"):
         return Response({"detail": "Site team or HR assigns shifts."},
                         status=403)
     try:

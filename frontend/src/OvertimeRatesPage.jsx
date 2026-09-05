@@ -12,7 +12,7 @@ export default function OvertimeRatesPage({ me }) {
   const [error, setError] = useState(null);
   const [savedFor, setSavedFor] = useState(null);
 
-  const canEdit = ["HO_HR", "ADMIN"].includes(me.role);
+  const canEdit = ["HO_HR", "ADMIN", "PA"].includes(me.role);
 
   function load() {
     api("/overtime-rates").then((data) => {

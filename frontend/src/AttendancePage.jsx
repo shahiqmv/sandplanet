@@ -30,8 +30,8 @@ export default function AttendancePage({ site, me, onClose,
   const [photoView, setPhotoView] = useState(null);
 
   const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "DIRECTOR",
-                    "ADMIN"].includes(me.role);
-  const isPm = ["PM", "HO_HR", "ADMIN"].includes(me.role);
+                    "ADMIN", "PA"].includes(me.role);
+  const isPm = ["PM", "HO_HR", "ADMIN", "PA"].includes(me.role);
 
   const load = useCallback(() => {
     setNotice(null);

@@ -13,7 +13,7 @@ export default function HeadOfficePage({ me, sites }) {
   // read as if they were office staff (owner 2026-08-20).
   const [away, setAway] = useState({});
   const [showAtt, setShowAtt] = useState(false);
-  const seesPay = ["HO_HR", "FINANCE", "ADMIN",
+  const seesPay = ["HO_HR", "FINANCE", "ADMIN", "PA",
                   "SIGNATORY"].includes(me.role);
 
   useEffect(() => {
