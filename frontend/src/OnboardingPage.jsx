@@ -1223,8 +1223,15 @@ visa fee) — advance without a payment"
           )}
           {c.next_stage && (
             <div>
+              {/* The fee only has to be RAISED. This asked for PAID, which
+                  was stricter than the server even before the settlement rule
+                  was relaxed twice — so HR sat at ticketing with a dead button
+                  while the PYR waited in Finance's queue (owner 2026-09-05).
+                  Whether the money has gone is the server's judgement, not
+                  this button's; all it checks now is that a fee exists to
+                  advance past. */}
               <Btn variant="primary"
-                   disabled={busy || (c.at_payment && !c.fee?.paid)
+                   disabled={busy || (c.at_payment && !c.fee?.raised)
                              || (c.next_needs === "portal_ref"
                                  && !portalRef.trim() && !c.portal_ref)
                              || (c.next_needs === "bv_approval"
