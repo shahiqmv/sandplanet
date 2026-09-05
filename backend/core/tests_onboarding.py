@@ -801,6 +801,70 @@ class OnboardingSpineTests(TestCase):
         self.assertIn("INSURANCE_POLICY", slots)      # earlier BV fee slot
         self.assertNotIn("ENTRY_PASS", slots)         # WP conversion not reached
 
+    def _walk_to_arrival(self, pk, arrived="2026-08-01"):
+        self._begin(pk); self._adv(pk)                   # → WP_APPLICATION
+        self._sdata(pk, portal_status="APPROVED")
+        self._adv(pk); self._adv(pk)                     # → WP_DEPOSIT
+        self._pay_fee(pk, "WP_DEPOSIT")
+        self._adv(pk)                                    # → WP_TICKET
+        self._pay_fee(pk, "WP_TICKET")
+        return self._adv(pk, arrived_date=arrived)       # → WP_ARRIVED
+
+    def test_the_job_title_on_the_case_reaches_the_employee(self):
+        """The case states the occupation; the record never carried it — all
+        fifteen live conversions had an empty job title (owner 2026-09-05)."""
+        pk = self._approved()
+        self._walk_to_arrival(pk)
+        emp = OnboardingCase.objects.get(pk=pk).employee
+        self.assertEqual(emp.job_title, "Mason")         # case trade_designation
+
+    def test_a_man_already_on_file_gets_the_new_case_terms(self):
+        """He is linked to the record that holds his history rather than given
+        a second one — but the engagement being mobilised is this case's, so
+        its title, salary and start date are the ones that apply. All three
+        were being dropped (owner 2026-09-05)."""
+        from decimal import Decimal
+
+        from datetime import date
+        from .models import Employee, EmployeeSiteAllocation
+        old = Employee.objects.create(
+            emp_no="EMP-9100", full_name="Returning Man",
+            passport_no="P1234567",                      # same as the case
+            basic_pay=Decimal("5000"), currency="MVR",
+            join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(
+            employee=old, site=self.site, from_date=date(2026, 1, 1))
+        pk = self._approved()
+        self._walk_to_arrival(pk, arrived="2026-08-01")
+        case = OnboardingCase.objects.get(pk=pk)
+        self.assertEqual(case.employee_id, old.id)       # linked, not minted
+        old.refresh_from_db()
+        self.assertEqual(old.job_title, "Mason")
+        self.assertEqual(old.basic_pay, Decimal("8000"))  # the case's salary
+        self.assertEqual(str(old.join_date), "2026-08-01")   # the day he landed
+        self.assertEqual(str(old.site_allocations.get().from_date), "2026-08-01")
+        self.assertEqual(Employee.objects.filter(
+            passport_no="P1234567").count(), 1)
+
+    def test_a_blank_on_the_case_never_wipes_the_record(self):
+        from decimal import Decimal
+
+        from datetime import date
+        from .models import Employee
+        old = Employee.objects.create(
+            emp_no="EMP-9101", full_name="Returning Man",
+            passport_no="P1234567", basic_pay=Decimal("5000"),
+            currency="MVR", join_date=date(2026, 1, 1), job_title="Foreman")
+        pk = self._approved()
+        case = OnboardingCase.objects.get(pk=pk)
+        case.trade_designation = ""
+        case.proposed_salary = None
+        case.save(update_fields=["trade_designation", "proposed_salary"])
+        self._walk_to_arrival(pk)
+        old.refresh_from_db()
+        self.assertEqual(old.job_title, "Foreman")       # kept
+        self.assertEqual(old.basic_pay, Decimal("5000"))  # kept
+
     def test_arrival_hands_over_to_employee_db(self):
         from .models import Employee, Notification
         pk = self._approved()

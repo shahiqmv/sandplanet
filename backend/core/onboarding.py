@@ -2027,6 +2027,8 @@ def _handover_employee(case, actor):
                       "passport": (case.passport_no or "").strip(),
                       "why": "passport already on file — linked instead of "
                              "creating a second record"})
+        _apply_case_terms(case, held, actor,
+                          case.arrived_date or timezone.localdate())
         return held
     join = case.arrived_date or timezone.localdate()
     sub = _is_subcontract(case)
@@ -2038,6 +2040,7 @@ def _handover_employee(case, actor):
             nationality=case.nationality or "",
             date_of_birth=case.date_of_birth,
             job_category_id=case.job_category_id or None,
+            job_title=(case.trade_designation or "").strip()[:80],
             basic_pay=None if sub else case.proposed_salary,
             currency=case.currency or "MVR",
             employment_type=Employee.EmploymentType.CONTRACT if sub
@@ -2062,6 +2065,48 @@ def _handover_employee(case, actor):
     audit("employee", emp.id, "OBR_HANDOVER", actor=actor,
           detail={"obr": case.document.ref, "emp_no": emp.emp_no})
     return emp
+
+
+def _apply_case_terms(case, emp, actor, join):
+    """Put the case's agreed terms onto the record it mobilises into.
+
+    A man already on file is linked to the record that holds his history
+    rather than given a second one (owner 2026-08-16) — but the engagement
+    being mobilised is THIS case's, and its terms are the ones that now
+    apply. They were being dropped: three men linked in August kept a join
+    date of the day their record happened to be made rather than the day they
+    landed, one kept a salary his new letter had superseded, and no handover
+    of any kind had ever written a job title (owner 2026-09-05, "their job
+    title, salary and joined date not getting updated").
+
+    Only what the case actually states is applied — a blank on the case never
+    wipes something already on the record. The site he is allocated to is not
+    touched.
+    """
+    changed = []
+    title = (case.trade_designation or "").strip()[:80]
+    if title and emp.job_title != title:
+        emp.job_title = title
+        changed.append("job_title")
+    if not _is_subcontract(case):
+        if (case.proposed_salary is not None
+                and emp.basic_pay != case.proposed_salary):
+            emp.basic_pay = case.proposed_salary
+            changed.append("basic_pay")
+        cur = (case.currency or "").strip()
+        if cur and emp.currency != cur:
+            emp.currency = cur
+            changed.append("currency")
+    if changed:
+        emp.save(update_fields=changed + ["updated_at"])
+    if emp.join_date != join:
+        _realign_join_date(case, join)      # join date + its allocation date
+        changed.append("join_date")
+    if changed:
+        # Field names only: a salary never goes in the log (spec §7.2).
+        audit("employee", emp.id, "ONBOARDING_TERMS_APPLIED", actor=actor,
+              detail={"case": case.document.ref, "emp_no": emp.emp_no,
+                      "fields": sorted(changed)})
 
 
 def _realign_join_date(case, join):
