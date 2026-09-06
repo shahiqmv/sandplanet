@@ -207,21 +207,24 @@ const ACTIONS = {
      ["PM", "DIRECTOR", "SIGNATORY", "ADMIN"], "comment"],
   ],
   // A purchase order is a commitment, not a payment, so it never goes through
-  // Finance's payment voucher to get signed: Purchasing sends the drafted
-  // order, the signatory's approval places it, and Finance sees it afterwards
-  // as a payable to settle (owner 2026-08-22).
+  // Finance's payment voucher to get signed: the award sends the order, the
+  // signatory's approval places it, and Finance sees it afterwards as a
+  // payable to settle (owner 2026-08-22, 2026-09-06).
   PO: [
     // Both are offered on a draft: the local one is sent for signature, an
     // import order's PO is issued straight out (its commitment was signed on
-    // the IPR). The server refuses whichever does not apply.
+    // the IPR). The server refuses whichever does not apply. A local order is
+    // only in draft if it came back to be corrected — the PR award sends it.
     ["submit", "Send for approval (Signatory)", ["DRAFT"],
      ["HO_PURCHASING", "ADMIN"]],
     ["issue", "Issue to supplier (import order)", ["DRAFT"],
      ["HO_PURCHASING", "ADMIN"]],
     ["authorise", "Approve & place order (Signatory)", ["SUBMITTED"],
      ["SIGNATORY", "ADMIN"]],
+    // The signatory hands one back; Purchasing pulls one back to correct it,
+    // which is now their only window before the signature (owner 2026-09-06).
     ["return", "Return to Purchasing", ["SUBMITTED"],
-     ["SIGNATORY", "ADMIN"], "comment"],
+     ["SIGNATORY", "HO_PURCHASING", "ADMIN"], "comment"],
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
     // Close sits beside the other actions and used to be a one-way door.
     ["reopen", "Re-open (Admin)", ["CLOSED"], ["ADMIN"], "comment"],

@@ -1119,8 +1119,8 @@ def pending_groups(user):
                 doc_type="MR",
                 status__in=["SENT_TO_HO", "PARTIALLY_ORDERED"])),
                  "Raise PR or plan loading"))
-        # Purchasing tracks its own orders end to end: what it still has to
-        # send for signature, and what is sitting with the signatory (owner
+        # Purchasing tracks its own orders end to end: what has come back to
+        # be corrected, and what is sitting with the signatory (owner
         # 2026-08-22).
         # Local credit orders go for signature; an import order's PO was
         # already authorised on its IPR, so Purchasing just issues it.
@@ -1128,8 +1128,12 @@ def pending_groups(user):
                          .select_related("site", "project", "current_revision"))
         local = [d for d in draft_pos if is_local_credit_po(d)]
         imported = [d for d in draft_pos if d not in local]
-        add("To send for approval — draft POs",
-            rows_of(local, "Check the order, then send it to the signatory"))
+        # A local order goes for signature the moment the Director awards the
+        # PR, so this band holds only the ones that came back — returned by
+        # the signatory, or pulled back to be corrected (owner 2026-09-06).
+        add("To send for approval — returned POs",
+            rows_of(local, "Correct the order, then send it back to the "
+                           "signatory"))
         add("To issue — import purchase orders",
             rows_of(imported, "Issue to the overseas supplier"))
         add("With the signatory — POs awaiting approval",
@@ -1563,7 +1567,10 @@ def _do_withdraw(request, doc, comment):
 def _do_return(request, doc, comment):
     """Return with comment → back to Draft (spec §7.2 / §7.5a)."""
     if doc.doc_type == "PO":
-        # A signatory hands a local order back to Purchasing (owner 2026-08-22).
+        # A signatory hands a local order back to Purchasing (owner
+        # 2026-08-22). Purchasing may also pull one back: the award now sends
+        # the order for signature on its own, so this is their only chance to
+        # correct an order before it is signed (owner 2026-09-06).
         if not comment.strip():
             return Response({"detail": "A comment is required to return."},
                             status=400)
@@ -1571,7 +1578,8 @@ def _do_return(request, doc, comment):
             return Response({"detail": "Only an order sent for approval can "
                                        "be returned."}, status=400)
         return _apply(request, doc, "DRAFT", "RETURN",
-                      roles={"SIGNATORY", "ADMIN"}, comment=comment)
+                      roles={"SIGNATORY", "HO_PURCHASING", "ADMIN"},
+                      comment=comment)
     if not comment.strip():
         return Response({"detail": "A comment is required to return."}, status=400)
     if doc.doc_type in ("MR", "IR") + submittals.TO_CLIENT:

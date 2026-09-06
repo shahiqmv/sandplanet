@@ -276,8 +276,9 @@ def on_pr_approved(pr, actor):
     The Director's approval is the award, so this is where the credit orders
     are drafted. They used to be generated only once a Finance payment voucher
     was signed, which held every order behind a payment run (owner
-    2026-08-22); Purchasing now sends each drafted order for the Signatory's
-    approval itself.
+    2026-08-22). The award now sends each credit order straight on to the
+    Signatory: waiting for Purchasing to push out an order they had nothing
+    left to decide about only delayed the signature (owner 2026-09-06).
     """
     claimed = active_pr_claimed_line_ids()
     for mr in linked_docs(pr, "MR_PR", "from"):  # link rows: PR → MR
@@ -470,6 +471,33 @@ def next_item_code():
     return f"ITM-{int(ref.split('-')[1]):05d}"
 
 
+def send_po_for_signature(po, actor):
+    """Put a freshly drafted local credit order in front of the signatory.
+
+    The order used to sit in DRAFT until Purchasing pushed it out. But by the
+    time the Director has awarded the PR there is nothing left for Purchasing
+    to decide on it — the supplier, the quantities and the rates all come off
+    the quotation they captured and the Director awarded. The draft step only
+    added a delay between the award and the signature, so the award now sends
+    the order itself (owner 2026-09-06).
+
+    Purchasing has not lost the ability to correct an order: a signatory hands
+    one back, and Purchasing can pull one back, to DRAFT.
+    """
+    from .models import Approval
+    from .notify import notify_document
+
+    set_status(po, "SUBMITTED", actor, "PO_SENT_FOR_APPROVAL")
+    if po.status != "SUBMITTED":
+        return
+    if actor is not None:
+        Approval.objects.create(
+            document=po, revision=po.current_revision, action="SUBMIT",
+            actor=actor, actor_role=getattr(actor, "role", "") or "",
+            comment="Sent for signature on the award of the purchase request.")
+    notify_document(po, actor)
+
+
 def generate_pos_for_pr(pr, actor):
     """On Director approval of the PR (award), generate one draft PO per
     awarded CREDIT supplier from the awarded quotation lines (R2/R3).
@@ -551,6 +579,7 @@ def generate_pos_for_pr(pr, actor):
             )
         audit("document", po.id, "PO_GENERATED", actor=actor,
               detail={"ref": po.ref, "pr": pr.ref, "supplier": supplier.name})
+        send_po_for_signature(po, actor)
         created.append(po)
     for ln in bare:
         created.append(_po_from_pr_row(pr, ln, actor))
@@ -587,6 +616,7 @@ def _po_from_pr_row(pr, ln, actor):
     audit("document", po.id, "PO_GENERATED", actor=actor,
           detail={"ref": po.ref, "pr": pr.ref, "supplier": ln.vendor,
                   "from_row": True})
+    send_po_for_signature(po, actor)
     return po
 
 

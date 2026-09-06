@@ -48,15 +48,18 @@ class PrCostingBase(TestCase):
             format="json")
 
     def sign_orders(self, pr):
-        """Walk the credit orders the award drafted through Purchasing and the
-        Signatory — the step that used to happen inside Finance's voucher
-        (owner 2026-08-22). Returns the issued POs."""
+        """Walk the credit orders the award raised through to the Signatory —
+        the step that used to happen inside Finance's voucher (owner
+        2026-08-22). The award sends them for signature itself now, so one
+        already with the signatory is not sent again (owner 2026-09-06).
+        Returns the issued POs."""
         from .models import Document
-        pos = list(Document.objects.filter(doc_type="PO",
-                                           links_from__to_document=pr,
-                                           status="DRAFT").distinct())
+        pos = list(Document.objects.filter(
+            doc_type="PO", links_from__to_document=pr,
+            status__in=("DRAFT", "SUBMITTED")).distinct())
         for po in pos:
-            self.act(po.ref, "submit", self.purchasing)
+            if po.status == "DRAFT":
+                self.act(po.ref, "submit", self.purchasing)
             self.act(po.ref, "authorise", self.signatory)
             po.refresh_from_db()
         return pos

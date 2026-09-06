@@ -586,9 +586,10 @@ class Document(models.Model):
         "PO": {  # generated per awarded credit supplier on PR approval (R2)
             # A purchase order is a commitment, not a payment, so it does not
             # travel through Finance's payment voucher to get signed: the
-            # Director awards the PR, Purchasing sends the drafted order for
-            # signature, and the Signatory's approval issues it. Finance sees
-            # it afterwards, as a payable to settle (owner 2026-08-22).
+            # Director awards the PR, which sends the order for signature, and
+            # the Signatory's approval issues it. Finance sees it afterwards,
+            # as a payable to settle (owner 2026-08-22, 2026-09-06). A local
+            # order rests in DRAFT only when it has been handed back.
             # DRAFT→ISSUED is still open for an IMPORT order's PO, whose
             # commitment was authorised on the IPR; a local credit order goes
             # DRAFT→SUBMITTED→ISSUED and the handlers enforce which is which.

@@ -236,13 +236,15 @@ class PoGenerationTests(QuoteBase):
         return mr, pr
 
     def sign_orders(self, pr_ref):
-        """Purchasing sends each drafted order, the signatory signs it."""
-        pos = list(Document.objects.filter(doc_type="PO",
-                                           links_from__to_document__ref=pr_ref,
-                                           status="DRAFT").distinct())
+        """The signatory signs each order the award raised. One still in draft
+        (handed back to be corrected) is sent on first."""
+        pos = list(Document.objects.filter(
+            doc_type="PO", links_from__to_document__ref=pr_ref,
+            status__in=("DRAFT", "SUBMITTED")).distinct())
         for po in pos:
-            self.as_user(self.purchasing)
-            self.act(po.ref, "submit")
+            if po.status == "DRAFT":
+                self.as_user(self.purchasing)
+                self.act(po.ref, "submit")
             self.as_user(self.signatory)
             self.act(po.ref, "authorise")
             po.refresh_from_db()
@@ -274,8 +276,8 @@ class PoGenerationTests(QuoteBase):
         self.assertEqual(lines[0].item_id, self.rebar.id)
         self.assertEqual(float(lines[0].rate), 18.50)
         self.assertEqual(po.current_revision.payload["pr_ref"], pr["ref"])
-        # The order is drafted, not yet placed — it goes to the signatory.
-        self.assertEqual(po.status, "DRAFT")
+        # The order is raised and already with the signatory, not yet placed.
+        self.assertEqual(po.status, "SUBMITTED")
         # PO ref lands in the credit vendor's row; the cash vendor has none.
         fresh = self.client.get(f"/api/v1/documents/{pr['ref']}").data
         po_refs = {row["vendor"]: row["po_ref"] for row in fresh["lines"]}
@@ -285,8 +287,8 @@ class PoGenerationTests(QuoteBase):
         # never again reads as "order out" while it is a draft.
         steel_row = next(r for r in fresh["lines"]
                          if r["vendor"] == "Maldives Steel Traders")
-        self.assertEqual(steel_row["po_status"], "DRAFT")
-        # The voucher authorised the CASH vendor; the drafted order settles
+        self.assertEqual(steel_row["po_status"], "SUBMITTED")
+        # The voucher authorised the CASH vendor; the raised order settles
         # nothing until the signatory has actually signed it.
         self.assertEqual(fresh["status"], "AUTHORISED")
         self.sign_orders(pr["ref"])
@@ -304,6 +306,32 @@ class PoGenerationTests(QuoteBase):
                               "payment_ref": "TRF-555"})
         self.assertEqual(r.data["status"], "PAID_PO_ISSUED")
 
+    def test_the_award_sends_the_order_to_the_signatory_itself(self):
+        """Purchasing had nothing left to decide on an awarded order, so the
+        draft step only delayed the signature (owner 2026-09-06)."""
+        mr, pr = self.full_award()
+        po = Document.objects.get(doc_type="PO", supplier=self.steel)
+        self.assertEqual(po.status, "SUBMITTED")
+        # The signatory can sign it straight away — no send in between.
+        self.as_user(self.signatory)
+        r = self.act(po.ref, "authorise")
+        self.assertEqual(r.data["status"], "ISSUED")
+
+    def test_purchasing_can_pull_an_order_back_to_correct_it(self):
+        """The draft window is gone, so recalling the order is the only way
+        to fix one before it is signed (owner 2026-09-06)."""
+        mr, pr = self.full_award()
+        po = Document.objects.get(doc_type="PO", supplier=self.steel)
+        self.as_user(self.purchasing)
+        # A reason is required, as it is for the signatory handing one back.
+        self.assertEqual(self.act(po.ref, "return").status_code, 400)
+        r = self.act(po.ref, "return",
+                     {"comment": "Rate agreed lower by phone"})
+        self.assertEqual(r.data["status"], "DRAFT")
+        # ...and it can go back for signature once corrected.
+        self.assertEqual(self.act(po.ref, "submit").data["status"],
+                         "SUBMITTED")
+
     def test_po_issue_generates_pdf_and_lm_prefill(self):
         mr, pr = self.full_award()
         po = Document.objects.filter(doc_type="PO",
@@ -313,7 +341,6 @@ class PoGenerationTests(QuoteBase):
         self.as_user(self.purchasing)
         blocked = self.act(po.ref, "issue")
         self.assertEqual(blocked.status_code, 400)
-        self.act(po.ref, "submit")
         self.as_user(self.signatory)
         r = self.act(po.ref, "authorise")
         self.assertEqual(r.data["status"], "ISSUED")

@@ -86,13 +86,13 @@ class ApprovalsQueueTests(TestCase):
         self.client.post(f"/api/v1/documents/{pr['ref']}/actions/approve")
         # Nothing for Finance — there is nothing to pay yet.
         self.assertEqual(self.pending(self.finance)["total"], 0)
-        # Purchasing has the drafted order to send on.
-        self.assertIn("To send for approval — draft POs",
-                      self.titles(self.pending(self.purchasing)))
+        # The award sent the order on by itself — Purchasing has nothing to
+        # push out, and watches it with the signatory (owner 2026-09-06).
         po = Document.objects.get(doc_type="PO")
-        self.client.force_authenticate(self.purchasing)
-        self.client.post(f"/api/v1/documents/{po.ref}/actions/submit")
-        # ...and then it is the signatory's decision, on the order itself.
+        self.assertEqual(po.status, "SUBMITTED")
+        self.assertIn("With the signatory — POs awaiting approval",
+                      self.titles(self.pending(self.purchasing)))
+        # It is the signatory's decision, on the order itself.
         sig = self.pending(make_user("sig", User.Role.SIGNATORY))
         self.assertIn("To authorise — purchase orders", self.titles(sig))
 

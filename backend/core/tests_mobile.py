@@ -375,10 +375,10 @@ class MobilePurchaseOrderTests(TestCase):
             format="json").data
         self._act(pr["ref"], "submit", self.purchasing)
         self._act(pr["ref"], "approve", self.director)
+        # The Director's award sends the order for signature (owner
+        # 2026-09-06) — nothing for Purchasing to do in between.
         po = Document.objects.get(doc_type="PO",
                                   links_from__to_document__ref=pr["ref"])
-        self._act(po.ref, "submit", self.purchasing)
-        po.refresh_from_db()
         self.assertEqual(po.status, "SUBMITTED")
         return pr, po
 

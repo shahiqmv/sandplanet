@@ -420,14 +420,12 @@ class ChainTests(ProcBase):
                          format="json")
         self.assertFalse(Payable.objects.filter(
             document__ref=pr["ref"], vendor="Credit Vendor").exists())
-        # The order was drafted when the Director awarded the PR. Purchasing
-        # sends it, the signatory approves it, and THAT books the payable.
+        # The award raised the order and sent it for signature. The
+        # signatory approves it, and THAT books the payable.
         po = Document.objects.filter(doc_type="PO",
                                      links_from__to_document__ref=pr["ref"]
                                      ).distinct().get()
-        self.assertEqual(po.status, "DRAFT")
-        self.as_user(self.purchasing)
-        self.act(po.ref, "submit")
+        self.assertEqual(po.status, "SUBMITTED")
         self.as_user(self.signatory)
         self.act(po.ref, "authorise")
         po.refresh_from_db()
