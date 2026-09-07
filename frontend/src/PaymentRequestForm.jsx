@@ -20,16 +20,12 @@ const nextMonth = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 };
 
-// Head-Office centres may raise in USD as well as MVR; site teams are MVR only.
-const USD_ROLES = ["HO_PURCHASING", "HO_HR", "FINANCE", "DIRECTOR",
-                   "SIGNATORY", "QS", "ADMIN"];
 
-export default function PaymentRequestForm({ site, sites, me, onSaved,
+export default function PaymentRequestForm({ site, sites, onSaved,
                                             onCancel }) {
   // Central raise (from a Head-Office area) passes `sites` to pick a filing
   // site; a site raise passes a fixed `site`.
   const central = !site && Array.isArray(sites);
-  const allowUSD = me ? USD_ROLES.includes(me.role) : false;
   const [pickedSite, setPickedSite] = useState(() => {
     if (site) return site;
     const ho = (sites || []).find((s) => s.is_head_office);
@@ -119,7 +115,7 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         cost_head_id: f.cost_head_id, payee: f.payee,
         payment_type: f.payment_type, payment_method: f.payment_method,
         payee_account: f.payee_account,
-        currency: allowUSD ? f.currency : "MVR",
+        currency: f.currency,
         amount_requested: f.amount_requested,
         required_by: f.required_by || null, purpose: f.purpose,
         is_urgent: f.is_urgent, urgent_reason: f.urgent_reason,
@@ -183,16 +179,18 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
             </select>
           </label>
         )}
-        {allowUSD && (
-          <label style={{ fontSize: 13 }}>Currency
-            <select value={f.currency}
-                    onChange={(e) => set("currency", e.target.value)}
-                    style={inputStyle}>
-              <option value="MVR">MVR</option>
-              <option value="USD">USD</option>
-            </select>
-          </label>
-        )}
+        {/* Head Office used to be the only place with this choice, so a site
+            meeting a dollar invoice either converted it by hand or asked HO to
+            raise the request for them (owner 2026-09-07). MVR stays the
+            default, so dollars is always a deliberate pick. */}
+        <label style={{ fontSize: 13 }}>Currency
+          <select value={f.currency}
+                  onChange={(e) => set("currency", e.target.value)}
+                  style={inputStyle}>
+            <option value="MVR">MVR</option>
+            <option value="USD">USD</option>
+          </select>
+        </label>
         <label style={{ fontSize: 13 }}>Payment type
           <select value={f.payment_type}
                   onChange={(e) => set("payment_type", e.target.value)}
@@ -282,7 +280,7 @@ export default function PaymentRequestForm({ site, sites, me, onSaved,
         )}
         {!isSalary && (
         <label style={{ fontSize: 13 }}>
-          Amount ({allowUSD ? f.currency : "MVR"})
+          Amount ({f.currency})
           <input type="number" min="0" value={f.amount_requested}
                  onChange={(e) => set("amount_requested", e.target.value)}
                  style={{ ...inputStyle, fontFamily: "var(--font-mono)" }} />

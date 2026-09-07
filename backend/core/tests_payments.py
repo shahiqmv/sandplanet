@@ -277,10 +277,49 @@ class CentralPaymentTests(PyrBase):
         body.update(extra)
         return self.client.post("/api/v1/documents", body, format="json")
 
-    def test_site_cannot_request_usd(self):
+    def test_a_site_can_request_usd(self):
+        """Head Office used to be the only place with the choice, so a site
+        meeting a dollar invoice either converted it by hand or asked HO to
+        raise the request for it (owner 2026-09-07)."""
         r = self.raise_pyr(amount=1000, currency="USD")
+        self.assertEqual(r.status_code, 201, r.data)
+        from .models import Document
+        self.assertEqual(Document.objects.get(ref=r.data["ref"])
+                         .payment_request.currency, "USD")
+
+    def test_rufiyaa_stays_the_default(self):
+        """Dollars has to be picked — nobody lands on it by leaving a box
+        alone."""
+        r = self.raise_pyr(amount=1000)
+        self.assertEqual(r.status_code, 201, r.data)
+        from .models import Document
+        self.assertEqual(Document.objects.get(ref=r.data["ref"])
+                         .payment_request.currency, "MVR")
+
+    def test_the_document_threshold_reads_dollars_as_rufiyaa(self):
+        """USD 400 is MVR 6,168 — over the limit. It used to read as "under
+        5,000" and sail through with no bill (owner 2026-09-07)."""
+        r = self.raise_pyr(amount=400, currency="USD",
+                           has_supporting_doc=False,
+                           no_doc_reason="Invoice to follow")
+        self.assertEqual(r.status_code, 201, r.data)
+        sub = self.act(r.data["ref"], "submit", self.sa)
+        self.assertEqual(sub.status_code, 400, sub.data)
+        self.assertTrue(sub.data.get("needs_override"))
+        self.assertIn("MVR 6,168", sub.data["detail"])
+
+    def test_a_small_dollar_request_still_needs_no_override(self):
+        r = self.raise_pyr(amount=100, currency="USD",
+                           has_supporting_doc=False,
+                           no_doc_reason="Petty amount")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(self.act(r.data["ref"], "submit", self.sa)
+                         .status_code, 200)
+
+    def test_a_currency_we_do_not_hold_is_still_refused(self):
+        r = self.raise_pyr(amount=1000, currency="EUR")
         self.assertEqual(r.status_code, 400)
-        self.assertIn("MVR only", r.data["detail"])
+        self.assertIn("MVR or USD", r.data["detail"])
 
     def test_central_clears_to_voucher_on_submit(self):
         # A Head-Office (central) request skips BOTH the PM and the Director —

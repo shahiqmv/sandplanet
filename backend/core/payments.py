@@ -25,9 +25,14 @@ HR_RAISERS = {"HO_HR", "PA"}
 FINANCE_RAISERS = {"FINANCE"}
 RAISER_ROLES = (SITE_RAISERS | CENTRAL_RAISERS | FINANCE_RAISERS
                 | HR_RAISERS | {"ADMIN"})
-# Only Head-Office centres may raise a foreign-currency request; site teams
-# request in MVR only (owner 2026-07-13).
-USD_RAISERS = CENTRAL_RAISERS | FINANCE_RAISERS | HR_RAISERS | {"ADMIN"}
+# Anyone who may raise a payment request may raise it in dollars. It used to
+# be Head-Office centres only, on the reading that a site pays local vendors in
+# rufiyaa (owner 2026-07-13) — but sites do meet dollar invoices, and the rule
+# only meant those came in as a rufiyaa figure someone had converted by hand,
+# or as a request Head Office had to raise on the site's behalf (owner
+# 2026-09-07). MVR stays the default, so a dollar request is always a
+# deliberate choice, and the PM / Director / signatory chain still sees it.
+USD_RAISERS = RAISER_ROLES
 RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",
                   "MISSING_DOCUMENT", "DUPLICATE", "ON_HOLD", "OTHER"}
 
@@ -56,6 +61,20 @@ def pyr_doc_threshold():
     """Above this a PYR needs an attachment or a PM override (§5.9).
     Default MVR 5,000."""
     return Decimal(str(_param("pyr_doc_threshold", 5000)))
+
+
+def in_rufiyaa(amount, currency):
+    """A requested amount as rufiyaa, for rules written in rufiyaa.
+
+    The document threshold compared the raw figure whatever the currency, so a
+    USD 400 request — MVR 6,168, well over the limit — read as "under 5,000"
+    and needed no bill. It mattered little while only Head Office could raise
+    in dollars; it matters now that a site can (owner 2026-09-07).
+    """
+    if (currency or "MVR") == "MVR":
+        return Decimal(amount or 0)
+    from . import fx
+    return fx.to_mvr(Decimal(amount or 0), currency)
 
 
 def create_payment_request(doc, data, user):
@@ -105,7 +124,7 @@ def create_payment_request(doc, data, user):
     if currency not in ("MVR", "USD"):
         return None, "Currency must be MVR or USD."
     if currency != "MVR" and user.role not in USD_RAISERS:
-        return None, "Site payment requests are in MVR only."
+        return None, "Your role cannot raise a payment request."
     # A commercial cost head (Insurance & Bonds…) routes to the Director for
     # approval then Finance, skipping the site PM — whoever raises it.
     origin = "COMMERCIAL" if cost_head.commercial else origin_for(user.role)
@@ -295,11 +314,16 @@ def pyr_action(request, doc, action_name):
             return Response({"detail": "Attach a bill/quotation, or give a "
                                        "reason for no supporting document."},
                             status=400)
-        if (not exempt_doc and pr.amount_requested >= pyr_doc_threshold()
+        over = in_rufiyaa(pr.amount_requested, pr.currency)
+        if (not exempt_doc and over >= pyr_doc_threshold()
                 and not has_doc and not pr.override_by_id):
+            worth = ("" if pr.currency == "MVR"
+                     else f" ({pr.currency} {pr.amount_requested:,.2f} is "
+                          f"MVR {over:,.0f})")
             return Response({
                 "detail": f"Above MVR {pyr_doc_threshold():,.0f} a PYR needs "
-                          "a supporting document or a PM override with reason.",
+                          "a supporting document or a PM override with "
+                          f"reason{worth}.",
                 "needs_override": True}, status=400)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
         if pr.origin == "HR" and not pr.is_capitalized and not is_permit_renewal:

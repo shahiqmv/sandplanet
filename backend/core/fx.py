@@ -25,6 +25,21 @@ def usd_rate():
     return DEFAULT_RATE
 
 
+def to_mvr(amount, currency, rate=None):
+    """Convert `amount` in `currency` to MVR — the mirror of `to_usd`.
+
+    Rules the company writes in rufiyaa (the PYR supporting-document
+    threshold) have to compare rufiyaa, or a dollar figure reads as a much
+    smaller one (owner 2026-09-07).
+    """
+    if amount is None:
+        return Decimal("0")
+    amount = Decimal(str(amount))
+    if currency != "USD":
+        return amount
+    return amount * (rate or usd_rate())
+
+
 def to_usd(amount, currency, rate=None):
     """Convert `amount` in `currency` to USD. USD passes through; MVR (or any
     non-USD) is divided by the rate."""
