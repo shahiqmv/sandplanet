@@ -23,6 +23,7 @@ export default function AttendanceDevicesPage({ me, sites }) {
   const [site, setSite] = useState("");
   const [tab, setTab] = useState("punches");
   const [adding, setAdding] = useState(false);
+  const [renaming, setRenaming] = useState(null);   // device id being renamed
   const [error, setError] = useState(null);
   const can = MANAGE.includes(me.role);
 
@@ -80,9 +81,20 @@ export default function AttendanceDevicesPage({ me, sites }) {
           {(devices || []).filter((d) => !site || String(d.site_id) === site)
             .map((d) => (
             <tr key={d.id}>
-              <td style={td}><strong>{d.name}</strong>
-                {d.location_note && <div style={{ fontSize: 11,
-                  color: "var(--muted)" }}>{d.location_note}</div>}</td>
+              <td style={td}>
+                {renaming === d.id ? (
+                  <RenameForm device={d} onDone={(ok) => {
+                    setRenaming(null); if (ok) loadDevices(); }} />
+                ) : (<>
+                  <strong>{d.name}</strong>
+                  {can && (
+                    <button style={{ ...ghostButton, padding: "1px 6px",
+                                     fontSize: 11, marginLeft: 6 }}
+                            onClick={() => setRenaming(d.id)}>Rename</button>)}
+                  {d.location_note && <div style={{ fontSize: 11,
+                    color: "var(--muted)" }}>{d.location_note}</div>}
+                </>)}
+              </td>
               <td style={td}>{d.site_code}</td>
               <td style={{ ...td, fontFamily: "var(--font-mono)",
                            fontSize: 12 }}>{d.serial}
@@ -256,6 +268,44 @@ function Enrolment({ data, can, reload }) {
       </tbody>
     </table>
   </>);
+}
+
+/* A name typed at registration used to be permanent — the registry could only
+ * add and list, so SJR's unit sat as "Main gate" when it was at the site
+ * office (owner 2026-09-07). The serial and the site are not editable: the
+ * serial is how the gate identifies itself to us, and a punch takes its site
+ * from the terminal, so moving one would carry its punch history across.
+ */
+function RenameForm({ device, onDone }) {
+  const [name, setName] = useState(device.name);
+  const [note, setNote] = useState(device.location_note || "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      await api(`/attendance-devices/${device.id}`,
+                { method: "PATCH", body: { name, location_note: note } });
+      onDone(true);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                  alignItems: "center" }}>
+      <input value={name} onChange={(e) => setName(e.target.value)}
+             placeholder="Name" autoFocus
+             style={{ ...inputStyle, width: 150 }} />
+      <input value={note} onChange={(e) => setNote(e.target.value)}
+             placeholder="Where it is mounted"
+             style={{ ...inputStyle, width: 170 }} />
+      <Btn onClick={save} disabled={busy || !name.trim()}>
+        {busy ? "Saving…" : "Save"}</Btn>
+      <Btn variant="secondary" onClick={() => onDone(false)}>Cancel</Btn>
+      {err && <div style={{ color: "#c0392b", fontSize: 12, width: "100%" }}>
+        {err}</div>}
+    </div>
+  );
 }
 
 function RegisterForm({ sites, onDone }) {

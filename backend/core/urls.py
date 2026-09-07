@@ -611,6 +611,10 @@ urlpatterns = [
          name="attendance-punches"),
     path("attendance-devices/enrolment", biometric_api.enrolment,
          name="attendance-enrolment"),
+    # Rename only: the serial identifies the device to ADMS and a punch takes
+    # its site from the terminal, so neither moves here (owner 2026-09-07).
+    path("attendance-devices/<int:pk>", biometric_api.device,
+         name="attendance-device"),
     path("employees/<int:pk>/biometric", biometric_api.employee_enrolment,
          name="employee-biometric"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),

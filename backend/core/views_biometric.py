@@ -69,6 +69,43 @@ def devices(request):
     return Response([_device_row(d, today) for d in qs])
 
 
+@api_view(["PATCH"])
+@permission_classes([IsAuthenticated])
+def device(request, pk):
+    """Correct what a terminal is called.
+
+    The registry was register-and-list only, so a name typed once was
+    permanent: SJR's unit went in as "Main gate", turned out to be at the site
+    office, and had to be renamed in the database by hand (owner 2026-09-07).
+
+    The serial and the site are deliberately NOT editable. The serial is how
+    ADMS identifies the device — changing it would orphan its punches and let
+    a stranger's serial inherit them. And a punch takes its site from the
+    terminal, so moving one would drag its whole punch history to the new
+    site; that needs the punch to remember where it was recorded first.
+    """
+    if not svc.can_manage(request.user):
+        return Response({"detail": "HR manages terminals."}, status=403)
+    d = _scoped(request, AttendanceDevice.objects.select_related("site")
+                ).filter(pk=pk).first()
+    if d is None:
+        return Response({"detail": "Terminal not found."}, status=404)
+    name = (request.data.get("name", d.name) or "").strip()
+    if not name:
+        return Response({"detail": "A terminal needs a name."}, status=400)
+    was, fields = d.name, ["name"]
+    d.name = name[:60]
+    if "location_note" in request.data:
+        d.location_note = (request.data.get("location_note") or "")[:120]
+        fields.append("location_note")
+    d.save(update_fields=fields)
+    if was != d.name:
+        audit("site", d.site_id, "ATTENDANCE_DEVICE_RENAMED",
+              actor=request.user,
+              detail={"serial": d.serial, "from": was, "to": d.name})
+    return Response(_device_row(d, date.today()))
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def punches(request):

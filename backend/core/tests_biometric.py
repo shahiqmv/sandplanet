@@ -303,6 +303,68 @@ class DeviceRegistryTests(TestCase):
             format="json")
         self.assertEqual(r.status_code, 403)
 
+    def test_a_terminal_can_be_renamed(self):
+        """A name typed at registration used to be permanent — SJR's unit sat
+        as "Main gate" when it was at the site office (owner 2026-09-07)."""
+        d = AttendanceDevice.objects.create(site=self.site, name="Main gate",
+                                            serial="SN-RN1")
+        r = self.client.patch(f"/api/v1/attendance-devices/{d.id}",
+                              {"name": "Site office",
+                               "location_note": "Beside the store"},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d.refresh_from_db()
+        self.assertEqual(d.name, "Site office")
+        self.assertEqual(d.location_note, "Beside the store")
+
+    def test_renaming_leaves_the_serial_and_the_site_alone(self):
+        """The serial is how the gate identifies itself, and a punch takes its
+        site from the terminal — moving one would carry its history across."""
+        other = Site.objects.create(code="ZZZ", name="Elsewhere",
+                                    status=Site.Status.ACTIVE)
+        d = AttendanceDevice.objects.create(site=self.site, name="Gate",
+                                            serial="SN-RN2")
+        r = self.client.patch(f"/api/v1/attendance-devices/{d.id}",
+                              {"name": "Camp gate", "serial": "SN-HIJACK",
+                               "site_id": other.id}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d.refresh_from_db()
+        self.assertEqual(d.name, "Camp gate")
+        self.assertEqual(d.serial, "SN-RN2")
+        self.assertEqual(d.site_id, self.site.id)
+
+    def test_a_terminal_cannot_be_left_nameless(self):
+        d = AttendanceDevice.objects.create(site=self.site, name="Gate",
+                                            serial="SN-RN3")
+        r = self.client.patch(f"/api/v1/attendance-devices/{d.id}",
+                              {"name": "   "}, format="json")
+        self.assertEqual(r.status_code, 400)
+        d.refresh_from_db()
+        self.assertEqual(d.name, "Gate")
+
+    def test_a_pm_cannot_rename_a_terminal(self):
+        d = AttendanceDevice.objects.create(site=self.site, name="Gate",
+                                            serial="SN-RN4")
+        self.client.force_authenticate(self.pm)
+        r = self.client.patch(f"/api/v1/attendance-devices/{d.id}",
+                              {"name": "Anything"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        d.refresh_from_db()
+        self.assertEqual(d.name, "Gate")
+
+    def test_the_rename_is_audited(self):
+        from .models import AuditLog
+
+        d = AttendanceDevice.objects.create(site=self.site, name="Main gate",
+                                            serial="SN-RN5")
+        self.client.patch(f"/api/v1/attendance-devices/{d.id}",
+                          {"name": "Site office"}, format="json")
+        row = AuditLog.objects.filter(
+            event="ATTENDANCE_DEVICE_RENAMED").latest("id")
+        self.assertEqual(row.detail["from"], "Main gate")
+        self.assertEqual(row.detail["to"], "Site office")
+        self.assertEqual(row.detail["serial"], "SN-RN5")
+
     def test_the_punch_log_can_be_read_and_filtered(self):
         d = AttendanceDevice.objects.create(site=self.site, name="Gate",
                                             serial="SN-7")
