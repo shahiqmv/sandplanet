@@ -480,7 +480,9 @@ def _svc_set_status(doc, new, actor, comment=""):
 def _subcontract_head():
     from .models import CostHead
     head, _ = CostHead.objects.get_or_create(
-        name="Subcontract", defaults={"sort_order": 60})
+        code="SUBCONTRACT",
+        defaults={"name": "Subcontract", "sort_order": 60,
+                  "is_system": True})
     return head
 
 

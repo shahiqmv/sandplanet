@@ -1086,7 +1086,9 @@ def _build_fee_pyr(case, stage, label, amount, payee, actor, invoice=None,
     from .payments import _set_status, create_payment_request
     doc = case.document
     head, _ = CostHead.objects.get_or_create(
-        name="Recruitment & Mobilisation", defaults={"sort_order": 95})
+        code="RECRUITMENT",
+        defaults={"name": "Recruitment & Mobilisation", "sort_order": 95,
+                  "is_system": True})
     with transaction.atomic():
         pyr = Document.objects.create(
             doc_type="PYR", ref=next_ref("PYR", doc.site), site=doc.site,

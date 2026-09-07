@@ -52,6 +52,7 @@ import MyPaymentRequests from "./MyPaymentRequests.jsx";
 import MeetingsPage from "./MeetingsPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
+import CostHeadsPage from "./CostHeadsPage.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
@@ -164,7 +165,11 @@ const NAV_GROUPS = [
            ["import-payments", "International Payables", ["FINANCE", "ADMIN",
                                                    "SIGNATORY"]],
            ["receivables", "Receivables", ["FINANCE", "DIRECTOR", "ADMIN",
-                                           "QS", "PA", "SIGNATORY"]]] },
+                                           "QS", "PA", "SIGNATORY"]],
+           // The chart every posting lands on. Finance and Admin edit it;
+           // the Director and a signatory read it (owner 2026-09-07).
+           ["cost-heads", "Cost Heads", ["FINANCE", "ADMIN", "DIRECTOR",
+                                         "SIGNATORY"]]] },
   { key: "people", label: "People",
     roles: ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PM", "PA", "SIGNATORY"],
     subs: [["hr", "HR Dashboard", ["HO_HR", "FINANCE", "ADMIN", "PA",
@@ -1282,6 +1287,11 @@ export default function App() {
              "SIGNATORY"].includes(me.role) &&
             hoPage === "receivables" && (
             <ReceivablesPage me={me} />
+          )}
+          {!docView && !openSite &&
+            ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"].includes(me.role) &&
+            hoPage === "cost-heads" && (
+            <CostHeadsPage me={me} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>

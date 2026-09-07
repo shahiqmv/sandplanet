@@ -216,7 +216,7 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
     the same way the order is allocated: each project allocation to that
     project's site under the line's cost head; the general-stock balance to the
     General Stock pool (never a project). Shared by commitment and payment."""
-    gs_head = costing.head("General Stock")
+    gs_head = costing.by_code(costing.GENERAL_STOCK)
     ho = _ho_site()
     # Apportion the order-level discount / freight / misc fee across every line
     # so the committed MVR equals the real order value, not just the subtotal.
@@ -885,7 +885,7 @@ def _apply_new_lines(doc, order, corr, actor):
         next_no += 1
     # After every line exists, so the discount/freight apportionment is the
     # one the finished order carries.
-    gs_head = costing.head("General Stock")
+    gs_head = costing.by_code(costing.GENERAL_STOCK)
     ho = _ho_site()
     subtotal = ipr_line_subtotal(order)
     net_factor = (ipr_order_total(order) / subtotal) if subtotal else Decimal("1")
@@ -1194,8 +1194,9 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
                     milestone=milestone)
         fx_delta = (mvr_paid - committed_mvr).quantize(Decimal("0.01"))
         if fx_delta != ZERO:
-            costing.post(site=_ho_site(), cost_head=costing.head(
-                "Foreign Exchange"), state="PAID", source="FX",
+            costing.post(site=_ho_site(),
+                cost_head=costing.by_code(costing.FOREX),
+                state="PAID", source="FX",
                 amount=fx_delta, currency="MVR", document=doc,
                 ipr_milestone=milestone, is_stock_pool=True, actor=actor)
         milestone.status = "PAID"
@@ -1661,7 +1662,9 @@ def raise_charge_pyr(payment, actor):
     if not payment.invoice:
         return None, "Upload the agent's invoice before raising the PYR."
     head, _ = CostHead.objects.get_or_create(
-        name="Import Charges", defaults={"sort_order": 90})
+        code="IMPORT_CHARGES",
+        defaults={"name": "Import Charges", "sort_order": 90,
+                  "is_system": True})
     site = _ho_site()
     order_doc = payment.shipment.order.document
     with transaction.atomic():
@@ -2206,7 +2209,6 @@ def receive_store_issue_line(sil, qty, to_site, document, actor):
     via received_qty, so a GRN receipt and a direct SIN receipt never
     double-post (P1B-f3). Returns the amount posted."""
     from . import costing
-    from .models import CostHead
     remaining = (sil.qty or ZERO) - (sil.received_qty or ZERO)
     take = min(_dec(qty), remaining) if remaining > ZERO else ZERO
     if take <= ZERO:
@@ -2218,8 +2220,9 @@ def receive_store_issue_line(sil, qty, to_site, document, actor):
     sil.save(update_fields=["received_qty"])
     amount = (take * sil.unit_landed_cost).quantize(Decimal("0.01"))
     if amount > ZERO:
-        costing.post(site=to_site, cost_head=CostHead.objects.get(
-            name="Materials"), state="INCURRED", source="STORE_ISSUE",
+        costing.post(site=to_site,
+            cost_head=costing.by_code(costing.MATERIALS),
+            state="INCURRED", source="STORE_ISSUE",
             amount=amount, document=document, actor=actor)
     sin = sil.issue
     if all((ln.received_qty or ZERO) >= (ln.qty or ZERO)

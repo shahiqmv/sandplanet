@@ -129,8 +129,9 @@ def raise_bond_pyr(bond, actor):
     project = bond.project
     site = project.site
     ch, _ = CostHead.objects.get_or_create(
-        name="Insurance & Bonds",
-        defaults={"is_active": True, "commercial": True})
+        code="INSURANCE_BONDS",
+        defaults={"name": "Insurance & Bonds", "is_active": True,
+                  "is_system": True, "commercial": True})
     label = bond.get_kind_display()
     purpose = f"{label} premium — {project.code}"
     data = {

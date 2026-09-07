@@ -493,7 +493,7 @@ def permit_batch_renew(request):
     renewal fee (Permits & Fees cost head) through the payment workflow, at
     Head Office. Body: {lines:[{employee_id, months, fee, permit_no?}],
     payee?, cost_head_id?, currency?, purpose?}."""
-    from .models import CostHead, Document, DocumentRevision
+    from .models import Document, DocumentRevision
     from .numbering import next_ref
     from .payments import create_payment_request
     if not _is_hr(request.user):
@@ -508,8 +508,8 @@ def permit_batch_renew(request):
                         status=400)
     cost_head_id = request.data.get("cost_head_id")
     if not cost_head_id:
-        ch = CostHead.objects.filter(name="Permits & Fees",
-                                     is_active=True).first()
+        from . import costing
+        ch = costing.by_code(costing.PERMITS)
         cost_head_id = ch.id if ch else None
     payee = request.data.get("payee") or "Work-permit renewals"
     purpose = request.data.get("purpose") or "Work-permit renewals (batch)"

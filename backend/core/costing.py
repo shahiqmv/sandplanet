@@ -133,7 +133,38 @@ DEFAULT_POOLS = ["General Stock", "Foreign Exchange", "Stock Adjustment",
                  "Input GST (recoverable)"]
 INPUT_GST_HEAD = "Input GST (recoverable)"
 
+# What the CODE knows each head by. The posting paths used to reach for a head
+# by its display text, so the owner could not be given a rename button without
+# handing them a way to crash procurement or silently switch off GST recovery
+# (owner 2026-09-07). The name is theirs; these are ours.
+MATERIALS = "MATERIALS"
+LABOUR = "LABOUR"
+SUBCONTRACT = "SUBCONTRACT"
+SITE_OVERHEADS = "SITE_OVERHEADS"
+PERMITS = "PERMITS"
+INPUT_GST = "INPUT_GST"
+IMPORT_CHARGES = "IMPORT_CHARGES"
+RECRUITMENT = "RECRUITMENT"
+INSURANCE_BONDS = "INSURANCE_BONDS"
+GENERAL_STOCK = "GENERAL_STOCK"
+FOREX = "FOREX"
+
 
 def head(name):
-    """Convenience lookup used by the trigger functions."""
+    """Look a head up by its display name.
+
+    Nothing in the posting paths uses this any more — they go through
+    `by_code`, so the owner can rename a head without breaking one. Kept for
+    fixtures and one-off scripts, where the name is what a person knows.
+    """
     return CostHead.objects.get(name=name)
+
+
+def by_code(code):
+    """The head a posting path depends on, or None if it is missing.
+
+    Callers that cannot post without it should say so rather than guess: a
+    fallback to "whatever sorts first" books real money against a head nobody
+    chose.
+    """
+    return CostHead.objects.filter(code=code).first()

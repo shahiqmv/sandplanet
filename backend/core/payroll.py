@@ -1059,11 +1059,11 @@ def lock_run(run, actor):
     from django.utils import timezone
 
     from . import costing, staff_cost
-    from .models import CostHead, Site
+    from .models import Site
 
     if run.status == "LOCKED":
         return
-    head = CostHead.objects.filter(name="Labour & Staff").first()
+    head = costing.by_code(costing.LABOUR)
     by_site = defaultdict(Decimal)
     for line in run.lines.all():
         by_site[line.site_id] += compute_line(line)["gross"]
@@ -1194,7 +1194,8 @@ def raise_payroll_pyr(run, actor):
     """
     from django.db import transaction
 
-    from .models import CostHead, Document, DocumentRevision, Site
+    from . import costing
+    from .models import Document, DocumentRevision, Site
     from .numbering import next_ref
     from .payments import _set_status, create_payment_request
 
@@ -1203,10 +1204,9 @@ def raise_payroll_pyr(run, actor):
     net = sum((compute_line(l)["net"] for l in run.lines.all()), Decimal("0"))
     if net <= 0:
         return None, "There is nothing to pay on this run."
-    head = CostHead.objects.filter(name="Labour & Staff",
-                                   is_active=True).first()
+    head = costing.by_code(costing.LABOUR)
     if head is None:
-        return None, "No 'Labour & Staff' cost head to charge the payroll to."
+        return None, "No staff cost head to charge the payroll to."
     # The combined USD run spans every site, so it has none of its own; Head
     # Office pays it.
     site = run.site or Site.objects.filter(is_head_office=True).first()

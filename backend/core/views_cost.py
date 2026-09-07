@@ -84,7 +84,12 @@ def _site_cost(site):
     """Net committed / incurred / paid for a site, in USD (MVR postings are
     converted at the company rate; contract values are already USD)."""
     rate = fx.usd_rate()
-    agg = CostPosting.objects.filter(site=site).values(
+    # A company overhead — office rent, head-office salaries, a licence — is
+    # not this project's cost, and charging it to whichever site happened to
+    # raise the payment misstated that project. Those heads are totalled on
+    # their own instead, on the cost head page (owner 2026-09-07).
+    agg = CostPosting.objects.filter(site=site).exclude(
+        cost_head__overhead=True).values(
         "cost_head__name", "state", "currency").annotate(t=Sum("amount"))
     heads = {name: {s: Decimal("0") for s in STATES} for name in DEFAULT_HEADS}
     totals = {s: Decimal("0") for s in STATES}
@@ -155,8 +160,10 @@ def site_cost_postings(request, site_id):
         return Response({"detail": "Not found."}, status=404)
     if not _can_see_site_cost(request.user, site):
         return Response({"detail": "Cost data is restricted."}, status=403)
-    qs = CostPosting.objects.filter(site=site).select_related(
-        "cost_head", "document")
+    # Matches the summary above: an overhead head is not this site's cost, so
+    # drilling in must not show rows the totals never counted.
+    qs = CostPosting.objects.filter(site=site).exclude(
+        cost_head__overhead=True).select_related("cost_head", "document")
     if request.GET.get("head"):
         qs = qs.filter(cost_head__name=request.GET["head"])
     if request.GET.get("state"):

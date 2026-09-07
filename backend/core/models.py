@@ -4166,10 +4166,25 @@ class CostHead(models.Model):
     never charged to a project — a small, enforceable deviation from the
     Technical Design schema, recorded in DECISIONS.md (M6)."""
 
+    # What the CODE knows a head by. The name used to be the key: nine heads
+    # were looked up by their exact text, so renaming "Materials" would have
+    # crashed the purchase-order posting and renaming the GST head would have
+    # silently stopped GST recovery. The code is fixed and internal; the name
+    # is the owner's to change (owner 2026-09-07).
+    code = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=60, unique=True)
     sort_order = models.IntegerField(default=100)
     is_pool = models.BooleanField(default=False)  # HO pool, never a project
     is_active = models.BooleanField(default=True)
+    # A head the code depends on: it may be renamed and reordered, never
+    # deleted or switched off, because a posting path reaches for it by code.
+    is_system = models.BooleanField(default=False)
+    # A company running cost — office rent, head-office salaries, licences —
+    # that no project causes. It is kept OUT of every site/project cost
+    # report and totalled on its own instead, because charging it to whatever
+    # site happened to raise the payment misstates that project's cost
+    # (owner 2026-09-07).
+    overhead = models.BooleanField(default=False)
     # A project-commercial cost head (Insurance & Bonds, …): its payment
     # requests skip the site PM and go straight to the Director for approval,
     # then Finance — never the site payment chain (owner 2026-08-04).

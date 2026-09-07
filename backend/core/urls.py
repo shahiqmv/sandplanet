@@ -5,6 +5,7 @@ from . import version as version_api, \
     views, views_biometric as biometric_api, views_bom as bom_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
+    views_cost_heads as cost_heads_api, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
     views_hse as hse_api, \
@@ -205,6 +206,14 @@ urlpatterns = [
     path("admin/audit-trail", views.audit_trail, name="audit-trail"),
     path("pms", views.pm_list, name="pm-list"),
     path("cost-heads", views.cost_heads, name="cost-heads"),
+    # The cost head master page (owner 2026-09-07). The picker above stays as
+    # it is — every screen that books money uses it.
+    path("cost-head-master", cost_heads_api.cost_head_list,
+         name="cost-head-master"),
+    path("cost-head-master/<int:pk>", cost_heads_api.cost_head_detail,
+         name="cost-head-detail"),
+    path("cost-heads/overheads", cost_heads_api.overheads_summary,
+         name="cost-head-overheads"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
          name="awaiting-voucher"),
     path("finance/payables", vouchers.payables, name="finance-payables"),

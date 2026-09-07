@@ -171,8 +171,14 @@ def request_replenishment(fl, user):
                  "cost_head": e.cost_head.name, "payee": e.payee,
                  "purpose": e.purpose, "has_receipt": e.has_receipt}
                 for e in approved]
-    overheads = CostHead.objects.filter(name="Site Overheads").first() \
-        or CostHead.objects.filter(is_pool=False).first()
+    from . import costing
+    # It used to fall back to "whatever head sorts first" when Site Overheads
+    # was missing, which books real money against a head nobody chose. Say so
+    # instead (owner 2026-09-07).
+    overheads = costing.by_code(costing.SITE_OVERHEADS)
+    if overheads is None:
+        return None, ("No 'Site Overheads' cost head to charge the "
+                      "replenishment to.")
     with transaction.atomic():
         ref = next_ref("PYR", fl.site)
         doc = Document.objects.create(

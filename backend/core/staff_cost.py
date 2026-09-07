@@ -85,7 +85,9 @@ def month_staff_cost(site, year, month):
 
 
 def _staff_head():
-    return costing.head("Labour & Staff")
+    # By code, not by name: the owner can rename the head on the cost head
+    # page and this path must keep finding it (owner 2026-09-07).
+    return costing.by_code(costing.LABOUR)
 
 
 def _active_originals(site, year, month):

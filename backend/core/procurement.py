@@ -818,12 +818,11 @@ def _post_pr_line(pr, ln, amount, gst, actor):
     a delivery/QA record with no cost event. Paid posts at vendor payment.
     """
     from . import costing
-    from .models import CostHead
 
     if amount <= 0:
         return
-    head = ln.cost_head or CostHead.objects.get(name="Materials")
-    gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
+    head = ln.cost_head or costing.by_code(costing.MATERIALS)
+    gst_head = costing.by_code(costing.INPUT_GST)
     # Net is the project cost; GST is recoverable input tax (not a project
     # cost) — posted to the Input GST account at HO (owner 2026-07-13).
     for state in ("COMMITTED", "INCURRED"):
@@ -985,16 +984,16 @@ def post_pr_vendor_paid(pr, line, actor, ref):
     """PAID leg when Finance records a vendor payment / settlement (§4A).
     Settles the vendor's payable if credit."""
     from . import costing
-    from .models import CostHead, Payable
+    from .models import Payable
 
     net = (line.amount_cash or 0) + (line.amount_credit or 0)
     gst = line.gst_amount or 0
     if net > 0:
-        materials = CostHead.objects.get(name="Materials")
+        materials = costing.by_code(costing.MATERIALS)
         costing.post(site=pr.site, cost_head=line.cost_head or materials,
                      state="PAID", source="PR", amount=net, document=pr,
                      document_line=line, actor=actor)
-        gst_head = CostHead.objects.filter(name=costing.INPUT_GST_HEAD).first()
+        gst_head = costing.by_code(costing.INPUT_GST)
         if gst > 0 and gst_head is not None:
             costing.post(site=_ho_site(), cost_head=gst_head, state="PAID",
                          source="PR", amount=gst, document=pr,
