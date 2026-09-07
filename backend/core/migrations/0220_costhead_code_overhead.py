@@ -13,8 +13,8 @@ head at a time on the new page — not something a migration decides.
 from django.db import migrations, models
 
 # code → the name it carries today. Anything not listed keeps a slug of its
-# own name and is not a system head.
-SYSTEM = {
+# own name.
+CODES = {
     "MATERIALS": "Materials",
     "LABOUR": "Labour & Staff",
     "SUBCONTRACT": "Subcontract",
@@ -32,6 +32,24 @@ SYSTEM = {
     "INSURANCE_BONDS": "Insurance & Bonds",
 }
 
+# Only these are reached for by a posting path, so only these may not be
+# switched off or removed. Plant & Equipment, Transport & Freight, Other and
+# Stock Adjustment are part of the default chart but nothing in the code looks
+# them up — a head nobody uses should still be switchable off.
+SYSTEM_CODES = {
+    "MATERIALS",         # procurement — the PR line posting
+    "LABOUR",            # payroll — staff cost at lock, and the payroll PYR
+    "SUBCONTRACT",       # subcontract valuations
+    "SITE_OVERHEADS",    # petty cash replenishment
+    "PERMITS",           # work-permit renewal batch
+    "INPUT_GST",         # recoverable input tax
+    "IMPORT_CHARGES",    # import charge payments
+    "RECRUITMENT",       # onboarding fees
+    "INSURANCE_BONDS",   # bond premiums
+    "GENERAL_STOCK",     # HO store
+    "FOREX",             # exchange difference on settlement
+}
+
 
 def slug(name):
     out = "".join(c if c.isalnum() else "_" for c in (name or "").upper())
@@ -42,11 +60,10 @@ def slug(name):
 
 def fill_codes(apps, schema_editor):
     CostHead = apps.get_model("core", "CostHead")
-    by_name = {v: k for k, v in SYSTEM.items()}
+    by_name = {v: k for k, v in CODES.items()}
     taken = set()
     for head in CostHead.objects.all().order_by("id"):
         code = by_name.get(head.name)
-        head.is_system = code is not None
         if code is None:                      # a head someone added by hand
             code = slug(head.name)
             base, n = code, 2
@@ -54,6 +71,7 @@ def fill_codes(apps, schema_editor):
                 code = f"{base[:27]}_{n}"[:30]
                 n += 1
         head.code = code
+        head.is_system = code in SYSTEM_CODES
         taken.add(code)
         head.save(update_fields=["code", "is_system"])
 
