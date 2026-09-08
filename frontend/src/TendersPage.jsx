@@ -30,9 +30,13 @@ export default function TendersPage({ me, sites }) {
   const [error, setError] = useState(null);
   const can = MANAGE.includes(me.role);
 
-  const load = () => api(`/tenders${onlyOpen ? "?open=1" : ""}`)
-    .then(setRows).catch((e) => setError(e.message));
-  useEffect(load, [onlyOpen]); // eslint-disable-line
+  const load = () => { api(`/tenders${onlyOpen ? "?open=1" : ""}`)
+    .then(setRows).catch((e) => setError(e.message)); };
+  // NOT useEffect(load, …) when load returns a promise: React treats an
+  // effect's return value as the cleanup function and calls it on unmount,
+  // so closing the page threw "n is not a function" and took the whole app
+  // down with it (owner 2026-09-09). Same trap as AgreementsPanel.
+  useEffect(load, [onlyOpen]);
 
   const live = (rows || []).filter((r) =>
     ["DRAFT", "SUBMITTED"].includes(r.status));
@@ -192,9 +196,9 @@ function TenderDetail({ id, me, onClose }) {
   const [ref, setRef] = useState("");
   const can = MANAGE.includes(me.role);
 
-  const load = () => api(`/tenders/${id}`).then(setT)
-    .catch((e) => setErr(e.message));
-  useEffect(load, [id]); // eslint-disable-line
+  const load = () => { api(`/tenders/${id}`).then(setT)
+    .catch((e) => setErr(e.message)); };
+  useEffect(load, [id]);
 
   async function act(action, body) {
     setBusy(true); setErr(null);
