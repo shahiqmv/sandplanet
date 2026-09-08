@@ -190,12 +190,13 @@ def issue_revision(t, data, actor):
     value = _dec(data.get("value"))
     if value is None or value <= 0:
         return "Enter the value being offered."
-    if not t.submit_our_format and not doc.attachments.exists():
+    if not t.submit_our_format and not doc.attachments.filter(
+            kind="TENDER_BILL").exists():
         # The lines are captured either way; what differs is the document that
         # goes out. Here it is the client's own file, so issuing without it
         # would record a submission the system cannot produce.
-        return ("This offer is submitted on the client's own bill — attach "
-                "the file being sent before issuing it.")
+        return ("This offer is submitted on the client's own bill — upload "
+                "that file under Documents before issuing it.")
     from django.utils import timezone
     rev.issued_at = timezone.now()
     rev.payload = {**(rev.payload or {}), "value": str(value)}

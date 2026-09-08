@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from . import tenders as svc
+from .audit import audit
 
 
 def _rev(r):
@@ -56,9 +57,16 @@ def _row(t, full=False):
                       "answered": r.is_answered}
                      for r in t.rfis.all()],
             "attachments": [{"id": a.id, "kind": a.kind,
+                             "kind_label": a.get_kind_display(),
                              "caption": a.caption,
+                             "file_name": a.file_name,
+                             "uploaded_at": a.created_at,
+                             # Part of a submission, so not removable.
+                             "issued": bool(a.revision_id
+                                            and a.revision.issued_at),
                              "url": a.file.url if a.file else None}
-                            for a in doc.attachments.all()],
+                            for a in doc.attachments.select_related("revision")
+                            .exclude(kind="GENERATED_PDF")],
         })
     return out
 
@@ -308,3 +316,72 @@ def tender_boq_import(request, pk):
         return Response({"detail": msg}, status=400)
     t.refresh_from_db()
     return Response(_boq_payload(t))
+
+
+# ---- tender documents --------------------------------------------------
+#
+# Everything the enquiry arrives with and everything it produces: their
+# enquiry pack, the bill on their own form where we must submit on it, any
+# addenda, and the award letter at the end. The bill is not optional — an
+# offer on the client's form cannot be issued until it is here, because that
+# file IS the submission (owner 2026-09-09).
+
+TENDER_DOC_KINDS = ("TENDER_ENQUIRY", "TENDER_BILL", "TENDER_ADDENDUM",
+                    "TENDER_AWARD", "ENCLOSURE")
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def tender_documents(request, pk):
+    from .models import Attachment
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "QS, the Director or Admin file tender "
+                                   "documents."}, status=403)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "Choose a file to upload."}, status=400)
+    kind = request.data.get("kind") or "TENDER_ENQUIRY"
+    if kind not in TENDER_DOC_KINDS:
+        return Response({"detail": "Unknown document kind."}, status=400)
+    doc = t.document
+    a = Attachment.objects.create(
+        document=doc, revision=doc.current_revision, kind=kind, file=upload,
+        file_name=upload.name, content_type=upload.content_type or "",
+        size_bytes=upload.size, caption=request.data.get("caption", ""),
+        uploaded_by=request.user)
+    audit("tender", t.id, "TENDER_DOCUMENT_ADDED", actor=request.user,
+          detail={"ref": doc.ref, "kind": kind, "name": a.file_name})
+    return Response(_row(t, full=True), status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def tender_document_delete(request, pk, att_id):
+    """Remove a document filed by mistake.
+
+    Never one that went out: an attachment stamped with a revision that has
+    been ISSUED is part of what the client received, and the record of a
+    submission is not edited afterwards.
+    """
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "QS, the Director or Admin file tender "
+                                   "documents."}, status=403)
+    a = t.document.attachments.filter(pk=att_id).first()
+    if a is None:
+        return Response({"detail": "That document is not on this tender."},
+                        status=404)
+    if a.revision_id and a.revision.issued_at is not None:
+        return Response({"detail": f"{a.file_name} went to the client with "
+                                   f"{a.revision.rev_label} and stays on the "
+                                   "record."}, status=400)
+    audit("tender", t.id, "TENDER_DOCUMENT_REMOVED", actor=request.user,
+          detail={"ref": t.document.ref, "name": a.file_name})
+    a.delete()
+    return Response(_row(t, full=True))

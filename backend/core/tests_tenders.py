@@ -480,3 +480,90 @@ class TenderTrailAndPackTests(TestCase):
         self.assertIn("on your own form", html)
         # Our schedule is NOT appended — they are getting their own bill.
         self.assertNotIn("Secret rate", html)
+
+
+class TenderDocumentTests(TestCase):
+    """The files an enquiry arrives with and produces. The client's own bill
+    is the one that matters: where we submit on their form, that file IS the
+    submission (owner 2026-09-09)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("tdoc_qs", User.Role.QS)
+        self.pm = make_user("tdoc_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "Soneva",
+            "title": "Jetty", "submit_our_format": False}, format="json").data
+
+    def _file(self, name="their-boq.xlsx"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b"x,y\n1,2\n",
+                                  content_type="text/csv")
+
+    def _upload(self, kind="TENDER_BILL", name="their-boq.xlsx"):
+        return self.client.post(f"/api/v1/tenders/{self.t['id']}/documents",
+                                {"file": self._file(name), "kind": kind},
+                                format="multipart")
+
+    def test_a_document_can_be_filed_against_a_tender(self):
+        r = self._upload(kind="TENDER_ENQUIRY", name="enquiry.pdf")
+        self.assertEqual(r.status_code, 201, r.data)
+        got = r.data["attachments"][0]
+        self.assertEqual(got["file_name"], "enquiry.pdf")
+        self.assertEqual(got["kind"], "TENDER_ENQUIRY")
+        self.assertFalse(got["issued"])
+
+    def test_their_bill_is_what_unblocks_issuing(self):
+        blocked = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                                   {"value": "1000"}, format="json")
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("upload that file", blocked.data["detail"])
+        # An enquiry document is not their bill and must not unblock it.
+        self._upload(kind="TENDER_ENQUIRY", name="enquiry.pdf")
+        still = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                                 {"value": "1000"}, format="json")
+        self.assertEqual(still.status_code, 400)
+        self._upload(kind="TENDER_BILL")
+        ok = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                              {"value": "1000"}, format="json")
+        self.assertEqual(ok.status_code, 200, ok.data)
+
+    def test_a_file_that_went_to_the_client_stays_on_the_record(self):
+        r = self._upload(kind="TENDER_BILL")
+        att = r.data["attachments"][0]["id"]
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                         {"value": "1000"}, format="json")
+        gone = self.client.delete(
+            f"/api/v1/tenders/{self.t['id']}/documents/{att}")
+        self.assertEqual(gone.status_code, 400)
+        self.assertIn("stays on the record", gone.data["detail"])
+
+    def test_a_file_filed_by_mistake_can_go(self):
+        r = self._upload(kind="TENDER_ENQUIRY", name="wrong.pdf")
+        att = r.data["attachments"][0]["id"]
+        gone = self.client.delete(
+            f"/api/v1/tenders/{self.t['id']}/documents/{att}")
+        self.assertEqual(gone.status_code, 200, gone.data)
+        self.assertEqual(gone.data["attachments"], [])
+
+    def test_an_unknown_kind_is_refused(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/documents",
+                             {"file": SimpleUploadedFile("x.pdf", b"x"),
+                              "kind": "PASSPORT_COPY"}, format="multipart")
+        self.assertEqual(r.status_code, 400)
+
+    def test_a_pm_reads_the_documents_but_files_none(self):
+        self._upload(kind="TENDER_ENQUIRY", name="enquiry.pdf")
+        self.client.force_authenticate(self.pm)
+        got = self.client.get(f"/api/v1/tenders/{self.t['id']}").data
+        self.assertEqual(len(got["attachments"]), 1)
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/documents",
+                             {"file": self._file(), "kind": "TENDER_BILL"},
+                             format="multipart")
+        self.assertEqual(r.status_code, 403)

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { useEffect, useRef, useState } from "react";
+import { api, apiUpload } from "./api.js";
 import BoqPanel from "./BoqPanel.jsx";
 import { Btn, Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
@@ -274,6 +274,7 @@ function TenderDetail({ id, me, onClose }) {
           <BoqPanel base={`/tenders/${t.id}`} me={me} />
         </div>
 
+        <Docs t={t} can={can} onChanged={setT} />
         <Trail t={t} can={can && live} busy={busy} act={act} />
 
         {!t.submit_our_format && (
@@ -433,6 +434,93 @@ function Trail({ t, can, busy, act }) {
                  setVisit({ visited_on: "", attendees: "", notes: "" }); }}>
             Log visit</Btn>
         </div>)}
+    </div>
+  );
+}
+
+
+/* Everything the enquiry arrived with and everything it produces. The
+ * client's own bill is the one that matters: where we submit on their form
+ * that file IS the submission, so the offer cannot be issued until it is
+ * here (owner 2026-09-09).
+ */
+const DOC_KINDS = [
+  ["TENDER_ENQUIRY", "Enquiry document"],
+  ["TENDER_BILL", "Their bill (the form we submit on)"],
+  ["TENDER_ADDENDUM", "Addendum / clarification"],
+  ["TENDER_AWARD", "Award letter"],
+  ["ENCLOSURE", "Other enclosure"],
+];
+
+function Docs({ t, can, onChanged }) {
+  const [kind, setKind] = useState("TENDER_ENQUIRY");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileRef = useRef(null);
+
+  async function upload(file) {
+    if (!file) return;
+    setBusy(true); setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", kind);
+      onChanged(await apiUpload(`/tenders/${t.id}/documents`, fd));
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); if (fileRef.current) fileRef.current.value = ""; }
+  }
+  async function remove(a) {
+    setBusy(true); setErr(null);
+    try {
+      onChanged(await api(`/tenders/${t.id}/documents/${a.id}`,
+                          { method: "DELETE" }));
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  const docs = t.attachments || [];
+  const needsBill = !t.submit_our_format
+    && !docs.some((a) => a.kind === "TENDER_BILL");
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Documents</h4>
+      {needsBill && (
+        <p style={{ fontSize: 12.5, color: "#b35900", margin: "0 0 6px" }}>
+          This offer is submitted on the client's own bill — upload that file
+          here before issuing it.
+        </p>)}
+      {docs.length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+          Nothing filed yet.</p>)}
+      {docs.map((a) => (
+        <div key={a.id} style={{ borderTop: "1px solid var(--sp-border)",
+                                 padding: "5px 0", fontSize: 13,
+                                 display: "flex", gap: 8,
+                                 alignItems: "baseline", flexWrap: "wrap" }}>
+          <a href={a.url} target="_blank" rel="noreferrer">{a.file_name}</a>
+          <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
+            {a.kind_label}</span>
+          {a.issued && <Chip tone="ok">sent to the client</Chip>}
+          {can && !a.issued && (
+            <button style={{ ...ghostButton, padding: "1px 6px", fontSize: 11,
+                             marginLeft: "auto", color: "#c0392b" }}
+                    disabled={busy} onClick={() => remove(a)}>Remove</button>)}
+        </div>))}
+      {can && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8,
+                      flexWrap: "wrap", alignItems: "center" }}>
+          <select value={kind} onChange={(e) => setKind(e.target.value)}
+                  style={{ ...inputStyle, width: 230 }}>
+            {DOC_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => fileRef.current?.click()}>
+            {busy ? "Uploading…" : "⬆ Upload"}</Btn>
+          <input ref={fileRef} type="file" style={{ display: "none" }}
+                 onChange={(e) => upload(e.target.files[0])} />
+        </div>)}
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
     </div>
   );
 }

@@ -820,6 +820,13 @@ class Attachment(models.Model):
         # Onboarding case documents (checklist + processing evidence)
         ("PASSPORT_COPY", "Passport copy"), ("PASSPORT_PHOTO", "Passport photo"),
         ("PASSPORT_OBS", "Passport observation page"), ("CV", "CV"),
+        # Tender documents (owner 2026-09-09). The client's own bill is the
+        # one that matters most: where we submit on their form, that file IS
+        # the submission, so an offer cannot be issued without it.
+        ("TENDER_ENQUIRY", "Tender enquiry document"),
+        ("TENDER_BILL", "Tender bill — the client's form"),
+        ("TENDER_ADDENDUM", "Tender addendum / clarification"),
+        ("TENDER_AWARD", "Award letter"),
     ]
 
     document = models.ForeignKey(
