@@ -6,6 +6,7 @@ from . import version as version_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
+    views_tenders as tenders_api, \
     views_documents as docs, \
     views_hr as hr, views_imports as imports_api, views_leave as leave_api, \
     views_hse as hse_api, \
@@ -214,6 +215,11 @@ urlpatterns = [
          name="cost-head-detail"),
     path("cost-heads/overheads", cost_heads_api.overheads_summary,
          name="cost-head-overheads"),
+    # Tenders & offers — the pre-award register (owner 2026-09-08).
+    path("tenders", tenders_api.tender_list, name="tenders"),
+    path("tenders/<int:pk>", tenders_api.tender_detail, name="tender-detail"),
+    path("tenders/<int:pk>/<str:action>", tenders_api.tender_action,
+         name="tender-action"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,
          name="awaiting-voucher"),
     path("finance/payables", vouchers.payables, name="finance-payables"),

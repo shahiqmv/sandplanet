@@ -381,6 +381,7 @@ class Document(models.Model):
         DLY = "DLY"  # delay event
         EOT = "EOT"  # extension of time application
         TR = "TR"    # material / site test request (QA/QC, 2026-08-29)
+        TDR = "TDR"  # tender / offer to a client, pre-award (owner 2026-09-08)
         # Civil submittals — the MAR/SD/MS family, same approval chain
         # (owner 2026-08-30).
         MXD = "MXD"  # concrete mix design
@@ -582,6 +583,20 @@ class Document(models.Model):
         "GRN": {
             "DRAFT": {"COUNTED"},
             "COUNTED": {"COMPLETE", "SHORTAGE_REPORTED"},
+        },
+        # A tender is priced, revised and only then issued. Revisions live
+        # inside DRAFT — the register's whole point is that an ISSUED revision
+        # is a submission and an unissued one is internal working (owner
+        # 2026-09-08). The outcome is a state, not a note: a tender ends
+        # AWARDED, LOST or WITHDRAWN and nothing else.
+        "TDR": {
+            "DRAFT": {"SUBMITTED", "CANCELLED"},
+            # Back to DRAFT to price a further revision after submitting; the
+            # revision already issued stays on the record either way.
+            "SUBMITTED": {"AWARDED", "LOST", "WITHDRAWN", "DRAFT"},
+            "AWARDED": {"CLOSED"},
+            "LOST": {"CLOSED"},
+            "WITHDRAWN": {"CLOSED"},
         },
         "PO": {  # generated per awarded credit supplier on PR approval (R2)
             # A purchase order is a commitment, not a payment, so it does not
@@ -3267,6 +3282,65 @@ class ProjectBond(models.Model):
 
     class Meta:
         ordering = ["kind", "id"]
+
+
+class Tender(models.Model):
+    """An offer to a client, before there is a project — the typed header on a
+    TDR document, the way ImportOrder heads an IPR.
+
+    BOQs are priced by the QS outside the system and only reached it once won,
+    so the system held the awarded bills and no record of a single submission:
+    not what was sent, in which revision, under what reference, or what came
+    of it. That is where the drift in format and numbering came from — nothing
+    was issuing the reference, so every submission invented one (owner
+    2026-09-08).
+
+    The document underneath carries the reference, the revisions (an ISSUED
+    revision is a submission; an unissued one is internal working), the
+    attachments and the trail. This header carries the commercial facts.
+    """
+
+    class Outcome(models.TextChoices):
+        AWARDED = "AWARDED", "Awarded"
+        LOST = "LOST", "Lost"
+        WITHDRAWN = "WITHDRAWN", "Withdrawn"
+
+    document = models.OneToOneField(Document, on_delete=models.CASCADE,
+                                    related_name="tender")
+    client_name = models.CharField(max_length=160)
+    client_contact = models.TextField(blank=True)
+    title = models.TextField()
+    scope = models.TextField(blank=True)
+    enquiry_date = models.DateField(null=True, blank=True)
+    due_date = models.DateField(null=True, blank=True)      # submission due
+    # Whose bill format goes out. Ours is rendered from the captured lines;
+    # theirs is their own file, attached — but the lines are still captured so
+    # the register can compare what we offered with what was awarded (owner
+    # 2026-09-08).
+    our_format = models.BooleanField(default=True)
+    currency = models.CharField(max_length=3, default="USD")
+    # What the issued revision was worth. Stamped at issue so a later revision
+    # cannot quietly restate what the client was already sent.
+    value_submitted = models.DecimalField(max_digits=14, decimal_places=2,
+                                          null=True, blank=True)
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    outcome_date = models.DateField(null=True, blank=True)
+    outcome_ref = models.CharField(max_length=60, blank=True)   # their LOA ref
+    value_awarded = models.DecimalField(max_digits=14, decimal_places=2,
+                                        null=True, blank=True)
+    lost_reason = models.TextField(blank=True)
+    lost_to = models.CharField(max_length=160, blank=True)   # who won it
+    # Set when an award creates the job. The BOQ moves to it rather than being
+    # copied, so there is never a second priced bill to disagree with this one.
+    awarded_project = models.ForeignKey("Project", on_delete=models.PROTECT,
+                                        null=True, blank=True,
+                                        related_name="won_from")
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.document.ref} — {self.client_name}"
 
 
 class Boq(models.Model):

@@ -53,6 +53,7 @@ import MeetingsPage from "./MeetingsPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import CostHeadsPage from "./CostHeadsPage.jsx";
+import TendersPage from "./TendersPage.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
 import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
@@ -121,6 +122,11 @@ const NAV_GROUPS = [
            ["contract", "Contract & time",
             ["PM", "DIRECTOR", "ADMIN", "QS", "SIGNATORY", "PA",
              "SITE_ENGINEER", "SITE_ADMIN"]],
+           // Offers, before there is a project to put them on. A site PM
+           // sees their own site's enquiries — they walked the job (owner
+           // 2026-09-08).
+           ["tenders", "Tenders & Offers",
+            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"]],
            ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
     // PM is here ONLY for the Procurement Schedule, which used to be its own
@@ -1292,6 +1298,11 @@ export default function App() {
             ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"].includes(me.role) &&
             hoPage === "cost-heads" && (
             <CostHeadsPage me={me} />
+          )}
+          {!docView && !openSite &&
+            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"].includes(me.role) &&
+            hoPage === "tenders" && (
+            <TendersPage me={me} sites={sites} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>
