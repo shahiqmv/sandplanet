@@ -199,29 +199,9 @@ def boq_import(request, pid):
     if not upload:
         return Response({"detail": "Attach the filled BOQ Excel (.xlsx)."},
                         status=400)
-    from openpyxl import load_workbook
-    try:
-        wb = load_workbook(upload, read_only=True, data_only=True)
-    except Exception:
-        return Response({"detail": "Could not read that file — save it as "
-                         ".xlsx and try again."}, status=400)
-    ws = wb["BOQ"] if "BOQ" in wb.sheetnames else wb.active
-    rows_iter = ws.iter_rows(values_only=True)
-    header = next(rows_iter, None)
-    if not header:
-        return Response({"detail": "The sheet is empty."}, status=400)
-    keys = [commercial.normalise_header(h) for h in header]
-    if "description" not in keys:
-        return Response({"detail": "Need at least a Description column."},
-                        status=400)
-    rows = []
-    for raw in rows_iter:
-        if raw is None or all(c in (None, "") for c in raw):
-            continue
-        rows.append({k: v for k, v in zip(keys, raw) if k})
-    if not rows:
-        return Response({"detail": "No rows found below the header."},
-                        status=400)
+    rows, msg = commercial.rows_from_xlsx(upload)
+    if msg:
+        return Response({"detail": msg}, status=400)
     boq, msg = commercial.import_boq_rows(p, rows, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
@@ -232,28 +212,10 @@ def boq_import(request, pid):
 @permission_classes([IsAuthenticated])
 def boq_template(request, pid):
     from django.http import HttpResponse
-    from openpyxl import Workbook
-    from openpyxl.styles import Font
     p, err = _get_project(request, pid)
     if err:
         return err
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "BOQ"
-    # Supply (Material) + Install (Labour) columns; leave Install blank for a
-    # combined-rate contract.
-    headers = ["Section", "Code", "Description", "Unit", "Qty",
-               "Material", "Labour"]
-    ws.append(headers)
-    for i, w in enumerate([22, 10, 46, 8, 12, 12, 12], start=1):
-        ws.cell(row=1, column=i).font = Font(bold=True)
-        ws.column_dimensions[chr(64 + i)].width = w
-    ws.append(["Bill 1 — Substructure", "", "", "", "", "", ""])
-    ws.append(["", "1.1", "Excavate for foundations", "m3", "120", "5.00",
-               "3.50"])
-    ws.append(["", "1.2", "Mass concrete blinding", "m3", "35", "80.00",
-               "15.00"])
-    ws.freeze_panes = "A2"
+    wb = commercial.template_workbook()
     resp = HttpResponse(content_type="application/vnd.openxmlformats-"
                         "officedocument.spreadsheetml.sheet")
     resp["Content-Disposition"] = 'attachment; filename="boq-template.xlsx"'
@@ -264,12 +226,27 @@ def boq_template(request, pid):
 # ---- BOQ capture from PDF / Excel (extract → review → commit) ------------
 
 def _get_import(request, pk):
+    """A capture draft, whoever owns it.
+
+    A draft belongs to a project or to a tender. Checking `imp.project`
+    unconditionally crashed on a tender's draft — capture worked and the
+    commit 500'd (owner 2026-09-08).
+    """
+    from . import tenders as tender_svc
     from .models import BoqImport
     try:
-        imp = BoqImport.objects.select_related("project__site").get(pk=pk)
+        imp = (BoqImport.objects
+               .select_related("project__site", "tender__document__site")
+               .get(pk=pk))
     except BoqImport.DoesNotExist:
         return None, Response({"detail": "Not found."}, status=404)
-    if not _can_view_value(request.user, imp.project):
+    if imp.tender_id is not None:
+        allowed = (tender_svc.can_view(request.user)
+                   and tender_svc.visible_to(request.user)
+                   .filter(pk=imp.tender_id).exists())
+    else:
+        allowed = _can_view_value(request.user, imp.project)
+    if not allowed:
         return None, Response({"detail": "Not permitted."}, status=403)
     return imp, None
 
@@ -418,7 +395,9 @@ def boq_import_commit(request, pk):
     boq, msg = boq_extract.commit(imp, request.user)
     if msg:
         return Response({"detail": msg}, status=400)
-    return Response(_boq_payload(imp.project))
+    # The payload comes from whoever owns the draft — `_boq_payload` reads
+    # `.boq` off either.
+    return Response(_boq_payload(imp.owner))
 
 
 # ---- Variations (VOs) ---------------------------------------------------

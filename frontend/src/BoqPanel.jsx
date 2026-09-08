@@ -201,7 +201,7 @@ export default function BoqPanel({ projectId, project, me, base }) {
         {canEdit && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8,
                         flexWrap: "wrap" }}>
-            {!onTender && !isUnit && (
+            {!isUnit && (
               <a href={`/api/v1${root}/boq/template`}
                  style={{ ...ghostButton, textDecoration: "none",
                           padding: "4px 12px" }}>⬇ Template</a>
@@ -234,7 +234,6 @@ export default function BoqPanel({ projectId, project, me, base }) {
                     <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
                            style={{ display: "none" }}
                            onChange={(e) => captureFile(e.target.files[0])} />
-                    {!onTender && (<>
                     <button style={{ ...ghostButton, padding: "4px 12px" }}
                             disabled={busy}
                             onClick={() => fileRef.current?.click()}>
@@ -242,7 +241,6 @@ export default function BoqPanel({ projectId, project, me, base }) {
                     <input ref={fileRef} type="file" accept=".xlsx"
                            style={{ display: "none" }}
                            onChange={(e) => importFile(e.target.files[0])} />
-                    </>)}
                     <button style={{ ...ghostButton, padding: "4px 12px" }}
                             onClick={() => setEditing(true)}>
                       ✎ {boq.exists ? "Edit" : "Enter manually"}</button>

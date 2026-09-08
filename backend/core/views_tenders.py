@@ -47,6 +47,14 @@ def _row(t, full=False):
             "revisions": [_rev(r) for r in
                           doc.revisions.select_related("created_by")
                           .order_by("id")],
+            "visits": [{"id": v.id, "visited_on": v.visited_on,
+                        "attendees": v.attendees, "notes": v.notes}
+                       for v in t.visits.all()],
+            "rfis": [{"id": r.id, "number": r.number,
+                      "question": r.question, "raised_on": r.raised_on,
+                      "answer": r.answer, "answered_on": r.answered_on,
+                      "answered": r.is_answered}
+                     for r in t.rfis.all()],
             "attachments": [{"id": a.id, "kind": a.kind,
                              "caption": a.caption,
                              "url": a.file.url if a.file else None}
@@ -116,6 +124,13 @@ def tender_action(request, pk, action):
         _rv, msg = svc.add_revision(t, request.data, request.user)
     elif action == "issue":
         msg = svc.issue_revision(t, request.data, request.user)
+    elif action == "visit":
+        _v, msg = svc.add_visit(t, request.data, request.user)
+    elif action == "rfi":
+        _r, msg = svc.raise_rfi(t, request.data, request.user)
+    elif action == "rfi-answer":
+        _r, msg = svc.answer_rfi(t, request.data.get("rfi_id"), request.data,
+                                 request.user)
     elif action in ("awarded", "lost", "withdrawn"):
         msg = svc.record_outcome(t, action.upper(), request.data,
                                  request.user)
@@ -217,3 +232,79 @@ def tender_boq_draft(request, pk):
     imp = (BoqImport.objects.filter(tender=t, status="DRAFT")
            .order_by("-created_at").first())
     return Response(boq_extract.import_payload(imp) if imp else None)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_submission_pdf(request, pk):
+    """The pack that goes to the client: covering letter, priced summary, and
+    the bill where we submit on our own form.
+
+    Available before issue too — the QS needs to read the letter before
+    sending it — but the reference and revision on it are the real ones.
+    """
+    from .views_commercial import pdf_bytes
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if t.document.current_revision is None:
+        return Response({"detail": "There is nothing to submit yet."},
+                        status=400)
+    ctx = svc.submission_context(t)
+    from django.http import HttpResponse
+    try:
+        pdf = pdf_bytes("pdf/tender_submission.html", ctx)
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"},
+                        status=500)
+    rev = t.document.current_revision.rev_label
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = (
+        f'inline; filename="{t.document.ref}-{rev}-submission.pdf"')
+    return resp
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_boq_template(request, pk):
+    """The same blank pricing sheet a project hands out."""
+    from django.http import HttpResponse
+
+    from . import commercial
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    wb = commercial.template_workbook()
+    resp = HttpResponse(content_type="application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = 'attachment; filename="boq-template.xlsx"'
+    wb.save(resp)
+    return resp
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def tender_boq_import(request, pk):
+    """Load a filled pricing sheet onto the offer."""
+    from . import commercial
+    from .views_commercial import _boq_payload
+    t, err = _boq_target(request, pk, writing=True)
+    if err:
+        return err
+    upload = request.FILES.get("file")
+    if not upload:
+        return Response({"detail": "Attach the filled BOQ Excel (.xlsx)."},
+                        status=400)
+    rows, msg = commercial.rows_from_xlsx(upload)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    _boq, msg = commercial.import_boq_rows(t, rows, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    t.refresh_from_db()
+    return Response(_boq_payload(t))

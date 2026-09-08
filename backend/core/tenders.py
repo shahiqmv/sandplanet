@@ -18,7 +18,8 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 
 from .audit import audit
-from .models import Document, DocumentRevision, Project, Site, Tender
+from .models import (Document, DocumentRevision, Project, Site,
+                     Tender, TenderRfi, TenderSiteVisit)
 from .numbering import next_ref
 
 # QS prices them and the Director decides; Admin keeps the register. A
@@ -283,3 +284,120 @@ def record_outcome(t, outcome, data, actor):
         if msg:
             return msg
     return None
+
+
+# ---- the submission pack ----------------------------------------------
+
+def _sections(boq):
+    """The bill grouped by its own section headings, for the summary page.
+
+    A client reads a summary before a bill; without one the covering letter
+    hands them 300 lines and a total (owner 2026-09-08).
+    """
+    if boq is None:
+        return [], Decimal("0")
+    rows, total = [], Decimal("0")
+    current = None
+    for it in boq.items.all().order_by("sort_order", "id"):
+        if it.is_heading:
+            name = (it.section or it.description or "").strip()
+            current = {"name": name or "—", "amount": Decimal("0"),
+                       "lines": 0}
+            rows.append(current)
+            continue
+        amount = it.amount or Decimal("0")
+        total += amount
+        if current is None:
+            current = {"name": "—", "amount": Decimal("0"), "lines": 0}
+            rows.append(current)
+        current["amount"] += amount
+        current["lines"] += 1
+    # A heading nobody priced under is noise on a summary page.
+    return [r for r in rows if r["lines"]], total
+
+
+def submission_context(t):
+    """Everything the covering letter and summary print."""
+    from .commercial import amount_in_words
+    from .pdf import _font_dir, company_info, mark_src
+
+    doc = t.document
+    rev = doc.current_revision
+    boq = boq_for(t)
+    sections, total = _sections(boq)
+    offered = t.value_submitted if t.value_submitted is not None else total
+
+    def fdate(d):
+        return d.strftime("%d %b %Y") if d else ""
+
+    return {
+        "mark_src": mark_src(), "font_dir": _font_dir(),
+        "co": company_info(), "ref": doc.ref,
+        "issue_date": fdate((rev.issued_at.date() if rev and rev.issued_at
+                             else doc.doc_date)),
+        "value_words": amount_in_words(offered, t.currency),
+        "due_date": fdate(t.due_date),
+        "enquiry_date": fdate(t.enquiry_date),
+        "tender": t, "doc": doc, "rev": rev, "site": doc.site,
+        "boq": boq, "sections": sections,
+        # The header value is what was actually offered; the bill's own total
+        # is shown beside it so a divergence is visible rather than hidden.
+        "bill_total": total,
+        "offered": t.value_submitted,
+        "diverges": (t.value_submitted is not None
+                     and abs((t.value_submitted or Decimal("0")) - total)
+                     >= Decimal("0.01")),
+        "issued_on": rev.issued_at if rev else None,
+        "our_bill": t.submit_our_format,
+    }
+
+
+# ---- what the price rested on -----------------------------------------
+
+def add_visit(t, data, actor):
+    """Record a visit made while pricing."""
+    when = data.get("visited_on")
+    if not when:
+        return None, "When was the visit?"
+    v = TenderSiteVisit.objects.create(
+        tender=t, visited_on=when,
+        attendees=data.get("attendees", ""), notes=data.get("notes", ""),
+        created_by=actor)
+    audit("tender", t.id, "TENDER_VISIT_LOGGED", actor=actor,
+          detail={"ref": t.document.ref, "on": str(v.visited_on)})
+    return v, None
+
+
+@transaction.atomic
+def raise_rfi(t, data, actor):
+    """Put a question to the client. Numbered within the tender, so an RFI can
+    be cited to them as 'our RFI 3 against TDR-SJR-001'."""
+    q = (data.get("question") or "").strip()
+    if not q:
+        return None, "What is the question?"
+    n = (t.rfis.order_by("-number").values_list("number", flat=True)
+         .first() or 0) + 1
+    r = TenderRfi.objects.create(
+        tender=t, number=n, question=q,
+        raised_on=data.get("raised_on") or date.today(), created_by=actor)
+    audit("tender", t.id, "TENDER_RFI_RAISED", actor=actor,
+          detail={"ref": t.document.ref, "rfi": n})
+    return r, None
+
+
+def answer_rfi(t, rfi_id, data, actor):
+    """Record what the client said. Their answer is why a later revision is
+    priced differently, so it is kept with the question rather than in a
+    mailbox."""
+    r = t.rfis.filter(pk=rfi_id).first()
+    if r is None:
+        return None, "That question is not on this tender."
+    answer = (data.get("answer") or "").strip()
+    if not answer:
+        return None, "Enter the client's answer."
+    r.answer = answer
+    r.answered_on = data.get("answered_on") or date.today()
+    r.save(update_fields=["answer", "answered_on"])
+    audit("tender", t.id, "TENDER_RFI_ANSWERED", actor=actor,
+          detail={"ref": t.document.ref, "rfi": r.number})
+    return r, None

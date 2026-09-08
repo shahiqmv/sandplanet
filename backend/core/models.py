@@ -3344,6 +3344,56 @@ class Tender(models.Model):
         return f"{self.document.ref} — {self.client_name}"
 
 
+class TenderSiteVisit(models.Model):
+    """A visit made while pricing. Half of what a tender price rests on is
+    what the estimator saw — access, existing conditions, what the drawings
+    do not show — and none of it was written down anywhere the next person
+    could find (owner 2026-09-08)."""
+
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
+                               related_name="visits")
+    visited_on = models.DateField()
+    attendees = models.TextField(blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-visited_on", "-id"]
+
+
+class TenderRfi(models.Model):
+    """A question put to the client while pricing, and their answer.
+
+    This is the trail that explains why a price moved between revisions —
+    without it a later revision looks like a change of mind rather than a
+    response to what the client told us (owner 2026-09-08).
+    """
+
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
+                               related_name="rfis")
+    number = models.PositiveIntegerField()          # 1, 2, 3… within a tender
+    question = models.TextField()
+    raised_on = models.DateField()
+    answer = models.TextField(blank=True)
+    answered_on = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(fields=["tender", "number"],
+                                    name="uniq_tender_rfi_number"),
+        ]
+
+    @property
+    def is_answered(self):
+        return bool(self.answer.strip()) and self.answered_on is not None
+
+
 class Boq(models.Model):
     """A project's Bill of Quantities — the priced contract schedule the QS
     progresses interim claims against. One per project; locked once claiming

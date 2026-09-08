@@ -263,9 +263,18 @@ function TenderDetail({ id, me, onClose }) {
           </tbody>
         </table>
 
+        <p style={{ margin: "10px 0 0" }}>
+          <a href={`/api/v1/tenders/${t.id}/submission.pdf`} target="_blank"
+             rel="noreferrer" style={{ fontSize: 13 }}>
+            ⬇ Submission pack ({current?.rev_label || "R0"}) — covering letter,
+            summary{t.submit_our_format ? " and bill" : ""}</a>
+        </p>
+
         <div style={{ marginTop: 18 }}>
           <BoqPanel base={`/tenders/${t.id}`} me={me} />
         </div>
+
+        <Trail t={t} can={can && live} busy={busy} act={act} />
 
         {!t.submit_our_format && (
           <p style={{ fontSize: 12.5, color: "#b35900", margin: "8px 0 0" }}>
@@ -327,6 +336,103 @@ function TenderDetail({ id, me, onClose }) {
                 : `Withdrawn ${day(t.outcome_date)}.`}
           </p>)}
       </div>
+    </div>
+  );
+}
+
+
+/* What the price rested on: the visit, and the questions the client answered.
+ * Without the RFI trail a later revision reads as a change of mind rather
+ * than a response to what the client told us (owner 2026-09-08).
+ */
+function Trail({ t, can, busy, act }) {
+  const [q, setQ] = useState("");
+  const [visit, setVisit] = useState({ visited_on: "", attendees: "",
+                                       notes: "" });
+  const [answering, setAnswering] = useState(null);
+  const [ans, setAns] = useState("");
+
+  return (
+    <div style={{ marginTop: 18 }}>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>
+        Questions to the client</h4>
+      {(t.rfis || []).length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+          None raised.</p>)}
+      {(t.rfis || []).map((r) => (
+        <div key={r.id} style={{ borderTop: "1px solid var(--sp-border)",
+                                 padding: "6px 0", fontSize: 13 }}>
+          <div><strong>RFI {r.number}</strong>
+            <span style={{ color: "var(--muted)", marginLeft: 8 }}>
+              raised {day(r.raised_on)}</span>
+            {r.answered
+              ? <Chip tone="ok">answered {day(r.answered_on)}</Chip>
+              : <Chip tone="warn">awaiting the client</Chip>}
+          </div>
+          <div style={{ marginTop: 2 }}>{r.question}</div>
+          {r.answer && (
+            <div style={{ marginTop: 2, color: "var(--muted)" }}>
+              ↳ {r.answer}</div>)}
+          {can && !r.answered && (
+            answering === r.id ? (
+              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                <input value={ans} onChange={(e) => setAns(e.target.value)}
+                       placeholder="What the client said" autoFocus
+                       style={{ ...inputStyle, flex: "1 1 200px" }} />
+                <Btn disabled={busy || !ans.trim()}
+                     onClick={() => { act("rfi-answer",
+                       { rfi_id: r.id, answer: ans }); setAnswering(null);
+                       setAns(""); }}>Save</Btn>
+              </div>
+            ) : (
+              <button style={{ ...ghostButton, padding: "1px 6px",
+                               fontSize: 11, marginTop: 3 }}
+                      onClick={() => setAnswering(r.id)}>
+                Record the answer</button>))}
+        </div>))}
+      {can && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+                 placeholder="Ask the client…"
+                 style={{ ...inputStyle, flex: "1 1 220px" }} />
+          <Btn variant="secondary" disabled={busy || !q.trim()}
+               onClick={() => { act("rfi", { question: q }); setQ(""); }}>
+            Raise RFI</Btn>
+        </div>)}
+
+      <h4 style={{ margin: "16px 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Site visits</h4>
+      {(t.visits || []).length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+          None recorded.</p>)}
+      {(t.visits || []).map((v) => (
+        <div key={v.id} style={{ borderTop: "1px solid var(--sp-border)",
+                                 padding: "6px 0", fontSize: 13 }}>
+          <strong>{day(v.visited_on)}</strong>
+          {v.attendees && <span style={{ color: "var(--muted)",
+                                         marginLeft: 8 }}>{v.attendees}</span>}
+          {v.notes && <div style={{ marginTop: 2 }}>{v.notes}</div>}
+        </div>))}
+      {can && (
+        <div style={{ display: "flex", gap: 6, marginTop: 8,
+                      flexWrap: "wrap" }}>
+          <input type="date" value={visit.visited_on}
+                 onChange={(e) => setVisit({ ...visit,
+                   visited_on: e.target.value })} style={inputStyle} />
+          <input value={visit.attendees} placeholder="Who went"
+                 onChange={(e) => setVisit({ ...visit,
+                   attendees: e.target.value })}
+                 style={{ ...inputStyle, width: 160 }} />
+          <input value={visit.notes} placeholder="What was seen"
+                 onChange={(e) => setVisit({ ...visit,
+                   notes: e.target.value })}
+                 style={{ ...inputStyle, flex: "1 1 200px" }} />
+          <Btn variant="secondary" disabled={busy || !visit.visited_on}
+               onClick={() => { act("visit", visit);
+                 setVisit({ visited_on: "", attendees: "", notes: "" }); }}>
+            Log visit</Btn>
+        </div>)}
     </div>
   );
 }

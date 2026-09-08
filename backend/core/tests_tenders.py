@@ -333,3 +333,150 @@ class TenderBoqTests(TestCase):
             with transaction.atomic():
                 Boq.objects.create(project=None, tender=None)
         self.assertEqual(Tender.objects.count(), 1)
+
+
+class TenderTrailAndPackTests(TestCase):
+    """The RFI trail, the visit notes, and the pack that goes to the client."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("tp_qs", User.Role.QS)
+        self.pm = make_user("tp_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "Soneva",
+            "title": "Jetty extension"}, format="json").data
+
+    def act(self, action, body):
+        return self.client.post(f"/api/v1/tenders/{self.t['id']}/{action}",
+                                body, format="json")
+
+    def test_rfis_are_numbered_within_the_tender(self):
+        """So one can be cited as 'our RFI 2 against TDR-SJR-001'."""
+        a = self.act("rfi", {"question": "Is the crane ours?"})
+        b = self.act("rfi", {"question": "Who pays the ferry?"})
+        self.assertEqual(a.status_code, 200, a.data)
+        self.assertEqual([r["number"] for r in b.data["rfis"]], [1, 2])
+
+    def test_an_rfi_keeps_the_clients_answer_beside_the_question(self):
+        r = self.act("rfi", {"question": "Is the crane ours?"})
+        rfi_id = r.data["rfis"][0]["id"]
+        r = self.act("rfi-answer", {"rfi_id": rfi_id,
+                                    "answer": "Client provides it"})
+        self.assertEqual(r.status_code, 200, r.data)
+        got = r.data["rfis"][0]
+        self.assertEqual(got["answer"], "Client provides it")
+        self.assertTrue(got["answered"])
+        self.assertIsNotNone(got["answered_on"])
+
+    def test_an_answer_needs_words(self):
+        r = self.act("rfi", {"question": "?"})
+        rfi_id = r.data["rfis"][0]["id"]
+        self.assertEqual(self.act("rfi-answer",
+                                  {"rfi_id": rfi_id, "answer": "  "})
+                         .status_code, 400)
+
+    def test_an_rfi_from_another_tender_is_refused(self):
+        other = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "X",
+            "title": "Y"}, format="json").data
+        r = self.client.post(f"/api/v1/tenders/{other['id']}/rfi",
+                             {"question": "q"}, format="json")
+        rfi_id = r.data["rfis"][0]["id"]
+        self.assertEqual(self.act("rfi-answer",
+                                  {"rfi_id": rfi_id, "answer": "a"})
+                         .status_code, 400)
+
+    def test_a_visit_is_recorded_with_who_went(self):
+        r = self.act("visit", {"visited_on": str(date.today()),
+                               "attendees": "Shahiq, Malith",
+                               "notes": "No barge access at low tide"})
+        self.assertEqual(r.status_code, 200, r.data)
+        v = r.data["visits"][0]
+        self.assertEqual(v["attendees"], "Shahiq, Malith")
+        self.assertIn("barge", v["notes"])
+
+    def test_a_visit_needs_a_date(self):
+        self.assertEqual(self.act("visit", {"notes": "x"}).status_code, 400)
+
+    def test_a_pm_reads_the_trail_but_does_not_write_it(self):
+        self.act("rfi", {"question": "Is the crane ours?"})
+        self.client.force_authenticate(self.pm)
+        got = self.client.get(f"/api/v1/tenders/{self.t['id']}").data
+        self.assertEqual(len(got["rfis"]), 1)
+        self.assertEqual(self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/rfi", {"question": "q"},
+            format="json").status_code, 403)
+
+    def test_the_pack_summarises_the_bill_by_section(self):
+        from . import tenders as svc
+        from .models import Tender
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [
+                             {"description": "Bill 1 — Substructure"},
+                             {"description": "Excavate", "unit": "m3",
+                              "qty": "100", "rate_combined": "5"},
+                             {"description": "Blinding", "unit": "m3",
+                              "qty": "10", "rate_combined": "80"},
+                         ]}, format="json")
+        ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
+        self.assertEqual(len(ctx["sections"]), 1)
+        self.assertEqual(ctx["sections"][0]["lines"], 2)
+        self.assertEqual(float(ctx["sections"][0]["amount"]), 1300.0)
+        self.assertEqual(float(ctx["bill_total"]), 1300.0)
+
+    def test_the_pack_says_when_the_offer_and_the_bill_disagree(self):
+        """The offered figure is what the client was told; a bill that totals
+        something else is worth showing, not hiding."""
+        from . import tenders as svc
+        from .models import Tender
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [{"description": "Excavate", "unit": "m3",
+                                    "qty": "100", "rate_combined": "5"}]},
+                         format="json")
+        self.act("issue", {"value": "900"})
+        ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
+        self.assertTrue(ctx["diverges"])
+        self.assertEqual(float(ctx["offered"]), 900.0)
+        self.assertEqual(float(ctx["bill_total"]), 500.0)
+
+    def test_the_pack_renders(self):
+        from django.template.loader import render_to_string
+
+        from . import tenders as svc
+        from .models import Tender
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [{"description": "Excavate", "unit": "m3",
+                                    "qty": "100", "rate_combined": "5"}]},
+                         format="json")
+        self.act("issue", {"value": "500"})
+        html = render_to_string(
+            "pdf/tender_submission.html",
+            svc.submission_context(Tender.objects.get(pk=self.t["id"])))
+        self.assertIn("TDR-SJR-001", html)
+        self.assertIn("Jetty extension", html)
+        self.assertIn("Excavate", html)
+
+    def test_a_clients_own_bill_prints_the_letter_without_our_schedule(self):
+        from django.template.loader import render_to_string
+
+        from . import tenders as svc
+        from .models import Tender
+        t = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "Soneva",
+            "title": "Spa works", "submit_our_format": False},
+            format="json").data
+        self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",
+                         {"rows": [{"description": "Secret rate", "unit": "m",
+                                    "qty": "1", "rate_combined": "9"}]},
+                         format="json")
+        html = render_to_string(
+            "pdf/tender_submission.html",
+            svc.submission_context(Tender.objects.get(pk=t["id"])))
+        self.assertIn("on your own form", html)
+        # Our schedule is NOT appended — they are getting their own bill.
+        self.assertNotIn("Secret rate", html)

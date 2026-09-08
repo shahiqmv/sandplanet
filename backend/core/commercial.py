@@ -97,6 +97,57 @@ def _row_items(boq, rows):
     return out
 
 
+def template_workbook():
+    """The blank pricing sheet. Nothing in it is project-specific, so a tender
+    and a project hand out the same one (owner 2026-09-08)."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "BOQ"
+    # Supply (Material) + Install (Labour) columns; leave Install blank for a
+    # combined-rate contract.
+    headers = ["Section", "Code", "Description", "Unit", "Qty",
+               "Material", "Labour"]
+    ws.append(headers)
+    for i, w in enumerate([22, 10, 46, 8, 12, 12, 12], start=1):
+        ws.cell(row=1, column=i).font = Font(bold=True)
+        ws.column_dimensions[chr(64 + i)].width = w
+    ws.append(["Bill 1 \u2014 Substructure", "", "", "", "", "", ""])
+    ws.append(["", "1.1", "Excavate for foundations", "m3", "120", "5.00",
+               "3.50"])
+    ws.append(["", "1.2", "Mass concrete blinding", "m3", "35", "80.00",
+               "15.00"])
+    ws.freeze_panes = "A2"
+    return wb
+
+
+def rows_from_xlsx(upload):
+    """(rows, error) read out of a filled pricing sheet."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(upload, read_only=True, data_only=True)
+    except Exception:
+        return None, ("Could not read that file \u2014 save it as .xlsx and "
+                      "try again.")
+    ws = wb["BOQ"] if "BOQ" in wb.sheetnames else wb.active
+    rows_iter = ws.iter_rows(values_only=True)
+    header = next(rows_iter, None)
+    if not header:
+        return None, "The sheet is empty."
+    keys = [normalise_header(h) for h in header]
+    if "description" not in keys:
+        return None, "Need at least a Description column."
+    rows = []
+    for raw in rows_iter:
+        if raw is None or all(c in (None, "") for c in raw):
+            continue
+        rows.append({k: v for k, v in zip(keys, raw) if k})
+    if not rows:
+        return None, "No rows found below the header."
+    return rows, None
+
+
 def owner_key(owner):
     """`{project: …}` or `{tender: …}` — a BOQ has exactly one owner, and an
     offer is priced before there is a project to hang it on (owner
