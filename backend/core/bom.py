@@ -139,16 +139,26 @@ def requested_by_item(project):
     return _sum_by_item((i, _dec(q)) for i, q in lines)
 
 
-def ordered_by_item(project):
+def ordered_by_item(project, exclude_pr=None):
     """Committed orders: awarded domestic quote lines (via their matched MR
-    line's project) on approved PRs, plus authorised import allocations."""
+    line's project) on approved PRs, plus authorised import allocations.
+
+    `exclude_pr` leaves one PR's own award out. The Director approving a PR
+    needs "how much of this item the project had already ordered BEFORE this
+    request" — and a SUBMITTED PR is not in `_PR_ORDERED`, so that is true
+    while he decides but stops being true the moment he approves. Naming the
+    PR keeps the figure meaning the same thing at every status
+    (owner 2026-09-08).
+    """
     dom = (QuotationLine.objects
            .filter(awarded=True,
                    mr_line__item__isnull=False,
                    mr_line__revision__document__project=project,
                    quotation__document__status__in=_PR_ORDERED)
-           .exclude(quotation__document__is_void=True)
-           .values_list("mr_line__item_id", "qty"))
+           .exclude(quotation__document__is_void=True))
+    if exclude_pr is not None:
+        dom = dom.exclude(quotation__document=exclude_pr)
+    dom = dom.values_list("mr_line__item_id", "qty")
     imp = (ImportAllocation.objects
            .filter(project=project, line__item__isnull=False,
                    line__order__document__status__in=_IPR_ORDERED)

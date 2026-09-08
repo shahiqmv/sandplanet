@@ -176,6 +176,71 @@ function useQuoteData(docRef) {
 }
 
 // Compact block shown on the PR page itself
+/* What is actually being bought, and what the job has bought already.
+ *
+ * The PR is where the Director awards, and it showed him supplier totals and
+ * nothing else — not the items, not which project they were for, not what
+ * that project had already ordered of the same thing (owner 2026-09-08).
+ * "Ordered before" leaves this request out, so it means the same number
+ * before and after he approves.
+ */
+function AwardedItems({ rows }) {
+  if (!rows?.length) return null;
+  const qty = (v) => (v == null ? "—"
+    : Number(v).toLocaleString(undefined, { maximumFractionDigits: 2 }));
+  return (
+    <div style={{ overflowX: "auto", marginBottom: 12 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+                      fontSize: 13 }}>
+        <thead><tr>
+          <th style={th}>Item</th>
+          <th style={th}>Project</th>
+          <th style={{ ...th, textAlign: "right" }}>To order</th>
+          <th style={{ ...th, textAlign: "right" }}>
+            Already ordered<div style={{ fontWeight: 400, fontSize: 10.5,
+              color: "var(--muted)" }}>on this project, before this PR</div>
+          </th>
+          <th style={th}>Award</th>
+        </tr></thead>
+        <tbody>
+          {rows.map((r) => {
+            const won = (r.quoted_by || []).filter((q) => q.awarded);
+            return (
+              <tr key={r.mr_line_id}>
+                <td style={td}>{r.description}
+                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                    {r.mr_ref}{r.unit ? ` · ${r.unit}` : ""}</div></td>
+                <td style={td}>
+                  {r.project_code
+                    ? <>{r.project_code}
+                        <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                          {r.project_title}</div></>
+                    : <span style={{ color: "var(--muted)" }}>—</span>}
+                </td>
+                <td style={{ ...td, textAlign: "right",
+                             fontVariantNumeric: "tabular-nums" }}>
+                  {qty(r.qty_to_order)}</td>
+                <td style={{ ...td, textAlign: "right",
+                             fontVariantNumeric: "tabular-nums",
+                             color: r.ordered_before ? "#b35900"
+                                                     : "var(--muted)" }}>
+                  {qty(r.ordered_before)}</td>
+                <td style={td}>
+                  {won.length
+                    ? won.map((q, i) => (
+                        <div key={i} style={{ fontSize: 12 }}>
+                          {q.supplier} · {qty(q.qty)} @ {qty(q.rate)}</div>))
+                    : <span style={{ color: "#b35900", fontSize: 12 }}>
+                        not awarded</span>}
+                </td>
+              </tr>);
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
   const { quotations, coverage } = useQuoteData(doc.ref);
   const canEdit = ["HO_PURCHASING", "ADMIN"].includes(me.role) &&
@@ -183,6 +248,8 @@ export function QuotationsSummary({ doc, me, onOpenWorkspace }) {
 
   return (
     <div style={{ marginTop: 8 }}>
+      <SectionTitle>Items on this request</SectionTitle>
+      <AwardedItems rows={coverage?.rows} />
       <SectionTitle>Quotations &amp; MR coverage</SectionTitle>
       <CoverageBanner coverage={coverage} />
       {quotations.map((q) => {

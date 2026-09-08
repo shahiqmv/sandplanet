@@ -311,3 +311,91 @@ class ClosedProjectVisibilityTests(BomBase):
                  "qty_to_order": "5", "unit": "mt"}]}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("closed", r.data["detail"])
+
+
+
+class PrAwardContextTests(BomBase):
+    """The PR is where the Director awards, and it showed him supplier totals
+    and nothing else — not the items, not the project, not what that project
+    had already ordered of the same thing (owner 2026-09-08)."""
+
+    def _awarded_pr(self, ref, mr_line, qty, status="APPROVED"):
+        pr = Document.objects.create(
+            doc_type="PR", ref=ref, site=self.site, doc_date=date.today(),
+            status=status, created_by=self.qs)
+        supp, _ = Supplier.objects.get_or_create(name="Local Vendor")
+        q = Quotation.objects.create(document=pr, supplier=supp,
+                                     created_by=self.qs)
+        QuotationLine.objects.create(quotation=q, line_no=1,
+                                     supplier_desc="63mm pipe", qty=qty,
+                                     awarded=True, mr_line=mr_line)
+        return pr
+
+    def test_a_prs_own_award_can_be_left_out_of_the_running_total(self):
+        _mr, lines = self._mr(self.project, [(self.pipe, Decimal("100"))])
+        earlier = self._awarded_pr("PR-801", lines[0], Decimal("30"))
+        this_one = self._awarded_pr("PR-802", lines[0], Decimal("25"))
+
+        both = bom_svc.ordered_by_item(self.project)
+        self.assertEqual(both[self.pipe.id], Decimal("55"))
+        # What the Director needs to see: the 30 bought before this request.
+        without = bom_svc.ordered_by_item(self.project, exclude_pr=this_one)
+        self.assertEqual(without[self.pipe.id], Decimal("30"))
+        self.assertEqual(
+            bom_svc.ordered_by_item(self.project, exclude_pr=earlier)[
+                self.pipe.id], Decimal("25"))
+
+    def test_the_figure_does_not_jump_when_he_approves(self):
+        """A SUBMITTED PR is not counted as ordered, so before this change the
+        number silently grew by its own award the moment it was approved."""
+        _mr, lines = self._mr(self.project, [(self.pipe, Decimal("100"))])
+        self._awarded_pr("PR-803", lines[0], Decimal("30"))
+        pending = self._awarded_pr("PR-804", lines[0], Decimal("25"),
+                                   status="SUBMITTED")
+        while_deciding = bom_svc.ordered_by_item(self.project,
+                                                 exclude_pr=pending)
+        pending.status = "APPROVED"
+        pending.save(update_fields=["status"])
+        after = bom_svc.ordered_by_item(self.project, exclude_pr=pending)
+        self.assertEqual(while_deciding[self.pipe.id], Decimal("30"))
+        self.assertEqual(after[self.pipe.id], Decimal("30"))
+
+    def test_the_coverage_rows_name_the_project_and_what_it_already_bought(
+            self):
+        from .views_quotes import pr_coverage_data
+
+        mr, lines = self._mr(self.project, [(self.pipe, Decimal("100"))])
+        self._awarded_pr("PR-805", lines[0], Decimal("30"))
+        pr = self._awarded_pr("PR-806", lines[0], Decimal("25"),
+                              status="SUBMITTED")
+        from .models import DocumentLink
+        DocumentLink.objects.create(from_document=pr, to_document=mr,
+                                    link_type="MR_PR")
+
+        row = next(r for r in pr_coverage_data(pr)
+                   if r["mr_line_id"] == lines[0].id)
+        self.assertEqual(row["project_code"], "MXB-01")
+        self.assertEqual(row["project_title"], "Pools")
+        self.assertEqual(row["item_id"], self.pipe.id)
+        self.assertEqual(row["ordered_before"], Decimal("30"))
+
+    def test_a_line_with_nothing_to_say_says_nothing(self):
+        """A free-text line with no catalogue item gets a dash, not an
+        authoritative zero."""
+        from .views_quotes import pr_coverage_data
+        from .models import DocumentLink
+
+        mr, _lines = self._mr(self.project, [])
+        rev = mr.current_revision
+        free = DocumentLine.objects.create(
+            revision=rev, line_no=1, free_text_desc="Scaffold hire",
+            unit="day", qty_required=Decimal("5"), qty_to_order=Decimal("5"))
+        pr = Document.objects.create(
+            doc_type="PR", ref="PR-807", site=self.site,
+            doc_date=date.today(), status="SUBMITTED", created_by=self.qs)
+        DocumentLink.objects.create(from_document=pr, to_document=mr,
+                                    link_type="MR_PR")
+        row = next(r for r in pr_coverage_data(pr)
+                   if r["mr_line_id"] == free.id)
+        self.assertIsNone(row["ordered_before"])
+        self.assertEqual(row["project_code"], "MXB-01")

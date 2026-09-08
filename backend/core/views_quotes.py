@@ -316,8 +316,18 @@ def pr_coverage_data(pr):
     # a shared MR shows just its own items, not the entire bill.
     from .procurement import pr_scope_line_ids
     show_ids = pr_scope_line_ids(pr)
+    # What the project has already ordered of each item, this request left
+    # out. The Director awards on this screen and could not see what the job
+    # had bought already — only supplier totals (owner 2026-09-08). Computed
+    # once per project, not per row.
+    from . import bom as bom_svc
+    ordered = {}
     rows = []
     for mr in mr_docs:
+        project = mr.project
+        if project is not None and project.id not in ordered:
+            ordered[project.id] = bom_svc.ordered_by_item(project,
+                                                          exclude_pr=pr)
         for line in mr.current_revision.lines.select_related("item"):
             # store-fulfilled lines are covered by a SIN, not a quote (P1B-f3)
             if line.fulfil_source == "STORE":
@@ -328,6 +338,15 @@ def pr_coverage_data(pr):
             rows.append({
                 "mr_ref": mr.ref,
                 "mr_line_id": line.id,
+                "project_code": project.code if project else None,
+                "project_title": project.title if project else None,
+                "item_id": line.item_id,
+                # None (not 0) where there is nothing to say: no project on
+                # the MR, or a free-text line with no catalogue item — the
+                # screen shows a dash rather than an authoritative "0".
+                "ordered_before": (
+                    ordered.get(project.id, {}).get(line.item_id)
+                    if project is not None and line.item_id else None),
                 "description": line.description,
                 "unit": line.unit,
                 "qty_to_order": line.qty_to_order,
