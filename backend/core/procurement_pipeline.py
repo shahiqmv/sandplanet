@@ -471,9 +471,12 @@ def _operational_lines():
 def _line_recipients(notify, sched, escalate):
     recips = set(notify._role_users("HO_PURCHASING"))
     proj = sched.project
-    pm = proj.pm or (proj.site.current_pm() if proj.site_id else None)
-    if pm:
-        recips.add(pm)
+    # Every current PM, not just the earliest-assigned: co-PMs share the
+    # site's alerts, and a co-PM was never told (owner 2026-09-08).
+    if proj.pm:
+        recips.add(proj.pm)
+    elif proj.site_id:
+        recips |= set(proj.site.current_pms())
     if escalate:
         recips |= set(notify._role_users("DIRECTOR"))
     return recips
@@ -562,8 +565,11 @@ def _chase_client(notify, line):
     body = (f"{proj.code} · {sched.document.ref} · client-supplied {what}: "
             f"no update in {CLIENT_STALE_DAYS}+ days. "
             f"Required {line.required_date or '—'}.")[:300]
-    pm = proj.pm or (proj.site.current_pm() if proj.site_id else None)
-    recips = {pm} if pm else set(notify._role_users("HO_PURCHASING"))
+    if proj.pm:
+        recips = {proj.pm}
+    else:
+        recips = (set(proj.site.current_pms()) if proj.site_id
+                  else set()) or set(notify._role_users("HO_PURCHASING"))
     for u in recips:
         notify.notify_user(u, title, body=body, doc=sched.document,
                            category="alert")

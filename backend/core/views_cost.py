@@ -58,8 +58,12 @@ def _can_see_site_cost(user, site):
     if user.role in SENIOR_COST_ROLES:
         return True
     if user.role == "PM":
-        pm = site.current_pm()
-        return pm is not None and pm.id == user.id
+        # Any CURRENT PM, not the earliest-assigned: a busy site can
+        # carry co-PMs who share full PM authority, and asking for
+        # `current_pm()` silently answered "the first one added" —
+        # so the second PM was refused on his own site (owner
+        # 2026-09-08).
+        return site.is_current_pm(user)
     return False
 
 

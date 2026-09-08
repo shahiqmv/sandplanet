@@ -1178,9 +1178,10 @@ def ot_approve(request):
     if not rows:
         return Response({"detail": "ids required."}, status=400)
     for row in rows:
-        pm = row.site.current_pm()
+        # Any current PM — co-PMs share approvals (owner 2026-09-08).
         if not (request.user.role in ("ADMIN", "HO_HR", "PA") or
-                (request.user.role == "PM" and pm and pm.id == request.user.id)):
+                (request.user.role == "PM"
+                 and row.site.is_current_pm(request.user))):
             return Response({"detail": f"Only the site PM or HR approves OT "
                                        f"({row.site.code})."}, status=403)
         if _month_locked(row.site_id, row.day):
@@ -1453,11 +1454,11 @@ def timesheet_lock(request, site_id, year, month):
         site = Site.objects.get(pk=site_id)
     except Site.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
-    pm = site.current_pm()
     # HR can sign off any month (needed for Head Office, which has no PM, and
-    # for corrections); otherwise the site PM signs off (spec §6A.3).
+    # for corrections); otherwise the site PM signs off (spec §6A.3) — any
+    # current PM, co-PMs included (owner 2026-09-08).
     if not (request.user.role in ("ADMIN", "HO_HR", "PA") or
-            (request.user.role == "PM" and pm and pm.id == request.user.id)):
+            (request.user.role == "PM" and site.is_current_pm(request.user))):
         return Response({"detail": "The site PM or HR signs off the month."},
                         status=403)
     row, _ = TimesheetMonth.objects.get_or_create(site=site, year=year,
@@ -1488,9 +1489,8 @@ def timesheet_reopen(request, site_id, year, month):
         site = Site.objects.get(pk=site_id)
     except Site.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
-    pm = site.current_pm()
     if not (request.user.role in ("ADMIN", "HO_HR", "PA") or
-            (request.user.role == "PM" and pm and pm.id == request.user.id)):
+            (request.user.role == "PM" and site.is_current_pm(request.user))):
         return Response({"detail": "The site PM or HR reopens a month."},
                         status=403)
     reason = (request.data.get("reason") or "").strip()
