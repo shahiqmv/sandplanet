@@ -151,15 +151,20 @@ def set_boq_items(owner, rows, actor):
         fields.append("split_rates")
     if fields:
         boq.save(update_fields=fields)
-    audit("project", project.id, "BOQ_SAVED", actor=actor,
+    # The audit names whichever owner it was saved against — a tender's bill
+    # is not a project's, and filing it under "project" would put an offer we
+    # have not won into a project's history.
+    from .models import Tender
+    entity = "tender" if isinstance(owner, Tender) else "project"
+    audit(entity, owner.id, "BOQ_SAVED", actor=actor,
           detail={"items": len(items), "total": str(boq.total),
                   "split": split})
     return boq, None
 
 
-def import_boq_rows(project, rows, actor):
+def import_boq_rows(owner, rows, actor):
     """Import BOQ rows (already parsed from the uploaded sheet)."""
-    return set_boq_items(project, rows, actor)
+    return set_boq_items(owner, rows, actor)
 
 
 def set_boq_lock(project, locked, actor):
