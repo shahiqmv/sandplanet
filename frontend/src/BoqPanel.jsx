@@ -45,7 +45,13 @@ function RowTools({ rows, i, setRows, blank }) {
 // The project's Bill of Quantities — the priced contract schedule the QS runs
 // progress claims against. Import from Excel (or edit by hand), reconcile to
 // the contract value, then lock it to start claiming.
-export default function BoqPanel({ projectId, project, me }) {
+export default function BoqPanel({ projectId, project, me, base }) {
+  // Where this bill lives. A tender is priced before there is a project, and
+  // an award hands that same bill to the project — so one editor drives both
+  // (owner 2026-09-08). Unit mode, claims and locking are project-only and
+  // simply never appear on a tender.
+  const root = base || `/projects/${projectId}`;
+  const onTender = !!base;
   const [boq, setBoq] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -60,12 +66,12 @@ export default function BoqPanel({ projectId, project, me }) {
 
   function load() {
     setError(null);
-    api(`/projects/${projectId}/boq`).then(setBoq)
+    api(`${root}/boq`).then(setBoq)
       .catch((e) => setError(e.message));
-    api(`/projects/${projectId}/boq/capture/draft`).then(setPending)
+    api(`${root}/boq/capture/draft`).then(setPending)
       .catch(() => {});
   }
-  useEffect(load, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(load, [root]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function importFile(file) {
     if (!file) return;
@@ -73,7 +79,7 @@ export default function BoqPanel({ projectId, project, me }) {
     const fd = new FormData();
     fd.append("file", file);
     try {
-      const data = await apiUpload(`/projects/${projectId}/boq/import`, fd);
+      const data = await apiUpload(`${root}/boq/import`, fd);
       setBoq(data);
     } catch (e) { setError(e.message); }
     setBusy(false);
@@ -84,7 +90,7 @@ export default function BoqPanel({ projectId, project, me }) {
     const fd = new FormData();
     fd.append("file", file);
     try {
-      setDraft(await apiUpload(`/projects/${projectId}/boq/capture`, fd));
+      setDraft(await apiUpload(`${root}/boq/capture`, fd));
     } catch (e) { setError(e.message); }
     setBusy(false);
   }
@@ -102,7 +108,7 @@ export default function BoqPanel({ projectId, project, me }) {
   async function lock(locked) {
     setError(null); setBusy(true);
     try {
-      const data = await api(`/projects/${projectId}/boq/lock`,
+      const data = await api(`${root}/boq/lock`,
         { method: "POST", body: { locked } });
       setBoq(data);
     } catch (e) { setError(e.message); }
@@ -114,7 +120,7 @@ export default function BoqPanel({ projectId, project, me }) {
       + "you'll need to re-enter or re-capture it.")) return;
     setError(null); setBusy(true);
     try {
-      const data = await api(`/projects/${projectId}/boq/delete`,
+      const data = await api(`${root}/boq/delete`,
         { method: "DELETE" });
       setBoq(data); setDraft(null); setUnitDraft(null); setPending(null);
     } catch (e) { setError(e.message); }
@@ -130,13 +136,15 @@ export default function BoqPanel({ projectId, project, me }) {
   // items.length would read 0 and (below) hide the Lock button.
   const lineCount = isUnit ? (boq.categories?.length || 0)
     : (boq.exists ? boq.items.length : 0);
-  const contractVal = project.contract_value != null
+  // A tender has nothing to reconcile against: the bill IS the offer, and the
+  // contract value only exists once it has been won.
+  const contractVal = project && project.contract_value != null
     ? Number(project.contract_value) : null;
   const delta = contractVal != null ? boq.total - contractVal : null;
   const reconciled = delta != null && Math.abs(delta) < 0.5;
 
   if (editing) {
-    return <BoqEditor projectId={projectId} boq={boq} onDone={(saved) => {
+    return <BoqEditor root={root} boq={boq} onDone={(saved) => {
       if (saved) setBoq(saved);
       setEditing(false);
     }} />;
@@ -169,7 +177,7 @@ export default function BoqPanel({ projectId, project, me }) {
             {boq.is_locked ? "Locked" : "Draft"}</Chip>
         )}
         {boq.exists && boq.split_rates && <Chip tone="info">Supply + Install</Chip>}
-        {boq.exists && isUnit
+        {!onTender && boq.exists && isUnit
           && boq.categories?.some((c) => c.is_split) && (
           <label style={{ fontSize: 12, color: "var(--muted)" }}
                  title="CATEGORY: claim units delivered/installed × the per-unit rates. DETAIL: the client certifies actual material quantities from the build-ups — material and workmanship both derive from each quantity. Delete + recreate an open draft claim after switching.">
@@ -193,14 +201,14 @@ export default function BoqPanel({ projectId, project, me }) {
         {canEdit && (
           <div style={{ marginLeft: "auto", display: "flex", gap: 8,
                         flexWrap: "wrap" }}>
-            {!isUnit && (
-              <a href={`/api/v1/projects/${projectId}/boq/template`}
+            {!onTender && !isUnit && (
+              <a href={`/api/v1${root}/boq/template`}
                  style={{ ...ghostButton, textDecoration: "none",
                           padding: "4px 12px" }}>⬇ Template</a>
             )}
             {editable && (
               <>
-                {(!boq.exists || isUnit) && (
+                {!onTender && (!boq.exists || isUnit) && (
                   <>
                     <button style={{ ...buttonStyle, padding: "4px 12px" }}
                             disabled={busy}
@@ -226,6 +234,7 @@ export default function BoqPanel({ projectId, project, me }) {
                     <input ref={captureRef} type="file" accept=".pdf,.xlsx,.xlsm"
                            style={{ display: "none" }}
                            onChange={(e) => captureFile(e.target.files[0])} />
+                    {!onTender && (<>
                     <button style={{ ...ghostButton, padding: "4px 12px" }}
                             disabled={busy}
                             onClick={() => fileRef.current?.click()}>
@@ -233,6 +242,7 @@ export default function BoqPanel({ projectId, project, me }) {
                     <input ref={fileRef} type="file" accept=".xlsx"
                            style={{ display: "none" }}
                            onChange={(e) => importFile(e.target.files[0])} />
+                    </>)}
                     <button style={{ ...ghostButton, padding: "4px 12px" }}
                             onClick={() => setEditing(true)}>
                       ✎ {boq.exists ? "Edit" : "Enter manually"}</button>
@@ -240,13 +250,14 @@ export default function BoqPanel({ projectId, project, me }) {
                 )}
               </>
             )}
-            {boq.exists && !boq.is_locked && lineCount > 0 && (
+            {!onTender && boq.exists && !boq.is_locked && lineCount > 0 && (
               <button style={{ ...buttonStyle, padding: "4px 12px" }}
                       disabled={busy} onClick={() => lock(true)}
                       title="Locks the contract baseline so claims can start">
                 🔒 Lock BOQ</button>
             )}
-            {boq.is_locked && ["ADMIN", "DIRECTOR"].includes(me.role) && (
+            {!onTender && boq.is_locked
+              && ["ADMIN", "DIRECTOR"].includes(me.role) && (
               <button style={{ ...ghostButton, padding: "4px 12px" }}
                       disabled={busy} onClick={() => lock(false)}>
                 Unlock</button>
@@ -675,7 +686,7 @@ function BoqTable({ boq }) {
 
 // A lightweight editable grid for manual entry / corrections. Import handles
 // the bulk; this is for tweaks and small BOQs.
-function BoqEditor({ projectId, boq, onDone }) {
+function BoqEditor({ root, boq, onDone }) {
   const blank = () => ({ section: "", item_code: "", description: "",
     unit: "", qty: "", rate_supply: "", rate_install: "", is_heading: false,
     is_discount: false });
@@ -695,7 +706,7 @@ function BoqEditor({ projectId, boq, onDone }) {
   async function save() {
     setError(null); setBusy(true);
     try {
-      const data = await api(`/projects/${projectId}/boq/items`,
+      const data = await api(`${root}/boq/items`,
         { method: "POST", body: { rows } });
       onDone(data);
     } catch (e) { setError(e.message); setBusy(false); }

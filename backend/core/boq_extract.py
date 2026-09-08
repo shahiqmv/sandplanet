@@ -367,7 +367,12 @@ def reconcile(rows, printed_totals):
 
 # ---- orchestration -------------------------------------------------------
 
-def run_import(project, upload, actor):
+def _owner_key(owner):
+    from .commercial import owner_key
+    return owner_key(owner)
+
+
+def run_import(owner, upload, actor):
     """Read + extract an uploaded BOQ file into a draft BoqImport. Returns
     (boq_import, error)."""
     from .models import BoqImport
@@ -385,7 +390,7 @@ def run_import(project, upload, actor):
                       "the priced schedule and try again.")
     rec = reconcile(rows, result["printed_totals"])
     imp = BoqImport.objects.create(
-        project=project, source=source,
+        **_owner_key(owner), source=source,
         filename=getattr(upload, "name", "") or "",
         rate_mode=result.get("rate_mode") or "", rows=rows,
         meta={"page_count": len(pages), "model": result.get("model"),
@@ -402,7 +407,7 @@ def commit(boq_import, actor):
     if boq_import.status == BoqImport.Status.COMMITTED:
         return None, "This import has already been loaded into the BOQ."
     boq, msg = commercial.import_boq_rows(
-        boq_import.project, boq_import.rows, actor)
+        boq_import.owner, boq_import.rows, actor)
     if msg:
         return None, msg
     boq_import.status = BoqImport.Status.COMMITTED

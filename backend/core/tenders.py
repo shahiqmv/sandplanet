@@ -18,7 +18,7 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 
 from .audit import audit
-from .models import Document, DocumentRevision, Site, Tender
+from .models import Document, DocumentRevision, Project, Site, Tender
 from .numbering import next_ref
 
 # QS prices them and the Director decides; Admin keeps the register. A
@@ -103,7 +103,7 @@ def create_tender(data, actor):
         scope=data.get("scope", ""),
         enquiry_date=data.get("enquiry_date") or None,
         due_date=data.get("due_date") or None,
-        our_format=bool(data.get("our_format", True)),
+        submit_our_format=bool(data.get("submit_our_format", True)),
         currency=(data.get("currency") or "USD").upper()[:3])
     audit("tender", t.id, "TENDER_OPENED", actor=actor,
           detail={"ref": doc.ref, "site": site.code, "client": t.client_name})
@@ -128,8 +128,8 @@ def edit_tender(t, data, actor):
         t.enquiry_date = data.get("enquiry_date") or None
     if "due_date" in data:
         t.due_date = data.get("due_date") or None
-    if "our_format" in data:
-        t.our_format = bool(data.get("our_format"))
+    if "submit_our_format" in data:
+        t.submit_our_format = bool(data.get("submit_our_format"))
     if "currency" in data:
         t.currency = (data.get("currency") or "USD").upper()[:3]
     if not t.client_name.strip() or not t.title.strip():
@@ -189,12 +189,12 @@ def issue_revision(t, data, actor):
     value = _dec(data.get("value"))
     if value is None or value <= 0:
         return "Enter the value being offered."
-    if not t.our_format and not doc.attachments.exists():
-        # We are submitting in the client's format, so their file IS the
-        # submission. Issuing without it would record a submission the system
-        # cannot produce.
-        return ("This tender goes out in the client's format — attach the "
-                "bill being sent before issuing it.")
+    if not t.submit_our_format and not doc.attachments.exists():
+        # The lines are captured either way; what differs is the document that
+        # goes out. Here it is the client's own file, so issuing without it
+        # would record a submission the system cannot produce.
+        return ("This offer is submitted on the client's own bill — attach "
+                "the file being sent before issuing it.")
     from django.utils import timezone
     rev.issued_at = timezone.now()
     rev.payload = {**(rev.payload or {}), "value": str(value)}
@@ -208,6 +208,47 @@ def issue_revision(t, data, actor):
           detail={"ref": doc.ref, "rev": rev.rev_label,
                   "currency": t.currency})
     return None
+
+
+def boq_for(t):
+    """The tender's BOQ, or None. Created on first save, as a project's is."""
+    return getattr(t, "boq", None)
+
+
+@transaction.atomic
+def award_to_project(t, data, actor):
+    """Turn a won offer into the job, and hand the BOQ over.
+
+    The BOQ is REASSIGNED, not copied: a copy would leave two priced bills
+    that can drift apart, and the whole point of pricing inside the system is
+    that the awarded bill is the one that was offered (owner 2026-09-08).
+    """
+    code = (data.get("project_code") or "").strip()[:12]
+    if not code:
+        return None, "Give the new project a code (e.g. SOUT JT)."
+    site = t.document.site
+    if Project.objects.filter(site=site, code=code).exists():
+        return None, f"{site.code} already has a project coded {code}."
+    project = Project.objects.create(
+        site=site, code=code,
+        title=(data.get("project_title") or t.title).strip(),
+        scope=t.scope,
+        status=Project.Status.AWARDED,
+        contract_value=t.value_awarded or t.value_submitted,
+        loa_date=t.outcome_date,
+        loa_ref=t.outcome_ref or "",
+    )
+    boq = boq_for(t)
+    if boq is not None:
+        boq.tender = None
+        boq.project = project
+        boq.save(update_fields=["tender", "project"])
+    t.awarded_project = project
+    t.save(update_fields=["awarded_project"])
+    audit("tender", t.id, "TENDER_BECAME_PROJECT", actor=actor,
+          detail={"ref": t.document.ref, "project": project.code,
+                  "boq_moved": boq is not None})
+    return project, None
 
 
 @transaction.atomic
@@ -234,4 +275,11 @@ def record_outcome(t, outcome, data, actor):
     audit("tender", t.id, f"TENDER_{outcome}", actor=actor,
           detail={"ref": doc.ref, "on": str(t.outcome_date),
                   "their_ref": t.outcome_ref})
+    if outcome == "AWARDED":
+        # A won offer becomes the job. Asking for the code here rather than
+        # inventing one keeps the project register readable — the codes are a
+        # human convention (SOUT JT, NORTH JT), not a serial.
+        _p, msg = award_to_project(t, data, actor)
+        if msg:
+            return msg
     return None

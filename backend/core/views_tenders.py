@@ -4,7 +4,9 @@ Read is wider than write: QS, the Director and Admin run it, a signatory reads
 it as they read everything, and a site PM sees the enquiries for their own
 site (owner 2026-09-08).
 """
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import (api_view, parser_classes,
+                                       permission_classes)
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
@@ -28,7 +30,7 @@ def _row(t, full=False):
         "site_id": doc.site_id, "site_code": doc.site.code,
         "client_name": t.client_name, "title": t.title,
         "enquiry_date": t.enquiry_date, "due_date": t.due_date,
-        "our_format": t.our_format, "currency": t.currency,
+        "submit_our_format": t.submit_our_format, "currency": t.currency,
         "value_submitted": t.value_submitted,
         "value_awarded": t.value_awarded,
         "submitted_at": t.submitted_at,
@@ -123,3 +125,95 @@ def tender_action(request, pk, action):
         return Response({"detail": msg}, status=400)
     t.refresh_from_db()
     return Response(_row(t, full=True))
+
+
+# ---- the offer's priced bill ------------------------------------------
+#
+# The same BOQ the project will have. A tender's bill is captured in full
+# whichever format is submitted — that is what lets the register compare what
+# we offered with what was awarded — and on an award it is handed to the new
+# project rather than copied (owner 2026-09-08).
+
+def _boq_target(request, pk, writing):
+    t = svc.visible_to(request.user).filter(pk=pk).first()
+    if t is None:
+        return None, Response({"detail": "Tender not found."}, status=404)
+    if writing:
+        if not svc.can_manage(request.user):
+            return None, Response(
+                {"detail": "QS, the Director or Admin price a tender."},
+                status=403)
+        if t.document.status not in svc.OPEN_STATUSES:
+            return None, Response(
+                {"detail": "This tender is closed — its bill cannot be "
+                           "changed."}, status=400)
+    return t, None
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_boq(request, pk):
+    from .views_commercial import _boq_payload
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    return Response(_boq_payload(t))
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def tender_boq_save(request, pk):
+    from . import commercial
+    from .views_commercial import _boq_payload
+    t, err = _boq_target(request, pk, writing=True)
+    if err:
+        return err
+    _boq, msg = commercial.set_boq_items(t, request.data.get("rows") or [],
+                                         request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    t.refresh_from_db()
+    return Response(_boq_payload(t))
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def tender_boq_capture(request, pk):
+    """Read a bill out of the client's PDF or Excel into a reviewable draft."""
+    from . import boq_extract
+    t, err = _boq_target(request, pk, writing=True)
+    if err:
+        return err
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "Attach the bill to read."}, status=400)
+    try:
+        imp, msg = boq_extract.run_import(t, upload, request.user)
+    except boq_extract.ExtractionError as e:
+        return Response({"detail": str(e)}, status=400)
+    except Exception as e:               # surface the reason, never a bare 500
+        import logging
+        logging.getLogger("boq").exception("Tender BOQ capture failed")
+        return Response({"detail": f"Capture failed: {e}"}, status=400)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(boq_extract.import_payload(imp))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_boq_draft(request, pk):
+    """The capture still waiting to be reviewed, if there is one."""
+    from . import boq_extract
+    from .models import BoqImport
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    imp = (BoqImport.objects.filter(tender=t, status="DRAFT")
+           .order_by("-created_at").first())
+    return Response(boq_extract.import_payload(imp) if imp else None)

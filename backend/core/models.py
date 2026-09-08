@@ -3313,11 +3313,12 @@ class Tender(models.Model):
     scope = models.TextField(blank=True)
     enquiry_date = models.DateField(null=True, blank=True)
     due_date = models.DateField(null=True, blank=True)      # submission due
-    # Whose bill format goes out. Ours is rendered from the captured lines;
-    # theirs is their own file, attached — but the lines are still captured so
-    # the register can compare what we offered with what was awarded (owner
-    # 2026-09-08).
-    our_format = models.BooleanField(default=True)
+    # Which DOCUMENT goes to the client, and nothing else. The priced lines
+    # are captured in full either way — that is what lets the register compare
+    # what we offered with what was awarded. When the client insists on their
+    # own layout we send their file instead of our rendered bill; the bill is
+    # still in here (owner 2026-09-08).
+    submit_our_format = models.BooleanField(default=True)
     currency = models.CharField(max_length=3, default="USD")
     # What the issued revision was worth. Stamped at issue so a later revision
     # cannot quietly restate what the client was already sent.
@@ -3351,12 +3352,30 @@ class Boq(models.Model):
     `split_rates` records whether the client wants supply (material) and
     installation (labour) priced separately, or as one combined rate."""
 
+    class Meta:
+        constraints = [
+            # One owner, never two and never none. A BOQ with neither is
+            # unreachable; one with both would be two bills claiming to be
+            # the same bill.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(project__isnull=False, tender__isnull=True)
+                    | models.Q(project__isnull=True, tender__isnull=False)),
+                name="boq_has_exactly_one_owner"),
+        ]
+
     class Mode(models.TextChoices):
         CONVENTIONAL = "CONVENTIONAL", "Conventional (flat priced items)"
         UNIT = "UNIT", "Unit-based (per-unit prototype × quantity)"
 
+    # A BOQ belongs to a PROJECT or to a TENDER — exactly one, enforced
+    # below. An offer is priced before there is a project, and when it is won
+    # the BOQ is handed over rather than copied, so there is never a second
+    # priced bill to disagree with this one (owner 2026-09-08).
     project = models.OneToOneField(Project, on_delete=models.CASCADE,
-                                   related_name="boq")
+                                   null=True, blank=True, related_name="boq")
+    tender = models.OneToOneField("Tender", on_delete=models.CASCADE,
+                                  null=True, blank=True, related_name="boq")
     currency = models.CharField(max_length=3, default="USD")  # contracts are USD
     split_rates = models.BooleanField(default=False)  # material + labour columns
     # Conventional = the existing flat priced-item bill (default, unchanged).
@@ -3700,8 +3719,12 @@ class BoqImport(models.Model):
         PDF = "PDF", "PDF"
         XLSX = "XLSX", "Excel"
 
-    project = models.ForeignKey(Project, on_delete=models.CASCADE,
-                                related_name="boq_imports")
+    # Owned by a project, or by a tender being priced before there is one —
+    # exactly one, as the BOQ itself is (owner 2026-09-08).
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, null=True,
+                                blank=True, related_name="boq_imports")
+    tender = models.ForeignKey("Tender", on_delete=models.CASCADE, null=True,
+                               blank=True, related_name="boq_imports")
     source = models.CharField(max_length=4, choices=Source.choices)
     filename = models.CharField(max_length=200, blank=True)
     status = models.CharField(max_length=10, choices=Status.choices,
@@ -3720,8 +3743,15 @@ class BoqImport(models.Model):
     class Meta:
         ordering = ["-created_at"]
 
+    @property
+    def owner(self):
+        """Whichever of the two owns it — what the extraction commits into."""
+        return self.project or self.tender
+
     def __str__(self):
-        return f"{self.project.code} BOQ import {self.id}"
+        who = self.project.code if self.project_id else (
+            self.tender.document.ref if self.tender_id else "?")
+        return f"{who} BOQ import {self.id}"
 
 
 def _variation_copy_path(instance, filename):

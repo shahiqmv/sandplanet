@@ -113,7 +113,7 @@ class TenderRegisterTests(TestCase):
     def test_a_client_format_offer_needs_their_bill_attached(self):
         """Their file IS the submission — issuing without it would record a
         submission the system cannot produce."""
-        t = self.open_one(our_format=False)
+        t = self.open_one(submit_our_format=False)
         r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
                              {"value": "90000"}, format="json")
         self.assertEqual(r.status_code, 400)
@@ -218,3 +218,116 @@ class TenderRegisterTests(TestCase):
         doc = Document.objects.get(ref=t["ref"])
         self.assertEqual(doc.doc_type, "TDR")
         self.assertEqual(Tender.objects.get(pk=t["id"]).document_id, doc.id)
+
+
+class TenderBoqTests(TestCase):
+    """The offer's priced bill, and what an award does with it.
+
+    A BOQ belongs to a project or to a tender, never both and never neither.
+    Winning hands it over rather than copying it, so there is never a second
+    priced bill to disagree with the first (owner 2026-09-08).
+    """
+
+    def setUp(self):
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("tb_qs", User.Role.QS)
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "Soneva",
+            "title": "Jetty extension"}, format="json").data
+
+    def _price(self, amount="50000"):
+        return self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                                {"rows": [{"description": "Piling",
+                                           "unit": "m", "qty": "100",
+                                           "rate": "500"}]}, format="json")
+
+    def test_a_tender_can_hold_a_priced_bill(self):
+        r = self._price()
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["exists"])
+        self.assertEqual(float(r.data["total"]), 50000.0)
+
+    def test_the_bill_belongs_to_the_tender_and_no_project(self):
+        from .models import Boq
+        self._price()
+        boq = Boq.objects.get(tender_id=self.t["id"])
+        self.assertIsNone(boq.project_id)
+
+    def test_winning_hands_the_bill_to_the_new_project(self):
+        from .models import Boq, Project
+        self._price()
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                         {"value": "50000"}, format="json")
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded",
+                             {"outcome_ref": "LOA/9", "value_awarded": "48000",
+                              "project_code": "SOUT JT"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["awarded_project"], "SOUT JT")
+        p = Project.objects.get(site=self.site, code="SOUT JT")
+        self.assertEqual(str(p.contract_value), "48000.00")
+        self.assertEqual(p.loa_ref, "LOA/9")
+        # The SAME bill, moved — not a copy.
+        self.assertEqual(Boq.objects.count(), 1)
+        boq = Boq.objects.get()
+        self.assertEqual(boq.project_id, p.id)
+        self.assertIsNone(boq.tender_id)
+        self.assertEqual(float(boq.total), 50000.0)
+
+    def test_an_award_needs_a_project_code(self):
+        self._price()
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                         {"value": "50000"}, format="json")
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("code", r.data["detail"].lower())
+
+    def test_a_code_already_used_on_that_site_is_refused(self):
+        from .models import Project
+        Project.objects.create(site=self.site, code="SOUT JT", title="x",
+                               status="ACTIVE")
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                         {"value": "1"}, format="json")
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded",
+                             {"project_code": "SOUT JT"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already has a project", r.data["detail"])
+
+    def test_a_lost_tender_keeps_its_bill(self):
+        """It is how the next enquiry from the same client gets priced."""
+        from .models import Boq
+        self._price()
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
+                         {"value": "50000"}, format="json")
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/lost",
+                         {"lost_reason": "Price"}, format="json")
+        boq = Boq.objects.get(tender_id=self.t["id"])
+        self.assertEqual(float(boq.total), 50000.0)
+
+    def test_a_closed_tenders_bill_cannot_be_changed(self):
+        self._price()
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/withdrawn", {},
+                         format="json")
+        r = self._price()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("closed", r.data["detail"])
+
+    def test_a_bill_cannot_have_two_owners_or_none(self):
+        from django.db import IntegrityError, transaction
+        from .models import Boq, Project, Tender
+        self._price()
+        boq = Boq.objects.get()
+        p = Project.objects.create(site=self.site, code="P1", title="x",
+                                   status="ACTIVE")
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                boq.project = p
+                boq.save()          # tender still set — two owners
+        boq.refresh_from_db()
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Boq.objects.create(project=None, tender=None)
+        self.assertEqual(Tender.objects.count(), 1)

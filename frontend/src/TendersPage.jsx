@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
+import BoqPanel from "./BoqPanel.jsx";
 import { Btn, Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -83,7 +84,7 @@ export default function TendersPage({ me, sites }) {
                              fontSize: 12, whiteSpace: "nowrap" }}>
                   {r.ref}
                   <div style={{ color: "var(--muted)" }}>
-                    {r.rev_label}{r.our_format ? "" : " · their format"}</div>
+                    {r.rev_label}{r.submit_our_format ? "" : " · their bill"}</div>
                 </td>
                 <td style={td}><strong>{r.client_name}</strong>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
@@ -120,7 +121,7 @@ export default function TendersPage({ me, sites }) {
 function NewTender({ sites, onDone }) {
   const [f, setF] = useState({ site_id: "", client_name: "", title: "",
                                enquiry_date: "", due_date: "",
-                               our_format: true, currency: "USD",
+                               submit_our_format: true, currency: "USD",
                                scope: "" });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -159,13 +160,17 @@ function NewTender({ sites, onDone }) {
               style={{ ...inputStyle, width: 90 }}>
         <option>USD</option><option>MVR</option>
       </select>
-      {/* Their format means their file is what goes out, so the system will
-          ask for it before letting the offer be issued. */}
-      <label style={{ fontSize: 12.5, display: "flex", gap: 5,
-                      alignItems: "center" }}>
-        <input type="checkbox" checked={f.our_format}
-               onChange={set("our_format")} />
-        Our BOQ format
+      {/* Only the document that goes out. The priced lines are captured
+          either way — this picks whether the client receives our rendered
+          bill or the file they issued. */}
+      <label style={{ fontSize: 12.5 }}>Submit on
+        <select value={f.submit_our_format ? "ours" : "theirs"}
+                onChange={(e) => setF({ ...f,
+                  submit_our_format: e.target.value === "ours" })}
+                style={{ ...inputStyle, width: 170 }}>
+          <option value="ours">our BOQ format</option>
+          <option value="theirs">the client's own bill</option>
+        </select>
       </label>
       <Btn onClick={save}
            disabled={busy || !f.site_id || !f.client_name.trim()
@@ -224,8 +229,8 @@ function TenderDetail({ id, me, onClose }) {
         <p style={{ margin: "6px 0 2px", fontWeight: 600 }}>{t.client_name}</p>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
           {t.title} · {t.site_code} · enquiry {day(t.enquiry_date)} · due{" "}
-          {day(t.due_date)} · {t.our_format ? "our format"
-                                            : "the client's format"}</p>
+          {day(t.due_date)} · {t.submit_our_format ? "submitted on our bill"
+                                     : "submitted on the client's bill"}</p>
         {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
 
         <h4 style={{ margin: "16px 0 4px", fontSize: 13.5,
@@ -258,10 +263,15 @@ function TenderDetail({ id, me, onClose }) {
           </tbody>
         </table>
 
-        {!t.our_format && (
+        <div style={{ marginTop: 18 }}>
+          <BoqPanel base={`/tenders/${t.id}`} me={me} />
+        </div>
+
+        {!t.submit_our_format && (
           <p style={{ fontSize: 12.5, color: "#b35900", margin: "8px 0 0" }}>
-            This goes out in the client's format — their bill must be attached
-            to the document before the offer can be issued.
+            This is submitted on the client's own bill, so their file must be
+            attached before the offer can be issued. The priced lines are
+            captured here either way.
           </p>)}
 
         {can && live && (

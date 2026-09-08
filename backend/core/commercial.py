@@ -97,14 +97,24 @@ def _row_items(boq, rows):
     return out
 
 
-def set_boq_items(project, rows, actor):
-    """Replace the project's BOQ lines. Creates the BOQ on first save; blocked
-    once it's locked (a claim has started). Records whether the schedule prices
-    supply and installation separately. Returns (boq, error)."""
+def owner_key(owner):
+    """`{project: …}` or `{tender: …}` — a BOQ has exactly one owner, and an
+    offer is priced before there is a project to hang it on (owner
+    2026-09-08)."""
+    from .models import Tender
+    return ({"tender": owner} if isinstance(owner, Tender)
+            else {"project": owner})
+
+
+def set_boq_items(owner, rows, actor):
+    """Replace the BOQ's lines. Creates the BOQ on first save; blocked once
+    it's locked (a claim has started). Records whether the schedule prices
+    supply and installation separately. `owner` is a Project or a Tender.
+    Returns (boq, error)."""
     from .models import Boq, BoqItem
     from .models import ProgressClaimItem
     boq, _ = Boq.objects.get_or_create(
-        project=project, defaults={"created_by": actor})
+        **owner_key(owner), defaults={"created_by": actor})
     if boq.is_locked:
         return None, "The BOQ is locked — a claim has already started."
     # Saving replaces every line, so anything already claimed against would be

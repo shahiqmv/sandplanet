@@ -218,6 +218,15 @@ urlpatterns = [
     # Tenders & offers — the pre-award register (owner 2026-09-08).
     path("tenders", tenders_api.tender_list, name="tenders"),
     path("tenders/<int:pk>", tenders_api.tender_detail, name="tender-detail"),
+    # The offer's priced bill — the same BOQ the project will inherit. These
+    # must precede the catch-all action route below or "boq" is read as one.
+    path("tenders/<int:pk>/boq", tenders_api.tender_boq, name="tender-boq"),
+    path("tenders/<int:pk>/boq/items", tenders_api.tender_boq_save,
+         name="tender-boq-save"),
+    path("tenders/<int:pk>/boq/capture", tenders_api.tender_boq_capture,
+         name="tender-boq-capture"),
+    path("tenders/<int:pk>/boq/capture/draft", tenders_api.tender_boq_draft,
+         name="tender-boq-draft"),
     path("tenders/<int:pk>/<str:action>", tenders_api.tender_action,
          name="tender-action"),
     path("finance/awaiting-voucher", vouchers.awaiting_voucher,

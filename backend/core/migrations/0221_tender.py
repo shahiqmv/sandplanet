@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
                 ("scope", models.TextField(blank=True)),
                 ("enquiry_date", models.DateField(blank=True, null=True)),
                 ("due_date", models.DateField(blank=True, null=True)),
-                ("our_format", models.BooleanField(default=True)),
+                ("submit_our_format", models.BooleanField(default=True)),
                 ("currency", models.CharField(default="USD", max_length=3)),
                 ("value_submitted", models.DecimalField(
                     blank=True, decimal_places=2, max_digits=14, null=True)),
