@@ -133,7 +133,8 @@ class TenderRegisterTests(TestCase):
                          {"value": "125000"}, format="json")
         r = self.client.post(f"/api/v1/tenders/{t['id']}/awarded",
                              {"outcome_ref": "LOA/2026/014",
-                              "value_awarded": "119500"}, format="json")
+                              "value_awarded": "119500",
+                              "project_code": "JETTY X"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "AWARDED")
         self.assertEqual(r.data["outcome_ref"], "LOA/2026/014")
@@ -242,7 +243,8 @@ class TenderBoqTests(TestCase):
         return self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
                                 {"rows": [{"description": "Piling",
                                            "unit": "m", "qty": "100",
-                                           "rate": "500"}]}, format="json")
+                                           "rate_combined": "500"}]},
+                                format="json")
 
     def test_a_tender_can_hold_a_priced_bill(self):
         r = self._price()
