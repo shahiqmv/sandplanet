@@ -435,6 +435,44 @@ class DayProposalTests(TestCase):
         self.assertIn("OT", d["flags"])
         self.assertNotIn("LATE", d["flags"])
 
+    def test_a_day_that_ends_after_midnight_stays_on_the_day_he_worked(self):
+        """A day-shift man who works past twelve punches out in the small
+        hours. A midnight-to-midnight window filed that punch as the NEXT
+        day's arrival, and his real arrival that morning became the punch-OUT
+        — so the row read 00:27–07:01 (owner 2026-09-08, EMP-0121 at SJR)."""
+        self._push("700\t2026-08-24 07:01:00\t255\t1",     # in, Monday
+                   "700\t2026-08-25 00:27:00\t255\t1")     # out, past 12
+        d = self._grid_row()["device"]
+        self.assertEqual(d["proposal"]["check_in"], "07:01")
+        self.assertEqual(d["proposal"]["check_out"], "00:27")
+        self.assertEqual(d["proposal"]["remark"], "PRESENT")
+        self.assertIn("PAST_MIDNIGHT", d["flags"])
+        # 17:00 Monday to 00:27 Tuesday is 7h27m, floored to the half hour
+        # so a proposal never overstates: 7.
+        self.assertEqual(d["proposal"]["ot_requested"], "7")
+
+    def test_the_late_punch_is_not_tuesdays_arrival(self):
+        """The other half of the same bug: Tuesday must not claim it."""
+        self._push("700\t2026-08-24 07:01:00\t255\t1",
+                   "700\t2026-08-25 00:27:00\t255\t1",
+                   "700\t2026-08-25 07:05:00\t255\t1",
+                   "700\t2026-08-25 17:10:00\t255\t1")
+        self.day = date(2026, 8, 25)
+        d = self._grid_row()["device"]
+        self.assertEqual(d["proposal"]["check_in"], "07:05")
+        self.assertEqual(d["proposal"]["check_out"], "17:10")
+        self.assertNotIn("PAST_MIDNIGHT", d["flags"])
+        self.assertEqual(d["punch_count"], 2)   # 00:27 belongs to Monday
+
+    def test_an_ordinary_day_is_unchanged(self):
+        """The rollover must not disturb the normal case."""
+        self._push("700\t2026-08-24 07:58:00\t255\t1",
+                   "700\t2026-08-24 17:02:00\t255\t1")
+        d = self._grid_row()["device"]
+        self.assertEqual(d["proposal"]["check_in"], "07:58")
+        self.assertEqual(d["proposal"]["check_out"], "17:02")
+        self.assertNotIn("PAST_MIDNIGHT", d["flags"])
+
     def test_no_punch_out_proposes_the_normal_finish_flagged(self):
         self._push("700\t2026-08-24 07:55:00\t255\t15")
         d = self._grid_row()["device"]

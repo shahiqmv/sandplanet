@@ -461,7 +461,12 @@ export default function AttendancePage({ site, me, onClose,
                   {row.device ? (<>
                     <span style={{ fontWeight: 600 }}>
                       {row.device.first}
-                      {row.device.last ? `–${row.device.last}` : ""}</span>
+                      {row.device.last ? `–${row.device.last}` : ""}
+                      {/* Without this the row reads 07:01–00:27 and looks
+                          like a mistake rather than a night's work. */}
+                      {row.device.flags.includes("PAST_MIDNIGHT")
+                        && <span style={{ fontWeight: 400 }}> (+1d)</span>}
+                    </span>
                     {row.device.flags.length > 0 && (
                       <div style={{ color:
                         row.device.flags.includes("REST_DAY")
@@ -472,6 +477,7 @@ export default function AttendancePage({ site, me, onClose,
                           LATE: "late",
                           OT: `OT ${row.device.proposal?.ot_requested}h`,
                           REST_DAY: "rest day — you decide",
+                          PAST_MIDNIGHT: "finished after midnight",
                         }[f] || f)).join(" · ")}
                       </div>)}
                   </>) : <span style={{ color: "#9aa8b3" }}>—</span>}

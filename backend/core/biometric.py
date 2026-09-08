@@ -270,6 +270,15 @@ def enrolment_gaps(site):
 
 HALF_DAY_BELOW_HOURS = Decimal("5")
 LATE_GRACE_MIN = 15
+# How long before a day shift is due to start its attendance day begins.
+# A day-shift man who works past twelve punches out in the small hours, and a
+# midnight-to-midnight window filed that punch as the NEXT day's arrival —
+# then his real arrival that morning became the punch-OUT, so the row read
+# 00:27–07:01 (owner 2026-09-08, EMP-0121 at SJR). With a 07:00 start his day
+# now runs 03:00 to 03:00, so a finish at any hour up to 03:00 stays on the
+# day he actually worked. Anyone punching in before that boundary is treated
+# as still on the previous day, which is the right guess for a day shift.
+DAY_ROLLOVER_HOURS = 4
 
 
 def _local(dt):
@@ -335,7 +344,11 @@ def day_proposals(site, day):
             # out-punch this morning belongs to yesterday's row).
             lo, hi = win_s - timedelta(hours=4), win_e + timedelta(hours=6)
         else:
-            lo = datetime.combine(day, datetime.min.time())
+            # NOT midnight to midnight — see DAY_ROLLOVER_HOURS. His day opens
+            # a few hours before he is due and runs a full 24 from there, so a
+            # late finish belongs to the day he worked rather than becoming
+            # tomorrow's arrival.
+            lo = win_s - timedelta(hours=DAY_ROLLOVER_HOURS)
             hi = lo + timedelta(days=1)
         plist = [p for p in plist
                  if lo <= _local(p.punched_at).replace(tzinfo=None) < hi]
@@ -373,6 +386,9 @@ def day_proposals(site, day):
                 "check_out": sched_end.strftime("%H:%M"),
                 "remark": "PRESENT", "ot_requested": "0"}}
             continue
+        if last_dt.date() > first_dt.date():
+            # Otherwise the row reads 07:01 → 00:27 and looks like a mistake.
+            flags.append("PAST_MIDNIGHT")
         span = Decimal(str((last - first).total_seconds())) / 3600
         remark = "PRESENT"
         if span < HALF_DAY_BELOW_HOURS:
