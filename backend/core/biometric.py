@@ -275,10 +275,18 @@ LATE_GRACE_MIN = 15
 # midnight-to-midnight window filed that punch as the NEXT day's arrival —
 # then his real arrival that morning became the punch-OUT, so the row read
 # 00:27–07:01 (owner 2026-09-08, EMP-0121 at SJR). With a 07:00 start his day
-# now runs 03:00 to 03:00, so a finish at any hour up to 03:00 stays on the
-# day he actually worked. Anyone punching in before that boundary is treated
-# as still on the previous day, which is the right guess for a day shift.
-DAY_ROLLOVER_HOURS = 4
+# now runs 05:00 to 05:00, so a finish at any hour up to 05:00 stays on the
+# day he actually worked, and anyone punching in after it is arriving.
+#
+# Two hours, not more, because the boundary has to sit between the LATEST
+# anyone finishes and the EARLIEST anyone arrives. The real log decided it:
+# SJR punches run to 03:07 and then stop dead — not one punch at 04:00 or
+# 05:00 in the whole log — with arrivals resuming at 06:xx; head office is
+# quiet from 02:00 to 08:00. A four-hour rollover put the boundary at 03:00,
+# on the wrong side of that gap, and read a 03:07 finish as an arrival.
+# A site whose men genuinely turn up more than two hours early would need
+# this per-site, as the lateness and OT thresholds already are.
+DAY_ROLLOVER_HOURS = 2
 
 
 def _local(dt):
