@@ -43,6 +43,13 @@ export default function TendersPage({ me, sites }) {
   const outstanding = live.reduce((n, r) =>
     n + (r.status === "SUBMITTED" ? 1 : 0), 0);
 
+  // A tender holds a full bill of quantities. It gets the page, not a modal
+  // floated over the register (owner 2026-09-09).
+  if (open) {
+    return <TenderDetail id={open} me={me}
+                         onClose={() => { setOpen(null); load(); }} />;
+  }
+
   return (
     <section style={card}>
       <div style={{ display: "flex", alignItems: "baseline", gap: 12,
@@ -116,8 +123,6 @@ export default function TendersPage({ me, sites }) {
         </table>
       </div>
 
-      {open && <TenderDetail id={open} me={me}
-                             onClose={() => { setOpen(null); load(); }} />}
     </section>
   );
 }
@@ -214,21 +219,16 @@ function TenderDetail({ id, me, onClose }) {
   const current = (t.revisions || []).slice(-1)[0];
 
   return (
-    <div onClick={onClose}
-         style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)",
-                  display: "flex", alignItems: "flex-start",
-                  justifyContent: "center", zIndex: 60, padding: 24,
-                  overflowY: "auto" }}>
-      <div onClick={(e) => e.stopPropagation()}
-           style={{ ...card, maxWidth: 720, width: "100%", marginTop: 24 }}>
+    <div>
+      <div style={card}>
         <div style={{ display: "flex", gap: 10, alignItems: "baseline",
                       flexWrap: "wrap" }}>
+          <button style={ghostButton} onClick={onClose}>
+            ← All tenders</button>
           <h3 style={{ margin: 0, color: "var(--sp-navy)",
                        fontFamily: "var(--font-mono)" }}>{t.ref}</h3>
           <Chip tone={TONE[t.status] || "info"}>
             {LABEL[t.status] || t.status}</Chip>
-          <button style={{ ...ghostButton, marginLeft: "auto" }}
-                  onClick={onClose}>Close</button>
         </div>
         <p style={{ margin: "6px 0 2px", fontWeight: 600 }}>{t.client_name}</p>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
@@ -273,13 +273,6 @@ function TenderDetail({ id, me, onClose }) {
             ⬇ Submission pack ({current?.rev_label || "R0"}) — covering letter,
             summary{t.submit_our_format ? " and bill" : ""}</a>
         </p>
-
-        <div style={{ marginTop: 18 }}>
-          <BoqPanel base={`/tenders/${t.id}`} me={me} />
-        </div>
-
-        <Docs t={t} can={can} onChanged={setT} />
-        <Trail t={t} can={can && live} busy={busy} act={act} />
 
         {!t.submit_our_format && (
           <p style={{ fontSize: 12.5, color: "#b35900", margin: "8px 0 0" }}>
@@ -340,6 +333,17 @@ function TenderDetail({ id, me, onClose }) {
                     ? ` — ${t.lost_reason}` : ""}.`
                 : `Withdrawn ${day(t.outcome_date)}.`}
           </p>)}
+      </div>
+
+      {/* Its own card: the bill is the biggest thing on the page and needs
+          the width, which is why the detail is a page and not a modal. */}
+      <div style={{ marginTop: 12 }}>
+        <BoqPanel base={`/tenders/${t.id}`} me={me} />
+      </div>
+
+      <div style={{ ...card, marginTop: 12 }}>
+        <Docs t={t} can={can} onChanged={setT} />
+        <Trail t={t} can={can && live} busy={busy} act={act} />
       </div>
     </div>
   );
