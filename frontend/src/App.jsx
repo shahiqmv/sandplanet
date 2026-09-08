@@ -53,6 +53,7 @@ import MeetingsPage from "./MeetingsPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import CostHeadsPage from "./CostHeadsPage.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import TendersPage from "./TendersPage.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
 import PmrRegister from "./PmrRegister.jsx";
@@ -1302,7 +1303,9 @@ export default function App() {
           {!docView && !openSite &&
             ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"].includes(me.role) &&
             hoPage === "tenders" && (
-            <TendersPage me={me} sites={sites} />
+            <ErrorBoundary label="Tenders & Offers">
+              <TendersPage me={me} sites={sites} />
+            </ErrorBoundary>
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
             <StoreLots me={me} onOpenIrn={(ref) =>

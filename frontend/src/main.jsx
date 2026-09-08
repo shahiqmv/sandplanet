@@ -10,11 +10,16 @@ import "@fontsource/inter/700.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import App from "./App.jsx";
+import ErrorBoundary from "./ErrorBoundary.jsx";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <App />
+    {/* Last resort: a crash anywhere used to leave a white page with nothing
+        to report. It now shows what broke (owner 2026-09-09). */}
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </React.StrictMode>
 );
 
