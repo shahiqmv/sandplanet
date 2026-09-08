@@ -117,7 +117,7 @@ class TenderRegisterTests(TestCase):
         r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
                              {"value": "90000"}, format="json")
         self.assertEqual(r.status_code, 400)
-        self.assertIn("attach", r.data["detail"].lower())
+        self.assertIn("upload that file", r.data["detail"].lower())
 
     def test_a_value_is_required_to_issue(self):
         t = self.open_one()
