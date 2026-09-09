@@ -1072,6 +1072,9 @@ class SubcontractAdvanceAndGstTests(TestCase):
         self.assertEqual(val1["gst"], Decimal("6720.00"))
         self.assertEqual(val1["total_payable"], Decimal("90720.00"))
 
+        # certificate 1 authorised and settled, so a second can open
+        v1.document.status = "AUTHORISED"
+        v1.document.save(update_fields=["status"])
         Payable.objects.create(document=v1.document, site=self.site,
                                vendor="Raajje Divers", status="SETTLED",
                                amount=val1["total_payable"],
