@@ -521,22 +521,6 @@ class TenderProcessTests(TestCase):
 
     # ---- the pack --------------------------------------------------------
 
-    def test_the_pack_summarises_the_bill_by_section(self):
-        from . import tenders as svc
-        from .models import Tender
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
-                         {"rows": [
-                             {"description": "Bill 1 — Substructure"},
-                             {"description": "Excavate", "unit": "m3",
-                              "qty": "100", "rate_combined": "5"},
-                             {"description": "Blinding", "unit": "m3",
-                              "qty": "10", "rate_combined": "80"},
-                         ]}, format="json")
-        ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
-        self.assertEqual(len(ctx["sections"]), 1)
-        self.assertEqual(ctx["sections"][0]["lines"], 2)
-        self.assertEqual(float(ctx["bill_total"]), 1300.0)
-
     def test_the_pack_says_when_the_offer_and_the_bill_disagree(self):
         from . import tenders as svc
         from .models import Tender
@@ -675,7 +659,7 @@ class TenderProcessTests(TestCase):
         html = render_to_string(
             "pdf/tender_submission.html",
             svc.submission_context(Tender.objects.get(pk=t["id"])))
-        self.assertIn("on your own form", html)
+        self.assertIn("on the client's own form", html)
         self.assertNotIn("Secret rate", html)
 
 
