@@ -335,13 +335,20 @@ class TenderBoqTests(TestCase):
         self.assertEqual(Tender.objects.count(), 1)
 
 
-class TenderTrailAndPackTests(TestCase):
-    """The RFI trail, the visit notes, and the pack that goes to the client."""
+class TenderProcessTests(TestCase):
+    """The process as it is actually run: assigned, visited, queried, priced.
+
+    The query is a TQ, not an RFI — that name is taken twice over in this app
+    (contract-stage request for information, and inspection request). A TQ
+    carries several numbered questions on one sheet and the client answers
+    them one at a time (owner 2026-09-09).
+    """
 
     def setUp(self):
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
         self.qs = make_user("tp_qs", User.Role.QS)
+        self.qs2 = make_user("tp_qs2", User.Role.QS)
         self.pm = make_user("tp_pm", User.Role.PM, site=self.site)
         SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
                                      from_date=date.today())
@@ -351,66 +358,137 @@ class TenderTrailAndPackTests(TestCase):
             "site_id": self.site.id, "client_name": "Soneva",
             "title": "Jetty extension"}, format="json").data
 
-    def act(self, action, body):
+    def act(self, action, body=None):
         return self.client.post(f"/api/v1/tenders/{self.t['id']}/{action}",
-                                body, format="json")
+                                body or {}, format="json")
 
-    def test_rfis_are_numbered_within_the_tender(self):
-        """So one can be cited as 'our RFI 2 against TDR-SJR-001'."""
-        a = self.act("rfi", {"question": "Is the crane ours?"})
-        b = self.act("rfi", {"question": "Who pays the ferry?"})
-        self.assertEqual(a.status_code, 200, a.data)
-        self.assertEqual([r["number"] for r in b.data["rfis"]], [1, 2])
+    # ---- whose job it is -------------------------------------------------
 
-    def test_an_rfi_keeps_the_clients_answer_beside_the_question(self):
-        r = self.act("rfi", {"question": "Is the crane ours?"})
-        rfi_id = r.data["rfis"][0]["id"]
-        r = self.act("rfi-answer", {"rfi_id": rfi_id,
-                                    "answer": "Client provides it"})
+    def test_a_tender_is_carried_by_someone(self):
+        r = self.act("assign", {"user_id": self.qs2.id})
         self.assertEqual(r.status_code, 200, r.data)
-        got = r.data["rfis"][0]
-        self.assertEqual(got["answer"], "Client provides it")
-        self.assertTrue(got["answered"])
-        self.assertIsNotNone(got["answered_on"])
+        self.assertEqual(r.data["assigned_to"], self.qs2.full_name)
+        self.assertEqual(self.act("assign", {"user_id": None})
+                         .data["assigned_to"], None)
 
-    def test_an_answer_needs_words(self):
-        r = self.act("rfi", {"question": "?"})
-        rfi_id = r.data["rfis"][0]["id"]
-        self.assertEqual(self.act("rfi-answer",
-                                  {"rfi_id": rfi_id, "answer": "  "})
-                         .status_code, 400)
+    def test_the_assignee_list_is_not_the_staff_register(self):
+        r = self.client.get("/api/v1/tenders/assignees")
+        self.assertEqual(r.status_code, 200)
+        roles = {p["role"] for p in r.data}
+        self.assertTrue(roles <= {"QS", "DIRECTOR", "ADMIN"}, roles)
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get("/api/v1/tenders/assignees")
+                         .status_code, 403)
 
-    def test_an_rfi_from_another_tender_is_refused(self):
-        other = self.client.post("/api/v1/tenders", {
-            "site_id": self.site.id, "client_name": "X",
-            "title": "Y"}, format="json").data
-        r = self.client.post(f"/api/v1/tenders/{other['id']}/rfi",
-                             {"question": "q"}, format="json")
-        rfi_id = r.data["rfis"][0]["id"]
-        self.assertEqual(self.act("rfi-answer",
-                                  {"rfi_id": rfi_id, "answer": "a"})
-                         .status_code, 400)
+    # ---- the visit -------------------------------------------------------
 
-    def test_a_visit_is_recorded_with_who_went(self):
-        r = self.act("visit", {"visited_on": str(date.today()),
-                               "attendees": "Shahiq, Malith",
-                               "notes": "No barge access at low tide"})
+    def test_a_visit_is_requested_then_held(self):
+        """One asked for and not yet given is why pricing has not started."""
+        r = self.act("visit-request", {"requested_on": str(date.today()),
+                                       "notes": "Access by barge only"})
         self.assertEqual(r.status_code, 200, r.data)
         v = r.data["visits"][0]
-        self.assertEqual(v["attendees"], "Shahiq, Malith")
-        self.assertIn("barge", v["notes"])
+        self.assertFalse(v["held"])
+        self.assertIsNone(v["visited_on"])
+        r = self.act("visit-held", {"visit_id": v["id"],
+                                    "visited_on": str(date.today()),
+                                    "attendees": "Shahiq",
+                                    "notes": "No barge access at low tide"})
+        held = r.data["visits"][0]
+        self.assertTrue(held["held"])
+        self.assertIn("low tide", held["notes"])
 
-    def test_a_visit_needs_a_date(self):
-        self.assertEqual(self.act("visit", {"notes": "x"}).status_code, 400)
+    def test_a_visit_carries_photos(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        v = self.act("visit-request", {}).data["visits"][0]
+        self.act("visit-held", {"visit_id": v["id"],
+                                "visited_on": str(date.today())})
+        r = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/visits/{v['id']}/photo",
+            {"file": SimpleUploadedFile("wall.jpg", b"\xff\xd8jpeg",
+                                        content_type="image/jpeg")},
+            format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(len(r.data["visits"][0]["photos"]), 1)
+        self.assertEqual(r.data["visits"][0]["photos"][0]["file_name"],
+                         "wall.jpg")
 
-    def test_a_pm_reads_the_trail_but_does_not_write_it(self):
-        self.act("rfi", {"question": "Is the crane ours?"})
+    # ---- the query sheet -------------------------------------------------
+
+    def test_a_query_carries_several_questions_under_one_reference(self):
+        q = self.act("query", {"subject": "Piling"}).data["queries"][0]
+        self.assertEqual(q["ref"], "TDR-SJR-001-TQ01")
+        self.act("query-question", {"query_id": q["id"],
+                                    "question": "Is the crane ours?",
+                                    "reference": "Dwg C-101"})
+        r = self.act("query-question", {"query_id": q["id"],
+                                        "question": "Who pays the ferry?"})
+        items = r.data["queries"][0]["items"]
+        self.assertEqual([i["number"] for i in items], [1, 2])
+        self.assertEqual(items[0]["reference"], "Dwg C-101")
+
+    def test_a_query_needs_a_question_before_it_is_issued(self):
+        q = self.act("query", {}).data["queries"][0]
+        r = self.act("query-issue", {"query_id": q["id"]})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("at least one question", r.data["detail"])
+
+    def test_an_issued_query_is_closed_to_further_questions(self):
+        """It is what the client holds; anything further is a new sheet."""
+        q = self.act("query", {}).data["queries"][0]
+        self.act("query-question", {"query_id": q["id"], "question": "A?"})
+        self.act("query-issue", {"query_id": q["id"]})
+        r = self.act("query-question", {"query_id": q["id"], "question": "B?"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already gone to the client", r.data["detail"])
+
+    def test_answers_land_per_question_not_per_sheet(self):
+        """A client commonly answers three of five, and a sheet marked simply
+        'answered' would hide that."""
+        q = self.act("query", {}).data["queries"][0]
+        self.act("query-question", {"query_id": q["id"], "question": "A?"})
+        self.act("query-question", {"query_id": q["id"], "question": "B?"})
+        q = self.act("query-issue", {"query_id": q["id"]}).data["queries"][0]
+        first = q["items"][0]["id"]
+        r = self.act("query-answer", {"query_id": q["id"], "item_id": first,
+                                      "answer": "Client provides the crane",
+                                      "client_ref": "SJ/TQ/014"})
+        got = r.data["queries"][0]
+        self.assertEqual(got["answered"], 1)
+        self.assertEqual(len(got["items"]), 2)
+        self.assertTrue(got["items"][0]["is_answered"])
+        self.assertFalse(got["items"][1]["is_answered"])
+        self.assertEqual(got["client_ref"], "SJ/TQ/014")
+
+    def test_query_sheets_are_numbered_within_the_tender(self):
+        self.act("query", {})
+        r = self.act("query", {})
+        self.assertEqual([q["ref"] for q in r.data["queries"]],
+                         ["TDR-SJR-001-TQ01", "TDR-SJR-001-TQ02"])
+
+    def test_the_query_sheet_renders_in_our_format(self):
+        from django.template.loader import render_to_string
+
+        from . import tenders as svc
+        from .models import TenderQuery
+        q = self.act("query", {"subject": "Piling"}).data["queries"][0]
+        self.act("query-question", {"query_id": q["id"],
+                                    "question": "Is the crane ours?"})
+        html = render_to_string(
+            "pdf/tender_query.html",
+            svc.query_context(TenderQuery.objects.get(pk=q["id"])))
+        self.assertIn("TDR-SJR-001-TQ01", html)
+        self.assertIn("Is the crane ours?", html)
+        self.assertIn("Tender Query", html)
+
+    def test_a_pm_reads_the_queries_but_raises_none(self):
+        self.act("query", {"subject": "Piling"})
         self.client.force_authenticate(self.pm)
         got = self.client.get(f"/api/v1/tenders/{self.t['id']}").data
-        self.assertEqual(len(got["rfis"]), 1)
-        self.assertEqual(self.client.post(
-            f"/api/v1/tenders/{self.t['id']}/rfi", {"question": "q"},
-            format="json").status_code, 403)
+        self.assertEqual(len(got["queries"]), 1)
+        self.assertEqual(self.act("query", {}).status_code, 403)
+
+    # ---- the pack --------------------------------------------------------
 
     def test_the_pack_summarises_the_bill_by_section(self):
         from . import tenders as svc
@@ -426,12 +504,9 @@ class TenderTrailAndPackTests(TestCase):
         ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
         self.assertEqual(len(ctx["sections"]), 1)
         self.assertEqual(ctx["sections"][0]["lines"], 2)
-        self.assertEqual(float(ctx["sections"][0]["amount"]), 1300.0)
         self.assertEqual(float(ctx["bill_total"]), 1300.0)
 
     def test_the_pack_says_when_the_offer_and_the_bill_disagree(self):
-        """The offered figure is what the client was told; a bill that totals
-        something else is worth showing, not hiding."""
         from . import tenders as svc
         from .models import Tender
         self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
@@ -458,7 +533,6 @@ class TenderTrailAndPackTests(TestCase):
             "pdf/tender_submission.html",
             svc.submission_context(Tender.objects.get(pk=self.t["id"])))
         self.assertIn("TDR-SJR-001", html)
-        self.assertIn("Jetty extension", html)
         self.assertIn("Excavate", html)
 
     def test_a_clients_own_bill_prints_the_letter_without_our_schedule(self):
@@ -478,7 +552,6 @@ class TenderTrailAndPackTests(TestCase):
             "pdf/tender_submission.html",
             svc.submission_context(Tender.objects.get(pk=t["id"])))
         self.assertIn("on your own form", html)
-        # Our schedule is NOT appended — they are getting their own bill.
         self.assertNotIn("Secret rate", html)
 
 

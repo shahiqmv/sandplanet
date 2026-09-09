@@ -824,8 +824,13 @@ class Attachment(models.Model):
         # one that matters most: where we submit on their form, that file IS
         # the submission, so an offer cannot be issued without it.
         ("TENDER_ENQUIRY", "Tender enquiry document"),
+        ("TENDER_PREQUAL", "Pre-qualification document"),
+        ("TENDER_DRAWING", "Drawing"),
+        ("TENDER_SPEC", "Design specification"),
         ("TENDER_BILL", "Tender bill — the client's form"),
-        ("TENDER_ADDENDUM", "Tender addendum / clarification"),
+        # Issued by the client, usually carrying every bidder's questions and
+        # the answers: received and filed, never raised by us.
+        ("TENDER_ADDENDUM", "Tender addendum / bulletin"),
         ("TENDER_AWARD", "Award letter"),
     ]
 
@@ -840,6 +845,12 @@ class Attachment(models.Model):
     line = models.ForeignKey(  # a photo tied to one line (free-text MR items)
         "DocumentLine", on_delete=models.CASCADE, null=True, blank=True,
         related_name="attachments",
+    )
+    # A photo taken on a tender site visit. What the estimator saw is as much
+    # of the price as his notes are (owner 2026-09-09).
+    tender_visit = models.ForeignKey(
+        "TenderSiteVisit", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="photos",
     )
     kind = models.CharField(max_length=20, choices=KINDS)
     file = models.FileField(upload_to=attachment_path)
@@ -3343,6 +3354,10 @@ class Tender(models.Model):
     awarded_project = models.ForeignKey("Project", on_delete=models.PROTECT,
                                         null=True, blank=True,
                                         related_name="won_from")
+    # The QS carrying it. A tender is somebody's job from the day it is
+    # opened, and the register is read to see whose (owner 2026-09-09).
+    assigned_to = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="tenders")
 
     class Meta:
         ordering = ["-id"]
@@ -3352,14 +3367,23 @@ class Tender(models.Model):
 
 
 class TenderSiteVisit(models.Model):
-    """A visit made while pricing. Half of what a tender price rests on is
-    what the estimator saw — access, existing conditions, what the drawings
-    do not show — and none of it was written down anywhere the next person
-    could find (owner 2026-09-08)."""
+    """A visit to the job before pricing it.
+
+    Half of what a tender price rests on is what the estimator saw — access,
+    existing conditions, what the drawings do not show — and it lived in his
+    head. The visit is REQUESTED of the client first and held later, so both
+    dates matter: a visit still unanswered is a reason pricing has not started
+    (owner 2026-09-09).
+
+    Photos are the point as much as the notes. They hang off the visit as
+    attachments, so "what did the retaining wall actually look like" has an
+    answer months later.
+    """
 
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
                                related_name="visits")
-    visited_on = models.DateField()
+    requested_on = models.DateField(null=True, blank=True)
+    visited_on = models.DateField(null=True, blank=True)
     attendees = models.TextField(blank=True)
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
@@ -3367,24 +3391,39 @@ class TenderSiteVisit(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-visited_on", "-id"]
+        ordering = ["-visited_on", "-requested_on", "-id"]
+
+    @property
+    def is_held(self):
+        return self.visited_on is not None
 
 
-class TenderRfi(models.Model):
-    """A question put to the client while pricing, and their answer.
+class TenderQuery(models.Model):
+    """A Tender Query (TQ) — the sheet of questions we put to the client
+    during the tender period, and their answers.
 
-    This is the trail that explains why a price moved between revisions —
-    without it a later revision looks like a change of mind rather than a
-    response to what the client told us (owner 2026-09-08).
+    NOT an RFI: this app already uses RFI for the contract-stage request for
+    information and IR for an inspection request. A TQ is pre-contract, it
+    carries SEVERAL numbered questions on one sheet, it is issued to the
+    client under its own reference in our format, and the answers come back
+    written against each question — which is the trail explaining why a later
+    revision is priced differently (owner 2026-09-09).
+
+    What the client circulates afterwards, collecting every bidder's questions
+    and their answers, is a tender ADDENDUM. That is a document received and
+    filed, not a query raised.
     """
 
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
-                               related_name="rfis")
-    number = models.PositiveIntegerField()          # 1, 2, 3… within a tender
-    question = models.TextField()
+                               related_name="queries")
+    number = models.PositiveIntegerField()          # 1, 2, 3… per tender
+    subject = models.CharField(max_length=200, blank=True)
     raised_on = models.DateField()
-    answer = models.TextField(blank=True)
-    answered_on = models.DateField(null=True, blank=True)
+    # Set when the sheet goes to the client. Before that it is being drafted
+    # and questions can still be added or reworded.
+    issued_at = models.DateTimeField(null=True, blank=True)
+    responded_on = models.DateField(null=True, blank=True)
+    client_ref = models.CharField(max_length=60, blank=True)  # their reply ref
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -3393,12 +3432,51 @@ class TenderRfi(models.Model):
         ordering = ["number"]
         constraints = [
             models.UniqueConstraint(fields=["tender", "number"],
-                                    name="uniq_tender_rfi_number"),
+                                    name="uniq_tender_query_number"),
+        ]
+
+    @property
+    def ref(self):
+        """Cited to the client as TDR-SJR-001-TQ01."""
+        return f"{self.tender.document.ref}-TQ{self.number:02d}"
+
+    @property
+    def is_issued(self):
+        return self.issued_at is not None
+
+    @property
+    def answered_count(self):
+        return sum(1 for i in self.items.all() if i.is_answered)
+
+
+class TenderQueryItem(models.Model):
+    """One numbered question on a TQ sheet, and the client's answer to it.
+
+    Answers arrive per question, not per sheet — a client commonly answers
+    three of five and leaves the rest, and a sheet marked simply "answered"
+    would hide that (owner 2026-09-09).
+    """
+
+    query = models.ForeignKey(TenderQuery, on_delete=models.CASCADE,
+                              related_name="items")
+    number = models.PositiveIntegerField()          # 1, 2, 3… on the sheet
+    question = models.TextField()
+    # Where in the tender documents the question arises — the drawing or
+    # clause the client needs to look at to answer it.
+    reference = models.CharField(max_length=160, blank=True)
+    answer = models.TextField(blank=True)
+    answered_on = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["number"]
+        constraints = [
+            models.UniqueConstraint(fields=["query", "number"],
+                                    name="uniq_tender_query_item_number"),
         ]
 
     @property
     def is_answered(self):
-        return bool(self.answer.strip()) and self.answered_on is not None
+        return bool(self.answer.strip())
 
 
 class Boq(models.Model):

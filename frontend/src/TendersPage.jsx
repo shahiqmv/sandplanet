@@ -192,8 +192,17 @@ function NewTender({ sites, onDone }) {
   );
 }
 
+const TABS = [
+  ["offer", "Offer"],
+  ["documents", "Documents"],
+  ["visits", "Site visits"],
+  ["queries", "Queries (TQ)"],
+  ["boq", "Bill of quantities"],
+];
+
 function TenderDetail({ id, me, onClose }) {
   const [t, setT] = useState(null);
+  const [tab, setTab] = useState("offer");
   const [err, setErr] = useState(null);
   const [busy, setBusy] = useState(false);
   const [value, setValue] = useState("");
@@ -211,12 +220,22 @@ function TenderDetail({ id, me, onClose }) {
       const d = await api(`/tenders/${id}/${action}`,
                           { method: "POST", body: body || {} });
       setT(d); setValue(""); setNote(""); setRef("");
-    } catch (e) { setErr(e.message); }
+      return d;
+    } catch (e) { setErr(e.message); return null; }
     finally { setBusy(false); }
   }
   if (!t) return null;
   const live = ["DRAFT", "SUBMITTED"].includes(t.status);
   const current = (t.revisions || []).slice(-1)[0];
+  // What each tab is carrying, so the work left is visible without opening
+  // every one of them (owner 2026-09-09).
+  const counts = {
+    documents: (t.attachments || []).length,
+    visits: (t.visits || []).length,
+    queries: (t.queries || []).length,
+  };
+  const openQuestions = (t.queries || []).reduce(
+    (n, q) => n + (q.items || []).filter((i) => !i.is_answered).length, 0);
 
   return (
     <div>
@@ -229,6 +248,9 @@ function TenderDetail({ id, me, onClose }) {
                        fontFamily: "var(--font-mono)" }}>{t.ref}</h3>
           <Chip tone={TONE[t.status] || "info"}>
             {LABEL[t.status] || t.status}</Chip>
+          {t.assigned_to && (
+            <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+              with {t.assigned_to}</span>)}
         </div>
         <p style={{ margin: "6px 0 2px", fontWeight: 600 }}>{t.client_name}</p>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
@@ -237,215 +259,428 @@ function TenderDetail({ id, me, onClose }) {
                                      : "submitted on the client's bill"}</p>
         {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
 
-        <h4 style={{ margin: "16px 0 4px", fontSize: 13.5,
-                     color: "var(--sp-navy)" }}>Revisions</h4>
-        <table style={{ width: "100%", borderCollapse: "collapse",
-                        fontSize: 13 }}>
-          <thead><tr>
-            <th style={th}>Rev</th><th style={th}>Priced by</th>
-            <th style={{ ...th, textAlign: "right" }}>Value</th>
-            <th style={th}>State</th><th style={th}>Note</th>
-          </tr></thead>
-          <tbody>
-            {(t.revisions || []).map((r) => (
-              <tr key={r.id}>
-                <td style={{ ...td, fontFamily: "var(--font-mono)" }}>
-                  {r.rev_label}</td>
-                <td style={td}>{r.created_by || "—"}
-                  <div style={{ fontSize: 11, color: "var(--muted)" }}>
-                    {day(r.created_at)}</div></td>
-                <td style={{ ...td, textAlign: "right",
-                             fontVariantNumeric: "tabular-nums" }}>
-                  {r.value ? money(r.value, t.currency) : "—"}</td>
-                <td style={td}>
-                  {r.issued
-                    ? <Chip tone="ok">Issued {day(r.issued_at)}</Chip>
-                    : <Chip tone="info">Internal</Chip>}</td>
-                <td style={{ ...td, color: "var(--muted)" }}>
-                  {r.note || "—"}</td>
-              </tr>))}
-          </tbody>
-        </table>
-
-        <p style={{ margin: "10px 0 0" }}>
-          <a href={`/api/v1/tenders/${t.id}/submission.pdf`} target="_blank"
-             rel="noreferrer" style={{ fontSize: 13 }}>
-            ⬇ Submission pack ({current?.rev_label || "R0"}) — covering letter,
-            summary{t.submit_our_format ? " and bill" : ""}</a>
-        </p>
-
-        {!t.submit_our_format && (
-          <p style={{ fontSize: 12.5, color: "#b35900", margin: "8px 0 0" }}>
-            This is submitted on the client's own bill, so their file must be
-            attached before the offer can be issued. The priced lines are
-            captured here either way.
-          </p>)}
-
-        {can && live && (
-          <div style={{ marginTop: 16, display: "flex", flexDirection:
-                        "column", gap: 10 }}>
-            {current && !current.issued && (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                            alignItems: "center" }}>
-                <input placeholder={`Value (${t.currency})`} type="number"
-                       value={value} onChange={(e) => setValue(e.target.value)}
-                       style={{ ...inputStyle, width: 160 }} />
-                <Btn disabled={busy || !value}
-                     onClick={() => act("issue", { value })}>
-                  Issue {current.rev_label} to the client</Btn>
-              </div>)}
-            {current && current.issued && (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                            alignItems: "center" }}>
-                <input placeholder="Why a new price?" value={note}
-                       onChange={(e) => setNote(e.target.value)}
-                       style={{ ...inputStyle, flex: "1 1 220px" }} />
-                <Btn variant="secondary" disabled={busy}
-                     onClick={() => act("revision", { note })}>
-                  Start a new revision</Btn>
-              </div>)}
-            {t.status === "SUBMITTED" && (
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                            alignItems: "center" }}>
-                <input placeholder="Their reference (LOA no.)" value={ref}
-                       onChange={(e) => setRef(e.target.value)}
-                       style={{ ...inputStyle, width: 200 }} />
-                <Btn disabled={busy}
-                     onClick={() => act("awarded", { outcome_ref: ref })}>
-                  Awarded</Btn>
-                <Btn variant="secondary" disabled={busy}
-                     onClick={() => act("lost", { lost_reason: note })}>
-                  Lost</Btn>
-              </div>)}
-            <Btn variant="secondary" disabled={busy}
-                 onClick={() => act("withdrawn", {})}>Withdraw</Btn>
-          </div>)}
-
-        {!live && (
-          <p style={{ marginTop: 14, fontSize: 13 }}>
-            {t.status === "AWARDED"
-              ? `Awarded ${day(t.outcome_date)}${t.outcome_ref
-                  ? ` under ${t.outcome_ref}` : ""} at ${money(
-                  t.value_awarded, t.currency)}.`
-              : t.status === "LOST"
-                ? `Lost ${day(t.outcome_date)}${t.lost_to
-                    ? ` to ${t.lost_to}` : ""}${t.lost_reason
-                    ? ` — ${t.lost_reason}` : ""}.`
-                : `Withdrawn ${day(t.outcome_date)}.`}
-          </p>)}
+        <div style={{ display: "flex", gap: 6, marginTop: 12,
+                      flexWrap: "wrap" }}>
+          {TABS.map(([k, label]) => (
+            <button key={k} onClick={() => setTab(k)}
+                    style={tab === k ? buttonStyle : ghostButton}>
+              {label}
+              {counts[k] > 0 && (
+                <span style={{ marginLeft: 5, opacity: .75 }}>
+                  {counts[k]}</span>)}
+              {k === "queries" && openQuestions > 0 && (
+                <span style={{ marginLeft: 5, color: "#b35900",
+                               fontWeight: 700 }}>
+                  · {openQuestions} unanswered</span>)}
+            </button>))}
+        </div>
       </div>
 
-      {/* Its own card: the bill is the biggest thing on the page and needs
-          the width, which is why the detail is a page and not a modal. */}
-      <div style={{ marginTop: 12 }}>
-        <BoqPanel base={`/tenders/${t.id}`} me={me} />
-      </div>
+      {tab === "offer" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Offer t={t} can={can} live={live} current={current} busy={busy}
+                 act={act} value={value} setValue={setValue} note={note}
+                 setNote={setNote} refText={ref} setRef={setRef} me={me} />
+        </div>)}
 
-      <div style={{ ...card, marginTop: 12 }}>
-        <Docs t={t} can={can} onChanged={setT} />
-        <Trail t={t} can={can && live} busy={busy} act={act} />
-      </div>
+      {tab === "documents" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Docs t={t} can={can} onChanged={setT} />
+        </div>)}
+
+      {tab === "visits" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Visits t={t} can={can && live} busy={busy} act={act}
+                  onChanged={setT} />
+        </div>)}
+
+      {tab === "queries" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Queries t={t} can={can && live} busy={busy} act={act} />
+        </div>)}
+
+      {tab === "boq" && (
+        <div style={{ marginTop: 12 }}>
+          <BoqPanel base={`/tenders/${t.id}`} me={me} />
+        </div>)}
     </div>
   );
 }
 
+/* The offer itself: its revisions, what has been issued, and how it ends. */
+function Offer({ t, can, live, current, busy, act, value, setValue, note,
+                 setNote, refText, setRef, me }) {
+  const [people, setPeople] = useState([]);
+  useEffect(() => {
+    if (!can) return;
+    // Its own endpoint: the user list is admin-only, and a QS assigning a
+    // tender has no business reading the whole staff register.
+    api("/tenders/assignees").then(setPeople).catch(() => {});
+  }, [can]);
 
-/* What the price rested on: the visit, and the questions the client answered.
- * Without the RFI trail a later revision reads as a change of mind rather
- * than a response to what the client told us (owner 2026-09-08).
+  return (
+    <>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Revisions</h4>
+      <table style={{ width: "100%", borderCollapse: "collapse",
+                      fontSize: 13 }}>
+        <thead><tr>
+          <th style={th}>Rev</th><th style={th}>Priced by</th>
+          <th style={{ ...th, textAlign: "right" }}>Value</th>
+          <th style={th}>State</th><th style={th}>Note</th>
+        </tr></thead>
+        <tbody>
+          {(t.revisions || []).map((r) => (
+            <tr key={r.id}>
+              <td style={{ ...td, fontFamily: "var(--font-mono)" }}>
+                {r.rev_label}</td>
+              <td style={td}>{r.created_by || "—"}
+                <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                  {day(r.created_at)}</div></td>
+              <td style={{ ...td, textAlign: "right",
+                           fontVariantNumeric: "tabular-nums" }}>
+                {r.value ? money(r.value, t.currency) : "—"}</td>
+              <td style={td}>
+                {r.issued
+                  ? <Chip tone="ok">Issued {day(r.issued_at)}</Chip>
+                  : <Chip tone="info">Internal</Chip>}</td>
+              <td style={{ ...td, color: "var(--muted)" }}>
+                {r.note || "—"}</td>
+            </tr>))}
+        </tbody>
+      </table>
+
+      <p style={{ margin: "10px 0 0" }}>
+        <a href={`/api/v1/tenders/${t.id}/submission.pdf`} target="_blank"
+           rel="noreferrer" style={{ fontSize: 13 }}>
+          ⬇ Submission pack ({current?.rev_label || "R0"}) — covering letter,
+          summary{t.submit_our_format ? " and bill" : ""}</a>
+      </p>
+
+      {can && (
+        <div style={{ marginTop: 12, display: "flex", gap: 8,
+                      alignItems: "center", flexWrap: "wrap" }}>
+          <label style={{ fontSize: 12.5 }}>Carried by
+            <select value={t.assigned_to_id || ""} disabled={busy}
+                    onChange={(e) => act("assign",
+                      { user_id: e.target.value || null })}
+                    style={{ ...inputStyle, width: 190 }}>
+              <option value="">— unassigned —</option>
+              {people.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name}</option>))}
+            </select>
+          </label>
+        </div>)}
+
+      {can && live && (
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column",
+                      gap: 10 }}>
+          {current && !current.issued && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                          alignItems: "center" }}>
+              <input placeholder={`Value (${t.currency})`} type="number"
+                     value={value} onChange={(e) => setValue(e.target.value)}
+                     style={{ ...inputStyle, width: 160 }} />
+              <Btn disabled={busy || !value}
+                   onClick={() => act("issue", { value })}>
+                Issue {current.rev_label} to the client</Btn>
+            </div>)}
+          {current && current.issued && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                          alignItems: "center" }}>
+              <input placeholder="Why a new price?" value={note}
+                     onChange={(e) => setNote(e.target.value)}
+                     style={{ ...inputStyle, flex: "1 1 220px" }} />
+              <Btn variant="secondary" disabled={busy}
+                   onClick={() => act("revision", { note })}>
+                Start a new revision</Btn>
+            </div>)}
+          {t.status === "SUBMITTED" && (
+            <Outcome t={t} busy={busy} act={act} refText={refText}
+                     setRef={setRef} note={note} setNote={setNote} />)}
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => act("withdrawn", {})}>Withdraw</Btn>
+        </div>)}
+
+      {!live && (
+        <p style={{ marginTop: 14, fontSize: 13 }}>
+          {t.status === "AWARDED"
+            ? `Awarded ${day(t.outcome_date)}${t.outcome_ref
+                ? ` under ${t.outcome_ref}` : ""} at ${money(
+                t.value_awarded, t.currency)}${t.awarded_project
+                ? ` — project ${t.awarded_project}` : ""}.`
+            : t.status === "LOST"
+              ? `Lost ${day(t.outcome_date)}${t.lost_to
+                  ? ` to ${t.lost_to}` : ""}${t.lost_reason
+                  ? ` — ${t.lost_reason}` : ""}.`
+              : `Withdrawn ${day(t.outcome_date)}.`}
+        </p>)}
+    </>
+  );
+}
+
+/* Awarding creates the project, so it asks for the code the register will
+   read by (SOUT JT, NORTH JT) rather than inventing a serial. */
+function Outcome({ t, busy, act, refText, setRef, note, setNote }) {
+  const [code, setCode] = useState("");
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                  alignItems: "center" }}>
+      <input placeholder="Their reference (LOA no.)" value={refText}
+             onChange={(e) => setRef(e.target.value)}
+             style={{ ...inputStyle, width: 180 }} />
+      <input placeholder="New project code" value={code}
+             onChange={(e) => setCode(e.target.value)}
+             style={{ ...inputStyle, width: 150 }} />
+      <Btn disabled={busy || !code.trim()}
+           onClick={() => act("awarded", { outcome_ref: refText,
+                                           project_code: code })}>
+        Awarded</Btn>
+      <Btn variant="secondary" disabled={busy}
+           onClick={() => act("lost", { lost_reason: note })}>Lost</Btn>
+      <input placeholder="Why lost?" value={note}
+             onChange={(e) => setNote(e.target.value)}
+             style={{ ...inputStyle, flex: "1 1 160px" }} />
+    </div>
+  );
+}
+
+/* A visit is asked for, then held. Both dates matter: one requested and not
+ * yet given is a live reason pricing has not started. The photos are as much
+ * of the price as the notes (owner 2026-09-09).
  */
-function Trail({ t, can, busy, act }) {
-  const [q, setQ] = useState("");
-  const [visit, setVisit] = useState({ visited_on: "", attendees: "",
-                                       notes: "" });
+function Visits({ t, can, busy, act, onChanged }) {
+  const [req, setReq] = useState({ requested_on: "", notes: "" });
+  const [holding, setHolding] = useState(null);
+  const [held, setHeld] = useState({ visited_on: "", attendees: "",
+                                     notes: "" });
+  const [err, setErr] = useState(null);
+  const fileRef = useRef(null);
+  const [forVisit, setForVisit] = useState(null);
+
+  async function addPhoto(file) {
+    if (!file || !forVisit) return;
+    setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      onChanged(await apiUpload(`/tenders/${t.id}/visits/${forVisit}/photo`,
+                                fd));
+    } catch (e) { setErr(e.message); }
+    finally { if (fileRef.current) fileRef.current.value = ""; }
+  }
+
+  return (
+    <div>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Site visits</h4>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        What the estimator saw — access, existing conditions, what the drawings
+        do not show. Pricing rests on it as much as on the documents.
+      </p>
+      {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
+      {(t.visits || []).length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+          None requested yet.</p>)}
+
+      {(t.visits || []).map((v) => (
+        <div key={v.id} style={{ borderTop: "1px solid var(--sp-border)",
+                                 padding: "8px 0", fontSize: 13 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline",
+                        flexWrap: "wrap" }}>
+            {v.held
+              ? <><strong>Held {day(v.visited_on)}</strong>
+                  <Chip tone="ok">done</Chip></>
+              : <><strong>Requested {day(v.requested_on)}</strong>
+                  <Chip tone="warn">awaiting the client</Chip></>}
+            {v.attendees && <span style={{ color: "var(--muted)" }}>
+              {v.attendees}</span>}
+          </div>
+          {v.notes && <div style={{ marginTop: 3, whiteSpace: "pre-line" }}>
+            {v.notes}</div>}
+
+          {v.photos?.length > 0 && (
+            <div style={{ display: "flex", gap: 6, marginTop: 6,
+                          flexWrap: "wrap" }}>
+              {v.photos.map((ph) => (
+                <a key={ph.id} href={ph.url} target="_blank" rel="noreferrer">
+                  <img src={ph.url} alt={ph.caption || ph.file_name}
+                       style={{ height: 84, width: 112, objectFit: "cover",
+                                borderRadius: 5,
+                                border: "1px solid var(--sp-border)" }} />
+                </a>))}
+            </div>)}
+
+          {can && !v.held && (
+            holding === v.id ? (
+              <div style={{ display: "flex", gap: 6, marginTop: 6,
+                            flexWrap: "wrap" }}>
+                <input type="date" value={held.visited_on}
+                       onChange={(e) => setHeld({ ...held,
+                         visited_on: e.target.value })} style={inputStyle} />
+                <input placeholder="Who went" value={held.attendees}
+                       onChange={(e) => setHeld({ ...held,
+                         attendees: e.target.value })}
+                       style={{ ...inputStyle, width: 150 }} />
+                <input placeholder="What was seen" value={held.notes}
+                       onChange={(e) => setHeld({ ...held,
+                         notes: e.target.value })}
+                       style={{ ...inputStyle, flex: "1 1 200px" }} />
+                <Btn disabled={busy || !held.visited_on}
+                     onClick={() => { act("visit-held",
+                       { visit_id: v.id, ...held }); setHolding(null);
+                       setHeld({ visited_on: "", attendees: "", notes: "" });
+                     }}>Save</Btn>
+              </div>
+            ) : (
+              <button style={{ ...ghostButton, padding: "1px 6px",
+                               fontSize: 11, marginTop: 5 }}
+                      onClick={() => setHolding(v.id)}>
+                Record the visit</button>))}
+
+          {can && v.held && (
+            <button style={{ ...ghostButton, padding: "1px 6px", fontSize: 11,
+                             marginTop: 5 }}
+                    onClick={() => { setForVisit(v.id);
+                                     fileRef.current?.click(); }}>
+              ＋ Add a photo</button>)}
+        </div>))}
+
+      <input ref={fileRef} type="file" accept="image/*"
+             style={{ display: "none" }}
+             onChange={(e) => addPhoto(e.target.files[0])} />
+
+      {can && (
+        <div style={{ display: "flex", gap: 6, marginTop: 10,
+                      flexWrap: "wrap" }}>
+          <input type="date" value={req.requested_on}
+                 onChange={(e) => setReq({ ...req,
+                   requested_on: e.target.value })} style={inputStyle} />
+          <input placeholder="What we asked for" value={req.notes}
+                 onChange={(e) => setReq({ ...req, notes: e.target.value })}
+                 style={{ ...inputStyle, flex: "1 1 220px" }} />
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => { act("visit-request", req);
+                 setReq({ requested_on: "", notes: "" }); }}>
+            Request a visit</Btn>
+        </div>)}
+    </div>
+  );
+}
+
+/* Tender Queries. NOT an RFI — that name is taken by the contract-stage
+ * request for information and by the inspection request. A TQ carries several
+ * numbered questions on one sheet, goes to the client under its own reference
+ * in our format, and the answers come back against each question, because a
+ * client commonly answers three of five (owner 2026-09-09).
+ */
+function Queries({ t, can, busy, act }) {
+  const [openQ, setOpenQ] = useState(null);
+  const [subject, setSubject] = useState("");
+  const [q, setQ] = useState({ question: "", reference: "" });
   const [answering, setAnswering] = useState(null);
   const [ans, setAns] = useState("");
 
   return (
-    <div style={{ marginTop: 18 }}>
+    <div>
       <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
-                   color: "var(--sp-navy)" }}>
-        Questions to the client</h4>
-      {(t.rfis || []).length === 0 && (
+                   color: "var(--sp-navy)" }}>Tender queries</h4>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        Questions put to the client during the tender period, several to a
+        sheet, issued under our own reference. Their answers are what explain
+        why a later revision is priced differently.
+      </p>
+      {(t.queries || []).length === 0 && (
         <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
           None raised.</p>)}
-      {(t.rfis || []).map((r) => (
-        <div key={r.id} style={{ borderTop: "1px solid var(--sp-border)",
-                                 padding: "6px 0", fontSize: 13 }}>
-          <div><strong>RFI {r.number}</strong>
-            <span style={{ color: "var(--muted)", marginLeft: 8 }}>
-              raised {day(r.raised_on)}</span>
-            {r.answered
-              ? <Chip tone="ok">answered {day(r.answered_on)}</Chip>
-              : <Chip tone="warn">awaiting the client</Chip>}
-          </div>
-          <div style={{ marginTop: 2 }}>{r.question}</div>
-          {r.answer && (
-            <div style={{ marginTop: 2, color: "var(--muted)" }}>
-              ↳ {r.answer}</div>)}
-          {can && !r.answered && (
-            answering === r.id ? (
-              <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-                <input value={ans} onChange={(e) => setAns(e.target.value)}
-                       placeholder="What the client said" autoFocus
-                       style={{ ...inputStyle, flex: "1 1 200px" }} />
-                <Btn disabled={busy || !ans.trim()}
-                     onClick={() => { act("rfi-answer",
-                       { rfi_id: r.id, answer: ans }); setAnswering(null);
-                       setAns(""); }}>Save</Btn>
-              </div>
-            ) : (
-              <button style={{ ...ghostButton, padding: "1px 6px",
-                               fontSize: 11, marginTop: 3 }}
-                      onClick={() => setAnswering(r.id)}>
-                Record the answer</button>))}
-        </div>))}
-      {can && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-          <input value={q} onChange={(e) => setQ(e.target.value)}
-                 placeholder="Ask the client…"
-                 style={{ ...inputStyle, flex: "1 1 220px" }} />
-          <Btn variant="secondary" disabled={busy || !q.trim()}
-               onClick={() => { act("rfi", { question: q }); setQ(""); }}>
-            Raise RFI</Btn>
-        </div>)}
 
-      <h4 style={{ margin: "16px 0 4px", fontSize: 13.5,
-                   color: "var(--sp-navy)" }}>Site visits</h4>
-      {(t.visits || []).length === 0 && (
-        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
-          None recorded.</p>)}
-      {(t.visits || []).map((v) => (
-        <div key={v.id} style={{ borderTop: "1px solid var(--sp-border)",
-                                 padding: "6px 0", fontSize: 13 }}>
-          <strong>{day(v.visited_on)}</strong>
-          {v.attendees && <span style={{ color: "var(--muted)",
-                                         marginLeft: 8 }}>{v.attendees}</span>}
-          {v.notes && <div style={{ marginTop: 2 }}>{v.notes}</div>}
+      {(t.queries || []).map((qq) => (
+        <div key={qq.id} style={{ borderTop: "1px solid var(--sp-border)",
+                                  padding: "8px 0" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "baseline",
+                        flexWrap: "wrap" }}>
+            <strong style={{ fontFamily: "var(--font-mono)" }}>{qq.ref}</strong>
+            {qq.subject && <span>{qq.subject}</span>}
+            {qq.issued
+              ? <Chip tone="ok">issued {day(qq.issued_at)}</Chip>
+              : <Chip tone="info">drafting</Chip>}
+            <span style={{ fontSize: 12, color: "var(--muted)" }}>
+              {qq.answered}/{(qq.items || []).length} answered</span>
+            {qq.client_ref && (
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                their ref {qq.client_ref}</span>)}
+            <a href={`/api/v1/tenders/${t.id}/queries/${qq.id}.pdf`}
+               target="_blank" rel="noreferrer"
+               style={{ fontSize: 12, marginLeft: "auto" }}>⬇ Sheet</a>
+          </div>
+
+          {(qq.items || []).map((it) => (
+            <div key={it.id} style={{ marginTop: 5, paddingLeft: 10,
+                                      borderLeft: "2px solid var(--sp-border)",
+                                      fontSize: 13 }}>
+              <div><strong>{it.number}.</strong> {it.question}
+                {it.reference && (
+                  <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
+                    {" "}(ref {it.reference})</span>)}</div>
+              {it.answer
+                ? <div style={{ color: "var(--muted)", marginTop: 2 }}>
+                    ↳ {it.answer} · {day(it.answered_on)}</div>
+                : can && (answering === it.id ? (
+                    <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+                      <input value={ans} autoFocus
+                             onChange={(e) => setAns(e.target.value)}
+                             placeholder="What the client answered"
+                             style={{ ...inputStyle, flex: "1 1 200px" }} />
+                      <Btn disabled={busy || !ans.trim()}
+                           onClick={() => { act("query-answer",
+                             { query_id: qq.id, item_id: it.id,
+                               answer: ans }); setAnswering(null);
+                             setAns(""); }}>Save</Btn>
+                    </div>
+                  ) : (
+                    <button style={{ ...ghostButton, padding: "1px 6px",
+                                     fontSize: 11, marginTop: 3 }}
+                            onClick={() => setAnswering(it.id)}>
+                      Record the answer</button>))}
+            </div>))}
+
+          {can && !qq.issued && (
+            <div style={{ marginTop: 8, display: "flex", gap: 6,
+                          flexWrap: "wrap" }}>
+              <input placeholder="Another question" value={
+                openQ === qq.id ? q.question : ""}
+                     onChange={(e) => { setOpenQ(qq.id);
+                       setQ({ ...q, question: e.target.value }); }}
+                     style={{ ...inputStyle, flex: "1 1 220px" }} />
+              <input placeholder="Drawing / clause" value={
+                openQ === qq.id ? q.reference : ""}
+                     onChange={(e) => { setOpenQ(qq.id);
+                       setQ({ ...q, reference: e.target.value }); }}
+                     style={{ ...inputStyle, width: 140 }} />
+              <Btn variant="secondary"
+                   disabled={busy || openQ !== qq.id || !q.question.trim()}
+                   onClick={() => { act("query-question",
+                     { query_id: qq.id, ...q });
+                     setQ({ question: "", reference: "" }); }}>Add</Btn>
+              <Btn disabled={busy || !(qq.items || []).length}
+                   onClick={() => act("query-issue", { query_id: qq.id })}>
+                Issue to the client</Btn>
+            </div>)}
         </div>))}
+
       {can && (
-        <div style={{ display: "flex", gap: 6, marginTop: 8,
+        <div style={{ display: "flex", gap: 6, marginTop: 12,
                       flexWrap: "wrap" }}>
-          <input type="date" value={visit.visited_on}
-                 onChange={(e) => setVisit({ ...visit,
-                   visited_on: e.target.value })} style={inputStyle} />
-          <input value={visit.attendees} placeholder="Who went"
-                 onChange={(e) => setVisit({ ...visit,
-                   attendees: e.target.value })}
-                 style={{ ...inputStyle, width: 160 }} />
-          <input value={visit.notes} placeholder="What was seen"
-                 onChange={(e) => setVisit({ ...visit,
-                   notes: e.target.value })}
-                 style={{ ...inputStyle, flex: "1 1 200px" }} />
-          <Btn variant="secondary" disabled={busy || !visit.visited_on}
-               onClick={() => { act("visit", visit);
-                 setVisit({ visited_on: "", attendees: "", notes: "" }); }}>
-            Log visit</Btn>
+          <input placeholder="Subject of a new query sheet" value={subject}
+                 onChange={(e) => setSubject(e.target.value)}
+                 style={{ ...inputStyle, flex: "1 1 240px" }} />
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => { act("query", { subject }); setSubject(""); }}>
+            Start a query</Btn>
         </div>)}
     </div>
   );
 }
-
 
 /* Everything the enquiry arrived with and everything it produces. The
  * client's own bill is the one that matters: where we submit on their form

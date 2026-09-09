@@ -41,6 +41,9 @@ def _row(t, full=False):
         if doc.current_revision_id else None,
         "awarded_project": (t.awarded_project.code
                             if t.awarded_project_id else None),
+        "assigned_to": (t.assigned_to.full_name if t.assigned_to_id
+                        else None),
+        "assigned_to_id": t.assigned_to_id,
     }
     if full:
         out.update({
@@ -48,14 +51,29 @@ def _row(t, full=False):
             "revisions": [_rev(r) for r in
                           doc.revisions.select_related("created_by")
                           .order_by("id")],
-            "visits": [{"id": v.id, "visited_on": v.visited_on,
-                        "attendees": v.attendees, "notes": v.notes}
+            "visits": [{"id": v.id, "requested_on": v.requested_on,
+                        "visited_on": v.visited_on, "held": v.is_held,
+                        "attendees": v.attendees, "notes": v.notes,
+                        "photos": [{"id": a.id, "url": a.file.url
+                                    if a.file else None,
+                                    "caption": a.caption,
+                                    "file_name": a.file_name}
+                                   for a in v.photos.all()]}
                        for v in t.visits.all()],
-            "rfis": [{"id": r.id, "number": r.number,
-                      "question": r.question, "raised_on": r.raised_on,
-                      "answer": r.answer, "answered_on": r.answered_on,
-                      "answered": r.is_answered}
-                     for r in t.rfis.all()],
+            "queries": [{"id": q.id, "number": q.number, "ref": q.ref,
+                         "subject": q.subject, "raised_on": q.raised_on,
+                         "issued_at": q.issued_at, "issued": q.is_issued,
+                         "client_ref": q.client_ref,
+                         "responded_on": q.responded_on,
+                         "answered": q.answered_count,
+                         "items": [{"id": i.id, "number": i.number,
+                                    "question": i.question,
+                                    "reference": i.reference,
+                                    "answer": i.answer,
+                                    "answered_on": i.answered_on,
+                                    "is_answered": i.is_answered}
+                                   for i in q.items.all()]}
+                        for q in t.queries.prefetch_related("items")],
             "attachments": [{"id": a.id, "kind": a.kind,
                              "kind_label": a.get_kind_display(),
                              "caption": a.caption,
@@ -69,6 +87,25 @@ def _row(t, full=False):
                             .exclude(kind="GENERATED_PDF")],
         })
     return out
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_assignees(request):
+    """Who a tender can be carried by.
+
+    Its own endpoint because the user list is admin-only, and a QS assigning
+    a tender has no business reading the whole staff register (owner
+    2026-09-09).
+    """
+    from .models import User
+    if not svc.can_manage(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    people = User.objects.filter(is_active=True,
+                                 role__in=svc.MANAGE_ROLES).order_by(
+        "full_name")
+    return Response([{"id": u.id, "full_name": u.full_name, "role": u.role}
+                     for u in people])
 
 
 @api_view(["GET", "POST"])
@@ -132,13 +169,28 @@ def tender_action(request, pk, action):
         _rv, msg = svc.add_revision(t, request.data, request.user)
     elif action == "issue":
         msg = svc.issue_revision(t, request.data, request.user)
-    elif action == "visit":
-        _v, msg = svc.add_visit(t, request.data, request.user)
-    elif action == "rfi":
-        _r, msg = svc.raise_rfi(t, request.data, request.user)
-    elif action == "rfi-answer":
-        _r, msg = svc.answer_rfi(t, request.data.get("rfi_id"), request.data,
-                                 request.user)
+    elif action == "visit-request":
+        _v, msg = svc.request_visit(t, request.data, request.user)
+    elif action == "visit-held":
+        _v, msg = svc.record_visit(t, request.data.get("visit_id"),
+                                   request.data, request.user)
+    elif action == "query":
+        _q, msg = svc.open_query(t, request.data, request.user)
+    elif action == "query-question":
+        _i, msg = svc.add_question(t, request.data.get("query_id"),
+                                   request.data, request.user)
+    elif action == "query-question-remove":
+        msg = svc.remove_question(t, request.data.get("query_id"),
+                                  request.data.get("item_id"), request.user)
+    elif action == "query-issue":
+        _q, msg = svc.issue_query(t, request.data.get("query_id"),
+                                  request.user)
+    elif action == "query-answer":
+        _i, msg = svc.answer_question(t, request.data.get("query_id"),
+                                      request.data.get("item_id"),
+                                      request.data, request.user)
+    elif action == "assign":
+        msg = svc.assign(t, request.data.get("user_id"), request.user)
     elif action in ("awarded", "lost", "withdrawn"):
         msg = svc.record_outcome(t, action.upper(), request.data,
                                  request.user)
@@ -385,3 +437,60 @@ def tender_document_delete(request, pk, att_id):
           detail={"ref": t.document.ref, "name": a.file_name})
     a.delete()
     return Response(_row(t, full=True))
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_query_pdf(request, pk, query_id):
+    """The TQ sheet as it goes to the client, in our format under our
+    reference. Printable before issue too — it is read before it is sent."""
+    from django.http import HttpResponse
+
+    from .views_commercial import pdf_bytes
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    q = t.queries.filter(pk=query_id).first()
+    if q is None:
+        return Response({"detail": "That query is not on this tender."},
+                        status=404)
+    try:
+        pdf = pdf_bytes("pdf/tender_query.html", svc.query_context(q))
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"},
+                        status=500)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{q.ref}.pdf"'
+    return resp
+
+
+@api_view(["POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def tender_visit_photo(request, pk, visit_id):
+    """A photo from the visit. What the estimator saw is as much of the price
+    as his notes are, and it has to survive past his memory."""
+    from .models import Attachment
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "QS, the Director or Admin record a "
+                                   "visit."}, status=403)
+    v = t.visits.filter(pk=visit_id).first()
+    if v is None:
+        return Response({"detail": "That visit is not on this tender."},
+                        status=404)
+    upload = request.FILES.get("file")
+    if upload is None:
+        return Response({"detail": "Choose a photo to upload."}, status=400)
+    Attachment.objects.create(
+        document=t.document, tender_visit=v, kind="PHOTO", file=upload,
+        file_name=upload.name, content_type=upload.content_type or "",
+        size_bytes=upload.size, caption=request.data.get("caption", ""),
+        uploaded_by=request.user)
+    audit("tender", t.id, "TENDER_VISIT_PHOTO", actor=request.user,
+          detail={"ref": t.document.ref, "visit": v.id})
+    return Response(_row(t, full=True), status=201)

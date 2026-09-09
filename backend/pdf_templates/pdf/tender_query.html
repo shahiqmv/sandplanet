@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+{% include "pdf/_letter_styles.html" %}
+<style>
+  /* A Tender Query goes to the client under its own reference, carrying
+     several numbered questions with room for their answer against each. It
+     is the record of what was asked and what came back — the trail that
+     explains why a later revision is priced differently (owner 2026-09-09). */
+  .facts { width: 100%; border-collapse: collapse; margin-top: 6pt; }
+  .facts td { padding: 2pt 0; font-size: 9pt; vertical-align: top; }
+  .facts td.k { width: 108pt; color: #5B6672; }
+  table.q { width: 100%; border-collapse: collapse; margin-top: 10pt;
+            border: 1pt solid #C9D9E5; }
+  table.q th { background: #16527E; color: #fff; font-size: 8pt;
+               text-transform: uppercase; letter-spacing: .5pt;
+               padding: 3pt 6pt; text-align: left; }
+  table.q td { padding: 4pt 6pt; border-bottom: 1pt solid #EAF1F6;
+               font-size: 8.5pt; vertical-align: top; }
+  table.q td.n { width: 24pt; text-align: right; font-weight: 700;
+                 color: #16527E; }
+  .qref { display: block; font-size: 7.5pt; color: #5B6672; margin-top: 1.5pt; }
+  .ans { min-height: 26pt; color: #1A2530; }
+  .ans-empty { color: #9AA4AD; font-style: italic; }
+  .sig { margin-top: 26pt; }
+  .sig-line { border-top: 1pt solid #1A2530; width: 190pt; margin-top: 36pt;
+              padding-top: 4pt; }
+</style>
+</head>
+<body>
+{% include "pdf/_letterhead_letter.html" %}
+
+<div class="lettertitle">Tender Query</div>
+<div class="lettertitle-rule"></div>
+
+<p style="margin-top:8pt;"><b>{{ tender.client_name }}</b></p>
+{% if tender.client_contact %}<p style="white-space:pre-line;margin:0;">{{ tender.client_contact }}</p>{% endif %}
+
+<p style="margin-top:10pt;">Dear Sir / Madam,</p>
+
+<p style="margin-top:6pt;text-align:justify;">
+  <b>{{ tender.title }}{% if site %} — {{ site.name }}{% endif %}</b>
+</p>
+
+<p style="margin-top:6pt;text-align:justify;">
+  In the course of preparing our tender we should be grateful for your
+  clarification of the following{% if q.subject %}, concerning
+  {{ q.subject }}{% endif %}. Our pricing depends on your response, and we
+  should be grateful to receive it at your earliest convenience.
+</p>
+
+<table class="facts">
+  <tr><td class="k">Query reference</td><td class="mono">{{ ref }}</td></tr>
+  <tr><td class="k">Tender reference</td><td class="mono">{{ tender_ref }}</td></tr>
+  {% if tender.due_date %}<tr><td class="k">Tender due</td>
+      <td>{{ tender.due_date|date:"d M Y" }}</td></tr>{% endif %}
+</table>
+
+<table class="q">
+  <thead><tr><th style="width:24pt;">No.</th><th style="width:46%;">Query</th>
+    <th>Response</th></tr></thead>
+  <tbody>
+    {% for it in items %}
+      <tr>
+        <td class="n">{{ it.number }}</td>
+        <td>{{ it.question }}
+          {% if it.reference %}<span class="qref">Ref: {{ it.reference }}</span>{% endif %}
+        </td>
+        <td class="ans">
+          {% if it.answer %}{{ it.answer }}
+            {% if it.answered_on %}<span class="qref">{{ it.answered_on|date:"d M Y" }}</span>{% endif %}
+          {% else %}<span class="ans-empty">&nbsp;</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="sig">
+  <p>Yours faithfully,</p>
+  <div class="sig-line"></div>
+  <div style="font-weight:700;">For and on behalf of {{ co.legal_name }}</div>
+</div>
+</body>
+</html>

@@ -18,8 +18,8 @@ from decimal import Decimal, InvalidOperation
 from django.db import transaction
 
 from .audit import audit
-from .models import (Document, DocumentRevision, Project, Site,
-                     Tender, TenderRfi, TenderSiteVisit)
+from .models import (Document, DocumentRevision, Project, Site, Tender,
+                     TenderQuery, TenderQueryItem, TenderSiteVisit, User)
 from .numbering import next_ref
 
 # QS prices them and the Director decides; Admin keeps the register. A
@@ -353,52 +353,170 @@ def submission_context(t):
     }
 
 
-# ---- what the price rested on -----------------------------------------
+# ---- what the price rests on ------------------------------------------
 
-def add_visit(t, data, actor):
-    """Record a visit made while pricing."""
-    when = data.get("visited_on")
-    if not when:
-        return None, "When was the visit?"
+def request_visit(t, data, actor):
+    """Ask the client for a look at the job.
+
+    Requested and held are separate dates on purpose: a visit asked for and
+    not yet given is a live reason pricing has not started, and reads that way
+    on the register (owner 2026-09-09).
+    """
     v = TenderSiteVisit.objects.create(
-        tender=t, visited_on=when,
+        tender=t, requested_on=data.get("requested_on") or date.today(),
         attendees=data.get("attendees", ""), notes=data.get("notes", ""),
         created_by=actor)
-    audit("tender", t.id, "TENDER_VISIT_LOGGED", actor=actor,
+    audit("tender", t.id, "TENDER_VISIT_REQUESTED", actor=actor,
+          detail={"ref": t.document.ref, "on": str(v.requested_on)})
+    return v, None
+
+
+def record_visit(t, visit_id, data, actor):
+    """What was seen. The notes and the photos are as much of the price as
+    the drawings are."""
+    v = t.visits.filter(pk=visit_id).first()
+    if v is None:
+        return None, "That visit is not on this tender."
+    v.visited_on = data.get("visited_on") or date.today()
+    if "attendees" in data:
+        v.attendees = data.get("attendees") or ""
+    if "notes" in data:
+        v.notes = data.get("notes") or ""
+    v.save(update_fields=["visited_on", "attendees", "notes"])
+    audit("tender", t.id, "TENDER_VISIT_HELD", actor=actor,
           detail={"ref": t.document.ref, "on": str(v.visited_on)})
     return v, None
 
 
+# ---- tender queries (TQ) ----------------------------------------------
+#
+# The sheet of questions put to the client during the tender period. NOT an
+# RFI — that name is taken twice over in this app, by the contract-stage
+# request for information and by the inspection request. A TQ carries several
+# numbered questions, goes out under its own reference in our format, and the
+# answers come back written against each question (owner 2026-09-09).
+
 @transaction.atomic
-def raise_rfi(t, data, actor):
-    """Put a question to the client. Numbered within the tender, so an RFI can
-    be cited to them as 'our RFI 3 against TDR-SJR-001'."""
-    q = (data.get("question") or "").strip()
-    if not q:
-        return None, "What is the question?"
-    n = (t.rfis.order_by("-number").values_list("number", flat=True)
+def open_query(t, data, actor):
+    """Start a new query sheet. Questions are added to it before it goes."""
+    if t.document.status not in OPEN_STATUSES:
+        return None, "This tender is closed."
+    n = (t.queries.order_by("-number").values_list("number", flat=True)
          .first() or 0) + 1
-    r = TenderRfi.objects.create(
-        tender=t, number=n, question=q,
+    q = TenderQuery.objects.create(
+        tender=t, number=n, subject=(data.get("subject") or "")[:200],
         raised_on=data.get("raised_on") or date.today(), created_by=actor)
-    audit("tender", t.id, "TENDER_RFI_RAISED", actor=actor,
-          detail={"ref": t.document.ref, "rfi": n})
-    return r, None
+    audit("tender", t.id, "TENDER_QUERY_OPENED", actor=actor,
+          detail={"ref": q.ref})
+    return q, None
 
 
-def answer_rfi(t, rfi_id, data, actor):
-    """Record what the client said. Their answer is why a later revision is
-    priced differently, so it is kept with the question rather than in a
-    mailbox."""
-    r = t.rfis.filter(pk=rfi_id).first()
-    if r is None:
-        return None, "That question is not on this tender."
+@transaction.atomic
+def add_question(t, query_id, data, actor):
+    """Put another question on a sheet that has not gone out yet."""
+    q = t.queries.filter(pk=query_id).first()
+    if q is None:
+        return None, "That query is not on this tender."
+    if q.is_issued:
+        return None, (f"{q.ref} has already gone to the client. Open a new "
+                      "query for anything further.")
+    text = (data.get("question") or "").strip()
+    if not text:
+        return None, "What is the question?"
+    n = (q.items.order_by("-number").values_list("number", flat=True)
+         .first() or 0) + 1
+    item = TenderQueryItem.objects.create(
+        query=q, number=n, question=text,
+        reference=(data.get("reference") or "")[:160])
+    return item, None
+
+
+def remove_question(t, query_id, item_id, actor):
+    q = t.queries.filter(pk=query_id).first()
+    if q is None:
+        return "That query is not on this tender."
+    if q.is_issued:
+        return f"{q.ref} has already gone to the client."
+    item = q.items.filter(pk=item_id).first()
+    if item is None:
+        return "That question is not on this query."
+    item.delete()
+    return None
+
+
+def issue_query(t, query_id, actor):
+    """Send the sheet. After this it is what the client holds: questions are
+    not reworded, and anything further is a new query."""
+    q = t.queries.filter(pk=query_id).first()
+    if q is None:
+        return None, "That query is not on this tender."
+    if q.is_issued:
+        return None, f"{q.ref} has already been issued."
+    if not q.items.exists():
+        return None, "Add at least one question before issuing it."
+    from django.utils import timezone
+    q.issued_at = timezone.now()
+    q.save(update_fields=["issued_at"])
+    audit("tender", t.id, "TENDER_QUERY_ISSUED", actor=actor,
+          detail={"ref": q.ref, "questions": q.items.count()})
+    return q, None
+
+
+def answer_question(t, query_id, item_id, data, actor):
+    """Record the client's answer to ONE question.
+
+    Per question, not per sheet: a client commonly answers three of five and
+    leaves the rest, and a sheet marked simply "answered" would hide that.
+    """
+    q = t.queries.filter(pk=query_id).first()
+    if q is None:
+        return None, "That query is not on this tender."
+    item = q.items.filter(pk=item_id).first()
+    if item is None:
+        return None, "That question is not on this query."
     answer = (data.get("answer") or "").strip()
     if not answer:
         return None, "Enter the client's answer."
-    r.answer = answer
-    r.answered_on = data.get("answered_on") or date.today()
-    r.save(update_fields=["answer", "answered_on"])
-    audit("tender", t.id, "TENDER_RFI_ANSWERED", actor=actor,
-          detail={"ref": t.document.ref, "rfi": r.number})
-    return r, None
+    item.answer = answer
+    item.answered_on = data.get("answered_on") or date.today()
+    item.save(update_fields=["answer", "answered_on"])
+    if "client_ref" in data:
+        q.client_ref = (data.get("client_ref") or "")[:60]
+    q.responded_on = item.answered_on
+    q.save(update_fields=["client_ref", "responded_on"])
+    audit("tender", t.id, "TENDER_QUERY_ANSWERED", actor=actor,
+          detail={"ref": q.ref, "question": item.number})
+    return item, None
+
+
+def assign(t, user_id, actor):
+    """Whose job this is. Read off the register far more often than edited."""
+    if not user_id:
+        t.assigned_to = None
+    else:
+        u = User.objects.filter(pk=user_id, is_active=True).first()
+        if u is None:
+            return "That person is not on the system."
+        t.assigned_to = u
+    t.save(update_fields=["assigned_to"])
+    audit("tender", t.id, "TENDER_ASSIGNED", actor=actor,
+          detail={"ref": t.document.ref,
+                  "to": t.assigned_to.full_name if t.assigned_to else None})
+    return None
+
+
+def query_context(q):
+    """What the TQ sheet prints."""
+    from .pdf import _font_dir, company_info, mark_src
+
+    t = q.tender
+    def fdate(d):
+        return d.strftime("%d %b %Y") if d else ""
+    return {
+        "mark_src": mark_src(), "font_dir": _font_dir(),
+        "co": company_info(), "ref": q.ref,
+        "issue_date": fdate(q.issued_at.date() if q.issued_at else q.raised_on),
+        "q": q, "tender": t, "site": t.document.site,
+        "items": list(q.items.all()),
+        "tender_ref": t.document.ref,
+    }
