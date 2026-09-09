@@ -371,6 +371,17 @@ def raise_advance(agreement, actor, data=None):
     if err:
         transaction.set_rollback(True)
         return None, err
+    # One route, whoever clicks. Left to the raiser's role, a QS's advance
+    # would clear straight to a voucher while a PM's went round the PM and
+    # the Director first — the same money on two different roads (owner
+    # 2026-09-09).
+    #
+    # It takes the shorter one deliberately: the advance percentage was
+    # approved by the PM and the Director when the agreement was activated,
+    # so paying it executes a term already sanctioned. The signatory still
+    # signs the money out on the voucher.
+    pr.origin = "CENTRAL"
+    pr.save(update_fields=["origin"])
     audit("subcontract", agreement.id, "SCA_ADVANCE_RAISED", actor=actor,
           detail={"sca": doc0.ref, "pyr": doc.ref, "percent": str(pct)})
     return doc, None

@@ -995,6 +995,21 @@ class SubcontractAdvanceAndGstTests(TestCase):
             subcontract_agreement=doc.subcontract_agreement)
         self.assertEqual(pr.amount_requested, Decimal("77760.00"))  # +8%
 
+    def test_the_advance_takes_one_route_whoever_raises_it(self):
+        """Left to the raiser's role a QS's advance would clear straight to a
+        voucher and a PM's would go round the PM and the Director — the same
+        money on two roads (owner 2026-09-09)."""
+        from .models import PaymentRequest
+        doc = self._sca(advance="30")
+        self.client.force_authenticate(self.pm)
+        r = self.client.post(
+            f"/api/v1/subcontract-agreements/{doc.ref}/advance", {},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        pr = PaymentRequest.objects.get(
+            subcontract_agreement=doc.subcontract_agreement)
+        self.assertEqual(pr.origin, "CENTRAL")
+
     def test_the_advance_is_raised_once(self):
         doc = self._sca(advance="30")
         self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
