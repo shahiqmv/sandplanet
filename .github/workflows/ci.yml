@@ -34,7 +34,7 @@ jobs:
       - run: pip install -r backend/requirements.txt ruff
       - run: ruff check backend
       - run: python backend/manage.py check
-      - run: python backend/manage.py test core
+      - run: python backend/manage.py test core --parallel auto
         working-directory: .
 
   frontend:
