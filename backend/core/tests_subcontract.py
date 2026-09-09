@@ -769,13 +769,20 @@ class SubcontractPaymentNettingTests(TestCase):
         return subcontract.svc_valuation(v)
 
     def test_an_advance_paid_first_reduces_the_certificate(self):
+        """The agreement stipulates NO advance percentage, so a payment
+        marked as one is an on-account payment by another name: it comes off
+        in full, and what is due is unchanged (owner 2026-09-09).
+
+        It now shows as recovered rather than as paid-to-date, because those
+        are two different things once a contractual advance exists.
+        """
         from . import subcontract
-        self._pay(3000)                       # advance before any work
-        self.assertEqual(subcontract.paid_to_date(self.agreement),
+        self._pay(3000)                       # paid before any work
+        self.assertEqual(subcontract.advance_paid(self.agreement),
                          Decimal("3000"))
         val = self._certify(40)               # 40 x 150 = 6,000 certified
         self.assertEqual(val["gross_cumulative"], Decimal("6000"))
-        self.assertEqual(val["paid_to_date"], Decimal("3000"))
+        self.assertEqual(val["advance_recovered"], Decimal("3000"))
         self.assertEqual(val["now_due"], Decimal("3000"))
 
     def test_nothing_paid_means_the_whole_certificate_is_due(self):
