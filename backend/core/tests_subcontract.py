@@ -1053,6 +1053,62 @@ class SubcontractAdvanceAndGstTests(TestCase):
         self.assertEqual(val["now_due"], Decimal("42000.00"))
         self.assertEqual(val["advance_outstanding"], Decimal("54000.00"))
 
+    def test_a_gst_job_pays_out_the_quoted_total_and_no_more(self):
+        """The whole point, end to end: MRAC quote 128 is 240,000 of work,
+        8% GST, 30% advance — 259,200 inclusive. Advance plus both
+        certificates must come to exactly that, and the advance must be fully
+        recovered by the end. Netting a gross payment out of a net stack used
+        to short the second certificate by the tax already paid."""
+        from .models import Payable
+        doc = self._sca(advance="30", gst="8")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        advance = self._pay_advance(doc).amount_paid
+        self.assertEqual(advance, Decimal("77760.00"))   # 72,000 + 8%
+        a = doc.subcontract_agreement
+
+        v1, val1 = self._certify(a, 100)                 # half the outfall
+        self.assertEqual(val1["now_due"], Decimal("84000.00"))
+        self.assertEqual(val1["gst"], Decimal("6720.00"))
+        self.assertEqual(val1["total_payable"], Decimal("90720.00"))
+
+        Payable.objects.create(document=v1.document, site=self.site,
+                               vendor="Raajje Divers", status="SETTLED",
+                               amount=val1["total_payable"],
+                               due_date=date.today())
+
+        _v2, val2 = self._certify(a, 200)                # the rest
+        self.assertEqual(val2["paid_to_date"], Decimal("84000.00"))  # net
+        self.assertEqual(val2["now_due"], Decimal("84000.00"))
+        self.assertEqual(val2["total_payable"], Decimal("90720.00"))
+        self.assertEqual(val2["advance_recovered"], Decimal("72000.00"))
+        self.assertEqual(val2["advance_outstanding"], Decimal("0.00"))
+
+        self.assertEqual(advance + val1["total_payable"]
+                         + val2["total_payable"], Decimal("259200.00"))
+
+    def test_the_advance_is_not_charged_to_the_project_twice(self):
+        """The certificates already post the work they certify. Committing and
+        incurring the advance on top billed a 240,000 subcontract as 317,760
+        of cost — the same double count that already keeps salary advances and
+        capitalized import charges out of the ledger."""
+        from . import costing, subcontract
+        from .models import CostPosting
+        doc = self._sca(advance="30", gst="8")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        pr = self._pay_advance(doc)                  # 77,760 out the door
+        self.assertTrue(subcontract.is_advance_prepayment(pr))
+
+        subcontract.on_advance_paid(pr.document, pr, self.sa)
+        self.assertFalse(CostPosting.objects.filter(site=self.site).exists())
+        gst_head = costing.by_code(costing.INPUT_GST)
+        pooled = CostPosting.objects.filter(cost_head=gst_head,
+                                            source="SUBCONTRACT")
+        # 8% of the 72,000 advanced, recoverable input tax, committed+incurred
+        self.assertEqual(pooled.count(), 2)
+        self.assertEqual({p.amount for p in pooled}, {Decimal("5760.00")})
+
     def test_recovery_never_exceeds_what_was_advanced(self):
         """A percentage on paper cannot claw back money that never moved."""
         from . import subcontract

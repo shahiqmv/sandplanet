@@ -282,6 +282,26 @@ def _svc_gross_cumulative(v):
     return total
 
 
+def net_of_gst(agreement, amount):
+    """Strip the GST out of money that went out gross.
+
+    A certificate is built in net terms — the work is valued, the advance is
+    recovered, and GST is charged on what is left. Money already paid comes
+    back off that stack, so it has to come off NET: subtracting a gross
+    payment charges the tax twice, once against what is due and again as tax
+    on the remainder, and the subcontractor is short by the GST on every
+    certificate after the first (owner 2026-09-09).
+
+    On an agreement carrying no GST this is the amount itself, so nothing
+    that predates GST moves by a cent.
+    """
+    pct = agreement.gst_percent or Decimal("0")
+    amount = Decimal(amount or 0)
+    if pct <= 0 or not amount:
+        return amount
+    return (amount / (1 + pct / Decimal("100"))).quantize(Decimal("0.01"))
+
+
 def paid_to_date(agreement):
     """Everything actually paid to this subcontractor under this agreement.
 
@@ -311,7 +331,7 @@ def paid_to_date(agreement):
         document__subcontract_valuation__agreement=agreement,
         status="SETTLED",
     ).aggregate(t=Sum("amount"))["t"] or Decimal("0")
-    return Decimal(pyrs) + Decimal(settled)
+    return net_of_gst(agreement, Decimal(pyrs) + Decimal(settled))
 
 
 @transaction.atomic
@@ -388,14 +408,56 @@ def raise_advance(agreement, actor, data=None):
 
 
 def advance_paid(agreement):
-    """The contractual advance actually paid out, if any."""
+    """The contractual advance actually paid out, if any — net of its GST,
+    because it is recovered against net certified values."""
     from .models import PaymentRequest
 
-    return Decimal(PaymentRequest.objects.filter(
+    return net_of_gst(agreement, PaymentRequest.objects.filter(
         subcontract_agreement=agreement, payment_type="ADVANCE",
         document__status__in=("PAID", "CLOSED"),
         document__is_void=False,
     ).aggregate(t=Sum("amount_paid"))["t"] or 0)
+
+
+def is_advance_prepayment(pr):
+    """True for a subcontract advance: money out of the door that is not a
+    cost. The certificates carry the cost, and the advance is recovered from
+    them — so it is committed and incurred nowhere (owner 2026-09-09)."""
+    return bool(pr.payment_type == "ADVANCE" and pr.subcontract_agreement_id)
+
+
+def on_advance_paid(document, pr, actor):
+    """A subcontract advance leaves the cost ledger alone.
+
+    It is a prepayment recouped from the certificates, and every certificate
+    already posts the work it certifies. Posting the advance too charged the
+    project for the same money twice — a 240,000 subcontract with a 30%
+    advance landed as 317,760 of cost (owner 2026-09-09). The same reasoning
+    already keeps salary advances and capitalized import charges out of the
+    ledger.
+
+    Its GST is a different matter: that tax was genuinely paid and is
+    recoverable, so it posts to the input-tax pool exactly as a certificate's
+    GST does. The certificates only charge GST on what is left after the
+    advance is recovered, so without this the input tax would be short.
+    """
+    from . import costing
+    from .procurement import _ho_site
+
+    a = pr.subcontract_agreement
+    if a is None:
+        return
+    gross = Decimal(pr.amount_paid or 0)
+    gst = gross - net_of_gst(a, gross)
+    if gst <= 0:
+        return
+    head = costing.by_code(costing.INPUT_GST)
+    if head is None:
+        return
+    for state in ("COMMITTED", "INCURRED"):
+        costing.post(site=_ho_site(), cost_head=head, state=state,
+                     source="SUBCONTRACT", amount=gst, document=document,
+                     is_stock_pool=True, actor=actor, currency=a.currency)
 
 
 def advance_recovered(agreement, gross_cumulative):

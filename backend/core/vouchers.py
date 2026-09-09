@@ -329,7 +329,9 @@ def authorise_source(doc, actor):
         # committed at the company rate (the actual rate lands on payment).
         # A capitalized PYR (import charge already in landed cost) posts
         # nothing, to avoid double counting.
-        if not pr.is_capitalized:
+        from . import subcontract
+
+        if not pr.is_capitalized and not subcontract.is_advance_prepayment(pr):
             committed = pr.amount_requested
             if pr.currency == "USD":
                 from . import fx

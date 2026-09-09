@@ -434,6 +434,8 @@ def pyr_action(request, doc, action_name):
                 kind="PAYMENT_SLIP", file=slip, file_name=slip.name,
                 content_type=slip.content_type or "", size_bytes=slip.size,
                 caption=pr.payment_ref or "payment slip", uploaded_by=user)
+        from . import subcontract
+
         if pr.payment_type == "PETTY_CASH_REPLENISH":
             # The Paid leg is posted per expense (under each entry's cost
             # head) and the float restored — never double-counting the
@@ -446,6 +448,12 @@ def pyr_action(request, doc, action_name):
             # labour expense is recognised in the payroll month-lock, so this
             # PYR posts nothing to the cost ledger to avoid double counting.
             pass
+        elif subcontract.is_advance_prepayment(pr):
+            # A subcontract advance is a prepayment recovered from the
+            # certificates, and each certificate posts the work it certifies —
+            # so the advance itself posts no project cost. Its GST is still
+            # recoverable input tax and goes to the pool.
+            subcontract.on_advance_paid(doc, pr, user)
         elif pr.is_capitalized:
             # An import charge already capitalized into the material's landed
             # cost at receipt — the PYR pays the agent but posts nothing here,
