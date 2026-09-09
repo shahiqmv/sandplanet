@@ -87,7 +87,8 @@ export default function TendersPage({ me, sites }) {
         <table style={{ width: "100%", borderCollapse: "collapse",
                         fontSize: 13 }}>
           <thead><tr>
-            <th style={th}>Reference</th><th style={th}>Client / scope</th>
+            <th style={th}>Reference</th>
+            <th style={th}>Works / client</th>
             <th style={th}>Site</th><th style={th}>Due</th>
             <th style={{ ...th, textAlign: "right" }}>Submitted</th>
             <th style={{ ...th, textAlign: "right" }}>Awarded</th>
@@ -103,9 +104,13 @@ export default function TendersPage({ me, sites }) {
                   <div style={{ color: "var(--muted)" }}>
                     {r.rev_label}{r.submit_our_format ? "" : " · their bill"}</div>
                 </td>
-                <td style={td}><strong>{r.client_name}</strong>
+                <td style={{ ...td, minWidth: 260 }}>
+                  {/* The title is the thing being read, so it leads and gets
+                      the room; the client sits under it (owner 2026-09-09). */}
+                  <strong>{r.title}</strong>
                   <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
-                    {r.title}</div></td>
+                    {r.client_name}
+                    {r.assigned_to ? ` · ${r.assigned_to}` : ""}</div></td>
                 <td style={td}>{r.site_code}</td>
                 <td style={td}>{day(r.due_date)}</td>
                 <td style={{ ...td, textAlign: "right",
@@ -149,64 +154,106 @@ function NewTender({ sites, onDone }) {
     try { await api("/tenders", { method: "POST", body: f }); onDone(true); }
     catch (e) { setErr(e.message); setBusy(false); }
   }
+  // Laid out in rows rather than one long line of boxes: a tender title is a
+  // sentence ("Construction of Host Accommodation Building — Phase 2"), and
+  // it was sharing a row with five other fields (owner 2026-09-09).
+  const row = { display: "flex", gap: 10, flexWrap: "wrap",
+                alignItems: "flex-end" };
+  const lab = { fontSize: 11.5, color: "var(--muted)", display: "block",
+                marginBottom: 2, letterSpacing: ".02em" };
+
   return (
     <div style={{ border: "1px solid var(--sp-border, #d8e1e8)",
-                  borderRadius: 8, padding: 12, marginBottom: 14,
-                  display: "flex", gap: 8, flexWrap: "wrap",
-                  alignItems: "flex-end" }}>
-      {/* Picking the site fills the client in: the site record already knows
-          who it is (owner 2026-09-09). Still editable — a few sites have no
-          client on file, and the party inviting a tender is not always the
-          one on the site record. */}
-      <select value={f.site_id}
-              onChange={(e) => {
-                const picked = (sites || []).find(
-                  (s) => String(s.id) === e.target.value);
-                setF({ ...f, site_id: e.target.value,
-                       client_name: picked?.client_name || f.client_name,
-                       client_contact: picked?.client_contact
-                                       || f.client_contact || "" });
-              }}
-              style={{ ...inputStyle, width: 150 }}>
-        <option value="">Site…</option>
-        {(sites || []).map((s) => (
-          <option key={s.id} value={s.id}>{s.code} — {s.name}</option>))}
-      </select>
-      <input placeholder="Client" value={f.client_name}
-             onChange={set("client_name")}
-             style={{ ...inputStyle, width: 220 }} />
-      <input placeholder="Title, e.g. Jetty extension — civil"
-             value={f.title} onChange={set("title")}
-             style={{ ...inputStyle, flex: "1 1 220px" }} />
-      <label style={{ fontSize: 12 }}>Enquiry
-        <input type="date" value={f.enquiry_date}
-               onChange={set("enquiry_date")} style={inputStyle} /></label>
-      <label style={{ fontSize: 12 }}>Due
-        <input type="date" value={f.due_date} onChange={set("due_date")}
-               style={inputStyle} /></label>
-      <select value={f.currency} onChange={set("currency")}
-              style={{ ...inputStyle, width: 90 }}>
-        <option>USD</option><option>MVR</option>
-      </select>
-      {/* Only the document that goes out. The priced lines are captured
-          either way — this picks whether the client receives our rendered
-          bill or the file they issued. */}
-      <label style={{ fontSize: 12.5 }}>Submit on
-        <select value={f.submit_our_format ? "ours" : "theirs"}
-                onChange={(e) => setF({ ...f,
-                  submit_our_format: e.target.value === "ours" })}
-                style={{ ...inputStyle, width: 170 }}>
-          <option value="ours">our BOQ format</option>
-          <option value="theirs">the client's own bill</option>
-        </select>
+                  borderRadius: 8, padding: 14, marginBottom: 14,
+                  display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={row}>
+        <label style={{ flex: "0 0 190px" }}>
+          <span style={lab}>Site</span>
+          {/* Picking the site fills the client in: the site record already
+              knows who it is (owner 2026-09-09). Still editable — a few
+              sites carry no client, and the party inviting a tender is not
+              always the one on the site record. */}
+          <select value={f.site_id}
+                  onChange={(e) => {
+                    const picked = (sites || []).find(
+                      (s) => String(s.id) === e.target.value);
+                    setF({ ...f, site_id: e.target.value,
+                           client_name: picked?.client_name || f.client_name,
+                           client_contact: picked?.client_contact
+                                           || f.client_contact || "" });
+                  }}
+                  style={{ ...inputStyle, width: "100%" }}>
+            <option value="">Choose a site…</option>
+            {(sites || []).map((s) => (
+              <option key={s.id} value={s.id}>{s.code} — {s.name}</option>))}
+          </select>
+        </label>
+        <label style={{ flex: "1 1 260px" }}>
+          <span style={lab}>Client — from the site record, edit if it differs</span>
+          <input value={f.client_name} onChange={set("client_name")}
+                 placeholder="Who the enquiry came from"
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+      </div>
+
+      {/* Its own row: these run long. */}
+      <label>
+        <span style={lab}>Title of the works</span>
+        <input value={f.title} onChange={set("title")}
+               placeholder="e.g. Construction of Host Accommodation Building"
+               style={{ ...inputStyle, width: "100%", fontSize: 14 }} />
       </label>
-      <Btn onClick={save}
-           disabled={busy || !f.site_id || !f.client_name.trim()
-                     || !f.title.trim()}>
-        {busy ? "Saving…" : "Open"}</Btn>
-      <Btn variant="secondary" onClick={() => onDone(false)}>Cancel</Btn>
-      {err && <div style={{ color: "#c0392b", fontSize: 12.5, width: "100%" }}>
-        {err}</div>}
+
+      <div style={row}>
+        <label style={{ flex: "0 0 150px" }}>
+          <span style={lab}>Enquiry received</span>
+          <input type="date" value={f.enquiry_date}
+                 onChange={set("enquiry_date")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 150px" }}>
+          <span style={lab}>Submission due</span>
+          <input type="date" value={f.due_date} onChange={set("due_date")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 110px" }}>
+          <span style={lab}>Currency</span>
+          <select value={f.currency} onChange={set("currency")}
+                  style={{ ...inputStyle, width: "100%" }}>
+            <option>USD</option><option>MVR</option>
+          </select>
+        </label>
+        {/* Only the document that goes out. The priced lines are captured
+            either way — this picks whether the client receives our rendered
+            bill or the file they issued. */}
+        <label style={{ flex: "1 1 220px" }}>
+          <span style={lab}>Submit on</span>
+          <select value={f.submit_our_format ? "ours" : "theirs"}
+                  onChange={(e) => setF({ ...f,
+                    submit_our_format: e.target.value === "ours" })}
+                  style={{ ...inputStyle, width: "100%" }}>
+            <option value="ours">our BOQ format</option>
+            <option value="theirs">the client's own bill</option>
+          </select>
+        </label>
+      </div>
+
+      <label>
+        <span style={lab}>Scope (optional)</span>
+        <textarea value={f.scope} onChange={set("scope")} rows={2}
+                  placeholder="What the enquiry covers, in a line or two"
+                  style={{ ...inputStyle, width: "100%",
+                           fontFamily: "inherit" }} />
+      </label>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn onClick={save}
+             disabled={busy || !f.site_id || !f.client_name.trim()
+                       || !f.title.trim()}>
+          {busy ? "Saving…" : "Open the enquiry"}</Btn>
+        <Btn variant="secondary" onClick={() => onDone(false)}>Cancel</Btn>
+      </div>
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
     </div>
   );
 }
@@ -271,11 +318,12 @@ function TenderDetail({ id, me, onClose }) {
             <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
               with {t.assigned_to}</span>)}
         </div>
-        <p style={{ margin: "6px 0 2px", fontWeight: 600 }}>{t.client_name}</p>
+        <p style={{ margin: "8px 0 2px", fontWeight: 600, fontSize: 16,
+                    lineHeight: 1.3 }}>{t.title}</p>
         <p style={{ margin: 0, color: "var(--muted)", fontSize: 13 }}>
-          {t.title} · {t.site_code} · enquiry {day(t.enquiry_date)} · due{" "}
-          {day(t.due_date)} · {t.submit_our_format ? "submitted on our bill"
-                                     : "submitted on the client's bill"}</p>
+          {t.client_name} · {t.site_code} · enquiry {day(t.enquiry_date)} ·
+          due {day(t.due_date)} · {t.submit_our_format
+            ? "submitted on our bill" : "submitted on the client's bill"}</p>
         {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
 
         <div style={{ display: "flex", gap: 6, marginTop: 12,
