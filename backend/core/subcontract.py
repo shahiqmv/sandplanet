@@ -242,7 +242,8 @@ def _apply_sca_terms(agreement, data):
               "contractor_signatory_title", "notes"):
         if f in data:
             setattr(agreement, f, data.get(f) or "")
-    for f in ("advance_percent", "retention_percent"):   # non-null, default 0
+    for f in ("advance_percent", "retention_percent", "gst_percent"):
+        # non-null, default 0
         if f in data:
             setattr(agreement, f, _dec(data.get(f)) or Decimal("0"))
     for f in ("ld_amount", "ld_cap_percent"):            # optional
@@ -284,13 +285,18 @@ def _svc_gross_cumulative(v):
 def paid_to_date(agreement):
     """Everything actually paid to this subcontractor under this agreement.
 
-    Both routes count: a PYR raised against the agreement (an up-front
-    advance, an on-account part payment) and a valuation already settled by
-    Finance. Netting real payments off the certified value is what makes an
-    advance need no machinery of its own — it is money paid before work was
-    certified (owner 2026-08-13). It also cannot drift: the previous approach
-    assumed the contractual advance had been paid in full and recovered it
-    whether or not a rufiyaa had moved.
+    On-account payments and settled valuations both count. The contractual
+    ADVANCE does not: it is recovered against each certificate instead (see
+    `advance_recovered`), which is how a construction advance actually works
+    — the subcontractor is paid a share of every certificate while repaying
+    it, rather than receiving nothing until the certified value overtakes the
+    advance (owner 2026-09-09).
+
+    Netting the advance here was the earlier approach (2026-08-13). It was
+    right to insist that nothing be clawed back that was never paid, and that
+    still holds: recovery is capped at what has actually been advanced. But
+    netting it in one lump left a 30% advance paying the gang nothing for the
+    first third of the job.
     """
     from .models import Payable, PaymentRequest
 
@@ -298,7 +304,8 @@ def paid_to_date(agreement):
         subcontract_agreement=agreement,
         document__status__in=("PAID", "CLOSED"),
         document__is_void=False,
-    ).aggregate(t=Sum("amount_paid"))["t"] or Decimal("0")
+    ).exclude(payment_type="ADVANCE").aggregate(
+        t=Sum("amount_paid"))["t"] or Decimal("0")
     # A settled valuation reaches the agreement through its SVC document.
     settled = Payable.objects.filter(
         document__subcontract_valuation__agreement=agreement,
@@ -307,12 +314,108 @@ def paid_to_date(agreement):
     return Decimal(pyrs) + Decimal(settled)
 
 
+@transaction.atomic
+def raise_advance(agreement, actor, data=None):
+    """Raise the payment request for the contractual advance.
+
+    The percentage could be set on an agreement and there was no way to
+    actually pay it — so it sat as a number on a PDF while the money was
+    arranged off the system, and nothing was ever recovered against it
+    (owner 2026-09-09).
+
+    It goes out as an ADVANCE payment request against the agreement, which is
+    what `advance_recovered` later claws back from each certificate.
+    """
+    from .models import Document, DocumentRevision, PaymentRequest
+    from .payments import create_payment_request
+
+    doc0 = agreement.document
+    if doc0.status != "APPROVED":
+        return None, "The agreement must be approved before its advance."
+    pct = agreement.advance_percent or Decimal("0")
+    if pct <= 0:
+        return None, "This agreement carries no advance."
+    if PaymentRequest.objects.filter(
+            subcontract_agreement=agreement, payment_type="ADVANCE"
+    ).exclude(document__is_void=True).exists():
+        return None, "The advance has already been raised."
+    net = ((agreement.value or Decimal("0")) * pct / Decimal("100")).quantize(
+        Decimal("0.01"))
+    if net <= 0:
+        return None, "The agreement has no value to advance against."
+    gst_pct = agreement.gst_percent or Decimal("0")
+    gst = (net * gst_pct / Decimal("100")).quantize(Decimal("0.01"))
+    ref = next_ref("PYR", doc0.site)
+    doc = Document.objects.create(
+        doc_type="PYR", ref=ref, site=doc0.site, project=agreement.project,
+        doc_date=date.today(), status="DRAFT", created_by=actor)
+    purpose = (f"{pct:g}% advance on {doc0.ref} — {agreement.title}"
+               [:300])
+    rev = DocumentRevision.objects.create(
+        document=doc, rev_label="R0", created_by=actor,
+        payload={"purpose": purpose, "kind": "subcontract_advance",
+                 "sca_ref": doc0.ref})
+    doc.current_revision = rev
+    doc.save(update_fields=["current_revision"])
+    pr, err = create_payment_request(doc, {
+        "amount_requested": str(net + gst),
+        "cost_head_id": _subcontract_head().id,
+        "payee": agreement.subcontractor.name,
+        "currency": agreement.currency,
+        "payment_method": "BANK",
+        "payment_type": "ADVANCE",
+        "purpose": purpose,
+        "subcontract_agreement_id": agreement.id,
+        "has_supporting_doc": True,
+    }, actor)
+    if err:
+        transaction.set_rollback(True)
+        return None, err
+    audit("subcontract", agreement.id, "SCA_ADVANCE_RAISED", actor=actor,
+          detail={"sca": doc0.ref, "pyr": doc.ref, "percent": str(pct)})
+    return doc, None
+
+
+def advance_paid(agreement):
+    """The contractual advance actually paid out, if any."""
+    from .models import PaymentRequest
+
+    return Decimal(PaymentRequest.objects.filter(
+        subcontract_agreement=agreement, payment_type="ADVANCE",
+        document__status__in=("PAID", "CLOSED"),
+        document__is_void=False,
+    ).aggregate(t=Sum("amount_paid"))["t"] or 0)
+
+
+def advance_recovered(agreement, gross_cumulative):
+    """How much of the advance the certified work has repaid so far.
+
+    Recovered at the contract's advance percentage of the gross certified —
+    the standard mechanism — and CAPPED at what was actually advanced, so a
+    percentage on paper can never claw back money that never moved.
+    """
+    paid = advance_paid(agreement)
+    if paid <= 0:
+        return Decimal("0")
+    pct = agreement.advance_percent or Decimal("0")
+    if pct <= 0:
+        # An advance paid against an agreement that stipulates none is an
+        # on-account payment by another name: it comes off in full, which is
+        # what netting always did (owner 2026-08-13). Without this it would
+        # be neither recovered nor netted, and the money would vanish from
+        # the certificate.
+        return paid
+    due = (Decimal(gross_cumulative) * pct / Decimal("100")).quantize(
+        Decimal("0.01"))
+    return min(due, paid)
+
+
 def _svc_net_cumulative(v):
     """Net certified-to-date = gross − retention − deductions + adjustment.
 
-    No advance recovery: what has actually been paid is deducted once, at
-    `now_due`, rather than clawed back pro-rata against an assumed advance
-    (owner 2026-08-13)."""
+    The advance is not in here: it comes off afterwards, at the contract
+    percentage and capped at what was actually advanced, so this figure stays
+    what the work is worth (owner 2026-09-09)."""
     if v is None:
         return Decimal("0")
     gross = _svc_gross_cumulative(v)
@@ -356,6 +459,21 @@ def svc_valuation(v):
     # alike. A certificate approved but not yet paid therefore rolls forward
     # instead of being dropped and chased separately (owner 2026-08-13).
     paid = paid_to_date(a)
+    # The advance comes off each certificate at the contract percentage,
+    # capped at what was actually advanced (owner 2026-09-09).
+    adv_paid = advance_paid(a)
+    adv_rec = advance_recovered(a, gross_cum)
+    prev_adv_rec = (advance_recovered(a, _svc_gross_cumulative(prev))
+                    if prev else Decimal("0"))
+    after_advance = net_cum - adv_rec
+    now_due = after_advance - paid
+    # GST is charged by a registered subcontractor on the work certified this
+    # period, and is recoverable input tax to us — the same treatment a local
+    # purchase gets. It rides on the money changing hands, not on the
+    # cumulative certificate.
+    gst_pct = a.gst_percent or Decimal("0")
+    gst = ((now_due * gst_pct / Decimal("100")).quantize(Decimal("0.01"))
+           if now_due > 0 and gst_pct > 0 else Decimal("0"))
     return {
         "currency": a.currency, "contract_value": a.value,
         "lines": lines,
@@ -365,8 +483,16 @@ def svc_valuation(v):
         "deductions": v.deductions or Decimal("0"),
         "adjustment": v.adjustment or Decimal("0"),
         "net_cumulative": net_cum, "previous_net": prev_net,
+        "advance_percent": a.advance_percent or Decimal("0"),
+        "advance_paid": adv_paid,
+        "advance_recovered": adv_rec,
+        "advance_recovered_this": adv_rec - prev_adv_rec,
+        "advance_outstanding": adv_paid - adv_rec,
+        "after_advance": after_advance,
         "paid_to_date": paid,
-        "now_due": net_cum - paid,
+        "now_due": now_due,
+        "gst_percent": gst_pct, "gst": gst,
+        "total_payable": now_due + gst,
         "over_warning": any(ln["over"] for ln in lines),
     }
 
@@ -504,13 +630,27 @@ def _svc_authorise(v, actor):
                          source="SUBCONTRACT",
                          amount=this_gross.quantize(Decimal("0.01")),
                          document=doc, actor=actor, currency=a.currency)
-    now_due = val["now_due"]
-    if now_due > 0:
+    # GST is recoverable input tax, not a project cost — posted to the Input
+    # GST account at head office, exactly as a local purchase does (owner
+    # 2026-09-09).
+    gst = val["gst"]
+    if gst > 0:
+        from .procurement import _ho_site
+        gst_head = costing.by_code(costing.INPUT_GST)
+        if gst_head is not None:
+            for state in ("COMMITTED", "INCURRED"):
+                costing.post(site=_ho_site(), cost_head=gst_head, state=state,
+                             source="SUBCONTRACT", amount=gst, document=doc,
+                             is_stock_pool=True, actor=actor,
+                             currency=a.currency)
+    # What we owe is the certificate plus the GST on it.
+    payable = val["total_payable"]
+    if payable > 0:
         days = a.payment_days if a.payment_days is not None else 30
         Payable.objects.create(
             document=doc, site=doc.site, vendor=a.subcontractor.name,
             terms=(f"{days} days" if a.payment_days is not None else ""),
-            amount=now_due.quantize(Decimal("0.01")),
+            amount=payable.quantize(Decimal("0.01")),
             due_date=date.today() + timedelta(days=days))
 
 

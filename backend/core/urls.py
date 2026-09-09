@@ -687,6 +687,8 @@ urlpatterns = [
          subcontract_api.subcontract_worker_action, name="subcontract-worker"),
     path("subcontractors/<int:pk>/agreements",
          subcontract_api.subcontractor_agreements, name="sca-list"),
+    path("subcontract-agreements/<str:ref>/advance",
+         subcontract_api.subcontract_advance, name="subcontract-advance"),
     path("subcontract-agreements", subcontract_api.site_agreements,
          name="sca-selectable"),
     path("subcontract-agreements/<str:ref>",

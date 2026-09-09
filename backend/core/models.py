@@ -2211,6 +2211,9 @@ class Subcontractor(models.Model):
     signatory_name = models.CharField(max_length=120, blank=True)
     signatory_title = models.CharField(max_length=120, blank=True)
     bank_details = models.TextField(blank=True)          # PYR/PV payee
+    # Whether this company charges GST. Prefills an agreement's rate; the
+    # agreement is what the money is actually computed from.
+    gst_registered = models.BooleanField(default=False)
     status = models.CharField(max_length=12, choices=Status.choices,
                               default=Status.DRAFT)
     notes = models.TextField(blank=True)
@@ -2254,6 +2257,11 @@ class SubcontractAgreement(models.Model):
     # Optional retention (owner 2026-08-02): 0 = no retention, clause omitted.
     retention_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                             default=0)
+    # A GST-registered subcontractor charges it on every certificate, and it
+    # is recoverable input tax to us — the same treatment a local purchase
+    # gets. 0 = unregistered, which most gangs are (owner 2026-09-09).
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                      default=0)
     payment_days = models.PositiveIntegerField(null=True, blank=True)  # to pay
     ld_amount = models.DecimalField(max_digits=14, decimal_places=2, null=True,
                                     blank=True)   # liquidated damages per day

@@ -332,6 +332,29 @@ def valuation_action(request, ref):
     return Response(subcontract.svc_payload(doc.subcontract_valuation))
 
 
+@api_view(["POST"])
+def subcontract_advance(request, ref):
+    """Raise the advance payment request for an approved agreement."""
+    from .models import Document
+    from .subcontract import raise_advance
+    try:
+        doc = Document.objects.select_related(
+            "subcontract_agreement__subcontractor", "site").get(
+            ref=ref, doc_type="SCA")
+    except Document.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in ("PM", "DIRECTOR", "QS", "ADMIN",
+                                 "SITE_ENGINEER", "SITE_ADMIN"):
+        return Response({"detail": "Not permitted."}, status=403)
+    pyr, err = raise_advance(doc.subcontract_agreement, request.user)
+    if err:
+        return Response({"detail": err}, status=400)
+    return Response({"ref": pyr.ref,
+                     "detail": f"{pyr.ref} raised for the advance — it goes "
+                               "through the usual payment approvals."},
+                    status=201)
+
+
 @api_view(["GET"])
 def site_agreements(request):
     """Approved subcontract agreements a payment can be raised against.

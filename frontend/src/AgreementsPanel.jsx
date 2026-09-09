@@ -124,7 +124,8 @@ function ScopeEditor({ rows, setRows }) {
 
 const TERMS0 = {
   currency: "MVR", start_date: "", end_date: "", advance_percent: "",
-  retention_percent: "", payment_days: "", ld_amount: "", ld_cap_percent: "",
+  gst_percent: "", retention_percent: "", payment_days: "", ld_amount: "",
+  ld_cap_percent: "",
   contractor_signatory_name: "", contractor_signatory_title: "",
   scope_of_work: "",
 };
@@ -167,6 +168,8 @@ function CreateForm({ sub, onCancel, onDone }) {
         <F k="start_date" label="Commencement" type="date" w={140} />
         <F k="end_date" label="Completion" type="date" w={140} />
         <F k="advance_percent" label="Advance %" type="number" w={80} />
+        <F k="gst_percent" label="GST % (0 = unregistered)" type="number"
+           w={110} />
         <F k="retention_percent" label="Retention % (0 = none)" type="number"
            w={130} />
         <F k="payment_days" label="Payment days" type="number" w={100} />
@@ -270,6 +273,23 @@ function AgreementView({ docRef, me, onBack }) {
           target="_blank" rel="noreferrer" style={{ marginLeft: "auto",
             fontSize: 12.5, color: "var(--sky)", textDecoration: "none" }}>
           ⬇ Agreement PDF</a>}
+        {/* The percentage could be set and there was no way to pay it, so
+            the money was arranged off the system and nothing was recovered
+            against it (owner 2026-09-09). */}
+        {s === "APPROVED" && Number(a.advance_percent) > 0 && (isSite || isPM
+          || isDir) && (
+          <Btn variant="secondary" disabled={busy}
+               onClick={async () => {
+                    setBusy(true); setError(null);
+                    try {
+                      const r = await api(
+                        `/subcontract-agreements/${doc.ref}/advance`,
+                        { method: "POST", body: {} });
+                      setError(r.detail);
+                    } catch (e) { setError(e.message); }
+                    finally { setBusy(false); }
+                  }}>
+            Raise the {Number(a.advance_percent)}% advance</Btn>)}
       </div>
       <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
         {a.title}{a.project_code ? ` · ${a.project_code}` : ""}
@@ -461,15 +481,25 @@ function ValuationView({ vref, me, onBack }) {
                this_value: thisValue,
                over: n(l.contract_qty) > 0 && cum > n(l.contract_qty) };
     });
-    // Mirrors subcontract._svc_net_cumulative: no advance recovery — what has
-    // genuinely been paid is netted off once, at now_due (owner 2026-08-13).
+    // Mirrors subcontract.svc_valuation so the figures do not disagree with
+    // the server while the clerk is typing. The advance comes off at the
+    // contract percentage, capped at what was actually advanced, and GST
+    // rides on the money changing hands (owner 2026-09-09).
     const retention = n(v.retention_pct) / 100 * gross;
     const net = gross - retention - n(hdr.deductions) + n(hdr.adjustment);
+    const advPaid = n(v.advance_paid);
+    const advRec = advPaid > 0
+      ? Math.min(n(v.advance_percent) / 100 * gross, advPaid) : 0;
+    const due = net - advRec - n(v.paid_to_date);
+    const gstPct = n(v.gst_percent);
+    const gst = due > 0 && gstPct > 0 ? due * gstPct / 100 : 0;
     live = { ...v, lines, gross_cumulative: gross,
       retention_held: retention,
       deductions: n(hdr.deductions), adjustment: n(hdr.adjustment),
       net_cumulative: net, paid_to_date: n(v.paid_to_date),
-      now_due: net - n(v.paid_to_date),
+      advance_paid: advPaid, advance_recovered: advRec,
+      advance_outstanding: advPaid - advRec,
+      now_due: due, gst_percent: gstPct, gst, total_payable: due + gst,
       over_warning: lines.some((l) => l.over) };
   }
 
@@ -546,18 +576,44 @@ function ValuationView({ vref, me, onBack }) {
             ["Less deductions", neg(live.deductions)],
             ["Adjustment", live.adjustment],
             ["Net certified to date", live.net_cumulative],
-            ["Less paid to date (advances + settled valuations)",
+            // The advance comes off at the contract percentage, capped at
+            // what was actually advanced (owner 2026-09-09).
+            ...(Number(live.advance_paid) > 0
+              ? [[`Less advance recovered (${
+                    Number(live.advance_percent) || 0}% of gross)`,
+                  neg(live.advance_recovered)]]
+              : []),
+            ["Less paid to date (settled valuations)",
              neg(live.paid_to_date)]].map(
             ([k, val], i) => (
             <tr key={i}><td style={{ padding: "2px 16px 2px 0",
               color: "var(--muted)" }}>{k}</td>
               <td style={{ padding: "2px 0", textAlign: "right",
                 fontFamily: "var(--font-mono)" }}>{money(val)}</td></tr>))}
+          {Number(live.gst) > 0 && (
+            <tr><td style={{ padding: "2px 16px 2px 0",
+              color: "var(--muted)" }}>
+              Certificate value</td>
+              <td style={{ padding: "2px 0", textAlign: "right",
+                fontFamily: "var(--font-mono)" }}>{money(live.now_due)}</td>
+            </tr>)}
+          {Number(live.gst) > 0 && (
+            <tr><td style={{ padding: "2px 16px 2px 0",
+              color: "var(--muted)" }}>
+              GST at {Number(live.gst_percent)}%</td>
+              <td style={{ padding: "2px 0", textAlign: "right",
+                fontFamily: "var(--font-mono)" }}>{money(live.gst)}</td>
+            </tr>)}
           <tr><td style={{ padding: "4px 16px 4px 0", fontWeight: 700 }}>
             Amount now payable</td>
             <td style={{ padding: "4px 0", textAlign: "right", fontWeight: 700,
               fontFamily: "var(--font-mono)" }}>
-              {v.currency} {money(live.now_due)}</td></tr>
+              {v.currency} {money(live.total_payable ?? live.now_due)}</td></tr>
+          {Number(live.advance_outstanding) > 0 && (
+            <tr><td colSpan={2} style={{ padding: "6px 0 0",
+              fontSize: 11.5, color: "var(--muted)" }}>
+              Advance outstanding after this certificate:{" "}
+              {v.currency} {money(live.advance_outstanding)}</td></tr>)}
         </tbody>
       </table>
 

@@ -700,11 +700,18 @@ class ReopenClosedSubcontractorTests(TestCase):
 
 
 class SubcontractPaymentNettingTests(TestCase):
-    """Whatever is paid to a subcontractor — an up-front advance, an
-    on-account part payment, an earlier settled valuation — is netted off the
-    next certificate (owner 2026-08-13). Replaces the old advance_percent
-    recovery, which clawed back a CONTRACTED advance whether or not a rufiyaa
-    had been paid."""
+    """Whatever is paid to a subcontractor comes off the next certificate.
+
+    Two rules, and which applies depends on the agreement (owner 2026-09-09):
+
+    * Where the agreement stipulates an ADVANCE PERCENTAGE, the advance is
+      recovered at that percentage of the gross certified — the standard
+      mechanism — capped at what was actually advanced, so a percentage on
+      paper can never claw back money that never moved.
+    * Anything else — an on-account payment, an advance on an agreement that
+      stipulates none, an earlier settled valuation — is netted off in full,
+      as it always was (2026-08-13).
+    """
 
     def setUp(self):
         from .models import CostHead
@@ -896,3 +903,178 @@ class SvcActionsFromTheDocumentViewerTests(TestCase):
         self.assertEqual(float(v["now_due"]), 47 * 50)
         self.assertEqual(len(v["items"]), 1)
         self.assertEqual(v["items"][0]["description"], "Blockwork")
+
+
+class SubcontractAdvanceAndGstTests(TestCase):
+    """The contractual advance, and GST on a certificate (owner 2026-09-09).
+
+    An advance percentage could be set and there was no way to pay it, so the
+    money was arranged off the system and nothing was ever recovered. And a
+    GST-registered subcontractor's tax was not computed at all.
+    """
+
+    def setUp(self):
+        from .models import CostHead
+        self.site = Site.objects.create(code="ADV", name="Advance Isle",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("adv_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("adv_pm", User.Role.PM, site=self.site)
+        self.head = CostHead.objects.first()
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def _sca(self, advance="30", gst="0", approved=True):
+        from . import subcontract
+        sub = Subcontractor.objects.create(
+            site=self.site, name="Raajje Divers",
+            status=Subcontractor.Status.APPROVED)
+        doc, err = subcontract.create_sca(sub, {
+            "title": "Installation of Sea Outfall",
+            "advance_percent": advance, "gst_percent": gst,
+            "retention_percent": "0", "rows": [
+                {"item_code": "1", "description": "Sea outfall", "unit": "m",
+                 "qty": "200", "rate": "1200"}]}, self.sa)
+        assert err is None, err
+        if approved:
+            doc.status = "APPROVED"
+            doc.save(update_fields=["status"])
+        return doc
+
+    def _pay_advance(self, doc):
+        """Take the raised advance PYR through to PAID."""
+        from .models import PaymentRequest
+        pr = PaymentRequest.objects.get(
+            subcontract_agreement=doc.subcontract_agreement,
+            payment_type="ADVANCE")
+        pr.amount_paid = pr.amount_requested
+        pr.save(update_fields=["amount_paid"])
+        pr.document.status = "PAID"
+        pr.document.save(update_fields=["status"])
+        return pr
+
+    def _certify(self, agreement, qty):
+        from . import subcontract
+        doc, err = subcontract.create_svc(agreement, self.sa)
+        assert err is None, err
+        v = doc.subcontract_valuation
+        it = v.items.first()
+        subcontract.value_svc(v, {"rows": [{"id": it.id,
+                                            "cumulative_qty": str(qty)}]},
+                              self.sa)
+        return v, subcontract.svc_valuation(v)
+
+    # ---- raising the advance ---------------------------------------------
+
+    def test_the_advance_can_actually_be_paid(self):
+        doc = self._sca(advance="30")
+        r = self.client.post(
+            f"/api/v1/subcontract-agreements/{doc.ref}/advance", {},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        from .models import PaymentRequest
+        pr = PaymentRequest.objects.get(
+            subcontract_agreement=doc.subcontract_agreement)
+        # 30% of 200 x 1,200 = 72,000
+        self.assertEqual(pr.amount_requested, Decimal("72000.00"))
+        self.assertEqual(pr.payment_type, "ADVANCE")
+        self.assertEqual(pr.payee, "Raajje Divers")
+
+    def test_the_advance_carries_gst_where_the_gang_is_registered(self):
+        doc = self._sca(advance="30", gst="8")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        from .models import PaymentRequest
+        pr = PaymentRequest.objects.get(
+            subcontract_agreement=doc.subcontract_agreement)
+        self.assertEqual(pr.amount_requested, Decimal("77760.00"))  # +8%
+
+    def test_the_advance_is_raised_once(self):
+        doc = self._sca(advance="30")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        again = self.client.post(
+            f"/api/v1/subcontract-agreements/{doc.ref}/advance", {},
+            format="json")
+        self.assertEqual(again.status_code, 400)
+        self.assertIn("already been raised", again.data["detail"])
+
+    def test_an_unapproved_agreement_has_no_advance_to_pay(self):
+        doc = self._sca(advance="30", approved=False)
+        r = self.client.post(
+            f"/api/v1/subcontract-agreements/{doc.ref}/advance", {},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("approved", r.data["detail"])
+
+    def test_an_agreement_without_an_advance_offers_none(self):
+        doc = self._sca(advance="0")
+        r = self.client.post(
+            f"/api/v1/subcontract-agreements/{doc.ref}/advance", {},
+            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no advance", r.data["detail"])
+
+    # ---- recovering it ----------------------------------------------------
+
+    def test_the_advance_is_recovered_pro_rata_not_all_at_once(self):
+        """A 30% advance used to leave the gang unpaid for the first third of
+        the job; it is now recovered at 30% of each certificate."""
+        doc = self._sca(advance="30")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        self._pay_advance(doc)                      # 72,000 advanced
+        a = doc.subcontract_agreement
+        _v, val = self._certify(a, 50)              # 50 x 1,200 = 60,000
+        self.assertEqual(val["gross_cumulative"], Decimal("60000"))
+        self.assertEqual(val["advance_paid"], Decimal("72000.00"))
+        self.assertEqual(val["advance_recovered"], Decimal("18000.00"))
+        self.assertEqual(val["now_due"], Decimal("42000.00"))
+        self.assertEqual(val["advance_outstanding"], Decimal("54000.00"))
+
+    def test_recovery_never_exceeds_what_was_advanced(self):
+        """A percentage on paper cannot claw back money that never moved."""
+        from . import subcontract
+        doc = self._sca(advance="30")
+        a = doc.subcontract_agreement
+        _v, val = self._certify(a, 200)             # the whole job certified
+        self.assertEqual(val["advance_paid"], Decimal("0"))
+        self.assertEqual(val["advance_recovered"], Decimal("0"))
+        self.assertEqual(val["now_due"], Decimal("240000"))
+        self.assertEqual(subcontract.advance_paid(a), Decimal("0"))
+
+    def test_the_advance_is_fully_recovered_by_the_end(self):
+        doc = self._sca(advance="30")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        self._pay_advance(doc)
+        a = doc.subcontract_agreement
+        _v, val = self._certify(a, 200)             # 240,000 certified
+        self.assertEqual(val["advance_recovered"], Decimal("72000.00"))
+        self.assertEqual(val["advance_outstanding"], Decimal("0.00"))
+        self.assertEqual(val["now_due"], Decimal("168000.00"))
+
+    # ---- GST on the certificate ------------------------------------------
+
+    def test_gst_is_added_to_what_is_payable(self):
+        doc = self._sca(advance="0", gst="8")
+        _v, val = self._certify(doc.subcontract_agreement, 10)  # 12,000
+        self.assertEqual(val["now_due"], Decimal("12000"))
+        self.assertEqual(val["gst"], Decimal("960.00"))
+        self.assertEqual(val["total_payable"], Decimal("12960.00"))
+
+    def test_an_unregistered_gang_is_charged_no_gst(self):
+        doc = self._sca(advance="0", gst="0")
+        _v, val = self._certify(doc.subcontract_agreement, 10)
+        self.assertEqual(val["gst"], Decimal("0"))
+        self.assertEqual(val["total_payable"], Decimal("12000"))
+
+    def test_gst_rides_on_the_money_after_the_advance_comes_off(self):
+        """Tax follows what changes hands, not the cumulative certificate."""
+        doc = self._sca(advance="30", gst="8")
+        self.client.post(f"/api/v1/subcontract-agreements/{doc.ref}/advance",
+                         {}, format="json")
+        self._pay_advance(doc)
+        _v, val = self._certify(doc.subcontract_agreement, 50)
+        self.assertEqual(val["now_due"], Decimal("42000.00"))
+        self.assertEqual(val["gst"], Decimal("3360.00"))       # 8% of 42,000
+        self.assertEqual(val["total_payable"], Decimal("45360.00"))
