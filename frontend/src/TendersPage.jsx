@@ -13,10 +13,15 @@ import { Btn, Chip, buttonStyle, card, ghostButton, inputStyle, td, th }
  * the record whatever is priced after it.
  */
 const MANAGE = ["QS", "DIRECTOR", "ADMIN"];
-const TONE = { DRAFT: "info", SUBMITTED: "warn", AWARDED: "ok",
+const TONE = { DRAFT: "info", PD_REVIEW: "warn", SIGNATORY_REVIEW: "warn",
+               CLEARED: "ok", ISSUED: "warn", AWARDED: "ok",
                LOST: "alert", WITHDRAWN: "info", CANCELLED: "info" };
-const LABEL = { DRAFT: "Pricing", SUBMITTED: "Submitted", AWARDED: "Awarded",
-                LOST: "Lost", WITHDRAWN: "Withdrawn" };
+const LABEL = { DRAFT: "Pricing", PD_REVIEW: "With the Director",
+                SIGNATORY_REVIEW: "With the signatory",
+                CLEARED: "Cleared to submit", ISSUED: "Submitted",
+                AWARDED: "Awarded", LOST: "Lost", WITHDRAWN: "Withdrawn" };
+// Everything before the client has answered.
+const OPEN = ["DRAFT", "PD_REVIEW", "SIGNATORY_REVIEW", "CLEARED", "ISSUED"];
 const money = (v, ccy) => (v == null ? "—"
   : `${ccy} ${Number(v).toLocaleString(undefined,
       { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
@@ -38,10 +43,9 @@ export default function TendersPage({ me, sites }) {
   // down with it (owner 2026-09-09). Same trap as AgreementsPanel.
   useEffect(load, [onlyOpen]);
 
-  const live = (rows || []).filter((r) =>
-    ["DRAFT", "SUBMITTED"].includes(r.status));
+  const live = (rows || []).filter((r) => OPEN.includes(r.status));
   const outstanding = live.reduce((n, r) =>
-    n + (r.status === "SUBMITTED" ? 1 : 0), 0);
+    n + (r.status === "ISSUED" ? 1 : 0), 0);
 
   // A tender holds a full bill of quantities. It gets the page, not a modal
   // floated over the register (owner 2026-09-09).
@@ -261,7 +265,7 @@ function NewTender({ sites, onDone }) {
 const TABS = [
   ["offer", "Offer"],
   ["documents", "Documents"],
-  ["visits", "Site visits"],
+  ["visits", "Visits & meetings"],
   ["queries", "Queries (TQ)"],
   ["proposal", "Proposal terms"],
   ["boq", "Bill of quantities"],
@@ -292,13 +296,13 @@ function TenderDetail({ id, me, onClose }) {
     finally { setBusy(false); }
   }
   if (!t) return null;
-  const live = ["DRAFT", "SUBMITTED"].includes(t.status);
+  const live = OPEN.includes(t.status);
   const current = (t.revisions || []).slice(-1)[0];
   // What each tab is carrying, so the work left is visible without opening
   // every one of them (owner 2026-09-09).
   const counts = {
     documents: (t.attachments || []).length,
-    visits: (t.visits || []).length,
+    visits: (t.events || []).length,
     queries: (t.queries || []).length,
   };
   const openQuestions = (t.queries || []).reduce(
@@ -450,20 +454,16 @@ function Offer({ t, can, live, current, busy, act, value, setValue, note,
           </label>
         </div>)}
 
-      {can && live && (
+      {live && (
         <div style={{ marginTop: 14, display: "flex", flexDirection: "column",
                       gap: 10 }}>
-          {current && !current.issued && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
-                          alignItems: "center" }}>
-              <input placeholder={`Value (${t.currency})`} type="number"
-                     value={value} onChange={(e) => setValue(e.target.value)}
-                     style={{ ...inputStyle, width: 160 }} />
-              <Btn disabled={busy || !value}
-                   onClick={() => act("issue", { value })}>
-                Issue {current.rev_label} to the client</Btn>
-            </div>)}
-          {current && current.issued && (
+          {/* The gate. A price does not leave the building on the QS's
+              say-so: the Director reviews it, a signatory clears it, and a
+              further revision walks the same road (owner 2026-09-09). */}
+          <Gate t={t} me={me} busy={busy} act={act} value={value}
+                setValue={setValue} note={note} setNote={setNote} />
+
+          {can && current && current.issued && (
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
                           alignItems: "center" }}>
               <input placeholder="Why a new price?" value={note}
@@ -473,11 +473,12 @@ function Offer({ t, can, live, current, busy, act, value, setValue, note,
                    onClick={() => act("revision", { note })}>
                 Start a new revision</Btn>
             </div>)}
-          {t.status === "SUBMITTED" && (
+          {can && t.status === "ISSUED" && (
             <Outcome t={t} busy={busy} act={act} refText={refText}
                      setRef={setRef} note={note} setNote={setNote} />)}
-          <Btn variant="secondary" disabled={busy}
-               onClick={() => act("withdrawn", {})}>Withdraw</Btn>
+          {can && (
+            <Btn variant="secondary" disabled={busy}
+                 onClick={() => act("withdrawn", {})}>Withdraw</Btn>)}
         </div>)}
 
       {!live && (
@@ -523,26 +524,29 @@ function Outcome({ t, busy, act, refText, setRef, note, setNote }) {
   );
 }
 
-/* A visit is asked for, then held. Both dates matter: one requested and not
- * yet given is a live reason pricing has not started. The photos are as much
- * of the price as the notes (owner 2026-09-09).
+/* A site visit and a tender meeting are the same shape: put in the diary
+ * with a team going, then written up afterwards. A visit's write-up is notes
+ * and photos; a meeting's is what was discussed and who from the client was
+ * in the room (owner 2026-09-09).
  */
 function Visits({ t, can, busy, act, onChanged }) {
-  const [req, setReq] = useState({ requested_on: "", notes: "" });
-  const [holding, setHolding] = useState(null);
-  const [held, setHeld] = useState({ visited_on: "", attendees: "",
-                                     notes: "" });
+  const [add, setAdd] = useState({ kind: "VISIT", scheduled_on: "",
+                                   attendees: "", client_attendees: "",
+                                   location: "" });
+  const [writing, setWriting] = useState(null);
+  const [up, setUp] = useState({ held_on: "", attendees: "",
+                                 client_attendees: "", notes: "" });
   const [err, setErr] = useState(null);
   const fileRef = useRef(null);
-  const [forVisit, setForVisit] = useState(null);
+  const [forEvent, setForEvent] = useState(null);
 
   async function addPhoto(file) {
-    if (!file || !forVisit) return;
+    if (!file || !forEvent) return;
     setErr(null);
     try {
       const fd = new FormData();
       fd.append("file", file);
-      onChanged(await apiUpload(`/tenders/${t.id}/visits/${forVisit}/photo`,
+      onChanged(await apiUpload(`/tenders/${t.id}/events/${forEvent}/photo`,
                                 fd));
     } catch (e) { setErr(e.message); }
     finally { if (fileRef.current) fileRef.current.value = ""; }
@@ -551,36 +555,44 @@ function Visits({ t, can, busy, act, onChanged }) {
   return (
     <div>
       <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
-                   color: "var(--sp-navy)" }}>Site visits</h4>
+                   color: "var(--sp-navy)" }}>Visits &amp; meetings</h4>
       <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
-        What the estimator saw — access, existing conditions, what the drawings
-        do not show. Pricing rests on it as much as on the documents.
+        What the estimator saw and what was agreed in the room — access,
+        existing conditions, what the drawings do not show. Pricing rests on
+        it as much as on the documents.
       </p>
       {err && <p style={{ color: "#c0392b", fontSize: 13 }}>{err}</p>}
-      {(t.visits || []).length === 0 && (
+      {(t.events || []).length === 0 && (
         <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
-          None requested yet.</p>)}
+          Nothing scheduled yet.</p>)}
 
-      {(t.visits || []).map((v) => (
-        <div key={v.id} style={{ borderTop: "1px solid var(--sp-border)",
+      {(t.events || []).map((e) => (
+        <div key={e.id} style={{ borderTop: "1px solid var(--sp-border)",
                                  padding: "8px 0", fontSize: 13 }}>
           <div style={{ display: "flex", gap: 8, alignItems: "baseline",
                         flexWrap: "wrap" }}>
-            {v.held
-              ? <><strong>Held {day(v.visited_on)}</strong>
-                  <Chip tone="ok">done</Chip></>
-              : <><strong>Requested {day(v.requested_on)}</strong>
-                  <Chip tone="warn">awaiting the client</Chip></>}
-            {v.attendees && <span style={{ color: "var(--muted)" }}>
-              {v.attendees}</span>}
+            <Chip tone={e.kind === "MEETING" ? "info" : "ok"}>
+              {e.kind_label}</Chip>
+            <strong>{day(e.held_on || e.scheduled_on)}</strong>
+            {e.held
+              ? <Chip tone="ok">written up</Chip>
+              : <Chip tone="warn">scheduled</Chip>}
+            {e.location && <span style={{ color: "var(--muted)" }}>
+              {e.location}</span>}
           </div>
-          {v.notes && <div style={{ marginTop: 3, whiteSpace: "pre-line" }}>
-            {v.notes}</div>}
+          {(e.attendees || e.client_attendees) && (
+            <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}>
+              {e.attendees && <>Us: {e.attendees}</>}
+              {e.attendees && e.client_attendees ? " · " : ""}
+              {e.client_attendees && <>Client: {e.client_attendees}</>}
+            </div>)}
+          {e.notes && <div style={{ marginTop: 3, whiteSpace: "pre-line" }}>
+            {e.notes}</div>}
 
-          {v.photos?.length > 0 && (
+          {e.photos?.length > 0 && (
             <div style={{ display: "flex", gap: 6, marginTop: 6,
                           flexWrap: "wrap" }}>
-              {v.photos.map((ph) => (
+              {e.photos.map((ph) => (
                 <a key={ph.id} href={ph.url} target="_blank" rel="noreferrer">
                   <img src={ph.url} alt={ph.caption || ph.file_name}
                        style={{ height: 84, width: 112, objectFit: "cover",
@@ -589,39 +601,59 @@ function Visits({ t, can, busy, act, onChanged }) {
                 </a>))}
             </div>)}
 
-          {can && !v.held && (
-            holding === v.id ? (
-              <div style={{ display: "flex", gap: 6, marginTop: 6,
-                            flexWrap: "wrap" }}>
-                <input type="date" value={held.visited_on}
-                       onChange={(e) => setHeld({ ...held,
-                         visited_on: e.target.value })} style={inputStyle} />
-                <input placeholder="Who went" value={held.attendees}
-                       onChange={(e) => setHeld({ ...held,
-                         attendees: e.target.value })}
-                       style={{ ...inputStyle, width: 150 }} />
-                <input placeholder="What was seen" value={held.notes}
-                       onChange={(e) => setHeld({ ...held,
-                         notes: e.target.value })}
-                       style={{ ...inputStyle, flex: "1 1 200px" }} />
-                <Btn disabled={busy || !held.visited_on}
-                     onClick={() => { act("visit-held",
-                       { visit_id: v.id, ...held }); setHolding(null);
-                       setHeld({ visited_on: "", attendees: "", notes: "" });
-                     }}>Save</Btn>
-              </div>
-            ) : (
+          {can && (writing === e.id ? (
+            <div style={{ display: "flex", gap: 6, marginTop: 6,
+                          flexWrap: "wrap" }}>
+              <input type="date" value={up.held_on}
+                     onChange={(ev) => setUp({ ...up,
+                       held_on: ev.target.value })} style={inputStyle} />
+              <input placeholder="Our team" value={up.attendees}
+                     onChange={(ev) => setUp({ ...up,
+                       attendees: ev.target.value })}
+                     style={{ ...inputStyle, width: 150 }} />
+              <input placeholder="From the client"
+                     value={up.client_attendees}
+                     onChange={(ev) => setUp({ ...up,
+                       client_attendees: ev.target.value })}
+                     style={{ ...inputStyle, width: 150 }} />
+              <textarea rows={2} value={up.notes}
+                        placeholder={e.kind === "MEETING"
+                          ? "What was discussed and agreed"
+                          : "What was seen — access, conditions, constraints"}
+                        onChange={(ev) => setUp({ ...up,
+                          notes: ev.target.value })}
+                        style={{ ...inputStyle, width: "100%",
+                                 fontFamily: "inherit" }} />
+              <Btn disabled={busy}
+                   onClick={() => { act("event-record",
+                     { event_id: e.id, ...up }); setWriting(null);
+                     setUp({ held_on: "", attendees: "",
+                             client_attendees: "", notes: "" }); }}>
+                Save the write-up</Btn>
+            </div>
+          ) : (
+            <div style={{ display: "flex", gap: 6, marginTop: 5 }}>
               <button style={{ ...ghostButton, padding: "1px 6px",
-                               fontSize: 11, marginTop: 5 }}
-                      onClick={() => setHolding(v.id)}>
-                Record the visit</button>))}
-
-          {can && v.held && (
-            <button style={{ ...ghostButton, padding: "1px 6px", fontSize: 11,
-                             marginTop: 5 }}
-                    onClick={() => { setForVisit(v.id);
-                                     fileRef.current?.click(); }}>
-              ＋ Add a photo</button>)}
+                               fontSize: 11 }}
+                      onClick={() => { setWriting(e.id);
+                        setUp({ held_on: e.held_on || e.scheduled_on || "",
+                                attendees: e.attendees || "",
+                                client_attendees: e.client_attendees || "",
+                                notes: e.notes || "" }); }}>
+                {e.held ? "Edit the write-up" : "Write it up"}</button>
+              {e.held && (
+                <button style={{ ...ghostButton, padding: "1px 6px",
+                                 fontSize: 11 }}
+                        onClick={() => { setForEvent(e.id);
+                                         fileRef.current?.click(); }}>
+                  ＋ Photo</button>)}
+              {!e.held && (
+                <button style={{ ...ghostButton, padding: "1px 6px",
+                                 fontSize: 11, color: "#c0392b" }}
+                        onClick={() => act("event-cancel",
+                                          { event_id: e.id })}>
+                  Cancel</button>)}
+            </div>))}
         </div>))}
 
       <input ref={fileRef} type="file" accept="image/*"
@@ -629,18 +661,30 @@ function Visits({ t, can, busy, act, onChanged }) {
              onChange={(e) => addPhoto(e.target.files[0])} />
 
       {can && (
-        <div style={{ display: "flex", gap: 6, marginTop: 10,
-                      flexWrap: "wrap" }}>
-          <input type="date" value={req.requested_on}
-                 onChange={(e) => setReq({ ...req,
-                   requested_on: e.target.value })} style={inputStyle} />
-          <input placeholder="What we asked for" value={req.notes}
-                 onChange={(e) => setReq({ ...req, notes: e.target.value })}
-                 style={{ ...inputStyle, flex: "1 1 220px" }} />
-          <Btn variant="secondary" disabled={busy}
-               onClick={() => { act("visit-request", req);
-                 setReq({ requested_on: "", notes: "" }); }}>
-            Request a visit</Btn>
+        <div style={{ display: "flex", gap: 6, marginTop: 12,
+                      flexWrap: "wrap", alignItems: "flex-end" }}>
+          <select value={add.kind}
+                  onChange={(e) => setAdd({ ...add, kind: e.target.value })}
+                  style={{ ...inputStyle, width: 140 }}>
+            <option value="VISIT">Site visit</option>
+            <option value="MEETING">Tender meeting</option>
+          </select>
+          <input type="date" value={add.scheduled_on}
+                 onChange={(e) => setAdd({ ...add,
+                   scheduled_on: e.target.value })} style={inputStyle} />
+          <input placeholder="Our team going" value={add.attendees}
+                 onChange={(e) => setAdd({ ...add,
+                   attendees: e.target.value })}
+                 style={{ ...inputStyle, width: 170 }} />
+          <input placeholder="Where" value={add.location}
+                 onChange={(e) => setAdd({ ...add,
+                   location: e.target.value })}
+                 style={{ ...inputStyle, width: 140 }} />
+          <Btn variant="secondary" disabled={busy || !add.scheduled_on}
+               onClick={() => { act("event", add);
+                 setAdd({ kind: "VISIT", scheduled_on: "", attendees: "",
+                          client_attendees: "", location: "" }); }}>
+            Schedule</Btn>
         </div>)}
     </div>
   );
@@ -934,6 +978,94 @@ function Proposal({ t, can, busy, save }) {
         <div>
           <Btn disabled={busy} onClick={() => save(f)}>Save these terms</Btn>
         </div>)}
+    </div>
+  );
+}
+
+
+/* The approval chain, as the person looking at it sees it. Each step shows
+ * only to whoever's step it is; everyone else reads where it has got to.
+ */
+function Gate({ t, me, busy, act, value, setValue, note, setNote }) {
+  const isQs = ["QS", "DIRECTOR", "ADMIN"].includes(me.role);
+  const step = { DRAFT: 1, PD_REVIEW: 2, SIGNATORY_REVIEW: 3,
+                 CLEARED: 4, ISSUED: 5 }[t.status] || 0;
+  const steps = [["Priced", 1], ["Director", 2], ["Signatory", 3],
+                 ["Cleared", 4], ["Submitted", 5]];
+
+  return (
+    <div style={{ border: "1px solid var(--sp-border, #d8e1e8)",
+                  borderRadius: 8, padding: 12, display: "flex",
+                  flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                    fontSize: 12 }}>
+        {steps.map(([label, n]) => (
+          <span key={n} style={{
+            padding: "2px 9px", borderRadius: 11,
+            background: step > n ? "#e7f4ea" : step === n
+              ? "var(--sp-navy)" : "#eef2f5",
+            color: step === n ? "#fff" : step > n ? "#1a7f37"
+              : "var(--muted)",
+            fontWeight: step === n ? 700 : 500 }}>
+            {step > n ? "✓ " : ""}{label}</span>))}
+      </div>
+
+      {t.status === "DRAFT" && isQs && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                      alignItems: "center" }}>
+          <input placeholder={`Value being offered (${t.currency})`}
+                 type="number" value={value}
+                 onChange={(e) => setValue(e.target.value)}
+                 style={{ ...inputStyle, width: 220 }} />
+          <Btn disabled={busy || !value}
+               onClick={() => act("send-for-approval", { value })}>
+            Send for approval</Btn>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            The Director and a signatory approve this figure before it goes
+            out.</span>
+        </div>)}
+
+      {t.status === "PD_REVIEW" && (
+        ["DIRECTOR", "ADMIN"].includes(me.role) ? (
+          <ApproveRow label="Approve the price (Director)" busy={busy}
+                      act={act} note={note} setNote={setNote} />
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            Waiting on the Director to review the price.</span>))}
+
+      {t.status === "SIGNATORY_REVIEW" && (
+        ["SIGNATORY", "ADMIN"].includes(me.role) ? (
+          <ApproveRow label="Clear it to go to the client" busy={busy}
+                      act={act} note={note} setNote={setNote} />
+        ) : (
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            Approved by the Director; waiting on a signatory to clear it.
+          </span>))}
+
+      {t.status === "CLEARED" && isQs && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                      alignItems: "center" }}>
+          <Btn disabled={busy} onClick={() => act("issue", {})}>
+            Submit to the client</Btn>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            Cleared at {t.currency}{" "}
+            {Number(t.value_submitted || 0).toLocaleString()}.</span>
+        </div>)}
+    </div>
+  );
+}
+
+function ApproveRow({ label, busy, act, note, setNote }) {
+  return (
+    <div style={{ display: "flex", gap: 8, flexWrap: "wrap",
+                  alignItems: "center" }}>
+      <Btn disabled={busy} onClick={() => act("approve", {})}>{label}</Btn>
+      <input placeholder="Reason, to send it back" value={note}
+             onChange={(e) => setNote(e.target.value)}
+             style={{ ...inputStyle, flex: "1 1 180px" }} />
+      <Btn variant="secondary" disabled={busy || !note.trim()}
+           onClick={() => act("return", { comment: note })}>
+        Send back to the QS</Btn>
     </div>
   );
 }

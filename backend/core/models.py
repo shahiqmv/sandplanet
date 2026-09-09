@@ -589,11 +589,25 @@ class Document(models.Model):
         # is a submission and an unissued one is internal working (owner
         # 2026-09-08). The outcome is a state, not a note: a tender ends
         # AWARDED, LOST or WITHDRAWN and nothing else.
+        # A price does not leave the building on the QS's say-so: the
+        # Director reviews it, then a signatory clears it, and only then may
+        # it go to the client. A further revision walks the same road — the
+        # gate is on the PRICE, so a new one is a new decision (owner
+        # 2026-09-09).
+        #
+        # PD_REVIEW and SIGNATORY_REVIEW name who is holding it, so the
+        # queues read straight off the status. ISSUED means the client has
+        # it; anything after that is their answer.
         "TDR": {
-            "DRAFT": {"SUBMITTED", "CANCELLED"},
-            # Back to DRAFT to price a further revision after submitting; the
-            # revision already issued stays on the record either way.
-            "SUBMITTED": {"AWARDED", "LOST", "WITHDRAWN", "DRAFT"},
+            "DRAFT": {"PD_REVIEW", "WITHDRAWN", "CANCELLED"},
+            "PD_REVIEW": {"SIGNATORY_REVIEW", "DRAFT", "WITHDRAWN"},
+            "SIGNATORY_REVIEW": {"CLEARED", "DRAFT", "PD_REVIEW",
+                                 "WITHDRAWN"},
+            # Cleared but not yet sent — the QS still has to issue it.
+            "CLEARED": {"ISSUED", "DRAFT", "WITHDRAWN"},
+            # Back to DRAFT to price a further revision; what was issued
+            # stays issued on the record either way.
+            "ISSUED": {"AWARDED", "LOST", "WITHDRAWN", "DRAFT"},
             "AWARDED": {"CLOSED"},
             "LOST": {"CLOSED"},
             "WITHDRAWN": {"CLOSED"},
@@ -846,10 +860,10 @@ class Attachment(models.Model):
         "DocumentLine", on_delete=models.CASCADE, null=True, blank=True,
         related_name="attachments",
     )
-    # A photo taken on a tender site visit. What the estimator saw is as much
-    # of the price as his notes are (owner 2026-09-09).
-    tender_visit = models.ForeignKey(
-        "TenderSiteVisit", on_delete=models.CASCADE, null=True, blank=True,
+    # A photo from a tender site visit or meeting. What the estimator saw is
+    # as much of the price as his notes are (owner 2026-09-09).
+    tender_event = models.ForeignKey(
+        "TenderEvent", on_delete=models.CASCADE, null=True, blank=True,
         related_name="photos",
     )
     kind = models.CharField(max_length=20, choices=KINDS)
@@ -3393,36 +3407,45 @@ class Tender(models.Model):
         return f"{self.document.ref} — {self.client_name}"
 
 
-class TenderSiteVisit(models.Model):
-    """A visit to the job before pricing it.
+class TenderEvent(models.Model):
+    """A site visit or a tender meeting, scheduled and then written up.
 
-    Half of what a tender price rests on is what the estimator saw — access,
-    existing conditions, what the drawings do not show — and it lived in his
-    head. The visit is REQUESTED of the client first and held later, so both
-    dates matter: a visit still unanswered is a reason pricing has not started
-    (owner 2026-09-09).
+    Both are the same shape of thing: it is arranged for a date with a team
+    going, and afterwards what was seen or discussed is written down and the
+    photos filed. Half of what a price rests on comes out of these, and it
+    lived in the estimator's head (owner 2026-09-09).
 
-    Photos are the point as much as the notes. They hang off the visit as
-    attachments, so "what did the retaining wall actually look like" has an
-    answer months later.
+    There is no request-and-wait step: the visit is simply scheduled, and
+    "held" is the date it actually happened.
     """
 
+    class Kind(models.TextChoices):
+        VISIT = "VISIT", "Site visit"
+        MEETING = "MEETING", "Tender meeting"
+
     tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
-                               related_name="visits")
-    requested_on = models.DateField(null=True, blank=True)
-    visited_on = models.DateField(null=True, blank=True)
+                               related_name="events")
+    kind = models.CharField(max_length=8, choices=Kind.choices,
+                            default=Kind.VISIT)
+    scheduled_on = models.DateField()
+    # Ours, and theirs. A tender meeting is worth little as a record without
+    # who from the client was in the room.
     attendees = models.TextField(blank=True)
+    client_attendees = models.TextField(blank=True)
+    location = models.CharField(max_length=160, blank=True)
+    held_on = models.DateField(null=True, blank=True)
+    # What was seen, or what was discussed.
     notes = models.TextField(blank=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ["-visited_on", "-requested_on", "-id"]
+        ordering = ["-scheduled_on", "-id"]
 
     @property
     def is_held(self):
-        return self.visited_on is not None
+        return self.held_on is not None
 
 
 class TenderQuery(models.Model):

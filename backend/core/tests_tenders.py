@@ -14,7 +14,43 @@ from .models import Document, Site, SitePmHistory, Tender, User
 from .tests import make_user
 
 
-class TenderRegisterTests(TestCase):
+class GateMixin:
+    """Walking the approval chain, which every issued offer now goes through.
+
+    A price does not leave the building on the QS's say-so: the Director
+    reviews it, a signatory clears it, and only then may the QS submit it
+    (owner 2026-09-09).
+    """
+
+    def make_approvers(self, prefix):
+        self.director = make_user(f"{prefix}_dir", User.Role.DIRECTOR)
+        self.sig = make_user(f"{prefix}_sig", User.Role.SIGNATORY)
+
+    def clear(self, tid, value="500"):
+        """Up to CLEARED, ready to submit."""
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(f"/api/v1/tenders/{tid}/send-for-approval",
+                             {"value": value}, format="json")
+        assert r.status_code == 200, r.data
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/tenders/{tid}/approve", {},
+                             format="json")
+        assert r.status_code == 200, r.data
+        self.client.force_authenticate(self.sig)
+        r = self.client.post(f"/api/v1/tenders/{tid}/approve", {},
+                             format="json")
+        assert r.status_code == 200, r.data
+        self.client.force_authenticate(self.qs)
+        return r
+
+    def issue(self, tid, value="500"):
+        """The whole road: priced, reviewed, cleared, submitted."""
+        self.clear(tid, value)
+        return self.client.post(f"/api/v1/tenders/{tid}/issue", {},
+                                format="json")
+
+
+class TenderRegisterTests(GateMixin, TestCase):
     def setUp(self):
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
@@ -103,26 +139,24 @@ class TenderRegisterTests(TestCase):
 
     def test_issuing_a_revision_is_the_submission(self):
         t = self.open_one()
-        r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                             {"value": "125000.00"}, format="json")
+        r = self.issue(t["id"], "125000.00")
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(r.data["status"], "SUBMITTED")
+        self.assertEqual(r.data["status"], "ISSUED")
         self.assertEqual(str(r.data["value_submitted"]), "125000.00")
         self.assertTrue(r.data["revisions"][0]["issued"])
 
     def test_an_issued_revision_cannot_be_issued_twice(self):
         t = self.open_one()
-        self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                         {"value": "100"}, format="json")
-        again = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                                 {"value": "200"}, format="json")
+        self.issue(t["id"], "100")
+        again = self.client.post(f"/api/v1/tenders/{t['id']}/issue", {},
+                                 format="json")
         self.assertEqual(again.status_code, 400)
-        self.assertIn("already been issued", again.data["detail"])
+        self.assertIn("already gone to the client",
+                      again.data["detail"])
 
     def test_a_further_price_is_a_further_revision(self):
         t = self.open_one()
-        self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                         {"value": "100000"}, format="json")
+        self.issue(t["id"], "100000")
         r = self.client.post(f"/api/v1/tenders/{t['id']}/revision",
                              {"note": "Client cut the scope"}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
@@ -145,23 +179,116 @@ class TenderRegisterTests(TestCase):
         """Their file IS the submission — issuing without it would record a
         submission the system cannot produce."""
         t = self.open_one(submit_our_format=False)
-        r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
                              {"value": "90000"}, format="json")
         self.assertEqual(r.status_code, 400)
         self.assertIn("upload that file", r.data["detail"].lower())
 
-    def test_a_value_is_required_to_issue(self):
+    def test_a_value_is_required_before_it_goes_up(self):
+        """The Director and the signatory are approving a NUMBER."""
+        t = self.open_one()
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                             {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("value", r.data["detail"].lower())
+
+    # ---- the approval gate ----------------------------------------------
+
+    def test_a_price_walks_the_chain_before_it_leaves_the_building(self):
+        """QS prices, Director reviews, signatory clears, QS submits."""
+        t = self.open_one()
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                             {"value": "125000"}, format="json")
+        self.assertEqual(r.data["status"], "PD_REVIEW")
+        self.client.force_authenticate(self.director)
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/approve", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "SIGNATORY_REVIEW")
+        self.client.force_authenticate(self.sig)
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/approve", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "CLEARED")
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/issue", {},
+                             format="json")
+        self.assertEqual(r.data["status"], "ISSUED")
+
+    def test_the_qs_cannot_submit_an_unapproved_price(self):
         t = self.open_one()
         r = self.client.post(f"/api/v1/tenders/{t['id']}/issue", {},
                              format="json")
         self.assertEqual(r.status_code, 400)
+        self.assertIn("Send the offer for approval first", r.data["detail"])
+
+    def test_the_signatory_cannot_clear_before_the_director_has_looked(self):
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                         {"value": "1000"}, format="json")
+        self.client.force_authenticate(self.sig)
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/approve", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Director", r.data["detail"])
+
+    def test_the_qs_cannot_approve_their_own_price(self):
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                         {"value": "1000"}, format="json")
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/approve", {},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Director", r.data["detail"])
+
+    def test_an_approver_sends_it_back_with_a_reason(self):
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                         {"value": "1000"}, format="json")
+        self.client.force_authenticate(self.director)
+        bare = self.client.post(f"/api/v1/tenders/{t['id']}/return", {},
+                                format="json")
+        self.assertEqual(bare.status_code, 400)
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/return",
+                             {"comment": "Rates look light on piling"},
+                             format="json")
+        self.assertEqual(r.data["status"], "DRAFT")
+
+    def test_a_further_revision_walks_the_chain_again(self):
+        """The gate is on the PRICE, so a new one is a new decision."""
+        t = self.open_one()
+        self.issue(t["id"], "100000")
+        self.client.post(f"/api/v1/tenders/{t['id']}/revision",
+                         {"note": "Scope cut"}, format="json")
+        blocked = self.client.post(f"/api/v1/tenders/{t['id']}/issue", {},
+                                   format="json")
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("Send the offer for approval first",
+                      blocked.data["detail"])
+        r = self.issue(t["id"], "88000")
+        self.assertEqual(r.data["status"], "ISSUED")
+        self.assertEqual(str(r.data["value_submitted"]), "88000.00")
+
+    def test_the_approvers_see_it_in_their_queue(self):
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                         {"value": "1000"}, format="json")
+        self.client.force_authenticate(self.director)
+        titles = [g["title"] for g in
+                  self.client.get("/api/v1/approvals/pending").data["groups"]]
+        self.assertIn("To review — tender prices", titles)
+        self.client.force_authenticate(self.sig)
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/tenders/{t['id']}/approve", {},
+                         format="json")
+        self.client.force_authenticate(self.sig)
+        titles = [g["title"] for g in
+                  self.client.get("/api/v1/approvals/pending").data["groups"]]
+        self.assertIn("To clear — tender prices", titles)
 
     # ---- how it ends ---------------------------------------------------
 
     def test_an_award_is_recorded_with_their_reference(self):
         t = self.open_one()
-        self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                         {"value": "125000"}, format="json")
+        self.issue(t["id"], "125000")
         r = self.client.post(f"/api/v1/tenders/{t['id']}/awarded",
                              {"outcome_ref": "LOA/2026/014",
                               "value_awarded": "119500",
@@ -173,8 +300,7 @@ class TenderRegisterTests(TestCase):
 
     def test_a_loss_records_the_reason_and_who_won(self):
         t = self.open_one()
-        self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                         {"value": "125000"}, format="json")
+        self.issue(t["id"], "125000")
         r = self.client.post(f"/api/v1/tenders/{t['id']}/lost",
                              {"lost_reason": "Price", "lost_to": "Rasheed Co"},
                              format="json")
@@ -234,15 +360,13 @@ class TenderRegisterTests(TestCase):
     def test_a_pm_cannot_price_or_issue(self):
         t = self.open_one()
         self.client.force_authenticate(self.pm)
-        r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                             {"value": "1"}, format="json")
+        r = self.issue(t["id"], "1")
         self.assertEqual(r.status_code, 403)
 
     def test_the_director_runs_it_too(self):
         t = self.open_one()
         self.client.force_authenticate(self.director)
-        r = self.client.post(f"/api/v1/tenders/{t['id']}/issue",
-                             {"value": "5000"}, format="json")
+        r = self.issue(t["id"], "5000")
         self.assertEqual(r.status_code, 200, r.data)
 
     def test_the_document_underneath_is_a_real_tdr(self):
@@ -252,7 +376,7 @@ class TenderRegisterTests(TestCase):
         self.assertEqual(Tender.objects.get(pk=t["id"]).document_id, doc.id)
 
 
-class TenderBoqTests(TestCase):
+class TenderBoqTests(GateMixin, TestCase):
     """The offer's priced bill, and what an award does with it.
 
     A BOQ belongs to a project or to a tender, never both and never neither.
@@ -264,6 +388,7 @@ class TenderBoqTests(TestCase):
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
         self.qs = make_user("tb_qs", User.Role.QS)
+        self.make_approvers("tb")
         self.client = APIClient()
         self.client.force_authenticate(self.qs)
         self.t = self.client.post("/api/v1/tenders", {
@@ -292,8 +417,7 @@ class TenderBoqTests(TestCase):
     def test_winning_hands_the_bill_to_the_new_project(self):
         from .models import Boq, Project
         self._price()
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                         {"value": "50000"}, format="json")
+        self.issue(self.t["id"], "50000")
         r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded",
                              {"outcome_ref": "LOA/9", "value_awarded": "48000",
                               "project_code": "SOUT JT"}, format="json")
@@ -311,8 +435,7 @@ class TenderBoqTests(TestCase):
 
     def test_an_award_needs_a_project_code(self):
         self._price()
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                         {"value": "50000"}, format="json")
+        self.issue(self.t["id"], "50000")
         r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded", {},
                              format="json")
         self.assertEqual(r.status_code, 400)
@@ -322,8 +445,7 @@ class TenderBoqTests(TestCase):
         from .models import Project
         Project.objects.create(site=self.site, code="SOUT JT", title="x",
                                status="ACTIVE")
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                         {"value": "1"}, format="json")
+        self.issue(self.t["id"], "1")
         r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded",
                              {"project_code": "SOUT JT"}, format="json")
         self.assertEqual(r.status_code, 400)
@@ -333,8 +455,7 @@ class TenderBoqTests(TestCase):
         """It is how the next enquiry from the same client gets priced."""
         from .models import Boq
         self._price()
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                         {"value": "50000"}, format="json")
+        self.issue(self.t["id"], "50000")
         self.client.post(f"/api/v1/tenders/{self.t['id']}/lost",
                          {"lost_reason": "Price"}, format="json")
         boq = Boq.objects.get(tender_id=self.t["id"])
@@ -366,7 +487,7 @@ class TenderBoqTests(TestCase):
         self.assertEqual(Tender.objects.count(), 1)
 
 
-class TenderProcessTests(TestCase):
+class TenderProcessTests(GateMixin, TestCase):
     """The process as it is actually run: assigned, visited, queried, priced.
 
     The query is a TQ, not an RFI — that name is taken twice over in this app
@@ -379,6 +500,7 @@ class TenderProcessTests(TestCase):
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
         self.qs = make_user("tp_qs", User.Role.QS)
+        self.make_approvers("tp")
         self.qs2 = make_user("tp_qs2", User.Role.QS)
         self.pm = make_user("tp_pm", User.Role.PM, site=self.site)
         SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
@@ -392,6 +514,7 @@ class TenderProcessTests(TestCase):
     def act(self, action, body=None):
         return self.client.post(f"/api/v1/tenders/{self.t['id']}/{action}",
                                 body or {}, format="json")
+
 
     # ---- whose job it is -------------------------------------------------
 
@@ -413,36 +536,69 @@ class TenderProcessTests(TestCase):
 
     # ---- the visit -------------------------------------------------------
 
-    def test_a_visit_is_requested_then_held(self):
-        """One asked for and not yet given is why pricing has not started."""
-        r = self.act("visit-request", {"requested_on": str(date.today()),
-                                       "notes": "Access by barge only"})
+    def test_a_visit_is_scheduled_then_written_up(self):
+        r = self.act("event", {"kind": "VISIT",
+                               "scheduled_on": str(date.today()),
+                               "attendees": "Shahiq, Malith",
+                               "location": "North jetty"})
         self.assertEqual(r.status_code, 200, r.data)
-        v = r.data["visits"][0]
-        self.assertFalse(v["held"])
-        self.assertIsNone(v["visited_on"])
-        r = self.act("visit-held", {"visit_id": v["id"],
-                                    "visited_on": str(date.today()),
-                                    "attendees": "Shahiq",
-                                    "notes": "No barge access at low tide"})
-        held = r.data["visits"][0]
+        e = r.data["events"][0]
+        self.assertEqual(e["kind"], "VISIT")
+        self.assertFalse(e["held"])
+        self.assertEqual(e["location"], "North jetty")
+
+        r = self.act("event-record", {"event_id": e["id"],
+                                      "held_on": str(date.today()),
+                                      "notes": "No barge access at low tide"})
+        held = r.data["events"][0]
         self.assertTrue(held["held"])
         self.assertIn("low tide", held["notes"])
 
+    def test_a_meeting_records_who_was_in_the_room(self):
+        """A tender meeting is worth little as a record without the client's
+        side of the table (owner 2026-09-09)."""
+        e = self.act("event", {"kind": "MEETING",
+                               "scheduled_on": str(date.today()),
+                               "attendees": "Shahiq"}).data["events"][0]
+        r = self.act("event-record",
+                     {"event_id": e["id"], "held_on": str(date.today()),
+                      "client_attendees": "Ms Fathimath, Projects",
+                      "notes": "Client to confirm the crane"})
+        got = r.data["events"][0]
+        self.assertEqual(got["kind"], "MEETING")
+        self.assertEqual(got["client_attendees"], "Ms Fathimath, Projects")
+        self.assertIn("crane", got["notes"])
+
+    def test_an_event_needs_a_date(self):
+        self.assertEqual(self.act("event", {"kind": "VISIT"}).status_code,
+                         400)
+
     def test_a_visit_carries_photos(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
-        v = self.act("visit-request", {}).data["visits"][0]
-        self.act("visit-held", {"visit_id": v["id"],
-                                "visited_on": str(date.today())})
+        e = self.act("event", {"scheduled_on": str(date.today())}
+                     ).data["events"][0]
+        self.act("event-record", {"event_id": e["id"],
+                                  "held_on": str(date.today())})
         r = self.client.post(
-            f"/api/v1/tenders/{self.t['id']}/visits/{v['id']}/photo",
+            f"/api/v1/tenders/{self.t['id']}/events/{e['id']}/photo",
             {"file": SimpleUploadedFile("wall.jpg", b"\xff\xd8jpeg",
                                         content_type="image/jpeg")},
             format="multipart")
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(len(r.data["visits"][0]["photos"]), 1)
-        self.assertEqual(r.data["visits"][0]["photos"][0]["file_name"],
-                         "wall.jpg")
+        self.assertEqual(len(r.data["events"][0]["photos"]), 1)
+
+    def test_one_that_did_not_happen_can_go_but_a_record_stays(self):
+        e = self.act("event", {"scheduled_on": str(date.today())}
+                     ).data["events"][0]
+        self.assertEqual(self.act("event-cancel", {"event_id": e["id"]})
+                         .data["events"], [])
+        e2 = self.act("event", {"scheduled_on": str(date.today())}
+                      ).data["events"][0]
+        self.act("event-record", {"event_id": e2["id"],
+                                  "notes": "Held and noted"})
+        r = self.act("event-cancel", {"event_id": e2["id"]})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("record stays", r.data["detail"])
 
     # ---- the query sheet -------------------------------------------------
 
@@ -528,7 +684,7 @@ class TenderProcessTests(TestCase):
                          {"rows": [{"description": "Excavate", "unit": "m3",
                                     "qty": "100", "rate_combined": "5"}]},
                          format="json")
-        self.act("issue", {"value": "900"})
+        self.issue(self.t["id"], "900")
         ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
         self.assertTrue(ctx["diverges"])
         self.assertEqual(float(ctx["offered"]), 900.0)
@@ -636,7 +792,7 @@ class TenderProcessTests(TestCase):
                          {"rows": [{"description": "Excavate", "unit": "m3",
                                     "qty": "100", "rate_combined": "5"}]},
                          format="json")
-        self.act("issue", {"value": "500"})
+        self.issue(self.t["id"], "500")
         html = render_to_string(
             "pdf/tender_submission.html",
             svc.submission_context(Tender.objects.get(pk=self.t["id"])))
@@ -663,7 +819,7 @@ class TenderProcessTests(TestCase):
         self.assertNotIn("Secret rate", html)
 
 
-class TenderDocumentTests(TestCase):
+class TenderDocumentTests(GateMixin, TestCase):
     """The files an enquiry arrives with and produces. The client's own bill
     is the one that matters: where we submit on their form, that file IS the
     submission (owner 2026-09-09)."""
@@ -672,6 +828,7 @@ class TenderDocumentTests(TestCase):
         self.site = Site.objects.create(code="SJR", name="Soneva Jani",
                                         status=Site.Status.ACTIVE)
         self.qs = make_user("tdoc_qs", User.Role.QS)
+        self.make_approvers("tdoc")
         self.pm = make_user("tdoc_pm", User.Role.PM, site=self.site)
         SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
                                      from_date=date.today())
@@ -700,25 +857,21 @@ class TenderDocumentTests(TestCase):
         self.assertFalse(got["issued"])
 
     def test_their_bill_is_what_unblocks_issuing(self):
-        blocked = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                                   {"value": "1000"}, format="json")
+        blocked = self.issue(self.t["id"], "1000")
         self.assertEqual(blocked.status_code, 400)
         self.assertIn("upload that file", blocked.data["detail"])
         # An enquiry document is not their bill and must not unblock it.
         self._upload(kind="TENDER_ENQUIRY", name="enquiry.pdf")
-        still = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                                 {"value": "1000"}, format="json")
+        still = self.issue(self.t["id"], "1000")
         self.assertEqual(still.status_code, 400)
         self._upload(kind="TENDER_BILL")
-        ok = self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                              {"value": "1000"}, format="json")
+        ok = self.issue(self.t["id"], "1000")
         self.assertEqual(ok.status_code, 200, ok.data)
 
     def test_a_file_that_went_to_the_client_stays_on_the_record(self):
         r = self._upload(kind="TENDER_BILL")
         att = r.data["attachments"][0]["id"]
-        self.client.post(f"/api/v1/tenders/{self.t['id']}/issue",
-                         {"value": "1000"}, format="json")
+        self.issue(self.t["id"], "1000")
         gone = self.client.delete(
             f"/api/v1/tenders/{self.t['id']}/documents/{att}")
         self.assertEqual(gone.status_code, 400)

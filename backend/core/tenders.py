@@ -19,7 +19,7 @@ from django.db import transaction
 
 from .audit import audit
 from .models import (Document, DocumentRevision, Project, Site, Tender,
-                     TenderQuery, TenderQueryItem, TenderSiteVisit, User)
+                     TenderEvent, TenderQuery, TenderQueryItem, User)
 from .numbering import next_ref
 
 # QS prices them and the Director decides; Admin keeps the register. A
@@ -28,7 +28,12 @@ from .numbering import next_ref
 # 2026-09-08).
 MANAGE_ROLES = ("QS", "DIRECTOR", "ADMIN")
 VIEW_ROLES = MANAGE_ROLES + ("SIGNATORY", "PM")
-OPEN_STATUSES = ("DRAFT", "SUBMITTED")
+# Everything before the client has answered. Pricing, the approval chain, and
+# the spell after it has gone out.
+OPEN_STATUSES = ("DRAFT", "PD_REVIEW", "SIGNATORY_REVIEW", "CLEARED",
+                 "ISSUED")
+# Still being worked on — a bill can be changed and a query raised here.
+WORKING_STATUSES = ("DRAFT", "PD_REVIEW", "SIGNATORY_REVIEW", "CLEARED")
 DECIDED = {"AWARDED": Tender.Outcome.AWARDED,
            "LOST": Tender.Outcome.LOST,
            "WITHDRAWN": Tender.Outcome.WITHDRAWN}
@@ -200,12 +205,103 @@ def add_revision(t, data, actor):
         payload=_payload(data, base=(cur.payload if cur else None)))
     doc.current_revision = rev
     # A further price means we are working again, not that the last
-    # submission is undone — it stays issued, on the record.
+    # submission is undone — it stays issued, on the record. And it walks the
+    # approval chain again: the gate is on the PRICE, so a new one is a new
+    # decision (owner 2026-09-09).
     doc.status = "DRAFT"
     doc.save(update_fields=["current_revision", "status"])
     audit("tender", t.id, "TENDER_REVISION_ADDED", actor=actor,
           detail={"ref": doc.ref, "rev": rev.rev_label})
     return rev, None
+
+
+# Who may take each step of the chain. The QS prices and sends; the Director
+# reviews the price; a signatory clears it to leave the building (owner
+# 2026-09-09).
+APPROVAL_CHAIN = {
+    "PD_REVIEW": ("DIRECTOR", "SIGNATORY_REVIEW", "TENDER_PD_APPROVED"),
+    "SIGNATORY_REVIEW": ("SIGNATORY", "CLEARED", "TENDER_CLEARED"),
+}
+
+
+def _tell(doc, actor):
+    """Alert whoever the offer now waits on. Never raises — a notification
+    failure must not undo a status change."""
+    from .notify import notify_document
+    notify_document(doc, actor)
+
+
+def send_for_approval(t, data, actor):
+    """Put the priced offer in front of the Director.
+
+    The value is fixed here rather than at issue: the Director and the
+    signatory are approving a NUMBER, and one that could still change
+    afterwards would make their approval meaningless.
+    """
+    doc = t.document
+    if doc.status != "DRAFT":
+        return "Only a tender being priced can be sent for approval."
+    rev = doc.current_revision
+    if rev is None:
+        return "There is nothing to approve."
+    value = _dec(data.get("value"))
+    if value is None or value <= 0:
+        return "Enter the value being offered before sending it up."
+    if not t.submit_our_format and not doc.attachments.filter(
+            kind="TENDER_BILL").exists():
+        return ("This offer is submitted on the client's own bill — upload "
+                "that file under Documents first.")
+    rev.payload = {**(rev.payload or {}), "value": str(value)}
+    rev.save(update_fields=["payload"])
+    t.value_submitted = value
+    t.save(update_fields=["value_submitted"])
+    doc.status = "PD_REVIEW"
+    doc.save(update_fields=["status"])
+    _tell(doc, actor)
+    audit("tender", t.id, "TENDER_SENT_FOR_APPROVAL", actor=actor,
+          detail={"ref": doc.ref, "rev": rev.rev_label,
+                  "currency": t.currency})
+    return None
+
+
+def approve(t, actor):
+    """The Director's review, then the signatory's clearance."""
+    doc = t.document
+    step = APPROVAL_CHAIN.get(doc.status)
+    if step is None:
+        return "There is nothing awaiting approval on this tender."
+    role, nxt, event = step
+    if actor.role not in (role, "ADMIN"):
+        who = "the Director" if role == "DIRECTOR" else "a signatory"
+        return f"This step is {who}'s."
+    doc.status = nxt
+    doc.save(update_fields=["status"])
+    _tell(doc, actor)
+    audit("tender", t.id, event, actor=actor,
+          detail={"ref": doc.ref,
+                  "value": str(t.value_submitted or ""),
+                  "currency": t.currency})
+    return None
+
+
+def return_for_rework(t, data, actor):
+    """Send it back to the QS. Nothing has gone to the client, so there is
+    nothing to unwind — only a price to think again about."""
+    doc = t.document
+    if doc.status not in ("PD_REVIEW", "SIGNATORY_REVIEW", "CLEARED"):
+        return "This tender is not with an approver."
+    expected = {"PD_REVIEW": "DIRECTOR", "SIGNATORY_REVIEW": "SIGNATORY",
+                "CLEARED": "SIGNATORY"}[doc.status]
+    if actor.role not in (expected, "ADMIN", "QS"):
+        return "Only the approver holding it, or the QS, can pull it back."
+    reason = (data.get("comment") or "").strip()
+    if not reason:
+        return "Say why it is going back."
+    doc.status = "DRAFT"
+    doc.save(update_fields=["status"])
+    audit("tender", t.id, "TENDER_RETURNED", actor=actor,
+          detail={"ref": doc.ref, "reason": reason[:300]})
+    return None
 
 
 @transaction.atomic
@@ -217,7 +313,19 @@ def issue_revision(t, data, actor):
     sent.
     """
     doc = t.document
-    if doc.status not in OPEN_STATUSES:
+    # The gate: a price does not leave the building until the Director has
+    # reviewed it and a signatory has cleared it (owner 2026-09-09).
+    if doc.status != "CLEARED":
+        if doc.status in ("PD_REVIEW", "SIGNATORY_REVIEW"):
+            with_who = ("the Director" if doc.status == "PD_REVIEW"
+                        else "a signatory")
+            return f"This offer is still with {with_who}."
+        if doc.status == "DRAFT":
+            return ("Send the offer for approval first — the Director and a "
+                    "signatory clear the price before it goes out.")
+        if doc.status == "ISSUED":
+            return ("This offer has already gone to the client. Open a new "
+                    "revision to send a further price.")
         return "This tender is closed."
     rev = doc.current_revision
     if rev is None:
@@ -225,24 +333,17 @@ def issue_revision(t, data, actor):
     if rev.issued_at is not None:
         return (f"{rev.rev_label} has already been issued. Open a new "
                 "revision to send a further price.")
-    value = _dec(data.get("value"))
-    if value is None or value <= 0:
-        return "Enter the value being offered."
-    if not t.submit_our_format and not doc.attachments.filter(
-            kind="TENDER_BILL").exists():
-        # The lines are captured either way; what differs is the document that
-        # goes out. Here it is the client's own file, so issuing without it
-        # would record a submission the system cannot produce.
-        return ("This offer is submitted on the client's own bill — upload "
-                "that file under Documents before issuing it.")
+    # The value was fixed when it went up for approval; that is the figure
+    # they approved and it is not re-entered here.
+    if not t.value_submitted:
+        return "This offer has no approved value on it."
     from django.utils import timezone
     rev.issued_at = timezone.now()
-    rev.payload = {**(rev.payload or {}), "value": str(value)}
+    rev.payload = {**(rev.payload or {}), "value": str(t.value_submitted)}
     rev.save(update_fields=["issued_at", "payload"])
-    t.value_submitted = value
     t.submitted_at = rev.issued_at
-    t.save(update_fields=["value_submitted", "submitted_at"])
-    doc.status = "SUBMITTED"
+    t.save(update_fields=["submitted_at"])
+    doc.status = "ISSUED"
     doc.save(update_fields=["status"])
     audit("tender", t.id, "TENDER_ISSUED", actor=actor,
           detail={"ref": doc.ref, "rev": rev.rev_label,
@@ -299,7 +400,7 @@ def record_outcome(t, outcome, data, actor):
         return "The outcome must be awarded, lost or withdrawn."
     if doc.status not in OPEN_STATUSES:
         return "This tender already has an outcome."
-    if outcome != "WITHDRAWN" and doc.status != "SUBMITTED":
+    if outcome != "WITHDRAWN" and doc.status != "ISSUED":
         return ("Issue the offer before recording what the client decided "
                 "about it.")
     t.outcome_date = data.get("outcome_date") or date.today()
@@ -455,38 +556,67 @@ def submission_context(t):
 
 
 # ---- what the price rests on ------------------------------------------
+#
+# A site visit and a tender meeting are the same shape of thing: arranged for
+# a date with a team going, then written up afterwards. There is no
+# request-and-wait step — that was invented, and is not how it is run (owner
+# 2026-09-09).
 
-def request_visit(t, data, actor):
-    """Ask the client for a look at the job.
+def schedule_event(t, data, actor):
+    """Put a visit or a meeting in the diary."""
+    if t.document.status not in OPEN_STATUSES:
+        return None, "This tender is closed."
+    when = data.get("scheduled_on")
+    if not when:
+        return None, "When is it?"
+    kind = (data.get("kind") or "VISIT").upper()
+    if kind not in dict(TenderEvent.Kind.choices):
+        return None, "A tender event is a site visit or a meeting."
+    e = TenderEvent.objects.create(
+        tender=t, kind=kind, scheduled_on=when,
+        attendees=data.get("attendees", ""),
+        client_attendees=data.get("client_attendees", ""),
+        location=(data.get("location") or "")[:160],
+        notes=data.get("notes", ""), created_by=actor)
+    audit("tender", t.id, "TENDER_EVENT_SCHEDULED", actor=actor,
+          detail={"ref": t.document.ref, "kind": kind,
+                  "on": str(e.scheduled_on)})
+    return e, None
 
-    Requested and held are separate dates on purpose: a visit asked for and
-    not yet given is a live reason pricing has not started, and reads that way
-    on the register (owner 2026-09-09).
+
+def record_event(t, event_id, data, actor):
+    """Write it up afterwards: what was seen, or what was discussed.
+
+    A meeting's value is in the note; a visit's is in the note and the photos.
+    Either way it is the half of the price that is not in the drawings.
     """
-    v = TenderSiteVisit.objects.create(
-        tender=t, requested_on=data.get("requested_on") or date.today(),
-        attendees=data.get("attendees", ""), notes=data.get("notes", ""),
-        created_by=actor)
-    audit("tender", t.id, "TENDER_VISIT_REQUESTED", actor=actor,
-          detail={"ref": t.document.ref, "on": str(v.requested_on)})
-    return v, None
+    e = t.events.filter(pk=event_id).first()
+    if e is None:
+        return None, "That is not on this tender."
+    e.held_on = data.get("held_on") or e.scheduled_on
+    for f in ("attendees", "client_attendees", "notes"):
+        if f in data:
+            setattr(e, f, data.get(f) or "")
+    if "location" in data:
+        e.location = (data.get("location") or "")[:160]
+    e.save()
+    audit("tender", t.id, "TENDER_EVENT_RECORDED", actor=actor,
+          detail={"ref": t.document.ref, "kind": e.kind,
+                  "on": str(e.held_on)})
+    return e, None
 
 
-def record_visit(t, visit_id, data, actor):
-    """What was seen. The notes and the photos are as much of the price as
-    the drawings are."""
-    v = t.visits.filter(pk=visit_id).first()
-    if v is None:
-        return None, "That visit is not on this tender."
-    v.visited_on = data.get("visited_on") or date.today()
-    if "attendees" in data:
-        v.attendees = data.get("attendees") or ""
-    if "notes" in data:
-        v.notes = data.get("notes") or ""
-    v.save(update_fields=["visited_on", "attendees", "notes"])
-    audit("tender", t.id, "TENDER_VISIT_HELD", actor=actor,
-          detail={"ref": t.document.ref, "on": str(v.visited_on)})
-    return v, None
+def cancel_event(t, event_id, actor):
+    """One that did not happen. Only before it is written up — a record of a
+    meeting that took place is not deleted."""
+    e = t.events.filter(pk=event_id).first()
+    if e is None:
+        return "That is not on this tender."
+    if e.is_held:
+        return ("This one has been written up. Its record stays; edit the "
+                "notes if they are wrong.")
+    e.delete()
+    return None
 
 
 # ---- tender queries (TQ) ----------------------------------------------

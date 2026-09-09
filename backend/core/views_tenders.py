@@ -62,15 +62,19 @@ def _row(t, full=False):
             "revisions": [_rev(r) for r in
                           doc.revisions.select_related("created_by")
                           .order_by("id")],
-            "visits": [{"id": v.id, "requested_on": v.requested_on,
-                        "visited_on": v.visited_on, "held": v.is_held,
-                        "attendees": v.attendees, "notes": v.notes,
+            "events": [{"id": e.id, "kind": e.kind,
+                        "kind_label": e.get_kind_display(),
+                        "scheduled_on": e.scheduled_on,
+                        "held_on": e.held_on, "held": e.is_held,
+                        "attendees": e.attendees,
+                        "client_attendees": e.client_attendees,
+                        "location": e.location, "notes": e.notes,
                         "photos": [{"id": a.id, "url": a.file.url
                                     if a.file else None,
                                     "caption": a.caption,
                                     "file_name": a.file_name}
-                                   for a in v.photos.all()]}
-                       for v in t.visits.all()],
+                                   for a in e.photos.all()]}
+                       for e in t.events.all()],
             "queries": [{"id": q.id, "number": q.number, "ref": q.ref,
                          "subject": q.subject, "raised_on": q.raised_on,
                          "issued_at": q.issued_at, "issued": q.is_issued,
@@ -170,7 +174,12 @@ def tender_detail(request, pk):
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def tender_action(request, pk, action):
-    if not svc.can_manage(request.user):
+    # Approving and returning belong to the Director and the signatory, who
+    # do not otherwise run a tender — the service checks which of them each
+    # step is for (owner 2026-09-09).
+    gated = action in ("approve", "return")
+    if not (svc.can_manage(request.user)
+            or (gated and request.user.role == "SIGNATORY")):
         return Response({"detail": "QS, the Director or Admin run a tender."},
                         status=403)
     t, err = _get(request, pk)
@@ -180,11 +189,19 @@ def tender_action(request, pk, action):
         _rv, msg = svc.add_revision(t, request.data, request.user)
     elif action == "issue":
         msg = svc.issue_revision(t, request.data, request.user)
-    elif action == "visit-request":
-        _v, msg = svc.request_visit(t, request.data, request.user)
-    elif action == "visit-held":
-        _v, msg = svc.record_visit(t, request.data.get("visit_id"),
+    elif action == "event":
+        _e, msg = svc.schedule_event(t, request.data, request.user)
+    elif action == "event-record":
+        _e, msg = svc.record_event(t, request.data.get("event_id"),
                                    request.data, request.user)
+    elif action == "event-cancel":
+        msg = svc.cancel_event(t, request.data.get("event_id"), request.user)
+    elif action == "send-for-approval":
+        msg = svc.send_for_approval(t, request.data, request.user)
+    elif action == "approve":
+        msg = svc.approve(t, request.user)
+    elif action == "return":
+        msg = svc.return_for_rework(t, request.data, request.user)
     elif action == "query":
         _q, msg = svc.open_query(t, request.data, request.user)
     elif action == "query-question":
@@ -480,7 +497,7 @@ def tender_query_pdf(request, pk, query_id):
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])
-def tender_visit_photo(request, pk, visit_id):
+def tender_event_photo(request, pk, event_id):
     """A photo from the visit. What the estimator saw is as much of the price
     as his notes are, and it has to survive past his memory."""
     from .models import Attachment
@@ -489,19 +506,19 @@ def tender_visit_photo(request, pk, visit_id):
         return err
     if not svc.can_manage(request.user):
         return Response({"detail": "QS, the Director or Admin record a "
-                                   "visit."}, status=403)
-    v = t.visits.filter(pk=visit_id).first()
-    if v is None:
-        return Response({"detail": "That visit is not on this tender."},
+                                   "visit or meeting."}, status=403)
+    e = t.events.filter(pk=event_id).first()
+    if e is None:
+        return Response({"detail": "That is not on this tender."},
                         status=404)
     upload = request.FILES.get("file")
     if upload is None:
         return Response({"detail": "Choose a photo to upload."}, status=400)
     Attachment.objects.create(
-        document=t.document, tender_visit=v, kind="PHOTO", file=upload,
+        document=t.document, tender_event=e, kind="PHOTO", file=upload,
         file_name=upload.name, content_type=upload.content_type or "",
         size_bytes=upload.size, caption=request.data.get("caption", ""),
         uploaded_by=request.user)
-    audit("tender", t.id, "TENDER_VISIT_PHOTO", actor=request.user,
-          detail={"ref": t.document.ref, "visit": v.id})
+    audit("tender", t.id, "TENDER_EVENT_PHOTO", actor=request.user,
+          detail={"ref": t.document.ref, "event": e.id})
     return Response(_row(t, full=True), status=201)

@@ -1050,6 +1050,16 @@ def pending_groups(user):
              "status": v.status,
              "hint": "Approve the priced draft, then the QS sends it to the "
                      "Employer"} for v in vos])
+    if user.role in ("DIRECTOR", "ADMIN"):
+        # A price does not leave the building on the QS's say-so: the
+        # Director reviews it, then a signatory clears it (owner 2026-09-09).
+        add("To review — tender prices",
+            rows(base.filter(doc_type="TDR", status="PD_REVIEW"),
+                 "Review the offered price before it goes to the client"))
+    if user.role in ("SIGNATORY", "ADMIN"):
+        add("To clear — tender prices",
+            rows(base.filter(doc_type="TDR", status="SIGNATORY_REVIEW"),
+                 "Clear the offer to go to the client"))
     if user.role in ("DIRECTOR", "QS", "ADMIN"):
         # QS shares the Director's overseas-procurement authority (owner
         # 2026-07-12): both award a submitted import order. IPRs are global.

@@ -86,6 +86,13 @@ def targets_for(doc):
         # placing the order is the commitment, not a payment — a signatory
         # authorises the order directly (no voucher)
         return [(u, "to authorise") for u in _role_users("SIGNATORY")]
+    if t == "TDR" and s == "PD_REVIEW":
+        # A tender price waits on the Director, then a signatory, before it
+        # may go to the client (owner 2026-09-09).
+        return [(u, "to review the price") for u in _role_users("DIRECTOR")]
+    if t == "TDR" and s == "SIGNATORY_REVIEW":
+        return [(u, "to clear for submission")
+                for u in _role_users("SIGNATORY")]
     if t == "PO" and s == "SUBMITTED":
         # A local purchase order is the same kind of thing: a commitment the
         # signatory signs directly, not a payment on a voucher (owner
