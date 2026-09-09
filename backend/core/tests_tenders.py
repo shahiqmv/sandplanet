@@ -61,6 +61,37 @@ class TenderRegisterTests(TestCase):
         self.assertEqual(len(t["revisions"]), 1)
         self.assertFalse(t["revisions"][0]["issued"])
 
+    def test_the_client_comes_from_the_site(self):
+        """The site record already knows who it is — SFR and SSR are both
+        Bunny Holdings (BVI) Limited (owner 2026-09-09)."""
+        self.site.client_name = "Bunny Holdings (BVI) Limited"
+        self.site.client_contact = "Attn: Projects"
+        self.site.save(update_fields=["client_name", "client_contact"])
+        r = self.client.post("/api/v1/tenders",
+                             {"site_id": self.site.id, "title": "Jetty"},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["client_name"],
+                         "Bunny Holdings (BVI) Limited")
+        self.assertEqual(r.data["client_contact"], "Attn: Projects")
+
+    def test_a_typed_client_still_wins(self):
+        """The party inviting a tender is not always the one on the site."""
+        self.site.client_name = "Bunny Holdings (BVI) Limited"
+        self.site.save(update_fields=["client_name"])
+        r = self.client.post("/api/v1/tenders",
+                             {"site_id": self.site.id, "title": "Jetty",
+                              "client_name": "Soneva Management Pvt Ltd"},
+                             format="json")
+        self.assertEqual(r.data["client_name"], "Soneva Management Pvt Ltd")
+
+    def test_a_site_with_no_client_on_file_asks_for_one(self):
+        r = self.client.post("/api/v1/tenders",
+                             {"site_id": self.site.id, "title": "Jetty"},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("no client on file", r.data["detail"])
+
     def test_a_client_and_a_title_are_required(self):
         r = self.client.post("/api/v1/tenders",
                              {"site_id": self.site.id, "title": "x"},

@@ -83,10 +83,15 @@ def create_tender(data, actor):
     site = Site.objects.filter(pk=data.get("site_id")).first()
     if site is None:
         return None, "Pick the site this enquiry is for."
-    client = (data.get("client_name") or "").strip()
+    # The site knows who the client is — SFR and SSR are both Bunny Holdings
+    # (BVI) Limited — so typing it again was work the system could do. Still
+    # editable: a few sites have no client on file, and the party who invites
+    # a tender is not always the one on the site record (owner 2026-09-09).
+    client = (data.get("client_name") or site.client_name or "").strip()
     title = (data.get("title") or "").strip()
     if not client:
-        return None, "The client's name is required."
+        return None, ("This site has no client on file — enter who the "
+                      "enquiry came from.")
     if not title:
         return None, "Give the tender a title."
     doc = Document.objects.create(
@@ -100,7 +105,8 @@ def create_tender(data, actor):
     doc.save(update_fields=["current_revision"])
     t = Tender.objects.create(
         document=doc, client_name=client[:160], title=title,
-        client_contact=data.get("client_contact", ""),
+        client_contact=(data.get("client_contact")
+                        or site.client_contact or ""),
         scope=data.get("scope", ""),
         enquiry_date=data.get("enquiry_date") or None,
         due_date=data.get("due_date") or None,

@@ -134,7 +134,8 @@ export default function TendersPage({ me, sites }) {
 }
 
 function NewTender({ sites, onDone }) {
-  const [f, setF] = useState({ site_id: "", client_name: "", title: "",
+  const [f, setF] = useState({ site_id: "", client_name: "",
+                               client_contact: "", title: "",
                                enquiry_date: "", due_date: "",
                                submit_our_format: true, currency: "USD",
                                scope: "" });
@@ -153,7 +154,19 @@ function NewTender({ sites, onDone }) {
                   borderRadius: 8, padding: 12, marginBottom: 14,
                   display: "flex", gap: 8, flexWrap: "wrap",
                   alignItems: "flex-end" }}>
-      <select value={f.site_id} onChange={set("site_id")}
+      {/* Picking the site fills the client in: the site record already knows
+          who it is (owner 2026-09-09). Still editable — a few sites have no
+          client on file, and the party inviting a tender is not always the
+          one on the site record. */}
+      <select value={f.site_id}
+              onChange={(e) => {
+                const picked = (sites || []).find(
+                  (s) => String(s.id) === e.target.value);
+                setF({ ...f, site_id: e.target.value,
+                       client_name: picked?.client_name || f.client_name,
+                       client_contact: picked?.client_contact
+                                       || f.client_contact || "" });
+              }}
               style={{ ...inputStyle, width: 150 }}>
         <option value="">Site…</option>
         {(sites || []).map((s) => (
@@ -161,7 +174,7 @@ function NewTender({ sites, onDone }) {
       </select>
       <input placeholder="Client" value={f.client_name}
              onChange={set("client_name")}
-             style={{ ...inputStyle, width: 190 }} />
+             style={{ ...inputStyle, width: 220 }} />
       <input placeholder="Title, e.g. Jetty extension — civil"
              value={f.title} onChange={set("title")}
              style={{ ...inputStyle, flex: "1 1 220px" }} />
