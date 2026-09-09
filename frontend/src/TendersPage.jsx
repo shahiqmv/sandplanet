@@ -56,20 +56,26 @@ export default function TendersPage({ me, sites }) {
                     flexWrap: "wrap", marginBottom: 4 }}>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
           Tenders &amp; offers</h2>
+        {/* "Only live" meant nothing to the person reading it — say what it
+            hides (owner 2026-09-09). */}
         <label style={{ fontSize: 12.5, display: "flex", gap: 5,
-                        alignItems: "center", marginLeft: "auto" }}>
+                        alignItems: "center", marginLeft: "auto" }}
+               title="Show only tenders still being priced or waiting on the
+                      client's decision, hiding those already awarded, lost
+                      or withdrawn.">
           <input type="checkbox" checked={onlyOpen}
                  onChange={(e) => setOnlyOpen(e.target.checked)} />
-          Only live
+          Hide awarded, lost &amp; withdrawn
         </label>
         {can && !adding && (
           <button style={buttonStyle} onClick={() => setAdding(true)}>
             ➕ Open an enquiry</button>)}
       </div>
       <p style={{ color: "var(--muted)", fontSize: 12.5, margin: "0 0 12px" }}>
-        {live.length} live · {outstanding} awaiting the client's decision. A
-        revision is internal until it is issued — issuing one is the
-        submission, and it stays on the record whatever is priced after it.
+        {live.length} still open · {outstanding} awaiting the client's
+        decision. A revision is internal until it is issued — issuing one is
+        the submission, and it stays on the record whatever is priced after
+        it.
       </p>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
