@@ -43,6 +43,16 @@ class GateMixin:
         self.client.force_authenticate(self.qs)
         return r
 
+    def approve_through(self, tid):
+        """From PD_REVIEW to submitted, for an offer already sent up."""
+        self.client.force_authenticate(self.director)
+        self.client.post(f"/api/v1/tenders/{tid}/approve", {}, format="json")
+        self.client.force_authenticate(self.sig)
+        self.client.post(f"/api/v1/tenders/{tid}/approve", {}, format="json")
+        self.client.force_authenticate(self.qs)
+        return self.client.post(f"/api/v1/tenders/{tid}/issue", {},
+                                format="json")
+
     def issue(self, tid, value="500"):
         """The whole road: priced, reviewed, cleared, submitted."""
         self.clear(tid, value)
@@ -358,10 +368,16 @@ class TenderRegisterTests(GateMixin, TestCase):
         self.assertEqual(self.client.get("/api/v1/tenders").status_code, 403)
 
     def test_a_pm_cannot_price_or_issue(self):
+        """Called directly, not through the chain helper — that helper
+        authenticates as the QS, so routing this through it would have
+        stopped testing a PM at all."""
         t = self.open_one()
         self.client.force_authenticate(self.pm)
-        r = self.issue(t["id"], "1")
-        self.assertEqual(r.status_code, 403)
+        for action, body in (("send-for-approval", {"value": "1"}),
+                             ("issue", {}), ("revision", {})):
+            r = self.client.post(f"/api/v1/tenders/{t['id']}/{action}", body,
+                                 format="json")
+            self.assertEqual(r.status_code, 403, action)
 
     def test_the_director_runs_it_too(self):
         t = self.open_one()
@@ -856,17 +872,27 @@ class TenderDocumentTests(GateMixin, TestCase):
         self.assertEqual(got["kind"], "TENDER_ENQUIRY")
         self.assertFalse(got["issued"])
 
-    def test_their_bill_is_what_unblocks_issuing(self):
-        blocked = self.issue(self.t["id"], "1000")
+    def test_their_bill_is_what_unblocks_the_offer(self):
+        """The check bites when the price goes up for approval — there is no
+        sense putting an offer in front of the Director when the document it
+        is made on is missing."""
+        def send():
+            return self.client.post(
+                f"/api/v1/tenders/{self.t['id']}/send-for-approval",
+                {"value": "1000"}, format="json")
+
+        blocked = send()
         self.assertEqual(blocked.status_code, 400)
         self.assertIn("upload that file", blocked.data["detail"])
         # An enquiry document is not their bill and must not unblock it.
         self._upload(kind="TENDER_ENQUIRY", name="enquiry.pdf")
-        still = self.issue(self.t["id"], "1000")
-        self.assertEqual(still.status_code, 400)
+        self.assertEqual(send().status_code, 400)
         self._upload(kind="TENDER_BILL")
-        ok = self.issue(self.t["id"], "1000")
-        self.assertEqual(ok.status_code, 200, ok.data)
+        self.assertEqual(send().status_code, 200)
+        # It is with the Director now, so carry on from there rather than
+        # sending it up a second time.
+        self.assertEqual(self.approve_through(self.t["id"]).data["status"],
+                         "ISSUED")
 
     def test_a_file_that_went_to_the_client_stays_on_the_record(self):
         r = self._upload(kind="TENDER_BILL")
