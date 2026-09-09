@@ -105,6 +105,16 @@ def create_tender(data, actor):
     doc.save(update_fields=["current_revision"])
     t = Tender.objects.create(
         document=doc, client_name=client[:160], title=title,
+        # The usual terms, so a tender starts where the last one ended. Each
+        # is editable before it goes out (owner 2026-09-09).
+        payment_terms=data.get("payment_terms")
+        or DEFAULT_TERMS["payment_terms"],
+        client_provides=data.get("client_provides")
+        or DEFAULT_TERMS["client_provides"],
+        exclusions=data.get("exclusions") or DEFAULT_TERMS["exclusions"],
+        variations=data.get("variations") or DEFAULT_TERMS["variations"],
+        warranty_terms=data.get("warranty_terms")
+        or DEFAULT_TERMS["warranty_terms"],
         client_contact=(data.get("client_contact")
                         or site.client_contact or ""),
         scope=data.get("scope", ""),
@@ -139,6 +149,28 @@ def edit_tender(t, data, actor):
         t.submit_our_format = bool(data.get("submit_our_format"))
     if "currency" in data:
         t.currency = (data.get("currency") or "USD").upper()[:3]
+    # What the commercial proposal prints.
+    for f in ("doc_ref", "payment_terms", "client_provides", "exclusions",
+              "variations", "warranty_terms", "prepared_by", "reviewed_by",
+              "approved_by"):
+        if f in data:
+            setattr(t, f, data.get(f) or "")
+    for f in ("validity_days", "duration_days"):
+        if f in data:
+            try:
+                setattr(t, f, int(data[f]) if data[f] not in (None, "")
+                        else None)
+            except (TypeError, ValueError):
+                return f"{f.replace('_', ' ')} must be a number of days."
+    if "validity_days" in data and t.validity_days is None:
+        t.validity_days = 30
+    for f in ("provisional_sum", "gst_percent"):
+        if f in data:
+            v = _dec(data[f])
+            if v is None and data[f] not in (None, ""):
+                return f"{f.replace('_', ' ')} must be a number."
+            setattr(t, f, v if v is not None
+                    else (None if f == "provisional_sum" else Decimal("0")))
     if not t.client_name.strip() or not t.title.strip():
         return "A tender needs a client and a title."
     t.save()
@@ -295,11 +327,32 @@ def record_outcome(t, outcome, data, actor):
 
 # ---- the submission pack ----------------------------------------------
 
-def _sections(boq):
-    """The bill grouped by its own section headings, for the summary page.
+# The offer's default terms. Lifted from the owner's own SJR Operation Office
+# workbook so a new tender starts where the last one ended rather than blank
+# (owner 2026-09-09). Each is editable per tender.
+DEFAULT_TERMS = {
+    "payment_terms": ("40% advance with Letter of Award; 50% on progress "
+                      "monthly payment; 5% on completion and handover; 5% "
+                      "after the defects liability period"),
+    "client_provides": ("Transport of materials and workers to site, "
+                        "accommodation, meals and drinking water for workers, "
+                        "power and lighting for the works, storage space"),
+    "exclusions": ("Any works, permits or approvals not expressly described "
+                   "in this bill of quantities"),
+    "variations": ("Any change to scope, quantity or specification will be "
+                   "priced and agreed in writing before execution"),
+    "warranty_terms": ("12 months defects liability period from the date of "
+                       "handover, covering workmanship and installed "
+                       "materials"),
+}
 
-    A client reads a summary before a bill; without one the covering letter
-    hands them 300 lines and a total (owner 2026-09-08).
+
+def _bills(boq):
+    """The priced bills, in order, for the summary page.
+
+    A client reads a summary before a bill. The owner's workbook lists them as
+    Bill No. 1..n with a description and a total — which is what a section
+    heading in the BOQ already is (owner 2026-09-09).
     """
     if boq is None:
         return [], Decimal("0")
@@ -308,52 +361,94 @@ def _sections(boq):
     for it in boq.items.all().order_by("sort_order", "id"):
         if it.is_heading:
             name = (it.section or it.description or "").strip()
-            current = {"name": name or "—", "amount": Decimal("0"),
-                       "lines": 0}
+            current = {"no": len(rows) + 1, "name": name or "\u2014",
+                       "amount": Decimal("0"), "lines": 0}
             rows.append(current)
             continue
         amount = it.amount or Decimal("0")
         total += amount
         if current is None:
-            current = {"name": "—", "amount": Decimal("0"), "lines": 0}
+            current = {"no": 1, "name": "Works", "amount": Decimal("0"),
+                       "lines": 0}
             rows.append(current)
         current["amount"] += amount
         current["lines"] += 1
-    # A heading nobody priced under is noise on a summary page.
-    return [r for r in rows if r["lines"]], total
+    kept = [r for r in rows if r["lines"]]
+    for i, r in enumerate(kept, start=1):    # renumber after dropping empties
+        r["no"] = i
+    return kept, total
+
+
+def money_stack(t, bill_total):
+    """Subtotal, provisional sum, GST, grand total — as the workbook does it.
+
+    Built on the OFFERED figure, because that is what the client was told; the
+    bill's own total is shown beside it when they differ rather than quietly
+    reconciled.
+    """
+    sub = (t.value_submitted if t.value_submitted is not None
+           else bill_total) or Decimal("0")
+    prov = t.provisional_sum or Decimal("0")
+    net = sub + prov
+    pct = t.gst_percent or Decimal("0")
+    gst = (net * pct / Decimal("100")).quantize(Decimal("0.01"))
+    return {"subtotal": sub, "provisional": prov, "net": net,
+            "gst_percent": pct, "gst": gst, "grand_total": net + gst}
 
 
 def submission_context(t):
-    """Everything the covering letter and summary print."""
+    """Everything the cover, the summary and the bill print."""
     from .commercial import amount_in_words
     from .pdf import _font_dir, company_info, mark_src
 
     doc = t.document
     rev = doc.current_revision
     boq = boq_for(t)
-    sections, total = _sections(boq)
-    offered = t.value_submitted if t.value_submitted is not None else total
+    bills, bill_total = _bills(boq)
+    stack = money_stack(t, bill_total)
 
     def fdate(d):
-        return d.strftime("%d %b %Y") if d else ""
+        return d.strftime("%d %B %Y") if d else ""
 
+    terms = [
+        ("Offer validity", f"{t.validity_days} days from the date of issue"),
+        ("Project duration",
+         f"{t.duration_days} calendar days from site handover and receipt of "
+         "advance payment" if t.duration_days else ""),
+        ("Payment terms", t.payment_terms or DEFAULT_TERMS["payment_terms"]),
+        ("Currency",
+         f"{t.currency}. GST at {t.gst_percent:g}% shown separately"),
+        ("By client", t.client_provides or DEFAULT_TERMS["client_provides"]),
+        ("Exclusions", t.exclusions or DEFAULT_TERMS["exclusions"]),
+        ("Variations", t.variations or DEFAULT_TERMS["variations"]),
+        ("Warranty / DLP",
+         t.warranty_terms or DEFAULT_TERMS["warranty_terms"]),
+    ]
     return {
         "mark_src": mark_src(), "font_dir": _font_dir(),
-        "co": company_info(), "ref": doc.ref,
+        "co": company_info(),
+        # The cover's reference: theirs if they keep one, ours otherwise.
+        "ref": t.doc_ref or doc.ref,
+        "system_ref": doc.ref,
+        "rev_label": rev.rev_label if rev else "R0",
         "issue_date": fdate((rev.issued_at.date() if rev and rev.issued_at
                              else doc.doc_date)),
-        "value_words": amount_in_words(offered, t.currency),
+        "value_words": amount_in_words(stack["grand_total"], t.currency),
         "due_date": fdate(t.due_date),
         "enquiry_date": fdate(t.enquiry_date),
         "tender": t, "doc": doc, "rev": rev, "site": doc.site,
-        "boq": boq, "sections": sections,
-        # The header value is what was actually offered; the bill's own total
-        # is shown beside it so a divergence is visible rather than hidden.
-        "bill_total": total,
-        "offered": t.value_submitted,
+        "boq": boq, "bills": bills, "bill_total": bill_total,
+        "offered": stack["subtotal"],
         "diverges": (t.value_submitted is not None
-                     and abs((t.value_submitted or Decimal("0")) - total)
+                     and abs(t.value_submitted - bill_total)
                      >= Decimal("0.01")),
+        "stack": stack,
+        "terms": [(k, v) for k, v in terms if v],
+        "prepared_by": (t.prepared_by
+                        or (t.assigned_to.full_name if t.assigned_to_id
+                            else "")),
+        "reviewed_by": t.reviewed_by,
+        "approved_by": t.approved_by,
         "issued_on": rev.issued_at if rev else None,
         "our_bill": t.submit_our_format,
     }

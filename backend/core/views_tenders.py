@@ -48,6 +48,17 @@ def _row(t, full=False):
     if full:
         out.update({
             "client_contact": t.client_contact, "scope": t.scope,
+            # What the cover and summary print.
+            "doc_ref": t.doc_ref, "validity_days": t.validity_days,
+            "duration_days": t.duration_days,
+            "payment_terms": t.payment_terms,
+            "client_provides": t.client_provides,
+            "exclusions": t.exclusions, "variations": t.variations,
+            "warranty_terms": t.warranty_terms,
+            "provisional_sum": t.provisional_sum,
+            "gst_percent": t.gst_percent,
+            "prepared_by": t.prepared_by, "reviewed_by": t.reviewed_by,
+            "approved_by": t.approved_by,
             "revisions": [_rev(r) for r in
                           doc.revisions.select_related("created_by")
                           .order_by("id")],

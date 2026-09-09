@@ -550,6 +550,99 @@ class TenderProcessTests(TestCase):
         self.assertEqual(float(ctx["offered"]), 900.0)
         self.assertEqual(float(ctx["bill_total"]), 500.0)
 
+    def test_the_money_stack_follows_the_workbook(self):
+        """Sub total, provisional sum, GST, grand total — built on the value
+        offered, which is what the client was told (owner 2026-09-09)."""
+        from decimal import Decimal
+
+        from . import tenders as svc
+        from .models import Tender
+        t = Tender.objects.get(pk=self.t["id"])
+        t.value_submitted = Decimal("856898.17")
+        t.provisional_sum = Decimal("100000")
+        t.gst_percent = Decimal("8")
+        t.save()
+        st = svc.money_stack(t, Decimal("856898.17"))
+        self.assertEqual(st["net"], Decimal("956898.17"))
+        self.assertEqual(st["gst"], Decimal("76551.85"))
+        self.assertEqual(st["grand_total"], Decimal("1033450.02"))
+
+    def test_the_summary_lists_the_bills_in_order(self):
+        from . import tenders as svc
+        from .models import Tender
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [
+                             {"description": "Preliminaries"},
+                             {"description": "Site setup", "unit": "item",
+                              "qty": "1", "rate_combined": "1000"},
+                             {"description": "Structural works"},
+                             {"description": "Concrete", "unit": "m3",
+                              "qty": "10", "rate_combined": "200"},
+                         ]}, format="json")
+        ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
+        self.assertEqual([(b["no"], b["name"], float(b["amount"]))
+                          for b in ctx["bills"]],
+                         [(1, "Preliminaries", 1000.0),
+                          (2, "Structural works", 2000.0)])
+
+    def test_a_new_tender_starts_with_the_usual_terms(self):
+        """Blank boxes on every tender is retyping by another name."""
+        from .models import Tender
+        t = Tender.objects.get(pk=self.t["id"])
+        self.assertIn("40% advance", t.payment_terms)
+        self.assertIn("defects liability", t.warranty_terms)
+        self.assertEqual(t.validity_days, 30)
+
+    def test_the_terms_are_editable(self):
+        r = self.client.patch(f"/api/v1/tenders/{self.t['id']}",
+                              {"validity_days": 45,
+                               "duration_days": 150,
+                               "provisional_sum": "100000",
+                               "doc_ref": "SP-BOQ-2026-SJR-OPO-O1",
+                               "payment_terms": "50% advance"},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["validity_days"], 45)
+        self.assertEqual(r.data["doc_ref"], "SP-BOQ-2026-SJR-OPO-O1")
+        self.assertEqual(str(r.data["provisional_sum"]), "100000.00")
+
+    def test_the_cover_prints_their_reference_when_they_keep_one(self):
+        from . import tenders as svc
+        from .models import Tender
+        t = Tender.objects.get(pk=self.t["id"])
+        self.assertEqual(svc.submission_context(t)["ref"], "TDR-SJR-001")
+        t.doc_ref = "SP-BOQ-2026-SJR-OPO-O1"
+        t.save(update_fields=["doc_ref"])
+        ctx = svc.submission_context(Tender.objects.get(pk=t.pk))
+        self.assertEqual(ctx["ref"], "SP-BOQ-2026-SJR-OPO-O1")
+        self.assertEqual(ctx["system_ref"], "TDR-SJR-001")
+
+    def test_the_cover_and_summary_render(self):
+        from django.template.loader import render_to_string
+
+        from . import tenders as svc
+        from .models import Tender
+        t = Tender.objects.get(pk=self.t["id"])
+        t.doc_ref = "SP-BOQ-2026-SJR-OPO-O1"
+        t.duration_days = 150
+        t.prepared_by = "Sanjula"
+        t.save()
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [
+                             {"description": "Preliminaries"},
+                             {"description": "Site setup", "unit": "item",
+                              "qty": "1", "rate_combined": "1000"},
+                         ]}, format="json")
+        html = render_to_string(
+            "pdf/tender_submission.html",
+            svc.submission_context(Tender.objects.get(pk=t.pk)))
+        for needle in ["Bill of Quantities and Commercial Proposal",
+                       "SP-BOQ-2026-SJR-OPO-O1", "Final Summary",
+                       "Preliminaries", "Terms and Conditions",
+                       "Acknowledgement", "Sanjula",
+                       "150 calendar days", "Grand total"]:
+            self.assertIn(needle, html, needle)
+
     def test_the_pack_renders(self):
         from django.template.loader import render_to_string
 

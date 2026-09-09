@@ -4,23 +4,86 @@
 <meta charset="utf-8">
 {% include "pdf/_letter_styles.html" %}
 <style>
-  /* The pack is three things under one reference: a covering letter, a
-     priced summary the client can read at a glance, and the bill itself.
-     Where the client insists on their own bill, the first two still come
-     from us and their file goes out beside this (owner 2026-09-08). */
-  .facts { width: 100%; border-collapse: collapse; margin-top: 6pt; }
-  .facts td { padding: 2pt 0; font-size: 9pt; vertical-align: top; }
-  .facts td.k { width: 108pt; color: #5B6672; }
-  .sum { width: 100%; border-collapse: collapse; margin-top: 8pt;
-         border: 1pt solid #C9D9E5; }
-  .sum th { background: #16527E; color: #fff; font-size: 8pt;
-            text-transform: uppercase; letter-spacing: .5pt;
-            padding: 3pt 6pt; text-align: left; }
-  .sum th.n, .sum td.n { text-align: right; }
-  .sum td { padding: 2.5pt 6pt; border-bottom: 1pt solid #EAF1F6;
-            font-size: 8.5pt; }
-  .sum tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
-                   background: #DCEBF8; }
+  /* Follows the owner's own BOQ workbook (SJR Operation Office, R-01): a
+     cover naming the document, a summary carrying the bills, the money and
+     the terms, then the priced bill (owner 2026-09-09). Where we submit on
+     the client's own form the bill is theirs and only the first two pages
+     are ours. */
+  .cover { text-align: center; padding-top: 26pt; }
+  .cover .addr { font-size: 8pt; color: #5B6672; letter-spacing: .02em; }
+  .cover .kind { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+                 font-weight: 700; font-size: 15pt; letter-spacing: 3pt;
+                 text-transform: uppercase; color: #16527E; margin-top: 40pt; }
+  .cover .kind-rule { width: 150pt; height: 2pt; background: #29ABE2;
+                      margin: 6pt auto 0 auto; }
+  .cover .subject { font-size: 13pt; line-height: 1.45; font-weight: 600;
+                    color: #1A2530; margin: 22pt auto 0 auto; max-width: 400pt;
+                    text-transform: uppercase; }
+  .cover .party-lab { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+                      font-weight: 700; font-size: 9pt; letter-spacing: 2pt;
+                      text-transform: uppercase; color: #5B6672;
+                      margin-top: 26pt; }
+  .cover .party { font-size: 11.5pt; font-weight: 600; color: #1A2530;
+                  margin-top: 2pt; }
+  table.meta { width: 78%; margin: 34pt auto 0 auto; border-collapse: collapse;
+               border: 1pt solid #C9D9E5; }
+  table.meta th { background: #16527E; color: #fff; font-size: 7.5pt;
+                  letter-spacing: 1pt; text-transform: uppercase;
+                  padding: 4pt 6pt; }
+  table.meta td { padding: 5pt 6pt; font-size: 9.5pt; text-align: center;
+                  border-top: 1pt solid #EAF1F6; }
+  table.sign { width: 78%; margin: 12pt auto 0 auto; border-collapse: collapse;
+               border: 1pt solid #C9D9E5; }
+  table.sign th { background: #F6F2E9; color: #16527E; font-size: 7.5pt;
+                  letter-spacing: 1pt; text-transform: uppercase;
+                  padding: 4pt 6pt; }
+  table.sign td { padding: 5pt 6pt 16pt 6pt; font-size: 9.5pt;
+                  text-align: center; border-top: 1pt solid #EAF1F6; }
+  .tagline { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+             font-weight: 700; font-size: 10pt; letter-spacing: 2.4pt;
+             text-transform: uppercase; color: #16527E; margin-top: 40pt; }
+  .confid { font-size: 7.5pt; color: #5B6672; margin: 10pt auto 0 auto;
+            max-width: 400pt; line-height: 1.5; }
+
+  .page2 { page-break-before: always; }
+  .secttitle { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+               font-weight: 700; font-size: 13pt; letter-spacing: 2pt;
+               text-transform: uppercase; color: #16527E; }
+  .sect-rule { width: 110pt; height: 1.5pt; background: #29ABE2;
+               margin: 3pt 0 8pt 0; }
+  .strap { font-size: 8.5pt; color: #5B6672; line-height: 1.5;
+           margin-bottom: 8pt; }
+  table.sum { width: 100%; border-collapse: collapse;
+              border: 1pt solid #C9D9E5; }
+  table.sum th { background: #16527E; color: #fff; font-size: 8pt;
+                 text-transform: uppercase; letter-spacing: .5pt;
+                 padding: 4pt 6pt; text-align: left; }
+  table.sum th.n, table.sum td.n { text-align: right; }
+  table.sum td { padding: 3.5pt 6pt; border-bottom: 1pt solid #EAF1F6;
+                 font-size: 9pt; }
+  table.sum tr.sub td { border-top: 1.2pt solid #16527E; font-weight: 600;
+                        background: #F6F9FC; }
+  table.sum tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
+                        background: #DCEBF8; font-size: 10pt; }
+  .words { font-size: 8.5pt; color: #5B6672; margin-top: 4pt;
+           font-style: italic; }
+  .warn { color: #B35900; font-weight: 600; font-size: 8.5pt; margin-top: 5pt; }
+  table.terms { width: 100%; border-collapse: collapse; margin-top: 6pt;
+                border: 1pt solid #C9D9E5; }
+  table.terms td { padding: 4pt 6pt; border-bottom: 1pt solid #EAF1F6;
+                   font-size: 8.5pt; vertical-align: top; }
+  table.terms td.k { width: 108pt; font-weight: 600; color: #16527E;
+                     background: #F6F9FC; }
+  table.ack { width: 100%; border-collapse: collapse; margin-top: 6pt; }
+  table.ack td { width: 50%; padding: 0 14pt; vertical-align: top; }
+  table.ack td.left { border-right: 1pt solid #EAF1F6; padding-left: 0; }
+  .ack-for { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
+             font-weight: 700; font-size: 9.5pt; letter-spacing: 1.2pt;
+             text-transform: uppercase; color: #16527E; }
+  .ack-row { font-size: 8.5pt; color: #5B6672; margin-top: 12pt; }
+  .ack-line { display: inline-block; border-bottom: 1pt solid #9AA4AD;
+              width: 132pt; }
+
   .bill { width: 100%; border-collapse: collapse; margin-top: 6pt;
           border: 1pt solid #C9D9E5; }
   .bill th { background: #16527E; color: #fff; font-size: 7.5pt;
@@ -32,123 +95,161 @@
   .bill tr.head td { background: #F6F2E9; font-weight: 600; color: #16527E; }
   .bill tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
                     background: #DCEBF8; }
-  .annex-h { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
-             font-weight: 700; font-size: 12pt; letter-spacing: 2pt;
-             text-transform: uppercase; color: #16527E; text-align: center;
-             margin-top: 10pt; page-break-before: always; }
-  .annex-rule { width: 120pt; height: 1.5pt; background: #29ABE2;
-                margin: 3pt auto 6pt auto; }
-  .sig { margin-top: 30pt; }
-  .sig-line { border-top: 1pt solid #1A2530; width: 190pt; margin-top: 40pt;
-              padding-top: 4pt; }
-  .note { font-size: 8pt; color: #5B6672; margin-top: 5pt; }
-  .warn { color: #B35900; font-weight: 600; }
 </style>
 </head>
 <body>
 {% include "pdf/_letterhead_letter.html" %}
 
-<div class="lettertitle">Tender Submission</div>
-<div class="lettertitle-rule"></div>
+{# ---- Cover ---- #}
+<div class="cover">
+  <div class="addr">{{ co.address|default:"Ma. Maaraadha aage', Dhanburuh Magu, Machchangolhi, 20162, Male', Maldives" }}
+    &nbsp;|&nbsp; GST TIN: {{ co.tin }}</div>
 
-<p style="margin-top:8pt;"><b>{{ tender.client_name }}</b></p>
-{% if tender.client_contact %}<p style="white-space:pre-line;margin:0;">{{ tender.client_contact }}</p>{% endif %}
+  <div class="kind">Bill of Quantities and Commercial Proposal</div>
+  <div class="kind-rule"></div>
 
-<p style="margin-top:10pt;">Dear Sir / Madam,</p>
+  <div class="subject">{{ tender.title }}{% if site %} at {{ site.name }}, Maldives{% endif %}</div>
 
-<p style="margin-top:6pt;text-align:justify;">
-  <b>{{ tender.title }}{% if site %} — {{ site.name }}{% endif %}</b>
-</p>
+  <div class="party-lab">Prepared for</div>
+  <div class="party">{{ tender.client_name }}</div>
 
-<p style="margin-top:6pt;text-align:justify;">
-  We thank you for the opportunity to tender for the above works
-  {% if enquiry_date %}, further to your enquiry of {{ enquiry_date }}{% endif %}.
-  We are pleased to submit our offer as set out below and in the priced bill
-  of quantities accompanying this letter.
-</p>
+  <div class="party-lab">Prepared by</div>
+  <div class="party">{{ co.legal_name }}</div>
 
-<table class="facts">
-  <tr><td class="k">Our reference</td><td class="mono">{{ ref }}</td></tr>
-  <tr><td class="k">Revision</td><td class="mono">{{ rev.rev_label }}</td></tr>
-  {% if due_date %}<tr><td class="k">Submission due</td><td>{{ due_date }}</td></tr>{% endif %}
-  <tr><td class="k">Tendered sum</td>
-      <td><b>{{ tender.currency }} {{ offered|floatformat:2 }}</b>
-          <div class="note">{{ value_words }}</div></td></tr>
-</table>
+  <table class="meta">
+    <tr><th>Document ref no.</th><th>Revision</th><th>Date of issue</th></tr>
+    <tr><td class="mono">{{ ref }}</td><td>{{ rev_label }}</td>
+        <td>{{ issue_date }}</td></tr>
+  </table>
 
-{% if sections %}
-<p style="margin-top:10pt;"><b>Summary of the priced bill</b></p>
-<table class="sum">
-  <thead><tr><th>Section</th><th class="n">Lines</th>
-    <th class="n">Amount ({{ tender.currency }})</th></tr></thead>
-  <tbody>
-    {% for s in sections %}
-      <tr><td>{{ s.name }}</td><td class="n">{{ s.lines }}</td>
-          <td class="n">{{ s.amount|floatformat:2 }}</td></tr>
-    {% endfor %}
-    <tr class="tot"><td>Total</td><td class="n"></td>
-        <td class="n">{{ bill_total|floatformat:2 }}</td></tr>
-  </tbody>
-</table>
-{% if diverges %}
-<p class="note warn">
-  The tendered sum above is the figure offered; the bill as priced totals
-  {{ tender.currency }} {{ bill_total|floatformat:2 }}.
-</p>
-{% endif %}
-{% endif %}
+  <table class="sign">
+    <tr><th>Prepared by (QS)</th><th>Reviewed by</th><th>Approved by</th></tr>
+    <tr><td>{{ prepared_by }}</td><td>{{ reviewed_by }}</td>
+        <td>{{ approved_by }}</td></tr>
+  </table>
 
-{% if not our_bill %}
-<p class="note">
-  The priced bill is submitted on your own form, enclosed with this letter.
-</p>
-{% endif %}
-
-<p style="margin-top:10pt;text-align:justify;">
-  Our offer is submitted in accordance with the enquiry documents and any
-  clarifications issued. We trust it meets your requirements and look forward
-  to your instructions.
-</p>
-
-<div class="sig">
-  <p>Yours faithfully,</p>
-  <div class="sig-line"></div>
-  <div style="font-weight:700;">For and on behalf of {{ co.legal_name }}</div>
+  <div class="tagline">{{ co.tagline|default:"We go above and beyond on every job, period." }}</div>
+  <div class="confid">This document is confidential and intended solely for
+    the named client. It may not be reproduced or disclosed to any third party
+    without the written consent of {{ co.legal_name }}.</div>
 </div>
 
-{% if our_bill and boq %}
-<div class="annex-h">Bill of Quantities</div>
-<div class="annex-rule"></div>
-<div style="text-align:center;font-size:8.5pt;color:#5B6672;">
-  {{ ref }} &nbsp;·&nbsp; {{ rev.rev_label }} &nbsp;·&nbsp; all amounts in
-  {{ tender.currency }}
-</div>
-<table class="bill">
-  <thead><tr>
-    <th style="width:30pt;">Item</th><th>Description</th>
-    <th style="width:34pt;">Unit</th><th class="n" style="width:44pt;">Qty</th>
-    <th class="n" style="width:56pt;">Rate</th>
-    <th class="n" style="width:64pt;">Amount</th>
-  </tr></thead>
-  <tbody>
-    {% for it in boq.items.all %}
-      {% if it.is_heading %}
-        <tr class="head"><td></td><td colspan="5">{{ it.section|default:it.description }}</td></tr>
-      {% else %}
-        <tr>
-          <td class="mono">{{ it.item_code }}</td>
-          <td>{{ it.description }}</td>
-          <td>{{ it.unit }}</td>
-          <td class="n">{{ it.qty|floatformat:2 }}</td>
-          <td class="n">{{ it.rate_supply|floatformat:2 }}</td>
-          <td class="n">{{ it.amount|floatformat:2 }}</td>
-        </tr>
+{# ---- Summary ---- #}
+<div class="page2">
+  <div class="secttitle">Final Summary</div>
+  <div class="sect-rule"></div>
+  <div class="strap">
+    {{ tender.title }}
+    {% if site %} &nbsp;|&nbsp; {{ site.name }}{% endif %}<br>
+    Client: {{ tender.client_name }}
+    &nbsp;|&nbsp; Ref: <span class="mono">{{ ref }}</span>
+    &nbsp;|&nbsp; Revision: {{ rev_label }}
+    &nbsp;|&nbsp; Date: {{ issue_date }}
+  </div>
+
+  <table class="sum">
+    <thead><tr><th style="width:52pt;">Bill no.</th><th>Description</th>
+      <th class="n" style="width:104pt;">Amount ({{ tender.currency }})</th>
+    </tr></thead>
+    <tbody>
+      {% for b in bills %}
+        <tr><td>{{ b.no }}.00</td><td>{{ b.name }}</td>
+            <td class="n">{{ b.amount|floatformat:2 }}</td></tr>
+      {% empty %}
+        <tr><td></td><td>Priced bill attached</td>
+            <td class="n">{{ stack.subtotal|floatformat:2 }}</td></tr>
+      {% endfor %}
+      <tr class="sub"><td></td><td>Sub total</td>
+          <td class="n">{{ stack.subtotal|floatformat:2 }}</td></tr>
+      {% if stack.provisional %}
+        <tr><td></td><td>Provisional sum</td>
+            <td class="n">{{ stack.provisional|floatformat:2 }}</td></tr>
       {% endif %}
+      {% if stack.gst %}
+        <tr><td></td><td>GST at {{ stack.gst_percent|floatformat:"-2" }}%</td>
+            <td class="n">{{ stack.gst|floatformat:2 }}</td></tr>
+      {% endif %}
+      <tr class="tot"><td></td><td>Grand total ({{ tender.currency }})</td>
+          <td class="n">{{ stack.grand_total|floatformat:2 }}</td></tr>
+    </tbody>
+  </table>
+  <div class="words">{{ value_words }}</div>
+
+  {% if diverges %}
+    <div class="warn">The sub total above is the sum offered; the priced bill
+      totals {{ tender.currency }} {{ bill_total|floatformat:2 }}.</div>
+  {% endif %}
+  {% if not our_bill %}
+    <div class="words">The priced bill is submitted on the client's own form,
+      enclosed with this proposal.</div>
+  {% endif %}
+
+  <div class="secttitle" style="margin-top:16pt;">Terms and Conditions</div>
+  <div class="sect-rule"></div>
+  <table class="terms">
+    {% for k, v in terms %}
+      <tr><td class="k">{{ k }}</td><td>{{ v }}</td></tr>
     {% endfor %}
-    <tr class="tot"><td></td><td colspan="4">Total</td>
-        <td class="n">{{ bill_total|floatformat:2 }}</td></tr>
-  </tbody>
-</table>
+  </table>
+
+  <div class="secttitle" style="margin-top:16pt;">Acknowledgement</div>
+  <div class="sect-rule"></div>
+  <div class="strap">Signature below confirms acceptance of the pricing,
+    terms and conditions stated in this document.</div>
+  <table class="ack">
+    <tr>
+      <td class="left">
+        <div class="ack-for">For {{ co.legal_name }}</div>
+        <div class="ack-row">Name: <span class="ack-line"></span></div>
+        <div class="ack-row">Designation: <span class="ack-line"></span></div>
+        <div class="ack-row">Signature: <span class="ack-line"></span></div>
+        <div class="ack-row">Date: <span class="ack-line"></span></div>
+      </td>
+      <td>
+        <div class="ack-for">For {{ tender.client_name }}</div>
+        <div class="ack-row">Name: <span class="ack-line"></span></div>
+        <div class="ack-row">Designation: <span class="ack-line"></span></div>
+        <div class="ack-row">Signature: <span class="ack-line"></span></div>
+        <div class="ack-row">Date: <span class="ack-line"></span></div>
+      </td>
+    </tr>
+  </table>
+</div>
+
+{# ---- The bill, where it is ours to send ---- #}
+{% if our_bill and boq %}
+<div class="page2">
+  <div class="secttitle">Bill of Quantities</div>
+  <div class="sect-rule"></div>
+  <div class="strap"><span class="mono">{{ ref }}</span> &nbsp;|&nbsp;
+    {{ rev_label }} &nbsp;|&nbsp; all amounts in {{ tender.currency }}</div>
+  <table class="bill">
+    <thead><tr>
+      <th style="width:30pt;">Item</th><th>Description</th>
+      <th style="width:34pt;">Unit</th><th class="n" style="width:44pt;">Qty</th>
+      <th class="n" style="width:56pt;">Rate</th>
+      <th class="n" style="width:64pt;">Amount</th>
+    </tr></thead>
+    <tbody>
+      {% for it in boq.items.all %}
+        {% if it.is_heading %}
+          <tr class="head"><td></td><td colspan="5">{{ it.section|default:it.description }}</td></tr>
+        {% else %}
+          <tr>
+            <td class="mono">{{ it.item_code }}</td>
+            <td>{{ it.description }}</td>
+            <td>{{ it.unit }}</td>
+            <td class="n">{{ it.qty|floatformat:2 }}</td>
+            <td class="n">{{ it.rate_supply|floatformat:2 }}</td>
+            <td class="n">{{ it.amount|floatformat:2 }}</td>
+          </tr>
+        {% endif %}
+      {% endfor %}
+      <tr class="tot"><td></td><td colspan="4">Total</td>
+          <td class="n">{{ bill_total|floatformat:2 }}</td></tr>
+    </tbody>
+  </table>
+</div>
 {% endif %}
 </body>
 </html>

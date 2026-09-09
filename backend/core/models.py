@@ -3359,6 +3359,33 @@ class Tender(models.Model):
     assigned_to = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                     blank=True, related_name="tenders")
 
+    # ---- what the commercial proposal prints ---------------------------
+    # The owner's own BOQ workbook (SJR Operation Office, R-01) is the format
+    # these follow: a cover naming the document, and a summary carrying the
+    # bills, the money and the terms the offer is made on. All of it was
+    # retyped in Excel each time (owner 2026-09-09).
+    #
+    # Their own reference convention — SP-BOQ-2026-SJR-OPO-O1 — reads better
+    # to a client than a serial, so it is theirs to set; blank falls back to
+    # the system reference.
+    doc_ref = models.CharField(max_length=60, blank=True)
+    validity_days = models.PositiveSmallIntegerField(default=30)
+    duration_days = models.PositiveSmallIntegerField(null=True, blank=True)
+    payment_terms = models.TextField(blank=True)
+    client_provides = models.TextField(blank=True)   # "By Client"
+    exclusions = models.TextField(blank=True)
+    variations = models.TextField(blank=True)
+    warranty_terms = models.TextField(blank=True)    # DLP
+    # A provisional sum sits outside the priced bills and is added after the
+    # subtotal, exactly as the workbook does it.
+    provisional_sum = models.DecimalField(max_digits=14, decimal_places=2,
+                                          null=True, blank=True)
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                      default=Decimal("8"))
+    prepared_by = models.CharField(max_length=120, blank=True)
+    reviewed_by = models.CharField(max_length=120, blank=True)
+    approved_by = models.CharField(max_length=120, blank=True)
+
     class Meta:
         ordering = ["-id"]
 

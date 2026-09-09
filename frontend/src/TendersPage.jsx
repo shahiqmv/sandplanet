@@ -263,6 +263,7 @@ const TABS = [
   ["documents", "Documents"],
   ["visits", "Site visits"],
   ["queries", "Queries (TQ)"],
+  ["proposal", "Proposal terms"],
   ["boq", "Bill of quantities"],
 ];
 
@@ -364,6 +365,16 @@ function TenderDetail({ id, me, onClose }) {
       {tab === "queries" && (
         <div style={{ ...card, marginTop: 12 }}>
           <Queries t={t} can={can && live} busy={busy} act={act} />
+        </div>)}
+
+      {tab === "proposal" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Proposal t={t} can={can && live} busy={busy} save={
+            async (body) => {
+              try { setT(await api(`/tenders/${t.id}`,
+                                   { method: "PATCH", body })); }
+              catch (e) { alert(e.message); }
+            }} />
         </div>)}
 
       {tab === "boq" && (
@@ -831,6 +842,98 @@ function Docs({ t, can, onChanged }) {
                  onChange={(e) => upload(e.target.files[0])} />
         </div>)}
       {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
+    </div>
+  );
+}
+
+
+/* What the cover and the summary print. Taken from the owner's own SJR
+ * Operation Office workbook, which is the format these proposals already
+ * follow — it was retyped into Excel for every tender (owner 2026-09-09).
+ */
+function Proposal({ t, can, busy, save }) {
+  const [f, setF] = useState({
+    doc_ref: t.doc_ref || "", validity_days: t.validity_days ?? 30,
+    duration_days: t.duration_days ?? "", provisional_sum:
+      t.provisional_sum ?? "", gst_percent: t.gst_percent ?? 8,
+    payment_terms: t.payment_terms || "",
+    client_provides: t.client_provides || "",
+    exclusions: t.exclusions || "", variations: t.variations || "",
+    warranty_terms: t.warranty_terms || "",
+    prepared_by: t.prepared_by || "", reviewed_by: t.reviewed_by || "",
+    approved_by: t.approved_by || "",
+  });
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const lab = { fontSize: 11.5, color: "var(--muted)", display: "block",
+                marginBottom: 2 };
+  const area = { ...inputStyle, width: "100%", fontFamily: "inherit" };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <h4 style={{ margin: 0, fontSize: 13.5, color: "var(--sp-navy)" }}>
+        Cover and summary</h4>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+        These print on the submission pack. The sums build on the value you
+        issue: sub total, provisional sum, GST, grand total.
+      </p>
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        <label style={{ flex: "1 1 220px" }}>
+          <span style={lab}>Document reference — yours, if you keep one</span>
+          <input value={f.doc_ref} onChange={set("doc_ref")} disabled={!can}
+                 placeholder={t.ref} style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 120px" }}>
+          <span style={lab}>Validity (days)</span>
+          <input type="number" value={f.validity_days} disabled={!can}
+                 onChange={set("validity_days")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 140px" }}>
+          <span style={lab}>Duration (days)</span>
+          <input type="number" value={f.duration_days} disabled={!can}
+                 onChange={set("duration_days")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 150px" }}>
+          <span style={lab}>Provisional sum</span>
+          <input type="number" value={f.provisional_sum} disabled={!can}
+                 onChange={set("provisional_sum")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "0 0 110px" }}>
+          <span style={lab}>GST %</span>
+          <input type="number" value={f.gst_percent} disabled={!can}
+                 onChange={set("gst_percent")}
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+      </div>
+
+      {[["payment_terms", "Payment terms"],
+        ["client_provides", "By client"],
+        ["exclusions", "Exclusions"],
+        ["variations", "Variations"],
+        ["warranty_terms", "Warranty / DLP"]].map(([k, label]) => (
+        <label key={k}>
+          <span style={lab}>{label}</span>
+          <textarea value={f[k]} onChange={set(k)} rows={2} disabled={!can}
+                    style={area} />
+        </label>))}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {[["prepared_by", "Prepared by (QS)"], ["reviewed_by", "Reviewed by"],
+          ["approved_by", "Approved by"]].map(([k, label]) => (
+          <label key={k} style={{ flex: "1 1 170px" }}>
+            <span style={lab}>{label}</span>
+            <input value={f[k]} onChange={set(k)} disabled={!can}
+                   style={{ ...inputStyle, width: "100%" }} />
+          </label>))}
+      </div>
+
+      {can && (
+        <div>
+          <Btn disabled={busy} onClick={() => save(f)}>Save these terms</Btn>
+        </div>)}
     </div>
   );
 }
