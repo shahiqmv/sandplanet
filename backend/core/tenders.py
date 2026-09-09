@@ -452,32 +452,31 @@ def _bills(boq):
     """The priced bills, in order, for the summary page.
 
     A client reads a summary before a bill. The owner's workbook lists them as
-    Bill No. 1..n with a description and a total — which is what a section
-    heading in the BOQ already is (owner 2026-09-09).
+    Bill No. 1..n with a description and a total, and a captured bill names
+    itself on its own lines — every priced row carries its bill in `section`,
+    so the section is what groups them. Headings inside a bill are trades, not
+    bills. Only where the rows carry no section at all does the last heading
+    stand in for the bill name, which is how a hand-typed BOQ of one heading
+    per bill reads (owner 2026-09-09).
     """
     if boq is None:
         return [], Decimal("0")
     rows, total = [], Decimal("0")
-    current = None
+    current, heading = None, ""
     for it in boq.items.all().order_by("sort_order", "id"):
         if it.is_heading:
-            name = (it.section or it.description or "").strip()
-            current = {"no": len(rows) + 1, "name": name or "\u2014",
-                       "amount": Decimal("0"), "lines": 0}
-            rows.append(current)
+            heading = (it.section or it.description or "").strip()
             continue
         amount = it.amount or Decimal("0")
         total += amount
-        if current is None:
-            current = {"no": 1, "name": "Works", "amount": Decimal("0"),
-                       "lines": 0}
+        name = (it.section or "").strip() or heading or "Works"
+        if current is None or current["name"] != name:
+            current = {"no": len(rows) + 1, "name": name,
+                       "amount": Decimal("0"), "lines": 0}
             rows.append(current)
         current["amount"] += amount
         current["lines"] += 1
-    kept = [r for r in rows if r["lines"]]
-    for i, r in enumerate(kept, start=1):    # renumber after dropping empties
-        r["no"] = i
-    return kept, total
+    return rows, total
 
 
 def money_stack(t, bill_total):

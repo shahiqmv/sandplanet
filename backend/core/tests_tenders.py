@@ -741,6 +741,34 @@ class TenderProcessTests(GateMixin, TestCase):
                          [(1, "Preliminaries", 1000.0),
                           (2, "Structural works", 2000.0)])
 
+    def test_trade_headings_inside_a_bill_do_not_split_it(self):
+        """A real bill is a sheet of trades. The summary is one row per bill,
+        so the bill each priced line names is what groups it — not every
+        heading above it, which would list forty trades as forty bills."""
+        from . import tenders as svc
+        from .models import Tender
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                         {"rows": [
+                             {"description": "BILL NO. 1"},
+                             {"description": "PRELIMINARIES"},
+                             {"section": "Preliminaries",
+                              "description": "Site setup", "unit": "item",
+                              "qty": "1", "rate_combined": "1000"},
+                             {"description": "SERVICES AND FACILITIES"},
+                             {"section": "Preliminaries",
+                              "description": "Water", "unit": "item",
+                              "qty": "1", "rate_combined": "500"},
+                             {"description": "BILL NO. 2"},
+                             {"section": "Mechanical Works",
+                              "description": "Pumps", "unit": "no",
+                              "qty": "2", "rate_combined": "250"},
+                         ]}, format="json")
+        ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
+        self.assertEqual([(b["no"], b["name"], b["lines"], float(b["amount"]))
+                          for b in ctx["bills"]],
+                         [(1, "Preliminaries", 2, 1500.0),
+                          (2, "Mechanical Works", 1, 500.0)])
+
     def test_a_new_tender_starts_with_the_usual_terms(self):
         """Blank boxes on every tender is retyping by another name."""
         from .models import Tender
