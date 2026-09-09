@@ -913,8 +913,14 @@ export default function App() {
                          // uses its full window.
                          : (!docView && hoPage === "payroll")
                            ? 1800
+                         // A tender carries the same bill of quantities the
+                         // project page does — section, code, description,
+                         // unit, qty, supply and install rates, amount — and
+                         // pricing one at 900px is no better here than there
+                         // (owner 2026-09-09).
                          : (docView?.mode === "project"
-                            || (!docView && hoPage === "procurement-schedule"))
+                            || (!docView && hoPage === "procurement-schedule")
+                            || (!docView && hoPage === "tenders"))
                            ? 1500
                          : (!docView && hoPage === "employees")
                            ? 1300
