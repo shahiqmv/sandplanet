@@ -792,6 +792,9 @@ class TenderProcessTests(GateMixin, TestCase):
         html = render_to_string(
             "pdf/tender_submission.html",
             svc.submission_context(Tender.objects.get(pk=t.pk)))
+        # Money is grouped: a proposal that prints 1033450.02 for its grand
+        # total reads as a spreadsheet dump, not an offer (owner 2026-09-09).
+        self.assertIn("1,000.00", html)
         for needle in ["Bill of Quantities and Commercial Proposal",
                        "SP-BOQ-2026-SJR-OPO-O1", "Final Summary",
                        "Preliminaries", "Terms and Conditions",

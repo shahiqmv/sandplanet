@@ -154,30 +154,30 @@
     <tbody>
       {% for b in bills %}
         <tr><td>{{ b.no }}.00</td><td>{{ b.name }}</td>
-            <td class="n">{{ b.amount|floatformat:2 }}</td></tr>
+            <td class="n">{{ b.amount_fmt }}</td></tr>
       {% empty %}
         <tr><td></td><td>Priced bill attached</td>
-            <td class="n">{{ stack.subtotal|floatformat:2 }}</td></tr>
+            <td class="n">{{ stack_fmt.subtotal }}</td></tr>
       {% endfor %}
       <tr class="sub"><td></td><td>Sub total</td>
-          <td class="n">{{ stack.subtotal|floatformat:2 }}</td></tr>
+          <td class="n">{{ stack_fmt.subtotal }}</td></tr>
       {% if stack.provisional %}
         <tr><td></td><td>Provisional sum</td>
-            <td class="n">{{ stack.provisional|floatformat:2 }}</td></tr>
+            <td class="n">{{ stack_fmt.provisional }}</td></tr>
       {% endif %}
       {% if stack.gst %}
         <tr><td></td><td>GST at {{ stack.gst_percent|floatformat:"-2" }}%</td>
-            <td class="n">{{ stack.gst|floatformat:2 }}</td></tr>
+            <td class="n">{{ stack_fmt.gst }}</td></tr>
       {% endif %}
       <tr class="tot"><td></td><td>Grand total ({{ tender.currency }})</td>
-          <td class="n">{{ stack.grand_total|floatformat:2 }}</td></tr>
+          <td class="n">{{ stack_fmt.grand_total }}</td></tr>
     </tbody>
   </table>
   <div class="words">{{ value_words }}</div>
 
   {% if diverges %}
     <div class="warn">The sub total above is the sum offered; the priced bill
-      totals {{ tender.currency }} {{ bill_total|floatformat:2 }}.</div>
+      totals {{ tender.currency }} {{ bill_total_fmt }}.</div>
   {% endif %}
   {% if not our_bill %}
     <div class="words">The priced bill is submitted on the client's own form,
@@ -231,22 +231,22 @@
       <th class="n" style="width:64pt;">Amount</th>
     </tr></thead>
     <tbody>
-      {% for it in boq.items.all %}
+      {% for it in boq_rows %}
         {% if it.is_heading %}
-          <tr class="head"><td></td><td colspan="5">{{ it.section|default:it.description }}</td></tr>
+          <tr class="head"><td></td><td colspan="5">{{ it.section }}</td></tr>
         {% else %}
           <tr>
             <td class="mono">{{ it.item_code }}</td>
             <td>{{ it.description }}</td>
             <td>{{ it.unit }}</td>
-            <td class="n">{{ it.qty|floatformat:2 }}</td>
-            <td class="n">{{ it.rate_supply|floatformat:2 }}</td>
-            <td class="n">{{ it.amount|floatformat:2 }}</td>
+            <td class="n">{{ it.qty }}</td>
+            <td class="n">{{ it.rate }}</td>
+            <td class="n">{{ it.amount }}</td>
           </tr>
         {% endif %}
       {% endfor %}
       <tr class="tot"><td></td><td colspan="4">Total</td>
-          <td class="n">{{ bill_total|floatformat:2 }}</td></tr>
+          <td class="n">{{ bill_total_fmt }}</td></tr>
     </tbody>
   </table>
 </div>

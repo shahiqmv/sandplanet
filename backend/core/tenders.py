@@ -497,6 +497,12 @@ def money_stack(t, bill_total):
             "gst_percent": pct, "gst": gst, "grand_total": net + gst}
 
 
+def _money(v):
+    """Grouped to thousands. A proposal that prints 1033450.02 for its grand
+    total looks like a spreadsheet dump, not an offer (owner 2026-09-09)."""
+    return f"{Decimal(v or 0).quantize(Decimal('0.01')):,}"
+
+
 def submission_context(t):
     """Everything the cover, the summary and the bill print."""
     from .commercial import amount_in_words
@@ -538,7 +544,25 @@ def submission_context(t):
         "due_date": fdate(t.due_date),
         "enquiry_date": fdate(t.enquiry_date),
         "tender": t, "doc": doc, "rev": rev, "site": doc.site,
-        "boq": boq, "bills": bills, "bill_total": bill_total,
+        "boq": boq, "bills": [{**b, "amount_fmt": _money(b["amount"])}
+                              for b in bills],
+        "bill_total": bill_total, "bill_total_fmt": _money(bill_total),
+        # Pre-formatted so the document does not print a raw decimal at a
+        # client.
+        "stack_fmt": {k: _money(v) for k, v in stack.items()
+                      if k != "gst_percent"},
+        # The bill itself, with its money already grouped.
+        "boq_rows": ([{
+            "is_heading": it.is_heading,
+            "section": it.section or it.description,
+            "item_code": it.item_code, "description": it.description,
+            "unit": it.unit,
+            "qty": (f"{it.qty:,}" if it.qty is not None else ""),
+            "rate": _money(it.rate_supply) if it.rate_supply is not None
+            else "",
+            "amount": _money(it.amount),
+        } for it in boq.items.all().order_by("sort_order", "id")]
+            if boq is not None else []),
         "offered": stack["subtotal"],
         "diverges": (t.value_submitted is not None
                      and abs(t.value_submitted - bill_total)
