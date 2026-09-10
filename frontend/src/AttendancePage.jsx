@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import ShiftAllocation from "./ShiftAllocation.jsx";
-import { buttonStyle, card, ghostButton, inputStyle, td, th } from "./ui.jsx";
+import { DayPicker, buttonStyle, card, ghostButton, inputStyle, td, th }
+  from "./ui.jsx";
 import OtApprovalPanel from "./OtApprovalPanel.jsx";
 
 const NORMAL_REMARKS = ["PRESENT", "HALF_DAY", "ABSENT", "SICK", "LEAVE"];
@@ -208,12 +209,7 @@ export default function AttendancePage({ site, me, onClose,
         {header}
         <div style={{ display: "flex", gap: 10, alignItems: "center",
                       margin: "12px 0 4px", flexWrap: "wrap" }}>
-          <input type="date" value={day}
-                 onChange={(e) => setDay(e.target.value)}
-                 style={{ ...inputStyle, width: 140, padding: "4px 8px" }} />
-          <span style={{ fontSize: 12, color: "var(--muted)" }}>
-            {new Date(day + "T00:00").toLocaleDateString("en",
-              { weekday: "long" })}</span>
+          <DayPicker value={day} onChange={setDay} />
           {grid?.locked && (
             <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
               🔒 month signed off — nothing to approve</span>
@@ -237,12 +233,7 @@ export default function AttendancePage({ site, me, onClose,
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 17 }}>
           Attendance — {site.code}
         </h2>
-        <input type="date" value={day}
-               onChange={(e) => setDay(e.target.value)}
-               style={{ ...inputStyle, width: 140, padding: "4px 8px" }} />
-        {grid && <span style={{ fontSize: 12, color: "var(--muted)" }}>
-          {new Date(day + "T00:00").toLocaleDateString("en",
-            { weekday: "long" })}</span>}
+        <DayPicker value={day} onChange={setDay} />
         <span style={{ marginLeft: "auto", display: "flex", gap: 6,
                        alignItems: "center" }}>
           <button onClick={() => setMode("day")}

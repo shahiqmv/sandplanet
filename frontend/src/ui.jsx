@@ -325,3 +325,52 @@ export function SectionTitle({ children }) {
     </h3>
   );
 }
+
+// A day, with a step either side of it. Typing into a native date field to
+// move one day back is four interactions and a calendar popup; the crew is
+// marked day after day, so the common move deserves a button (owner
+// 2026-09-10). Yesterday is one click, and "Today" gets you home from
+// wherever you wandered.
+export function DayPicker({ value, onChange, min, max, width = 140 }) {
+  // Local calendar date, NOT toISOString(): a date field means the day you can
+  // see on a wall, and converting local midnight to UTC lands on the day
+  // before anywhere east of Greenwich. Stepping back one day from here moved
+  // the crew two.
+  const iso = (d) => `${d.getFullYear()}-`
+    + `${String(d.getMonth() + 1).padStart(2, "0")}-`
+    + `${String(d.getDate()).padStart(2, "0")}`;
+  const shift = (days) => {
+    const d = new Date(value + "T00:00");
+    d.setDate(d.getDate() + days);
+    const next = iso(d);
+    if ((min && next < min) || (max && next > max)) return;
+    onChange(next);
+  };
+  const todayIso = iso(new Date());
+  const step = {
+    ...BTN.secondary, padding: "4px 9px", fontSize: 15, lineHeight: 1,
+    fontFamily: "var(--font-mono)",
+  };
+  const weekday = value
+    ? new Date(value + "T00:00").toLocaleDateString("en", { weekday: "long" })
+    : "";
+  return (
+    <span style={{ display: "inline-flex", gap: 6, alignItems: "center" }}>
+      <button type="button" onClick={() => shift(-1)} style={step}
+              title="Previous day" aria-label="Previous day">‹</button>
+      <input type="date" value={value} min={min} max={max}
+             onChange={(e) => e.target.value && onChange(e.target.value)}
+             style={{ ...inputStyle, width, padding: "4px 8px" }} />
+      <button type="button" onClick={() => shift(1)} style={step}
+              title="Next day" aria-label="Next day">›</button>
+      {weekday && (
+        <span style={{ fontSize: 12, color: "var(--muted)" }}>{weekday}</span>
+      )}
+      {value !== todayIso && (!max || todayIso <= max) && (
+        <button type="button" onClick={() => onChange(todayIso)}
+                style={{ ...BTN.secondary, padding: "3px 10px",
+                         fontSize: 12.5 }}>Today</button>
+      )}
+    </span>
+  );
+}

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
-import { StatusChip, buttonStyle, card, ghostButton, inputStyle, td, th }
-  from "./ui.jsx";
+import { DayPicker, StatusChip, buttonStyle, card, ghostButton, inputStyle,
+  td, th } from "./ui.jsx";
 
 // Daily Manpower Allocation (R5): the PM's early-morning task board, built
 // off the TWSs issued the previous evening plus general tasks (cleaning,
@@ -186,11 +186,10 @@ export default function DMAPage({ site, me, onClose }) {
 
       <div style={{ display: "flex", gap: 12, alignItems: "center",
                     margin: "14px 0", flexWrap: "wrap" }}>
-        <label style={{ fontSize: 13 }}>Allocation for{" "}
-          <input type="date" value={date}
-                 onChange={(e) => setDate(e.target.value)}
-                 style={{ ...inputStyle, width: 150 }} />
-        </label>
+        <span style={{ fontSize: 13, display: "inline-flex", gap: 8,
+                       alignItems: "center" }}>Allocation for
+          <DayPicker value={date} onChange={setDate} width={150} />
+        </span>
         <label style={{ fontSize: 13 }}>Working hours{" "}
           <input value={hours} placeholder="e.g. 08:00 – 18:00"
                  disabled={!editable}
