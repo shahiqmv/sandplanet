@@ -107,6 +107,13 @@ def add_worker(sub, data, actor):
     if held is not None:
         return None, (f"Passport {data.get('passport_no').strip()} is already "
                       f"on {held.emp_no} {held.full_name}.")
+    # The day he joined is not optional: the register only shows a man from
+    # the day his allocation starts, so a worker added on Friday who began on
+    # Monday could not be marked for the week (owner 2026-09-10).
+    join = _iso_date(data.get("join_date"))
+    if join is None:
+        return None, ("Give the date the worker joined the site — the "
+                      "register shows him from that day.")
     with transaction.atomic():
         n = int(next_ref("EMP", None).split("-")[1])
         emp = Employee.objects.create(
@@ -115,10 +122,11 @@ def add_worker(sub, data, actor):
             nationality=data.get("nationality", ""),
             job_category_id=data.get("job_category_id") or None,
             emergency_contact=data.get("emergency_contact", ""),
+            join_date=join,
             engagement_type=Employee.Engagement.SUBCONTRACT, subcontractor=sub,
             is_active=False, sub_pending=True)
         EmployeeSiteAllocation.objects.create(
-            employee=emp, site=sub.site, from_date=date.today())
+            employee=emp, site=sub.site, from_date=join)
     audit("employee", emp.id, "SUB_WORKER_ADDED", actor=actor,
           detail={"sub": sub.name, "name": emp.full_name})
     return emp, None
@@ -213,6 +221,61 @@ def take_on_directly(emp, data, actor):
                   "employment_type": employment,
                   "join_date": str(emp.join_date or ""),
                   "why": "engaged through a subcontractor, hired directly"})
+    return None
+
+
+def _iso_date(v):
+    if not v:
+        return None
+    try:
+        return date.fromisoformat(str(v)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def update_worker(emp, data, actor):
+    """The site corrects a gang worker's details after the fact.
+
+    A subcontract worker has no HR profile — the register hides him by
+    design — so the only way to fix a missing join date or category was to
+    remove and re-add him, losing his marks. The site fills in what it can
+    see is missing (owner 2026-09-10). Pay never enters here; he has none.
+
+    Moving the join date earlier pulls his allocation back to it, because
+    the register shows him from the allocation and not from the date on the
+    record — a join date on its own would change nothing anyone could mark.
+    """
+    changed = []
+    if "join_date" in data:
+        join = _iso_date(data.get("join_date"))
+        if join is None:
+            return "Give the join date as a date."
+        if emp.join_date != join:
+            emp.join_date = join
+            changed.append("join_date")
+    if "job_category_id" in data:
+        cid = data.get("job_category_id") or None
+        if cid != emp.job_category_id:
+            emp.job_category_id = cid
+            changed.append("job_category")
+    if "nationality" in data:
+        nat = (data.get("nationality") or "").strip()
+        if nat != emp.nationality:
+            emp.nationality = nat
+            changed.append("nationality")
+    if not changed:
+        return None
+    with transaction.atomic():
+        emp.save(update_fields=changed + ["updated_at"])
+        if "join_date" in changed and emp.subcontractor_id:
+            for al in emp.site_allocations.filter(
+                    site=emp.subcontractor.site, to_date=None,
+                    from_date__gt=emp.join_date):
+                al.from_date = emp.join_date
+                al.save(update_fields=["from_date"])
+    audit("employee", emp.id, "SUB_WORKER_EDITED", actor=actor,
+          detail={"emp_no": emp.emp_no, "fields": changed,
+                  "join_date": str(emp.join_date or "")})
     return None
 
 

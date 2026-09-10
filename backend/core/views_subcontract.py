@@ -138,6 +138,30 @@ def subcontractor_workers(request, pk):
     return Response(_worker_json(emp), status=201)
 
 
+@api_view(["GET", "PATCH"])
+def subcontract_worker_detail(request, emp_id):
+    """One gang worker, for the site to read and correct."""
+    try:
+        emp = Employee.objects.select_related("subcontractor__site",
+                                              "job_category").get(
+            pk=emp_id, engagement_type=Employee.Engagement.SUBCONTRACT)
+    except Employee.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    sub = emp.subcontractor
+    scoped = scoped_site_ids(request.user)
+    if (sub and not _can_see_all(request.user)
+            and scoped is not None and sub.site_id not in scoped):
+        return Response({"detail": "Not one of your sites."}, status=403)
+    if request.method == "PATCH":
+        if request.user.role not in subcontract.SITE_MANAGE_ROLES + ("PM",):
+            return Response({"detail": "Site team only."}, status=403)
+        err = subcontract.update_worker(emp, request.data, request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        emp.refresh_from_db()
+    return Response(_worker_json(emp))
+
+
 @api_view(["POST"])
 def subcontract_worker_action(request, emp_id):
     try:

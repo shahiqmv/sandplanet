@@ -52,7 +52,7 @@ class SubcontractorTeamTests(TestCase):
 
         # unusable until approved — no workers yet
         r = self.client.post(f"/api/v1/subcontractors/{sid}/workers",
-                             {"full_name": "Worker A"}, format="json")
+                             {"full_name": "Worker A", "join_date": "2026-06-01"}, format="json")
         self.assertEqual(r.status_code, 400)
 
         # SA cannot self-approve
@@ -82,7 +82,7 @@ class SubcontractorTeamTests(TestCase):
 
         self._auth(self.sa)
         r = self.client.post(f"/api/v1/subcontractors/{sub.id}/workers",
-                             {"full_name": "Worker A",
+                             {"full_name": "Worker A", "join_date": "2026-06-01",
                               "job_category_id": self.mason.id}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         wid = r.data["id"]
@@ -181,7 +181,7 @@ class SubcontractorTeamTests(TestCase):
         sub = self._approved_sub()
         self._auth(self.sa)
         r = self.client.post(f"/api/v1/subcontractors/{sub.id}/workers",
-                             {"full_name": "Worker A"}, format="json")
+                             {"full_name": "Worker A", "join_date": "2026-06-01"}, format="json")
         emp = Employee.objects.get(pk=r.data["id"])
         self.assertEqual(emp.engagement_type, "SUBCONTRACT")
         self.assertNotIn(emp.id, Employee.objects.payroll_eligible()
@@ -1188,7 +1188,8 @@ class TakenOnDirectlyTests(TestCase):
         from core import subcontract
         emp, err = subcontract.add_worker(
             self.sub, {"full_name": "Sudesh Lakmal",
-                       "passport_no": "P1258011"}, self.sa)
+                       "passport_no": "P1258011",
+                       "join_date": "2026-09-05"}, self.sa)
         assert err is None, err
         if approved:
             subcontract.approve_worker(emp, self.sa)
@@ -1565,3 +1566,127 @@ class DayWorkValuationTests(TestCase):
         a = doc.subcontract_agreement
         self.assertEqual(a.basis, "MEASURED")
         self.assertFalse(subcontract.is_daywork(a))
+
+
+
+class SubcontractWorkerJoinDateTests(TestCase):
+    """A gang worker's join date is not optional, and the site can fix it.
+
+    The register only shows a man from the day his allocation starts, so a
+    worker added on Friday who began on Monday could not be marked for the
+    week. And a subcontract worker has no HR profile, so a missing date or
+    category could only be fixed by removing and re-adding him (owner
+    2026-09-10).
+    """
+
+    def setUp(self):
+        from .models import ManpowerCategory
+        self.site = Site.objects.create(code="JDT", name="Join Date Isle",
+                                        status=Site.Status.ACTIVE)
+        self.carp = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Carpenter", sort_order=1)
+        self.sa = make_user("jdt_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Join Gang",
+            status=Subcontractor.Status.APPROVED)
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def _add(self, **body):
+        body.setdefault("full_name", "Worker J")
+        return self.client.post(f"/api/v1/subcontractors/{self.sub.id}/workers",
+                                body, format="json")
+
+    def test_the_join_date_is_required(self):
+        r = self._add()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("joined", r.data["detail"])
+
+    def test_the_register_shows_him_from_the_day_he_joined(self):
+        r = self._add(join_date="2026-06-02")
+        self.assertEqual(r.status_code, 201, r.data)
+        emp = Employee.objects.get(pk=r.data["id"])
+        self.assertEqual(str(emp.join_date), "2026-06-02")
+        al = emp.site_allocations.get(to_date=None)
+        self.assertEqual(str(al.from_date), "2026-06-02")   # not today
+
+    def test_the_site_can_fix_a_missing_date_and_category(self):
+        emp = Employee.objects.create(
+            emp_no="EMP-9201", full_name="Late Entry",
+            engagement_type=Employee.Engagement.SUBCONTRACT,
+            subcontractor=self.sub, is_active=True)
+        from .models import EmployeeSiteAllocation
+        EmployeeSiteAllocation.objects.create(
+            employee=emp, site=self.site, from_date=date(2026, 6, 10))
+        r = self.client.patch(f"/api/v1/subcontract-workers/{emp.id}",
+                              {"join_date": "2026-06-03",
+                               "job_category_id": self.carp.id},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(str(r.data["join_date"]), "2026-06-03")
+        self.assertEqual(r.data["job_title"], "Carpenter")
+        emp.refresh_from_db()
+        # the allocation comes back to the join date, or nothing could be
+        # marked for the week he actually worked
+        self.assertEqual(str(emp.site_allocations.get(to_date=None).from_date),
+                         "2026-06-03")
+
+    def test_a_later_join_date_does_not_push_the_allocation_forward(self):
+        """Marks already on the register are not orphaned by a correction."""
+        emp = Employee.objects.create(
+            emp_no="EMP-9202", full_name="Early Marks",
+            engagement_type=Employee.Engagement.SUBCONTRACT,
+            subcontractor=self.sub, is_active=True, join_date=date(2026, 6, 1))
+        from .models import EmployeeSiteAllocation
+        EmployeeSiteAllocation.objects.create(
+            employee=emp, site=self.site, from_date=date(2026, 6, 1))
+        self.client.patch(f"/api/v1/subcontract-workers/{emp.id}",
+                          {"join_date": "2026-06-15"}, format="json")
+        self.assertEqual(str(emp.site_allocations.get(to_date=None).from_date),
+                         "2026-06-01")
+
+    def test_only_the_site_team_edits_a_gang_worker(self):
+        emp = Employee.objects.create(
+            emp_no="EMP-9203", full_name="Not Yours",
+            engagement_type=Employee.Engagement.SUBCONTRACT,
+            subcontractor=self.sub, is_active=True)
+        fin = make_user("jdt_fin", User.Role.FINANCE)
+        self.client.force_authenticate(fin)
+        r = self.client.patch(f"/api/v1/subcontract-workers/{emp.id}",
+                              {"join_date": "2026-06-03"}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_a_direct_employee_is_not_reachable_this_way(self):
+        emp = Employee.objects.create(emp_no="EMP-9204", full_name="Ours",
+                                      engagement_type="DIRECT", is_active=True)
+        r = self.client.patch(f"/api/v1/subcontract-workers/{emp.id}",
+                              {"join_date": "2026-06-03"}, format="json")
+        self.assertEqual(r.status_code, 404)
+
+    def test_he_cannot_be_marked_before_the_day_he_joined(self):
+        """Subcontract pay is counted off the register like payroll, so the
+        same rule applies: a day before the man joined is refused (owner
+        2026-09-10). The rule already existed for direct workers; gang
+        workers escaped it only because they were never given a join date."""
+        from .models import Attendance
+        r = self._add(join_date="2026-06-10")
+        emp = Employee.objects.get(pk=r.data["id"])
+        emp.is_active = True; emp.sub_pending = False
+        emp.save(update_fields=["is_active", "sub_pending"])
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": "2026-06-08",
+            "rows": [{"employee_id": emp.id, "remark": "PRESENT",
+                      "check_in": "07:00", "check_out": "18:00"}]},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data.get("refused"), r.data)
+        self.assertFalse(Attendance.objects.filter(employee=emp,
+                                                   day="2026-06-08").exists())
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": "2026-06-10",
+            "rows": [{"employee_id": emp.id, "remark": "PRESENT",
+                      "check_in": "07:00", "check_out": "18:00"}]},
+            format="json")
+        self.assertFalse(r.data.get("refused"), r.data)
+        self.assertTrue(Attendance.objects.filter(employee=emp,
+                                                  day="2026-06-10").exists())

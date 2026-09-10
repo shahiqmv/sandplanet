@@ -158,6 +158,7 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [hiring, setHiring] = useState(null);      // worker being taken on
+  const [editingW, setEditingW] = useState(null);  // worker being corrected
 
   const canSiteManage = SITE_MANAGE.includes(me.role);
   const isPM = ["PM", "ADMIN"].includes(me.role);
@@ -268,13 +269,17 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
                     {" "}· {w.emp_no}</span></td>
                 <td style={td}>{w.job_title || "—"}</td>
                 <td style={td}>{w.nationality || "—"}</td>
-                <td style={td}>{w.join_date || "—"}</td>
+                <td style={td}>{w.join_date
+                  || <span style={{ color: "var(--red-fg)" }}>not set</span>}</td>
                 <td style={td}><Chip tone={WORKER_TONE[w.state]}>
                   {w.state}</Chip></td>
                 <td style={{ ...td, textAlign: "right" }}>
                   {w.state === "PENDING" && isPM && (
                     <Btn variant="navy" disabled={busy}
                          onClick={() => workerAct(w, "approve")}>Approve</Btn>)}
+                  {w.state !== "REMOVED" && canSiteManage && (
+                    <Btn variant="ghost" disabled={busy}
+                         onClick={() => setEditingW(w)}>Edit</Btn>)}
                   {w.state === "ACTIVE" && canHire && (
                     <Btn variant="ghost" disabled={busy}
                          onClick={() => setHiring(w)}>Hire directly</Btn>)}
@@ -288,6 +293,12 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
         </table>
       )}
 
+      {editingW && (
+        <WorkerEditForm worker={editingW} cats={cats}
+                        onCancel={() => setEditingW(null)}
+                        onDone={async () => { setEditingW(null);
+                          onChanged(await api(`/subcontractors/${sub.id}`)); }} />
+      )}
       {hiring && (
         <HireForm worker={hiring} cats={cats}
                   onCancel={() => setHiring(null)}
@@ -300,9 +311,11 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
   );
 }
 
+const today = () => new Date().toISOString().slice(0, 10);
+
 function WorkerForm({ sub, cats, onCancel, onDone }) {
   const [f, setF] = useState({ full_name: "", nationality: "",
-    passport_no: "", job_category_id: "" });
+    passport_no: "", job_category_id: "", join_date: today() });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -335,13 +348,71 @@ function WorkerForm({ sub, cats, onCancel, onDone }) {
                value={f.nationality} onChange={set("nationality")} />
         <input style={inputStyle} placeholder="Passport no."
                value={f.passport_no} onChange={set("passport_no")} />
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>
+          Joined the site *
+          <input type="date" style={inputStyle} value={f.join_date}
+                 onChange={set("join_date")} required />
+        </label>
       </div>
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "8px 0 0" }}>
         Added workers wait for PM approval before they appear on the site
         attendance register.</p>
       <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-        <Btn variant="navy" disabled={busy || !f.full_name.trim()}>
+        <Btn variant="navy" disabled={busy || !f.full_name.trim()
+                                      || !f.join_date}>
           Add worker</Btn>
+        <Btn type="button" variant="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
+// The site corrects a gang worker after the fact. He has no HR profile —
+// the register hides him by design — so a missing join date or category
+// used to mean removing and re-adding him, losing his marks (owner
+// 2026-09-10). Pay is not here; he has none.
+function WorkerEditForm({ worker, cats, onCancel, onDone }) {
+  const [f, setF] = useState({ join_date: worker.join_date || "",
+    job_category_id: worker.job_category_id || "",
+    nationality: worker.nationality || "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      await api(`/subcontract-workers/${worker.id}`,
+                { method: "PATCH", body: f });
+      onDone();
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={submit} style={{ ...card, background: "var(--paper)",
+                                     margin: "8px 0" }}>
+      <strong style={{ fontSize: 14 }}>{worker.full_name} · {worker.emp_no}</strong>
+      {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      <div style={{ display: "grid", gap: 8, gridTemplateColumns: "1fr 1fr 1fr",
+                    marginTop: 8 }}>
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>Joined the site *
+          <input type="date" style={inputStyle} value={f.join_date}
+                 onChange={set("join_date")} required autoFocus /></label>
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>Trade / category
+          <select style={inputStyle} value={f.job_category_id}
+                  onChange={set("job_category_id")}>
+            <option value="">—</option>
+            {cats.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>))}
+          </select></label>
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>Nationality
+          <input style={inputStyle} value={f.nationality}
+                 onChange={set("nationality")} /></label>
+      </div>
+      <p style={{ fontSize: 12, color: "var(--muted)", margin: "8px 0 0" }}>
+        Moving the join date earlier puts him on the register from that day.
+      </p>
+      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+        <Btn variant="navy" disabled={busy || !f.join_date}>Save</Btn>
         <Btn type="button" variant="ghost" onClick={onCancel}>Cancel</Btn>
       </div>
     </form>

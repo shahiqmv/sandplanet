@@ -685,6 +685,8 @@ urlpatterns = [
          name="subcontractor-action"),
     path("subcontractors/<int:pk>/workers",
          subcontract_api.subcontractor_workers, name="subcontractor-workers"),
+    path("subcontract-workers/<int:emp_id>",
+         subcontract_api.subcontract_worker_detail, name="sub-worker"),
     path("subcontract-workers/<int:emp_id>/action",
          subcontract_api.subcontract_worker_action, name="subcontract-worker"),
     path("subcontractors/<int:pk>/agreements",
