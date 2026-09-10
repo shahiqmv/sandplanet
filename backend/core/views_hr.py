@@ -769,6 +769,9 @@ def attendance_grid(request):
             "is_subcontract": is_sub,
             "subcontractor": employee.subcontractor.name
             if is_sub and employee.subcontractor_id else "",
+            # the id as well as the name, so a gang's own sheet can be
+            # narrowed to its men without matching on a string
+            "subcontractor_id": employee.subcontractor_id if is_sub else None,
             "check_in": att.check_in if att
             else (shift.start if shift else site.working_hours_from),
             "check_out": att.check_out if att

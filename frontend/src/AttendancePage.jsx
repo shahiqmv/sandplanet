@@ -17,7 +17,8 @@ const gin = { padding: "4px 6px", fontSize: 13 };
 
 export default function AttendancePage({ site, me, onClose,
                                          initialMode = "day",
-                                         initialDay = null }) {
+                                         initialDay = null,
+                                         initialSub = null }) {
   const [mode, setMode] = useState(initialMode);   // day | register | shifts | ot
   const [day, setDay] = useState(() =>
     initialDay || new Date().toISOString().slice(0, 10));
@@ -29,6 +30,20 @@ export default function AttendancePage({ site, me, onClose,
   // Click a face to see it big — a thumbnail can only do so much
   // (owner 2026-08-26).
   const [photoView, setPhotoView] = useState(null);
+  // Narrowing the day grid. A site sheet runs to a few hundred men, and
+  // fixing one mark meant scrolling for him (owner 2026-09-10). The search
+  // and the gang filter both HIDE rows rather than removing them, so the row
+  // index the save uses still lines up with `rows`.
+  const [q, setQ] = useState("");
+  const [subFilter, setSubFilter] = useState(initialSub);   // {id, name}
+  const showRow = (row) => {
+    if (subFilter && row.subcontractor_id !== subFilter.id) return false;
+    if (q.trim()) {
+      const hay = `${row.emp_no} ${row.full_name}`.toLowerCase();
+      if (!hay.includes(q.trim().toLowerCase())) return false;
+    }
+    return true;
+  };
 
   const canEnter = ["SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_HR", "DIRECTOR",
                     "ADMIN", "PA"].includes(me.role);
@@ -234,6 +249,23 @@ export default function AttendancePage({ site, me, onClose,
           Attendance — {site.code}
         </h2>
         <DayPicker value={day} onChange={setDay} />
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+               placeholder="Find a man — no. or name"
+               style={{ ...inputStyle, width: 190, padding: "4px 10px",
+                        fontSize: 13 }} />
+        {subFilter && (
+          <span style={{ fontSize: 12.5, display: "inline-flex", gap: 6,
+                         alignItems: "center", padding: "2px 8px",
+                         borderRadius: 12, background: "#eef5fb",
+                         color: "var(--sp-navy)" }}>
+            {subFilter.name}'s men only
+            <button onClick={() => setSubFilter(null)} title="Show the whole site"
+                    style={{ ...ghostButton, padding: "0 6px", fontSize: 11 }}>
+              whole site</button>
+          </span>)}
+        {(q.trim() || subFilter) && (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {rows.filter(showRow).length} of {rows.length}</span>)}
         <span style={{ marginLeft: "auto", display: "flex", gap: 6,
                        alignItems: "center" }}>
           <button onClick={() => setMode("day")}
@@ -346,6 +378,7 @@ export default function AttendancePage({ site, me, onClose,
         </tr></thead>
         <tbody>
           {rows.map((row, i) => {
+            if (!showRow(row)) return null;      // hidden, never removed
             const off = row.remark === "OFF";
             const sub = row.is_subcontract;
             return (

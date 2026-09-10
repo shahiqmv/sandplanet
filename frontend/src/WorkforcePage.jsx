@@ -8,7 +8,7 @@ import { ghostButton } from "./ui.jsx";
 // subcontractor teams.
 const TABS = [["direct", "Direct workers"], ["subcontract", "Subcontractors"]];
 
-export default function WorkforcePage({ site, me, onClose }) {
+export default function WorkforcePage({ site, me, onClose, onAttendance }) {
   const [tab, setTab] = useState("direct");
   return (
     <div>
@@ -30,7 +30,8 @@ export default function WorkforcePage({ site, me, onClose }) {
         ))}
       </div>
       {tab === "direct" && <WorkerManagementPanel site={site} me={me} />}
-      {tab === "subcontract" && <SubcontractorsPanel site={site} me={me} />}
+      {tab === "subcontract" && (
+        <SubcontractorsPanel site={site} me={me} onAttendance={onAttendance} />)}
     </div>
   );
 }

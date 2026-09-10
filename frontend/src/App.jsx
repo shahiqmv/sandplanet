@@ -1421,7 +1421,8 @@ export default function App() {
           {docView?.mode === "attendance" && openSite && (
             <AttendancePage site={openSite} me={me} onClose={closeDoc}
                             initialMode={docView.tab || "day"}
-                            initialDay={docView.day} />
+                            initialDay={docView.day}
+                            initialSub={docView.sub || null} />
           )}
           {docView?.mode === "units" && openSite && (
             <UnitTrackerPage site={openSite} me={me} onClose={closeDoc}
@@ -1430,7 +1431,9 @@ export default function App() {
                                                   tab: "units" })} />
           )}
           {docView?.mode === "workforce" && openSite && (
-            <WorkforcePage site={openSite} me={me} onClose={closeDoc} />
+            <WorkforcePage site={openSite} me={me} onClose={closeDoc}
+              onAttendance={(sub) => setDocView({ mode: "attendance",
+                                                  tab: "day", sub })} />
           )}
           {docView?.mode === "dma" && openSite && (
             <DMAPage site={openSite} me={me} onClose={closeDoc} />

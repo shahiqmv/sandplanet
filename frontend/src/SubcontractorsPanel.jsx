@@ -14,7 +14,7 @@ const WORKER_TONE = { ACTIVE: "ok", PENDING: "warn", REMOVED: "alert" };
 // Subcontractor register + site team management (subcontractor module, R? P2).
 // Given a `site`, it scopes to that site and lets the SA/SE create/staff a
 // subcontractor. Without one, it is the read/approve register for PM+/Director.
-export default function SubcontractorsPanel({ me, site }) {
+export default function SubcontractorsPanel({ me, site, onAttendance }) {
   const [subs, setSubs] = useState(null);
   const [sel, setSel] = useState(null);          // open detail
   const [cats, setCats] = useState([]);
@@ -40,7 +40,7 @@ export default function SubcontractorsPanel({ me, site }) {
   }
 
   if (sel) {
-    return <Detail sub={sel} me={me} cats={cats}
+    return <Detail sub={sel} me={me} cats={cats} onAttendance={onAttendance}
                    onBack={() => { setSel(null); load(); }}
                    onChanged={(s) => setSel(s)} />;
   }
@@ -153,7 +153,7 @@ function CreateForm({ site, onCancel, onDone }) {
   );
 }
 
-function Detail({ sub, me, cats, onBack, onChanged }) {
+function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -206,9 +206,19 @@ function Detail({ sub, me, cats, onBack, onChanged }) {
                       title="Reverse a mistaken close — the group returns to Approved"
                       onClick={() => act("reactivate")}>Re-open (admin)</Btn>);
 
+  const activeMen = (sub.workers || []).filter((w) => w.state === "ACTIVE");
   return (
     <section style={card}>
-      <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <Btn variant="ghost" onClick={onBack}>← Back</Btn>
+        {/* Fixing one man's mark meant scrolling the whole site's sheet to
+            find him. This opens the day sheet already narrowed to this gang
+            (owner 2026-09-10). */}
+        {onAttendance && activeMen.length > 0 && (
+          <Btn variant="secondary" style={{ marginLeft: "auto" }}
+               onClick={() => onAttendance({ id: sub.id, name: sub.name })}>
+            Attendance sheet — {activeMen.length} men</Btn>)}
+      </div>
       <div style={{ display: "flex", justifyContent: "space-between",
                     alignItems: "center", marginTop: 6 }}>
         <h3 style={{ margin: 0, color: "var(--navy)" }}>
