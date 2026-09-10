@@ -448,6 +448,31 @@ class EmployeeViewSet(viewsets.ModelViewSet):
               actor=request.user, to_state=site.code)
         return Response(self.get_serializer(employee).data)
 
+    @action(detail=True, methods=["post"], url_path="take-on-directly")
+    def take_on_directly(self, request, pk=None):
+        """Hire a subcontractor's man onto our own payroll.
+
+        A man comes in on a subcontractor's business visa and turns out to be
+        worth keeping. There was no way to say so: engagement was written once
+        when the record was made and never again (owner 2026-09-10).
+        """
+        from . import subcontract
+        if not _is_hr(request.user):
+            return Response(
+                {"detail": "HR takes a worker onto the payroll."}, status=403)
+        # NOT get_object(): the HR register hides subcontract workers
+        # (`hr_managed()`), which is every worker this action exists for — it
+        # would 404 on all of them.
+        employee = Employee.objects.filter(pk=pk).first()
+        if employee is None:
+            return Response({"detail": "No such employee."}, status=404)
+        err = subcontract.take_on_directly(employee, request.data,
+                                           request.user)
+        if err:
+            return Response({"detail": err}, status=400)
+        employee.refresh_from_db()
+        return Response(self.get_serializer(employee).data)
+
     @action(detail=True, methods=["post"])
     def deactivate(self, request, pk=None):
         employee = self.get_object()

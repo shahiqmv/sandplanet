@@ -1159,3 +1159,146 @@ class SubcontractAdvanceAndGstTests(TestCase):
         self.assertEqual(val["now_due"], Decimal("42000.00"))
         self.assertEqual(val["gst"], Decimal("3360.00"))       # 8% of 42,000
         self.assertEqual(val["total_payable"], Decimal("45360.00"))
+
+
+class TakenOnDirectlyTests(TestCase):
+    """A subcontractor's man hired onto our own payroll.
+
+    He arrives on the subcontractor's business visa, works a few days, and is
+    good enough that we take him on ourselves (owner 2026-09-10, EMP-0809).
+    Engagement used to be written once when the record was made and never
+    again, so the only way through was editing the row by hand.
+    """
+
+    def setUp(self):
+        self.site = Site.objects.create(code="HPI", name="Halcyon",
+                                        status=Site.Status.ACTIVE)
+        self.cat = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Structural Technician",
+            sort_order=10)
+        self.hr = make_user("toc_hr", User.Role.HO_HR)
+        self.sa = make_user("toc_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Lanka Subcon Team",
+            status=Subcontractor.Status.APPROVED)
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _worker(self, approved=True):
+        from core import subcontract
+        emp, err = subcontract.add_worker(
+            self.sub, {"full_name": "Sudesh Lakmal",
+                       "passport_no": "P1258011"}, self.sa)
+        assert err is None, err
+        if approved:
+            subcontract.approve_worker(emp, self.sa)
+            emp.refresh_from_db()
+        return emp
+
+    def _take_on(self, emp, **body):
+        body.setdefault("basic_pay", "9000")
+        body.setdefault("job_category_id", self.cat.id)
+        return self.client.post(
+            f"/api/v1/employees/{emp.id}/take-on-directly", body,
+            format="json")
+
+    def test_he_becomes_a_direct_employee_on_our_payroll(self):
+        emp = self._worker()
+        r = self._take_on(emp)
+        self.assertEqual(r.status_code, 200, r.data)
+        emp.refresh_from_db()
+        self.assertEqual(emp.engagement_type, "DIRECT")
+        self.assertIsNone(emp.subcontractor_id)
+        self.assertEqual(emp.basic_pay, Decimal("9000"))
+        self.assertEqual(emp.job_category_id, self.cat.id)
+        self.assertEqual(emp.employment_type, "CONTRACT")
+
+    def test_he_can_be_paid_once_he_is_ours(self):
+        """A subcontract worker is barred from payroll structurally, so the
+        whole point is that a line can now exist for him."""
+        from .models import PayrollLine, PayrollRun
+        emp = self._worker()
+        run = PayrollRun.objects.create(
+            site=self.site, year=2026, month=9, working_days=30,
+            created_by=self.hr)
+        with self.assertRaises(Exception):
+            PayrollLine.objects.create(run=run, employee=emp, site=self.site)
+        self._take_on(emp)
+        emp.refresh_from_db()
+        line = PayrollLine.objects.create(run=run, employee=emp,
+                                          site=self.site)
+        self.assertIsNotNone(line.pk)
+
+    def test_a_half_built_employee_is_refused(self):
+        """No pay and no category is not an employee, it is a broken record —
+        his payroll line would come out at zero and his hours would be
+        counted under nothing."""
+        emp = self._worker()
+        r = self.client.post(f"/api/v1/employees/{emp.id}/take-on-directly",
+                             {"job_category_id": self.cat.id}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("basic pay", r.data["detail"])
+        r = self.client.post(f"/api/v1/employees/{emp.id}/take-on-directly",
+                             {"basic_pay": "9000"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("category", r.data["detail"])
+        emp.refresh_from_db()
+        self.assertEqual(emp.engagement_type, "SUBCONTRACT")
+
+    def test_a_worker_still_awaiting_the_pm_is_refused(self):
+        emp = self._worker(approved=False)
+        r = self._take_on(emp)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("awaiting", r.data["detail"])
+
+    def test_it_cannot_be_done_twice(self):
+        emp = self._worker()
+        self.assertEqual(self._take_on(emp).status_code, 200)
+        r = self._take_on(emp)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already a direct employee", r.data["detail"])
+
+    def test_our_employment_can_start_later_than_his_arrival(self):
+        """A man who worked six months for the subcontractor first joins US
+        on the day we hire him, not the day he landed."""
+        emp = self._worker()
+        self._take_on(emp, join_date="2026-09-10")
+        emp.refresh_from_db()
+        self.assertEqual(str(emp.join_date), "2026-09-10")
+
+    def test_the_visa_file_stops_calling_him_somebody_elses_worker(self):
+        """The onboarding case said he was a subcontractor's man. Leaving it
+        saying so has the visa file and the employee record disagreeing about
+        who he works for."""
+        from .models import Document, OnboardingCase
+        emp = self._worker()
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-HPI-001", site=self.site,
+            doc_date=date.today(), status="IN_PROGRESS", created_by=self.hr)
+        case = OnboardingCase.objects.create(
+            document=doc, full_name=emp.full_name, route="BV",
+            bv_purpose="SUBCONTRACT", subcontractor=self.sub, employee=emp)
+        self._take_on(emp)
+        case.refresh_from_db()
+        self.assertEqual(case.bv_purpose, "RECRUITMENT")
+        self.assertIsNone(case.subcontractor_id)
+
+    def test_the_site_cannot_put_a_man_on_the_payroll_itself(self):
+        """Hiring is HR's, not the site's — it is a salary being created."""
+        emp = self._worker()
+        self.client.force_authenticate(self.sa)
+        r = self._take_on(emp)
+        self.assertEqual(r.status_code, 403)
+        emp.refresh_from_db()
+        self.assertEqual(emp.engagement_type, "SUBCONTRACT")
+
+    def test_his_pay_is_never_written_into_the_audit_detail(self):
+        """Spec 7.2 — basic pay never reaches audit detail."""
+        from .models import AuditLog
+        emp = self._worker()
+        self._take_on(emp)
+        entry = AuditLog.objects.filter(event="TAKEN_ON_DIRECTLY").first()
+        self.assertIsNotNone(entry)
+        self.assertNotIn("9000", json.dumps(entry.detail))
+        self.assertEqual(entry.detail["from_subcontractor"],
+                         "Lanka Subcon Team")

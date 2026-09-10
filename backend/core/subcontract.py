@@ -124,6 +124,85 @@ def add_worker(sub, data, actor):
     return emp, None
 
 
+def take_on_directly(emp, data, actor):
+    """Take a subcontractor's man onto our own payroll.
+
+    It happens the other way round from how the record was made: a man comes
+    in on a subcontractor's business visa, works a few days, and is good
+    enough that we hire him ourselves (owner 2026-09-10, EMP-0809). Until now
+    `engagement_type` was written once at creation and never again, so the
+    only way through was editing the row by hand — no record of who decided
+    it, or when he stopped being someone else's man.
+
+    A subcontract worker deliberately carries no pay and is structurally
+    barred from payroll, so becoming DIRECT is not a flag flip: he needs a
+    salary and a category before he is a payable employee at all, and this
+    refuses to make a half-built one.
+
+    `join_date` is when OUR employment starts, which is not always when he
+    arrived — a man who worked six months for the subcontractor first joins
+    us today. Left out, the date already on the record stands.
+    """
+    from decimal import Decimal, InvalidOperation
+
+    from .models import Employee
+
+    if emp.engagement_type != Employee.Engagement.SUBCONTRACT:
+        return "This worker is already a direct employee."
+    if emp.sub_pending:
+        return ("This worker is still awaiting the PM's approval as a "
+                "subcontract worker. Approve or remove him first.")
+    try:
+        pay = Decimal(str(data.get("basic_pay") or "0"))
+    except (InvalidOperation, TypeError, ValueError):
+        return "Enter the basic pay as a number."
+    if pay <= 0:
+        return ("A direct employee needs a basic pay — a subcontract worker "
+                "carries none, and without one his payroll line is zero.")
+    category_id = data.get("job_category_id") or emp.job_category_id
+    if not category_id:
+        return ("Pick the worker category. It is what the manpower reports "
+                "count him under and what his overtime rate comes from.")
+    employment = data.get("employment_type") or Employee.EmploymentType.CONTRACT
+    if employment not in dict(Employee.EmploymentType.choices):
+        return "Unknown employment type."
+    join = data.get("join_date") or None
+
+    was = emp.subcontractor.name if emp.subcontractor_id else ""
+    fields = ["engagement_type", "subcontractor", "basic_pay", "job_category",
+              "employment_type", "currency", "updated_at"]
+    with transaction.atomic():
+        emp.engagement_type = Employee.Engagement.DIRECT
+        emp.subcontractor = None
+        emp.basic_pay = pay
+        emp.job_category_id = category_id
+        emp.employment_type = employment
+        emp.currency = data.get("currency") or emp.currency or "MVR"
+        if join:
+            emp.join_date = join
+            fields.append("join_date")
+        emp.save(update_fields=fields)
+        # The onboarding case that brought him in said he was somebody else's
+        # worker. Leaving it saying so would have the visa file and the
+        # employee record disagreeing about who he works for.
+        from .models import OnboardingCase
+        # `employee` is related_name="+" — there is no reverse accessor, so
+        # this has to be queried or it silently does nothing.
+        for case in OnboardingCase.objects.filter(employee=emp,
+                                                  bv_purpose="SUBCONTRACT"):
+            case.bv_purpose = "RECRUITMENT"
+            case.subcontractor = None
+            case.save(update_fields=["bv_purpose", "subcontractor",
+                                     "updated_at"])
+    # No pay in the detail (spec §7.2) — that it changed is the record.
+    audit("employee", emp.id, "TAKEN_ON_DIRECTLY", actor=actor,
+          detail={"emp_no": emp.emp_no, "from_subcontractor": was,
+                  "employment_type": employment,
+                  "join_date": str(emp.join_date or ""),
+                  "why": "engaged through a subcontractor, hired directly"})
+    return None
+
+
 def approve_worker(emp, actor):
     """PM approval activates a pending subcontract worker — it now appears in
     the site attendance register + manpower count."""
