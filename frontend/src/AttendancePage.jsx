@@ -201,7 +201,8 @@ export default function AttendancePage({ site, me, onClose,
       <section style={card}>
         {header}
         <Register site={site} canEnter={canEnter}
-          onOpenDay={(dateStr) => { setDay(dateStr); setMode("day"); }} />
+          onOpenDay={(dateStr) => { setDay(dateStr); setMode("day"); }}
+          narrow={{ q, setQ, subFilter, setSubFilter, showRow }} />
       </section>
     );
   }
@@ -595,7 +596,11 @@ const CODE_STYLE = {
   S: { bg: "#fff5e6", c: "#b35900" }, "½": { bg: "#f0f0f0", c: "#5a6b78" },
 };
 
-function Register({ site, canEnter, onOpenDay }) {
+function Register({ site, canEnter, onOpenDay, narrow }) {
+  // The same search and gang filter as the day sheet, so a gang opened from
+  // its own page stays narrowed when the month register is opened (owner
+  // 2026-09-10). Register rows are not index-edited, so filtering is safe.
+  const { q, setQ, subFilter, setSubFilter, showRow } = narrow;
   const nowD = new Date();
   const [year, setYear] = useState(nowD.getFullYear());
   const [month, setMonth] = useState(nowD.getMonth() + 1);
@@ -670,6 +675,26 @@ function Register({ site, canEnter, onOpenDay }) {
         <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
           headcount and marks only — no OT</span>
       </div>
+      <div style={{ display: "flex", gap: 10, alignItems: "center",
+                    flexWrap: "wrap", margin: "6px 0 2px" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+               placeholder="Find a man — no. or name"
+               style={{ ...inputStyle, width: 190, padding: "4px 10px",
+                        fontSize: 13 }} />
+        {subFilter && (
+          <span style={{ fontSize: 12.5, display: "inline-flex", gap: 6,
+                         alignItems: "center", padding: "2px 8px",
+                         borderRadius: 12, background: "#eef5fb",
+                         color: "var(--sp-navy)" }}>
+            {subFilter.name}'s men only
+            <button onClick={() => setSubFilter(null)} title="Show the whole site"
+                    style={{ ...ghostButton, padding: "0 6px", fontSize: 11 }}>
+              whole site</button>
+          </span>)}
+        {data && (q.trim() || subFilter) && (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {data.rows.filter(showRow).length} of {data.rows.length}</span>)}
+      </div>
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {canEnter && onOpenDay && !data?.locked && (
         <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 0" }}>
@@ -705,12 +730,15 @@ function Register({ site, canEnter, onOpenDay }) {
               <th style={{ ...th, textAlign: "right" }}>Lv</th>
             </tr></thead>
             <tbody>
-              {data.rows.map((r) => (
+              {data.rows.filter(showRow).map((r) => (
                 <tr key={r.emp_no}>
                   <td style={{ ...td, whiteSpace: "nowrap", position: "sticky",
                                left: 0, background: "#fff" }}>
                     <b style={{ color: "var(--sp-navy)" }}>{r.emp_no}</b>{" "}
-                    {r.full_name}</td>
+                    {r.full_name}
+                    {r.is_subcontract && (
+                      <span style={{ marginLeft: 6, fontSize: 10.5,
+                                     color: "var(--muted)" }}>SUB</span>)}</td>
                   {data.days.map((d) => {
                     // Days before the worker's join date are outside their
                     // engagement — shown hatched, not blank (never counted).

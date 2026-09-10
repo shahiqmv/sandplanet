@@ -1432,8 +1432,9 @@ export default function App() {
           )}
           {docView?.mode === "workforce" && openSite && (
             <WorkforcePage site={openSite} me={me} onClose={closeDoc}
-              onAttendance={(sub) => setDocView({ mode: "attendance",
-                                                  tab: "day", sub })} />
+              onAttendance={(sub, tab) => setDocView({ mode: "attendance",
+                                                       tab: tab || "day",
+                                                       sub })} />
           )}
           {docView?.mode === "dma" && openSite && (
             <DMAPage site={openSite} me={me} onClose={closeDoc} />

@@ -215,10 +215,15 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
         {/* Fixing one man's mark meant scrolling the whole site's sheet to
             find him. This opens the day sheet already narrowed to this gang
             (owner 2026-09-10). */}
-        {onAttendance && activeMen.length > 0 && (
+        {onAttendance && activeMen.length > 0 && (<>
           <Btn variant="secondary" style={{ marginLeft: "auto" }}
                onClick={() => onAttendance({ id: sub.id, name: sub.name })}>
-            Attendance sheet — {activeMen.length} men</Btn>)}
+            Attendance sheet — {activeMen.length} men</Btn>
+          <Btn variant="ghost"
+               onClick={() => onAttendance({ id: sub.id, name: sub.name },
+                                           "register")}>
+            Month register</Btn>
+        </>)}
       </div>
       <div style={{ display: "flex", justifyContent: "space-between",
                     alignItems: "center", marginTop: 6 }}>

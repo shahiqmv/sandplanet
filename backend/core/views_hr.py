@@ -905,6 +905,11 @@ def attendance_register(request):
         rows.append({
             "emp_no": emp.emp_no, "full_name": emp.full_name,
             "category": emp.job_category.name if emp.job_category_id else "",
+            # so a gang's own view of the month can be narrowed to its men
+            "is_subcontract": emp.engagement_type == "SUBCONTRACT",
+            "subcontractor_id": (emp.subcontractor_id
+                                 if emp.engagement_type == "SUBCONTRACT"
+                                 else None),
             "start_day": start_day, "days": cells, **t})
         for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays"):
             sums[k] += t[k]
