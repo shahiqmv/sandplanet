@@ -169,18 +169,55 @@ def edit_tender(t, data, actor):
                 return f"{f.replace('_', ' ')} must be a number of days."
     if "validity_days" in data and t.validity_days is None:
         t.validity_days = 30
-    for f in ("provisional_sum", "gst_percent"):
+    for f in ("discount_amount", "gst_percent"):
         if f in data:
             v = _dec(data[f])
             if v is None and data[f] not in (None, ""):
                 return f"{f.replace('_', ' ')} must be a number."
             setattr(t, f, v if v is not None
-                    else (None if f == "provisional_sum" else Decimal("0")))
+                    else (None if f == "discount_amount" else Decimal("0")))
+    if (t.discount_amount or Decimal("0")) < 0:
+        return "A discount is entered as a positive figure — it comes off."
+    if "discount_label" in data:
+        t.discount_label = (data.get("discount_label") or "").strip()[:80]
     if not t.client_name.strip() or not t.title.strip():
         return "A tender needs a client and a title."
+    if "provisional_items" in data:
+        err = set_provisional_items(t, data.get("provisional_items"))
+        if err:
+            return err
     t.save()
     audit("tender", t.id, "TENDER_EDITED", actor=actor,
           detail={"ref": t.document.ref})
+    return None
+
+
+def set_provisional_items(t, rows):
+    """Replace the tender's provisional sums with the rows given.
+
+    Replaced wholesale rather than patched line by line: the screen edits them
+    as one list, and a half-applied list is a wrong total on a client-facing
+    offer. A row with no label and no amount is a blank the editor left
+    behind, not a deletion to argue about.
+    """
+    from .models import TenderProvisionalItem
+    clean = []
+    for i, r in enumerate(rows or []):
+        label = (r.get("label") or "").strip()
+        amount = _dec(r.get("amount"))
+        if not label and amount in (None, Decimal("0")):
+            continue
+        if not label:
+            return "Give each provisional sum a description."
+        if amount is None:
+            return f"'{label}' needs an amount."
+        if amount < 0:
+            return f"'{label}' cannot be negative."
+        clean.append(TenderProvisionalItem(
+            tender=t, sort_order=i, label=label[:160], amount=amount))
+    with transaction.atomic():
+        t.provisional_items.all().delete()
+        TenderProvisionalItem.objects.bulk_create(clean)
     return None
 
 
@@ -480,19 +517,34 @@ def _bills(boq):
 
 
 def money_stack(t, bill_total):
-    """Subtotal, provisional sum, GST, grand total — as the workbook does it.
+    """Subtotal, discount, provisional sums, GST, grand total.
 
     Built on the OFFERED figure, because that is what the client was told; the
     bill's own total is shown beside it when they differ rather than quietly
     reconciled.
+
+    The discount comes off the priced work, before the provisional sums are
+    added: a provisional sum is an allowance to be spent, not our price, and
+    discounting it would be discounting the client's own money. GST is charged
+    on what is left, because GST is charged on what the client actually pays
+    (owner 2026-09-10).
     """
     sub = (t.value_submitted if t.value_submitted is not None
            else bill_total) or Decimal("0")
-    prov = t.provisional_sum or Decimal("0")
-    net = sub + prov
+    discount = t.discount_amount or Decimal("0")
+    after_discount = sub - discount
+    items = [{"label": i.label, "amount": i.amount}
+             for i in t.provisional_items.all()]
+    prov = sum((i["amount"] for i in items), Decimal("0"))
+    net = after_discount + prov
     pct = t.gst_percent or Decimal("0")
     gst = (net * pct / Decimal("100")).quantize(Decimal("0.01"))
-    return {"subtotal": sub, "provisional": prov, "net": net,
+    return {"subtotal": sub,
+            "discount": discount,
+            "discount_label": t.discount_label or "Discount",
+            "after_discount": after_discount,
+            "provisional_items": items,
+            "provisional": prov, "net": net,
             "gst_percent": pct, "gst": gst, "grand_total": net + gst}
 
 
@@ -547,9 +599,13 @@ def submission_context(t):
                               for b in bills],
         "bill_total": bill_total, "bill_total_fmt": _money(bill_total),
         # Pre-formatted so the document does not print a raw decimal at a
-        # client.
+        # client. Only the money — the rate, the label and the provisional
+        # rows are not amounts and must not go through the formatter.
         "stack_fmt": {k: _money(v) for k, v in stack.items()
-                      if k != "gst_percent"},
+                      if k not in ("gst_percent", "discount_label",
+                                   "provisional_items")},
+        "prov_rows": [{**p, "amount_fmt": _money(p["amount"])}
+                      for p in stack["provisional_items"]],
         # The bill itself, with its money already grouped.
         "boq_rows": ([{
             "is_heading": it.is_heading,

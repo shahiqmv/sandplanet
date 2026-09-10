@@ -161,10 +161,16 @@
       {% endfor %}
       <tr class="sub"><td></td><td>Sub total</td>
           <td class="n">{{ stack_fmt.subtotal }}</td></tr>
-      {% if stack.provisional %}
-        <tr><td></td><td>Provisional sum</td>
-            <td class="n">{{ stack_fmt.provisional }}</td></tr>
+      {% if stack.discount %}
+        <tr><td></td><td>Less: {{ stack.discount_label }}</td>
+            <td class="n">({{ stack_fmt.discount }})</td></tr>
+        <tr class="sub"><td></td><td>Sub total after discount</td>
+            <td class="n">{{ stack_fmt.after_discount }}</td></tr>
       {% endif %}
+      {% for p in prov_rows %}
+        <tr><td></td><td>Provisional sum — {{ p.label }}</td>
+            <td class="n">{{ p.amount_fmt }}</td></tr>
+      {% endfor %}
       {% if stack.gst %}
         <tr><td></td><td>GST at {{ stack.gst_percent|floatformat:"-2" }}%</td>
             <td class="n">{{ stack_fmt.gst }}</td></tr>

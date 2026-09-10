@@ -55,7 +55,11 @@ def _row(t, full=False):
             "client_provides": t.client_provides,
             "exclusions": t.exclusions, "variations": t.variations,
             "warranty_terms": t.warranty_terms,
-            "provisional_sum": t.provisional_sum,
+            "discount_amount": t.discount_amount,
+            "discount_label": t.discount_label,
+            "provisional_items": [
+                {"label": i.label, "amount": i.amount}
+                for i in t.provisional_items.all()],
             "gst_percent": t.gst_percent,
             "prepared_by": t.prepared_by, "reviewed_by": t.reviewed_by,
             "approved_by": t.approved_by,

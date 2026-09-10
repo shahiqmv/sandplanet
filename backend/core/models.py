@@ -3407,10 +3407,14 @@ class Tender(models.Model):
     exclusions = models.TextField(blank=True)
     variations = models.TextField(blank=True)
     warranty_terms = models.TextField(blank=True)    # DLP
-    # A provisional sum sits outside the priced bills and is added after the
-    # subtotal, exactly as the workbook does it.
-    provisional_sum = models.DecimalField(max_digits=14, decimal_places=2,
+    # A negotiated lump sum off the offer. Some revisions are won on a
+    # discount rather than a re-price, and there was nowhere to say so — it
+    # was either buried in a bill or left off the summary entirely (owner
+    # 2026-09-10). It comes off before GST, because GST is charged on what the
+    # client actually pays.
+    discount_amount = models.DecimalField(max_digits=14, decimal_places=2,
                                           null=True, blank=True)
+    discount_label = models.CharField(max_length=80, blank=True)
     gst_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                       default=Decimal("8"))
     prepared_by = models.CharField(max_length=120, blank=True)
@@ -3422,6 +3426,31 @@ class Tender(models.Model):
 
     def __str__(self):
         return f"{self.document.ref} — {self.client_name}"
+
+
+class TenderProvisionalItem(models.Model):
+    """One provisional sum on the offer summary.
+
+    A provisional sum sits outside the priced bills and is added after the
+    subtotal, exactly as the workbook does it. It used to be a single figure
+    on the tender, which is fine for one allowance and wrong the moment there
+    are two — a client asking for provisional sums against three separate
+    items got them added together under one unexplained line (owner
+    2026-09-10).
+    """
+
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
+                               related_name="provisional_items")
+    sort_order = models.IntegerField(default=0)
+    label = models.CharField(max_length=160)
+    amount = models.DecimalField(max_digits=14, decimal_places=2,
+                                 default=Decimal("0"))
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.label} — {self.amount}"
 
 
 class TenderEvent(models.Model):

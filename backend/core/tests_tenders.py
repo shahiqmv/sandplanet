@@ -6,6 +6,7 @@ internal working until it is ISSUED — and an issued one is a submission that
 stays on the record whatever is priced afterwards.
 """
 from datetime import date, timedelta
+from decimal import Decimal
 
 from django.test import TestCase
 from rest_framework.test import APIClient
@@ -713,11 +714,13 @@ class TenderProcessTests(GateMixin, TestCase):
 
         from . import tenders as svc
         from .models import Tender
+        from .models import TenderProvisionalItem
         t = Tender.objects.get(pk=self.t["id"])
         t.value_submitted = Decimal("856898.17")
-        t.provisional_sum = Decimal("100000")
         t.gst_percent = Decimal("8")
         t.save()
+        TenderProvisionalItem.objects.create(
+            tender=t, label="Landscaping", amount=Decimal("100000"))
         st = svc.money_stack(t, Decimal("856898.17"))
         self.assertEqual(st["net"], Decimal("956898.17"))
         self.assertEqual(st["gst"], Decimal("76551.85"))
@@ -781,14 +784,101 @@ class TenderProcessTests(GateMixin, TestCase):
         r = self.client.patch(f"/api/v1/tenders/{self.t['id']}",
                               {"validity_days": 45,
                                "duration_days": 150,
-                               "provisional_sum": "100000",
                                "doc_ref": "SP-BOQ-2026-SJR-OPO-O1",
                                "payment_terms": "50% advance"},
                               format="json")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["validity_days"], 45)
         self.assertEqual(r.data["doc_ref"], "SP-BOQ-2026-SJR-OPO-O1")
-        self.assertEqual(str(r.data["provisional_sum"]), "100000.00")
+
+    # ---- the discount and the provisional sums ------------------------
+
+    def _patch(self, **body):
+        return self.client.patch(f"/api/v1/tenders/{self.t['id']}", body,
+                                 format="json")
+
+    def test_a_client_can_be_given_more_than_one_provisional_sum(self):
+        """One figure is fine for one allowance and wrong the moment there
+        are two — three separate items used to be added together under one
+        unexplained line (owner 2026-09-10)."""
+        r = self._patch(provisional_items=[
+            {"label": "Landscaping", "amount": "60000"},
+            {"label": "Signage", "amount": "25000"},
+            {"label": "Artwork", "amount": "15000"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual([(p["label"], str(p["amount"]))
+                          for p in r.data["provisional_items"]],
+                         [("Landscaping", "60000.00"), ("Signage", "25000.00"),
+                          ("Artwork", "15000.00")])
+        from . import tenders as svc
+        from .models import Tender
+        st = svc.money_stack(Tender.objects.get(pk=self.t["id"]),
+                             Decimal("0"))
+        self.assertEqual(st["provisional"], Decimal("100000"))
+        self.assertEqual(len(st["provisional_items"]), 3)
+
+    def test_the_list_is_replaced_wholesale(self):
+        """The screen edits them as one list; a half-applied list is a wrong
+        total on a client-facing offer."""
+        self._patch(provisional_items=[{"label": "Landscaping",
+                                        "amount": "60000"}])
+        r = self._patch(provisional_items=[{"label": "Signage",
+                                            "amount": "25000"}])
+        self.assertEqual([p["label"] for p in r.data["provisional_items"]],
+                         ["Signage"])
+
+    def test_a_blank_row_is_not_an_error(self):
+        r = self._patch(provisional_items=[
+            {"label": "Landscaping", "amount": "60000"},
+            {"label": "", "amount": ""}])
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["provisional_items"]), 1)
+
+    def test_a_provisional_sum_needs_a_description(self):
+        r = self._patch(provisional_items=[{"label": "", "amount": "60000"}])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("description", r.data["detail"])
+
+    def test_a_lump_sum_discount_comes_off_before_gst(self):
+        """Some revisions are won on a discount rather than a re-price. GST
+        is charged on what the client actually pays."""
+        from . import tenders as svc
+        from .models import Tender
+        r = self._patch(discount_amount="50000",
+                        discount_label="Negotiation discount")
+        self.assertEqual(r.status_code, 200, r.data)
+        t = Tender.objects.get(pk=self.t["id"])
+        t.value_submitted = Decimal("1000000")
+        t.gst_percent = Decimal("8")
+        t.save()
+        st = svc.money_stack(t, Decimal("1000000"))
+        self.assertEqual(st["subtotal"], Decimal("1000000"))
+        self.assertEqual(st["discount"], Decimal("50000"))
+        self.assertEqual(st["discount_label"], "Negotiation discount")
+        self.assertEqual(st["after_discount"], Decimal("950000"))
+        self.assertEqual(st["gst"], Decimal("76000.00"))     # 8% of 950,000
+        self.assertEqual(st["grand_total"], Decimal("1026000.00"))
+
+    def test_the_discount_does_not_eat_the_provisional_sums(self):
+        """A provisional sum is an allowance to be spent, not our price —
+        discounting it would be discounting the client's own money."""
+        from . import tenders as svc
+        from .models import Tender
+        self._patch(discount_amount="50000",
+                    provisional_items=[{"label": "Landscaping",
+                                        "amount": "100000"}])
+        t = Tender.objects.get(pk=self.t["id"])
+        t.value_submitted = Decimal("1000000")
+        t.gst_percent = Decimal("8")
+        t.save()
+        st = svc.money_stack(t, Decimal("1000000"))
+        self.assertEqual(st["net"], Decimal("1050000"))   # 950,000 + 100,000
+        self.assertEqual(st["grand_total"], Decimal("1134000.00"))
+
+    def test_a_discount_is_entered_as_a_positive_figure(self):
+        r = self._patch(discount_amount="-50000")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("comes off", r.data["detail"])
 
     def test_the_cover_prints_their_reference_when_they_keep_one(self):
         from . import tenders as svc

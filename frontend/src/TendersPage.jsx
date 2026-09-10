@@ -898,8 +898,10 @@ function Docs({ t, can, onChanged }) {
 function Proposal({ t, can, busy, save }) {
   const [f, setF] = useState({
     doc_ref: t.doc_ref || "", validity_days: t.validity_days ?? 30,
-    duration_days: t.duration_days ?? "", provisional_sum:
-      t.provisional_sum ?? "", gst_percent: t.gst_percent ?? 8,
+    duration_days: t.duration_days ?? "",
+    discount_amount: t.discount_amount ?? "",
+    discount_label: t.discount_label || "",
+    gst_percent: t.gst_percent ?? 8,
     payment_terms: t.payment_terms || "",
     client_provides: t.client_provides || "",
     exclusions: t.exclusions || "", variations: t.variations || "",
@@ -907,10 +909,18 @@ function Proposal({ t, can, busy, save }) {
     prepared_by: t.prepared_by || "", reviewed_by: t.reviewed_by || "",
     approved_by: t.approved_by || "",
   });
+  // A client asking for allowances against three separate items used to get
+  // them added together under one unexplained line (owner 2026-09-10).
+  const [prov, setProv] = useState(
+    (t.provisional_items || []).map((p) => ({ label: p.label,
+                                              amount: String(p.amount) })));
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  const setProvAt = (i, k, v) =>
+    setProv(prov.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
   const lab = { fontSize: 11.5, color: "var(--muted)", display: "block",
                 marginBottom: 2 };
   const area = { ...inputStyle, width: "100%", fontFamily: "inherit" };
+  const provTotal = prov.reduce((n, r) => n + (Number(r.amount) || 0), 0);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -918,7 +928,8 @@ function Proposal({ t, can, busy, save }) {
         Cover and summary</h4>
       <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
         These print on the submission pack. The sums build on the value you
-        issue: sub total, provisional sum, GST, grand total.
+        issue: sub total, less any discount, plus the provisional sums, GST,
+        grand total.
       </p>
 
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
@@ -940,9 +951,16 @@ function Proposal({ t, can, busy, save }) {
                  style={{ ...inputStyle, width: "100%" }} />
         </label>
         <label style={{ flex: "0 0 150px" }}>
-          <span style={lab}>Provisional sum</span>
-          <input type="number" value={f.provisional_sum} disabled={!can}
-                 onChange={set("provisional_sum")}
+          <span style={lab}>Discount ({t.currency})</span>
+          <input type="number" value={f.discount_amount} disabled={!can}
+                 onChange={set("discount_amount")} placeholder="0.00"
+                 style={{ ...inputStyle, width: "100%" }} />
+        </label>
+        <label style={{ flex: "1 1 190px" }}>
+          <span style={lab}>Discount shown as</span>
+          <input value={f.discount_label} disabled={!can}
+                 onChange={set("discount_label")}
+                 placeholder="Discount"
                  style={{ ...inputStyle, width: "100%" }} />
         </label>
         <label style={{ flex: "0 0 110px" }}>
@@ -951,6 +969,45 @@ function Proposal({ t, can, busy, save }) {
                  onChange={set("gst_percent")}
                  style={{ ...inputStyle, width: "100%" }} />
         </label>
+      </div>
+
+      <div style={{ border: "1px solid var(--sp-border, #d8e1e8)",
+                    borderRadius: 8, padding: 10 }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <strong style={{ fontSize: 12.5, color: "var(--sp-navy)" }}>
+            Provisional sums</strong>
+          <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+            each prints on its own line of the summary</span>
+          {provTotal > 0 && (
+            <span style={{ marginLeft: "auto", fontSize: 12.5,
+                           fontFamily: "var(--font-mono)" }}>
+              {t.currency} {provTotal.toLocaleString("en-US",
+                { minimumFractionDigits: 2 })}</span>)}
+        </div>
+        {prov.map((r, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, marginTop: 6 }}>
+            <input value={r.label} disabled={!can}
+                   onChange={(e) => setProvAt(i, "label", e.target.value)}
+                   placeholder="What the allowance is for"
+                   style={{ ...inputStyle, flex: 1 }} />
+            <input type="number" value={r.amount} disabled={!can}
+                   onChange={(e) => setProvAt(i, "amount", e.target.value)}
+                   placeholder="0.00"
+                   style={{ ...inputStyle, width: 140 }} />
+            {can && (
+              <Btn variant="ghost"
+                   onClick={() => setProv(prov.filter((_, j) => j !== i))}>
+                ✕</Btn>)}
+          </div>))}
+        {can && (
+          <div style={{ marginTop: 8 }}>
+            <Btn variant="ghost"
+                 onClick={() => setProv([...prov, { label: "", amount: "" }])}>
+              + Add a provisional sum</Btn>
+          </div>)}
+        {prov.length === 0 && (
+          <p style={{ fontSize: 12, color: "var(--muted)", margin: "6px 0 0" }}>
+            None — the offer carries no allowances.</p>)}
       </div>
 
       {[["payment_terms", "Payment terms"],
@@ -976,7 +1033,9 @@ function Proposal({ t, can, busy, save }) {
 
       {can && (
         <div>
-          <Btn disabled={busy} onClick={() => save(f)}>Save these terms</Btn>
+          <Btn disabled={busy}
+               onClick={() => save({ ...f, provisional_items: prov })}>
+            Save these terms</Btn>
         </div>)}
     </div>
   );
