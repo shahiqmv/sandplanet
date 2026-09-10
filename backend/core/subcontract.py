@@ -334,7 +334,10 @@ def _apply_sca_terms(agreement, data):
               "contractor_signatory_title", "notes"):
         if f in data:
             setattr(agreement, f, data.get(f) or "")
-    for f in ("advance_percent", "retention_percent", "gst_percent"):
+    if "basis" in data and data.get("basis") in ("MEASURED", "DAYWORK"):
+        agreement.basis = data["basis"]
+    for f in ("advance_percent", "retention_percent", "gst_percent",
+              "markup_percent"):
         # non-null, default 0
         if f in data:
             setattr(agreement, f, _dec(data.get(f)) or Decimal("0"))
@@ -363,10 +366,176 @@ _SVC_OPEN = ("DRAFT", "SUBMITTED", "PM_VERIFIED", "DIRECTOR_APPROVED")
 _SVC_CERTIFIED = ("AUTHORISED", "PAID")
 
 
+# ---- day work: labour hired by the man-day -------------------------------
+
+DAY_MARK_VALUE = {"PRESENT": Decimal("1"), "HALF_DAY": Decimal("0.5")}
+
+
+def is_daywork(agreement):
+    return agreement.basis == "DAYWORK"
+
+
+def set_day_rates(agreement, rows, actor):
+    """Replace the agreed category rates on a day-work agreement.
+
+    Replaced wholesale rather than patched: the screen edits them as one
+    table, and a half-applied rate card is a wrong certificate. Rates already
+    written onto a valuation's lines are untouched — that is the point of
+    storing them there.
+    """
+    from .models import SubcontractDayRate
+    if agreement.document.status != "DRAFT":
+        return "Rates can only be set while the agreement is a draft."
+    seen, clean = set(), []
+    for r in rows or []:
+        cid = r.get("job_category_id")
+        if not cid:
+            continue
+        if cid in seen:
+            return "The same category is listed twice."
+        seen.add(cid)
+        day = _dec(r.get("rate_per_day")) or Decimal("0")
+        ot = _dec(r.get("ot_rate_per_hour")) or Decimal("0")
+        if day < 0 or ot < 0:
+            return "A rate cannot be negative."
+        clean.append(SubcontractDayRate(agreement=agreement,
+                                        job_category_id=cid,
+                                        rate_per_day=day,
+                                        ot_rate_per_hour=ot))
+    with transaction.atomic():
+        agreement.day_rates.all().delete()
+        SubcontractDayRate.objects.bulk_create(clean)
+    audit("document", agreement.document_id, "SCA_DAY_RATES_SET", actor=actor,
+          detail={"ref": agreement.document.ref, "categories": len(clean)})
+    return None
+
+
+def _certified_periods(agreement, exclude_id=None):
+    """Periods already certified on this agreement — a man-day is charged
+    once, so a new valuation may not reach back into one of them."""
+    from .models import SubcontractValuation
+    qs = SubcontractValuation.objects.filter(
+        agreement=agreement, document__is_void=False,
+        period_from__isnull=False).exclude(
+        document__status__in=("DRAFT", "RETURNED"))
+    if exclude_id:
+        qs = qs.exclude(pk=exclude_id)
+    return [(v.period_from, v.period_to, v.document.ref)
+            for v in qs.select_related("document")]
+
+
+def period_clash(agreement, start, end, exclude_id=None):
+    for a, b, ref in _certified_periods(agreement, exclude_id):
+        if start <= b and a <= end:
+            return (f"{a:%d %b} to {b:%d %b %Y} is already certified on "
+                    f"{ref}. A man-day is charged once.")
+    return None
+
+
+def read_worker_days(agreement, start, end):
+    """What the register says the gang worked, between two dates.
+
+    Only days actually worked are charged: PRESENT is a day, HALF_DAY is
+    half, and everything else — absent, sick, leave — is nothing. A
+    subcontractor's man is hired by the day, so a day he did not work is not
+    ours to pay for; that is a matter between him and his employer.
+    """
+    from .models import Attendance
+    rates = {r.job_category_id: r for r in agreement.day_rates.all()}
+    rows = {}
+    marks = Attendance.objects.filter(
+        employee__subcontractor_id=agreement.subcontractor_id,
+        employee__engagement_type="SUBCONTRACT",
+        day__gte=start, day__lte=end).select_related(
+        "employee__job_category")
+    for m in marks:
+        emp = m.employee
+        row = rows.setdefault(emp.id, {
+            "employee": emp, "job_category": emp.job_category,
+            "days": Decimal("0"), "ot_hours": Decimal("0")})
+        row["days"] += DAY_MARK_VALUE.get(m.remark, Decimal("0"))
+        row["ot_hours"] += m.sub_extra_hours or Decimal("0")
+    out = []
+    for row in rows.values():
+        rate = rates.get(row["job_category"].id if row["job_category"]
+                         else None)
+        row["rate_per_day"] = rate.rate_per_day if rate else Decimal("0")
+        row["ot_rate_per_hour"] = (rate.ot_rate_per_hour if rate
+                                   else Decimal("0"))
+        out.append(row)
+    return out
+
+
+def fill_worker_days(v, actor=None):
+    """(Re-)read the register into this valuation's lines.
+
+    Only ever onto a draft: attendance moves — a late edit is audited but it
+    still moves — and a certificate that quietly followed it would not be a
+    certificate. Refreshing is a deliberate act on a document nobody has
+    signed yet.
+    """
+    from .models import SubcontractWorkerDay
+    if v.document.status not in ("DRAFT", "RETURNED"):
+        return "Only a draft valuation reads the register again."
+    if not v.period_from or not v.period_to:
+        return "This valuation has no period to read."
+    rows = read_worker_days(v.agreement, v.period_from, v.period_to)
+    with transaction.atomic():
+        v.worker_days.all().delete()
+        SubcontractWorkerDay.objects.bulk_create([
+            SubcontractWorkerDay(
+                valuation=v, employee=r["employee"],
+                job_category=r["job_category"], days=r["days"],
+                ot_hours=r["ot_hours"], rate_per_day=r["rate_per_day"],
+                ot_rate_per_hour=r["ot_rate_per_hour"])
+            for r in rows])
+    if actor is not None:
+        audit("document", v.document_id, "SVC_DAYS_READ", actor=actor,
+              detail={"ref": v.document.ref, "workers": len(rows),
+                      "period": f"{v.period_from} to {v.period_to}"})
+    return None
+
+
+def daywork_period_value(v):
+    """What this period's labour is worth: the men, then the markup.
+
+    The markup is on the DAY RATES only — overtime is passed through at the
+    rate the worker is actually paid, so it is a reimbursement and not
+    something to take a fee on (owner 2026-09-10).
+    """
+    days_total = ot_total = Decimal("0")
+    for w in v.worker_days.all():
+        days_total += w.day_value
+        ot_total += w.ot_value
+    pct = v.markup_percent or Decimal("0")
+    markup = (days_total * pct / Decimal("100")).quantize(Decimal("0.01"))
+    return {"days_value": days_total, "ot_value": ot_total,
+            "markup_percent": pct, "markup": markup,
+            "period_gross": days_total + ot_total + markup}
+
+
+def unpriced_workers(v):
+    """Men on the valuation whose category carries no agreed rate."""
+    return [w for w in v.worker_days.select_related("employee",
+                                                    "job_category")
+            if not w.priced]
+
+
 def _svc_gross_cumulative(v):
-    """Σ (cumulative qty × scope rate) across a valuation's lines."""
+    """Certified-to-date, gross, whichever way the work is valued.
+
+    Measured work carries its own cumulative quantities, so the total is
+    simply Σ (cumulative qty × rate). Day work values a PERIOD, so the
+    cumulative is the chain: what was certified before, plus this period's
+    labour. Everything downstream — retention, advance recovery, deductions,
+    what has been paid, the payable and the cost posting — reads this one
+    figure and so needs no idea which basis produced it (owner 2026-09-10).
+    """
     if v is None:
         return Decimal("0")
+    if is_daywork(v.agreement):
+        return (_svc_gross_cumulative(v.previous)
+                + daywork_period_value(v)["period_gross"])
     total = Decimal("0")
     for it in v.items.select_related("scope_item"):
         total += (it.cumulative_qty or Decimal("0")) * \
@@ -594,6 +763,8 @@ def svc_valuation(v):
     """Full valuation breakdown for display + the amount now payable."""
     a = v.agreement
     prev = v.previous
+    if is_daywork(a):
+        return _daywork_valuation(v)
     prev_items = ({i.scope_item_id: (i.cumulative_qty or Decimal("0"))
                    for i in prev.items.all()} if prev else {})
     lines, gross_cum = [], Decimal("0")
@@ -613,6 +784,60 @@ def svc_valuation(v):
             "this_value": (cum_qty - prev_qty) * rate, "cumulative_value": cum_val,
             "over": bool(contract_qty and cum_qty > contract_qty),
         })
+    out = _certification_waterfall(v, gross_cum)
+    out.update({"basis": "MEASURED", "lines": lines,
+                "over_warning": any(ln["over"] for ln in lines)})
+    return out
+
+
+def _daywork_valuation(v):
+    """The same certificate, arrived at from the register instead of a scope.
+
+    One line per man — days, extra hours, the agreed rates — then the markup
+    on the day rates. That total is this period's work; the waterfall below it
+    is the one every valuation uses, which is the point: retention, the
+    advance, what has been paid and the GST behave identically whichever way
+    the work was measured.
+    """
+    period = daywork_period_value(v)
+    lines = [{
+        "id": w.id, "employee_id": w.employee_id,
+        "emp_no": w.employee.emp_no, "name": w.employee.full_name,
+        "category": (w.job_category.name if w.job_category_id else ""),
+        "days": w.days, "ot_hours": w.ot_hours,
+        "rate_per_day": w.rate_per_day,
+        "ot_rate_per_hour": w.ot_rate_per_hour,
+        "day_value": w.day_value, "ot_value": w.ot_value,
+        "amount": w.amount, "priced": w.priced,
+    } for w in v.worker_days.select_related("employee", "job_category")]
+    gross_cum = (_svc_gross_cumulative(v.previous)
+                 + period["period_gross"])
+    out = _certification_waterfall(v, gross_cum)
+    unpriced = [ln for ln in lines if not ln["priced"]]
+    out.update({
+        "basis": "DAYWORK", "lines": lines,
+        "period_from": v.period_from, "period_to": v.period_to,
+        "days_value": period["days_value"], "ot_value": period["ot_value"],
+        "markup_percent": period["markup_percent"],
+        "markup": period["markup"],
+        "period_gross": period["period_gross"],
+        "worker_count": len(lines),
+        "unpriced": [f'{ln["emp_no"]} {ln["name"]}' for ln in unpriced],
+        "over_warning": False,
+    })
+    return out
+
+
+def _certification_waterfall(v, gross_cum):
+    """Gross certified to date → what is payable now.
+
+    Written once and shared, because the difference between a measured
+    valuation and a day-work one ends at the gross figure. Retention, the
+    advance recovery, what has already been paid and the GST are contract
+    terms, not measurement methods, and two copies of them would drift.
+    """
+    a = v.agreement
+    prev = v.previous
     prev_gross = _svc_gross_cumulative(prev) if prev else Decimal("0")
     ret_pct = v.retention_percent or Decimal("0")
     retention = ret_pct / 100 * gross_cum
@@ -628,8 +853,8 @@ def svc_valuation(v):
     # capped at what was actually advanced (owner 2026-09-09).
     adv_paid = advance_paid(a)
     adv_rec = advance_recovered(a, gross_cum)
-    prev_adv_rec = (advance_recovered(a, _svc_gross_cumulative(prev))
-                    if prev else Decimal("0"))
+    prev_adv_rec = (advance_recovered(a, prev_gross) if prev
+                    else Decimal("0"))
     after_advance = net_cum - adv_rec
     now_due = after_advance - paid
     # GST is charged by a registered subcontractor on the work certified this
@@ -641,7 +866,6 @@ def svc_valuation(v):
            if now_due > 0 and gst_pct > 0 else Decimal("0"))
     return {
         "currency": a.currency, "contract_value": a.value,
-        "lines": lines,
         "gross_cumulative": gross_cum, "previous_gross": prev_gross,
         "this_gross": gross_cum - prev_gross,
         "retention_pct": ret_pct, "retention_held": retention,
@@ -658,14 +882,46 @@ def svc_valuation(v):
         "now_due": now_due,
         "gst_percent": gst_pct, "gst": gst,
         "total_payable": now_due + gst,
-        "over_warning": any(ln["over"] for ln in lines),
     }
 
 
-def create_svc(agreement, actor):
-    """Open a new valuation against an APPROVED agreement — one line per priced
-    scope item, seeded at the previously-certified cumulative, terms snapshotted
-    from the SCA. Only one valuation may be in flight per agreement."""
+def _period_dates(data):
+    """The period a day-work valuation covers.
+
+    Given a year and month it is that whole calendar month, which is how the
+    register is kept and how these are settled; explicit dates are accepted
+    for a part month (a gang that demobilised mid-month).
+    """
+    import calendar
+    from datetime import date as _date
+
+    if data.get("period_from") and data.get("period_to"):
+        try:
+            a = _date.fromisoformat(str(data["period_from"]))
+            b = _date.fromisoformat(str(data["period_to"]))
+            return a, b
+        except (TypeError, ValueError):
+            return None, None
+    try:
+        y, m = int(data["year"]), int(data["month"])
+    except (KeyError, TypeError, ValueError):
+        return None, None
+    if not 1 <= m <= 12:
+        return None, None
+    return _date(y, m, 1), _date(y, m, calendar.monthrange(y, m)[1])
+
+
+def create_svc(agreement, actor, data=None):
+    """Open a new valuation against an APPROVED agreement.
+
+    Measured work gets one line per priced scope item, seeded at the
+    previously-certified cumulative. Day work gets a PERIOD — a month, usually
+    — and its lines are read off the site attendance register: one man, his
+    days, his extra hours, at the rates the agreement agreed.
+
+    Terms are snapshotted from the SCA either way, so a certified valuation
+    never shifts. Only one valuation may be in flight per agreement.
+    """
     from datetime import date
 
     from .models import (Document, DocumentRevision, SubcontractValuation,
@@ -685,6 +941,21 @@ def create_svc(agreement, actor):
         document__is_void=False).order_by("-seq").first())
     prev_items = ({i.scope_item_id: i.cumulative_qty for i in prev.items.all()}
                   if prev else {})
+    data = data or {}
+    start = end = None
+    if is_daywork(agreement):
+        start, end = _period_dates(data)
+        if start is None:
+            return None, ("Give the period this valuation covers — day work "
+                          "is valued a month at a time.")
+        if end < start:
+            return None, "The period ends before it starts."
+        clash = period_clash(agreement, start, end)
+        if clash:
+            return None, clash
+        if not agreement.day_rates.exists():
+            return None, ("Set the agreed day rates on the agreement before "
+                          "valuing labour against it.")
     site = doc0.site
     with transaction.atomic():
         doc = Document.objects.create(
@@ -698,11 +969,16 @@ def create_svc(agreement, actor):
         v = SubcontractValuation.objects.create(
             document=doc, agreement=agreement, seq=(prev.seq + 1) if prev else 1,
             previous=prev, advance_percent=agreement.advance_percent or 0,
-            retention_percent=agreement.retention_percent or 0, created_by=actor)
-        for si in agreement.items.filter(is_heading=False):
-            SubcontractValuationItem.objects.create(
-                valuation=v, scope_item=si,
-                cumulative_qty=prev_items.get(si.id, Decimal("0")))
+            retention_percent=agreement.retention_percent or 0,
+            markup_percent=agreement.markup_percent or 0,
+            period_from=start, period_to=end, created_by=actor)
+        if is_daywork(agreement):
+            fill_worker_days(v, actor)
+        else:
+            for si in agreement.items.filter(is_heading=False):
+                SubcontractValuationItem.objects.create(
+                    valuation=v, scope_item=si,
+                    cumulative_qty=prev_items.get(si.id, Decimal("0")))
     audit("document", doc.id, "DOC_CREATED", actor=actor, to_state="DRAFT",
           detail={"ref": doc.ref, "sca": agreement.document.ref})
     return doc, None
@@ -715,6 +991,9 @@ def value_svc(v, data, actor):
         return None, "Only a draft valuation can be edited."
     if actor.role not in SITE_MANAGE_ROLES:
         return None, "Only the site team can value this."
+    if is_daywork(v.agreement) and (data.get("rows") or []):
+        return None, ("Day work is not valued by hand — it comes off the "
+                      "attendance register. Refresh it instead.")
     prev_items = ({i.scope_item_id: (i.cumulative_qty or Decimal("0"))
                    for i in v.previous.items.all()} if v.previous_id else {})
     by_id = {it.id: it for it in v.items.select_related("scope_item")}
@@ -870,8 +1149,24 @@ def svc_action(v, action, actor, note=""):
         return denied
     if doc.status != frm or to not in Document.TRANSITIONS["SVC"].get(frm, set()):
         return f"Cannot {action} a {doc.status.lower()} valuation."
-    if action == "submit" and not v.items.exists():
-        return "There's nothing to value on this certificate."
+    if action == "submit":
+        if is_daywork(v.agreement):
+            if not v.worker_days.exists():
+                return ("Nobody was marked on the register for this period, "
+                        "so there is nothing to value.")
+            # A man valued at nothing because his trade has no agreed rate is
+            # how a gang goes unpaid for a month. Say so before it is signed,
+            # not after (owner 2026-09-10).
+            missing = unpriced_workers(v)
+            if missing:
+                who = ", ".join(f"{w.employee.emp_no} "
+                                f"({w.job_category.name if w.job_category_id else 'no category'})"
+                                for w in missing[:4])
+                more = f" and {len(missing) - 4} more" if len(missing) > 4 else ""
+                return (f"No agreed day rate for {who}{more}. Set the rate on "
+                        f"the agreement, or take them off the register.")
+        elif not v.items.exists():
+            return "There's nothing to value on this certificate."
     if action == "authorise":
         _svc_authorise(v, actor)
         v.authorised_at = timezone.now()
@@ -889,6 +1184,8 @@ def svc_payload(v, request=None):
         "agreement_title": a.title,
         "subcontractor": a.subcontractor.name,
         "work_done_upto": v.work_done_upto, "note": v.note,
+        "basis": a.basis,
+        "period_from": v.period_from, "period_to": v.period_to,
         "created_by": v.created_by.full_name if v.created_by_id else "",
         "created_at": v.created_at,
         "valuation": _jsonify(svc_valuation(v)),
@@ -991,10 +1288,28 @@ def svc_pdf_context(doc):
         "project_title": (a.project or doc.project).title
                          if (a.project or doc.project) else "",
         "currency": val["currency"], "contract_value": q2(val["contract_value"]),
-        "lines": [{**ln, "rate": q2(ln["rate"]),
-                   "this_value": q2(ln["this_value"]),
-                   "cumulative_value": q2(ln["cumulative_value"])}
-                  for ln in val["lines"]],
+        # The body of the certificate is the one thing the two bases do not
+        # share: measured work lists items and quantities, day work lists men
+        # and days. Everything under "Certification" is identical.
+        "basis": val["basis"],
+        "lines": ([{**ln, "rate_per_day": q2(ln["rate_per_day"]),
+                    "ot_rate_per_hour": q2(ln["ot_rate_per_hour"]),
+                    "day_value": q2(ln["day_value"]),
+                    "ot_value": q2(ln["ot_value"]),
+                    "amount": q2(ln["amount"])}
+                   for ln in val["lines"]]
+                  if val["basis"] == "DAYWORK" else
+                  [{**ln, "rate": q2(ln["rate"]),
+                    "this_value": q2(ln["this_value"]),
+                    "cumulative_value": q2(ln["cumulative_value"])}
+                   for ln in val["lines"]]),
+        "period_from": val.get("period_from"),
+        "period_to": val.get("period_to"),
+        "days_value": q2(val.get("days_value")),
+        "ot_value": q2(val.get("ot_value")),
+        "markup_percent": val.get("markup_percent") or Decimal("0"),
+        "markup": q2(val.get("markup")),
+        "period_gross": q2(val.get("period_gross")),
         "gross_cumulative": q2(val["gross_cumulative"]),
         "retention_pct": _pct(val["retention_pct"]),
         "retention_held": q2(val["retention_held"]),
@@ -1023,6 +1338,10 @@ def update_sca(doc, data, actor):
     agreement.save()
     if "rows" in data:
         _set_scope(agreement, data.get("rows") or [])
+    if "day_rates" in data:
+        err = set_day_rates(agreement, data.get("day_rates") or [], actor)
+        if err:
+            return None, err
     audit("document", doc.id, "SCA_EDITED", actor=actor,
           detail={"ref": doc.ref})
     return doc, None

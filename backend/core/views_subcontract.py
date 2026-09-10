@@ -272,7 +272,8 @@ def agreement_valuations(request, ref):
         return Response({"detail": "Not found."}, status=404)
     agreement = sca.subcontract_agreement
     if request.method == "POST":
-        doc, err = subcontract.create_svc(agreement, request.user)
+        doc, err = subcontract.create_svc(agreement, request.user,
+                                          request.data)
         if err:
             return Response({"detail": err}, status=400)
         return Response(subcontract.svc_payload(doc.subcontract_valuation),
@@ -284,6 +285,31 @@ def agreement_valuations(request, ref):
          "status": v.document.status,
          "now_due": str(subcontract.svc_valuation(v)["now_due"])}
         for v in vals])
+
+
+@api_view(["POST"])
+def valuation_refresh(request, ref):
+    """Read the attendance register into a draft day-work valuation again.
+
+    Deliberate, not automatic: a certificate that silently followed a late
+    edit to the register would not be a certificate. It only ever runs on a
+    draft, so nothing anybody signed can move under them.
+    """
+    doc, err = _get_svc(request, ref)
+    if err:
+        return err
+    v = doc.subcontract_valuation
+    if request.user.role not in subcontract.SITE_MANAGE_ROLES:
+        return Response({"detail": "Only the site team values this."},
+                        status=403)
+    if not subcontract.is_daywork(v.agreement):
+        return Response({"detail": "This agreement is measured work — its "
+                                   "quantities are entered, not read."},
+                        status=400)
+    msg = subcontract.fill_worker_days(v, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(subcontract.svc_payload(v))
 
 
 @api_view(["GET", "PATCH"])

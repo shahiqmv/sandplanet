@@ -61,6 +61,48 @@
       <td class="k">Certificate date</td><td>{{ issue_date|date:"d M Y" }}</td></tr>
 </table>
 
+{% if basis == "DAYWORK" %}
+<h2>Labour supplied ({{ currency }}){% if period_from %} ·
+  {{ period_from|date:"d M Y" }} to {{ period_to|date:"d M Y" }}{% endif %}</h2>
+<table class="dv">
+  <thead><tr>
+    <th class="l">Worker</th><th class="l">Category</th>
+    <th>Days</th><th>Rate/day</th><th>Day value</th>
+    <th>Extra hrs</th><th>Rate/hr</th><th>Extra value</th><th>Amount</th>
+  </tr></thead>
+  <tbody>
+    {% for ln in lines %}
+    <tr{% if not ln.priced %} class="over"{% endif %}>
+      <td>{{ ln.emp_no }} · {{ ln.name }}</td>
+      <td>{{ ln.category|default:"—" }}</td>
+      <td class="num">{{ ln.days|floatformat:"-1" }}</td>
+      <td class="num">{{ ln.rate_per_day }}</td>
+      <td class="num">{{ ln.day_value }}</td>
+      <td class="num">{{ ln.ot_hours|floatformat:"-2" }}</td>
+      <td class="num">{{ ln.ot_rate_per_hour }}</td>
+      <td class="num">{{ ln.ot_value }}</td>
+      <td class="num">{{ ln.amount }}</td>
+    </tr>
+    {% endfor %}
+    <tr><td colspan="8">Day rates</td>
+        <td class="num">{{ days_value }}</td></tr>
+    <tr><td colspan="8">Extra hours, at cost</td>
+        <td class="num">{{ ot_value }}</td></tr>
+    {% if markup %}
+    <tr><td colspan="8">Markup at {{ markup_percent|floatformat:"-2" }}% on
+        the day rates</td>
+        <td class="num">{{ markup }}</td></tr>
+    {% endif %}
+    <tr class="grand"><td colspan="8">Value of labour this period</td>
+        <td class="num">{{ period_gross }}</td></tr>
+    <tr class="grand"><td colspan="8">Gross value of work done to date</td>
+        <td class="num">{{ gross_cumulative }}</td></tr>
+  </tbody>
+</table>
+<div class="overnote">Valued from the site attendance register: a full day
+worked counts one, a half day counts a half, and a day not worked counts
+nothing.</div>
+{% else %}
 <h2>Measured works ({{ currency }})</h2>
 <table class="dv">
   <thead><tr>
@@ -91,6 +133,7 @@
 {% if over_warning %}
 <div class="overnote">Shaded lines exceed the agreement quantity — certified
 as measured, subject to the agreement's variation provisions.</div>
+{% endif %}
 {% endif %}
 
 <h2>Certification ({{ currency }})</h2>

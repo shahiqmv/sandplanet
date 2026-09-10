@@ -2260,6 +2260,20 @@ class SubcontractAgreement(models.Model):
     end_date = models.DateField(null=True, blank=True)       # completion
     # Free-text scope narrative for Annexure A (priced lines below = Annexure B).
     scope_of_work = models.TextField(blank=True)
+    # How the work is valued. MEASURED prices a scope of work by quantity —
+    # the original and still the default. DAYWORK hires labour by the man-day
+    # at agreed category rates and charges a markup, valued off the site
+    # attendance register at month end (owner 2026-09-10). One basis per
+    # agreement: a gang doing both signs two, which is how it is contracted
+    # anyway and keeps each certificate reading as one thing.
+    basis = models.CharField(max_length=10, default="MEASURED",
+                             choices=[("MEASURED", "Measured work"),
+                                      ("DAYWORK", "Day work (labour supply)")])
+    # The subcontractor's fee on the labour they supply. Day rates only —
+    # overtime is passed through at the rate the worker is actually paid
+    # (owner 2026-09-10).
+    markup_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                         default=Decimal("0"))
     # Commercial terms for the agreement document + SVC valuations.
     advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                           default=0)   # of price, on signing
@@ -2318,6 +2332,39 @@ class SubcontractScopeItem(models.Model):
         return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
 
 
+class SubcontractDayRate(models.Model):
+    """What one category costs per day under a day-work agreement.
+
+    On the AGREEMENT, not global: every subcontractor negotiates their own,
+    and last year's rate must not rewrite a certificate signed this year. The
+    overtime rate sits here too — it is the standard hourly rate the company
+    pays for that trade, agreed with the subcontractor and recorded so the
+    certificate can be checked against the contract rather than against a
+    table that has since moved.
+    """
+
+    agreement = models.ForeignKey(SubcontractAgreement,
+                                  on_delete=models.CASCADE,
+                                  related_name="day_rates")
+    job_category = models.ForeignKey("ManpowerCategory",
+                                     on_delete=models.PROTECT,
+                                     related_name="+")
+    rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
+                                       default=Decimal("0"))
+    ot_rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2,
+                                           default=Decimal("0"))
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["agreement", "job_category"],
+                                    name="uniq_sca_day_rate")
+        ]
+        ordering = ["job_category__sort_order", "id"]
+
+    def __str__(self):
+        return f"{self.job_category} @ {self.rate_per_day}/day"
+
+
 class SubcontractValuation(models.Model):
     """SVC — an interim valuation of a subcontractor's work under an APPROVED
     agreement. Mirrors a client progress claim but pays the subcontractor:
@@ -2335,11 +2382,18 @@ class SubcontractValuation(models.Model):
     previous = models.ForeignKey("self", on_delete=models.SET_NULL, null=True,
                                  blank=True, related_name="+")
     work_done_upto = models.DateField(null=True, blank=True)
+    # Day work values a PERIOD, not a quantity: the month whose attendance it
+    # certifies. Periods may not overlap an already-certified valuation on the
+    # same agreement, so a man-day is charged once (owner 2026-09-10).
+    period_from = models.DateField(null=True, blank=True)
+    period_to = models.DateField(null=True, blank=True)
     # Terms snapshotted from the SCA at creation so a certified SVC never shifts.
     advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                           default=0)
     retention_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                             default=0)
+    markup_percent = models.DecimalField(max_digits=5, decimal_places=2,
+                                         default=0)
     # Cumulative deductions to date and a one-off +/- adjustment this period.
     deductions = models.DecimalField(max_digits=16, decimal_places=3, default=0)
     adjustment = models.DecimalField(max_digits=16, decimal_places=3, default=0)
@@ -2352,6 +2406,69 @@ class SubcontractValuation(models.Model):
 
     def __str__(self):
         return f"SVC {self.document.ref}"
+
+
+class SubcontractWorkerDay(models.Model):
+    """One man on a day-work valuation: what he worked, and at what rate.
+
+    Read off the site attendance register when the valuation is generated and
+    then STORED — attendance is the evidence, not the ledger. A late edit to a
+    July mark must not quietly rewrite a certificate signed in August; if the
+    register really has changed, HR refreshes the valuation, which knocks it
+    back to draft so no sign-off outlives its numbers. The rates are stored
+    for the same reason: renegotiating a day rate must not rewrite what was
+    already certified (owner 2026-09-10).
+
+    Money is derived from these inputs, never stored, so the screen, the
+    certificate and the payable can never disagree.
+    """
+
+    valuation = models.ForeignKey(SubcontractValuation,
+                                  on_delete=models.CASCADE,
+                                  related_name="worker_days")
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="+")
+    job_category = models.ForeignKey("ManpowerCategory",
+                                     on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    days = models.DecimalField(max_digits=6, decimal_places=1,
+                               default=Decimal("0"))   # present 1, half 0.5
+    ot_hours = models.DecimalField(max_digits=7, decimal_places=2,
+                                   default=Decimal("0"))
+    rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
+                                       default=Decimal("0"))
+    ot_rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2,
+                                           default=Decimal("0"))
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["valuation", "employee"],
+                                    name="uniq_svc_worker_day")
+        ]
+        ordering = ["job_category__sort_order", "employee__emp_no"]
+
+    @property
+    def day_value(self):
+        return (self.days or Decimal("0")) * (self.rate_per_day
+                                              or Decimal("0"))
+
+    @property
+    def ot_value(self):
+        """Overtime is passed through at cost — the markup is on the day
+        rates only (owner 2026-09-10)."""
+        return (self.ot_hours or Decimal("0")) * (self.ot_rate_per_hour
+                                                  or Decimal("0"))
+
+    @property
+    def amount(self):
+        return self.day_value + self.ot_value
+
+    @property
+    def priced(self):
+        """A man whose category has no agreed rate cannot be valued. He is
+        shown, at zero, and blocks certification — valuing him silently at
+        nothing is how a gang goes unpaid for a month."""
+        return bool(self.job_category_id and self.rate_per_day)
 
 
 class SubcontractValuationItem(models.Model):

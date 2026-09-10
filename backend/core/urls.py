@@ -699,6 +699,8 @@ urlpatterns = [
          subcontract_api.subcontract_agreement_pdf, name="sca-pdf"),
     path("subcontract-agreements/<str:ref>/valuations",
          subcontract_api.agreement_valuations, name="svc-list-create"),
+    path("subcontract-valuations/<str:ref>/refresh",
+         subcontract_api.valuation_refresh, name="svc-refresh"),
     path("subcontract-valuations/<str:ref>",
          subcontract_api.valuation_detail, name="svc-detail"),
     path("subcontract-valuations/<str:ref>/action",

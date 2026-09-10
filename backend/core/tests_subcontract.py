@@ -1325,3 +1325,243 @@ class TakenOnDirectlyTests(TestCase):
         self.assertNotIn("9000", json.dumps(entry.detail))
         self.assertEqual(entry.detail["from_subcontractor"],
                          "Lanka Subcon Team")
+
+
+class DayWorkValuationTests(TestCase):
+    """Labour hired by the man-day, valued off the attendance register.
+
+    The only basis was a priced scope of work. A gang supplying men by the day
+    had nowhere to go: 2 carpenters for 30 days at 500, plus the extra hours
+    they worked, plus the agreed markup (owner 2026-09-10).
+    """
+
+    def setUp(self):
+        from .models import ManpowerCategory
+        self.site = Site.objects.create(code="DWK", name="Day Work Isle",
+                                        status=Site.Status.ACTIVE)
+        self.carp = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Carpenter", sort_order=1)
+        self.mason = ManpowerCategory.objects.create(
+            list_type="DPR", grp="LABOUR", name="Mason", sort_order=2)
+        self.sa = make_user("dwk_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.pm = make_user("dwk_pm", User.Role.PM, site=self.site)
+        self.sub = Subcontractor.objects.create(
+            site=self.site, name="Day Gang",
+            status=Subcontractor.Status.APPROVED)
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def _agreement(self, markup="10", rates=True, approve=True):
+        from core import subcontract
+        doc, err = subcontract.create_sca(self.sub, {
+            "title": "Labour supply", "basis": "DAYWORK",
+            "markup_percent": markup, "advance_percent": "0",
+            "retention_percent": "0"}, self.sa)
+        assert err is None, err
+        a = doc.subcontract_agreement
+        if rates:
+            err = subcontract.set_day_rates(a, [
+                {"job_category_id": self.carp.id, "rate_per_day": "500",
+                 "ot_rate_per_hour": "25"}], self.sa)
+            assert err is None, err
+        if approve:
+            doc.status = "APPROVED"
+            doc.save(update_fields=["status"])
+        a.refresh_from_db()
+        return a
+
+    def _worker(self, no, cat):
+        from .models import EmployeeSiteAllocation
+        e = Employee.objects.create(
+            emp_no=no, full_name=f"Worker {no}", job_category=cat,
+            engagement_type=Employee.Engagement.SUBCONTRACT,
+            subcontractor=self.sub, is_active=True)
+        EmployeeSiteAllocation.objects.create(employee=e, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        return e
+
+    def _mark(self, emp, days, remark="PRESENT", extra=0, start=1):
+        from .models import Attendance
+        for i in range(days):
+            Attendance.objects.create(
+                employee=emp, site=self.site, day=date(2026, 6, start + i),
+                remark=remark,
+                sub_extra_hours=Decimal(str(extra)) if i == 0 else 0)
+
+    def _value(self, a, year=2026, month=6):
+        from core import subcontract
+        doc, err = subcontract.create_svc(a, self.sa,
+                                          {"year": year, "month": month})
+        assert err is None, err
+        v = doc.subcontract_valuation
+        return v, subcontract.svc_valuation(v)
+
+    # ---- the arithmetic the owner described ----------------------------
+
+    def test_two_carpenters_thirty_days_and_ten_extra_hours(self):
+        """60 man-days x 500, plus 10 hours x 25, plus 10% on the day rates
+        only — overtime is passed through at cost."""
+        a = self._agreement(markup="10")
+        for n in ("EMP-9001", "EMP-9002"):
+            self._mark(self._worker(n, self.carp), 30, extra=5)
+        _v, val = self._value(a)
+        self.assertEqual(val["basis"], "DAYWORK")
+        self.assertEqual(val["worker_count"], 2)
+        self.assertEqual(val["days_value"], Decimal("30000"))   # 60 x 500
+        self.assertEqual(val["ot_value"], Decimal("250"))       # 10 x 25
+        self.assertEqual(val["markup"], Decimal("3000.00"))     # 10% of 30,000
+        self.assertEqual(val["period_gross"], Decimal("33250.00"))
+        self.assertEqual(val["this_gross"], Decimal("33250.00"))
+
+    def test_a_half_day_is_half_a_day_and_an_absence_is_nothing(self):
+        """A subcontractor's man is hired by the day; a day he did not work
+        is not ours to pay for."""
+        a = self._agreement(markup="0")
+        w = self._worker("EMP-9003", self.carp)
+        self._mark(w, 2, start=1)                          # 2 present
+        self._mark(w, 2, remark="HALF_DAY", start=3)       # 1
+        self._mark(w, 5, remark="ABSENT", start=5)         # 0
+        _v, val = self._value(a)
+        self.assertEqual(val["lines"][0]["days"], Decimal("3.0"))
+        self.assertEqual(val["days_value"], Decimal("1500.00"))
+
+    # ---- the accounting guards -----------------------------------------
+
+    def test_a_period_cannot_be_certified_twice(self):
+        """A man-day is charged once."""
+        from core import subcontract
+        a = self._agreement()
+        self._mark(self._worker("EMP-9004", self.carp), 10)
+        v, _ = self._value(a)
+        v.document.status = "AUTHORISED"
+        v.document.save(update_fields=["status"])
+        doc, err = subcontract.create_svc(a, self.sa,
+                                          {"year": 2026, "month": 6})
+        self.assertIsNone(doc)
+        self.assertIn("already certified", err)
+
+    def test_a_man_with_no_agreed_rate_blocks_the_certificate(self):
+        """Valuing him silently at nothing is how a gang goes unpaid for a
+        month."""
+        from core import subcontract
+        a = self._agreement()
+        self._mark(self._worker("EMP-9005", self.carp), 10)
+        self._mark(self._worker("EMP-9006", self.mason), 10)   # no rate
+        v, val = self._value(a)
+        self.assertEqual(len(val["unpriced"]), 1)
+        err = subcontract.svc_action(v, "submit", self.sa)
+        self.assertIn("No agreed day rate", err)
+
+    def test_nothing_on_the_register_is_nothing_to_value(self):
+        from core import subcontract
+        a = self._agreement()
+        v, _ = self._value(a)
+        self.assertIn("Nobody was marked",
+                      subcontract.svc_action(v, "submit", self.sa))
+
+    def test_the_rates_are_snapshotted_onto_the_lines(self):
+        """Renegotiating a day rate must not rewrite what was certified."""
+        from core import subcontract
+        a = self._agreement()
+        self._mark(self._worker("EMP-9007", self.carp), 10)
+        v, val = self._value(a)
+        self.assertEqual(val["days_value"], Decimal("5000"))
+        a.document.status = "DRAFT"
+        a.document.save(update_fields=["status"])
+        subcontract.set_day_rates(a, [
+            {"job_category_id": self.carp.id, "rate_per_day": "900",
+             "ot_rate_per_hour": "25"}], self.sa)
+        self.assertEqual(subcontract.svc_valuation(v)["days_value"],
+                         Decimal("5000"))          # unmoved
+
+    def test_a_certified_valuation_does_not_follow_a_late_attendance_edit(self):
+        """Attendance is the evidence, not the ledger."""
+        from core import subcontract
+        a = self._agreement()
+        w = self._worker("EMP-9008", self.carp)
+        self._mark(w, 10)
+        v, val = self._value(a)
+        self.assertEqual(val["days_value"], Decimal("5000"))
+        v.document.status = "SUBMITTED"
+        v.document.save(update_fields=["status"])
+        self._mark(w, 5, start=11)                 # the register moves
+        self.assertEqual(subcontract.svc_valuation(v)["days_value"],
+                         Decimal("5000"))
+        self.assertIn("Only a draft", subcontract.fill_worker_days(v, self.sa))
+
+    def test_a_draft_can_be_refreshed_from_the_register(self):
+        from core import subcontract
+        a = self._agreement()
+        w = self._worker("EMP-9009", self.carp)
+        self._mark(w, 10)
+        v, _ = self._value(a)
+        self._mark(w, 5, start=11)
+        self.assertIsNone(subcontract.fill_worker_days(v, self.sa))
+        self.assertEqual(subcontract.svc_valuation(v)["days_value"],
+                         Decimal("7500"))          # 15 days
+
+    def test_day_work_is_not_valued_by_hand(self):
+        from core import subcontract
+        a = self._agreement()
+        self._mark(self._worker("EMP-9010", self.carp), 5)
+        v, _ = self._value(a)
+        _, err = subcontract.value_svc(v, {"rows": [{"id": 1}]}, self.sa)
+        self.assertIn("attendance register", err)
+
+    def test_it_needs_a_period_and_agreed_rates(self):
+        from core import subcontract
+        a = self._agreement()
+        doc, err = subcontract.create_svc(a, self.sa, {})
+        self.assertIn("period", err)
+        bare = self._agreement(rates=False)
+        doc, err = subcontract.create_svc(bare, self.sa,
+                                          {"year": 2026, "month": 6})
+        self.assertIn("agreed day rates", err)
+
+    def test_a_second_month_carries_the_first_forward(self):
+        """Day work values a period; the certificate is still cumulative, so
+        retention, the advance and what has been paid all behave as they do
+        on measured work."""
+        a = self._agreement(markup="0")
+        w = self._worker("EMP-9011", self.carp)
+        self._mark(w, 10)                                   # June: 5,000
+        v1, val1 = self._value(a)
+        self.assertEqual(val1["gross_cumulative"], Decimal("5000"))
+        v1.document.status = "AUTHORISED"
+        v1.document.save(update_fields=["status"])
+        from .models import Attendance
+        for i in range(4):                                  # July: 2,000
+            Attendance.objects.create(employee=w, site=self.site,
+                                      day=date(2026, 7, 1 + i),
+                                      remark="PRESENT")
+        _v2, val2 = self._value(a, month=7)
+        self.assertEqual(val2["this_gross"], Decimal("2000"))
+        self.assertEqual(val2["gross_cumulative"], Decimal("7000"))
+        self.assertEqual(val2["previous_gross"], Decimal("5000"))
+
+    def test_the_certificate_prints_the_men_not_a_bill_of_quantities(self):
+        from django.template.loader import render_to_string
+        from core import subcontract
+        a = self._agreement(markup="10")
+        self._mark(self._worker("EMP-9012", self.carp), 30, extra=10)
+        v, _ = self._value(a)
+        ctx = subcontract.svc_pdf_context(v.document)
+        self.assertEqual(ctx["basis"], "DAYWORK")
+        html = render_to_string("pdf/svc_certificate.html", ctx)
+        self.assertIn("Labour supplied", html)
+        self.assertNotIn("Measured works", html)
+        self.assertIn("EMP-9012", html)
+        self.assertIn("Markup at 10", html)
+        self.assertIn("16,750.00", html)      # 15,000 + 250 + 1,500 markup
+
+    def test_measured_agreements_are_untouched(self):
+        """The default basis still prices a scope by quantity."""
+        from core import subcontract
+        doc, err = subcontract.create_sca(self.sub, {
+            "title": "Measured", "rows": [
+                {"description": "Slab", "unit": "m2", "qty": "10",
+                 "rate": "100"}]}, self.sa)
+        self.assertIsNone(err)
+        a = doc.subcontract_agreement
+        self.assertEqual(a.basis, "MEASURED")
+        self.assertFalse(subcontract.is_daywork(a))
