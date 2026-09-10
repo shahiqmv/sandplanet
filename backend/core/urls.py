@@ -254,6 +254,8 @@ urlpatterns = [
          name="finance-dashboard"),
     path("payment-vouchers", vouchers.payment_vouchers,
          name="payment-vouchers"),
+    path("payment-vouchers/<str:ref>/transfers.xlsx",
+         vouchers.voucher_transfer_schedule, name="voucher-transfers"),
     path("payment-vouchers/<str:ref>/pdf", vouchers.payment_voucher_pdf,
          name="payment-voucher-pdf"),
     path("payment-vouchers/<str:ref>", vouchers.payment_voucher_detail,

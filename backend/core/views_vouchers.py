@@ -86,15 +86,23 @@ def _line_info(line):
                 "paid": m.status == "PAID"}
     if line.source_payable_id:
         p = line.source_payable
+        pay = p.payroll_line if p.payroll_line_id else None
+        if pay is not None:
+            purpose = (f"Salary {pay.run.year}-{pay.run.month:02d} · "
+                       f"{pay.employee.emp_no}")
+        else:
+            purpose = (f"Credit payable · terms {p.terms or '—'} · due "
+                       f"{p.due_date or '—'}")
         return {"line_id": line.id, "ref": p.document.ref,
                 "doc_type": "PAYABLE",
                 "site_code": p.site.code if p.site_id else "HO",
                 "amount": line.amount, "currency": line.currency,
                 "status": line.status, "query_note": line.query_note,
                 "source_status": p.status, "payable_id": p.id,
-                "payee": p.vendor, "cost_head": "Materials",
-                "purpose": f"Credit payable · terms {p.terms or '—'} · due "
-                           f"{p.due_date or '—'}",
+                "is_salary": pay is not None,
+                "payee": p.vendor,
+                "cost_head": "Salary" if pay is not None else "Materials",
+                "purpose": purpose,
                 "payment_ref": p.settled_ref,
                 "paid": p.status == "SETTLED"}
     if line.source_document_id is None:
@@ -147,12 +155,16 @@ def _voucher_info(pv):
         "source_document__site",
         "source_milestone__order__document",
         "source_milestone__order__supplier",
-        "source_payable__document", "source_payable__site").order_by("id")]
+        "source_payable__document", "source_payable__site",
+        "source_payable__payroll_line__employee",
+        "source_payable__payroll_line__run").order_by("id")]
     approved = [ln for ln in lines if ln["status"] == "APPROVED"]
     currency = lines[0]["currency"] if lines else "MVR"
     ba = pv.debit_account
     return {
         "ref": pv.ref, "status": "VOID" if pv.is_void else pv.status,
+        # a salary batch has a bank list to download, a supplier voucher doesn't
+        "has_salaries": any(ln.get("is_salary") for ln in lines),
         "is_void": pv.is_void, "void_reason": pv.void_reason,
         "debit_account": ({"id": ba.id, "label": ba.label,
                            "bank_name": ba.bank_name, "account_no": ba.account_no,
@@ -202,16 +214,76 @@ def awaiting_voucher(request):
     # service still accepts milestone_ids — that is what the register posts.
     today = date.today()
     for p in vouchers.awaiting_payables():
-        out.append({
-            "kind": "PAYABLE", "payable_id": p.id,
-            "ref": p.document.ref, "doc_type": "PAYABLE",
-            "site_code": p.site.code if p.site_id else "HO",
-            "doc_date": p.due_date, "due_date": p.due_date,
-            "overdue": bool(p.due_date and p.due_date < today),
-            "amount": p.amount, "currency": "MVR",
-            "payee": p.vendor, "cost_head": "Credit payable",
-            "purpose": f"Terms {p.terms or '—'}"})
+        out.append(_payable_row(p, today))
     return Response(out)
+
+
+def _payable_row(p, today):
+    """One outstanding payable as Finance sees it.
+
+    A salary payable names a person, not a vendor, and cannot be transferred
+    without an account on file — so the row carries the account it will go to
+    and says plainly when there isn't one (owner 2026-09-10). The number is
+    shown by its last four digits; the full one belongs on the transfer
+    schedule, not on a list screen.
+    """
+    line = p.payroll_line if p.payroll_line_id else None
+    row = {
+        "kind": "PAYABLE", "payable_id": p.id,
+        "ref": p.document.ref, "doc_type": "PAYABLE",
+        "site_code": p.site.code if p.site_id else "HO",
+        "doc_date": p.due_date, "due_date": p.due_date,
+        "overdue": bool(p.due_date and p.due_date < today),
+        "amount": p.amount, "currency": vouchers.payable_currency(p),
+        "payee": p.vendor, "group": "SALARY" if line else "CREDIT",
+        "cost_head": "Salary" if line else "Credit payable",
+        "purpose": f"Terms {p.terms or '—'}"}
+    if line is None:
+        return row
+    emp = line.employee
+    acct = (emp.bank_account_no or "").strip()
+    row.update({
+        "emp_no": emp.emp_no,
+        "period": f"{line.run.year}-{line.run.month:02d}",
+        "bank": emp.bank_name or "",
+        "account_tail": acct[-4:] if len(acct) >= 4 else acct,
+        "payable_now": bool(acct),
+        "cost_head": "Salary",
+        "purpose": f"Salary {line.run.year}-{line.run.month:02d}"})
+    return row
+
+
+@api_view(["GET"])
+def voucher_transfer_schedule(request, ref):
+    """The bank upload list for a voucher's salaries.
+
+    Finance authorises the batch on the voucher and then has to actually make
+    the transfers; this is that batch in the shape a bank file wants. It
+    carries full account numbers, so it is Finance-only and never a screen.
+    """
+    from django.http import HttpResponse
+
+    from . import payroll
+    if request.user.role not in ("FINANCE", "ADMIN"):
+        return Response({"detail": "Finance only."}, status=403)
+    pv = Document.objects.filter(doc_type="PV", ref=ref,
+                                 is_void=False).first()
+    if pv is None:
+        return Response({"detail": "No such voucher."}, status=404)
+    payables = [ln.source_payable for ln in pv.voucher_lines.select_related(
+        "source_payable__payroll_line__employee",
+        "source_payable__payroll_line__run").order_by("id")
+        if ln.source_payable_id and ln.source_payable.payroll_line_id]
+    if not payables:
+        return Response({"detail": "This voucher has no salaries on it."},
+                        status=400)
+    wb = payroll.transfer_schedule(payables)
+    resp = HttpResponse(content_type="application/vnd.openxmlformats-"
+                        "officedocument.spreadsheetml.sheet")
+    resp["Content-Disposition"] = (
+        f'attachment; filename="transfers-{ref}.xlsx"')
+    wb.save(resp)
+    return resp
 
 
 @api_view(["GET"])
@@ -233,16 +305,9 @@ def payables(request):
         if q and q not in (p.vendor or "").lower() \
                 and q not in ref.lower() and q not in p.document.ref.lower():
             continue
-        rows.append({
-            "kind": "PAYABLE", "payable_id": p.id,
-            "ref": ref, "po_ref": po_ref, "pr_ref": p.document.ref,
-            "doc_type": "PAYABLE",
-            "site_code": p.site.code if p.site_id else "HO",
-            "doc_date": p.due_date, "due_date": p.due_date,
-            "overdue": bool(p.due_date and p.due_date < today),
-            "amount": p.amount, "currency": "MVR",
-            "payee": p.vendor, "cost_head": "Credit payable",
-            "purpose": f"Terms {p.terms or '—'}"})
+        row = _payable_row(p, today)
+        row.update({"ref": ref, "po_ref": po_ref, "pr_ref": p.document.ref})
+        rows.append(row)
     total = sum((Decimal(str(r["amount"] or 0)) for r in rows), Decimal("0"))
     overdue = sum(1 for r in rows if r["overdue"])
     return Response({"payables": rows, "total": total,

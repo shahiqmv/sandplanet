@@ -70,7 +70,12 @@ def payable_amount(p):
 
 
 def payable_currency(p):
-    return "MVR"        # credit payables settle in MVR
+    """Credit payables settle in rufiyaa; a salary payable settles in whatever
+    the run pays in, which for the combined staff run is USD. Hard-coding MVR
+    put a USD salary on a rufiyaa voucher."""
+    if p.payroll_line_id:
+        return p.payroll_line.run.currency
+    return "MVR"
 
 
 def _on_live_payable():
@@ -98,6 +103,10 @@ def settle_payable(payable, actor, ref):
     if payable.document.doc_type == "SVC":
         from . import subcontract
         subcontract.settle_svc_payable(payable, actor, ref or "")
+        return None
+    if payable.payroll_line_id:
+        from . import payroll
+        payroll.settle_salary_payable(payable, actor, ref or "")
         return None
     from .procurement import post_pr_vendor_paid
     post_pr_vendor_paid(payable.document, payable.document_line, actor,
@@ -139,6 +148,11 @@ def awaiting_voucher():
             out.append(doc)
     for doc in docs.filter(doc_type="PYR", status="DIRECTOR_APPROVED") \
             .select_related("site"):
+        # A payroll PYR whose salaries were raised per person is paid off the
+        # payables queue, one transfer per account. Leaving it here too would
+        # offer Finance two routes to the same money (owner 2026-09-10).
+        if doc.payables.filter(payroll_line__isnull=False).exists():
+            continue
         out.append(doc)
     return out
 

@@ -41,6 +41,10 @@ SENSITIVE_FIELDS = ("passport_no", "passport_expiry", "work_permit_no",
                     "work_visa_number", "medical_expiry", "insurance_expiry",
                     "emergency_contact")
 PAY_FIELDS = ("basic_pay", "usd_basic_pay")
+# Where a salary is transferred. Same audience as pay — HR maintains it,
+# Finance needs it to raise the transfer — and never in audit detail.
+BANK_FIELDS = ("bank_name", "bank_branch", "bank_account_name",
+               "bank_account_no", "bank_swift")
 
 
 def _is_hr(user):
@@ -136,6 +140,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "work_permit_no", "work_permit_expiry", "work_visa_number",
                   "medical_expiry", "insurance_expiry", "permit_state",
                   "permit_days", "permit_pending", "emergency_contact",
+                  "bank_name", "bank_branch", "bank_account_name",
+                  "bank_account_no", "bank_swift",
                   "join_date", "is_active", "site_id", "site_code"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
                             "permit_state", "permit_days", "permit_pending"]
@@ -192,7 +198,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
             for field in SENSITIVE_FIELDS:
                 data.pop(field, None)
         if request and not _sees_pay(request.user):
-            for field in PAY_FIELDS + ("ot_rate", "currency"):
+            for field in PAY_FIELDS + BANK_FIELDS + ("ot_rate", "currency"):
                 data.pop(field, None)
         return data
 
@@ -423,7 +429,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
               actor=self.request.user,
               detail={"fields": sorted(
                   k for k in self.request.data
-                  if k not in SENSITIVE_FIELDS + PAY_FIELDS)})
+                  if k not in SENSITIVE_FIELDS + PAY_FIELDS + BANK_FIELDS)})
 
     @action(detail=True, methods=["post"])
     def allocate(self, request, pk=None):

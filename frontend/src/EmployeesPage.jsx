@@ -635,6 +635,11 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
     medical_expiry: employee.medical_expiry || "",
     insurance_expiry: employee.insurance_expiry || "",
     emergency_contact: employee.emergency_contact || "",
+    bank_name: employee.bank_name || "",
+    bank_branch: employee.bank_branch || "",
+    bank_account_name: employee.bank_account_name || "",
+    bank_account_no: employee.bank_account_no || "",
+    bank_swift: employee.bank_swift || "",
     join_date: employee.join_date || "",
     is_active: employee.is_active ?? true,
     site_id: "",                        // create-only: initial allocation
@@ -764,6 +769,36 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                    onChange={(e) => set({ emergency_contact: e.target.value })}
                    style={inputStyle} /></L>
         </Section>
+
+        {/* Where the salary is transferred. USD staff are paid into their own
+            accounts, so Finance cannot raise the transfer without this — the
+            payables queue shows anyone missing it (owner 2026-09-10). Same
+            audience as pay: HR keeps it, Finance uses it. */}
+        {seesPay && (
+        <Section title="Bank account">
+          <L label="Bank">
+            <input value={f.bank_name}
+                   onChange={(e) => set({ bank_name: e.target.value })}
+                   placeholder="e.g. BML"
+                   style={inputStyle} /></L>
+          <L label="Branch">
+            <input value={f.bank_branch}
+                   onChange={(e) => set({ bank_branch: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="Account name">
+            <input value={f.bank_account_name}
+                   onChange={(e) => set({ bank_account_name: e.target.value })}
+                   placeholder="as it reads at the bank"
+                   style={inputStyle} /></L>
+          <L label="Account no.">
+            <input value={f.bank_account_no}
+                   onChange={(e) => set({ bank_account_no: e.target.value })}
+                   style={inputStyle} /></L>
+          <L label="SWIFT (overseas only)">
+            <input value={f.bank_swift}
+                   onChange={(e) => set({ bank_swift: e.target.value })}
+                   style={inputStyle} /></L>
+        </Section>)}
 
         <Section title="Employment info">
           <L label="Job category">

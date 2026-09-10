@@ -819,6 +819,12 @@ def set_run_status(run, action, actor, reason=""):
                     _, err = raise_payroll_pyr(run, actor)
                     if err:
                         raise ValueError(err)
+                    # A USD salary is transferred to the person's own account,
+                    # so the run is paid per head rather than as one lump.
+                    if run.currency == "USD":
+                        _, err = raise_salary_payables(run, actor)
+                        if err:
+                            raise ValueError(err)
                 lock_run(run, actor)
         except ValueError as exc:
             run.status, run.approved_by, run.approved_at = (
@@ -1178,6 +1184,112 @@ def set_excluded(line, excluded, reason, actor):
           actor=actor, detail={"run": run.id, "emp_no": line.employee.emp_no,
                                "reason": line.excluded_reason})
     return line, None
+
+
+def transfer_schedule(payables):
+    """The bank list for a batch of salary payables.
+
+    Fifty-five transfers keyed by hand is fifty-five chances to mistype an
+    account number. This is the same list the voucher authorises, in the shape
+    a bank upload wants, and it carries the FULL account number — which is
+    why it is a download for Finance and not a column on a screen.
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Transfers"
+    headers = ["Emp No", "Beneficiary", "Bank", "Branch", "Account name",
+               "Account no", "SWIFT", "Currency", "Amount", "Reference"]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+    total = Decimal("0")
+    for p in payables:
+        line = p.payroll_line
+        emp = line.employee
+        period = f"{line.run.year}-{line.run.month:02d}"
+        ws.append([emp.emp_no, p.vendor, emp.bank_name, emp.bank_branch,
+                   emp.bank_account_name or emp.full_name,
+                   emp.bank_account_no, emp.bank_swift, line.run.currency,
+                   float(p.amount), f"Salary {period}"])
+        total += p.amount
+    ws.append([])
+    row = ws.max_row + 1
+    ws.cell(row=row, column=8, value="Total").font = Font(bold=True)
+    ws.cell(row=row, column=9, value=float(total)).font = Font(bold=True)
+    for col, width in zip("ABCDEFGHIJ",
+                          (10, 28, 18, 18, 28, 24, 14, 10, 14, 18)):
+        ws.column_dimensions[col].width = width
+    return wb
+
+
+def settle_salary_payable(payable, actor, ref):
+    """Finance has transferred one person's salary.
+
+    Nothing is posted to the cost ledger: locking the run already booked the
+    whole month's labour, and the run's PYR is capitalized for exactly that
+    reason. This records that the money left, against that person.
+
+    When the last one is settled the run's PYR is PAID — there is no lump
+    payment to mark off, so it closes when the people do.
+    """
+    payable.status = "SETTLED"
+    payable.settled_on = date.today()
+    payable.settled_ref = ref or ""
+    payable.save(update_fields=["status", "settled_on", "settled_ref"])
+    line = payable.payroll_line
+    audit("payroll_run", line.run_id, "SALARY_PAID", actor=actor,
+          detail={"employee": line.employee.emp_no, "ref": ref,
+                  "period": f"{line.run.year}-{line.run.month:02d}"})
+    doc = payable.document
+    if doc.payables.filter(payroll_line__isnull=False,
+                           status="OUTSTANDING").exists():
+        return
+    if doc.status != "PAID":
+        doc.status = "PAID"
+        doc.save(update_fields=["status", "updated_at"])
+        audit("document", doc.id, "PAYROLL_FULLY_PAID", actor=actor,
+              to_state="PAID")
+
+
+def raise_salary_payables(run, actor):
+    """One payable per person on a USD run.
+
+    A rufiyaa site run leaves as one payment and one voucher settles it. The
+    USD run does not: every one of these salaries is transferred to that
+    person's own account, so Finance has to be able to pay some people and
+    hold others — someone whose account details are missing, someone in
+    dispute, someone who has already been settled on the way out (owner
+    2026-09-10).
+
+    The run's PYR stays: it is the Director's authorisation to pay the run,
+    and it is what the payables hang off. What changes is that the money
+    leaves per head, so each head is its own outstanding obligation and
+    Finance picks them off the payables queue like any other.
+    """
+    from .models import Payable
+
+    doc = run.payment_request
+    if doc is None:
+        return 0, "The run has no payment request to hang the salaries off."
+    made = 0
+    for line in run.lines.select_related("employee").all():
+        if line.excluded or hasattr(line, "payable"):
+            continue
+        net = compute_line(line)["net"]
+        if net <= 0:
+            continue
+        Payable.objects.create(
+            document=doc, site=doc.site, payroll_line=line,
+            vendor=line.employee.full_name,
+            amount=q(net), due_date=date.today())
+        made += 1
+    audit("payroll_run", run.id, "PAYROLL_SALARY_PAYABLES_RAISED", actor=actor,
+          detail={"ref": doc.ref, "people": made, "currency": run.currency,
+                  "period": f"{run.year}-{run.month:02d}"})
+    return made, None
 
 
 def raise_payroll_pyr(run, actor):

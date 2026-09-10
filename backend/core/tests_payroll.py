@@ -2801,3 +2801,131 @@ class UsdSalaryRunTests(TestCase):
         self.assertEqual(fx.usd_rate(), Decimal("15.42"))
         self.assertEqual(line.advance, Decimal("1000.00"))   # 15,420 / 15.42
 
+
+
+class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):
+    """Every USD salary goes to that person's own account.
+
+    A rufiyaa site run leaves as one payment and one voucher settles it. The
+    combined USD run does not: Finance has to be able to pay some people and
+    hold others — a missing account, a dispute, someone already settled on the
+    way out — so each salary is its own outstanding obligation (owner
+    2026-09-10).
+    """
+
+    def _approve(self, run):
+        """Take a run to the Director's approval, which is where money starts
+        moving."""
+        from core import payroll
+        from .models import SitePmHistory
+        Site.objects.get_or_create(
+            code="MLE", defaults={"name": "Head Office",
+                                  "status": Site.Status.ACTIVE,
+                                  "is_head_office": True})
+        director = make_user("usd_pd", User.Role.DIRECTOR)
+        _, err = payroll.set_run_status(run, "submit", self.hr)
+        assert err is None, err
+        run.refresh_from_db()
+        if run.status == "PM_REVIEW":                 # a site run waits on its PM
+            pm = make_user("usd_pm", User.Role.PM, site=self.site)
+            SitePmHistory.objects.create(site=self.site, pm_user=pm,
+                                         from_date=date(2026, 1, 1))
+            _, err = payroll.set_run_status(run, "verify", pm)
+            assert err is None, err
+            run.refresh_from_db()
+        _, err = payroll.set_run_status(run, "approve", director)
+        assert err is None, err
+        run.refresh_from_db()
+        return run
+
+    def test_each_person_becomes_their_own_payable(self):
+        from .models import Payable
+        run = self._approve(self._run())
+        self.assertEqual(run.status, "LOCKED")
+        payables = Payable.objects.filter(payroll_line__run=run)
+        self.assertEqual(payables.count(), 2)
+        self.assertEqual(
+            {(p.vendor, p.amount) for p in payables},
+            {("Salaried PM", Decimal("1500.00")),
+             ("USD Electrician", Decimal("700.00"))})
+        # they hang off the run's own PYR, which is its authorisation to pay
+        self.assertTrue(all(p.document_id == run.payment_request_id
+                            for p in payables))
+
+    def test_a_rufiyaa_site_run_still_pays_as_one(self):
+        """The site runs are unchanged: one payment, one voucher."""
+        from .models import Payable
+        run = self._approve(self._run(currency="MVR", site=self.site, month=7))
+        self.assertFalse(
+            Payable.objects.filter(payroll_line__run=run).exists())
+
+    def test_the_lump_pyr_is_not_offered_to_finance_as_well(self):
+        """Two routes to the same money is how it gets paid twice."""
+        from core import vouchers
+        run = self._approve(self._run())
+        refs = [d.ref for d in vouchers.awaiting_voucher()]
+        self.assertNotIn(run.payment_request.ref, refs)
+
+    def test_a_salary_payable_is_in_the_currency_of_the_run(self):
+        """Hard-coding rufiyaa put a USD salary on a rufiyaa voucher."""
+        from core import vouchers
+        from .models import Payable
+        run = self._approve(self._run())
+        p = Payable.objects.filter(payroll_line__run=run).first()
+        self.assertEqual(vouchers.payable_currency(p), "USD")
+
+    def test_paying_one_person_settles_only_that_person(self):
+        from core import vouchers
+        from .models import CostPosting, Payable
+        run = self._approve(self._run())
+        posted_before = CostPosting.objects.count()
+        p = Payable.objects.get(payroll_line__employee=self.pm)
+        self.assertIsNone(vouchers.settle_payable(p, self.hr, "TRF-11"))
+        p.refresh_from_db()
+        self.assertEqual(p.status, "SETTLED")
+        self.assertEqual(p.settled_ref, "TRF-11")
+        # the run booked the month's labour when it locked; paying a person
+        # moves money and must post nothing, or the month is counted twice
+        self.assertEqual(CostPosting.objects.count(), posted_before)
+        # the other one is untouched, and the PYR stays open
+        other = Payable.objects.get(payroll_line__employee=self.spark)
+        self.assertEqual(other.status, "OUTSTANDING")
+        run.payment_request.refresh_from_db()
+        self.assertNotEqual(run.payment_request.status, "PAID")
+
+    def test_the_run_closes_when_the_last_person_is_paid(self):
+        from core import vouchers
+        from .models import Payable
+        run = self._approve(self._run())
+        for p in Payable.objects.filter(payroll_line__run=run):
+            vouchers.settle_payable(p, self.hr, "TRF-12")
+        run.payment_request.refresh_from_db()
+        self.assertEqual(run.payment_request.status, "PAID")
+
+    def test_finance_is_told_who_has_no_account_on_file(self):
+        """A salary cannot be transferred without one, and Finance should see
+        that on the queue rather than at the bank."""
+        self._approve(self._run())
+        self.pm.bank_name = "BML"
+        self.pm.bank_account_no = "7730000123456"
+        self.pm.save(update_fields=["bank_name", "bank_account_no"])
+        finance = make_user("usd_fin", User.Role.FINANCE)
+        self.client.force_authenticate(finance)
+        rows = {r["payee"]: r for r in
+                self.client.get("/api/v1/finance/payables").data["payables"]}
+        self.assertEqual(rows["Salaried PM"]["group"], "SALARY")
+        self.assertTrue(rows["Salaried PM"]["payable_now"])
+        self.assertEqual(rows["Salaried PM"]["account_tail"], "3456")
+        self.assertEqual(rows["Salaried PM"]["currency"], "USD")
+        self.assertFalse(rows["USD Electrician"]["payable_now"])
+
+    def test_a_site_user_cannot_see_where_the_money_goes(self):
+        """Account details sit with pay: HR keeps them, Finance uses them."""
+        self.pm.bank_account_no = "7730000123456"
+        self.pm.save(update_fields=["bank_account_no"])
+        se = make_user("usd_se", User.Role.SITE_ENGINEER, site=self.site)
+        self.client.force_authenticate(se)
+        r = self.client.get(f"/api/v1/employees/{self.pm.id}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertNotIn("bank_account_no", r.data)
+        self.assertNotIn("bank_name", r.data)

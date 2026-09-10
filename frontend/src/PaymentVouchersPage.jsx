@@ -899,6 +899,13 @@ function VoucherModal({ pv, onClose, error, children }) {
             <a href={`/api/v1/payment-vouchers/${pv.ref}/pdf`}
                target="_blank" rel="noreferrer"
                style={{ fontSize: 13, color: "var(--navy)" }}>📄 PDF</a>
+            {/* A salary batch is transferred account by account, so Finance
+                needs the bank list, not just the voucher (owner 2026-09-10).
+                It carries full account numbers — a download, never a column. */}
+            {pv.has_salaries && (
+              <a href={`/api/v1/payment-vouchers/${pv.ref}/transfers.xlsx`}
+                 style={{ fontSize: 13, color: "var(--navy)" }}>
+                ⬇ Transfer list</a>)}
             <Btn variant="ghost" onClick={onClose}>Close</Btn>
           </span>
         </div>

@@ -2095,6 +2095,15 @@ class Employee(models.Model):
     medical_expiry = models.DateField(null=True, blank=True)
     insurance_expiry = models.DateField(null=True, blank=True)
     emergency_contact = models.TextField(blank=True)
+    # Where the money goes. USD salaries are transferred to each person's own
+    # account rather than paid out as one lump, so Finance needs the account
+    # per employee to raise the transfer (owner 2026-09-10). Visible to the
+    # pay roles only, and kept out of audit detail, like basic pay.
+    bank_name = models.CharField(max_length=120, blank=True)
+    bank_branch = models.CharField(max_length=120, blank=True)
+    bank_account_name = models.CharField(max_length=140, blank=True)
+    bank_account_no = models.CharField(max_length=60, blank=True)
+    bank_swift = models.CharField(max_length=40, blank=True)   # overseas only
     join_date = models.DateField(null=True, blank=True)
     is_active = models.BooleanField(default=True)  # deactivate, never delete
     # When they actually stopped working, and why. Demobilisation used to
@@ -4669,6 +4678,13 @@ class Payable(models.Model):
                                  related_name="payables")
     document_line = models.ForeignKey(DocumentLine, on_delete=models.PROTECT,
                                       null=True, blank=True, related_name="+")
+    # A salary payable: one person, their own bank account. The run's PYR is
+    # still the parent document — it is the Director's authorisation to pay
+    # the run — but the money leaves per head, so Finance picks the people to
+    # pay off the payables queue (owner 2026-09-10).
+    payroll_line = models.OneToOneField(
+        "PayrollLine", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="payable")
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="payables")
     vendor = models.TextField()
