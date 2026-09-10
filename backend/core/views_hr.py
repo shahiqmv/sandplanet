@@ -69,6 +69,11 @@ class EmployeeSerializer(serializers.ModelSerializer):
     site_code = serializers.SerializerMethodField()
     job_category_name = serializers.CharField(source="job_category.name",
                                               read_only=True, default=None)
+    # Who he works for. A subcontract worker is hidden from the register by
+    # default (`hr_managed()`), and when HR does ask for him the row has to
+    # say plainly that he is not ours — otherwise he reads as an employee
+    # with no pay (owner 2026-09-10).
+    subcontractor_name = serializers.SerializerMethodField()
     photo_url = serializers.SerializerMethodField()
     ot_rate = serializers.SerializerMethodField()
     ot_effective = serializers.SerializerMethodField()
@@ -142,10 +147,15 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "permit_days", "permit_pending", "emergency_contact",
                   "bank_name", "bank_branch", "bank_account_name",
                   "bank_account_no", "bank_swift",
-                  "join_date", "is_active", "site_id", "site_code"]
+                  "join_date", "is_active", "site_id", "site_code",
+                  "engagement_type", "subcontractor_name"]
         read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
-                            "permit_state", "permit_days", "permit_pending"]
+                            "permit_state", "permit_days", "permit_pending",
+                            "engagement_type", "subcontractor_name"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
+
+    def get_subcontractor_name(self, obj):
+        return obj.subcontractor.name if obj.subcontractor_id else ""
 
     def get_photo_url(self, obj):
         return obj.photo.url if obj.photo else None

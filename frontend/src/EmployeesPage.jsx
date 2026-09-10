@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import HireForm from "./HireWorkerForm.jsx";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
 import { NATIONALITIES } from "./constants.js";
@@ -50,6 +51,12 @@ export default function EmployeesPage({ me, sites }) {
   const [fStatus, setFStatus] = useState("active");
   const [fEmp, setFEmp] = useState("");
   const [fNat, setFNat] = useState("");
+  // Subcontract workers are deliberately off the HR register (D-b), which
+  // means a man engaged through a subcontractor cannot be found here at all —
+  // and he is exactly who HR goes looking for when we decide to hire him
+  // (owner 2026-09-10).
+  const [withSub, setWithSub] = useState(false);
+  const [hiring, setHiring] = useState(null);      // worker being taken on
 
   // PA is full HR (owner 2026-08-03). The API has said so since; these two
   // screens never got the message, which is why the Director's office could
@@ -57,8 +64,9 @@ export default function EmployeesPage({ me, sites }) {
   const isHr = ["HO_HR", "ADMIN", "PA"].includes(me.role);
   const seesPay = ["HO_HR", "FINANCE", "ADMIN", "PA"].includes(me.role);
 
-  function load() {
-    api("/employees").then(setEmployees);
+  function load(includeSub = withSub) {
+    api(`/employees${includeSub ? "?include_subcontract=1" : ""}`)
+      .then(setEmployees);
     api("/permits/alerts").then(setAlerts).catch(() => setAlerts(null));
   }
   useEffect(() => {
@@ -66,6 +74,11 @@ export default function EmployeesPage({ me, sites }) {
     api("/manpower-categories").then((all) =>
       setCategories(all.filter((c) => c.list_type === "DPR" && c.is_active)));
   }, []);
+
+  // He is on the site's manpower list, not the HR register: there is no
+  // editable profile for him here, and the only thing HR does with him is
+  // decide to hire him.
+  const isSub = (e) => e.engagement_type === "SUBCONTRACT";
 
   const filtered = employees.filter((e) => {
     if (q && !`${e.emp_no} ${e.full_name}`.toLowerCase()
@@ -202,6 +215,16 @@ export default function EmployeesPage({ me, sites }) {
             <option value="PERMANENT">Permanent</option>
             <option value="CONTRACT">Contract</option>
           </select>
+          {isHr && (
+            <label style={{ fontSize: 12.5, display: "inline-flex", gap: 5,
+                            alignItems: "center", whiteSpace: "nowrap" }}
+                   title="Men engaged through a subcontractor. They are not on
+ the payroll — HR can hire one directly from their record.">
+              <input type="checkbox" checked={withSub}
+                     onChange={(e) => { setWithSub(e.target.checked);
+                                        load(e.target.checked); }} />
+              Subcontract workers</label>
+          )}
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {filtered.length} of {employees.length}</span>
           {seesPay && (
@@ -252,9 +275,21 @@ export default function EmployeesPage({ me, sites }) {
                   )}
                 </td>
                 <td style={{ ...td, fontWeight: 600, color: "var(--sp-navy)" }}
-                    onClick={() => isHr && setEditing(emp)}>{emp.emp_no}</td>
-                <td style={td} onClick={() => isHr && setEditing(emp)}>
-                  {emp.full_name}</td>
+                    onClick={() => isHr && !isSub(emp)
+                             && setEditing(emp)}>{emp.emp_no}</td>
+                <td style={td} onClick={() => isHr && !isSub(emp)
+                                         && setEditing(emp)}>
+                  {emp.full_name}
+                  {isSub(emp) && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      SUB · {emp.subcontractor_name || "subcontractor"}
+                      {isHr && (
+                        <button onClick={() => setHiring(emp)}
+                          style={{ ...ghostButton, padding: "0 8px",
+                                   fontSize: 11, marginLeft: 6 }}>
+                          Hire onto payroll</button>)}
+                    </div>)}
+                </td>
                 <td style={td}>{emp.nationality || "—"}</td>
                 <td style={td}>{emp.job_category_name}</td>
                 <td style={td}>{emp.site_code || "—"}</td>
@@ -307,6 +342,21 @@ export default function EmployeesPage({ me, sites }) {
           </tbody>
         </table>
       </section>
+
+      {hiring && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 40,
+                      background: "rgba(15,32,45,.35)", overflow: "auto",
+                      padding: "6vh 16px" }}
+             onClick={() => setHiring(null)}>
+          <div style={{ maxWidth: 620, margin: "0 auto" }}
+               onClick={(e) => e.stopPropagation()}>
+            <HireForm worker={{ ...hiring, job_category_id: hiring.job_category }}
+                      cats={categories}
+                      onCancel={() => setHiring(null)}
+                      onDone={() => { setHiring(null); load(); }} />
+          </div>
+        </div>
+      )}
 
       {editing && (
         <EmployeeProfile employee={editing} categories={categories}
