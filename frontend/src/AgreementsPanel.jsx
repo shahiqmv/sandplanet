@@ -125,17 +125,80 @@ function ScopeEditor({ rows, setRows }) {
 const TERMS0 = {
   currency: "MVR", start_date: "", end_date: "", advance_percent: "",
   gst_percent: "", retention_percent: "", payment_days: "", ld_amount: "",
-  ld_cap_percent: "",
+  ld_cap_percent: "", markup_percent: "",
   contractor_signatory_name: "", contractor_signatory_title: "",
   scope_of_work: "",
 };
+
+// The agreed cost of one category per day under a day-work agreement. On
+// the agreement, not global: every gang negotiates its own, and the rate
+// written onto a certificate stays what it was when it was signed (owner
+// 2026-09-10). The OT rate is the standard hourly rate the company pays for
+// that trade, recorded here so the certificate can be checked against the
+// contract rather than against a table that has since moved.
+function DayRateEditor({ rates, setRates, cats }) {
+  const set = (i, k, v) =>
+    setRates(rates.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  const used = new Set(rates.map((r) => String(r.job_category_id)));
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse" }}>
+      <thead><tr>
+        <th style={th}>Category</th>
+        <th style={{ ...th, textAlign: "right" }}>Rate / day</th>
+        <th style={{ ...th, textAlign: "right" }}>Extra hours / hr</th>
+        <th style={th}></th>
+      </tr></thead>
+      <tbody>
+        {rates.map((r, i) => (
+          <tr key={i}>
+            <td style={td}>
+              <select value={r.job_category_id}
+                      onChange={(e) => set(i, "job_category_id", e.target.value)}
+                      style={{ ...inputStyle, width: "100%" }}>
+                <option value="">Category…</option>
+                {cats.map((c) => (
+                  <option key={c.id} value={c.id}
+                          disabled={used.has(String(c.id))
+                                    && String(c.id) !== String(r.job_category_id)}>
+                    {c.name}</option>))}
+              </select></td>
+            <td style={td}>
+              <input type="number" value={r.rate_per_day} placeholder="0.00"
+                     onChange={(e) => set(i, "rate_per_day", e.target.value)}
+                     style={{ ...inputStyle, width: 110, textAlign: "right" }} />
+            </td>
+            <td style={td}>
+              <input type="number" value={r.ot_rate_per_hour} placeholder="0.00"
+                     onChange={(e) => set(i, "ot_rate_per_hour", e.target.value)}
+                     style={{ ...inputStyle, width: 110, textAlign: "right" }} />
+            </td>
+            <td style={{ ...td, textAlign: "right" }}>
+              <Btn type="button" variant="ghost"
+                   onClick={() => setRates(rates.filter((_, j) => j !== i))}>
+                ✕</Btn></td>
+          </tr>))}
+      </tbody>
+    </table>
+  );
+}
 
 function CreateForm({ sub, onCancel, onDone }) {
   const [title, setTitle] = useState("");
   const [t, setT] = useState({ ...TERMS0 });
   const [rows, setRows] = useState([{ ...BLANK_ROW }]);
+  // Measured work prices a scope by quantity; day work hires men by the day
+  // at agreed category rates and charges a markup. One basis per agreement —
+  // a gang doing both signs two (owner 2026-09-10).
+  const [basis, setBasis] = useState("MEASURED");
+  const [rates, setRates] = useState([]);
+  const [cats, setCats] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
+  const daywork = basis === "DAYWORK";
+  useEffect(() => {
+    api("/manpower-categories").then((all) => setCats(
+      all.filter((c) => c.list_type === "DPR" && c.is_active))).catch(() => {});
+  }, []);
   const total = rows.reduce(
     (a, r) => a + (Number(r.qty) || 0) * (Number(r.rate) || 0), 0);
   const set = (k) => (e) => setT((s) => ({ ...s, [k]: e.target.value }));
@@ -149,9 +212,12 @@ function CreateForm({ sub, onCancel, onDone }) {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const clean = rows.filter((r) => r.description.trim());
+      const clean = daywork ? [] : rows.filter((r) => r.description.trim());
+      const day_rates = daywork
+        ? rates.filter((r) => r.job_category_id) : [];
       await api(`/subcontractors/${sub.id}/agreements`,
-                { method: "POST", body: { title, rows: clean, ...t } });
+                { method: "POST",
+                  body: { title, rows: clean, basis, day_rates, ...t } });
       onDone();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
@@ -162,6 +228,16 @@ function CreateForm({ sub, onCancel, onDone }) {
       <input style={{ ...inputStyle, width: "100%" }} autoFocus
              placeholder="Agreement title * (e.g. Blockwork package)"
              value={title} onChange={(e) => setTitle(e.target.value)} />
+      <div style={{ display: "flex", gap: 14, alignItems: "center",
+                    marginTop: 10, fontSize: 13 }}>
+        <span style={{ color: "var(--muted)", fontSize: 12 }}>Valued by</span>
+        {[["MEASURED", "Measured work — a priced scope"],
+          ["DAYWORK", "Day work — men by the day"]].map(([k, label]) => (
+          <label key={k} style={{ display: "inline-flex", gap: 5,
+                                  alignItems: "center", cursor: "pointer" }}>
+            <input type="radio" name="basis" value={k} checked={basis === k}
+                   onChange={() => setBasis(k)} />{label}</label>))}
+      </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
                     marginTop: 8 }}>
         <F k="currency" label="Currency" w={64} />
@@ -175,6 +251,9 @@ function CreateForm({ sub, onCancel, onDone }) {
         <F k="payment_days" label="Payment days" type="number" w={100} />
         <F k="ld_amount" label="LD / day" type="number" w={100} />
         <F k="ld_cap_percent" label="LD cap %" type="number" w={80} />
+        {daywork && (
+          <F k="markup_percent" label="Markup % (on day rates)" type="number"
+             w={150} />)}
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
         <F k="contractor_signatory_name" label="Contractor signatory" w={180}
@@ -187,17 +266,32 @@ function CreateForm({ sub, onCancel, onDone }) {
           rows={3} placeholder="Narrative description of the works…"
           style={{ ...inputStyle, width: "100%", fontFamily: "inherit",
                    resize: "vertical" }} /></label>
-      <div style={{ fontSize: 12, color: "var(--muted)", margin: "10px 0 2px" }}>
-        Priced scope (Annexure B)</div>
-      <ScopeEditor rows={rows} setRows={setRows} />
-      <div style={{ display: "flex", justifyContent: "space-between",
-                    marginTop: 8 }}>
-        <Btn type="button" variant="ghost"
-             onClick={() => setRows([...rows, { ...BLANK_ROW }])}>
-          + Add line</Btn>
-        <span style={{ fontWeight: 600, color: "var(--navy)" }}>
-          Total {money(total)}</span>
-      </div>
+      {daywork ? (<>
+        <div style={{ fontSize: 12, color: "var(--muted)",
+                      margin: "10px 0 2px" }}>
+          Agreed day rates (Annexure B) — overtime is passed through at the
+          hourly rate, without markup</div>
+        <DayRateEditor rates={rates} setRates={setRates} cats={cats} />
+        <div style={{ marginTop: 8 }}>
+          <Btn type="button" variant="ghost"
+               onClick={() => setRates([...rates, { job_category_id: "",
+                 rate_per_day: "", ot_rate_per_hour: "" }])}>
+            + Add a category</Btn>
+        </div>
+      </>) : (<>
+        <div style={{ fontSize: 12, color: "var(--muted)",
+                      margin: "10px 0 2px" }}>
+          Priced scope (Annexure B)</div>
+        <ScopeEditor rows={rows} setRows={setRows} />
+        <div style={{ display: "flex", justifyContent: "space-between",
+                      marginTop: 8 }}>
+          <Btn type="button" variant="ghost"
+               onClick={() => setRows([...rows, { ...BLANK_ROW }])}>
+            + Add line</Btn>
+          <span style={{ fontWeight: 600, color: "var(--navy)" }}>
+            Total {money(total)}</span>
+        </div>
+      </>)}
       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
         <Btn variant="navy" disabled={busy || !title.trim()}>
           Create draft</Btn>
@@ -243,7 +337,10 @@ function AgreementView({ docRef, me, onBack }) {
   // The agreement PDF carries rates → PM and above (matches the backend gate).
   const canPdf = ["PM", "DIRECTOR", "SIGNATORY", "FINANCE", "QS", "ADMIN"]
     .includes(me.role);
+  const daywork = a.basis === "DAYWORK";
   const terms = [
+    daywork && "day work",
+    daywork && Number(a.markup_percent) > 0 && `${a.markup_percent}% markup`,
     a.advance_percent > 0 && `${a.advance_percent}% advance`,
     a.retention_percent > 0 && `${a.retention_percent}% retention`,
     a.payment_days && `pay in ${a.payment_days} days`,
@@ -303,6 +400,39 @@ function AgreementView({ docRef, me, onBack }) {
           ))}
         </div>
       )}
+      {daywork ? (
+        <table style={{ width: "100%", borderCollapse: "collapse",
+                        marginTop: 10 }}>
+          <thead><tr>
+            <th style={th}>Category</th>
+            <th style={{ ...th, textAlign: "right" }}>Rate / day</th>
+            <th style={{ ...th, textAlign: "right" }}>Extra hours / hr</th>
+          </tr></thead>
+          <tbody>
+            {(a.day_rates || []).map((r) => (
+              <tr key={r.id}>
+                <td style={td}>{r.category}</td>
+                <td style={{ ...td, textAlign: "right",
+                             fontFamily: "var(--font-mono)" }}>
+                  {money(r.rate_per_day)}</td>
+                <td style={{ ...td, textAlign: "right",
+                             fontFamily: "var(--font-mono)" }}>
+                  {money(r.ot_rate_per_hour)}</td>
+              </tr>))}
+            {!(a.day_rates || []).length && (
+              <tr><td colSpan={3} style={{ ...td, color: "var(--red-fg)" }}>
+                No day rates agreed — nothing can be valued against this
+                agreement until they are set.</td></tr>)}
+          </tbody>
+          <tfoot><tr>
+            <td colSpan={3} style={{ ...td, fontSize: 12,
+                                     color: "var(--muted)" }}>
+              Valued monthly off the attendance register. Markup of{" "}
+              {Number(a.markup_percent) || 0}% on the day rates; extra hours
+              passed through at cost.</td>
+          </tr></tfoot>
+        </table>
+      ) : (
       <table style={{ width: "100%", borderCollapse: "collapse",
                       marginTop: 10 }}>
         <thead><tr>
@@ -335,6 +465,7 @@ function AgreementView({ docRef, me, onBack }) {
             {a.currency} {money(a.value)}</td>
         </tr></tfoot>
       </table>
+      )}
       {(doc.approvals || []).length > 0 && (
         <div style={{ marginTop: 10, fontSize: 12, color: "var(--muted)" }}>
           {doc.approvals.map((ap, i) => (
@@ -345,7 +476,8 @@ function AgreementView({ docRef, me, onBack }) {
       )}
 
       {s === "APPROVED" && (
-        <Valuations scaRef={doc.ref} me={me} currency={a.currency} />)}
+        <Valuations scaRef={doc.ref} me={me} currency={a.currency}
+                    basis={a.basis} />)}
     </div>
   );
 }
@@ -363,10 +495,19 @@ const SVC_ACTIONS = {
                       ["return", "Return", ["SIGNATORY", "ADMIN"]]],
 };
 
-function Valuations({ scaRef, me, currency }) {
+function Valuations({ scaRef, me, currency, basis }) {
   const [list, setList] = useState(null);
   const [openRef, setOpenRef] = useState(null);
   const [error, setError] = useState(null);
+  // Day work is valued a month at a time, off the register; the month is
+  // the one thing the site has to say. Defaults to last month, which is the
+  // one just closed.
+  const lastMonth = (() => {
+    const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const [period, setPeriod] = useState(lastMonth);
+  const daywork = basis === "DAYWORK";
   const canRaise = SITE_TEAM_V.includes(me.role);
   const load = () => api(`/subcontract-agreements/${scaRef}/valuations`)
     .then(setList).catch((e) => setError(e.message));
@@ -377,8 +518,13 @@ function Valuations({ scaRef, me, currency }) {
   async function create() {
     setError(null);
     try {
+      const body = {};
+      if (daywork) {
+        const [y, m] = period.split("-");
+        body.year = Number(y); body.month = Number(m);
+      }
       const v = await api(`/subcontract-agreements/${scaRef}/valuations`,
-                          { method: "POST" });
+                          { method: "POST", body });
       setOpenRef(v.ref); load();
     } catch (e) { setError(e.message); }
   }
@@ -389,8 +535,13 @@ function Valuations({ scaRef, me, currency }) {
                   paddingTop: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
         <h4 style={{ margin: 0, color: "var(--navy)" }}>Valuations</h4>
+        {canRaise && daywork && (
+          <input type="month" value={period}
+                 onChange={(e) => setPeriod(e.target.value)}
+                 style={{ ...inputStyle, width: 150, marginLeft: "auto" }} />)}
         {canRaise && <Btn variant="navy" onClick={create}
-          style={{ marginLeft: "auto" }}>+ New valuation</Btn>}
+          style={daywork ? {} : { marginLeft: "auto" }}>
+          {daywork ? "Value this month" : "+ New valuation"}</Btn>}
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       {list && !list.length && (
@@ -435,9 +586,20 @@ function ValuationView({ vref, me, onBack }) {
     try { await fn(); } catch (e) { setError(e.message); } finally {
       setBusy(false); }
   }
+  const daywork = d?.basis === "DAYWORK";
+  // Day-work lines are read, not typed: the PATCH carries only the header.
+  const body = () => ({ rows: daywork ? [] : rows, ...hdr });
   const save = () => run(async () => {
     const v = await api(`/subcontract-valuations/${vref}`,
-      { method: "PATCH", body: { rows, ...hdr } });
+      { method: "PATCH", body: body() });
+    setD(v);
+  });
+  // Attendance is the evidence, not the ledger. A certificate that quietly
+  // followed a late edit to the register would not be a certificate, so
+  // reading it again is a deliberate act on a draft (owner 2026-09-10).
+  const refresh = () => run(async () => {
+    const v = await api(`/subcontract-valuations/${vref}/refresh`,
+      { method: "POST", body: {} });
     setD(v);
   });
   const act = (action) => {
@@ -448,7 +610,7 @@ function ValuationView({ vref, me, onBack }) {
     }
     run(async () => {
       if (d.status === "DRAFT") await api(`/subcontract-valuations/${vref}`,
-        { method: "PATCH", body: { rows, ...hdr } });   // save before submit
+        { method: "PATCH", body: body() });   // save before submit
       const v = await api(`/subcontract-valuations/${vref}/action`,
         { method: "POST", body: { action, note } });
       setD(v);
@@ -470,7 +632,7 @@ function ValuationView({ vref, me, onBack }) {
   // The server recomputes authoritatively on save/submit.
   const n = (x) => { const f = Number(x); return Number.isFinite(f) ? f : 0; };
   let live = v;
-  if (editable) {
+  if (editable && !daywork) {
     let gross = 0;
     const lines = v.lines.map((l, i) => {
       const cum = n(rows[i]?.cumulative_qty);
@@ -511,6 +673,11 @@ function ValuationView({ vref, me, onBack }) {
         <Chip tone={SCA_TONE[d.status] || "info"}>
           {d.status.replace(/_/g, " ")}</Chip>
         {live.over_warning && <Chip tone="alert">over-contract qty</Chip>}
+        {daywork && d.period_from && (
+          <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
+            {d.period_from} → {d.period_to}</span>)}
+        {daywork && (v.unpriced || []).length > 0 && (
+          <Chip tone="alert">{v.unpriced.length} without an agreed rate</Chip>)}
         {d.status !== "DRAFT" && ["PM", "DIRECTOR", "SIGNATORY", "FINANCE",
                                   "ADMIN", "QS"].includes(me.role) && (
           <a href={`/api/v1/subcontract-valuations/${d.ref}/certificate.pdf`}
@@ -520,6 +687,59 @@ function ValuationView({ vref, me, onBack }) {
             ↓ Certificate PDF</a>)}
       </div>
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      {daywork && (v.unpriced || []).length > 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--red-fg)", margin: "6px 0 0" }}>
+          No agreed day rate for {v.unpriced.join(", ")} — set it on the
+          agreement, or take them off the register. They are shown at zero
+          and block submission.</p>)}
+      {daywork ? (
+      <div style={{ overflowX: "auto", marginTop: 8 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse",
+          fontSize: 12.5 }}>
+          <thead><tr>
+            {["Worker", "Category", "Days", "Rate/day", "Day value",
+              "Extra hrs", "Rate/hr", "Extra value", "Amount"].map((h, i) => (
+              <th key={h} style={{ ...th, textAlign: i > 1 ? "right" : "left" }}>
+                {h}</th>))}
+          </tr></thead>
+          <tbody>
+            {v.lines.map((l) => (
+              <tr key={l.id} style={l.priced ? {} : { background: "#FDECEA" }}>
+                <td style={td}>{l.emp_no} · {l.name}</td>
+                <td style={td}>{l.category || "—"}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.days)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{money(l.rate_per_day)}</td>
+                <td style={{ ...td, textAlign: "right",
+                  fontFamily: "var(--font-mono)" }}>{money(l.day_value)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.ot_hours)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{money(l.ot_rate_per_hour)}</td>
+                <td style={{ ...td, textAlign: "right",
+                  fontFamily: "var(--font-mono)" }}>{money(l.ot_value)}</td>
+                <td style={{ ...td, textAlign: "right",
+                  fontFamily: "var(--font-mono)" }}>{money(l.amount)}</td>
+              </tr>))}
+            {!v.lines.length && (
+              <tr><td colSpan={9} style={{ ...td, color: "var(--muted)" }}>
+                Nobody was marked on the register for this period.</td></tr>)}
+          </tbody>
+          <tfoot>
+            {[["Day rates", v.days_value],
+              ["Extra hours, at cost", v.ot_value],
+              ...(Number(v.markup) > 0
+                ? [[`Markup at ${Number(v.markup_percent)}% on the day rates`,
+                    v.markup]] : []),
+              ["Value of labour this period", v.period_gross]].map(
+              ([k, val], i, arr) => (
+              <tr key={k} style={i === arr.length - 1
+                ? { fontWeight: 700, color: "var(--navy)" } : {}}>
+                <td colSpan={8} style={{ ...td, textAlign: "right" }}>{k}</td>
+                <td style={{ ...td, textAlign: "right",
+                  fontFamily: "var(--font-mono)" }}>{money(val)}</td>
+              </tr>))}
+          </tfoot>
+        </table>
+      </div>
+      ) : (
       <div style={{ overflowX: "auto", marginTop: 8 }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
           fontSize: 12.5 }}>
@@ -550,6 +770,7 @@ function ValuationView({ vref, me, onBack }) {
           </tbody>
         </table>
       </div>
+      )}
 
       {editable && (
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap",
@@ -620,6 +841,10 @@ function ValuationView({ vref, me, onBack }) {
       <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
         {editable && <Btn variant="secondary" disabled={busy}
           onClick={save}>Save</Btn>}
+        {editable && daywork && <Btn variant="ghost" disabled={busy}
+          onClick={refresh}
+          title="Read the attendance register again — only while this is a draft">
+          ↻ Refresh from register</Btn>}
         {actions.map(([action, label]) => (
           <Btn key={action} variant={action === "return" ? "ghost" : "navy"}
             disabled={busy} onClick={() => act(action)}>{label}</Btn>))}
