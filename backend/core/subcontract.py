@@ -190,10 +190,23 @@ def take_on_directly(emp, data, actor):
         # this has to be queried or it silently does nothing.
         for case in OnboardingCase.objects.filter(employee=emp,
                                                   bv_purpose="SUBCONTRACT"):
+            # A subcontract business visa ENDS on arrival; a recruitment one
+            # carries the in-country BV→WP conversion tail (`sequence()`). So
+            # this is not bookkeeping — it is what lets HR go on and apply for
+            # his work permit (owner 2026-09-10).
             case.bv_purpose = "RECRUITMENT"
             case.subcontractor = None
+            # A recruitment case must carry the proposed salary — it goes on
+            # the appointment letter — and it is the same figure we just put
+            # on his record. Leaving it empty would make the case invalid the
+            # moment anyone touched it.
+            case.proposed_salary = pay
+            case.currency = emp.currency
+            if not case.job_category_id:
+                case.job_category_id = category_id
             case.save(update_fields=["bv_purpose", "subcontractor",
-                                     "updated_at"])
+                                     "proposed_salary", "currency",
+                                     "job_category", "updated_at"])
     # No pay in the detail (spec §7.2) — that it changed is the record.
     audit("employee", emp.id, "TAKEN_ON_DIRECTLY", actor=actor,
           detail={"emp_no": emp.emp_no, "from_subcontractor": was,

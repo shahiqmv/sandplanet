@@ -1282,6 +1282,29 @@ class TakenOnDirectlyTests(TestCase):
         case.refresh_from_db()
         self.assertEqual(case.bv_purpose, "RECRUITMENT")
         self.assertIsNone(case.subcontractor_id)
+        # and it carries the salary, or the case is invalid the moment
+        # anyone touches it — it goes on the appointment letter
+        self.assertEqual(case.proposed_salary, Decimal("9000"))
+
+    def test_hiring_him_opens_the_work_permit_conversion(self):
+        """A subcontract business visa ends on arrival. A recruitment one
+        carries the in-country BV to work-permit tail — which is the whole
+        reason HR needs the purpose changed."""
+        from core import onboarding
+        from .models import Document, OnboardingCase
+        emp = self._worker()
+        doc = Document.objects.create(
+            doc_type="OBR", ref="OBR-HPI-002", site=self.site,
+            doc_date=date.today(), status="IN_PROGRESS", created_by=self.hr)
+        case = OnboardingCase.objects.create(
+            document=doc, full_name=emp.full_name, route="BV",
+            bv_purpose="SUBCONTRACT", subcontractor=self.sub, employee=emp)
+        before = onboarding.sequence(case)
+        self._take_on(emp)
+        case.refresh_from_db()
+        after = onboarding.sequence(case)
+        self.assertGreater(len(after), len(before))
+        self.assertEqual(after[:len(before)], before)   # nothing lost
 
     def test_the_site_cannot_put_a_man_on_the_payroll_itself(self):
         """Hiring is HR's, not the site's — it is a salary being created."""

@@ -215,16 +215,17 @@ export default function EmployeesPage({ me, sites }) {
             <option value="PERMANENT">Permanent</option>
             <option value="CONTRACT">Contract</option>
           </select>
-          {isHr && (
-            <label style={{ fontSize: 12.5, display: "inline-flex", gap: 5,
-                            alignItems: "center", whiteSpace: "nowrap" }}
-                   title="Men engaged through a subcontractor. They are not on
- the payroll — HR can hire one directly from their record.">
-              <input type="checkbox" checked={withSub}
-                     onChange={(e) => { setWithSub(e.target.checked);
-                                        load(e.target.checked); }} />
-              Subcontract workers</label>
-          )}
+          {/* A filter, not a control: it only changes who is listed, so it
+              belongs to anyone who can read the register. Gating it on HR hid
+              it from the Director and the signatory, who can read every
+              module (owner 2026-09-10). Hiring stays HR's. */}
+          <label style={{ fontSize: 12.5, display: "inline-flex", gap: 5,
+                          alignItems: "center", whiteSpace: "nowrap" }}
+                 title="Men engaged through a subcontractor. They are on the site's manpower list, not the payroll.">
+            <input type="checkbox" checked={withSub}
+                   onChange={(e) => { setWithSub(e.target.checked);
+                                      load(e.target.checked); }} />
+            Subcontract workers</label>
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
             {filtered.length} of {employees.length}</span>
           {seesPay && (
