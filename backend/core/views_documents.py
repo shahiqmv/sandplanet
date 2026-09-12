@@ -1420,7 +1420,10 @@ def _do_submit(request, doc, comment):
         return Response({"detail": "This order came from an import request — "
                                    "issue it to the supplier directly."},
                         status=400)
-    if doc.doc_type == "SCA" and not doc.subcontract_agreement.items.exists():
+    if (doc.doc_type == "SCA" and doc.subcontract_agreement.basis != "DAYWORK"
+            and not doc.subcontract_agreement.items.exists()):
+        # A day-work agreement has no scope lines by design — its men are
+        # priced off their own records (owner 2026-09-12, SCA-SJR-001).
         return Response({"detail": "Add at least one scope line before "
                                    "submitting."}, status=400)
     if doc.doc_type == "PR" and doc.quotations.exists():

@@ -1690,6 +1690,16 @@ class DayWorkValuationTests(TestCase):
         self.assertIn("Markup at 10", html)
         self.assertIn("11,275.00", html)      # (10,000 + 250) x 1.1
 
+    def test_a_day_work_agreement_submits_without_scope_lines(self):
+        """It has none by design; the submit guard for measured work must
+        not stop it (owner 2026-09-12, SCA-SJR-001)."""
+        a = self._agreement(approve=False)
+        r = self.client.post(
+            f"/api/v1/documents/{a.document.ref}/actions/submit", {},
+            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+
     def test_measured_agreements_are_untouched(self):
         """The default basis still prices a scope by quantity."""
         from core import subcontract
