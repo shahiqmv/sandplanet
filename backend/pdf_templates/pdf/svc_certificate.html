@@ -67,8 +67,8 @@
 <table class="dv">
   <thead><tr>
     <th class="l">Worker</th><th class="l">Category</th>
-    <th>Days</th><th>Rate/day</th><th>Day value</th>
-    <th>Extra hrs</th><th>Rate/hr</th><th>Extra value</th><th>Amount</th>
+    <th>Weekdays</th><th>Rate/day</th><th>Fridays</th><th>Friday rate</th>
+    <th>Extra hrs</th><th>Rate/hr</th><th>Amount</th>
   </tr></thead>
   <tbody>
     {% for ln in lines %}
@@ -77,20 +77,23 @@
       <td>{{ ln.category|default:"—" }}</td>
       <td class="num">{{ ln.days|floatformat:"-1" }}</td>
       <td class="num">{{ ln.rate_per_day }}</td>
-      <td class="num">{{ ln.day_value }}</td>
+      <td class="num">{{ ln.friday_days|floatformat:"-1" }}</td>
+      <td class="num">{{ ln.friday_rate_per_day }}</td>
       <td class="num">{{ ln.ot_hours|floatformat:"-2" }}</td>
       <td class="num">{{ ln.ot_rate_per_hour }}</td>
-      <td class="num">{{ ln.ot_value }}</td>
       <td class="num">{{ ln.amount }}</td>
     </tr>
     {% endfor %}
-    <tr><td colspan="8">Day rates</td>
+    <tr><td colspan="8">Weekdays</td>
         <td class="num">{{ days_value }}</td></tr>
-    <tr><td colspan="8">Extra hours, at cost</td>
+    <tr><td colspan="8">Fridays</td>
+        <td class="num">{{ friday_value }}</td></tr>
+    <tr><td colspan="8">Extra hours</td>
         <td class="num">{{ ot_value }}</td></tr>
+    <tr class="sub"><td colspan="8">Labour supplied</td>
+        <td class="num">{{ labour }}</td></tr>
     {% if markup %}
-    <tr><td colspan="8">Markup at {{ markup_percent|floatformat:"-2" }}% on
-        the day rates</td>
+    <tr><td colspan="8">Markup at {{ markup_percent|floatformat:"-2" }}%</td>
         <td class="num">{{ markup }}</td></tr>
     {% endif %}
     <tr class="grand"><td colspan="8">Value of labour this period</td>
@@ -100,8 +103,9 @@
   </tbody>
 </table>
 <div class="overnote">Valued from the site attendance register: a full day
-worked counts one, a half day counts a half, and a day not worked counts
-nothing.</div>
+worked counts one, a half day counts a half, a day not worked counts nothing,
+and a Friday worked earns the agreement's Friday rate. Each man's day rate is
+his monthly rate ÷ {{ day_rate_divisor }}.</div>
 {% else %}
 <h2>Measured works ({{ currency }})</h2>
 <table class="dv">

@@ -264,6 +264,7 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
           <thead><tr>
             <th style={th}>Worker</th><th style={th}>Trade</th>
             <th style={th}>Nationality</th><th style={th}>Joined</th>
+            <th style={{ ...th, textAlign: "right" }}>Monthly rate</th>
             <th style={th}>Status</th><th style={th}></th>
           </tr></thead>
           <tbody>
@@ -276,6 +277,12 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
                 <td style={td}>{w.nationality || "—"}</td>
                 <td style={td}>{w.join_date
                   || <span style={{ color: "var(--red-fg)" }}>not set</span>}</td>
+                <td style={{ ...td, textAlign: "right",
+                             fontFamily: "var(--font-mono)" }}>
+                  {w.sub_monthly_rate != null
+                    ? Number(w.sub_monthly_rate).toLocaleString("en-US",
+                        { minimumFractionDigits: 2 })
+                    : <span style={{ color: "var(--muted)" }}>—</span>}</td>
                 <td style={td}><Chip tone={WORKER_TONE[w.state]}>
                   {w.state}</Chip></td>
                 <td style={{ ...td, textAlign: "right" }}>
@@ -320,7 +327,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 
 function WorkerForm({ sub, cats, onCancel, onDone }) {
   const [f, setF] = useState({ full_name: "", nationality: "",
-    passport_no: "", job_category_id: "", join_date: today() });
+    passport_no: "", job_category_id: "", join_date: today(),
+    sub_monthly_rate: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -358,6 +366,11 @@ function WorkerForm({ sub, cats, onCancel, onDone }) {
           <input type="date" style={inputStyle} value={f.join_date}
                  onChange={set("join_date")} required />
         </label>
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>
+          Monthly rate (day work)
+          <input type="number" style={inputStyle} value={f.sub_monthly_rate}
+                 onChange={set("sub_monthly_rate")} placeholder="0.00" />
+        </label>
       </div>
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "8px 0 0" }}>
         Added workers wait for PM approval before they appear on the site
@@ -379,7 +392,8 @@ function WorkerForm({ sub, cats, onCancel, onDone }) {
 function WorkerEditForm({ worker, cats, onCancel, onDone }) {
   const [f, setF] = useState({ join_date: worker.join_date || "",
     job_category_id: worker.job_category_id || "",
-    nationality: worker.nationality || "" });
+    nationality: worker.nationality || "",
+    sub_monthly_rate: worker.sub_monthly_rate ?? "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
@@ -412,6 +426,10 @@ function WorkerEditForm({ worker, cats, onCancel, onDone }) {
         <label style={{ fontSize: 12, color: "var(--muted)" }}>Nationality
           <input style={inputStyle} value={f.nationality}
                  onChange={set("nationality")} /></label>
+        <label style={{ fontSize: 12, color: "var(--muted)" }}>
+          Monthly rate (day work)
+          <input type="number" style={inputStyle} value={f.sub_monthly_rate}
+                 onChange={set("sub_monthly_rate")} placeholder="0.00" /></label>
       </div>
       <p style={{ fontSize: 12, color: "var(--muted)", margin: "8px 0 0" }}>
         Moving the join date earlier puts him on the register from that day.

@@ -187,13 +187,9 @@ class DocumentSerializer(serializers.ModelSerializer):
             "contractor_signatory_title": a.contractor_signatory_title,
             "notes": a.notes, "value": a.value,
             "basis": a.basis, "markup_percent": a.markup_percent,
-            "day_rates": [
-                {"id": r.id, "job_category_id": r.job_category_id,
-                 "category": r.job_category.name,
-                 "rate_per_day": r.rate_per_day,
-                 "ot_rate_per_hour": r.ot_rate_per_hour}
-                for r in a.day_rates.select_related("job_category")
-            ],
+            "day_rate_divisor": a.day_rate_divisor,
+            "ot_rate_per_hour": a.ot_rate_per_hour,
+            "friday_rate_per_day": a.friday_rate_per_day,
             "items": [
                 {"id": i.id, "sort_order": i.sort_order, "section": i.section,
                  "item_code": i.item_code, "description": i.description,

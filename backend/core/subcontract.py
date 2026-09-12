@@ -263,6 +263,13 @@ def update_worker(emp, data, actor):
         if nat != emp.nationality:
             emp.nationality = nat
             changed.append("nationality")
+    if "sub_monthly_rate" in data:
+        rate = _dec(data.get("sub_monthly_rate"))
+        if rate is not None and rate < 0:
+            return "A monthly rate cannot be negative."
+        if rate != emp.sub_monthly_rate:
+            emp.sub_monthly_rate = rate
+            changed.append("sub_monthly_rate")
     if not changed:
         return None
     with transaction.atomic():
@@ -399,6 +406,15 @@ def _apply_sca_terms(agreement, data):
             setattr(agreement, f, data.get(f) or "")
     if "basis" in data and data.get("basis") in ("MEASURED", "DAYWORK"):
         agreement.basis = data["basis"]
+    for f in ("ot_rate_per_hour", "friday_rate_per_day"):
+        if f in data:
+            setattr(agreement, f, _dec(data.get(f)) or Decimal("0"))
+    if "day_rate_divisor" in data:
+        try:
+            agreement.day_rate_divisor = max(1, int(data.get("day_rate_divisor")
+                                                    or 30))
+        except (TypeError, ValueError):
+            pass
     for f in ("advance_percent", "retention_percent", "gst_percent",
               "markup_percent"):
         # non-null, default 0
@@ -438,41 +454,6 @@ def is_daywork(agreement):
     return agreement.basis == "DAYWORK"
 
 
-def set_day_rates(agreement, rows, actor):
-    """Replace the agreed category rates on a day-work agreement.
-
-    Replaced wholesale rather than patched: the screen edits them as one
-    table, and a half-applied rate card is a wrong certificate. Rates already
-    written onto a valuation's lines are untouched — that is the point of
-    storing them there.
-    """
-    from .models import SubcontractDayRate
-    if agreement.document.status != "DRAFT":
-        return "Rates can only be set while the agreement is a draft."
-    seen, clean = set(), []
-    for r in rows or []:
-        cid = r.get("job_category_id")
-        if not cid:
-            continue
-        if cid in seen:
-            return "The same category is listed twice."
-        seen.add(cid)
-        day = _dec(r.get("rate_per_day")) or Decimal("0")
-        ot = _dec(r.get("ot_rate_per_hour")) or Decimal("0")
-        if day < 0 or ot < 0:
-            return "A rate cannot be negative."
-        clean.append(SubcontractDayRate(agreement=agreement,
-                                        job_category_id=cid,
-                                        rate_per_day=day,
-                                        ot_rate_per_hour=ot))
-    with transaction.atomic():
-        agreement.day_rates.all().delete()
-        SubcontractDayRate.objects.bulk_create(clean)
-    audit("document", agreement.document_id, "SCA_DAY_RATES_SET", actor=actor,
-          detail={"ref": agreement.document.ref, "categories": len(clean)})
-    return None
-
-
 def _certified_periods(agreement, exclude_id=None):
     """Periods already certified on this agreement — a man-day is charged
     once, so a new valuation may not reach back into one of them."""
@@ -495,6 +476,15 @@ def period_clash(agreement, start, end, exclude_id=None):
     return None
 
 
+def day_rate_for(emp, agreement):
+    """His day rate: the monthly figure on his record ÷ the agreement's
+    divisor, to the cent. 15,000 ÷ 30 = 500.00; 5,397 ÷ 30 = 179.90."""
+    if emp.sub_monthly_rate is None:
+        return Decimal("0")
+    div = Decimal(agreement.day_rate_divisor or 30)
+    return (Decimal(emp.sub_monthly_rate) / div).quantize(Decimal("0.01"))
+
+
 def read_worker_days(agreement, start, end):
     """What the register says the gang worked, between two dates.
 
@@ -502,9 +492,11 @@ def read_worker_days(agreement, start, end):
     half, and everything else — absent, sick, leave — is nothing. A
     subcontractor's man is hired by the day, so a day he did not work is not
     ours to pay for; that is a matter between him and his employer.
+
+    A Friday worked is counted apart: it earns the agreement's flat Friday
+    rate whoever the man is, not his own day rate (owner 2026-09-12).
     """
     from .models import Attendance
-    rates = {r.job_category_id: r for r in agreement.day_rates.all()}
     rows = {}
     marks = Attendance.objects.filter(
         employee__subcontractor_id=agreement.subcontractor_id,
@@ -515,16 +507,21 @@ def read_worker_days(agreement, start, end):
         emp = m.employee
         row = rows.setdefault(emp.id, {
             "employee": emp, "job_category": emp.job_category,
-            "days": Decimal("0"), "ot_hours": Decimal("0")})
-        row["days"] += DAY_MARK_VALUE.get(m.remark, Decimal("0"))
+            "days": Decimal("0"), "friday_days": Decimal("0"),
+            "ot_hours": Decimal("0")})
+        worked = DAY_MARK_VALUE.get(m.remark, Decimal("0"))
+        if m.day.weekday() == 4:              # Friday
+            row["friday_days"] += worked
+        else:
+            row["days"] += worked
         row["ot_hours"] += m.sub_extra_hours or Decimal("0")
     out = []
     for row in rows.values():
-        rate = rates.get(row["job_category"].id if row["job_category"]
-                         else None)
-        row["rate_per_day"] = rate.rate_per_day if rate else Decimal("0")
-        row["ot_rate_per_hour"] = (rate.ot_rate_per_hour if rate
-                                   else Decimal("0"))
+        row["monthly_rate"] = row["employee"].sub_monthly_rate
+        row["rate_per_day"] = day_rate_for(row["employee"], agreement)
+        row["friday_rate_per_day"] = (agreement.friday_rate_per_day
+                                      or Decimal("0"))
+        row["ot_rate_per_hour"] = agreement.ot_rate_per_hour or Decimal("0")
         out.append(row)
     return out
 
@@ -549,7 +546,10 @@ def fill_worker_days(v, actor=None):
             SubcontractWorkerDay(
                 valuation=v, employee=r["employee"],
                 job_category=r["job_category"], days=r["days"],
-                ot_hours=r["ot_hours"], rate_per_day=r["rate_per_day"],
+                friday_days=r["friday_days"], ot_hours=r["ot_hours"],
+                monthly_rate=r["monthly_rate"],
+                rate_per_day=r["rate_per_day"],
+                friday_rate_per_day=r["friday_rate_per_day"],
                 ot_rate_per_hour=r["ot_rate_per_hour"])
             for r in rows])
     if actor is not None:
@@ -560,25 +560,29 @@ def fill_worker_days(v, actor=None):
 
 
 def daywork_period_value(v):
-    """What this period's labour is worth: the men, then the markup.
+    """What this period's labour is worth: the men, then the gang's markup.
 
-    The markup is on the DAY RATES only — overtime is passed through at the
-    rate the worker is actually paid, so it is a reimbursement and not
-    something to take a fee on (owner 2026-09-10).
+    The markup is on everything supplied — weekdays, Fridays and extra hours
+    alike. That is how the subcontractor's own sheet reads (25/hr becomes
+    30, 300 a Friday becomes 360) and it reconciles to the cent (owner
+    2026-09-12).
     """
-    days_total = ot_total = Decimal("0")
+    days_total = friday_total = ot_total = Decimal("0")
     for w in v.worker_days.all():
         days_total += w.day_value
+        friday_total += w.friday_value
         ot_total += w.ot_value
+    labour = days_total + friday_total + ot_total
     pct = v.markup_percent or Decimal("0")
-    markup = (days_total * pct / Decimal("100")).quantize(Decimal("0.01"))
-    return {"days_value": days_total, "ot_value": ot_total,
+    markup = (labour * pct / Decimal("100")).quantize(Decimal("0.01"))
+    return {"days_value": days_total, "friday_value": friday_total,
+            "ot_value": ot_total, "labour": labour,
             "markup_percent": pct, "markup": markup,
-            "period_gross": days_total + ot_total + markup}
+            "period_gross": labour + markup}
 
 
 def unpriced_workers(v):
-    """Men on the valuation whose category carries no agreed rate."""
+    """Men on the valuation with no monthly rate on their record."""
     return [w for w in v.worker_days.select_related("employee",
                                                     "job_category")
             if not w.priced]
@@ -867,11 +871,12 @@ def _daywork_valuation(v):
         "id": w.id, "employee_id": w.employee_id,
         "emp_no": w.employee.emp_no, "name": w.employee.full_name,
         "category": (w.job_category.name if w.job_category_id else ""),
-        "days": w.days, "ot_hours": w.ot_hours,
-        "rate_per_day": w.rate_per_day,
+        "days": w.days, "friday_days": w.friday_days, "ot_hours": w.ot_hours,
+        "monthly_rate": w.monthly_rate, "rate_per_day": w.rate_per_day,
+        "friday_rate_per_day": w.friday_rate_per_day,
         "ot_rate_per_hour": w.ot_rate_per_hour,
-        "day_value": w.day_value, "ot_value": w.ot_value,
-        "amount": w.amount, "priced": w.priced,
+        "day_value": w.day_value, "friday_value": w.friday_value,
+        "ot_value": w.ot_value, "amount": w.amount, "priced": w.priced,
     } for w in v.worker_days.select_related("employee", "job_category")]
     gross_cum = (_svc_gross_cumulative(v.previous)
                  + period["period_gross"])
@@ -880,7 +885,9 @@ def _daywork_valuation(v):
     out.update({
         "basis": "DAYWORK", "lines": lines,
         "period_from": v.period_from, "period_to": v.period_to,
-        "days_value": period["days_value"], "ot_value": period["ot_value"],
+        "days_value": period["days_value"],
+        "friday_value": period["friday_value"],
+        "ot_value": period["ot_value"], "labour": period["labour"],
         "markup_percent": period["markup_percent"],
         "markup": period["markup"],
         "period_gross": period["period_gross"],
@@ -1016,9 +1023,13 @@ def create_svc(agreement, actor, data=None):
         clash = period_clash(agreement, start, end)
         if clash:
             return None, clash
-        if not agreement.day_rates.exists():
-            return None, ("Set the agreed day rates on the agreement before "
-                          "valuing labour against it.")
+        if not Employee.objects.filter(
+                subcontractor_id=agreement.subcontractor_id,
+                engagement_type="SUBCONTRACT",
+                sub_monthly_rate__isnull=False).exists():
+            return None, ("None of the gang has a monthly rate on his record "
+                          "yet — set them from the subcontractor's team "
+                          "table before valuing labour.")
     site = doc0.site
     with transaction.atomic():
         doc = Document.objects.create(
@@ -1222,12 +1233,11 @@ def svc_action(v, action, actor, note=""):
             # not after (owner 2026-09-10).
             missing = unpriced_workers(v)
             if missing:
-                who = ", ".join(f"{w.employee.emp_no} "
-                                f"({w.job_category.name if w.job_category_id else 'no category'})"
+                who = ", ".join(f"{w.employee.emp_no} {w.employee.full_name}"
                                 for w in missing[:4])
                 more = f" and {len(missing) - 4} more" if len(missing) > 4 else ""
-                return (f"No agreed day rate for {who}{more}. Set the rate on "
-                        f"the agreement, or take them off the register.")
+                return (f"No monthly rate on record for {who}{more}. Set it "
+                        f"on the subcontractor's team table, then refresh.")
         elif not v.items.exists():
             return "There's nothing to value on this certificate."
     if action == "authorise":
@@ -1356,8 +1366,10 @@ def svc_pdf_context(doc):
         # and days. Everything under "Certification" is identical.
         "basis": val["basis"],
         "lines": ([{**ln, "rate_per_day": q2(ln["rate_per_day"]),
+                    "friday_rate_per_day": q2(ln["friday_rate_per_day"]),
                     "ot_rate_per_hour": q2(ln["ot_rate_per_hour"]),
                     "day_value": q2(ln["day_value"]),
+                    "friday_value": q2(ln["friday_value"]),
                     "ot_value": q2(ln["ot_value"]),
                     "amount": q2(ln["amount"])}
                    for ln in val["lines"]]
@@ -1369,10 +1381,13 @@ def svc_pdf_context(doc):
         "period_from": val.get("period_from"),
         "period_to": val.get("period_to"),
         "days_value": q2(val.get("days_value")),
+        "friday_value": q2(val.get("friday_value")),
         "ot_value": q2(val.get("ot_value")),
+        "labour": q2(val.get("labour")),
         "markup_percent": val.get("markup_percent") or Decimal("0"),
         "markup": q2(val.get("markup")),
         "period_gross": q2(val.get("period_gross")),
+        "day_rate_divisor": a.day_rate_divisor,
         "gross_cumulative": q2(val["gross_cumulative"]),
         "retention_pct": _pct(val["retention_pct"]),
         "retention_held": q2(val["retention_held"]),
@@ -1401,10 +1416,6 @@ def update_sca(doc, data, actor):
     agreement.save()
     if "rows" in data:
         _set_scope(agreement, data.get("rows") or [])
-    if "day_rates" in data:
-        err = set_day_rates(agreement, data.get("day_rates") or [], actor)
-        if err:
-            return None, err
     audit("document", doc.id, "SCA_EDITED", actor=actor,
           detail={"ref": doc.ref})
     return doc, None

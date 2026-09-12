@@ -125,7 +125,8 @@ function ScopeEditor({ rows, setRows }) {
 const TERMS0 = {
   currency: "MVR", start_date: "", end_date: "", advance_percent: "",
   gst_percent: "", retention_percent: "", payment_days: "", ld_amount: "",
-  ld_cap_percent: "", markup_percent: "",
+  ld_cap_percent: "", markup_percent: "", ot_rate_per_hour: "",
+  friday_rate_per_day: "", day_rate_divisor: "30",
   contractor_signatory_name: "", contractor_signatory_title: "",
   scope_of_work: "",
 };
@@ -136,61 +137,14 @@ const TERMS0 = {
 // 2026-09-10). The OT rate is the standard hourly rate the company pays for
 // that trade, recorded here so the certificate can be checked against the
 // contract rather than against a table that has since moved.
-function DayRateEditor({ rates, setRates, cats }) {
-  const set = (i, k, v) =>
-    setRates(rates.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
-  const used = new Set(rates.map((r) => String(r.job_category_id)));
-  return (
-    <table style={{ width: "100%", borderCollapse: "collapse" }}>
-      <thead><tr>
-        <th style={th}>Category</th>
-        <th style={{ ...th, textAlign: "right" }}>Rate / day</th>
-        <th style={{ ...th, textAlign: "right" }}>Extra hours / hr</th>
-        <th style={th}></th>
-      </tr></thead>
-      <tbody>
-        {rates.map((r, i) => (
-          <tr key={i}>
-            <td style={td}>
-              <select value={r.job_category_id}
-                      onChange={(e) => set(i, "job_category_id", e.target.value)}
-                      style={{ ...inputStyle, width: "100%" }}>
-                <option value="">Category…</option>
-                {cats.map((c) => (
-                  <option key={c.id} value={c.id}
-                          disabled={used.has(String(c.id))
-                                    && String(c.id) !== String(r.job_category_id)}>
-                    {c.name}</option>))}
-              </select></td>
-            <td style={td}>
-              <input type="number" value={r.rate_per_day} placeholder="0.00"
-                     onChange={(e) => set(i, "rate_per_day", e.target.value)}
-                     style={{ ...inputStyle, width: 110, textAlign: "right" }} />
-            </td>
-            <td style={td}>
-              <input type="number" value={r.ot_rate_per_hour} placeholder="0.00"
-                     onChange={(e) => set(i, "ot_rate_per_hour", e.target.value)}
-                     style={{ ...inputStyle, width: 110, textAlign: "right" }} />
-            </td>
-            <td style={{ ...td, textAlign: "right" }}>
-              <Btn type="button" variant="ghost"
-                   onClick={() => setRates(rates.filter((_, j) => j !== i))}>
-                ✕</Btn></td>
-          </tr>))}
-      </tbody>
-    </table>
-  );
-}
-
 function CreateForm({ sub, onCancel, onDone }) {
   const [title, setTitle] = useState("");
   const [t, setT] = useState({ ...TERMS0 });
   const [rows, setRows] = useState([{ ...BLANK_ROW }]);
   // Measured work prices a scope by quantity; day work hires men by the day
-  // at agreed category rates and charges a markup. One basis per agreement —
+  // at the monthly rate on each man's record and charges a markup. One basis per agreement —
   // a gang doing both signs two (owner 2026-09-10).
   const [basis, setBasis] = useState("MEASURED");
-  const [rates, setRates] = useState([]);
   const [cats, setCats] = useState([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -213,11 +167,8 @@ function CreateForm({ sub, onCancel, onDone }) {
     setBusy(true); setError(null);
     try {
       const clean = daywork ? [] : rows.filter((r) => r.description.trim());
-      const day_rates = daywork
-        ? rates.filter((r) => r.job_category_id) : [];
-      await api(`/subcontractors/${sub.id}/agreements`,
-                { method: "POST",
-                  body: { title, rows: clean, basis, day_rates, ...t } });
+      await api(`/subcontractors/${sub.id}/agreements`, { method: "POST",
+                body: { title, rows: clean, basis, ...t } });
       onDone();
     } catch (err) { setError(err.message); } finally { setBusy(false); }
   }
@@ -251,9 +202,16 @@ function CreateForm({ sub, onCancel, onDone }) {
         <F k="payment_days" label="Payment days" type="number" w={100} />
         <F k="ld_amount" label="LD / day" type="number" w={100} />
         <F k="ld_cap_percent" label="LD cap %" type="number" w={80} />
-        {daywork && (
-          <F k="markup_percent" label="Markup % (on day rates)" type="number"
-             w={150} />)}
+        {daywork && (<>
+          <F k="markup_percent" label="Markup % (on all labour)" type="number"
+             w={150} />
+          <F k="ot_rate_per_hour" label="Extra hours / hr" type="number"
+             w={120} />
+          <F k="friday_rate_per_day" label="Friday rate / day" type="number"
+             w={130} />
+          <F k="day_rate_divisor" label="Day rate = monthly ÷" type="number"
+             w={130} />
+        </>)}
       </div>
       <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
         <F k="contractor_signatory_name" label="Contractor signatory" w={180}
@@ -266,19 +224,14 @@ function CreateForm({ sub, onCancel, onDone }) {
           rows={3} placeholder="Narrative description of the works…"
           style={{ ...inputStyle, width: "100%", fontFamily: "inherit",
                    resize: "vertical" }} /></label>
-      {daywork ? (<>
+      {daywork ? (
         <div style={{ fontSize: 12, color: "var(--muted)",
                       margin: "10px 0 2px" }}>
-          Agreed day rates (Annexure B) — overtime is passed through at the
-          hourly rate, without markup</div>
-        <DayRateEditor rates={rates} setRates={setRates} cats={cats} />
-        <div style={{ marginTop: 8 }}>
-          <Btn type="button" variant="ghost"
-               onClick={() => setRates([...rates, { job_category_id: "",
-                 rate_per_day: "", ot_rate_per_hour: "" }])}>
-            + Add a category</Btn>
-        </div>
-      </>) : (<>
+          Each man is priced from the monthly rate on his own record — set it
+          on the team table above. His day rate is that figure ÷ the divisor;
+          a Friday worked earns the flat Friday rate; extra hours the hourly
+          rate; the markup goes on all of it.</div>
+      ) : (<>
         <div style={{ fontSize: 12, color: "var(--muted)",
                       margin: "10px 0 2px" }}>
           Priced scope (Annexure B)</div>
@@ -401,35 +354,23 @@ function AgreementView({ docRef, me, onBack }) {
         </div>
       )}
       {daywork ? (
-        <table style={{ width: "100%", borderCollapse: "collapse",
-                        marginTop: 10 }}>
-          <thead><tr>
-            <th style={th}>Category</th>
-            <th style={{ ...th, textAlign: "right" }}>Rate / day</th>
-            <th style={{ ...th, textAlign: "right" }}>Extra hours / hr</th>
-          </tr></thead>
+        <table style={{ borderCollapse: "collapse", marginTop: 10 }}>
           <tbody>
-            {(a.day_rates || []).map((r) => (
-              <tr key={r.id}>
-                <td style={td}>{r.category}</td>
-                <td style={{ ...td, textAlign: "right",
-                             fontFamily: "var(--font-mono)" }}>
-                  {money(r.rate_per_day)}</td>
-                <td style={{ ...td, textAlign: "right",
-                             fontFamily: "var(--font-mono)" }}>
-                  {money(r.ot_rate_per_hour)}</td>
+            {[["Day rate", `monthly rate on each man ÷ ${a.day_rate_divisor || 30}`],
+              ["Friday worked", money(a.friday_rate_per_day) + " / day"],
+              ["Extra hours", money(a.ot_rate_per_hour) + " / hr"],
+              ["Markup", `${Number(a.markup_percent) || 0}% on all labour`]]
+              .map(([k, val]) => (
+              <tr key={k}>
+                <td style={{ ...td, color: "var(--muted)", paddingRight: 16 }}>{k}</td>
+                <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{val}</td>
               </tr>))}
-            {!(a.day_rates || []).length && (
-              <tr><td colSpan={3} style={{ ...td, color: "var(--red-fg)" }}>
-                No day rates agreed — nothing can be valued against this
-                agreement until they are set.</td></tr>)}
           </tbody>
           <tfoot><tr>
-            <td colSpan={3} style={{ ...td, fontSize: 12,
+            <td colSpan={2} style={{ ...td, fontSize: 12,
                                      color: "var(--muted)" }}>
-              Valued monthly off the attendance register. Markup of{" "}
-              {Number(a.markup_percent) || 0}% on the day rates; extra hours
-              passed through at cost.</td>
+              Valued monthly off the attendance register. A man with no
+              monthly rate on his record blocks the certificate.</td>
           </tr></tfoot>
         </table>
       ) : (
@@ -677,7 +618,7 @@ function ValuationView({ vref, me, onBack }) {
           <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
             {d.period_from} → {d.period_to}</span>)}
         {daywork && (v.unpriced || []).length > 0 && (
-          <Chip tone="alert">{v.unpriced.length} without an agreed rate</Chip>)}
+          <Chip tone="alert">{v.unpriced.length} without a monthly rate</Chip>)}
         {d.status !== "DRAFT" && ["PM", "DIRECTOR", "SIGNATORY", "FINANCE",
                                   "ADMIN", "QS"].includes(me.role) && (
           <a href={`/api/v1/subcontract-valuations/${d.ref}/certificate.pdf`}
@@ -689,16 +630,15 @@ function ValuationView({ vref, me, onBack }) {
       {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
       {daywork && (v.unpriced || []).length > 0 && (
         <p style={{ fontSize: 12.5, color: "var(--red-fg)", margin: "6px 0 0" }}>
-          No agreed day rate for {v.unpriced.join(", ")} — set it on the
-          agreement, or take them off the register. They are shown at zero
-          and block submission.</p>)}
+          No monthly rate on record for {v.unpriced.join(", ")} — set it on
+          the subcontractor's team table, then refresh this valuation.</p>)}
       {daywork ? (
       <div style={{ overflowX: "auto", marginTop: 8 }}>
         <table style={{ width: "100%", borderCollapse: "collapse",
           fontSize: 12.5 }}>
           <thead><tr>
-            {["Worker", "Category", "Days", "Rate/day", "Day value",
-              "Extra hrs", "Rate/hr", "Extra value", "Amount"].map((h, i) => (
+            {["Worker", "Category", "Weekdays", "Rate/day", "Fridays",
+              "Friday rate", "Extra hrs", "Rate/hr", "Amount"].map((h, i) => (
               <th key={h} style={{ ...th, textAlign: i > 1 ? "right" : "left" }}>
                 {h}</th>))}
           </tr></thead>
@@ -709,12 +649,10 @@ function ValuationView({ vref, me, onBack }) {
                 <td style={td}>{l.category || "—"}</td>
                 <td style={{ ...td, textAlign: "right" }}>{num(l.days)}</td>
                 <td style={{ ...td, textAlign: "right" }}>{money(l.rate_per_day)}</td>
-                <td style={{ ...td, textAlign: "right",
-                  fontFamily: "var(--font-mono)" }}>{money(l.day_value)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{num(l.friday_days)}</td>
+                <td style={{ ...td, textAlign: "right" }}>{money(l.friday_rate_per_day)}</td>
                 <td style={{ ...td, textAlign: "right" }}>{num(l.ot_hours)}</td>
                 <td style={{ ...td, textAlign: "right" }}>{money(l.ot_rate_per_hour)}</td>
-                <td style={{ ...td, textAlign: "right",
-                  fontFamily: "var(--font-mono)" }}>{money(l.ot_value)}</td>
                 <td style={{ ...td, textAlign: "right",
                   fontFamily: "var(--font-mono)" }}>{money(l.amount)}</td>
               </tr>))}
@@ -723,11 +661,12 @@ function ValuationView({ vref, me, onBack }) {
                 Nobody was marked on the register for this period.</td></tr>)}
           </tbody>
           <tfoot>
-            {[["Day rates", v.days_value],
-              ["Extra hours, at cost", v.ot_value],
+            {[["Weekdays", v.days_value],
+              ["Fridays", v.friday_value],
+              ["Extra hours", v.ot_value],
+              ["Labour supplied", v.labour],
               ...(Number(v.markup) > 0
-                ? [[`Markup at ${Number(v.markup_percent)}% on the day rates`,
-                    v.markup]] : []),
+                ? [[`Markup at ${Number(v.markup_percent)}%`, v.markup]] : []),
               ["Value of labour this period", v.period_gross]].map(
               ([k, val], i, arr) => (
               <tr key={k} style={i === arr.length - 1

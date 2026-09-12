@@ -2124,6 +2124,13 @@ class Employee(models.Model):
     # A newly-added subcontract worker awaits PM approval; until then is_active
     # is False so it stays out of every attendance roster + manpower count.
     sub_pending = models.BooleanField(default=False)
+    # The agreed monthly figure for a gang worker under a day-work agreement.
+    # Men in one category are paid differently — Ocean Nautica's carpenters
+    # range 5,397 to 15,000 — so a rate per category was the wrong shape;
+    # the day rate is this ÷ the agreement's divisor (owner 2026-09-12).
+    # Not basic_pay: he is not on our payroll and never will be through this.
+    sub_monthly_rate = models.DecimalField(max_digits=12, decimal_places=2,
+                                           null=True, blank=True)
     # A site-added DIRECT hire awaits PM→Director approval; is_active is False
     # (so it's out of every attendance + payroll query) until the Director
     # approves it (site-worker-management tool).
@@ -2269,11 +2276,20 @@ class SubcontractAgreement(models.Model):
     basis = models.CharField(max_length=10, default="MEASURED",
                              choices=[("MEASURED", "Measured work"),
                                       ("DAYWORK", "Day work (labour supply)")])
-    # The subcontractor's fee on the labour they supply. Day rates only —
-    # overtime is passed through at the rate the worker is actually paid
-    # (owner 2026-09-10).
+    # The subcontractor's fee on ALL the labour they supply — day rates,
+    # overtime and Fridays alike (owner 2026-09-12, from their own sheet:
+    # 25/hr becomes 30, 300 a Friday becomes 360).
     markup_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                          default=Decimal("0"))
+    # Day work is priced per MAN, not per category: his monthly figure sits
+    # on his record and his day rate is that ÷ this divisor. What is common
+    # to the whole gang sits here — the hourly rate for extra hours and the
+    # flat rate a Friday worked earns regardless of the man's salary.
+    day_rate_divisor = models.PositiveSmallIntegerField(default=30)
+    ot_rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2,
+                                           default=Decimal("0"))
+    friday_rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
+                                              default=Decimal("0"))
     # Commercial terms for the agreement document + SVC valuations.
     advance_percent = models.DecimalField(max_digits=5, decimal_places=2,
                                           default=0)   # of price, on signing
@@ -2330,39 +2346,6 @@ class SubcontractScopeItem(models.Model):
         if self.is_heading:
             return Decimal("0")
         return (self.qty or Decimal("0")) * (self.rate or Decimal("0"))
-
-
-class SubcontractDayRate(models.Model):
-    """What one category costs per day under a day-work agreement.
-
-    On the AGREEMENT, not global: every subcontractor negotiates their own,
-    and last year's rate must not rewrite a certificate signed this year. The
-    overtime rate sits here too — it is the standard hourly rate the company
-    pays for that trade, agreed with the subcontractor and recorded so the
-    certificate can be checked against the contract rather than against a
-    table that has since moved.
-    """
-
-    agreement = models.ForeignKey(SubcontractAgreement,
-                                  on_delete=models.CASCADE,
-                                  related_name="day_rates")
-    job_category = models.ForeignKey("ManpowerCategory",
-                                     on_delete=models.PROTECT,
-                                     related_name="+")
-    rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
-                                       default=Decimal("0"))
-    ot_rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2,
-                                           default=Decimal("0"))
-
-    class Meta:
-        constraints = [
-            models.UniqueConstraint(fields=["agreement", "job_category"],
-                                    name="uniq_sca_day_rate")
-        ]
-        ordering = ["job_category__sort_order", "id"]
-
-    def __str__(self):
-        return f"{self.job_category} @ {self.rate_per_day}/day"
 
 
 class SubcontractValuation(models.Model):
@@ -2432,11 +2415,18 @@ class SubcontractWorkerDay(models.Model):
                                      on_delete=models.PROTECT, null=True,
                                      blank=True, related_name="+")
     days = models.DecimalField(max_digits=6, decimal_places=1,
-                               default=Decimal("0"))   # present 1, half 0.5
+                               default=Decimal("0"))   # weekdays: present 1, half 0.5
+    friday_days = models.DecimalField(max_digits=6, decimal_places=1,
+                                      default=Decimal("0"))
     ot_hours = models.DecimalField(max_digits=7, decimal_places=2,
                                    default=Decimal("0"))
+    # Snapshots of what he was priced at when the register was read.
+    monthly_rate = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
     rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
                                        default=Decimal("0"))
+    friday_rate_per_day = models.DecimalField(max_digits=12, decimal_places=2,
+                                              default=Decimal("0"))
     ot_rate_per_hour = models.DecimalField(max_digits=10, decimal_places=2,
                                            default=Decimal("0"))
 
@@ -2453,22 +2443,26 @@ class SubcontractWorkerDay(models.Model):
                                               or Decimal("0"))
 
     @property
+    def friday_value(self):
+        return (self.friday_days or Decimal("0")) * (self.friday_rate_per_day
+                                                     or Decimal("0"))
+
+    @property
     def ot_value(self):
-        """Overtime is passed through at cost — the markup is on the day
-        rates only (owner 2026-09-10)."""
         return (self.ot_hours or Decimal("0")) * (self.ot_rate_per_hour
                                                   or Decimal("0"))
 
     @property
     def amount(self):
-        return self.day_value + self.ot_value
+        """Before markup — the markup is the gang's, applied to the total."""
+        return self.day_value + self.friday_value + self.ot_value
 
     @property
     def priced(self):
-        """A man whose category has no agreed rate cannot be valued. He is
+        """A man with no monthly rate on his record cannot be valued. He is
         shown, at zero, and blocks certification — valuing him silently at
         nothing is how a gang goes unpaid for a month."""
-        return bool(self.job_category_id and self.rate_per_day)
+        return bool(self.rate_per_day)
 
 
 class SubcontractValuationItem(models.Model):
