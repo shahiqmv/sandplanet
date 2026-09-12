@@ -1884,7 +1884,39 @@ def _do_cancel(request, doc, comment):
         return _apply(request, doc, "CANCELLED", "CANCEL",
                       roles={"SITE_ADMIN", "SITE_ENGINEER", "PM"},
                       comment=comment)
-    return Response({"detail": "cancel applies to PMR/IPR/SCA here."},
+    if doc.doc_type == "PO":
+        # A returned order that must not go out as it stands — a duplicated
+        # award, found at signature (owner 2026-09-12, PO-139). Its lines
+        # cannot be edited and re-approving the PR would not re-cut it,
+        # because generation leaves alone any vendor whose lines already
+        # carry an order. So: cancel the order AND release the award marks on
+        # its PR lines, so the PR can be returned, corrected and re-approved,
+        # and a clean order is cut. A draft has posted no commitment, so
+        # there is nothing to reverse. An import order is cancelled through
+        # its IPR, whose signatory approval is the one that counts.
+        from .procurement import is_local_credit_po, po_source_pr
+        if doc.status != "DRAFT":
+            return Response({"detail": "Only a returned (draft) order can be "
+                                       "cancelled. A submitted one is "
+                                       "returned first."}, status=400)
+        if not is_local_credit_po(doc):
+            return Response({"detail": "This order came from an import "
+                                       "request — cancel the IPR instead."},
+                            status=400)
+        resp = _apply(request, doc, "CANCELLED", "CANCEL",
+                      roles={"HO_PURCHASING"}, comment=comment)
+        if doc.status == "CANCELLED":
+            pr = po_source_pr(doc)
+            released = 0
+            if pr is not None and pr.current_revision_id:
+                released = pr.current_revision.lines.filter(
+                    po_ref=doc.ref).update(po_ref="")
+            audit("document", doc.id, "PO_AWARD_RELEASED",
+                  actor=request.user,
+                  detail={"po": doc.ref, "pr": pr.ref if pr else None,
+                          "lines_released": released, "reason": comment})
+        return resp
+    return Response({"detail": "cancel applies to PMR/IPR/SCA/PO here."},
                     status=400)
 
 

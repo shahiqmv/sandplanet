@@ -239,6 +239,11 @@ const ACTIONS = {
     ["close", "Close", ["ISSUED"], ["HO_PURCHASING", "ADMIN"]],
     // Close sits beside the other actions and used to be a one-way door.
     ["reopen", "Re-open (Admin)", ["CLOSED"], ["ADMIN"], "comment"],
+    // A returned order that must not go out as it stands. Cancelling it
+    // releases the award on its PR lines, so the PR can be returned,
+    // corrected and re-approved to cut a clean order (owner 2026-09-12).
+    ["cancel", "Cancel order — release the award", ["DRAFT"],
+     ["HO_PURCHASING", "ADMIN"], "comment"],
   ],
   GRN: [
     ["count", "Confirm count", ["DRAFT"], ["SITE_ADMIN", "SITE_ENGINEER", "PM",
