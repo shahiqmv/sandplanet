@@ -23,6 +23,17 @@ const HEADER_FIELDS = {
     ["required_by", "Required On Site By", "date"],
   ],
   PR: [["requested_delivery", "Requested Delivery", "date"]],
+  // A local order comes back to draft only to be corrected before it is
+  // sent for signature, and Edit was offered on it — but this table had no
+  // PO row, so HEADER_FIELDS["PO"].map threw and the boundary took the
+  // screen (owner 2026-09-12, PO-139). What is editable on the order is its
+  // own terms; the supplier, the quote and the PR it came from are
+  // provenance and stay as they were awarded.
+  PO: [
+    ["expected_delivery", "Expected Delivery", "date"],
+    ["payment_terms", "Payment Terms", "text"],
+    ["supplier_contact", "Supplier Contact", "text"],
+  ],
   LM: [
     ["vessel", "Vessel / Boat", "text"],
     ["departure_point", "Departure Point", "text"],
@@ -412,6 +423,7 @@ function ItemCell({ items, row, set, me, onItemCreated }) {
 const LINE_DEFAULTS = {
   MR: { priority: "NORMAL" },
   PR: {},
+  PO: {},   // same shape as the PR it was awarded from
   LM: {},
   GRN: {},
   // MR/PMR lines must be catalogue items (owner 2026-07-14) — a missing item
@@ -536,7 +548,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
       amount_cash: l.amount_cash, amount_credit: l.amount_credit,
       fulfil_source: l.fulfil_source, store_issue_line: l.store_issue_line,
       remarks: l.remarks,
-    })) || [{ ...LINE_DEFAULTS[docType] }]
+    })) || [{ ...(LINE_DEFAULTS[docType] || {}) }]
   );
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -771,7 +783,7 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
             </select>
           </label>
         )}
-        {HEADER_FIELDS[docType].map(([key, label, type]) => (
+        {(HEADER_FIELDS[docType] || []).map(([key, label, type]) => (
           docType === "LM" && key === "vessel" ? (
             <VesselPicker key={key} name={payload.vessel}
               vesselId={payload.vessel_id}
@@ -909,6 +921,41 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           </span>
         </div>
       )}
+      {/* A PO's lines are what the award produced, and the server takes no
+          lines on a PO at all (LINE_TYPES) — an editor here would let someone
+          change a quantity that never saved. The order takes its own terms
+          above; what is ordered changes on the PR (owner 2026-09-12). */}
+      {docType === "PO" ? (
+        <div style={{ marginTop: 10 }}>
+          <div style={{ fontSize: 12.5, color: "var(--muted)", marginBottom: 6 }}>
+            Lines as awarded{payload.pr_ref ? ` from ${payload.pr_ref}` : ""} —
+            to change what is ordered, return the PR and re-award it; the
+            order is regenerated from it.
+          </div>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead><tr>
+              <th style={th}>#</th><th style={th}>Item</th>
+              <th style={th}>Unit</th>
+              <th style={{ ...th, textAlign: "right" }}>Qty</th>
+              <th style={{ ...th, textAlign: "right" }}>Rate</th>
+              <th style={{ ...th, textAlign: "right" }}>Amount</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={td}>{r.line_no || i + 1}</td>
+                  <td style={td}>
+                    {r.description || r.free_text_desc || r.item_code || "—"}</td>
+                  <td style={td}>{r.unit || ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>
+                    {r.qty_required ?? r.qty ?? ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.rate ?? ""}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.amount ?? ""}</td>
+                </tr>))}
+            </tbody>
+          </table>
+        </div>
+      ) : (<>
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -1076,10 +1123,11 @@ export function LineDocForm({ docType, site, sites, me, existing, grnLmRef,
           </tbody>
         </table>
       </div>
-      <button onClick={() => setRows([...rows, { ...LINE_DEFAULTS[docType] }])}
+      <button onClick={() => setRows([...rows, { ...(LINE_DEFAULTS[docType] || {}) }])}
               style={{ ...ghostButton, padding: "4px 12px", marginTop: 6 }}>
         + Add row
       </button>
+      </>)}
       </>
       )}
 
@@ -1379,7 +1427,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       </p>
       {doc.links?.length > 0 && (
         <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 0" }}>
-          References: {doc.links.map((l) => l.ref).join(" · ")}
+          References: {(doc.links || []).map((l) => l.ref).join(" · ")}
         </p>
       )}
 
@@ -1619,7 +1667,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
             </tr>
           </thead>
           <tbody>
-            {doc.lines.map((line) => (
+            {(doc.lines || []).map((line) => (
               <tr key={line.id}
                   style={line.is_changed ? { background: "#fff8e6" } : {}}>
                 {isPR ? (<>
@@ -1843,7 +1891,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
 
       {doc.revisions?.length > 1 && (
         <p style={{ fontSize: 12, color: "#5a6b78" }}>
-          Revisions: {doc.revisions.map((r) =>
+          Revisions: {(doc.revisions || []).map((r) =>
             r.is_current ? `${r.rev_label} (current)` : r.rev_label).join(" · ")}
         </p>
       )}
@@ -1856,7 +1904,7 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
       {doc.approvals?.length > 0 && (
         <>
           <SectionTitle>Workflow trail</SectionTitle>
-          {doc.approvals.map((a) => (
+          {(doc.approvals || []).map((a) => (
             <p key={a.id} style={{ fontSize: 12, color: "#1a7f37",
                                    margin: "4px 0" }}>
               {a.action} — {a.actor_name} ({a.actor_role.replace(/_/g, " ")}) —{" "}

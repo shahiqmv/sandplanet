@@ -522,6 +522,18 @@ export default function App() {
       return;
     }
     if (pendingUrl.hoPage) setHoPage(pendingUrl.hoPage);
+    // A #/doc/<mode>/<ref> hash decodes to a bare {ref}: the viewers render
+    // what they are handed and never fetch, so a link opened cold painted an
+    // empty document — and, until today, crashed on its missing lines.
+    // Resolve it the way #/open/<ref> is resolved: fetch, then route by type
+    // (owner 2026-09-12, PO-139). A view carrying a real document (navigated
+    // to, not typed) is applied as before.
+    const shell = pendingUrl.docView?.doc;
+    if (shell?.ref && !shell.doc_type) {
+      openDoc(shell.ref);
+      setPendingUrl(null);
+      return;
+    }
     if (pendingUrl.docView) setDocView(pendingUrl.docView);
     // a site view waits for /sites above; clear the intent either way
     if (!pendingUrl.siteId) setPendingUrl(null);
