@@ -619,6 +619,9 @@ function ValuationView({ vref, me, onBack }) {
             {d.period_from} → {d.period_to}</span>)}
         {daywork && (v.unpriced || []).length > 0 && (
           <Chip tone="alert">{v.unpriced.length} without a monthly rate</Chip>)}
+        {daywork && Number(v.pending_hours) > 0 && (
+          <Chip tone="warn">{num(v.pending_hours)} extra hours on{" "}
+            {v.pending_men} awaiting PM approval</Chip>)}
         {d.status !== "DRAFT" && ["PM", "DIRECTOR", "SIGNATORY", "FINANCE",
                                   "ADMIN", "QS"].includes(me.role) && (
           <a href={`/api/v1/subcontract-valuations/${d.ref}/certificate.pdf`}

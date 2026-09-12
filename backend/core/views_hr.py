@@ -1065,6 +1065,18 @@ def attendance_bulk(request):
             record.ot_approved_at = None
             fields += ["ot_approved", "ot_approved_by", "ot_approved_at"]
             withdrawn.append(employee.emp_no)
+        # The same rule for a gang worker's extra hours: the PM approved a
+        # figure, the clerk changed it, the approval goes back to the PM.
+        if (before is not None and is_sub
+                and before.sub_extra_approved is not None
+                and (record.sub_extra_hours or Decimal("0"))
+                != (before.sub_extra_hours or Decimal("0"))):
+            record.sub_extra_approved = None
+            record.sub_extra_approved_by = None
+            record.sub_extra_approved_at = None
+            fields += ["sub_extra_approved", "sub_extra_approved_by",
+                       "sub_extra_approved_at"]
+            withdrawn.append(employee.emp_no)
         record.save(update_fields=fields)
         now = _mark_snapshot(record)
         if was != now:
@@ -1247,16 +1259,31 @@ def ot_approve(request):
         if hours < 0:
             return Response({"detail": "Hours cannot be negative."},
                             status=400)
-        row.ot_approved = hours
-        row.ot_approved_by = request.user
-        row.ot_approved_at = timezone.now()
-        row.save(update_fields=["ot_approved", "ot_approved_by",
-                                "ot_approved_at"])
-        rate = row.employee.ot_rate()
+        is_sub = (row.employee.engagement_type
+                  == Employee.Engagement.SUBCONTRACT)
+        if is_sub:
+            # A gang worker's hours are approved into their own field and
+            # never the payroll one — he is structurally off payroll.
+            row.sub_extra_approved = hours
+            row.sub_extra_approved_by = request.user
+            row.sub_extra_approved_at = timezone.now()
+            row.save(update_fields=["sub_extra_approved",
+                                    "sub_extra_approved_by",
+                                    "sub_extra_approved_at"])
+            rate, _ccy = _gang_ot_rate(row.employee)
+        else:
+            row.ot_approved = hours
+            row.ot_approved_by = request.user
+            row.ot_approved_at = timezone.now()
+            row.save(update_fields=["ot_approved", "ot_approved_by",
+                                    "ot_approved_at"])
+            rate = row.employee.ot_rate()
         cost = (hours * rate).quantize(Decimal("0.01"))
         total_cost += cost
         decided.append({"emp": row.employee.emp_no, "day": row.day.isoformat(),
-                        "requested": str(row.ot_requested or 0),
+                        "subcontract": is_sub,
+                        "requested": str((row.sub_extra_hours if is_sub
+                                          else row.ot_requested) or 0),
                         "approved": str(hours), "rate": str(rate),
                         "cost": str(cost)})
     # The audit used to say only "count: 197". Payroll evidence needs the
@@ -1349,6 +1376,20 @@ def _ot_flag_hours():
         return Decimal("4")
 
 
+def _gang_ot_rate(emp):
+    """What an hour of a gang worker's extra time is priced at: the hourly
+    rate on his subcontractor's approved day-work agreement. Not the company
+    OT table — it is the gang's money, not payroll's."""
+    from .models import SubcontractAgreement
+    ag = (SubcontractAgreement.objects.filter(
+        subcontractor_id=emp.subcontractor_id, basis="DAYWORK",
+        document__status="APPROVED", document__is_void=False)
+        .order_by("-id").first())
+    if ag is None:
+        return Decimal("0"), "MVR"
+    return ag.ot_rate_per_hour or Decimal("0"), ag.currency or "MVR"
+
+
 @api_view(["GET"])
 def ot_review(request):
     """The PM's OT approval table for a day: every request with its rate and
@@ -1413,6 +1454,46 @@ def ot_review(request):
             "no_rate": rate == 0,
             "flag": req > flag,
         })
+    # A gang worker's extra hours come to the same desk: a request until the
+    # PM decides them, and the day-work valuation charges only what was
+    # approved (owner 2026-09-12). Kept out of the payroll totals above.
+    sub_pending = sub_hours = Decimal("0")
+    sub_rows = 0
+    for a in (Attendance.objects.filter(
+                site=site, day=day,
+                employee__engagement_type=Employee.Engagement.SUBCONTRACT)
+              .filter(Q(sub_extra_hours__gt=0)
+                      | Q(sub_extra_approved__isnull=False))
+              .select_related("employee__job_category",
+                              "employee__subcontractor")
+              .order_by("employee__subcontractor__name", "employee__emp_no")):
+        e = a.employee
+        rate, ccy = _gang_ot_rate(e)
+        req = a.sub_extra_hours or Decimal("0")
+        appr = a.sub_extra_approved
+        sub_rows += 1
+        sub_hours += req
+        if appr is None:
+            sub_pending += 1
+        rows.append({
+            "attendance_id": a.id, "employee_id": e.id, "emp_no": e.emp_no,
+            "full_name": e.full_name,
+            "photo_url": (e.photo.url if e.photo else None),
+            "category": e.job_category.name if e.job_category_id else "",
+            "check_in": a.check_in, "check_out": a.check_out,
+            "normal_hours": a.normal_hours,
+            "ot_requested": req, "ot_approved": appr,
+            "ot_rate": rate, "currency": ccy,
+            "cost_requested": (req * rate).quantize(Decimal("0.01")),
+            "cost_approved": ((appr * rate).quantize(Decimal("0.01"))
+                              if appr is not None else None),
+            "pending": appr is None,
+            "no_rate": rate == 0,
+            "flag": req > flag,
+            "is_subcontract": True,
+            "subcontractor": (e.subcontractor.name if e.subcontractor_id
+                              else ""),
+        })
     # The month so far: what this site has already committed to in OT.
     mtd = {}
     for a in (Attendance.objects.filter(site=site, day__year=day.year,
@@ -1435,6 +1516,8 @@ def ot_review(request):
         "locked": _month_locked(site.id, day),
         "flag_hours": flag, "rows": rows,
         "totals": list(totals.values()), "month_to_date": list(mtd.values()),
+        "subcontract": {"rows": sub_rows, "pending": sub_pending,
+                        "hours": sub_hours},
     })
 
 

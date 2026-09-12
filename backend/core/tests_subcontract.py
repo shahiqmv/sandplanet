@@ -1382,19 +1382,23 @@ class DayWorkValuationTests(TestCase):
         return e
 
     def _mark(self, emp, days, remark="PRESENT", extra=0, start=1,
-              skip_fridays=True):
+              skip_fridays=True, approved=True):
         """Consecutive marks from June 2026 (the 1st is a Monday). Fridays
         are skipped unless asked for, so a count of days is a count of
-        weekdays; extra hours all land on the first mark."""
+        weekdays; extra hours all land on the first mark and, unless told
+        otherwise, the PM has approved them as asked."""
         from .models import Attendance
         d, made = date(2026, 6, start), 0
         while made < days:
             if skip_fridays and d.weekday() == 4:
                 d += timedelta(days=1)
                 continue
+            hrs = Decimal(str(extra)) if made == 0 else Decimal("0")
             Attendance.objects.create(
                 employee=emp, site=self.site, day=d, remark=remark,
-                sub_extra_hours=Decimal(str(extra)) if made == 0 else 0)
+                sub_extra_hours=hrs,
+                sub_extra_approved=(hrs if approved and hrs else None),
+                sub_extra_approved_by=(self.pm if approved and hrs else None))
             made += 1
             d += timedelta(days=1)
 
@@ -1451,6 +1455,91 @@ class DayWorkValuationTests(TestCase):
         self.assertEqual(val["ot_value"], Decimal("150.00"))
         self.assertEqual(val["markup"], Decimal("2590.00"))
         self.assertEqual(val["period_gross"], Decimal("15540.00"))
+
+    def test_only_extra_hours_the_pm_approved_are_charged(self):
+        """Extra hours on the register are a request, as OT is. The PM
+        approves a figure; that is what the gang is paid for."""
+        from .models import Attendance
+        a = self._agreement(markup="0", ot="25")
+        w = self._worker("EMP-9030", self.carp, "15000")
+        self._mark(w, 2, extra=8, approved=False)
+        first = Attendance.objects.filter(employee=w).order_by("day").first()
+        first.sub_extra_approved = Decimal("6")     # PM cut it to six
+        first.save(update_fields=["sub_extra_approved"])
+        _v, val = self._value(a)
+        self.assertEqual(val["lines"][0]["ot_hours"], Decimal("6.00"))
+        self.assertEqual(val["ot_value"], Decimal("150.00"))
+        self.assertEqual(val["pending_hours"], Decimal("0"))
+
+    def test_hours_awaiting_the_pm_hold_the_certificate(self):
+        """A period is valued once. Dropping undecided hours silently would
+        lose them for good, so they block instead."""
+        from core import subcontract
+        a = self._agreement()
+        self._mark(self._worker("EMP-9031", self.carp), 3, extra=4,
+                   approved=False)
+        v, val = self._value(a)
+        self.assertEqual(val["lines"][0]["ot_hours"], Decimal("0"))
+        self.assertEqual(val["pending_hours"], Decimal("4.00"))
+        self.assertEqual(val["pending_men"], 1)
+        err = subcontract.svc_action(v, "submit", self.sa)
+        self.assertIn("await the PM's approval", err)
+
+    def test_changing_the_hours_withdraws_the_approval(self):
+        """The PM approved 6; the clerk corrects the day to 4. Back to the
+        PM — the same rule OT has had since 3 September."""
+        from .models import Attendance
+        w = self._worker("EMP-9032", self.carp)
+        d = date(2026, 6, 1)
+        Attendance.objects.create(employee=w, site=self.site, day=d,
+                                  remark="PRESENT", sub_extra_hours=6,
+                                  sub_extra_approved=6,
+                                  sub_extra_approved_by=self.pm)
+        self.client.force_authenticate(self.sa)
+        r = self.client.put("/api/v1/attendance/bulk", {
+            "site": self.site.id, "date": str(d),
+            "rows": [{"employee_id": w.id, "remark": "PRESENT",
+                      "check_in": "07:00", "check_out": "18:00",
+                      "sub_extra_hours": "4"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIn(w.emp_no, r.data.get("ot_approval_withdrawn") or [])
+        row = Attendance.objects.get(employee=w, day=d)
+        self.assertEqual(row.sub_extra_hours, Decimal("4"))
+        self.assertIsNone(row.sub_extra_approved)
+        self.assertIsNone(row.sub_extra_approved_by)
+
+    def test_the_pm_reviews_and_approves_a_gang_mans_extra_hours(self):
+        """On the same OT screen as everyone else's, priced at the gang's
+        agreed hourly rate — it is their money, not payroll's."""
+        from .models import Attendance
+        a = self._agreement(ot="25")
+        w = self._worker("EMP-9033", self.carp)
+        d = date(2026, 6, 2)
+        Attendance.objects.create(employee=w, site=self.site, day=d,
+                                  remark="PRESENT", sub_extra_hours=5)
+        admin = make_user("dwk_admin", User.Role.ADMIN)
+        self.client.force_authenticate(admin)
+        r = self.client.get(f"/api/v1/attendance/ot-review?site={self.site.id}"
+                            f"&date={d}")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = [x for x in r.data["rows"] if x["emp_no"] == "EMP-9033"][0]
+        self.assertTrue(row["is_subcontract"])
+        self.assertEqual(row["subcontractor"], "Day Gang")
+        self.assertEqual(Decimal(str(row["ot_rate"])), Decimal("25"))
+        self.assertEqual(Decimal(str(row["ot_requested"])), Decimal("5"))
+        self.assertTrue(row["pending"])
+        self.assertEqual(r.data["subcontract"]["pending"], 1)
+        r = self.client.post("/api/v1/attendance/ot-approve",
+                             {"rows": [{"id": row["attendance_id"],
+                                        "hours": "4"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        att = Attendance.objects.get(employee=w, day=d)
+        self.assertEqual(att.sub_extra_approved, Decimal("4"))
+        self.assertEqual(att.sub_extra_approved_by, admin)
+        self.assertIsNone(att.ot_approved)          # never the payroll field
+        _v, val = self._value(a)
+        self.assertEqual(val["lines"][0]["ot_hours"], Decimal("4.00"))
+        self.assertEqual(val["pending_hours"], Decimal("0"))
 
     def test_a_friday_earns_the_gang_rate_not_his_own(self):
         """5,397 a month is 179.90 a day; his Friday is still 300."""

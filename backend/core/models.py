@@ -2419,7 +2419,12 @@ class SubcontractWorkerDay(models.Model):
     friday_days = models.DecimalField(max_digits=6, decimal_places=1,
                                       default=Decimal("0"))
     ot_hours = models.DecimalField(max_digits=7, decimal_places=2,
-                                   default=Decimal("0"))
+                                   default=Decimal("0"))   # PM-approved only
+    # Extra hours on the register the PM has not yet decided on. They are
+    # worth nothing here, but they hold the certificate: a period is valued
+    # once, so dropping them silently would lose them for good.
+    ot_hours_pending = models.DecimalField(max_digits=7, decimal_places=2,
+                                           default=Decimal("0"))
     # Snapshots of what he was priced at when the register was read.
     monthly_rate = models.DecimalField(max_digits=12, decimal_places=2,
                                        null=True, blank=True)
@@ -3158,6 +3163,17 @@ class Attendance(models.Model):
     # pipeline (subcontractor module).
     sub_extra_hours = models.DecimalField(max_digits=4, decimal_places=2,
                                           default=0)
+    # ...and, like overtime, they count for nothing until the PM has said so.
+    # A day-work valuation reads the APPROVED figure; hours still awaiting
+    # the PM hold the certificate rather than being quietly dropped, because
+    # a period is valued once (owner 2026-09-12). Withdrawn when the clerk
+    # changes the hours, exactly as an OT approval is.
+    sub_extra_approved = models.DecimalField(max_digits=4, decimal_places=2,
+                                             null=True, blank=True)
+    sub_extra_approved_by = models.ForeignKey(
+        User, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="+")
+    sub_extra_approved_at = models.DateTimeField(null=True, blank=True)
     remark = models.CharField(max_length=12, choices=REMARKS, default="PRESENT")
     entered_by = models.ForeignKey(User, on_delete=models.PROTECT,
                                    null=True, blank=True, related_name="+")

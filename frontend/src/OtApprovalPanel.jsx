@@ -63,6 +63,14 @@ export default function OtApprovalPanel({ site, day, locked, onChanged,
                     alignItems: "baseline", marginBottom: 10 }}>
         <h3 style={{ margin: 0, fontSize: 15, color: "var(--sp-navy)" }}>
           OT approval — {day}</h3>
+        {data.subcontract?.rows > 0 && (
+          <span style={{ fontSize: 13, color: "#5a6b78" }}>
+            Gang extra hours <b>{hrs(data.subcontract.hours)} h</b>
+            {data.subcontract.pending > 0 && (
+              <> · <b style={{ color: "#b35900" }}>
+                {data.subcontract.pending} awaiting</b></>)}
+            {" "}— not payroll; valued on the subcontractor's certificate
+          </span>)}
         {(data.totals || []).map((t) => (
           <span key={t.currency} style={{ fontSize: 13, color: "#5a6b78" }}>
             Requested <b>{hrs(t.requested_hours)} h</b> ·{" "}
@@ -121,6 +129,10 @@ export default function OtApprovalPanel({ site, day, locked, onChanged,
                 <td style={td}>
                   <b style={{ color: "var(--sp-navy)" }}>{r.emp_no}</b>{" "}
                   {r.full_name}
+                  {r.is_subcontract && (
+                    <div style={{ fontSize: 11, color: "var(--muted)" }}>
+                      SUB · {r.subcontractor} — extra hours at the gang's rate
+                    </div>)}
                 </td>
                 <td style={{ ...td, fontSize: 12 }}>{r.category}</td>
                 <td style={{ ...td, fontSize: 12, whiteSpace: "nowrap" }}>

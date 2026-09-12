@@ -508,13 +508,18 @@ def read_worker_days(agreement, start, end):
         row = rows.setdefault(emp.id, {
             "employee": emp, "job_category": emp.job_category,
             "days": Decimal("0"), "friday_days": Decimal("0"),
-            "ot_hours": Decimal("0")})
+            "ot_hours": Decimal("0"), "ot_hours_pending": Decimal("0")})
         worked = DAY_MARK_VALUE.get(m.remark, Decimal("0"))
         if m.day.weekday() == 4:              # Friday
             row["friday_days"] += worked
         else:
             row["days"] += worked
-        row["ot_hours"] += m.sub_extra_hours or Decimal("0")
+        # Only what the PM approved is charged; what he has not yet decided
+        # on is counted apart, to hold the certificate rather than be lost.
+        if m.sub_extra_approved is not None:
+            row["ot_hours"] += m.sub_extra_approved
+        elif (m.sub_extra_hours or Decimal("0")) > 0:
+            row["ot_hours_pending"] += m.sub_extra_hours
     out = []
     for row in rows.values():
         row["monthly_rate"] = row["employee"].sub_monthly_rate
@@ -547,6 +552,7 @@ def fill_worker_days(v, actor=None):
                 valuation=v, employee=r["employee"],
                 job_category=r["job_category"], days=r["days"],
                 friday_days=r["friday_days"], ot_hours=r["ot_hours"],
+                ot_hours_pending=r["ot_hours_pending"],
                 monthly_rate=r["monthly_rate"],
                 rate_per_day=r["rate_per_day"],
                 friday_rate_per_day=r["friday_rate_per_day"],
@@ -872,6 +878,7 @@ def _daywork_valuation(v):
         "emp_no": w.employee.emp_no, "name": w.employee.full_name,
         "category": (w.job_category.name if w.job_category_id else ""),
         "days": w.days, "friday_days": w.friday_days, "ot_hours": w.ot_hours,
+        "ot_hours_pending": w.ot_hours_pending,
         "monthly_rate": w.monthly_rate, "rate_per_day": w.rate_per_day,
         "friday_rate_per_day": w.friday_rate_per_day,
         "ot_rate_per_hour": w.ot_rate_per_hour,
@@ -893,6 +900,9 @@ def _daywork_valuation(v):
         "period_gross": period["period_gross"],
         "worker_count": len(lines),
         "unpriced": [f'{ln["emp_no"]} {ln["name"]}' for ln in unpriced],
+        "pending_hours": sum((ln["ot_hours_pending"] for ln in lines),
+                             Decimal("0")),
+        "pending_men": sum(1 for ln in lines if ln["ot_hours_pending"] > 0),
         "over_warning": False,
     })
     return out
@@ -1231,6 +1241,14 @@ def svc_action(v, action, actor, note=""):
             # A man valued at nothing because his trade has no agreed rate is
             # how a gang goes unpaid for a month. Say so before it is signed,
             # not after (owner 2026-09-10).
+            pending = [w for w in v.worker_days.select_related("employee")
+                       if (w.ot_hours_pending or Decimal("0")) > 0]
+            if pending:
+                hours = sum((w.ot_hours_pending for w in pending), Decimal("0"))
+                return (f"{hours:g} extra hours on {len(pending)} "
+                        f"{'man' if len(pending) == 1 else 'men'} await the "
+                        f"PM's approval. Approve or refuse them on the OT "
+                        f"tab, then refresh this valuation.")
             missing = unpriced_workers(v)
             if missing:
                 who = ", ".join(f"{w.employee.emp_no} {w.employee.full_name}"
