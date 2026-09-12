@@ -267,8 +267,22 @@ export default function SiteDashboard({ site, me, project, onNewDpr, onNewMr,
               <Icon name="clock" />Shifts</Btn>
           )}
           {CAN_SEE_SUBCONTRACTORS.includes(me.role) && (
-            <Btn variant="secondary" onClick={onWorkforce}>
+            <Btn variant="secondary" onClick={() => onWorkforce()}>
               <Icon name="users" />Workforce</Btn>
+          )}
+          {/* A site that runs gangs touches their page daily, and it sat
+              three levels down. Offered only where there is one, so a site
+              without never sees it (owner 2026-09-12). */}
+          {CAN_SEE_SUBCONTRACTORS.includes(me.role)
+            && dash?.subcontract?.gangs > 0 && (
+            <Btn variant="secondary" onClick={() => onWorkforce("subcontract")}>
+              <Icon name="users" />Subcontractors
+              <span style={{ marginLeft: 6, fontWeight: 400, opacity: .8 }}>
+                {dash.subcontract.gangs} {dash.subcontract.gangs === 1
+                  ? "gang" : "gangs"} · {dash.subcontract.men} men
+                {dash.subcontract.valuations_awaiting > 0
+                  && ` · ${dash.subcontract.valuations_awaiting} awaiting`}
+              </span></Btn>
           )}
           {/* Unit progress opens its own page — the tracker is a report, not
               a dashboard tile (owner 2026-08-23). */}

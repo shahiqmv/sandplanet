@@ -1835,3 +1835,36 @@ class SubcontractWorkerJoinDateTests(TestCase):
         self.assertFalse(r.data.get("refused"), r.data)
         self.assertTrue(Attendance.objects.filter(employee=emp,
                                                   day="2026-06-10").exists())
+
+
+class SiteDashboardSubcontractTests(TestCase):
+    """The site dashboard says whether the site runs gangs, so it can offer
+    the subcontractor page one click away (owner 2026-09-12)."""
+
+    def setUp(self):
+        self.site = Site.objects.create(code="DSH", name="Dash Isle",
+                                        status=Site.Status.ACTIVE)
+        self.sa = make_user("dsh_sa", User.Role.SITE_ADMIN, site=self.site)
+        self.client = APIClient()
+        self.client.force_authenticate(self.sa)
+
+    def test_a_site_without_gangs_reports_none(self):
+        r = self.client.get(f"/api/v1/dashboards/site/{self.site.id}")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["subcontract"],
+                         {"gangs": 0, "men": 0, "valuations_awaiting": 0})
+
+    def test_a_site_with_a_gang_reports_its_size(self):
+        sub = Subcontractor.objects.create(site=self.site, name="Gang",
+                                           status=Subcontractor.Status.APPROVED)
+        for i in range(3):
+            Employee.objects.create(
+                emp_no=f"EMP-97{i:02d}", full_name=f"Man {i}",
+                engagement_type=Employee.Engagement.SUBCONTRACT,
+                subcontractor=sub, is_active=True)
+        Employee.objects.create(emp_no="EMP-9799", full_name="Gone",
+                                engagement_type=Employee.Engagement.SUBCONTRACT,
+                                subcontractor=sub, is_active=False)
+        r = self.client.get(f"/api/v1/dashboards/site/{self.site.id}")
+        self.assertEqual(r.data["subcontract"]["gangs"], 1)
+        self.assertEqual(r.data["subcontract"]["men"], 3)

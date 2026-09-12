@@ -2444,7 +2444,25 @@ def dashboard_site(request, site_id):
         "others_roster": sum(c["roster"] for c in mp["categories"][4:]),
     }
     from .views_hr import ot_pending_summary
+    # Whether this site runs gangs, for the dashboard to offer them at all:
+    # a site with a subcontractor touches that page daily and had it three
+    # levels down; a site without one never sees the tile (owner 2026-09-12).
+    from .models import Employee, SubcontractValuation, Subcontractor
+    _gangs = Subcontractor.objects.filter(
+        site=site, status__in=("APPROVED", "ACTIVE"))
+    _sub_block = {
+        "gangs": _gangs.count(),
+        "men": Employee.objects.filter(
+            subcontractor__in=_gangs, engagement_type="SUBCONTRACT",
+            is_active=True).count(),
+        "valuations_awaiting": SubcontractValuation.objects.filter(
+            agreement__subcontractor__in=_gangs, document__is_void=False,
+            document__status__in=("SUBMITTED", "PM_VERIFIED",
+                                  "DIRECTOR_APPROVED")).count(),
+    }
+
     return Response({
+        "subcontract": _sub_block,
         "manpower": manpower,
         # OT waiting on the PM — surfaced here, not found by opening days.
         "ot_pending": ot_pending_summary(site),

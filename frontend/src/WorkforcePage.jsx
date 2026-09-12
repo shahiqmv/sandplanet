@@ -8,8 +8,9 @@ import { ghostButton } from "./ui.jsx";
 // subcontractor teams.
 const TABS = [["direct", "Direct workers"], ["subcontract", "Subcontractors"]];
 
-export default function WorkforcePage({ site, me, onClose, onAttendance }) {
-  const [tab, setTab] = useState("direct");
+export default function WorkforcePage({ site, me, onClose, onAttendance,
+                                        initialTab }) {
+  const [tab, setTab] = useState(initialTab || "direct");
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 12,

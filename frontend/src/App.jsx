@@ -41,6 +41,7 @@ import ProgrammePage from "./ProgrammePage.jsx";
 import SitesManagePage from "./SitesManagePage.jsx";
 import AttendancePage from "./AttendancePage.jsx";
 import WorkforcePage from "./WorkforcePage.jsx";
+import SubcontractorsPanel from "./SubcontractorsPanel.jsx";
 import UnitTrackerPage from "./UnitTrackerPage.jsx";
 import DMAPage from "./DMAPage.jsx";
 import ManpowerPage from "./ManpowerPage.jsx";
@@ -128,6 +129,10 @@ const NAV_GROUPS = [
            // 2026-09-08).
            ["tenders", "Tenders & Offers",
             ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"]],
+           // The all-sites gang register, for the people who do not work
+           // from one site's dashboard (owner 2026-09-12).
+           ["subcontractors", "Subcontractors",
+            ["PM", "DIRECTOR", "ADMIN", "SIGNATORY", "FINANCE", "QS"]],
            ["live-feeds", "Live Feeds", null]] },
   { key: "procurement", label: "Procurement",
     // PM is here ONLY for the Procurement Schedule, which used to be its own
@@ -1212,7 +1217,8 @@ export default function App() {
                 onAttendance={(tab, day) => setDocView({ mode: "attendance",
                   tab: typeof tab === "string" ? tab : "day",
                   day: typeof day === "string" ? day : undefined })}
-                onWorkforce={() => setDocView({ mode: "workforce" })}
+                onWorkforce={(tab) => setDocView({ mode: "workforce",
+                  tab: typeof tab === "string" ? tab : undefined })}
                 onUnits={() => setDocView({ mode: "units" })}
                 onDma={() => setDocView({ mode: "dma" })}
                 onManpower={() => setDocView({ mode: "manpower" })}
@@ -1323,6 +1329,13 @@ export default function App() {
             hoPage === "tenders" && (
             <ErrorBoundary label="Tenders & Offers">
               <TendersPage me={me} sites={sites} />
+            </ErrorBoundary>
+          )}
+          {!docView && !openSite
+            && ["PM", "DIRECTOR", "ADMIN", "SIGNATORY", "FINANCE", "QS"]
+              .includes(me.role) && hoPage === "subcontractors" && (
+            <ErrorBoundary label="Subcontractors">
+              <SubcontractorsPanel me={me} />
             </ErrorBoundary>
           )}
           {!docView && !openSite && me.is_ho && hoPage === "store" && (
@@ -1444,6 +1457,7 @@ export default function App() {
           )}
           {docView?.mode === "workforce" && openSite && (
             <WorkforcePage site={openSite} me={me} onClose={closeDoc}
+              initialTab={docView.tab}
               onAttendance={(sub, tab) => setDocView({ mode: "attendance",
                                                        tab: tab || "day",
                                                        sub })} />
