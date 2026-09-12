@@ -629,6 +629,8 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
           )}
         </td>
         <td style={td}>{d.site_code}</td>
+        <td style={{ ...td, whiteSpace: "nowrap" }}>{d.doc_date || d.due_date || "—"}</td>
+        <td style={{ ...td, whiteSpace: "nowrap" }}>{d.approved_at || "—"}</td>
         <td style={td}>{d.payee}</td>
         <td style={td}>{d.cost_head}</td>
         <td style={{ ...td, textAlign: "right", ...mono }}>
@@ -641,6 +643,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     <thead><tr>
       <th style={{ ...th, width: 34 }}></th>
       <th style={th}>Ref</th><th style={th}>Site</th>
+      <th style={th}>Raised</th><th style={th}>Approved</th>
       <th style={th}>Payee</th><th style={th}>Cost head</th>
       <th style={{ ...th, textAlign: "right" }}>Amount</th>
     </tr></thead>

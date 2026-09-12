@@ -196,8 +196,13 @@ def awaiting_voucher(request):
         return Response({"detail": "Finance builds vouchers."}, status=403)
     out = []
     for doc in vouchers.awaiting_voucher():
+        # When it reached Finance — the Director's approval — beside the day
+        # it was raised. A queue of eighteen with no dates cannot be worked
+        # oldest first (owner 2026-09-12).
+        last = doc.approvals.order_by("-acted_at").first()
         row = {"kind": "DOC", "ref": doc.ref, "doc_type": doc.doc_type,
                "site_code": doc.site.code, "doc_date": doc.doc_date,
+               "approved_at": last.acted_at.date() if last else None,
                "amount": vouchers._source_amount(doc),
                "currency": vouchers.source_currency(doc)}
         if doc.doc_type == "PYR" and hasattr(doc, "payment_request"):
