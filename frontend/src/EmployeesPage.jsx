@@ -66,7 +66,10 @@ export default function EmployeesPage({ me, sites }) {
 
   function load(includeSub = withSub) {
     api(`/employees${includeSub ? "?include_subcontract=1" : ""}`)
-      .then(setEmployees);
+      // A list, or nothing: a body that is not a list must not reach the
+      // filter below and take the whole screen down.
+      .then((d) => setEmployees(Array.isArray(d) ? d : []))
+      .catch((e) => setError(e.message));
     api("/permits/alerts").then(setAlerts).catch(() => setAlerts(null));
   }
   useEffect(() => {

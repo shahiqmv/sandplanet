@@ -39,7 +39,10 @@ export default class ErrorBoundary extends Component {
         <pre style={{ background: "#fbeaea", color: "#7d1f1f", padding: 10,
                       borderRadius: 6, fontSize: 12, whiteSpace: "pre-wrap",
                       overflowX: "auto", margin: 0 }}>
-{String(error && (error.stack || error.message || error))}
+{/* Safari's and Firefox's stacks carry no message line, so every report
+    from the owner's Mac arrived as frames with the one line that names the
+    fault missing (owner 2026-09-12). Message first, always. */}
+{String(error?.message || error)}{"\n\n"}{String(error?.stack || "")}
 {info?.componentStack ? `\n\nWhere:${info.componentStack}` : ""}
         </pre>
         <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
@@ -51,7 +54,7 @@ export default class ErrorBoundary extends Component {
             Reload the app</button>
           <button style={ghostButton}
                   onClick={() => navigator.clipboard?.writeText(
-                    String(error?.stack || error)
+                    `${error?.message || error}\n\n${error?.stack || ""}`
                     + (info?.componentStack || ""))}>
             Copy the details</button>
         </div>
