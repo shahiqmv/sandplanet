@@ -254,10 +254,89 @@ function CreateForm({ sub, onCancel, onDone }) {
   );
 }
 
+// Corrects a DRAFT agreement's terms in place. The rate card is gone; on a
+// day-work agreement these ARE the commercial terms, so a typo here could
+// only be fixed by starting the agreement again (owner 2026-09-12).
+function TermsEditor({ a, docRef, daywork, onCancel, onSaved }) {
+  const keys = ["title", "currency", "start_date", "end_date",
+    "advance_percent", "retention_percent", "gst_percent", "payment_days",
+    "ld_amount", "ld_cap_percent", "markup_percent", "ot_rate_per_hour",
+    "friday_rate_per_day", "day_rate_divisor", "contractor_signatory_name",
+    "contractor_signatory_title", "scope_of_work", "notes"];
+  const [t, setT] = useState(Object.fromEntries(
+    keys.map((k) => [k, a[k] == null ? "" : String(a[k])])));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setT({ ...t, [k]: e.target.value });
+  const F = ({ k, label, w = 120, type = "text" }) => (
+    <label style={{ fontSize: 12, color: "var(--muted)" }}>{label}<br />
+      <input type={type} value={t[k]} onChange={set(k)}
+             style={{ ...inputStyle, width: w }} /></label>
+  );
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true); setError(null);
+    try {
+      const body = {};
+      keys.forEach((k) => { body[k] = t[k] === "" ? null : t[k]; });
+      body.title = t.title;
+      await api(`/subcontract-agreements/${docRef}`,
+                { method: "PATCH", body });
+      onSaved(await api(`/documents/${docRef}`));
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={save} style={{ ...card, background: "var(--paper)",
+                                   margin: "8px 0" }}>
+      {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
+      <label style={{ fontSize: 12, color: "var(--muted)" }}>Title<br />
+        <input value={t.title} onChange={set("title")}
+               style={{ ...inputStyle, width: "100%" }} /></label>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+        <F k="currency" label="Currency" w={70} />
+        <F k="start_date" label="Start" type="date" w={140} />
+        <F k="end_date" label="End" type="date" w={140} />
+        <F k="advance_percent" label="Advance %" type="number" w={90} />
+        <F k="retention_percent" label="Retention %" type="number" w={90} />
+        <F k="gst_percent" label="GST %" type="number" w={80} />
+        <F k="payment_days" label="Payment days" type="number" w={100} />
+        <F k="ld_amount" label="LD / day" type="number" w={100} />
+        <F k="ld_cap_percent" label="LD cap %" type="number" w={80} />
+        {daywork && (<>
+          <F k="markup_percent" label="Markup % (on all labour)" type="number"
+             w={150} />
+          <F k="ot_rate_per_hour" label="Extra hours / hr" type="number"
+             w={120} />
+          <F k="friday_rate_per_day" label="Friday rate / day" type="number"
+             w={130} />
+          <F k="day_rate_divisor" label="Day rate = monthly ÷" type="number"
+             w={130} />
+        </>)}
+      </div>
+      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 8 }}>
+        <F k="contractor_signatory_name" label="Contractor signatory" w={180} />
+        <F k="contractor_signatory_title" label="Signatory title" w={160} />
+      </div>
+      <label style={{ fontSize: 12, color: "var(--muted)", display: "block",
+                      marginTop: 8 }}>Scope of work (Annexure A)<br />
+        <textarea value={t.scope_of_work} onChange={set("scope_of_work")}
+          rows={3} style={{ ...inputStyle, width: "100%",
+                            fontFamily: "inherit", resize: "vertical" }} />
+      </label>
+      <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+        <Btn variant="navy" disabled={busy}>Save terms</Btn>
+        <Btn type="button" variant="ghost" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
+
 function AgreementView({ docRef, me, onBack }) {
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
 
   function load() {
     api(`/documents/${docRef}`).then(setDoc).catch((e) => setError(e.message));
@@ -303,6 +382,9 @@ function AgreementView({ docRef, me, onBack }) {
   const actions = [];
   if (s === "DRAFT" && isSite)
     actions.push(["submit", "Submit for approval", "navy", false]);
+  // A draft could be submitted or left, never corrected: the server took
+  // edits to a draft all along and the page never asked (owner 2026-09-12).
+  const canEdit = s === "DRAFT" && isSite;
   if (s === "SUBMITTED" && isPM) {
     actions.push(["approve", "Approve (PM)", "navy", false]);
     actions.push(["return", "Return", "secondary", true]);
@@ -323,6 +405,9 @@ function AgreementView({ docRef, me, onBack }) {
           target="_blank" rel="noreferrer" style={{ marginLeft: "auto",
             fontSize: 12.5, color: "var(--sky)", textDecoration: "none" }}>
           ⬇ Agreement PDF</a>}
+        {canEdit && !editing && (
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => setEditing(true)}>Edit terms</Btn>)}
         {/* The percentage could be set and there was no way to pay it, so
             the money was arranged off the system and nothing was recovered
             against it (owner 2026-09-09). */}
@@ -341,6 +426,12 @@ function AgreementView({ docRef, me, onBack }) {
                   }}>
             Raise the {Number(a.advance_percent)}% advance</Btn>)}
       </div>
+      {editing && (
+        <TermsEditor a={a} docRef={doc.ref} daywork={daywork}
+                     onCancel={() => setEditing(false)}
+                     onSaved={(updated) => { setDoc(updated);
+                                             setEditing(false); }} />
+      )}
       <div style={{ fontSize: 13, color: "var(--muted)", marginTop: 2 }}>
         {a.title}{a.project_code ? ` · ${a.project_code}` : ""}
         {terms ? ` · ${terms}` : ""}</div>
