@@ -80,8 +80,13 @@ class UnitReportTests(TestCase):
         self.assertLessEqual(end, date(2026, 8, 31))
 
     def test_movement_is_measured_from_the_start_of_the_week(self):
-        self._report(on=self.today - timedelta(days=20), pct=20)
-        self._report(on=self.today - timedelta(days=2), pct=60)
+        # The week starts on Saturday. Placed relative to that rule, not to
+        # today: "two days ago" is inside the week Monday to Friday and
+        # before it on a Saturday or Sunday, which is how this failed on a
+        # Saturday (2026-09-12). Eight days back is always before the start;
+        # today is always inside.
+        self._report(on=self.today - timedelta(days=8), pct=20)
+        self._report(on=self.today, pct=60)
         r = build(self.project)
         row = [x for x in r["rows"] if x["ref"] == "V200"][0]
         # Two equal stages: 20% of one stage is 10% of the unit, 60% is 30%.
@@ -113,8 +118,11 @@ class UnitReportTests(TestCase):
         self.assertEqual(row["moved"], 0.0)
 
     def test_the_summary_counts_what_moved(self):
-        self._report(on=self.today - timedelta(days=1), pct=50, unit=0)
-        self._report(on=self.today - timedelta(days=1), pct=30, unit=1)
+        # Reported today, which is always inside the current week. Yesterday
+        # is not: the week starts on Saturday, so on a Saturday yesterday is
+        # last week and nothing has moved (failed 2026-09-12).
+        self._report(on=self.today, pct=50, unit=0)
+        self._report(on=self.today, pct=30, unit=1)
         s = build(self.project)["summary"]
         self.assertEqual(s["units"], 3)
         self.assertEqual(s["moved_count"], 2)
