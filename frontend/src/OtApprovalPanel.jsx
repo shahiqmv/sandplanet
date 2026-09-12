@@ -14,7 +14,8 @@ const hrs = (v) => Number(v || 0).toLocaleString("en-US",
   { maximumFractionDigits: 2 });
 
 export default function OtApprovalPanel({ site, day, locked, onChanged,
-                                          onError, onNotice }) {
+                                          onError, onNotice,
+                                         narrow }) {
   const [data, setData] = useState(null);
   const [edits, setEdits] = useState({});     // attendance_id -> hours
   const [ticked, setTicked] = useState([]);
@@ -28,10 +29,21 @@ export default function OtApprovalPanel({ site, day, locked, onChanged,
   useEffect(load, [load]);
 
   if (!data) return <p style={{ color: "#5a6b78", fontSize: 13 }}>Loading…</p>;
-  const rows = data.rows || [];
+  // Opened from a gang's page the tab shows that gang's men only, and the
+  // search box narrows further — the same rule as the day sheet and the
+  // month register (owner 2026-09-12).
+  const rows = (data.rows || []).filter((r) => {
+    if (narrow?.subFilter && r.subcontractor_id !== narrow.subFilter.id)
+      return false;
+    const q = (narrow?.q || "").trim().toLowerCase();
+    if (q && !`${r.emp_no} ${r.full_name}`.toLowerCase().includes(q))
+      return false;
+    return true;
+  });
   if (!rows.length) return (
     <p style={{ color: "#5a6b78", fontSize: 13 }}>
-      No overtime requested on {day}.</p>
+      No {narrow?.subFilter ? "extra hours" : "overtime"} requested on {day}
+      {narrow?.subFilter ? ` by ${narrow.subFilter.name}'s men` : ""}.</p>
   );
   const pending = rows.filter((r) => r.pending);
   const hoursFor = (r) => edits[r.attendance_id] ?? r.ot_requested;

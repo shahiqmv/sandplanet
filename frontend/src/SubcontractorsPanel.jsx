@@ -223,6 +223,11 @@ function Detail({ sub, me, cats, onBack, onChanged, onAttendance }) {
                onClick={() => onAttendance({ id: sub.id, name: sub.name },
                                            "register")}>
             Month register</Btn>
+          {["PM", "ADMIN", "HO_HR", "PA"].includes(me.role) && (
+            <Btn variant="ghost"
+                 onClick={() => onAttendance({ id: sub.id, name: sub.name },
+                                             "ot")}>
+              Extra hours</Btn>)}
         </>)}
       </div>
       <div style={{ display: "flex", justifyContent: "space-between",

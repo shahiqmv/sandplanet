@@ -1491,6 +1491,7 @@ def ot_review(request):
             "no_rate": rate == 0,
             "flag": req > flag,
             "is_subcontract": True,
+            "subcontractor_id": e.subcontractor_id,
             "subcontractor": (e.subcontractor.name if e.subcontractor_id
                               else ""),
         })

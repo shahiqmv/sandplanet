@@ -226,6 +226,21 @@ export default function AttendancePage({ site, me, onClose,
         <div style={{ display: "flex", gap: 10, alignItems: "center",
                       margin: "12px 0 4px", flexWrap: "wrap" }}>
           <DayPicker value={day} onChange={setDay} />
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+                 placeholder="Find a man — no. or name"
+                 style={{ ...inputStyle, width: 190, padding: "4px 10px",
+                          fontSize: 13 }} />
+          {subFilter && (
+            <span style={{ fontSize: 12.5, display: "inline-flex", gap: 6,
+                           alignItems: "center", padding: "2px 8px",
+                           borderRadius: 12, background: "#eef5fb",
+                           color: "var(--sp-navy)" }}>
+              {subFilter.name}'s men only
+              <button onClick={() => setSubFilter(null)}
+                      title="Show the whole site"
+                      style={{ ...ghostButton, padding: "0 6px", fontSize: 11 }}>
+                whole site</button>
+            </span>)}
           {grid?.locked && (
             <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
               🔒 month signed off — nothing to approve</span>
@@ -234,6 +249,7 @@ export default function AttendancePage({ site, me, onClose,
         {error && <p style={{ color: "#a3271b", fontSize: 13 }}>{error}</p>}
         {notice && <p style={{ color: "#1a7f37", fontSize: 13 }}>{notice}</p>}
         <OtApprovalPanel site={site} day={day} locked={!!grid?.locked}
+                         narrow={{ q, subFilter }}
                          onChanged={load} onError={setError}
                          onNotice={setNotice} />
       </section>
