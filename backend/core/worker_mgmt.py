@@ -6,7 +6,7 @@ once so individual changes don't swamp them (owner 2026-07-20).
 Chains: ADD = PM → Director (salary is a recurring cost); REMOVE / TRANSFER =
 site PM only."""
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from django.db import transaction
 from django.utils import timezone
@@ -336,13 +336,33 @@ def _activate_add(batch, actor):
 
 
 def _apply_remove(batch, actor):
+    """A removed man's engagement ends on the last day the site marked him.
+
+    It used to end on the day the removal was approved, with no leaving date
+    at all. BVR removed two men on 1 August whose last marks were 30 July;
+    the allocation therefore reached one day into August, and August's run —
+    generated weeks later — kept them as men who had left during the month
+    and carried two 0-day lines the site could not explain (owner
+    2026-09-13). The last mark is the evidence of when he was there; a man
+    never marked ends the day before the removal, so no allocation reaches
+    into a month he never worked.
+    """
+    from .models import Attendance
     with transaction.atomic():
         for item in batch.items.select_related("employee"):
             emp = item.employee
+            last = (Attendance.objects.filter(employee=emp)
+                    .order_by("-day").values_list("day", flat=True).first())
+            ended = last if (last and last <= date.today()) \
+                else date.today() - timedelta(days=1)
             emp.is_active = False
-            emp.save(update_fields=["is_active", "updated_at"])
-            emp.site_allocations.filter(to_date__isnull=True).update(
-                to_date=date.today())
+            emp.left_on = ended
+            emp.save(update_fields=["is_active", "left_on", "updated_at"])
+            # ...but never before the allocation began: a man removed on his
+            # first day keeps a one-day allocation rather than an inverted one.
+            for al in emp.site_allocations.filter(to_date__isnull=True):
+                al.to_date = max(ended, al.from_date)
+                al.save(update_fields=["to_date"])
         batch.status = WCR.Status.APPROVED
         _stamp(batch, actor)
     audit("worker_batch", batch.id, "WORKER_REMOVE_APPROVED", actor=actor,

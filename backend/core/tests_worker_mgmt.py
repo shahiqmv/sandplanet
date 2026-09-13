@@ -134,6 +134,44 @@ class WorkerBatchTests(TestCase):
             e.refresh_from_db()
             self.assertFalse(e.is_active)
 
+    def test_a_removed_man_ends_on_his_last_mark_not_the_day_of_removal(self):
+        """BVR removed two men on 1 August whose last marks were 30 July; the
+        allocation reached into August and the August run carried them at
+        0 days (owner 2026-09-13)."""
+        from datetime import date, timedelta
+        from .models import Attendance
+        emp = self._direct(self.site, 1)[0]
+        last = date.today() - timedelta(days=12)
+        for i in range(3):
+            Attendance.objects.create(employee=emp, site=self.site,
+                                      day=last - timedelta(days=i),
+                                      remark="PRESENT")
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "REMOVE", "employee_ids": [emp.id],
+                              "reason": "left"}, format="json")
+        self._auth(self.pm)
+        self.client.post(f"/api/v1/worker-batches/{r.data['id']}/action",
+                         {"action": "approve"}, format="json")
+        emp.refresh_from_db()
+        self.assertFalse(emp.is_active)
+        self.assertEqual(emp.left_on, last)
+        self.assertEqual(emp.site_allocations.get().to_date, last)
+
+    def test_a_man_never_marked_ends_the_day_before_removal(self):
+        from datetime import date, timedelta
+        emp = self._direct(self.site, 1)[0]
+        r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
+                             {"kind": "REMOVE", "employee_ids": [emp.id],
+                              "reason": "never came"}, format="json")
+        self._auth(self.pm)
+        self.client.post(f"/api/v1/worker-batches/{r.data['id']}/action",
+                         {"action": "approve"}, format="json")
+        emp.refresh_from_db()
+        al = emp.site_allocations.get()
+        self.assertEqual(al.to_date,
+                         max(date.today() - timedelta(days=1), al.from_date))
+        self.assertEqual(emp.left_on, date.today() - timedelta(days=1))
+
     def test_transfer_batch(self):
         emps = self._direct(self.site, 2)
         r = self.client.post(f"/api/v1/sites/{self.site.id}/worker-batches",
