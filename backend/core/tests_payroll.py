@@ -2948,7 +2948,13 @@ class SettlementIsNotTheMonthlyRunTests(TestCase):
 
     def _settlement(self):
         from datetime import date
-        from .models import PayrollRun
+        from .models import Employee, EmployeeSiteAllocation, PayrollRun
+        # the readiness table lists staffed sites only
+        emp = Employee.objects.create(emp_no="EMP-8801", full_name="Stays",
+                                      currency="MVR", is_active=True,
+                                      join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(employee=emp, site=self.site,
+                                              from_date=date(2026, 1, 1))
         return PayrollRun.objects.create(
             site=self.site, kind="SETTLEMENT", currency="MVR", year=2026,
             month=8, working_days=30, last_working_day=date(2026, 8, 24),
