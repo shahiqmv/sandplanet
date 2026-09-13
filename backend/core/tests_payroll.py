@@ -2929,3 +2929,47 @@ class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):
         self.assertEqual(r.status_code, 200, r.data)
         self.assertNotIn("bank_account_no", r.data)
         self.assertNotIn("bank_name", r.data)
+
+
+
+class SettlementIsNotTheMonthlyRunTests(TestCase):
+    """VKR settled twenty leavers mid-August; the settlement was then counted
+    as August's run — "Run made" on the generate table, and "already exists"
+    when HR tried to generate the monthly run (owner 2026-09-13)."""
+
+    def setUp(self):
+        from .tests import make_user
+        from .models import Site, User
+        self.site = Site.objects.create(code="STL", name="Settle Isle",
+                                        status=Site.Status.ACTIVE)
+        self.hr = make_user("stl_hr", User.Role.HO_HR)
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _settlement(self):
+        from datetime import date
+        from .models import PayrollRun
+        return PayrollRun.objects.create(
+            site=self.site, kind="SETTLEMENT", currency="MVR", year=2026,
+            month=8, working_days=30, last_working_day=date(2026, 8, 24),
+            status="LOCKED", created_by=self.hr)
+
+    def test_a_settlement_alone_is_not_run_made(self):
+        self._settlement()
+        r = self.client.get("/api/v1/payroll/readiness?year=2026&month=8")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = [x for x in r.data["sites"] if x["site_code"] == "STL"][0]
+        self.assertFalse(row["has_run"])
+
+    def test_the_monthly_run_can_still_be_generated_after_a_settlement(self):
+        from .models import TimesheetMonth, PayrollRun
+        self._settlement()
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=8,
+                                      status="LOCKED")
+        r = self.client.post("/api/v1/payroll/runs",
+                             {"site_id": self.site.id, "year": 2026,
+                              "month": 8, "currency": "MVR",
+                              "working_days": 30}, format="json")
+        self.assertNotEqual(r.status_code, 400, r.data)
+        self.assertTrue(PayrollRun.objects.filter(
+            site=self.site, year=2026, month=8, kind="MONTHLY").exists())

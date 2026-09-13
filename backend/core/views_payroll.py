@@ -143,8 +143,12 @@ def payroll_runs(request):
         # and leaving dates — so it waits on no site's attendance lock (owner
         # 2026-09-05). Overtime for these workers is rufiyaa and is gated, as
         # ever, on its own site's run.
+        # A settlement is a run too, and it sits beside the monthly one for
+        # the same period by design — VKR settled twenty leavers mid-August
+        # and was then refused its August run as "already existing" (owner
+        # 2026-09-13). Only a MONTHLY run is the run for the period.
         if PayrollRun.objects.filter(site=site, currency=currency, year=year,
-                                     month=month).exists():
+                                     month=month, kind="MONTHLY").exists():
             return Response({"detail": "A run for this period already exists."},
                             status=400)
         working_days = int(request.data.get("working_days")
@@ -321,8 +325,10 @@ def payroll_readiness(request):
             "mvr_staff": mvr,
             "locked": TimesheetMonth.objects.filter(
                 site=site, year=year, month=month, status="LOCKED").exists(),
+            # the MONTHLY run — a settlement alone is not "run made"
             "has_run": PayrollRun.objects.filter(
-                site=site, currency="MVR", year=year, month=month).exists(),
+                site=site, currency="MVR", year=year, month=month,
+                kind="MONTHLY").exists(),
         })
     from django.db.models import Q
     return Response({
