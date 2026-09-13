@@ -200,9 +200,24 @@ export default function AttendancePage({ site, me, onClose,
     return (
       <section style={card}>
         {header}
-        <Register site={site} canEnter={canEnter}
+        <Register site={site} canEnter={canEnter} isPm={isPm}
           onOpenDay={(dateStr) => { setDay(dateStr); setMode("day"); }}
-          narrow={{ q, setQ, subFilter, setSubFilter, showRow }} />
+          narrow={{ q, setQ, subFilter, setSubFilter, showRow }}
+          onLock={async (y, m) => {
+            // The only lock used to sit on the day sheet and lock the month
+            // of the day on screen — which from the 1st is the NEW month.
+            // VKR's PMs could not find "lock August" because nothing said
+            // August (owner 2026-09-13). The register locks the month it
+            // shows, by name.
+            setError(null);
+            try {
+              await api(`/timesheets/${site.id}/${y}/${m}/lock`,
+                        { method: "POST" });
+              setNotice(`${new Date(y, m - 1, 1).toLocaleDateString("en",
+                { month: "long", year: "numeric" })} signed off and locked.`);
+              return true;
+            } catch (e) { setError(e.message); return false; }
+          }} />
       </section>
     );
   }
@@ -597,7 +612,9 @@ export default function AttendancePage({ site, me, onClose,
           <>
             <button onClick={lockMonth}
                     style={{ ...ghostButton, color: "#b35900" }}>
-              🔒 Sign off &amp; lock month
+              🔒 Sign off &amp; lock{" "}
+              {new Date(day + "T00:00").toLocaleDateString("en",
+                { month: "long", year: "numeric" })}
             </button>
           </>
         )}
@@ -612,7 +629,7 @@ const CODE_STYLE = {
   S: { bg: "#fff5e6", c: "#b35900" }, "½": { bg: "#f0f0f0", c: "#5a6b78" },
 };
 
-function Register({ site, canEnter, onOpenDay, narrow }) {
+function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
   // The same search and gang filter as the day sheet, so a gang opened from
   // its own page stays narrowed when the month register is opened (owner
   // 2026-09-10). Register rows are not index-edited, so filtering is safe.
@@ -641,11 +658,12 @@ function Register({ site, canEnter, onOpenDay, narrow }) {
   const dateStr = (dn) => `${year}-${String(month).padStart(2, "0")}-`
     + `${String(dn).padStart(2, "0")}`;
 
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     setError(null);
     api(`/attendance/register?site=${site.id}&year=${year}&month=${month}`)
       .then(setData).catch((e) => setError(e.message));
-  }, [site.id, year, month]);
+  }, [site.id, year, month, reload]);
 
   const dcell = { ...td, textAlign: "center", padding: "3px 4px",
                   minWidth: 22, fontSize: 11 };
@@ -665,6 +683,14 @@ function Register({ site, canEnter, onOpenDay, narrow }) {
             </option>
           ))}
         </select>
+        {data && !data.locked && isPm && onLock && (
+          <button onClick={async () => { if (await onLock(year, month))
+                                            setReload((n) => n + 1); }}
+                  style={{ ...ghostButton, color: "#b35900", padding: "3px 10px",
+                           fontSize: 12.5 }}>
+            🔒 Sign off &amp; lock {new Date(year, month - 1, 1)
+              .toLocaleDateString("en", { month: "long", year: "numeric" })}
+          </button>)}
         {data?.locked && <span style={{ fontSize: 12.5, color: "#1a7f37" }}>
           🔒 Locked</span>}
         <span style={{ fontSize: 11.5, color: "var(--muted)", marginLeft: 8 }}>
