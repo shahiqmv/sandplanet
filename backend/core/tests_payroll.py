@@ -2822,7 +2822,8 @@ class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):
             code="MLE", defaults={"name": "Head Office",
                                   "status": Site.Status.ACTIVE,
                                   "is_head_office": True})
-        director = make_user("usd_pd", User.Role.DIRECTOR)
+        director = (User.objects.filter(username="usd_pd").first()
+                    or make_user("usd_pd", User.Role.DIRECTOR))
         _, err = payroll.set_run_status(run, "submit", self.hr)
         assert err is None, err
         run.refresh_from_db()
@@ -2849,6 +2850,31 @@ class UsdSalariesAreTransferredPerPersonTests(UsdSalaryRunTests):
             {("Salaried PM", Decimal("1500.00")),
              ("USD Electrician", Decimal("700.00"))})
         # they hang off the run's own PYR, which is its authorisation to pay
+        self.assertTrue(all(p.document_id == run.payment_request_id
+                            for p in payables))
+
+    def test_reopening_withdraws_the_payables_and_re_approval_raises_fresh_ones(self):
+        """The August USD run was reopened twice to correct two men's pay;
+        each re-approval raised a new PYR but no payables, because every line
+        already had one — hanging off the CANCELLED PYR at the old amounts.
+        Finance's list never moved (owner 2026-09-14)."""
+        from core import payroll
+        from .models import Payable
+        run = self._approve(self._run())
+        old_pyr = run.payment_request
+        _, err = payroll.reopen_run(run, self.hr)
+        self.assertIsNone(err)
+        self.assertFalse(Payable.objects.filter(payroll_line__run=run).exists())
+        line = run.lines.get(employee=self.pm)
+        line.allowance = Decimal("150")
+        line.save(update_fields=["allowance"])
+        run = self._approve(run)
+        self.assertEqual(run.status, "LOCKED")
+        self.assertNotEqual(run.payment_request_id, old_pyr.id)
+        payables = Payable.objects.filter(payroll_line__run=run)
+        self.assertEqual(payables.count(), 2)
+        self.assertEqual(payables.get(payroll_line=line).amount,
+                         Decimal("1650.00"))
         self.assertTrue(all(p.document_id == run.payment_request_id
                             for p in payables))
 

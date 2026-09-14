@@ -1292,6 +1292,24 @@ def raise_salary_payables(run, actor):
     return made, None
 
 
+def withdraw_salary_payables(run):
+    """Drop a run's per-head salary payables that nobody has acted on.
+
+    A payable still OUTSTANDING and on no voucher is only the run's figure
+    restated per person; when the run reopens that figure is about to change,
+    so the row is deleted rather than left to mislead. One already settled or
+    sitting on a voucher is Finance's now and is left alone — the reopen
+    guards refuse the reopen in that case anyway.
+    """
+    from . import vouchers
+    from .models import Payable
+    stale = Payable.objects.filter(payroll_line__run=run,
+                                   status="OUTSTANDING").exclude(
+        id__in=vouchers._on_live_payable())
+    n, _ = stale.delete()
+    return n
+
+
 def raise_payroll_pyr(run, actor):
     """Raise the payment request that pays a run's workers.
 
@@ -1410,6 +1428,13 @@ def reopen_run(run, actor):
         for site_id in {l.site_id for l in run.lines.all() if l.site_id}:
             staff_cost.reverse_staff_cost(Site.objects.get(pk=site_id),
                                           run.year, run.month, actor)
+        # The per-head salary payables belong to the PYR being cancelled, so
+        # they go with it; the next approval raises them afresh at the
+        # corrected figures. Left standing, they kept the OLD amounts under a
+        # cancelled PYR and the re-approval raised none — Finance's payables
+        # list never moved (owner 2026-09-14). The guards above already
+        # refuse the reopen once any of this money is authorised or paid.
+        withdrawn = withdraw_salary_payables(run)
         if doc is not None:
             doc.status = "CANCELLED"
             doc.save(update_fields=["status"])
@@ -1421,5 +1446,6 @@ def reopen_run(run, actor):
                                 "payment_request"])
     audit("payroll_run", run.id, "PAYROLL_RUN_REOPENED", actor=actor,
           detail={"period": f"{run.year}-{run.month:02d}",
-                  "cancelled_pyr": doc.ref if doc else None})
+                  "cancelled_pyr": doc.ref if doc else None,
+                  "payables_withdrawn": withdrawn})
     return run, None
