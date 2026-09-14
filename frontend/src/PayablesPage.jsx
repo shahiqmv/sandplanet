@@ -53,8 +53,10 @@ export default function PayablesPage({ me, onOpenDoc }) {
   // account has to be in.
   const currency = pickedRows[0]?.currency || rows[0]?.currency || "MVR";
   const payBanks = banks.filter((b) => (b.currency || "MVR") === currency);
-  // Nobody can be transferred to an account we do not hold.
-  const blocked = onSalaries ? rows.filter((r) => !r.payable_now).length : 0;
+  // Missing account details are flagged, not a stop: Finance still pays
+  // these people (by cash or a hand transfer) and fills the account in later
+  // (owner 2026-09-14).
+  const noAccount = onSalaries ? rows.filter((r) => !r.payable_now).length : 0;
 
   function switchTab(next) {          // never carry a selection across currencies
     setTab(next); setPicked({}); setDebit(""); setMsg(null);
@@ -62,8 +64,7 @@ export default function PayablesPage({ me, onOpenDoc }) {
 
   function pickAllPayable() {
     const next = {};
-    for (const r of rows) if (!onSalaries || r.payable_now)
-      next[r.payable_id] = true;
+    for (const r of rows) next[r.payable_id] = true;
     setPicked(next);
   }
 
@@ -150,11 +151,12 @@ export default function PayablesPage({ me, onOpenDoc }) {
             + "Vouchers page."}
       </p>
 
-      {blocked > 0 && (
-        <p style={{ fontSize: 13, color: "var(--red-fg)", margin: "0 0 10px" }}>
-          {blocked} {blocked === 1 ? "person has" : "people have"} no bank
-          account on file and cannot be transferred. HR adds it on the employee
-          record; they stay outstanding until then.
+      {noAccount > 0 && (
+        <p style={{ fontSize: 13, color: "var(--muted)", margin: "0 0 10px" }}>
+          {noAccount} {noAccount === 1 ? "person has" : "people have"} no bank
+          account on file — they can still be paid, but the transfer schedule
+          will carry a blank account for them. HR adds it on the employee
+          record.
         </p>)}
 
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
@@ -172,7 +174,7 @@ export default function PayablesPage({ me, onOpenDoc }) {
             <strong style={mono}>{currency} {money(pickedTotal)}</strong></span>
           <button onClick={pickAllPayable}
             style={{ ...ghostButton, padding: "2px 10px", fontSize: 12.5 }}>
-            Select all{blocked > 0 ? " payable" : ""}</button>
+            Select all</button>
           {pickedRows.length > 0 && (
             <button onClick={() => setPicked({})}
               style={{ ...ghostButton, padding: "2px 10px", fontSize: 12.5 }}>
@@ -210,14 +212,12 @@ export default function PayablesPage({ me, onOpenDoc }) {
             </tr></thead>
             <tbody>
               {rows.map((r) => {
-                const stop = onSalaries && !r.payable_now;
                 return (
                 <tr key={r.payable_id} style={{ background:
-                  picked[r.payable_id] ? "var(--sky-soft)" : "transparent",
-                  opacity: stop ? 0.55 : 1 }}>
+                  picked[r.payable_id] ? "var(--sky-soft)" : "transparent" }}>
                   {isFinance && (
                     <td style={{ ...td, textAlign: "center" }}>
-                      <input type="checkbox" disabled={stop}
+                      <input type="checkbox"
                         checked={!!picked[r.payable_id]}
                         onChange={(e) => setPicked({ ...picked,
                           [r.payable_id]: e.target.checked })} /></td>
