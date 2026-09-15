@@ -4,6 +4,8 @@ Read is wider than write: QS, the Director and Admin run it, a signatory reads
 it as they read everything, and a site PM sees the enquiries for their own
 site (owner 2026-09-08).
 """
+from urllib.parse import urlparse
+
 from rest_framework.decorators import (api_view, parser_classes,
                                        permission_classes)
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -101,7 +103,8 @@ def _row(t, full=False):
                              # Part of a submission, so not removable.
                              "issued": bool(a.revision_id
                                             and a.revision.issued_at),
-                             "url": a.file.url if a.file else None}
+                             "is_link": bool(a.external_url),
+                             "url": a.href}
                             for a in doc.attachments.select_related("revision")
                             .exclude(kind="GENERATED_PDF")],
         })
@@ -414,6 +417,19 @@ TENDER_DOC_KINDS = ("TENDER_ENQUIRY", "TENDER_BILL", "TENDER_ADDENDUM",
                     "TENDER_AWARD", "ENCLOSURE")
 
 
+def _link_label(parsed):
+    """A readable name for a link nobody named: the host, so the list says
+    'OneDrive' or 'Dropbox' rather than a 200-character address."""
+    host = parsed.netloc.lower()
+    for key, label in (("1drv", "OneDrive"), ("onedrive", "OneDrive"),
+                       ("sharepoint", "SharePoint"), ("dropbox", "Dropbox"),
+                       ("drive.google", "Google Drive"),
+                       ("wetransfer", "WeTransfer")):
+        if key in host:
+            return f"{label} link"
+    return f"Link — {host}"
+
+
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])
@@ -426,19 +442,42 @@ def tender_documents(request, pk):
         return Response({"detail": "QS, the Director or Admin file tender "
                                    "documents."}, status=403)
     upload = request.FILES.get("file")
-    if upload is None:
-        return Response({"detail": "Choose a file to upload."}, status=400)
+    link = (request.data.get("url") or "").strip()
+    if upload is None and not link:
+        return Response({"detail": "Choose a file to upload, or paste a "
+                                   "link to where the document is kept."},
+                        status=400)
+    if upload is not None and link:
+        return Response({"detail": "File a document as an upload or as a "
+                                   "link, not both."}, status=400)
     kind = request.data.get("kind") or "TENDER_ENQUIRY"
     if kind not in TENDER_DOC_KINDS:
         return Response({"detail": "Unknown document kind."}, status=400)
     doc = t.document
-    a = Attachment.objects.create(
-        document=doc, revision=doc.current_revision, kind=kind, file=upload,
-        file_name=upload.name, content_type=upload.content_type or "",
-        size_bytes=upload.size, caption=request.data.get("caption", ""),
-        uploaded_by=request.user)
+    if link:
+        # A client's tender pack can run to gigabytes; the link to their
+        # OneDrive / Dropbox folder is the document, not a copy of it
+        # (owner 2026-09-15).
+        parsed = urlparse(link)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return Response({"detail": "That is not a web link. Paste the "
+                                       "full https:// address."}, status=400)
+        name = (request.data.get("name") or "").strip() or _link_label(parsed)
+        a = Attachment.objects.create(
+            document=doc, revision=doc.current_revision, kind=kind,
+            external_url=link, file_name=name, content_type="text/uri-list",
+            caption=request.data.get("caption", ""),
+            uploaded_by=request.user)
+    else:
+        a = Attachment.objects.create(
+            document=doc, revision=doc.current_revision, kind=kind,
+            file=upload, file_name=upload.name,
+            content_type=upload.content_type or "", size_bytes=upload.size,
+            caption=request.data.get("caption", ""),
+            uploaded_by=request.user)
     audit("tender", t.id, "TENDER_DOCUMENT_ADDED", actor=request.user,
-          detail={"ref": doc.ref, "kind": kind, "name": a.file_name})
+          detail={"ref": doc.ref, "kind": kind, "name": a.file_name,
+                  "link": bool(link)})
     return Response(_row(t, full=True), status=201)
 
 

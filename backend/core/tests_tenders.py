@@ -1015,6 +1015,53 @@ class TenderDocumentTests(GateMixin, TestCase):
         self.assertEqual(self.approve_through(self.t["id"]).data["status"],
                          "ISSUED")
 
+    def test_a_document_can_be_filed_as_a_link(self):
+        """Client tender packs run to gigabytes; a link to where they sit on
+        OneDrive or Dropbox is the document, not a copy (owner 2026-09-15)."""
+        r = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"url": "https://1drv.ms/f/s!AbcDef123", "kind": "TENDER_ENQUIRY"},
+            format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        got = r.data["attachments"][0]
+        self.assertTrue(got["is_link"])
+        self.assertEqual(got["url"], "https://1drv.ms/f/s!AbcDef123")
+        self.assertEqual(got["file_name"], "OneDrive link")   # named by host
+        named = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"url": "https://www.dropbox.com/scl/fo/xyz", "kind": "ENCLOSURE",
+             "name": "Drawings set B"}, format="multipart")
+        self.assertEqual(named.data["attachments"][1]["file_name"],
+                         "Drawings set B")
+
+    def test_their_bill_kept_on_a_link_still_unblocks_the_offer(self):
+        r = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"url": "https://www.dropbox.com/s/bill.xlsx", "kind": "TENDER_BILL"},
+            format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        sent = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/send-for-approval",
+            {"value": "1000"}, format="json")
+        self.assertEqual(sent.status_code, 200, sent.data)
+
+    def test_a_link_must_be_a_web_address_and_not_also_a_file(self):
+        bad = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"url": "C:\\Tenders\\pack.zip", "kind": "TENDER_ENQUIRY"},
+            format="multipart")
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("https://", bad.data["detail"])
+        both = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"url": "https://1drv.ms/x", "file": self._file(),
+             "kind": "TENDER_ENQUIRY"}, format="multipart")
+        self.assertEqual(both.status_code, 400)
+        none = self.client.post(
+            f"/api/v1/tenders/{self.t['id']}/documents",
+            {"kind": "TENDER_ENQUIRY"}, format="multipart")
+        self.assertEqual(none.status_code, 400)
+
     def test_a_file_that_went_to_the_client_stays_on_the_record(self):
         r = self._upload(kind="TENDER_BILL")
         att = r.data["attachments"][0]["id"]

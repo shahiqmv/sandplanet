@@ -867,8 +867,20 @@ class Attachment(models.Model):
         related_name="photos",
     )
     kind = models.CharField(max_length=20, choices=KINDS)
-    file = models.FileField(upload_to=attachment_path)
+    file = models.FileField(upload_to=attachment_path, null=True, blank=True)
+    # A document kept elsewhere — a client's tender pack on OneDrive or
+    # Dropbox runs to gigabytes and would fill the server for nothing, so the
+    # record can hold the link instead of the file (owner 2026-09-15). One of
+    # `file` / `external_url` is set, never both.
+    external_url = models.URLField(max_length=1000, blank=True)
     file_name = models.TextField(blank=True)
+
+    @property
+    def href(self):
+        """Where the document is opened from, whichever way it is held."""
+        if self.external_url:
+            return self.external_url
+        return self.file.url if self.file else None
     content_type = models.TextField(blank=True)
     size_bytes = models.BigIntegerField(default=0)
     caption = models.TextField(blank=True)  # DPR photo captions

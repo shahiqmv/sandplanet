@@ -37,9 +37,18 @@ class AttachmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = Attachment
         fields = ["id", "kind", "file_name", "content_type", "size_bytes",
-                  "caption", "project_code", "url", "created_at"]
+                  "caption", "project_code", "url", "is_link", "created_at"]
+
+    is_link = serializers.SerializerMethodField()
+
+    def get_is_link(self, obj):
+        return bool(obj.external_url)
 
     def get_url(self, obj):
+        if obj.external_url:            # lives elsewhere; open it as given
+            return obj.external_url
+        if not obj.file:
+            return None
         request = self.context.get("request")
         url = obj.file.url
         return request.build_absolute_uri(url) if request else url

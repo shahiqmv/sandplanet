@@ -822,6 +822,24 @@ function Docs({ t, can, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
   const fileRef = useRef(null);
+  // A client's tender pack can run to gigabytes: filing the OneDrive /
+  // Dropbox link instead of the file keeps the server clear (owner 2026-09-15).
+  const [linking, setLinking] = useState(false);
+  const [link, setLink] = useState({ url: "", name: "" });
+
+  async function addLink() {
+    if (!link.url.trim()) { setErr("Paste the link first."); return; }
+    setBusy(true); setErr(null);
+    try {
+      const fd = new FormData();
+      fd.append("url", link.url.trim());
+      fd.append("name", link.name.trim());
+      fd.append("kind", kind);
+      onChanged(await apiUpload(`/tenders/${t.id}/documents`, fd));
+      setLink({ url: "", name: "" }); setLinking(false);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
 
   async function upload(file) {
     if (!file) return;
@@ -863,9 +881,10 @@ function Docs({ t, can, onChanged }) {
                                  padding: "5px 0", fontSize: 13,
                                  display: "flex", gap: 8,
                                  alignItems: "baseline", flexWrap: "wrap" }}>
-          <a href={a.url} target="_blank" rel="noreferrer">{a.file_name}</a>
+          <a href={a.url} target="_blank" rel="noreferrer">
+            {a.is_link ? "🔗 " : ""}{a.file_name}</a>
           <span style={{ color: "var(--muted)", fontSize: 11.5 }}>
-            {a.kind_label}</span>
+            {a.kind_label}{a.is_link ? " · kept elsewhere" : ""}</span>
           {a.issued && <Chip tone="ok">sent to the client</Chip>}
           {can && !a.issued && (
             <button style={{ ...ghostButton, padding: "1px 6px", fontSize: 11,
@@ -884,6 +903,23 @@ function Docs({ t, can, onChanged }) {
             {busy ? "Uploading…" : "⬆ Upload"}</Btn>
           <input ref={fileRef} type="file" style={{ display: "none" }}
                  onChange={(e) => upload(e.target.files[0])} />
+          <Btn variant="secondary" disabled={busy}
+               onClick={() => { setLinking(!linking); setErr(null); }}>
+            🔗 Add link</Btn>
+        </div>)}
+      {can && linking && (
+        <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap",
+                      alignItems: "center" }}>
+          <input value={link.url} placeholder="https://… OneDrive, Dropbox or SharePoint link"
+                 onChange={(e) => setLink({ ...link, url: e.target.value })}
+                 style={{ ...inputStyle, flex: "1 1 320px" }} />
+          <input value={link.name} placeholder="Name (optional)"
+                 onChange={(e) => setLink({ ...link, name: e.target.value })}
+                 style={{ ...inputStyle, width: 180 }} />
+          <Btn disabled={busy} onClick={addLink}>Save link</Btn>
+          <span style={{ fontSize: 11.5, color: "var(--muted)", flexBasis: "100%" }}>
+            The document stays where it is; the link is filed under this kind.
+            Make sure the folder is shared with everyone who needs it.</span>
         </div>)}
       {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
     </div>
