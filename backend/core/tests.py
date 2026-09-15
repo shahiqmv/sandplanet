@@ -47,6 +47,26 @@ class SiteLifecycleTests(BaseCase):
                              {"status": "CLOSED", "reason": "x"})
         self.assertEqual(r.status_code, 400)
 
+    def test_a_new_site_opens_at_tender_and_is_awarded_before_it_can_start(self):
+        """A site is created to tender for it; the award moves it on
+        (owner 2026-09-15)."""
+        self.login(self.admin)
+        r = self.client.post("/api/v1/sites", {"code": "MDF",
+                                               "name": "Samana Medhafushi"})
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["status"], "TENDERING")
+        sid = r.data["id"]
+        early = self.client.post(f"/api/v1/sites/{sid}/status",
+                                 {"status": "ACTIVE", "reason": "x"})
+        self.assertEqual(early.status_code, 400)
+        won = self.client.post(f"/api/v1/sites/{sid}/status",
+                               {"status": "AWARDED", "reason": "LOA received"})
+        self.assertEqual(won.status_code, 200, won.data)
+        lost = Site.objects.create(code="LST", name="Lost one")
+        gone = self.client.post(f"/api/v1/sites/{lost.id}/status",
+                                {"status": "CLOSED", "reason": "Not won"})
+        self.assertEqual(gone.status_code, 200, gone.data)
+
     def test_reason_required(self):
         self.login(self.admin)
         r = self.client.post(f"/api/v1/sites/{self.sjr.id}/status",

@@ -460,6 +460,18 @@ def record_outcome(t, outcome, data, actor):
         _p, msg = award_to_project(t, data, actor)
         if msg:
             return msg
+        # The site was opened to tender for this; the client's award is what
+        # moves it on (owner 2026-09-15). A site already awarded or active
+        # (a second job on a running site) is left where it is.
+        site = doc.site
+        if site.status == Site.Status.TENDERING:
+            site.status = Site.Status.AWARDED
+            site.award_date = site.award_date or t.outcome_date
+            site.save(update_fields=["status", "award_date"])
+            audit("site", site.id, "SITE_STATUS_CHANGED", actor=actor,
+                  from_state="TENDERING", to_state="AWARDED",
+                  detail={"code": site.code, "tender": doc.ref,
+                          "reason": f"Awarded by the client — {doc.ref}"})
     return None
 
 

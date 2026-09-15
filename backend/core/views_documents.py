@@ -222,6 +222,10 @@ def document_create(request):
     # Lifecycle rules (spec §2.2); MAR/MR may begin at AWARDED (mobilization)
     if site.status == Site.Status.CLOSED:
         return Response({"detail": "Site is closed — no new documents."}, status=400)
+    if site.status == Site.Status.TENDERING and doc_type != "TDR":
+        return Response({"detail": "This site is still at tender — only "
+                                   "tenders and offers can be raised until "
+                                   "the client awards it."}, status=400)
     if site.status == Site.Status.ON_HOLD and request.user.role not in ("PM", "ADMIN") \
             and not request.user.is_ho:
         return Response(

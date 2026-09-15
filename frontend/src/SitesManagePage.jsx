@@ -24,6 +24,7 @@ const PROJECT_EMPTY = { code: "", title: "", loa_date: "", start_date: "",
                         manpower_summary: "" };
 
 const SITE_TRANSITIONS = {
+  TENDERING: ["AWARDED", "CLOSED"],
   AWARDED: ["ACTIVE", "ON_HOLD"],
   ACTIVE: ["ON_HOLD", "CLOSED"],
   ON_HOLD: ["ACTIVE", "CLOSED"],
@@ -101,8 +102,9 @@ export default function SitesManagePage({ me, onChanged, onSitesChanged }) {
       setSiteDraft({ code: "", name: "", client_name: "" });
       loadSites();
       openSite(created);
-      setNotice(`Site ${created.code} created (status: Awarded — activate `
-                + "it below once work begins).");
+      setNotice(`Site ${created.code} created at the tender stage. Raise the `
+                + "enquiry under Tenders & Offers; the client's award moves "
+                + "it to Awarded, and you activate it once work begins.");
       onChanged?.();
       onSitesChanged?.();
     } catch (e) {

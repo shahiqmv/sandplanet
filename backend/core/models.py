@@ -94,9 +94,16 @@ def default_working_days():
 
 
 class Site(models.Model):
-    """A site IS a project (spec §2). Created at award, closed at completion."""
+    """A site IS a project (spec §2). Opened at tender, closed at completion.
+
+    A site used to begin life AWARDED, but the register now opens with the
+    enquiry: a site is created to tender for it, and only the client's award
+    moves it on (owner 2026-09-15). A site that never wins closes from
+    TENDERING directly.
+    """
 
     class Status(models.TextChoices):
+        TENDERING = "TENDERING"
         AWARDED = "AWARDED"
         ACTIVE = "ACTIVE"
         ON_HOLD = "ON_HOLD"
@@ -104,6 +111,7 @@ class Site(models.Model):
 
     # Valid lifecycle transitions (spec §2.2). CLOSED→ACTIVE = reopen, Admin only.
     TRANSITIONS = {
+        Status.TENDERING: {Status.AWARDED, Status.CLOSED},
         Status.AWARDED: {Status.ACTIVE, Status.ON_HOLD},
         Status.ACTIVE: {Status.ON_HOLD, Status.CLOSED},
         Status.ON_HOLD: {Status.ACTIVE, Status.CLOSED},
@@ -128,7 +136,7 @@ class Site(models.Model):
     planned_completion = models.DateField(null=True, blank=True)
     actual_completion = models.DateField(null=True, blank=True)
     status = models.CharField(
-        max_length=10, choices=Status.choices, default=Status.AWARDED
+        max_length=10, choices=Status.choices, default=Status.TENDERING
     )
     client_name = models.TextField(blank=True)
     client_address = models.TextField(blank=True)

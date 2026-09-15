@@ -106,7 +106,7 @@ def _row(t, full=False):
                              "is_link": bool(a.external_url),
                              "url": a.href}
                             for a in doc.attachments.select_related("revision")
-                            .exclude(kind="GENERATED_PDF")],
+                            .exclude(kind="GENERATED_PDF").order_by("id")],
         })
     return out
 

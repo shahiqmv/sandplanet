@@ -356,12 +356,13 @@ function Login({ onLogin, expired }) {
 const SITE_BANDS = [
   ["ACTIVE", "Active"],
   ["AWARDED", "Awarded — not started"],
+  ["TENDERING", "Tendering"],
   ["ON_HOLD", "On hold"],
 ];
 // The accent stripe carries the status, so an active tile spends its room on
 // the number instead of a chip.
 const SITE_ACCENT = { ACTIVE: "#1a7f37", AWARDED: "#2f6f9f",
-                      ON_HOLD: "#b35900" };
+                      TENDERING: "#7a5ea8", ON_HOLD: "#b35900" };
 
 function SiteTile({ s, onOpen }) {
   return (

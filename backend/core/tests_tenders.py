@@ -309,6 +309,33 @@ class TenderRegisterTests(GateMixin, TestCase):
         self.assertEqual(r.data["outcome_ref"], "LOA/2026/014")
         self.assertEqual(str(r.data["value_awarded"]), "119500.00")
 
+    def test_the_award_moves_a_tendering_site_to_awarded(self):
+        """The site was opened to tender for this; the client's award is what
+        moves it on (owner 2026-09-15). A site already running stays put."""
+        from .models import AuditLog
+        self.site.status = Site.Status.TENDERING
+        self.site.save(update_fields=["status"])
+        t = self.open_one()
+        self.issue(t["id"], "125000")
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/awarded",
+                             {"outcome_ref": "LOA/2026/015",
+                              "project_code": "JETTY Y"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.site.refresh_from_db()
+        self.assertEqual(self.site.status, "AWARDED")
+        self.assertIsNotNone(self.site.award_date)
+        self.assertTrue(AuditLog.objects.filter(
+            entity="site", entity_id=self.site.id, to_state="AWARDED").exists())
+        # a second enquiry on the same, now-awarded site leaves it alone
+        self.site.status = Site.Status.ACTIVE
+        self.site.save(update_fields=["status"])
+        t2 = self.open_one()
+        self.issue(t2["id"], "5000")
+        self.client.post(f"/api/v1/tenders/{t2['id']}/awarded",
+                         {"project_code": "JETTY Z"}, format="json")
+        self.site.refresh_from_db()
+        self.assertEqual(self.site.status, "ACTIVE")
+
     def test_a_loss_records_the_reason_and_who_won(self):
         t = self.open_one()
         self.issue(t["id"], "125000")
@@ -1031,8 +1058,9 @@ class TenderDocumentTests(GateMixin, TestCase):
             f"/api/v1/tenders/{self.t['id']}/documents",
             {"url": "https://www.dropbox.com/scl/fo/xyz", "kind": "ENCLOSURE",
              "name": "Drawings set B"}, format="multipart")
-        self.assertEqual(named.data["attachments"][1]["file_name"],
-                         "Drawings set B")
+        self.assertEqual(
+            {a["file_name"] for a in named.data["attachments"]},
+            {"OneDrive link", "Drawings set B"})
 
     def test_their_bill_kept_on_a_link_still_unblocks_the_offer(self):
         r = self.client.post(
