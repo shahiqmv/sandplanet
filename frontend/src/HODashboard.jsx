@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "./api.js";
 import { DOC_LABELS } from "./LineDoc.jsx";
 import { Chip, Eyebrow, RefStamp, Stat, StatusChip, buttonStyle, card,
-         ghostButton, td, th } from "./ui.jsx";
+         ghostButton, inputStyle, td, th } from "./ui.jsx";
 const money = (v) => Number(v || 0).toLocaleString("en-US",
   { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -18,6 +18,21 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
   const isPo = tab === "PO";
   const [rows, setRows] = useState([]);
   const [pending, setPending] = useState([]);
+  // Lengthy registers need finding, not scrolling: one box matches the
+  // reference, site, status, supplier, linked refs and who raised it
+  // (owner 2026-09-15). Words are ANDed, so "VKR PO-14" narrows twice.
+  const [q, setQ] = useState("");
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = (row) => [
+    row.ref, row.site_code, row.status, row.created_by, row.date,
+    row.supplier, row.supplier_contact, row.source_ref, row.payment_terms,
+    ...Object.values(row.links || {}).flat(),
+    ...Object.values(row.payload_summary || {}),
+  ].filter(Boolean).join(" ").toLowerCase().replace(/_/g, " ");
+  const shown = words.length
+    ? rows.filter((row) => { const h = hay(row);
+                             return words.every((w) => h.includes(w)); })
+    : rows;
 
   const load = useCallback(() => {
     api("/dashboards/ho").then(setStats).catch(() => setStats(null));
@@ -84,6 +99,10 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
               {key === "PENDING" ? "Pending Items" : `${key} Register`}
             </button>
           ))}
+          {tab !== "PENDING" && (
+            <input value={q} onChange={(e) => setQ(e.target.value)}
+                   placeholder={`Search ${tab}s — number, site, status, supplier…`}
+                   style={{ ...inputStyle, width: 280, marginLeft: 4 }} />)}
           <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
             {onVessels && (
               <button onClick={onVessels} style={ghostButton}
@@ -157,7 +176,7 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
               <th style={th}>By</th>
             </tr></thead>
             <tbody>
-              {rows.map((row, i) => (
+              {shown.map((row, i) => (
                 <tr key={`${row.ref}-${row.rev}-${i}`}
                     style={row.is_current_rev ? {} : { opacity: 0.55 }}>
                   <td style={td}>
@@ -233,6 +252,11 @@ export default function HODashboard({ me, tab, onTab, onOpenDoc, onNew,
               {rows.length === 0 && (
                 <tr><td style={td} colSpan={isPo ? 10 : 8}>
                   No {DOC_LABELS[tab]}s yet.</td></tr>
+              )}
+              {rows.length > 0 && shown.length === 0 && (
+                <tr><td style={td} colSpan={isPo ? 10 : 8}>
+                  Nothing matches “{q.trim()}” in the last {rows.length}{" "}
+                  {DOC_LABELS[tab]} rows.</td></tr>
               )}
             </tbody>
           </table>
