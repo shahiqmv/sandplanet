@@ -848,6 +848,32 @@ class PartialPRTests(ProcBase):
         # MR now shows for a fresh PR again
         self.assertIn(mr_ref, self._for_pr())
 
+    def test_release_from_a_returned_pr_reopens_the_mr(self):
+        """PR-213 took all of MR-VKR-037 and was approved (MR: PR raised).
+        The signatory returned it, Purchasing released two items, and the MR
+        stayed at PR raised — so no new PR could take them (owner
+        2026-09-15)."""
+        mr_ref = self.mr_to_sent()
+        pr = self.make_pr(mr_ref)
+        self._approve(pr["ref"])
+        self.assertEqual(Document.objects.get(ref=mr_ref).status, "PR_RAISED")
+        self.as_user(self.director)
+        r = self.act(pr["ref"], "return", {"comment": "amend"})
+        self.assertEqual(r.status_code, 200, r.data)
+        lines = self._lines(mr_ref)
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/release-lines",
+                             {"line_ids": [lines[self.rebar.id]["id"]]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=mr_ref).status,
+                         "PARTIALLY_ORDERED")
+        self.assertIn(mr_ref, self._for_pr())
+        # approving the corrected PR keeps it partially ordered, not raised
+        self._approve(pr["ref"])
+        self.assertEqual(Document.objects.get(ref=mr_ref).status,
+                         "PARTIALLY_ORDERED")
+
     def test_release_blocked_after_approval(self):
         mr_ref = self.mr_to_sent()
         pr = self.make_pr(mr_ref)

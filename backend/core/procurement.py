@@ -265,6 +265,16 @@ def release_pr_lines(pr, line_ids, actor):
             quotation__document=pr, mr_line_id__in=ids).update(mr_line=None)
     audit("document", pr.id, "PR_LINES_RELEASED", actor=actor,
           detail={"ref": pr.ref, "count": len(ids)})
+    if ids:
+        # The MR was marked PR-raised when this PR was first approved; a
+        # returned PR handing items back leaves those items with no PR, so
+        # the MR must be offered again. It was not: MR-VKR-037 sat at
+        # PR-raised with two pine sizes nobody could order (owner
+        # 2026-09-15).
+        claimed = active_pr_claimed_line_ids()
+        for mr in linked_docs(pr, "MR_PR", "from"):
+            if mr.status == "PR_RAISED" and remaining_mr_lines(mr, claimed):
+                set_status(mr, "PARTIALLY_ORDERED", actor, "MR_PR_RAISED")
     return len(ids), None
 
 

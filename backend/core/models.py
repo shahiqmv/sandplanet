@@ -508,7 +508,9 @@ class Document(models.Model):
             "SENT_TO_HO": {"PR_RAISED", "PARTIALLY_ORDERED", "LOADING_PLANNED"},
             "PARTIALLY_ORDERED": {"PARTIALLY_ORDERED", "PR_RAISED",
                                   "LOADING_PLANNED"},
-            "PR_RAISED": {"LOADING_PLANNED"},
+            # PR_RAISED → PARTIALLY_ORDERED: a returned PR handed items back
+            # after the MR was already marked fully raised (owner 2026-09-15).
+            "PR_RAISED": {"LOADING_PLANNED", "PARTIALLY_ORDERED"},
             "LOADING_PLANNED": {"PARTIALLY_LOADED", "LOADED"},
             "PARTIALLY_LOADED": {"PARTIALLY_LOADED", "LOADED", "CLOSED"},
             "LOADED": {"CLOSED"},
