@@ -701,6 +701,13 @@ export default function App() {
     setRefresh((n) => n + 1);
   }
 
+  // The site list feeds every site dropdown in the app (tenders, transfers,
+  // reports). It loads once at sign-in, so a site created on the Sites page
+  // was missing from all of them until a reload (owner 2026-09-15, MDF).
+  function reloadSites() {
+    api("/sites").then((list) => setSites(list)).catch(() => {});
+  }
+
   // Closing a document returns you to the page you opened it from. Without
   // this, raising a submittal from the submittals page and closing it landed
   // you on the site dashboard, and you had to walk back in
@@ -1266,7 +1273,8 @@ export default function App() {
             <MyPaymentRequests me={me} onOpenDoc={openDoc} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "manage" && (
-            <SitesManagePage me={me} onChanged={bump} />
+            <SitesManagePage me={me} onChanged={bump}
+                             onSitesChanged={reloadSites} />
           )}
           {!docView && !openSite && me.is_ho && hoPage === "items" && (
             <ItemsPage me={me} />

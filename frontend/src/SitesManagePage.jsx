@@ -36,7 +36,7 @@ const hhmm = (t) => (t ? String(t).slice(0, 5) : "");
 const DAY_NAMES = { 1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri",
                     6: "Sat", 7: "Sun" };
 
-export default function SitesManagePage({ me, onChanged }) {
+export default function SitesManagePage({ me, onChanged, onSitesChanged }) {
   const [sites, setSites] = useState([]);
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({});
@@ -104,6 +104,7 @@ export default function SitesManagePage({ me, onChanged }) {
       setNotice(`Site ${created.code} created (status: Awarded — activate `
                 + "it below once work begins).");
       onChanged?.();
+      onSitesChanged?.();
     } catch (e) {
       setError(e.message);
     }
@@ -121,6 +122,7 @@ export default function SitesManagePage({ me, onChanged }) {
       setSelected(fresh);
       loadSites();
       onChanged?.();
+      onSitesChanged?.();
     } catch (e) {
       setError(e.message);
     }
@@ -136,6 +138,7 @@ export default function SitesManagePage({ me, onChanged }) {
       setSelected(fresh);
       loadSites();
       onChanged?.();
+      onSitesChanged?.();
     } catch (e) {
       setError(e.message);
     }
