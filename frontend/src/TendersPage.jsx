@@ -834,8 +834,8 @@ function PackDigest({ t, can, onChanged }) {
   const [picked, setPicked] = useState({});
   const [raised, setRaised] = useState(null);
 
-  const load = () => api(`/tenders/${t.id}/digest`).then(setData)
-    .catch((e) => setErr(e.message));
+  const load = () => { api(`/tenders/${t.id}/digest`).then(setData)
+    .catch((e) => setErr(e.message)); };
   useEffect(load, [t.id]);
   const d = data?.digest;
   const running = d?.status === "RUNNING";
