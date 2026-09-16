@@ -1123,3 +1123,162 @@ class TenderDocumentTests(GateMixin, TestCase):
                              {"file": self._file(), "kind": "TENDER_BILL"},
                              format="multipart")
         self.assertEqual(r.status_code, 403)
+
+
+class TenderDigestTests(GateMixin, TestCase):
+    """The first read of a tender pack: what it asks for, when, on what
+    terms, and what to query — a record the QS reads, never something that
+    changes the tender by itself (owner 2026-09-16)."""
+
+    FIXTURE = {
+        "summary": "Soneva wants a jetty at Jani.",
+        "scope": [{"item": "120 m timber jetty", "source": "enquiry.xlsx p.1"}],
+        "key_dates": [{"label": "Submission", "as_written": "30 Sept 2026",
+                       "iso": "2026-09-30", "source": "enquiry.xlsx p.1"}],
+        "submission": {"how": "By email, PDF",
+                       "deliverables": [{"item": "Priced bill",
+                                         "source": "enquiry.xlsx p.1"}]},
+        "commercial": [{"topic": "Performance bond", "detail": "10%",
+                        "source": "enquiry.xlsx p.2"}],
+        "risks": [{"risk": "Monsoon", "detail": "Works over SW monsoon",
+                   "source": "enquiry.xlsx p.2"}],
+        "queries": [{"question": "Is the bond bank or insurance?",
+                     "reference": "Cl. 4.2", "why": "cost differs"},
+                    {"question": "Who supplies the piles?",
+                     "reference": "Spec 3.1", "why": "not stated"}],
+        "documents_missing": ["Drawing register"],
+    }
+
+    def setUp(self):
+        from . import tender_digest as dg
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("tdg_qs", User.Role.QS)
+        self.make_approvers("tdg")
+        self.pm = make_user("tdg_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.client.post("/api/v1/tenders", {
+            "site_id": self.site.id, "client_name": "Soneva",
+            "title": "Jetty"}, format="json").data
+        self.calls = []
+        real = dg._call_claude
+
+        def fake(text, model):
+            self.calls.append((text, model))
+            return dict(self.FIXTURE), {"input": 12000, "output": 900,
+                                        "model": model}
+        dg._call_claude = fake
+        self.addCleanup(setattr, dg, "_call_claude", real)
+
+    def _xlsx(self, name="enquiry.xlsx"):
+        import io
+
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Instructions"
+        ws.append(["Tender for a 120 m timber jetty at Soneva Jani"])
+        ws.append(["Submission", "30 Sept 2026", "by email as PDF"])
+        ws2 = wb.create_sheet("Conditions")
+        ws2.append(["Performance bond", "10% of the contract sum"])
+        buf = io.BytesIO()
+        wb.save(buf)
+        return SimpleUploadedFile(
+            name, buf.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument"
+                         ".spreadsheetml.sheet")
+
+    def _file(self, name, kind="TENDER_ENQUIRY"):
+        return self.client.post(f"/api/v1/tenders/{self.t['id']}/documents",
+                                {"file": self._xlsx(name), "kind": kind},
+                                format="multipart")
+
+    def _url(self, tail=""):
+        return f"/api/v1/tenders/{self.t['id']}/digest{tail}"
+
+    def test_the_estimate_lists_what_can_be_read_and_what_cannot(self):
+        self._file("enquiry.xlsx")
+        self.client.post(f"/api/v1/tenders/{self.t['id']}/documents",
+                         {"url": "https://1drv.ms/f/pack", "kind": "ENCLOSURE",
+                          "name": "Drawings on OneDrive"}, format="multipart")
+        r = self.client.get(self._url())
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertIsNone(r.data["digest"])
+        est = r.data["estimate"]
+        self.assertEqual([d["name"] for d in est["documents"]],
+                         ["enquiry.xlsx"])
+        self.assertEqual(est["skipped"][0]["name"], "Drawings on OneDrive")
+        self.assertIn("link", est["skipped"][0]["why"])
+        self.assertIn("approx_usd", est)
+
+    def test_nothing_readable_is_refused_plainly(self):
+        r = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("upload", r.data["detail"].lower())
+
+    def test_reading_the_pack_records_the_digest_and_its_cost(self):
+        from .models import TenderDigest
+        self._file("enquiry.xlsx")
+        r = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(r.status_code, 202, r.data)
+        d = TenderDigest.objects.get(tender_id=self.t["id"])
+        self.assertEqual(d.status, "DONE", d.error)
+        self.assertEqual(d.result["summary"], "Soneva wants a jetty at Jani.")
+        self.assertEqual([x["name"] for x in d.documents], ["enquiry.xlsx"])
+        self.assertEqual(d.input_tokens, 12000)
+        self.assertGreater(d.cost_usd, 0)
+        # the pack text the model saw is page-marked per document
+        text, _model = self.calls[0]
+        self.assertIn("DOCUMENT: enquiry.xlsx", text)
+        self.assertIn("Performance bond", text)
+        got = self.client.get(self._url()).data["digest"]
+        self.assertEqual(got["status"], "DONE")
+        self.assertEqual(len(got["result"]["queries"]), 2)
+        self.assertEqual(got["started_by"], self.qs.full_name)
+
+    def test_a_model_failure_lands_on_the_record_not_a_500(self):
+        from . import tender_digest as dg
+        from .models import TenderDigest
+
+        def boom(text, model):
+            raise dg.ExtractionError("The digest model failed: quota")
+        dg._call_claude = boom
+        self._file("enquiry.xlsx")
+        r = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(r.status_code, 202, r.data)
+        d = TenderDigest.objects.get(tender_id=self.t["id"])
+        self.assertEqual(d.status, "FAILED")
+        self.assertIn("quota", d.error)
+
+    def test_ticked_queries_become_one_tq_sheet_without_duplicates(self):
+        self._file("enquiry.xlsx")
+        self.client.post(self._url(), {}, format="json")
+        r = self.client.post(self._url("/raise-queries"), {"picks": [0, 1, 7]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        queries = r.data["tender"]["queries"]
+        self.assertEqual(len(queries), 1)
+        self.assertEqual([i["question"] for i in queries[0]["items"]],
+                         ["Is the bond bank or insurance?",
+                          "Who supplies the piles?"])
+        self.assertEqual(queries[0]["items"][0]["reference"], "Cl. 4.2")
+        # pressing again adds to the same sheet and does not repeat a question
+        again = self.client.post(self._url("/raise-queries"), {"picks": [1]},
+                                 format="json")
+        self.assertEqual(again.status_code, 200, again.data)
+        self.assertEqual(len(again.data["tender"]["queries"]), 1)
+        self.assertEqual(len(again.data["tender"]["queries"][0]["items"]), 2)
+        self.assertEqual(self.client.get(self._url()).data["digest"]
+                         ["raised_query_ref"], r.data["query_ref"])
+
+    def test_a_pm_reads_the_digest_but_cannot_run_one(self):
+        self._file("enquiry.xlsx")
+        self.client.post(self._url(), {}, format="json")
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(self._url()).status_code, 200)
+        r = self.client.post(self._url(), {}, format="json")
+        self.assertEqual(r.status_code, 403)

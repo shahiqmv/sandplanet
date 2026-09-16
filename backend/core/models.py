@@ -3724,6 +3724,37 @@ class TenderQueryItem(models.Model):
         return bool(self.answer.strip())
 
 
+class TenderDigest(models.Model):
+    """One reading of a tender's document pack by the model — what the pack
+    asks for, when, on what terms, and what is unclear enough to query. A
+    record the QS reads, never something that changes the tender by itself
+    (owner 2026-09-16). See core/tender_digest.py.
+    """
+
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
+                               related_name="digests")
+    status = models.CharField(max_length=8, default="RUNNING")  # /DONE/FAILED
+    model = models.CharField(max_length=60, blank=True)
+    started_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    started_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    documents = models.JSONField(default=list, blank=True)  # what was read
+    skipped = models.JSONField(default=list, blank=True)    # and what not
+    result = models.JSONField(null=True, blank=True)
+    error = models.TextField(blank=True)
+    input_tokens = models.IntegerField(default=0)
+    output_tokens = models.IntegerField(default=0)
+    cost_usd = models.DecimalField(max_digits=10, decimal_places=4,
+                                   null=True, blank=True)
+    # The TQ sheet opened from this digest's candidate queries, if any.
+    raised_query = models.ForeignKey(TenderQuery, on_delete=models.SET_NULL,
+                                     null=True, blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["-id"]
+
+
 class Boq(models.Model):
     """A project's Bill of Quantities — the priced contract schedule the QS
     progresses interim claims against. One per project; locked once claiming

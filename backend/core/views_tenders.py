@@ -510,6 +510,53 @@ def tender_document_delete(request, pk, att_id):
     return Response(_row(t, full=True))
 
 
+# ---- the pack digest ---------------------------------------------------
+
+@api_view(["GET", "POST"])
+@permission_classes([IsAuthenticated])
+def tender_digest(request, pk):
+    """GET: the latest reading of the pack, plus what a fresh read would
+    cost. POST: read the pack (runs in the background; poll the GET)."""
+    from . import tender_digest as dg
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if request.method == "POST":
+        if not svc.can_manage(request.user):
+            return Response({"detail": "QS, the Director or Admin read the "
+                                       "pack."}, status=403)
+        d, msg = dg.start(t, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response({"digest": dg.payload(d)}, status=202)
+    latest = t.digests.select_related("started_by").first()
+    return Response({"digest": dg.payload(latest),
+                     "estimate": dg.estimate(t)})
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def tender_digest_raise_queries(request, pk):
+    """Turn ticked candidate queries into a TQ sheet."""
+    from . import tender_digest as dg
+    t, err = _boq_target(request, pk, writing=True)
+    if err:
+        return err
+    d = t.digests.first()
+    picks = request.data.get("picks") or []
+    try:
+        picks = [int(i) for i in picks]
+    except (TypeError, ValueError):
+        return Response({"detail": "Bad selection."}, status=400)
+    q, msg = dg.raise_queries(d, picks, request.user) if d else (
+        None, "There is no digest to raise queries from.")
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"query_ref": q.ref, "tender": _row(t, full=True)})
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def tender_query_pdf(request, pk, query_id):

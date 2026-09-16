@@ -265,6 +265,7 @@ function NewTender({ sites, onDone }) {
 const TABS = [
   ["offer", "Offer"],
   ["documents", "Documents"],
+  ["digest", "Pack digest"],
   ["visits", "Visits & meetings"],
   ["queries", "Queries (TQ)"],
   ["proposal", "Proposal terms"],
@@ -358,6 +359,11 @@ function TenderDetail({ id, me, onClose }) {
       {tab === "documents" && (
         <div style={{ ...card, marginTop: 12 }}>
           <Docs t={t} can={can} onChanged={setT} />
+        </div>)}
+
+      {tab === "digest" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <PackDigest t={t} can={can && live} onChanged={setT} />
         </div>)}
 
       {tab === "visits" && (
@@ -816,6 +822,166 @@ const DOC_KINDS = [
   ["TENDER_AWARD", "Award letter"],
   ["ENCLOSURE", "Other enclosure"],
 ];
+
+/* The first read of the pack. Claude drafts, the QS reads; the candidate
+ * queries only become a TQ when someone ticks them and raises it
+ * (owner 2026-09-16). The read runs on the server in the background, so the
+ * tab polls while it is RUNNING. */
+function PackDigest({ t, can, onChanged }) {
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [picked, setPicked] = useState({});
+  const [raised, setRaised] = useState(null);
+
+  const load = () => api(`/tenders/${t.id}/digest`).then(setData)
+    .catch((e) => setErr(e.message));
+  useEffect(load, [t.id]);
+  const d = data?.digest;
+  const running = d?.status === "RUNNING";
+  useEffect(() => {
+    if (!running) return undefined;
+    const id = setInterval(load, 3000);
+    return () => clearInterval(id);
+  }, [running, t.id]);
+
+  async function read() {
+    setBusy(true); setErr(null); setRaised(null); setPicked({});
+    try { setData({ ...data, digest: (await api(`/tenders/${t.id}/digest`,
+                                                { method: "POST", body: {} }))
+                                       .digest }); }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  async function raise_() {
+    const picks = Object.keys(picked).filter((k) => picked[k]).map(Number);
+    setBusy(true); setErr(null);
+    try {
+      const r = await api(`/tenders/${t.id}/digest/raise-queries`,
+                          { method: "POST", body: { picks } });
+      onChanged(r.tender); setRaised(r.query_ref); setPicked({}); load();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+
+  const est = data?.estimate;
+  const res = d?.result;
+  const h = { margin: "12px 0 4px", fontSize: 13, color: "var(--sp-navy)" };
+  const src = (s) => s ? <span style={{ fontSize: 11, color: "var(--muted)",
+                                        marginLeft: 6 }}>{s}</span> : null;
+  const li = { fontSize: 12.5, margin: "2px 0" };
+  const nPicked = Object.values(picked).filter(Boolean).length;
+
+  return (
+    <div>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Pack digest</h4>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        A first read of every PDF and Excel file under Documents: what is
+        asked for, when and how it is submitted, the commercial terms, the
+        risks, and what is unclear enough to query. Drafted by the model;
+        check it against the pack before relying on it.
+      </p>
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
+
+      {est && !running && can && (
+        <div style={{ display: "flex", gap: 10, alignItems: "center",
+                      flexWrap: "wrap", marginBottom: 8 }}>
+          <Btn disabled={busy || !est.documents.length} onClick={read}>
+            {d ? "Read the pack again" : "Read the pack"}</Btn>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {est.documents.length} document{est.documents.length === 1 ? "" : "s"}
+            {" "}· about USD {est.approx_usd} on {est.model}
+          </span>
+        </div>)}
+      {est?.skipped?.length > 0 && !running && (
+        <div style={{ fontSize: 12, color: "#7a5b12", background: "#fff6e5",
+                      border: "1px solid #f0d9a8", borderRadius: 6,
+                      padding: "6px 10px", marginBottom: 8 }}>
+          Not readable here:{" "}
+          {est.skipped.map((s) => `${s.name} — ${s.why}`).join("; ")}
+        </div>)}
+
+      {running && (
+        <p style={{ fontSize: 12.5 }}>
+          Reading the pack… this takes a minute or two for a large one. The
+          page updates by itself.</p>)}
+      {d?.status === "FAILED" && (
+        <p style={{ fontSize: 12.5, color: "#c0392b" }}>
+          The read failed: {d.error}</p>)}
+
+      {d && !running && (
+        <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 6 }}>
+          {d.status === "DONE" ? "Read" : "Attempted"} by {d.started_by}
+          {d.finished_at ? ` · ${new Date(d.finished_at).toLocaleString()}` : ""}
+          {" "}· {d.model}
+          {d.cost_usd ? ` · USD ${Number(d.cost_usd).toFixed(2)}` : ""}
+          {d.documents?.length
+            ? ` · ${d.documents.map((x) => `${x.name} (${x.pages} p.)`).join(", ")}`
+            : ""}
+        </div>)}
+
+      {res && (
+        <div>
+          <p style={{ fontSize: 13, margin: "6px 0" }}>{res.summary}</p>
+
+          <h5 style={h}>Scope</h5>
+          {res.scope.map((x, i) => <div key={i} style={li}>• {x.item}{src(x.source)}</div>)}
+
+          <h5 style={h}>Key dates</h5>
+          {res.key_dates.map((x, i) => (
+            <div key={i} style={li}>• <strong>{x.label}:</strong> {x.as_written}
+              {x.iso ? <span style={{ fontFamily: "var(--font-mono)", marginLeft: 6 }}>{x.iso}</span> : null}
+              {src(x.source)}</div>))}
+
+          <h5 style={h}>Submission</h5>
+          <div style={li}>{res.submission.how}</div>
+          {res.submission.deliverables.map((x, i) =>
+            <div key={i} style={li}>• {x.item}{src(x.source)}</div>)}
+
+          <h5 style={h}>Commercial terms</h5>
+          {res.commercial.map((x, i) =>
+            <div key={i} style={li}>• <strong>{x.topic}:</strong> {x.detail}{src(x.source)}</div>)}
+
+          <h5 style={h}>Risks</h5>
+          {res.risks.map((x, i) =>
+            <div key={i} style={li}>• <strong>{x.risk}:</strong> {x.detail}{src(x.source)}</div>)}
+
+          {res.documents_missing?.length > 0 && (
+            <>
+              <h5 style={h}>Referred to but not in the pack</h5>
+              {res.documents_missing.map((x, i) => <div key={i} style={li}>• {x}</div>)}
+            </>)}
+
+          <h5 style={h}>Candidate queries</h5>
+          {res.queries.length === 0 && (
+            <div style={li}>None suggested.</div>)}
+          {res.queries.map((x, i) => (
+            <label key={i} style={{ ...li, display: "flex", gap: 8,
+                                    alignItems: "flex-start" }}>
+              {can && <input type="checkbox" checked={!!picked[i]}
+                             onChange={(e) => setPicked({ ...picked,
+                                                          [i]: e.target.checked })} />}
+              <span>{x.question}
+                <span style={{ fontSize: 11, color: "var(--muted)", marginLeft: 6 }}>
+                  {x.reference}{x.why ? ` · ${x.why}` : ""}</span></span>
+            </label>))}
+          {can && res.queries.length > 0 && (
+            <div style={{ display: "flex", gap: 10, alignItems: "center",
+                          marginTop: 8 }}>
+              <Btn disabled={busy || !nPicked} onClick={raise_}>
+                Raise {nPicked || ""} as a tender query</Btn>
+              {d.raised_query_ref && (
+                <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                  On sheet {d.raised_query_ref} — finish it under Queries (TQ)
+                </span>)}
+              {raised && <Chip tone="ok">added to {raised}</Chip>}
+            </div>)}
+        </div>)}
+    </div>
+  );
+}
+
 
 function Docs({ t, can, onChanged }) {
   const [kind, setKind] = useState("TENDER_ENQUIRY");
