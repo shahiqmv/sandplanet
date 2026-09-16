@@ -309,19 +309,24 @@ def start(tender, actor, background=True):
                   "documents": len(readable)})
     from django.conf import settings
     if background and not getattr(settings, "TESTING", False):
-        threading.Thread(target=run, args=(d.id,), daemon=True).start()
+        threading.Thread(target=run, args=(d.id, True), daemon=True).start()
     else:
-        run(d.id)
+        run(d.id, False)
         d.refresh_from_db()
     return d, None
 
 
-def run(digest_id):
-    """The whole read, on its own thread. Every outcome lands on the record."""
+def run(digest_id, own_thread=True):
+    """The whole read. Every outcome lands on the record.
+
+    On its own thread the DB connection is this thread's to open and close;
+    run inline (tests) it is the caller's, and closing it under a request
+    breaks the request (CI on Postgres, 2026-09-16)."""
     from django.db import close_old_connections
 
     from .models import TenderDigest
-    close_old_connections()
+    if own_thread:
+        close_old_connections()
     d = TenderDigest.objects.select_related("tender__document").get(
         pk=digest_id)
     try:
@@ -345,7 +350,8 @@ def run(digest_id):
         d.status, d.error = "FAILED", f"The read failed: {e}"
     d.finished_at = timezone.now()
     d.save()
-    close_old_connections()
+    if own_thread:
+        close_old_connections()
 
 
 def is_stale(d):
