@@ -408,6 +408,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
   const [run, setRun] = useState(null);
   const [error, setError] = useState(null);
   const [slipBusy, setSlipBusy] = useState(false);
+  const [q, setQ] = useState("");
   const [slipNote, setSlipNote] = useState(null);
 
   // Rendering 28 slips server-side takes a moment and lands ~1.8MB, so the
@@ -543,6 +544,16 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     </section>
   );
   const lines = run.lines || [];
+  // A site run carries a hundred-odd men; finding one means typing him, not
+  // scrolling (owner 2026-09-16). Matches number, name, site and title.
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = words.length
+    ? lines.filter((l) => {
+        const h = [l.emp_no, l.full_name, l.site_code, l.job_title]
+          .filter(Boolean).join(" ").toLowerCase();
+        return words.every((w) => h.includes(w));
+      })
+    : lines;
   const sum = (k) => lines.reduce((a, l) => a + Number(l[k] || 0), 0);
   const monthName = new Date(2000, run.month - 1)
     .toLocaleString("en", { month: "long" });
@@ -645,7 +656,16 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           is and refresh.
         </div>)}
 
-      <div style={{ overflowX: "auto", marginTop: 12 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center",
+                    marginTop: 12 }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+               placeholder="Search — emp no, name, site, title"
+               style={{ ...inputStyle, width: 280 }} />
+        {words.length > 0 && (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            {shown.length} of {lines.length}</span>)}
+      </div>
+      <div style={{ overflowX: "auto", marginTop: 8 }}>
         <table style={{ borderCollapse: "collapse", fontSize: 12,
                         minWidth: 1100 }}>
           <thead><tr>
@@ -671,7 +691,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             <th style={{ ...th, textAlign: "right" }}>To office</th>
           </tr></thead>
           <tbody>
-            {lines.map((l) => (
+            {shown.map((l) => (
               <Row key={l.id} line={l} locked={locked} showSite={run.site_id == null}
                    onSave={saveField}
                    onRestDay={!locked && (isPM || isHR || isPD)

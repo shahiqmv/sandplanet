@@ -8,6 +8,10 @@ export default function PayrollPage({ sites }) {
   const [siteId, setSiteId] = useState("");
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
+  const [q, setQ] = useState("");
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = (data?.rows || []).filter((r) => !words.length || words.every(
+    (w) => `${r.emp_no} ${r.full_name} ${r.sites}`.toLowerCase().includes(w)));
 
   const [year, month] = period.split("-");
 
@@ -33,6 +37,9 @@ export default function PayrollPage({ sites }) {
           Payroll — {period}
         </h2>
         <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input value={q} onChange={(e) => setQ(e.target.value)}
+                 placeholder="Search — emp no, name, site"
+                 style={{ ...inputStyle, width: 220 }} />
           <input type="month" value={period}
                  onChange={(e) => setPeriod(e.target.value)}
                  style={{ ...inputStyle, width: 150 }} />
@@ -70,7 +77,7 @@ export default function PayrollPage({ sites }) {
           <th style={{ ...th, textAlign: "right" }}>Gross</th>
         </tr></thead>
         <tbody>
-          {(data?.rows || []).map((row) => (
+          {shown.map((row) => (
             <tr key={row.emp_no}>
               <td style={{ ...td, fontWeight: 600,
                            color: "var(--sp-navy)" }}>{row.emp_no}</td>
@@ -100,6 +107,10 @@ export default function PayrollPage({ sites }) {
           {data && data.rows.length === 0 && (
             <tr><td style={td} colSpan={10}>
               No attendance recorded for this period.</td></tr>
+          )}
+          {data?.rows?.length > 0 && shown.length === 0 && (
+            <tr><td style={td} colSpan={10}>
+              Nothing matches “{q.trim()}”.</td></tr>
           )}
         </tbody>
       </table>
