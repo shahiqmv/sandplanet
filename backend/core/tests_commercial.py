@@ -152,6 +152,21 @@ class BoqTests(TestCase):
         self.assertEqual(float(kept["qty"]), 60.0)
         self.assertTrue(kept["has_working"])
 
+    def test_the_bill_is_always_read_back_in_its_own_order(self):
+        """An aggregate annotation dropped the model's ordering and every
+        bill came back shuffled on Postgres (2026-09-17). Rows are saved out
+        of id order here so insertion order cannot hide the fault."""
+        from .models import BoqItem
+        self.client.force_authenticate(self.qs)
+        rows = [{"item_code": f"{n}", "description": f"Line {n}", "unit": "m",
+                 "qty": "1", "rate_combined": "1"} for n in range(1, 9)]
+        self.client.post(self._url("/items"), {"rows": rows}, format="json")
+        items = list(BoqItem.objects.order_by("id"))
+        for it, so in zip(items, [7, 3, 5, 0, 6, 1, 4, 2]):
+            BoqItem.objects.filter(pk=it.pk).update(sort_order=so)
+        got = self.client.get(self._url("")).data["items"]
+        self.assertEqual([i["sort_order"] for i in got], list(range(8)))
+
     def test_a_zero_in_labour_does_not_make_the_bill_split(self):
         """TDR-FAR-001: a 0 typed into Labour on one N/A line turned a
         supply-and-installation offer into two columns (owner 2026-09-17)."""

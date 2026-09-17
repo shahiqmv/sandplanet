@@ -75,8 +75,13 @@ def _boq_payload(project):
     # 2026-08-11). Unit mode skips the flat list entirely: the screen reads
     # categories[].items, so serializing all build-ups twice was pure waste.
     is_unit = boq.mode == boq.Mode.UNIT
+    # order_by is NOT optional here: an aggregate annotation makes this a
+    # GROUP BY query, and Django drops Meta.ordering on those — Postgres then
+    # returned every bill's lines in arbitrary order (2026-09-17, all BOQs
+    # shown shuffled; the data was never touched).
     items = [] if is_unit else list(
-        boq.items.annotate(working_count=Count("workings")))
+        boq.items.annotate(working_count=Count("workings"))
+        .order_by("sort_order", "id"))
     data = {"exists": True, "currency": boq.currency,
             "is_locked": boq.is_locked, "split_rates": boq.split_rates,
             "mode": boq.mode, "claim_level": boq.claim_level,
