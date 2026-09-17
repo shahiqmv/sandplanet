@@ -3893,6 +3893,14 @@ class BoqItem(models.Model):
                                     null=True, blank=True)
     markup_percent = models.DecimalField(max_digits=7, decimal_places=2,
                                          null=True, blank=True)
+    # The labour leg has its own cost and its own markup: on a supply-and-
+    # installation-separate offer the two are marked up differently, so one
+    # markup for the line was no use (owner 2026-09-17).
+    labour_cost = models.DecimalField(max_digits=14, decimal_places=3,
+                                      null=True, blank=True)
+    labour_markup_percent = models.DecimalField(max_digits=7,
+                                                decimal_places=2,
+                                                null=True, blank=True)
     rate_install = models.DecimalField(max_digits=14, decimal_places=3,
                                        null=True, blank=True)  # labour
     is_heading = models.BooleanField(default=False)
@@ -3911,13 +3919,20 @@ class BoqItem(models.Model):
                                                      or Decimal("0"))
 
     @property
+    def is_costed(self):
+        return not self.is_heading and not self.is_discount and (
+            self.unit_cost is not None or self.labour_cost is not None)
+
+    @property
     def cost_amount(self):
-        """qty × unit cost — nothing for a heading, a discount, or a line
-        whose cost was never worked."""
+        """qty × (material cost + labour cost) — nothing for a heading, a
+        discount, or a line whose cost was never worked."""
         from decimal import Decimal
-        if self.is_heading or self.is_discount or self.unit_cost is None:
+        if not self.is_costed:
             return None
-        return (self.qty or Decimal("0")) * self.unit_cost
+        return (self.qty or Decimal("0")) * (
+            (self.unit_cost or Decimal("0"))
+            + (self.labour_cost or Decimal("0")))
 
     def _amount(self, rate):
         from decimal import Decimal

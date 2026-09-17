@@ -101,6 +101,26 @@ class BoqTests(TestCase):
         self.assertFalse(r.data["split_rates"])
         self.assertEqual(float(r.data["total"]), 1000.0)
 
+    def test_each_leg_carries_its_own_cost_and_markup(self):
+        """Supply and labour are marked up differently on a split offer, so
+        each leg has its own cost and markup; the estimate is both legs
+        (owner 2026-09-17)."""
+        self.client.force_authenticate(self.qs)
+        rows = [{"item_code": "1.1", "description": "Blockwork", "unit": "m2",
+                 "qty": "50", "unit_cost": "16", "markup_percent": "25",
+                 "rate_supply": "20.00", "labour_cost": "8",
+                 "labour_markup_percent": "50", "rate_install": "12.00"}]
+        r = self.client.post(self._url("/items"), {"rows": rows},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["split_rates"])
+        it = r.data["items"][0]
+        self.assertEqual((it["labour_cost"], it["labour_markup_percent"]),
+                         ("8.000", "50.00"))
+        self.assertEqual(it["cost_amount"], "1200.000")     # 50 × (16 + 8)
+        self.assertEqual(str(r.data["estimated_cost"]), "1200.000")
+        self.assertEqual(float(r.data["total"]), 1600.0)    # 50 × 32
+
     def test_a_zero_in_labour_does_not_make_the_bill_split(self):
         """TDR-FAR-001: a 0 typed into Labour on one N/A line turned a
         supply-and-installation offer into two columns (owner 2026-09-17)."""

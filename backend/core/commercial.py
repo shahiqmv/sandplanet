@@ -96,7 +96,10 @@ def _row_items(boq, rows):
             is_discount=is_discount,
             unit_cost=None if is_heading else _dec(r.get("unit_cost")),
             markup_percent=None if is_heading
-            else _dec(r.get("markup_percent"))))
+            else _dec(r.get("markup_percent")),
+            labour_cost=None if is_heading else _dec(r.get("labour_cost")),
+            labour_markup_percent=None if is_heading
+            else _dec(r.get("labour_markup_percent"))))
     return out
 
 
@@ -106,7 +109,7 @@ def cost_summary(items):
     approver whether the markup they see is the whole job's or a part's."""
     priced = [i for i in items if not i.is_heading and not i.is_discount
               and (i.rate_supply is not None or i.rate_install is not None)]
-    costed = [i for i in priced if i.unit_cost is not None]
+    costed = [i for i in priced if i.is_costed]
     return {"estimated_cost": sum((i.cost_amount for i in costed),
                                   Decimal("0")).quantize(Decimal("0.001")),
             "priced_lines": len(priced), "costed_lines": len(costed)}

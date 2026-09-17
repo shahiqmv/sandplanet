@@ -50,7 +50,8 @@ class BoqItemSerializer(serializers.ModelSerializer):
         model = BoqItem
         fields = ["id", "sort_order", "section", "item_code", "description",
                   "unit", "qty", "rate_supply", "rate_install", "rate_total",
-                  "unit_cost", "markup_percent", "cost_amount",
+                  "unit_cost", "markup_percent", "labour_cost",
+                  "labour_markup_percent", "cost_amount",
                   "is_heading", "is_discount", "amount", "amount_supply",
                   "amount_install"]
 

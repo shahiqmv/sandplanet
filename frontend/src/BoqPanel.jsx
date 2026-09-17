@@ -634,12 +634,17 @@ function BoqTable({ boq, working }) {
             <th style={{ ...th, width: 44 }}>Unit</th>
             <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
             {working && <th style={{ ...th, textAlign: "right", width: 76,
-                                     color: "#8a6d00" }}>Cost</th>}
+                                     color: "#8a6d00" }}>
+              {split ? "Mat. cost" : "Cost"}</th>}
             {working && <th style={{ ...th, textAlign: "right", width: 62,
                                      color: "#8a6d00" }}>Mk %</th>}
             {split ? (
               <>
                 <th style={{ ...th, textAlign: "right" }}>Material</th>
+                {working && <th style={{ ...th, textAlign: "right", width: 76,
+                                         color: "#8a6d00" }}>Lab. cost</th>}
+                {working && <th style={{ ...th, textAlign: "right", width: 62,
+                                         color: "#8a6d00" }}>Mk %</th>}
                 <th style={{ ...th, textAlign: "right" }}>Labour</th>
               </>
             ) : (
@@ -651,7 +656,7 @@ function BoqTable({ boq, working }) {
         <tbody>
           {boq.items.map((it) => it.is_heading ? (
             <tr key={it.id}>
-              <td colSpan={(split ? 7 : 6) + (working ? 2 : 0)}
+              <td colSpan={(split ? 7 : 6) + (working ? (split ? 4 : 2) : 0)}
                   style={{ ...td, fontWeight: 700, color: "var(--navy)",
                            background: "#f4f7fa" }}>
                 {it.item_code ? `${it.item_code}  ` : ""}{it.description
@@ -664,7 +669,7 @@ function BoqTable({ boq, working }) {
                 <span style={{ marginLeft: 6, fontSize: 10, color: "#8a1f2f",
                   background: "#fde8ec", padding: "0 5px", borderRadius: 8 }}>
                   Discount</span></td>
-              <td style={td} colSpan={(split ? 3 : 2) + (working ? 2 : 0)} />
+              <td style={td} colSpan={(split ? 3 : 2) + (working ? (split ? 4 : 2) : 0)} />
               <td style={{ ...td, textAlign: "right", fontWeight: 600,
                            color: "#b0402f" }}>{fmt(it.amount)}</td>
             </tr>
@@ -685,6 +690,13 @@ function BoqTable({ boq, working }) {
                 <>
                   <td style={{ ...td, textAlign: "right" }}>
                     {it.rate_supply != null ? fmt(it.rate_supply) : ""}</td>
+                  {working && <td style={{ ...td, textAlign: "right",
+                                           color: "#8a6d00" }}>
+                    {it.labour_cost != null ? fmt(it.labour_cost) : ""}</td>}
+                  {working && <td style={{ ...td, textAlign: "right",
+                                           color: "#8a6d00" }}>
+                    {it.labour_markup_percent != null
+                      ? `${fmt(it.labour_markup_percent)}%` : ""}</td>}
                   <td style={{ ...td, textAlign: "right" }}>
                     {it.rate_install != null ? fmt(it.rate_install) : ""}</td>
                 </>
@@ -707,7 +719,8 @@ function BoqTable({ boq, working }) {
 function BoqEditor({ root, boq, onDone, working }) {
   const blank = () => ({ section: "", item_code: "", description: "",
     unit: "", qty: "", unit_cost: "", markup_percent: "", rate_supply: "",
-    rate_install: "", is_heading: false, is_discount: false });
+    labour_cost: "", labour_markup_percent: "", rate_install: "",
+    is_heading: false, is_discount: false });
   const [rows, setRows] = useState(
     boq.items.length
       ? boq.items.map((i) => ({ section: i.section, item_code: i.item_code,
@@ -715,6 +728,8 @@ function BoqEditor({ root, boq, onDone, working }) {
           qty: i.qty ?? "", unit_cost: i.unit_cost ?? "",
           markup_percent: i.markup_percent ?? "",
           rate_supply: i.rate_supply ?? "",
+          labour_cost: i.labour_cost ?? "",
+          labour_markup_percent: i.labour_markup_percent ?? "",
           rate_install: i.rate_install ?? "", is_heading: i.is_heading,
           is_discount: i.is_discount }))
       : [blank()]);
@@ -722,23 +737,30 @@ function BoqEditor({ root, boq, onDone, working }) {
   const [busy, setBusy] = useState(false);
   const set = (i, k, v) =>
     setRows(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
-  // The QS's working. Cost, markup and rate are one equation —
-  // rate = cost × (1 + markup) — so whichever is typed, the others follow
-  // (owner 2026-09-17). The rate is the Material / Rate column.
+  // The QS's working. Each leg is one equation — rate = cost × (1 + markup)
+  // — so whichever of the three is typed, the others follow. Material and
+  // labour have their own cost AND their own markup: on a supply-and-
+  // installation-separate offer they are marked up differently (owner
+  // 2026-09-17).
   const num = (v) => (v === "" || v == null ? null : Number(v));
   const r3 = (n) => String(Math.round(n * 1000) / 1000);
   const r2 = (n) => String(Math.round(n * 100) / 100);
+  const LEGS = { unit_cost: "M", markup_percent: "M", rate_supply: "M",
+                 labour_cost: "L", labour_markup_percent: "L",
+                 rate_install: "L" };
+  const FIELDS = { M: ["unit_cost", "markup_percent", "rate_supply"],
+                   L: ["labour_cost", "labour_markup_percent", "rate_install"] };
   const work = (i, k, v) => setRows(rows.map((r, j) => {
     if (j !== i) return r;
     const next = { ...r, [k]: v };
-    const cost = num(next.unit_cost), mk = num(next.markup_percent),
-          rate = num(next.rate_supply);
-    if (k === "unit_cost" || k === "markup_percent") {
-      if (cost != null && mk != null) next.rate_supply = r3(cost * (1 + mk / 100));
-      else if (k === "unit_cost" && cost && rate != null)
-        next.markup_percent = r2((rate / cost - 1) * 100);
-    } else if (k === "rate_supply" && cost && rate != null) {
-      next.markup_percent = r2((rate / cost - 1) * 100);
+    const [ck, mkk, rk] = FIELDS[LEGS[k]];
+    const cost = num(next[ck]), mk = num(next[mkk]), rate = num(next[rk]);
+    if (k === ck || k === mkk) {
+      if (cost != null && mk != null) next[rk] = r3(cost * (1 + mk / 100));
+      else if (k === ck && cost && rate != null)
+        next[mkk] = r2((rate / cost - 1) * 100);
+    } else if (cost && rate != null) {
+      next[mkk] = r2((rate / cost - 1) * 100);
     }
     return next;
   }));
@@ -761,9 +783,9 @@ function BoqEditor({ root, boq, onDone, working }) {
           Tick <b>H</b> for a bill/section heading. Tick <b>D</b> for a discount
           — enter the amount in Material; it lowers the BOQ total and is claimed
           by % like any line. Leave Labour blank for a combined rate.
-          {working && <> <b>Cost</b> and <b>Markup %</b> are your working and
-          never print: type any two of cost, markup and rate and the third
-          follows.</>}</span>
+          {working && <> <b>Cost</b> and <b>Mk %</b> are your working and
+          never print: on each leg, type any two of cost, markup and rate and
+          the third follows.</>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={ghostButton} disabled={busy}
                   onClick={() => onDone(null)}>Cancel</button>
@@ -777,8 +799,10 @@ function BoqEditor({ root, boq, onDone, working }) {
         <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr>
             {["H", "D", "Section", "Code", "Description", "Unit", "Qty",
-              ...(working ? ["Cost", "Markup %"] : []),
-              working ? "Rate (Material)" : "Material", "Labour", ""]
+              ...(working ? ["Mat. cost", "Mk %"] : []),
+              working ? "Material rate" : "Material",
+              ...(working ? ["Lab. cost", "Mk %"] : []),
+              working ? "Labour rate" : "Labour", ""]
               .map((h, i) => <th key={i} style={th}>{h}</th>)}
           </tr></thead>
           <tbody>
@@ -824,9 +848,23 @@ function BoqEditor({ root, boq, onDone, working }) {
                   placeholder={r.is_discount ? "Discount amt" : ""}
                   onChange={(e) => (working ? work : set)(i, "rate_supply",
                                                           e.target.value)} /></td>
+                {working && (
+                  <td style={td}><input value={r.labour_cost} type="number"
+                    style={{ ...cell(80), background: "#fbf7ea" }}
+                    title="Expected labour cost per unit — internal"
+                    disabled={r.is_heading || r.is_discount}
+                    onChange={(e) => work(i, "labour_cost", e.target.value)} /></td>)}
+                {working && (
+                  <td style={td}><input value={r.labour_markup_percent}
+                    type="number" style={{ ...cell(66), background: "#fbf7ea" }}
+                    title="Markup on labour cost, % — internal"
+                    disabled={r.is_heading || r.is_discount}
+                    onChange={(e) => work(i, "labour_markup_percent",
+                                          e.target.value)} /></td>)}
                 <td style={td}><input value={r.rate_install} type="number"
                   style={cell(80)} disabled={r.is_heading || r.is_discount}
-                  onChange={(e) => set(i, "rate_install", e.target.value)} /></td>
+                  onChange={(e) => (working ? work : set)(i, "rate_install",
+                                                          e.target.value)} /></td>
                 <td style={td}>
                   <RowTools rows={rows} i={i} setRows={setRows} blank={blank} />
                 </td>
