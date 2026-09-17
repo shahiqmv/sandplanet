@@ -32,7 +32,7 @@
 {% if multi_site %}<div class="sect">{{ g.site_code }}</div>{% endif %}
 <table>
   <thead><tr>
-    <th style="width:3%">No.</th><th>Name</th><th>Nat.</th><th>Title</th>
+    <th style="width:3%">No.</th><th style="width:7%">Emp No</th><th>Name</th><th>Nat.</th><th>Title</th>
     <th class="num">Basic</th><th class="num">Days</th><th class="num">Fri</th>
     <th class="num">OT h</th><th class="num">Earned</th>
     <th class="num">Allow.<br><span style="font-weight:400">+ Friday</span></th><th class="num">OT pay</th>
@@ -42,7 +42,7 @@
   </tr></thead>
   {% for r in g.rows %}
   <tr>
-    <td class="ctr">{{ r.no }}</td><td>{{ r.full_name }}</td>
+    <td class="ctr">{{ r.no }}</td><td style="font-family:monospace;white-space:nowrap">{{ r.emp_no }}</td><td>{{ r.full_name }}</td>
     <td>{{ r.nationality }}</td><td>{{ r.job_title }}</td>
     <td class="num">{{ r.f_basic_pay }}</td>
     <td class="num">{{ r.days_worked }}</td>
@@ -61,7 +61,7 @@
   </tr>
   {% endfor %}
   <tr class="sub">
-    <td colspan="4">Subtotal — {{ g.site_code }}</td>
+    <td colspan="5">Subtotal — {{ g.site_code }}</td>
     <td class="num">{{ g.totals.basic_pay }}</td><td></td><td></td><td></td>
     <td class="num">{{ g.totals.earned_basic }}</td>
     <td class="num">{{ g.totals.allowance }}</td>
