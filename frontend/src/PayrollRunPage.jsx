@@ -549,7 +549,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
   const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = words.length
     ? lines.filter((l) => {
-        const h = [l.emp_no, l.full_name, l.site_code, l.job_title]
+        const h = [l.pay_id, l.emp_no, l.full_name, l.site_code, l.job_title]
           .filter(Boolean).join(" ").toLowerCase();
         return words.every((w) => h.includes(w));
       })
@@ -566,6 +566,8 @@ function RunDetail({ runId, onBack, me, backLabel }) {
           {backLabel || "← Runs"}
         </button>
         <h2 style={{ margin: 0, color: "var(--sp-navy)", fontSize: 16 }}>
+          {run.ref && <span style={{ fontFamily: "var(--font-mono)",
+                                     marginRight: 8 }}>{run.ref}</span>}
           {run.site_code || "USD — all sites"} · {monthName} {run.year}
         </h2>
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
@@ -659,7 +661,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     marginTop: 12 }}>
         <input value={q} onChange={(e) => setQ(e.target.value)}
-               placeholder="Search — emp no, name, site, title"
+               placeholder="Search — pay ID, emp no, name, site, title"
                style={{ ...inputStyle, width: 280 }} />
         {words.length > 0 && (
           <span style={{ fontSize: 12, color: "var(--muted)" }}>
@@ -669,6 +671,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
         <table style={{ borderCollapse: "collapse", fontSize: 12,
                         minWidth: 1100 }}>
           <thead><tr>
+            <th style={th}>Pay ID</th>
             <th style={th}>Emp</th><th style={th}>Name</th>
             {run.site_id == null && <th style={th}>Site</th>}
             <th style={th}>Title</th>
@@ -742,6 +745,8 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
   return (
     <tr style={line.excluded
       ? { opacity: 0.55, textDecoration: "line-through" } : undefined}>
+      <td style={{ ...td, fontFamily: "var(--font-mono)", fontSize: 11.5,
+                   whiteSpace: "nowrap" }}>{line.pay_id}</td>
       <td style={{ ...td, fontWeight: 600 }}>{line.emp_no}</td>
       <td style={td}>{line.full_name}</td>
       {showSite && <td style={td}>{line.site_code}</td>}

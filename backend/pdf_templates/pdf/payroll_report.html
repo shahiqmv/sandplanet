@@ -21,7 +21,8 @@
 {% include "pdf/_letterhead.html" with title="SALARY REPORT" subline=period %}
 
 <table class="kv">
-  <tr><td class="k">Period</td><td>{{ period }}</td>
+  <tr><td class="k">Payroll ref</td><td><b>{{ run.ref }}</b></td>
+      <td class="k">Period</td><td>{{ period }}</td>
       <td class="k">Currency</td><td>{{ currency }}</td>
       <td class="k">Working days</td><td>{{ run.working_days }}</td>
       <td class="k">Status</td><td>{{ run.status }}</td></tr>

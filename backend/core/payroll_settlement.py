@@ -36,7 +36,8 @@ from .audit import audit
 from .models import (Attendance, EmployeeSiteAllocation, PayrollLine,
                      PayrollRun, SalaryAdvance)
 from .payroll import (RECOVERABLE_ADVANCE_STATUSES, _attendance_prefill,
-                      compute_line, month_days, paid_window, q)
+                      compute_line, issue_run_ref, month_days, paid_window,
+                      q)
 
 log = logging.getLogger(__name__)
 
@@ -194,6 +195,7 @@ def generate_settlement(*, site, employees, last_working_day, reason, actor,
                                                     last_working_day.month),
             last_working_day=last_working_day,
             settlement_reason=(reason or "").strip(), created_by=actor)
+        issue_run_ref(run)
         made = 0
         for emp in sorted(people, key=lambda e: e.emp_no or ""):
             days = Decimal(0)

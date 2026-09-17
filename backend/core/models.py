@@ -3016,6 +3016,11 @@ class PayrollRun(models.Model):
         "LOCKED": set(),
     }
 
+    # PRL-VKR-012 / PRL-USD-003: the run's own reference, issued gap-free
+    # from the document counter when the run is generated, so a payroll can
+    # be cited, filed and audited by number rather than "August, VKR"
+    # (owner 2026-09-17). Each line carries a pay number under it.
+    ref = models.CharField(max_length=20, blank=True, db_index=True)
     site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
                              blank=True, related_name="payroll_runs")
     kind = models.CharField(max_length=10, choices=Kind.choices,
@@ -3075,6 +3080,9 @@ class PayrollLine(models.Model):
 
     run = models.ForeignKey(PayrollRun, on_delete=models.CASCADE,
                             related_name="lines")
+    # 1, 2, 3… within the run, issued when the line is written and never
+    # renumbered; with the run's ref it is the line's pay ID (PRL-VKR-012-007).
+    pay_no = models.PositiveIntegerField(null=True, blank=True)
     employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
                                  related_name="payroll_lines")
     site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
@@ -3126,7 +3134,21 @@ class PayrollLine(models.Model):
             raise ValueError(
                 "A subcontract worker cannot be added to payroll — their cost "
                 "goes through a Subcontract Valuation Certificate.")
+        # The pay number is issued once, when the line is first written, and
+        # never renumbered — a line that goes leaves its number unused.
+        if self.pay_no is None and self.run_id:
+            from django.db.models import Max
+            last = PayrollLine.objects.filter(run_id=self.run_id).aggregate(
+                m=Max("pay_no"))["m"] or 0
+            self.pay_no = last + 1
         super().save(*args, **kwargs)
+
+    @property
+    def pay_id(self):
+        if self.pay_no is None:
+            return ""
+        return (f"{self.run.ref}-{self.pay_no:03d}" if self.run.ref
+                else f"#{self.pay_no}")
 
 
 class TimesheetMonth(models.Model):

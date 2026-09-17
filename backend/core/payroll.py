@@ -574,6 +574,18 @@ def is_split_pay(emp):
                 and emp.employment_type == "PERMANENT")
 
 
+def issue_run_ref(run):
+    """PRL-<site>-NNN for a site run, PRL-USD-NNN for the combined USD run —
+    gap-free from the document counter, inside the creating transaction."""
+    from .numbering import next_ref
+    ref = next_ref("PRL", run.site if run.site_id else None)
+    if not run.site_id:
+        ref = ref.replace("PRL-", "PRL-USD-", 1)
+    run.ref = ref
+    run.save(update_fields=["ref"])
+    return ref
+
+
 def generate_run(*, site, currency, year, month, working_days, actor):
     """Create a draft run and a prefilled line per eligible worker. MVR runs are
     scoped to one site; the USD run spans all sites (site=None). Split-pay
@@ -587,6 +599,7 @@ def generate_run(*, site, currency, year, month, working_days, actor):
         run = PayrollRun.objects.create(
             site=site, currency=currency, year=year, month=month,
             working_days=working_days, created_by=actor)
+        issue_run_ref(run)
         workers = list(eligible_workers(site, currency, year, month)
                        .select_related("job_category").order_by("emp_no"))
         allocs, spans = window_inputs([w.id for w in workers], site, year,

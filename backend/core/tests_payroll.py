@@ -1999,6 +1999,73 @@ class NoAllocationWindowTests(TestCase):
         self.assertEqual(self._days(), 31.0)
 
 
+class PayrollRunRefAndPayNoTests(TestCase):
+    """A payroll can be cited by number: the run carries PRL-<site>-NNN
+    (PRL-USD-NNN for the combined run) and each line a pay number under
+    it that is never renumbered (owner 2026-09-17)."""
+
+    def setUp(self):
+        from .models import (Attendance, EmployeeSiteAllocation,
+                             ManpowerCategory, TimesheetMonth)
+        self.hr = make_user("prn_hr", User.Role.HO_HR)
+        self.site = Site.objects.create(code="PRN", name="Ref Isle",
+                                        status=Site.Status.ACTIVE,
+                                        working_days=[1, 2, 3, 4, 6, 7])
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=7,
+                                      status="LOCKED")
+        cat = ManpowerCategory.objects.create(list_type="DPR", grp="LABOUR",
+                                              name="Mason", sort_order=10)
+        for no in ("PRN-0002", "PRN-0001", "PRN-0003"):
+            emp = Employee.objects.create(
+                emp_no=no, full_name=f"Worker {no}", job_category=cat,
+                basic_pay=Decimal("6000"), currency="MVR")
+            EmployeeSiteAllocation.objects.create(
+                employee=emp, site=self.site, from_date=date(2026, 7, 1))
+            Attendance.objects.create(employee=emp, site=self.site,
+                                      day=date(2026, 7, 6), remark="PRESENT")
+        self.client = APIClient()
+        self.client.force_authenticate(self.hr)
+
+    def _make(self, month=7):
+        return self.client.post("/api/v1/payroll/runs", {
+            "site_id": self.site.id, "year": 2026, "month": month,
+            "working_days": 31}, format="json")
+
+    def test_a_run_is_numbered_per_site_and_its_lines_by_employee(self):
+        r = self._make()
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["ref"], "PRL-PRN-001")
+        lines = sorted(r.data["lines"], key=lambda l: l["pay_no"])
+        self.assertEqual([(l["emp_no"], l["pay_no"], l["pay_id"]) for l in lines],
+                         [("PRN-0001", 1, "PRL-PRN-001-001"),
+                          ("PRN-0002", 2, "PRL-PRN-001-002"),
+                          ("PRN-0003", 3, "PRL-PRN-001-003")])
+        from .models import TimesheetMonth
+        TimesheetMonth.objects.create(site=self.site, year=2026, month=8,
+                                      status="LOCKED")
+        self.assertEqual(self._make(month=8).data["ref"], "PRL-PRN-002")
+
+    def test_the_combined_usd_run_has_its_own_counter(self):
+        from core import payroll
+        run = payroll.generate_run(site=None, currency="USD", year=2026,
+                                   month=7, working_days=31, actor=self.hr)
+        self.assertEqual(run.ref, "PRL-USD-001")
+
+    def test_a_line_added_later_takes_the_next_number(self):
+        from .models import PayrollLine, PayrollRun
+        run = PayrollRun.objects.get(pk=self._make().data["id"])
+        self.assertEqual(run.lines.count(), 3)
+        run.lines.get(employee__emp_no="PRN-0002").delete()
+        late = Employee.objects.create(emp_no="PRN-0004", full_name="Late",
+                                       basic_pay=Decimal("6000"))
+        line = PayrollLine.objects.create(run=run, employee=late,
+                                          site=self.site,
+                                          basic_pay=Decimal("6000"))
+        # 2 is not reused; the newcomer is 4
+        self.assertEqual(line.pay_no, 4)
+        self.assertEqual(line.pay_id, "PRL-PRN-001-004")
+
+
 class PayrollReopenTests(TestCase):
     """Locking is automatic now, so there has to be a way back (2026-08-15).
 

@@ -57,7 +57,8 @@ def _line_info(line, register=None, fri_hours=None):
         "days_absent": reg["absent"],
         "joined_after": reg.get("joined_after"),
         "excluded": line.excluded, "excluded_reason": line.excluded_reason,
-        "id": line.id, "emp_no": line.employee.emp_no,
+        "id": line.id, "pay_no": line.pay_no, "pay_id": line.pay_id,
+        "emp_no": line.employee.emp_no,
         "rest_day_revoked": line.rest_day_revoked,
         "full_name": line.employee.full_name,
         "nationality": line.employee.nationality,
@@ -76,7 +77,7 @@ def _line_info(line, register=None, fri_hours=None):
 
 def _run_info(run, lines=True):
     data = {
-        "id": run.id, "site_id": run.site_id,
+        "id": run.id, "ref": run.ref, "site_id": run.site_id,
         "site_code": run.site.code if run.site_id else None,
         "currency": run.currency, "year": run.year, "month": run.month,
         "working_days": run.working_days, "status": run.status,
@@ -593,7 +594,7 @@ def payroll_report_pdf(request, pk):
     group_list = []
     for site_code, rows in groups.items():
         for i, r in enumerate(rows, 1):
-            r["no"] = i
+            r["no"] = r.get("pay_no") or i
             for k in ("basic_pay", "earned_basic", "allowance", "ot_pay",
                       "gross", "advance", "penalty", "loan", "net",
                       "amount_to_site", "amount_to_office"):
@@ -632,8 +633,8 @@ def _slip_context(line, register=None):
         "period": f"{_month_name(run.month)} {run.year}",
         "friday_ot_hours": friday_ot_hours().normalize(),
         "logo_src": logo_src(), "co": company_info(),
-        "run_ref": (f"{run.site.code if run.site_id else 'USD'} "
-                    f"{run.year}-{run.month:02d}"),
+        "run_ref": run.ref or (f"{run.site.code if run.site_id else 'USD'} "
+                               f"{run.year}-{run.month:02d}"),
         "printed_at": timezone.localtime().strftime("%d %b %Y %H:%M"),
         "page_height": thermal.RENDER_H_MM,
     }
