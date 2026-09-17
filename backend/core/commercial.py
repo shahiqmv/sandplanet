@@ -93,8 +93,23 @@ def _row_items(boq, rows):
             boq=boq, sort_order=i, section=section, item_code=code,
             description=desc, unit=unit, qty=qty, rate_supply=supply,
             rate_install=install, is_heading=is_heading,
-            is_discount=is_discount))
+            is_discount=is_discount,
+            unit_cost=None if is_heading else _dec(r.get("unit_cost")),
+            markup_percent=None if is_heading
+            else _dec(r.get("markup_percent"))))
     return out
+
+
+def cost_summary(items):
+    """The estimate the bill carries: qty × unit cost over the lines that
+    have one, and how many priced lines do. Coverage is what tells an
+    approver whether the markup they see is the whole job's or a part's."""
+    priced = [i for i in items if not i.is_heading and not i.is_discount
+              and (i.rate_supply is not None or i.rate_install is not None)]
+    costed = [i for i in priced if i.unit_cost is not None]
+    return {"estimated_cost": sum((i.cost_amount for i in costed),
+                                  Decimal("0")).quantize(Decimal("0.001")),
+            "priced_lines": len(priced), "costed_lines": len(costed)}
 
 
 def template_workbook():

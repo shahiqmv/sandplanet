@@ -408,7 +408,9 @@ function Offer({ t, can, live, current, busy, act, value, setValue, note,
 
   return (
     <>
-      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+      <Snapshot t={t} can={can} act={act} busy={busy} />
+
+      <h4 style={{ margin: "12px 0 4px", fontSize: 13.5,
                    color: "var(--sp-navy)" }}>Revisions</h4>
       <table style={{ width: "100%", borderCollapse: "collapse",
                       fontSize: 13 }}>
@@ -504,6 +506,97 @@ function Offer({ t, can, live, current, busy, act, value, setValue, note,
   );
 }
 
+/* The one-screen picture the Director and the signatory review before
+ * approving: what is offered, what it is expected to cost (from the bill's
+ * Cost column), the markup, the money the client sees, the terms, and how
+ * complete the tender file is (owner 2026-09-17). Cost never prints. */
+function Snapshot({ t, can, act, busy }) {
+  const s = t.snapshot;
+  const [note, setNote] = useState(t.cost_note || "");
+  useEffect(() => setNote(t.cost_note || ""), [t.cost_note]);
+  if (!s) return null;
+  const cur = t.currency;
+  const m = (v) => (v == null ? "—" : money(v, cur));
+  const cell = (label, value, extra) => (
+    <div style={{ minWidth: 130 }}>
+      <div style={{ fontSize: 11, color: "var(--muted)",
+                    textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+      <div style={{ fontSize: 14, fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums" }}>{value}</div>
+      {extra && <div style={{ fontSize: 11, color: "var(--muted)" }}>{extra}</div>}
+    </div>);
+  const partial = s.costed_lines < s.priced_lines;
+  const noCost = s.priced_lines > 0 && s.costed_lines === 0;
+  const mkTone = s.markup_percent == null ? "var(--muted)"
+    : Number(s.markup_percent) < 0 ? "#c0392b"
+    : Number(s.markup_percent) < 10 ? "#8a6d00" : "#1a7f37";
+  return (
+    <div style={{ border: "1px solid var(--sp-border, #d8e1e8)", borderRadius: 8,
+                  padding: 12, background: "#fbfcfd" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "baseline",
+                    flexWrap: "wrap" }}>
+        <h4 style={{ margin: 0, fontSize: 13.5, color: "var(--sp-navy)" }}>
+          Offer snapshot</h4>
+        <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+          {s.rev_label || "R0"} · internal — the cost side never prints</span>
+        {noCost && <Chip tone="alert">no cost worked on the bill</Chip>}
+        {partial && !noCost && (
+          <Chip tone="warn">{s.costed_lines} of {s.priced_lines} lines costed</Chip>)}
+      </div>
+      <div style={{ display: "flex", gap: 22, flexWrap: "wrap", marginTop: 10 }}>
+        {cell("Offer value", m(s.offer_value),
+              s.bill_matches_offer ? null : `bill total ${m(s.bill_total)}`)}
+        {cell("Estimated cost", s.estimated_cost > 0 || s.costed_lines
+              ? m(s.estimated_cost) : "—")}
+        <div style={{ minWidth: 150 }}>
+          <div style={{ fontSize: 11, color: "var(--muted)",
+                        textTransform: "uppercase", letterSpacing: 0.3 }}>Markup</div>
+          <div style={{ fontSize: 14, fontWeight: 700, color: mkTone,
+                        fontVariantNumeric: "tabular-nums" }}>
+            {s.markup_percent == null ? "—"
+              : `${Number(s.markup_percent).toFixed(1)}% on cost`}</div>
+          <div style={{ fontSize: 11, color: "var(--muted)" }}>
+            {s.markup == null ? "" : `${m(s.markup)} · ${Number(s.margin_percent).toFixed(1)}% margin on offer`}</div>
+        </div>
+        {cell("Client pays", m(s.grand_total),
+              `${Number(s.discount) ? `less ${s.discount_label} ${m(s.discount)} · ` : ""}`
+              + `${Number(s.provisional) ? `provisional ${m(s.provisional)} · ` : ""}`
+              + `GST ${Number(s.gst_percent)}% ${m(s.gst)}`)}
+        {cell("Programme", s.duration_days ? `${s.duration_days} days` : "—",
+              `validity ${s.validity_days || 30} days${s.due_date ? ` · due ${day(s.due_date)}` : ""}`)}
+        {cell("Tender file", `${s.documents} doc${s.documents === 1 ? "" : "s"}`,
+              `${s.visits_held} visit${s.visits_held === 1 ? "" : "s"} held`
+              + `${s.visits_planned ? `, ${s.visits_planned} planned` : ""}`
+              + ` · TQ ${s.queries_answered}/${s.queries_asked} answered`
+              + `${s.digest_read ? " · pack read" : ""}`)}
+      </div>
+      {s.payment_terms && (
+        <div style={{ fontSize: 12, marginTop: 8 }}>
+          <span style={{ color: "var(--muted)" }}>Payment terms: </span>
+          {s.payment_terms}</div>)}
+      <div style={{ marginTop: 8 }}>
+        <div style={{ fontSize: 11, color: "var(--muted)",
+                      textTransform: "uppercase", letterSpacing: 0.3 }}>
+          Basis of the estimate</div>
+        {can && t.status === "DRAFT" ? (
+          <textarea rows={2} value={note}
+                    placeholder="Where the costs came from, what is assumed, what is at risk — for the Director and the signatory"
+                    onChange={(e) => setNote(e.target.value)}
+                    onBlur={() => note !== (t.cost_note || "")
+                      && api(`/tenders/${t.id}`, { method: "PATCH",
+                                                   body: { cost_note: note } })
+                        .catch(() => {})}
+                    style={{ ...inputStyle, width: "100%", fontFamily: "inherit",
+                             marginTop: 3 }} disabled={busy} />
+        ) : (
+          <div style={{ fontSize: 12.5, whiteSpace: "pre-line" }}>
+            {t.cost_note || <span style={{ color: "var(--muted)" }}>—</span>}</div>)}
+      </div>
+    </div>
+  );
+}
+
+
 /* Awarding creates the project, so it asks for the code the register will
    read by (SOUT JT, NORTH JT) rather than inventing a serial. */
 function Outcome({ t, busy, act, refText, setRef, note, setNote }) {
@@ -592,8 +685,11 @@ function Visits({ t, can, busy, act, onChanged }) {
               {e.attendees && e.client_attendees ? " · " : ""}
               {e.client_attendees && <>Client: {e.client_attendees}</>}
             </div>)}
-          {e.notes && <div style={{ marginTop: 3, whiteSpace: "pre-line" }}>
-            {e.notes}</div>}
+          {e.notes && (
+            <ul style={{ margin: "4px 0 0", paddingLeft: 18, lineHeight: 1.45 }}>
+              {e.notes.split(/\r?\n/).map((l) => l.replace(/^\s*[-•*·]\s*/, "").trim())
+                .filter(Boolean).map((l, i) => <li key={i}>{l}</li>)}
+            </ul>)}
 
           {e.photos?.length > 0 && (
             <div style={{ display: "flex", gap: 6, marginTop: 6,
@@ -601,8 +697,8 @@ function Visits({ t, can, busy, act, onChanged }) {
               {e.photos.map((ph) => (
                 <a key={ph.id} href={ph.url} target="_blank" rel="noreferrer">
                   <img src={ph.url} alt={ph.caption || ph.file_name}
-                       style={{ height: 84, width: 112, objectFit: "cover",
-                                borderRadius: 5,
+                       style={{ height: 170, width: 226, objectFit: "cover",
+                                borderRadius: 6,
                                 border: "1px solid var(--sp-border)" }} />
                 </a>))}
             </div>)}
@@ -622,10 +718,10 @@ function Visits({ t, can, busy, act, onChanged }) {
                      onChange={(ev) => setUp({ ...up,
                        client_attendees: ev.target.value })}
                      style={{ ...inputStyle, width: 150 }} />
-              <textarea rows={2} value={up.notes}
+              <textarea rows={5} value={up.notes}
                         placeholder={e.kind === "MEETING"
-                          ? "What was discussed and agreed"
-                          : "What was seen — access, conditions, constraints"}
+                          ? "One point per line — what was discussed and agreed"
+                          : "One point per line — access, existing conditions, constraints, what the drawings do not show"}
                         onChange={(ev) => setUp({ ...up,
                           notes: ev.target.value })}
                         style={{ ...inputStyle, width: "100%",

@@ -169,6 +169,8 @@ def edit_tender(t, data, actor):
                 return f"{f.replace('_', ' ')} must be a number of days."
     if "validity_days" in data and t.validity_days is None:
         t.validity_days = 30
+    if "cost_note" in data:
+        t.cost_note = data.get("cost_note") or ""
     for f in ("discount_amount", "gst_percent"):
         if f in data:
             v = _dec(data[f])
@@ -284,6 +286,15 @@ def send_for_approval(t, data, actor):
     value = _dec(data.get("value"))
     if value is None or value <= 0:
         return "Enter the value being offered before sending it up."
+    boq = boq_for(t)
+    if boq is not None:
+        from .commercial import cost_summary
+        cs = cost_summary(list(boq.items.all()))
+        if cs["priced_lines"] and not cs["costed_lines"]:
+            return ("Work the cost on the bill before sending it up — the "
+                    "Director and the signatory approve the markup, not "
+                    "just the number. Fill the Cost column on the bill's "
+                    "lines (the Rate follows the markup).")
     if not t.submit_our_format and not doc.attachments.filter(
             kind="TENDER_BILL").exists():
         return ("This offer is submitted on the client's own bill — upload "
@@ -558,6 +569,54 @@ def money_stack(t, bill_total):
             "provisional_items": items,
             "provisional": prov, "net": net,
             "gst_percent": pct, "gst": gst, "grand_total": net + gst}
+
+
+def snapshot(t):
+    """The one-screen picture the Director and the signatory review: what is
+    offered, what it is expected to cost, the markup, the money stack the
+    client will see, the terms, and how complete the tender file is. Internal
+    — the cost side never prints (owner 2026-09-17)."""
+    doc = t.document
+    boq = boq_for(t)
+    bill_total = (boq.total if boq is not None
+                  else Decimal("0")).quantize(Decimal("0.001"))
+    rev = doc.current_revision
+    value = _dec((rev.payload or {}).get("value")) if rev else None
+    if value is None:
+        value = t.value_submitted
+    from .commercial import cost_summary
+    cs = cost_summary(list(boq.items.all())) if boq is not None else {
+        "estimated_cost": Decimal("0"), "priced_lines": 0, "costed_lines": 0}
+    cost = cs["estimated_cost"]
+    markup = markup_pct = margin_pct = None
+    if value is not None and cost > 0:
+        markup = (value - cost).quantize(Decimal("0.001"))
+        markup_pct = (markup / cost * 100).quantize(Decimal("0.1"))
+        margin_pct = ((markup / value * 100).quantize(Decimal("0.1"))
+                      if value else None)
+    stack = money_stack(t, bill_total)
+    items = TenderQueryItem.objects.filter(query__tender=t)
+    return {
+        "rev_label": rev.rev_label if rev else None,
+        "offer_value": value, "bill_total": bill_total,
+        "bill_matches_offer": (value is None or bill_total == 0
+                               or value == bill_total),
+        "estimated_cost": cost, "cost_note": t.cost_note,
+        "priced_lines": cs["priced_lines"], "costed_lines": cs["costed_lines"],
+        "markup": markup, "markup_percent": markup_pct,
+        "margin_percent": margin_pct,
+        "discount": stack["discount"], "discount_label": stack["discount_label"],
+        "provisional": stack["provisional"], "gst_percent": stack["gst_percent"],
+        "gst": stack["gst"], "grand_total": stack["grand_total"],
+        "duration_days": t.duration_days, "validity_days": t.validity_days,
+        "payment_terms": t.payment_terms, "due_date": t.due_date,
+        "documents": doc.attachments.exclude(kind="GENERATED_PDF").count(),
+        "visits_held": t.events.filter(held_on__isnull=False).count(),
+        "visits_planned": t.events.filter(held_on__isnull=True).count(),
+        "queries_asked": items.count(),
+        "queries_answered": sum(1 for i in items if i.is_answered),
+        "digest_read": t.digests.filter(status="DONE").exists(),
+    }
 
 
 def _money(v):

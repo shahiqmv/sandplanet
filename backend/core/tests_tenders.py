@@ -203,6 +203,61 @@ class TenderRegisterTests(GateMixin, TestCase):
         self.assertEqual(r.status_code, 400)
         self.assertIn("value", r.data["detail"].lower())
 
+    def test_a_priced_bill_must_carry_its_cost_before_it_goes_up(self):
+        """The Director and the signatory approve a markup, not just a
+        number (owner 2026-09-17). A bill priced with no cost worked on any
+        line is sent back; a tender with no bill in the system is not
+        gated (a client-format offer priced outside it)."""
+        t = self.open_one()
+        self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",
+                         {"rows": [{"description": "Piling", "unit": "m",
+                                    "qty": "100", "rate_combined": "500"}]},
+                         format="json")
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                             {"value": "50000"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("cost", r.data["detail"].lower())
+
+    def test_the_snapshot_puts_the_markup_in_front_of_the_approvers(self):
+        t = self.open_one()
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",
+                             {"rows": [
+                                 {"section": "Bill 1", "is_heading": True},
+                                 {"description": "Piling", "unit": "m",
+                                  "qty": "100", "unit_cost": "400",
+                                  "markup_percent": "25",
+                                  "rate_combined": "500"},
+                                 {"description": "Deck", "unit": "m2",
+                                  "qty": "200", "unit_cost": "300",
+                                  "rate_combined": "375"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(str(r.data["estimated_cost"]), "100000.000")
+        self.assertEqual((r.data["priced_lines"], r.data["costed_lines"]),
+                         (2, 2))
+        self.client.patch(f"/api/v1/tenders/{t['id']}", {
+            "cost_note": "Rates from PO-120", "duration_days": 45,
+            "discount_amount": "5000"}, format="json")
+        r = self.client.post(f"/api/v1/tenders/{t['id']}/send-for-approval",
+                             {"value": "125000"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        s = r.data["snapshot"]
+        self.assertEqual(str(s["offer_value"]), "125000.00")
+        self.assertEqual(str(s["bill_total"]), "125000.000")
+        self.assertEqual(str(s["estimated_cost"]), "100000.000")
+        self.assertEqual(str(s["markup"]), "25000.000")
+        self.assertEqual(str(s["markup_percent"]), "25.0")
+        self.assertEqual(str(s["margin_percent"]), "20.0")
+        self.assertEqual(str(s["discount"]), "5000.00")
+        self.assertEqual(str(s["grand_total"]), "129600.00")  # 8% GST
+        self.assertEqual(s["duration_days"], 45)
+        self.assertEqual(s["cost_note"], "Rates from PO-120")
+        # what the Director sees is what the QS sent
+        self.client.force_authenticate(self.director)
+        got = self.client.get(f"/api/v1/tenders/{t['id']}").data["snapshot"]
+        self.assertEqual(str(got["markup_percent"]), "25.0")
+        self.assertEqual(got["costed_lines"], 2)
+
     # ---- the approval gate ----------------------------------------------
 
     def test_a_price_walks_the_chain_before_it_leaves_the_building(self):
@@ -443,7 +498,7 @@ class TenderBoqTests(GateMixin, TestCase):
         return self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
                                 {"rows": [{"description": "Piling",
                                            "unit": "m", "qty": "100",
-                                           "rate_combined": "500"}]},
+                                           "unit_cost": "1", "rate_combined": "500"}]},
                                 format="json")
 
     def test_a_tender_can_hold_a_priced_bill(self):
@@ -726,7 +781,7 @@ class TenderProcessTests(GateMixin, TestCase):
         from .models import Tender
         self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
                          {"rows": [{"description": "Excavate", "unit": "m3",
-                                    "qty": "100", "rate_combined": "5"}]},
+                                    "qty": "100", "unit_cost": "1", "rate_combined": "5"}]},
                          format="json")
         self.issue(self.t["id"], "900")
         ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
@@ -760,10 +815,10 @@ class TenderProcessTests(GateMixin, TestCase):
                          {"rows": [
                              {"description": "Preliminaries"},
                              {"description": "Site setup", "unit": "item",
-                              "qty": "1", "rate_combined": "1000"},
+                              "qty": "1", "unit_cost": "1", "rate_combined": "1000"},
                              {"description": "Structural works"},
                              {"description": "Concrete", "unit": "m3",
-                              "qty": "10", "rate_combined": "200"},
+                              "qty": "10", "unit_cost": "1", "rate_combined": "200"},
                          ]}, format="json")
         ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
         self.assertEqual([(b["no"], b["name"], float(b["amount"]))
@@ -783,15 +838,15 @@ class TenderProcessTests(GateMixin, TestCase):
                              {"description": "PRELIMINARIES"},
                              {"section": "Preliminaries",
                               "description": "Site setup", "unit": "item",
-                              "qty": "1", "rate_combined": "1000"},
+                              "qty": "1", "unit_cost": "1", "rate_combined": "1000"},
                              {"description": "SERVICES AND FACILITIES"},
                              {"section": "Preliminaries",
                               "description": "Water", "unit": "item",
-                              "qty": "1", "rate_combined": "500"},
+                              "qty": "1", "unit_cost": "1", "rate_combined": "500"},
                              {"description": "BILL NO. 2"},
                              {"section": "Mechanical Works",
                               "description": "Pumps", "unit": "no",
-                              "qty": "2", "rate_combined": "250"},
+                              "qty": "2", "unit_cost": "1", "rate_combined": "250"},
                          ]}, format="json")
         ctx = svc.submission_context(Tender.objects.get(pk=self.t["id"]))
         self.assertEqual([(b["no"], b["name"], b["lines"], float(b["amount"]))
@@ -932,7 +987,7 @@ class TenderProcessTests(GateMixin, TestCase):
                          {"rows": [
                              {"description": "Preliminaries"},
                              {"description": "Site setup", "unit": "item",
-                              "qty": "1", "rate_combined": "1000"},
+                              "qty": "1", "unit_cost": "1", "rate_combined": "1000"},
                          ]}, format="json")
         html = render_to_string(
             "pdf/tender_submission.html",
@@ -954,7 +1009,7 @@ class TenderProcessTests(GateMixin, TestCase):
         from .models import Tender
         self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
                          {"rows": [{"description": "Excavate", "unit": "m3",
-                                    "qty": "100", "rate_combined": "5"}]},
+                                    "qty": "100", "unit_cost": "1", "rate_combined": "5"}]},
                          format="json")
         self.issue(self.t["id"], "500")
         html = render_to_string(
@@ -974,7 +1029,7 @@ class TenderProcessTests(GateMixin, TestCase):
             format="json").data
         self.client.post(f"/api/v1/tenders/{t['id']}/boq/items",
                          {"rows": [{"description": "Secret rate", "unit": "m",
-                                    "qty": "1", "rate_combined": "9"}]},
+                                    "qty": "1", "unit_cost": "1", "rate_combined": "9"}]},
                          format="json")
         html = render_to_string(
             "pdf/tender_submission.html",

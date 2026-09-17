@@ -144,7 +144,7 @@ export default function BoqPanel({ projectId, project, me, base }) {
   const reconciled = delta != null && Math.abs(delta) < 0.5;
 
   if (editing) {
-    return <BoqEditor root={root} boq={boq} onDone={(saved) => {
+    return <BoqEditor root={root} boq={boq} working={onTender} onDone={(saved) => {
       if (saved) setBoq(saved);
       setEditing(false);
     }} />;
@@ -177,6 +177,16 @@ export default function BoqPanel({ projectId, project, me, base }) {
             {boq.is_locked ? "Locked" : "Draft"}</Chip>
         )}
         {boq.exists && boq.split_rates && <Chip tone="info">Supply + Install</Chip>}
+        {onTender && boq.exists && boq.costed_lines > 0 && (
+          <span style={{ fontSize: 12, color: "var(--muted)" }}
+                title="Internal — the QS's working, never printed">
+            Est. cost <b>{boq.currency} {fmt(boq.estimated_cost)}</b>
+            {Number(boq.estimated_cost) > 0 && (
+              <> · markup <b>{fmt((Number(boq.total) - Number(boq.estimated_cost))
+                              / Number(boq.estimated_cost) * 100)}%</b></>)}
+            {boq.costed_lines < boq.priced_lines
+              && <> · {boq.costed_lines} of {boq.priced_lines} lines costed</>}
+          </span>)}
         {!onTender && boq.exists && isUnit
           && boq.categories?.some((c) => c.is_split) && (
           <label style={{ fontSize: 12, color: "var(--muted)" }}
@@ -299,7 +309,7 @@ export default function BoqPanel({ projectId, project, me, base }) {
           onChanged={setBoq} />
       ) : (
         <>
-          <BoqTable boq={boq} />
+          <BoqTable boq={boq} working={onTender} />
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 24,
                         marginTop: 10, fontSize: 13, flexWrap: "wrap" }}>
             {boq.split_rates && (
@@ -611,7 +621,7 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
   );
 }
 
-function BoqTable({ boq }) {
+function BoqTable({ boq, working }) {
   const split = boq.split_rates;
   return (
     <div style={{ overflowX: "auto" }}>
@@ -623,6 +633,10 @@ function BoqTable({ boq }) {
             <th style={th}>Description</th>
             <th style={{ ...th, width: 44 }}>Unit</th>
             <th style={{ ...th, textAlign: "right", width: 70 }}>Qty</th>
+            {working && <th style={{ ...th, textAlign: "right", width: 76,
+                                     color: "#8a6d00" }}>Cost</th>}
+            {working && <th style={{ ...th, textAlign: "right", width: 62,
+                                     color: "#8a6d00" }}>Mk %</th>}
             {split ? (
               <>
                 <th style={{ ...th, textAlign: "right" }}>Material</th>
@@ -637,7 +651,7 @@ function BoqTable({ boq }) {
         <tbody>
           {boq.items.map((it) => it.is_heading ? (
             <tr key={it.id}>
-              <td colSpan={split ? 7 : 6}
+              <td colSpan={(split ? 7 : 6) + (working ? 2 : 0)}
                   style={{ ...td, fontWeight: 700, color: "var(--navy)",
                            background: "#f4f7fa" }}>
                 {it.item_code ? `${it.item_code}  ` : ""}{it.description
@@ -650,7 +664,7 @@ function BoqTable({ boq }) {
                 <span style={{ marginLeft: 6, fontSize: 10, color: "#8a1f2f",
                   background: "#fde8ec", padding: "0 5px", borderRadius: 8 }}>
                   Discount</span></td>
-              <td style={td} colSpan={split ? 3 : 2} />
+              <td style={td} colSpan={(split ? 3 : 2) + (working ? 2 : 0)} />
               <td style={{ ...td, textAlign: "right", fontWeight: 600,
                            color: "#b0402f" }}>{fmt(it.amount)}</td>
             </tr>
@@ -661,6 +675,12 @@ function BoqTable({ boq }) {
               <td style={td}>{it.unit}</td>
               <td style={{ ...td, textAlign: "right" }}>
                 {it.qty != null ? fmt(it.qty) : ""}</td>
+              {working && <td style={{ ...td, textAlign: "right",
+                                       color: "#8a6d00" }}>
+                {it.unit_cost != null ? fmt(it.unit_cost) : ""}</td>}
+              {working && <td style={{ ...td, textAlign: "right",
+                                       color: "#8a6d00" }}>
+                {it.markup_percent != null ? `${fmt(it.markup_percent)}%` : ""}</td>}
               {split ? (
                 <>
                   <td style={{ ...td, textAlign: "right" }}>
@@ -684,15 +704,17 @@ function BoqTable({ boq }) {
 
 // A lightweight editable grid for manual entry / corrections. Import handles
 // the bulk; this is for tweaks and small BOQs.
-function BoqEditor({ root, boq, onDone }) {
+function BoqEditor({ root, boq, onDone, working }) {
   const blank = () => ({ section: "", item_code: "", description: "",
-    unit: "", qty: "", rate_supply: "", rate_install: "", is_heading: false,
-    is_discount: false });
+    unit: "", qty: "", unit_cost: "", markup_percent: "", rate_supply: "",
+    rate_install: "", is_heading: false, is_discount: false });
   const [rows, setRows] = useState(
     boq.items.length
       ? boq.items.map((i) => ({ section: i.section, item_code: i.item_code,
           description: i.description, unit: i.unit,
-          qty: i.qty ?? "", rate_supply: i.rate_supply ?? "",
+          qty: i.qty ?? "", unit_cost: i.unit_cost ?? "",
+          markup_percent: i.markup_percent ?? "",
+          rate_supply: i.rate_supply ?? "",
           rate_install: i.rate_install ?? "", is_heading: i.is_heading,
           is_discount: i.is_discount }))
       : [blank()]);
@@ -700,6 +722,26 @@ function BoqEditor({ root, boq, onDone }) {
   const [busy, setBusy] = useState(false);
   const set = (i, k, v) =>
     setRows(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
+  // The QS's working. Cost, markup and rate are one equation —
+  // rate = cost × (1 + markup) — so whichever is typed, the others follow
+  // (owner 2026-09-17). The rate is the Material / Rate column.
+  const num = (v) => (v === "" || v == null ? null : Number(v));
+  const r3 = (n) => String(Math.round(n * 1000) / 1000);
+  const r2 = (n) => String(Math.round(n * 100) / 100);
+  const work = (i, k, v) => setRows(rows.map((r, j) => {
+    if (j !== i) return r;
+    const next = { ...r, [k]: v };
+    const cost = num(next.unit_cost), mk = num(next.markup_percent),
+          rate = num(next.rate_supply);
+    if (k === "unit_cost" || k === "markup_percent") {
+      if (cost != null && mk != null) next.rate_supply = r3(cost * (1 + mk / 100));
+      else if (k === "unit_cost" && cost && rate != null)
+        next.markup_percent = r2((rate / cost - 1) * 100);
+    } else if (k === "rate_supply" && cost && rate != null) {
+      next.markup_percent = r2((rate / cost - 1) * 100);
+    }
+    return next;
+  }));
 
   async function save() {
     setError(null); setBusy(true);
@@ -718,7 +760,10 @@ function BoqEditor({ root, boq, onDone }) {
         <span style={{ fontSize: 12, color: "var(--muted)" }}>
           Tick <b>H</b> for a bill/section heading. Tick <b>D</b> for a discount
           — enter the amount in Material; it lowers the BOQ total and is claimed
-          by % like any line. Leave Labour blank for a combined rate.</span>
+          by % like any line. Leave Labour blank for a combined rate.
+          {working && <> <b>Cost</b> and <b>Markup %</b> are your working and
+          never print: type any two of cost, markup and rate and the third
+          follows.</>}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
           <button style={ghostButton} disabled={busy}
                   onClick={() => onDone(null)}>Cancel</button>
@@ -732,8 +777,9 @@ function BoqEditor({ root, boq, onDone }) {
         <table style={{ borderCollapse: "collapse", fontSize: 12 }}>
           <thead><tr>
             {["H", "D", "Section", "Code", "Description", "Unit", "Qty",
-              "Material", "Labour", ""].map((h, i) =>
-              <th key={i} style={th}>{h}</th>)}
+              ...(working ? ["Cost", "Markup %"] : []),
+              working ? "Rate (Material)" : "Material", "Labour", ""]
+              .map((h, i) => <th key={i} style={th}>{h}</th>)}
           </tr></thead>
           <tbody>
             {rows.map((r, i) => (
@@ -761,10 +807,23 @@ function BoqEditor({ root, boq, onDone }) {
                 <td style={td}><input value={r.qty} type="number" style={cell(70)}
                   disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "qty", e.target.value)} /></td>
+                {working && (
+                  <td style={td}><input value={r.unit_cost} type="number"
+                    style={{ ...cell(80), background: "#fbf7ea" }}
+                    title="Expected cost per unit — internal"
+                    disabled={r.is_heading || r.is_discount}
+                    onChange={(e) => work(i, "unit_cost", e.target.value)} /></td>)}
+                {working && (
+                  <td style={td}><input value={r.markup_percent} type="number"
+                    style={{ ...cell(66), background: "#fbf7ea" }}
+                    title="Markup on cost, % — internal"
+                    disabled={r.is_heading || r.is_discount}
+                    onChange={(e) => work(i, "markup_percent", e.target.value)} /></td>)}
                 <td style={td}><input value={r.rate_supply} type="number"
                   style={cell(80)} disabled={r.is_heading}
                   placeholder={r.is_discount ? "Discount amt" : ""}
-                  onChange={(e) => set(i, "rate_supply", e.target.value)} /></td>
+                  onChange={(e) => (working ? work : set)(i, "rate_supply",
+                                                          e.target.value)} /></td>
                 <td style={td}><input value={r.rate_install} type="number"
                   style={cell(80)} disabled={r.is_heading || r.is_discount}
                   onChange={(e) => set(i, "rate_install", e.target.value)} /></td>

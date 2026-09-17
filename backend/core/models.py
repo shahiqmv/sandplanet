@@ -3591,6 +3591,10 @@ class Tender(models.Model):
     prepared_by = models.CharField(max_length=120, blank=True)
     reviewed_by = models.CharField(max_length=120, blank=True)
     approved_by = models.CharField(max_length=120, blank=True)
+    # The estimate behind the price lives on the bill's lines (BoqItem
+    # unit_cost / markup_percent); this is the QS's note on its basis and
+    # assumptions, read by the Director and the signatory (owner 2026-09-17).
+    cost_note = models.TextField(blank=True)
 
     class Meta:
         ordering = ["-id"]
@@ -3881,6 +3885,14 @@ class BoqItem(models.Model):
                               blank=True)
     rate_supply = models.DecimalField(max_digits=14, decimal_places=3,
                                       null=True, blank=True)   # material
+    # The QS's working: what the line is expected to cost per unit and the
+    # markup on it. Internal — never printed. Change any of cost, markup and
+    # rate on the screen and the others follow: rate = cost × (1 + markup)
+    # (owner 2026-09-17).
+    unit_cost = models.DecimalField(max_digits=14, decimal_places=3,
+                                    null=True, blank=True)
+    markup_percent = models.DecimalField(max_digits=7, decimal_places=2,
+                                         null=True, blank=True)
     rate_install = models.DecimalField(max_digits=14, decimal_places=3,
                                        null=True, blank=True)  # labour
     is_heading = models.BooleanField(default=False)
@@ -3897,6 +3909,15 @@ class BoqItem(models.Model):
         from decimal import Decimal
         return (self.rate_supply or Decimal("0")) + (self.rate_install
                                                      or Decimal("0"))
+
+    @property
+    def cost_amount(self):
+        """qty × unit cost — nothing for a heading, a discount, or a line
+        whose cost was never worked."""
+        from decimal import Decimal
+        if self.is_heading or self.is_discount or self.unit_cost is None:
+            return None
+        return (self.qty or Decimal("0")) * self.unit_cost
 
     def _amount(self, rate):
         from decimal import Decimal

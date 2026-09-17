@@ -65,6 +65,8 @@ def _row(t, full=False):
             "gst_percent": t.gst_percent,
             "prepared_by": t.prepared_by, "reviewed_by": t.reviewed_by,
             "approved_by": t.approved_by,
+            "cost_note": t.cost_note,
+            "snapshot": svc.snapshot(t),
             "revisions": [_rev(r) for r in
                           doc.revisions.select_related("created_by")
                           .order_by("id")],

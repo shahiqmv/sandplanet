@@ -43,11 +43,14 @@ class BoqItemSerializer(serializers.ModelSerializer):
                                               read_only=True)
     rate_total = serializers.DecimalField(max_digits=16, decimal_places=3,
                                           read_only=True)
+    cost_amount = serializers.DecimalField(max_digits=18, decimal_places=3,
+                                           read_only=True)
 
     class Meta:
         model = BoqItem
         fields = ["id", "sort_order", "section", "item_code", "description",
                   "unit", "qty", "rate_supply", "rate_install", "rate_total",
+                  "unit_cost", "markup_percent", "cost_amount",
                   "is_heading", "is_discount", "amount", "amount_supply",
                   "amount_install"]
 
@@ -74,6 +77,7 @@ def _boq_payload(project):
             "total_install": sum((i.amount_install for i in items),
                                  Decimal("0")),
             "items": BoqItemSerializer(items, many=True).data,
+            **commercial.cost_summary(items),
             "categories": []}
     # conventional contract value = the items total; unit mode overrides below
     data["contract_value"] = data["total"]
