@@ -353,6 +353,13 @@ function Login({ onLogin, expired }) {
 // The landing page for most people. A list of codes and names answers "what
 // exists" when the question is "where is everyone", so a site is a tile: the
 // code, who runs it, and how many are stationed there (owner 2026-08-15).
+// Views that ARE a document or a form, as opposed to a page that lists or
+// manages things. A document opened from another document keeps the first
+// one's origin rather than stacking.
+const DOC_MODES = new Set(["dpr-form", "dpr-view", "line-form", "line-view",
+  "qa-form", "qa-view", "pyr-form", "pyr-view", "central-pyr-form",
+  "ipr-edit", "ipr-view", "irn-view", "shipment-view", "pr-match"]);
+
 const SITE_BANDS = [
   ["ACTIVE", "Active"],
   ["AWARDED", "Awarded — not started"],
@@ -464,7 +471,30 @@ export default function App() {
   // expands it instead of showing the list.
   const [voucherRef, setVoucherRef] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [docView, setDocView] = useState(null);
+  const [docView, setDocViewRaw] = useState(null);
+  // Every view change goes through here so "close" always has somewhere to
+  // go back to. Opening a document, a form or another page FROM a page
+  // remembers that page — its tab and all — and closing returns to it.
+  // Before this, only a few call sites passed a return target by hand, and
+  // everywhere else closing a PYR opened from the Payment Register, a GRN
+  // from Stock, a document from Petty Cash… dropped you on the site
+  // dashboard (owner 2026-09-17).
+  function setDocView(next) {
+    setDocViewRaw((cur) => {
+      if (!next) return null;
+      if (next.back !== undefined) return next;            // caller decided
+      // Where we are coming from: a page is itself the way back; a document
+      // hands on the page IT came from, so documents never stack.
+      let from = cur ? (DOC_MODES.has(cur.mode) ? cur.back || null : cur)
+                     : null;
+      // Going to a view already on the way back means returning to it, not
+      // stacking a second copy: resume the chain from before that view.
+      for (let c = from, n = 0; c && n < 8; c = c.back, n += 1) {
+        if (c.mode === next.mode) { from = c.back || null; break; }
+      }
+      return { ...next, back: from };
+    });
+  }
   // URL <-> view sync (owner 2026-08-28): the address bar now names the
   // view, so refresh stays put, Back/Forward work, and a URL can be opened
   // in a second tab.
@@ -714,7 +744,8 @@ export default function App() {
   // you on the site dashboard, and you had to walk back in
   // (owner 2026-08-30).
   function closeDoc() {
-    setDocView(docView?.returnTo ? { mode: docView.returnTo } : null);
+    setDocViewRaw((cur) => cur?.back
+      || (cur?.returnTo ? { mode: cur.returnTo, back: null } : null));
     bump();
   }
 
@@ -1506,7 +1537,7 @@ export default function App() {
           {docView?.mode === "submittals" && openSite && (
             <SubmittalsPage site={openSite} project={project} me={me}
               onOpenDoc={(ref) => openDoc(ref, "submittals")}
-              onClose={() => setDocView(null)}
+              onClose={closeDoc}
               onNewQa={(t) => setDocView({ mode: "qa-form", docType: t,
                                            doc: null,
                                            returnTo: "submittals" })} />
