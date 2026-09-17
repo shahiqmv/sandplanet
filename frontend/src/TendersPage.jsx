@@ -284,7 +284,9 @@ function TenderDetail({ id, me, onClose }) {
 
   const load = () => { api(`/tenders/${id}`).then(setT)
     .catch((e) => setErr(e.message)); };
-  useEffect(load, [id]);
+  // Reload on every tab switch: the bill and its workings are saved on
+  // their own tab, and the Offer snapshot must show what they now say.
+  useEffect(load, [id, tab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   async function act(action, body) {
     setBusy(true); setErr(null);
