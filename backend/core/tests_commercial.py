@@ -101,6 +101,23 @@ class BoqTests(TestCase):
         self.assertFalse(r.data["split_rates"])
         self.assertEqual(float(r.data["total"]), 1000.0)
 
+    def test_a_zero_in_labour_does_not_make_the_bill_split(self):
+        """TDR-FAR-001: a 0 typed into Labour on one N/A line turned a
+        supply-and-installation offer into two columns (owner 2026-09-17)."""
+        self.client.force_authenticate(self.qs)
+        rows = [{"item_code": "1.1", "description": "Blockwork", "unit": "m2",
+                 "qty": "50", "rate_supply": "20.00"},
+                {"item_code": "1.2", "description": "Hoarding (N/A)",
+                 "unit": "Item", "qty": "1", "rate_supply": "0",
+                 "rate_install": "0"}]
+        r = self.client.post(self._url("/items"), {"rows": rows},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertFalse(r.data["split_rates"])
+        self.assertEqual(float(r.data["total"]), 1000.0)
+        self.assertTrue(all(i["rate_install"] is None
+                            for i in r.data["items"]))
+
     def test_save_replaces_previous_lines(self):
         self.client.force_authenticate(self.qs)
         self.client.post(self._url("/items"), {"rows": self.ROWS},

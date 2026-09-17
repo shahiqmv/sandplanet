@@ -186,7 +186,14 @@ def set_boq_items(owner, rows, actor):
               "claim is only a draft, delete it first and re-create it "
               "after.")
     items = _row_items(boq, rows)
-    split = any(i.rate_install is not None for i in items)
+    # A bill is Supply + Install only when some line actually carries a
+    # labour rate. A 0 typed into Labour on an N/A line (TDR-FAR-001) used to
+    # flip the whole offer to two columns; a zero is no labour (owner
+    # 2026-09-17). A line with labour typed and blanked again is cleared too.
+    split = any(i.rate_install for i in items)
+    if not split:
+        for i in items:
+            i.rate_install = None
     boq.items.all().delete()
     # Saving flat priced items is the conventional path: if this project was on
     # a unit-based BOQ, cleanly convert it back — reset the mode and drop the
