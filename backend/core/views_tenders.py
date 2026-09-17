@@ -108,7 +108,10 @@ def _row(t, full=False):
                              "is_link": bool(a.external_url),
                              "url": a.href}
                             for a in doc.attachments.select_related("revision")
-                            .exclude(kind="GENERATED_PDF").order_by("id")],
+                            .exclude(kind__in=("GENERATED_PDF", "TENDER_QUOTE"))
+                            .order_by("id")],
+            "quotes": [svc.quote_payload(q) for q in
+                       t.quotes.select_related("attachment", "created_by")],
         })
     return out
 
@@ -288,6 +291,47 @@ def tender_boq_save(request, pk):
         return Response({"detail": msg}, status=400)
     t.refresh_from_db()
     return Response(_boq_payload(t))
+
+
+@api_view(["GET", "POST"])
+@parser_classes([MultiPartParser, FormParser])
+@permission_classes([IsAuthenticated])
+def tender_quotes(request, pk):
+    """Supplier quotations on the tender. GET lists them; POST files one,
+    as an upload or a link."""
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    if request.method == "GET":
+        return Response({"quotes": [svc.quote_payload(q) for q in
+                                    t.quotes.select_related("attachment",
+                                                            "created_by")]})
+    if not svc.can_manage(request.user):
+        return Response({"detail": "QS, the Director or Admin file quotes."},
+                        status=403)
+    q, msg = svc.add_quote(t, request.data, request.FILES.get("file"),
+                           request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"quote": svc.quote_payload(q),
+                     "tender": _row(t, full=True)}, status=201)
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def tender_quote_delete(request, pk, quote_id):
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    if not svc.can_manage(request.user):
+        return Response({"detail": "QS, the Director or Admin file quotes."},
+                        status=403)
+    msg = svc.remove_quote(t, quote_id, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_row(t, full=True))
 
 
 @api_view(["GET", "PUT"])

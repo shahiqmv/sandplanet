@@ -79,7 +79,7 @@ def pack_documents(tender):
     cannot (links, and file types the reader does not handle)."""
     readable, skipped = [], []
     for a in tender.document.attachments.exclude(
-            kind="GENERATED_PDF").order_by("id"):
+            kind__in=("GENERATED_PDF", "TENDER_QUOTE")).order_by("id"):
         if a.external_url:
             skipped.append({"name": a.file_name, "why": "kept elsewhere "
                             "(link) — upload the file to read it"})

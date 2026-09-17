@@ -768,6 +768,18 @@ function ScheduleDetail({ id, me, onBack, onDeleted, onOpenDoc }) {
               <span style={{ color: "var(--muted)" }}> · Ordered </span>
               <b>{money(c.totals.committed, "USD")}</b></>}
           </div>)}
+        {c.tender_quotes?.length > 0 && (
+          <div style={{ marginTop: 8, fontSize: 12.5, padding: "6px 10px",
+                        background: "var(--sky-soft, #eef5fb)", borderRadius: 8 }}>
+            <b>Supplier quotes from the tender ({c.tender_quotes[0].tender_ref}):</b>{" "}
+            {c.tender_quotes.map((q, i) => (
+              <span key={q.id}>{i > 0 ? " · " : ""}
+                {q.url ? <a href={q.url} target="_blank" rel="noreferrer">
+                  {q.supplier}{q.reference ? ` (${q.reference})` : ""}</a>
+                  : `${q.supplier}${q.reference ? ` (${q.reference})` : ""}`}
+                {q.expired ? " — expired" : q.valid_until ? ` — valid to ${fmt(q.valid_until)}` : ""}
+              </span>))}
+          </div>)}
         {error && <p style={{ color: "var(--red-fg)" }}>{error}</p>}
         {/* workflow bar */}
         <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>

@@ -767,8 +767,13 @@ def schedule_dict(sched, user):
         by_sec.setdefault(ld["section_id"] or 0, []).append(ld)
     groups = {str(sid): group_rows(lds, values)
               for sid, lds in by_sec.items()}
+    from .tenders import quote_payload
+    tender_quotes = [quote_payload(q) for q in
+                     sched.project.tender_quotes.select_related(
+                         "attachment", "created_by", "tender__document")]
     return {
         "id": doc.id, "ref": doc.ref, "status": doc.status,
+        "tender_quotes": tender_quotes if values else [],
         "project_id": sched.project_id, "project_code": sched.project.code,
         "project_title": sched.project.title,
         "site_code": doc.site.code, "site_id": doc.site_id,

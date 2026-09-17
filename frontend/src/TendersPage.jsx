@@ -265,6 +265,7 @@ function NewTender({ sites, onDone }) {
 const TABS = [
   ["offer", "Offer"],
   ["documents", "Documents"],
+  ["quotes", "Supplier quotes"],
   ["digest", "Pack digest"],
   ["visits", "Visits & meetings"],
   ["queries", "Queries (TQ)"],
@@ -361,6 +362,11 @@ function TenderDetail({ id, me, onClose }) {
       {tab === "documents" && (
         <div style={{ ...card, marginTop: 12 }}>
           <Docs t={t} can={can} onChanged={setT} />
+        </div>)}
+
+      {tab === "quotes" && (
+        <div style={{ ...card, marginTop: 12 }}>
+          <Quotes t={t} can={can && live} onChanged={setT} />
         </div>)}
 
       {tab === "digest" && (
@@ -1085,6 +1091,123 @@ function PackDigest({ t, can, onChanged }) {
                 </span>)}
               {raised && <Chip tone="ok">added to {raised}</Chip>}
             </div>)}
+        </div>)}
+    </div>
+  );
+}
+
+
+/* Supplier quotations behind the price. Filed here or from a line's
+ * working, cited by working rows, and handed to the project with the bill
+ * on award, where the procurement schedule reads them (owner 2026-09-17).
+ * Never part of the client's pack. */
+export function QuoteForm({ tenderId, onDone, compact }) {
+  const [f, setF] = useState({ supplier: "", reference: "", quote_date: "",
+                               valid_until: "", currency: "", notes: "",
+                               url: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(null);
+  const fileRef = useRef(null);
+  const set = (k) => (e) => setF({ ...f, [k]: e.target.value });
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const fd = new FormData();
+      Object.entries(f).forEach(([k, v]) => v && fd.append(k, v));
+      const file = fileRef.current?.files?.[0];
+      if (file) fd.append("file", file);
+      const r = await apiUpload(`/tenders/${tenderId}/quotes`, fd);
+      onDone(r);
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  }
+  const w = compact ? 130 : 170;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap",
+                  alignItems: "center" }}>
+      <input value={f.supplier} onChange={set("supplier")} placeholder="Supplier"
+             style={{ ...inputStyle, width: w }} />
+      <input value={f.reference} onChange={set("reference")} placeholder="Their ref"
+             style={{ ...inputStyle, width: 110 }} />
+      <input type="date" value={f.quote_date} onChange={set("quote_date")}
+             title="Quote date" style={{ ...inputStyle, width: 140 }} />
+      <input type="date" value={f.valid_until} onChange={set("valid_until")}
+             title="Valid until" style={{ ...inputStyle, width: 140 }} />
+      <input value={f.currency} onChange={set("currency")} placeholder="USD"
+             style={{ ...inputStyle, width: 60 }} />
+      <input value={f.notes} onChange={set("notes")}
+             placeholder="What it covers, exclusions"
+             style={{ ...inputStyle, flex: "1 1 180px" }} />
+      <input ref={fileRef} type="file" style={{ fontSize: 12 }} />
+      <input value={f.url} onChange={set("url")} placeholder="or a link (https://…)"
+             style={{ ...inputStyle, width: w }} />
+      <Btn disabled={busy || !f.supplier.trim()} onClick={save}>
+        {busy ? "Filing…" : "File quote"}</Btn>
+      {err && <span style={{ color: "#c0392b", fontSize: 12 }}>{err}</span>}
+    </div>
+  );
+}
+
+function Quotes({ t, can, onChanged }) {
+  const [err, setErr] = useState(null);
+  const quotes = t.quotes || [];
+  async function remove(q) {
+    if (!window.confirm(`Remove ${q.supplier}'s quote?`)) return;
+    setErr(null);
+    try { onChanged(await api(`/tenders/${t.id}/quotes/${q.id}`,
+                              { method: "DELETE" })); }
+    catch (e) { setErr(e.message); }
+  }
+  return (
+    <div>
+      <h4 style={{ margin: "0 0 4px", fontSize: 13.5,
+                   color: "var(--sp-navy)" }}>Supplier quotes</h4>
+      <p style={{ fontSize: 12.5, color: "var(--muted)", margin: "0 0 8px" }}>
+        The quotations behind the rates. Cite them from a line's working so
+        the evidence is one click from the price. They go to the project with
+        the bill when the tender is won, and never form part of the client's
+        pack.
+      </p>
+      {err && <div style={{ color: "#c0392b", fontSize: 12.5 }}>{err}</div>}
+      {quotes.length === 0 && (
+        <p style={{ fontSize: 12.5, color: "var(--muted)", margin: 0 }}>
+          None filed yet.</p>)}
+      {quotes.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr>
+            <th style={th}>Supplier</th><th style={th}>Their ref</th>
+            <th style={th}>Dated</th><th style={th}>Valid until</th>
+            <th style={th}>Quote</th><th style={th}>Used on</th>
+            <th style={th}>Notes</th><th style={th} />
+          </tr></thead>
+          <tbody>
+            {quotes.map((q) => (
+              <tr key={q.id}>
+                <td style={{ ...td, fontWeight: 600 }}>{q.supplier}
+                  {q.currency && <span style={{ fontSize: 11, color: "var(--muted)",
+                                                marginLeft: 6 }}>{q.currency}</span>}</td>
+                <td style={td}>{q.reference || "—"}</td>
+                <td style={td}>{q.quote_date ? day(q.quote_date) : "—"}</td>
+                <td style={td}>{q.valid_until ? day(q.valid_until) : "—"}
+                  {q.expired && <> <Chip tone="alert">expired</Chip></>}</td>
+                <td style={td}>
+                  {q.url ? <a href={q.url} target="_blank" rel="noreferrer">
+                    {q.is_link ? "🔗 " : "📄 "}{q.file_name}</a> : "—"}</td>
+                <td style={{ ...td, fontSize: 12 }}>
+                  {q.used_on?.length ? q.used_on.join(" · ")
+                    : <span style={{ color: "var(--muted)" }}>not cited yet</span>}</td>
+                <td style={{ ...td, fontSize: 12, color: "var(--muted)" }}>{q.notes}</td>
+                <td style={td}>
+                  {can && (
+                    <button style={{ ...ghostButton, padding: "1px 6px", fontSize: 11,
+                                     color: "#c0392b" }}
+                            onClick={() => remove(q)}>Remove</button>)}</td>
+              </tr>))}
+          </tbody>
+        </table>)}
+      {can && (
+        <div style={{ marginTop: 10 }}>
+          <QuoteForm tenderId={t.id} onDone={(r) => onChanged(r.tender)} />
         </div>)}
     </div>
   );

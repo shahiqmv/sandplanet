@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
+import { QuoteForm } from "./TendersPage.jsx";
 import { Chip, Eyebrow, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
 
@@ -926,7 +927,8 @@ const rowAmount = (r) => {
   return q * p * (1 + w / 100);
 };
 const blankRow = (kind = "MATERIAL") => ({ kind, description: "", qty: "",
-                                           unit: "", rate: "", waste: "" });
+                                           unit: "", rate: "", waste: "",
+                                           quote_id: "" });
 
 function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
   const [rows, setRows] = useState(null);
@@ -937,7 +939,15 @@ function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
   const [copying, setCopying] = useState(false);
   const [q, setQ] = useState("");
   const [hits, setHits] = useState([]);
+  const [quotes, setQuotes] = useState([]);
+  const [filing, setFiling] = useState(false);
   const tbodyRef = useRef(null);
+  const tenderId = root.startsWith("/tenders/") ? root.split("/")[2] : null;
+  useEffect(() => {
+    if (!tenderId) return;
+    api(`/tenders/${tenderId}/quotes`).then((r) => setQuotes(r.quotes))
+      .catch(() => {});
+  }, [tenderId]);
 
   useEffect(() => {
     api(`${root}/boq/items/${item.id}/workings`).then((w) => {
@@ -1052,7 +1062,7 @@ function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
           <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
             <thead><tr>
               {["Kind", "Description", `Qty / ${item.unit || "unit"}`, "Unit", "Rate",
-                "Waste %", "Amount", ""].map((h, i) => (
+                "Waste %", "Amount", "Quote", ""].map((h, i) => (
                 <th key={i} style={{ ...th, textAlign: i >= 2 && i <= 6 && i !== 3 ? "right" : "left" }}>{h}</th>))}
             </tr></thead>
             <tbody ref={tbodyRef}>
@@ -1086,6 +1096,26 @@ function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
                   <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums",
                                color: Number.isNaN(amounts[i]) ? "#c0392b" : undefined }}>
                     {amounts[i] == null ? "" : Number.isNaN(amounts[i]) ? "?" : num(amounts[i])}</td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    {tenderId && (
+                      <select value={r.quote_id || ""} disabled={!canEdit}
+                              onChange={(e) => set(i, "quote_id", e.target.value)}
+                              title="The supplier quote this rate came from"
+                              style={wcell(150)}>
+                        <option value="">— no quote —</option>
+                        {quotes.map((qq) => (
+                          <option key={qq.id} value={qq.id}>
+                            {qq.supplier}{qq.reference ? ` · ${qq.reference}` : ""}
+                            {qq.expired ? " (expired)" : ""}</option>))}
+                      </select>)}
+                    {r.quote_id && (() => {
+                      const qq = quotes.find((x) => String(x.id) === String(r.quote_id));
+                      return qq?.url ? (
+                        <a href={qq.url} target="_blank" rel="noreferrer"
+                           title={`Open ${qq.supplier}'s quote`}
+                           style={{ marginLeft: 4, textDecoration: "none" }}>
+                          {qq.is_link ? "🔗" : "📄"}</a>) : null; })()}
+                  </td>
                   <td style={td}>
                     {canEdit && (
                       <button title="Remove row" onClick={() => setRows(rows.filter((_, j) => j !== i))}
@@ -1103,6 +1133,18 @@ function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
             <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
               Enter adds a row below. A cell takes a formula: =1200/40. Labour in h or day
               counts towards the manpower on the offer snapshot.</span>
+            {tenderId && (
+              <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12,
+                               marginLeft: "auto" }}
+                      onClick={() => setFiling(!filing)}>
+                {filing ? "Hide" : "＋ File a supplier quote"}</button>)}
+          </div>)}
+        {filing && tenderId && (
+          <div style={{ marginTop: 6, padding: 8, border: "1px solid var(--line)",
+                        borderRadius: 8 }}>
+            <QuoteForm tenderId={tenderId} compact
+                       onDone={(r) => { setQuotes(r.tender.quotes || []);
+                                        setFiling(false); }} />
           </div>)}
 
         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>

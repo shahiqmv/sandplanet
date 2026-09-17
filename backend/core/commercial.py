@@ -1759,6 +1759,9 @@ def set_workings(item, rows, material_markup, labour_markup, actor):
         return None, "A heading or a discount line has no working."
     if item.boq.is_locked:
         return None, "The BOQ is locked — a claim has already started."
+    allowed_quotes = set(
+        item.boq.tender.quotes.values_list("id", flat=True)
+    ) if item.boq.tender_id else set()
     parsed = []
     for n, r in enumerate(rows or []):
         kind = str(r.get("kind") or "MATERIAL").upper()
@@ -1777,8 +1780,18 @@ def set_workings(item, rows, material_markup, labour_markup, actor):
         if qty is not None and rate is not None:
             amount = (qty * rate * (1 + (waste or Decimal("0")) / 100)
                       ).quantize(Decimal("0.001"))
+        quote_id = r.get("quote_id") or None
+        if quote_id:
+            try:
+                quote_id = int(quote_id)
+            except (TypeError, ValueError):
+                return None, f"Row {n + 1}: bad quote reference."
+            if quote_id not in allowed_quotes:
+                return None, (f"Row {n + 1}: that quote is not filed on this "
+                              "tender.")
         parsed.append(BoqItemWorking(
             item=item, sort_order=n, kind=kind, description=desc,
+            quote_id=quote_id,
             unit=str(r.get("unit") or "").strip()[:20],
             qty_expr=str(r.get("qty") or "").strip()[:80],
             rate_expr=str(r.get("rate") or "").strip()[:80],
@@ -1836,9 +1849,19 @@ def workings_payload(item):
         "labour_markup": item.labour_markup_percent,
         "rows": [{"id": w.id, "kind": w.kind, "description": w.description,
                   "unit": w.unit, "qty": w.qty_expr, "rate": w.rate_expr,
-                  "waste": w.waste_expr, "amount": w.amount}
-                 for w in item.workings.all()],
+                  "waste": w.waste_expr, "amount": w.amount,
+                  "quote_id": w.quote_id,
+                  "quote": quote_brief(w.quote) if w.quote_id else None}
+                 for w in item.workings.select_related(
+                     "quote__attachment")],
     }
+
+
+def quote_brief(q):
+    a = q.attachment
+    return {"id": q.id, "supplier": q.supplier, "reference": q.reference,
+            "url": a.href if a else None, "is_link": bool(a and a.external_url),
+            "expired": q.is_expired}
 
 
 def search_workings(q, user, limit=20):

@@ -434,9 +434,12 @@ def award_to_project(t, data, actor):
         boq.save(update_fields=["tender", "project"])
     t.awarded_project = project
     t.save(update_fields=["awarded_project"])
+    # The supplier quotes behind the price go with the bill: they are the
+    # start of the project's procurement schedule (owner 2026-09-17).
+    quotes_moved = t.quotes.update(project=project)
     audit("tender", t.id, "TENDER_BECAME_PROJECT", actor=actor,
           detail={"ref": t.document.ref, "project": project.code,
-                  "boq_moved": boq is not None})
+                  "boq_moved": boq is not None, "quotes": quotes_moved})
     return project, None
 
 
@@ -903,3 +906,96 @@ def query_context(q):
         "items": list(q.items.all()),
         "tender_ref": t.document.ref,
     }
+
+
+
+# ---- supplier quotes -----------------------------------------------------
+
+def add_quote(t, data, upload, actor):
+    """File a supplier's quotation on the tender, as an upload or a link."""
+    from urllib.parse import urlparse
+
+    from .models import Attachment, TenderQuote
+    if t.document.status not in OPEN_STATUSES:
+        return None, "This tender is closed."
+    supplier = (data.get("supplier") or "").strip()[:160]
+    if not supplier:
+        return None, "Who is the quote from?"
+    link = (data.get("url") or "").strip()
+    if upload is None and not link:
+        return None, ("Attach the quote as a file, or paste a link to where "
+                      "it is kept.")
+    if upload is not None and link:
+        return None, "File a quote as an upload or as a link, not both."
+    doc = t.document
+    if link:
+        parsed = urlparse(link)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            return None, ("That is not a web link. Paste the full https:// "
+                          "address.")
+        att = Attachment.objects.create(
+            document=doc, kind="TENDER_QUOTE", external_url=link,
+            file_name=(data.get("name") or "").strip()
+            or f"{supplier} quote (link)", content_type="text/uri-list",
+            uploaded_by=actor)
+    else:
+        att = Attachment.objects.create(
+            document=doc, kind="TENDER_QUOTE", file=upload,
+            file_name=upload.name, content_type=upload.content_type or "",
+            size_bytes=upload.size, uploaded_by=actor)
+    def _d(key):
+        v = (data.get(key) or "").strip() if isinstance(
+            data.get(key), str) else data.get(key)
+        if not v:
+            return None
+        try:
+            return date.fromisoformat(str(v))
+        except ValueError:
+            raise ValueError(f"{key.replace('_', ' ')} must be a date "
+                             "(YYYY-MM-DD).")
+    try:
+        quote_date, valid_until = _d("quote_date"), _d("valid_until")
+    except ValueError as e:
+        att.delete()
+        return None, str(e)
+    q = TenderQuote.objects.create(
+        tender=t, supplier=supplier,
+        reference=(data.get("reference") or "").strip()[:60],
+        quote_date=quote_date, valid_until=valid_until,
+        currency=(data.get("currency") or "").upper()[:3],
+        notes=data.get("notes") or "", attachment=att, created_by=actor)
+    audit("tender", t.id, "TENDER_QUOTE_FILED", actor=actor,
+          detail={"ref": doc.ref, "supplier": supplier,
+                  "their_ref": q.reference, "link": bool(link)})
+    return q, None
+
+
+def remove_quote(t, quote_id, actor):
+    q = t.quotes.filter(pk=quote_id).first()
+    if q is None:
+        return "That quote is not on this tender."
+    used = q.working_rows.count()
+    if used:
+        return (f"{q.supplier}'s quote is cited by {used} working row"
+                f"{'' if used == 1 else 's'} — take it off those lines "
+                "first.")
+    att = q.attachment
+    q.delete()
+    if att is not None:
+        att.delete()
+    audit("tender", t.id, "TENDER_QUOTE_REMOVED", actor=actor,
+          detail={"ref": t.document.ref, "supplier": q.supplier})
+    return None
+
+
+def quote_payload(q):
+    from .commercial import quote_brief
+    lines = sorted({(w.item.item_code or "") + " " + w.item.description[:40]
+                    for w in q.working_rows.select_related("item")})
+    return {**quote_brief(q), "tender_ref": q.tender.document.ref,
+            "quote_date": q.quote_date,
+            "valid_until": q.valid_until, "currency": q.currency,
+            "notes": q.notes, "file_name": q.attachment.file_name
+            if q.attachment else "", "filed_by": q.created_by.full_name
+            if q.created_by_id else "", "filed_at": q.created_at,
+            "used_on": lines}

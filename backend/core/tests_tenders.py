@@ -1467,3 +1467,123 @@ class TenderWorkingsTests(GateMixin, TestCase):
         # labour cost per m = 0.8×6.20 + 0.05×60 = 7.96 ; × 100 = 796
         self.assertEqual(str(mp["labour_cost"]), "796.000")
         self.assertEqual(mp["unmeasured_rows"], 0)
+
+
+class TenderQuoteTests(GateMixin, TestCase):
+    """Supplier quotations held on the tender and cited from the workings,
+    so the evidence behind a rate is one click away (owner 2026-09-17)."""
+
+    open_one = TenderRegisterTests.open_one
+
+    def setUp(self):
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("tq_qs", User.Role.QS)
+        self.make_approvers("tq")
+        self.pm = make_user("tq_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.open_one()
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                             {"rows": [{"item_code": "1.1",
+                                        "description": "Piling", "unit": "m",
+                                        "qty": "100", "unit_cost": "400",
+                                        "rate_combined": "500"}]},
+                             format="json")
+        self.item = r.data["items"][0]
+
+    def _file(self, name="timber-quote.pdf"):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        return SimpleUploadedFile(name, b"%PDF-1.4 quote",
+                                  content_type="application/pdf")
+
+    def _url(self, tail=""):
+        return f"/api/v1/tenders/{self.t['id']}/quotes{tail}"
+
+    def test_a_quote_is_filed_as_a_file_or_a_link_and_kept_off_the_pack(self):
+        r = self.client.post(self._url(), {
+            "supplier": "Timber Traders", "reference": "TT/2026/88",
+            "quote_date": "2026-09-10", "valid_until": "2026-10-10",
+            "currency": "USD", "file": self._file()}, format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        q = r.data["quote"]
+        self.assertEqual((q["supplier"], q["reference"], q["file_name"]),
+                         ("Timber Traders", "TT/2026/88", "timber-quote.pdf"))
+        self.assertFalse(q["expired"])
+        lk = self.client.post(self._url(), {
+            "supplier": "Marine Plant Hire",
+            "url": "https://1drv.ms/f/quotes/plant"}, format="multipart")
+        self.assertEqual(lk.status_code, 201, lk.data)
+        self.assertTrue(lk.data["quote"]["is_link"])
+        t = self.client.get(f"/api/v1/tenders/{self.t['id']}").data
+        self.assertEqual([x["supplier"] for x in t["quotes"]],
+                         ["Marine Plant Hire", "Timber Traders"])
+        # not in Documents, and not read by the pack digest
+        self.assertEqual(t["attachments"], [])
+        est = self.client.get(f"/api/v1/tenders/{self.t['id']}/digest").data
+        self.assertEqual(est["estimate"]["documents"], [])
+        bad = self.client.post(self._url(), {"supplier": "Nobody"},
+                               format="multipart")
+        self.assertEqual(bad.status_code, 400)
+
+    def test_a_working_row_cites_a_quote_and_the_quote_lists_the_line(self):
+        q = self.client.post(self._url(), {"supplier": "Timber Traders",
+                                           "file": self._file()},
+                             format="multipart").data["quote"]
+        rows = [{"kind": "MATERIAL", "description": "Timber pile",
+                 "qty": "1.1", "unit": "m", "rate": "38", "waste": "5",
+                 "quote_id": q["id"]}]
+        r = self.client.put(
+            f"/api/v1/tenders/{self.t['id']}/boq/items/{self.item['id']}"
+            "/workings", {"rows": rows, "material_markup": 20}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        row = r.data["working"]["rows"][0]
+        self.assertEqual(row["quote_id"], q["id"])
+        self.assertEqual(row["quote"]["supplier"], "Timber Traders")
+        self.assertTrue(row["quote"]["url"])
+        t = self.client.get(f"/api/v1/tenders/{self.t['id']}").data
+        self.assertEqual(t["quotes"][0]["used_on"], ["1.1 Piling"])
+        # cited: cannot be removed
+        gone = self.client.delete(self._url(f"/{q['id']}"))
+        self.assertEqual(gone.status_code, 400)
+        self.assertIn("cited", gone.data["detail"])
+        # a quote from another tender cannot be cited
+        other = self.open_one(title="Other")
+        q2 = self.client.post(f"/api/v1/tenders/{other['id']}/quotes",
+                              {"supplier": "Elsewhere", "file": self._file()},
+                              format="multipart").data["quote"]
+        rows[0]["quote_id"] = q2["id"]
+        r = self.client.put(
+            f"/api/v1/tenders/{self.t['id']}/boq/items/{self.item['id']}"
+            "/workings", {"rows": rows, "material_markup": 20}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_the_award_hands_the_quotes_to_the_project(self):
+        from .models import Project, TenderQuote
+        self.client.post(self._url(), {"supplier": "Timber Traders",
+                                       "file": self._file()},
+                         format="multipart")
+        self.issue(self.t["id"], "50000")
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/awarded",
+                             {"project_code": "JETTY Q"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        project = Project.objects.get(code="JETTY Q")
+        q = TenderQuote.objects.get(tender_id=self.t["id"])
+        self.assertEqual(q.project_id, project.id)
+        self.assertEqual(project.tender_quotes.count(), 1)
+
+    def test_an_uncited_quote_can_be_removed_and_a_pm_only_reads(self):
+        q = self.client.post(self._url(), {"supplier": "Timber Traders",
+                                           "file": self._file()},
+                             format="multipart").data["quote"]
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(self._url()).status_code, 200)
+        self.assertEqual(self.client.post(self._url(), {
+            "supplier": "X", "file": self._file()},
+            format="multipart").status_code, 403)
+        self.client.force_authenticate(self.qs)
+        gone = self.client.delete(self._url(f"/{q['id']}"))
+        self.assertEqual(gone.status_code, 200, gone.data)
+        self.assertEqual(gone.data["quotes"], [])

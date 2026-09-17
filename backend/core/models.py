@@ -856,6 +856,9 @@ class Attachment(models.Model):
         # the answers: received and filed, never raised by us.
         ("TENDER_ADDENDUM", "Tender addendum / bulletin"),
         ("TENDER_AWARD", "Award letter"),
+        # A supplier's quotation behind a price (owner 2026-09-17): filed
+        # on the tender, cited from the workings, never part of the pack.
+        ("TENDER_QUOTE", "Supplier quote"),
     ]
 
     document = models.ForeignKey(
@@ -3669,6 +3672,44 @@ class TenderEvent(models.Model):
         return self.held_on is not None
 
 
+class TenderQuote(models.Model):
+    """A supplier's quotation held against a tender — the evidence behind
+    a rate. Filed from the Supplier quotes tab or from a line's working,
+    and cited by working rows so a reviewer can open the quote from the
+    sheet (owner 2026-09-17). The file (or link) is an Attachment of kind
+    TENDER_QUOTE on the tender's document; it is never part of the pack
+    the client sees or the pack digest reads.
+    """
+
+    tender = models.ForeignKey(Tender, on_delete=models.CASCADE,
+                               related_name="quotes")
+    # Set at award: the quotes go to the job with the bill, where the
+    # procurement schedule reads them (owner 2026-09-17).
+    project = models.ForeignKey("Project", on_delete=models.SET_NULL,
+                                null=True, blank=True,
+                                related_name="tender_quotes")
+    supplier = models.CharField(max_length=160)
+    reference = models.CharField(max_length=60, blank=True)   # their ref
+    quote_date = models.DateField(null=True, blank=True)
+    valid_until = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True)
+    notes = models.TextField(blank=True)   # what it covers, exclusions
+    attachment = models.OneToOneField(Attachment, on_delete=models.PROTECT,
+                                      null=True, blank=True,
+                                      related_name="tender_quote")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+    @property
+    def is_expired(self):
+        from datetime import date
+        return bool(self.valid_until and self.valid_until < date.today())
+
+
 class TenderQuery(models.Model):
     """A Tender Query (TQ) — the sheet of questions we put to the client
     during the tender period, and their answers.
@@ -3997,6 +4038,10 @@ class BoqItemWorking(models.Model):
                                         null=True, blank=True)
     amount = models.DecimalField(max_digits=14, decimal_places=3, null=True,
                                  blank=True)
+    # The supplier quote this row's rate came from, if any.
+    quote = models.ForeignKey("TenderQuote", on_delete=models.SET_NULL,
+                              null=True, blank=True,
+                              related_name="working_rows")
 
     class Meta:
         ordering = ["sort_order", "id"]
