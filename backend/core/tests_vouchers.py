@@ -379,6 +379,10 @@ class VoucherListPerfTests(VoucherBase):
         self.assertEqual(len(r2.data["vouchers"]), 1)
         self.assertFalse(r2.data["has_more"])
         # ref search narrows to one
+        # every page carries the per-state counts the tabs wear
+        self.assertEqual(set(r.data["counts"]), {"DRAFT", "SUBMITTED",
+                                                 "APPROVED"})
+        self.assertEqual(sum(r.data["counts"].values()), r.data["total"])
         r3 = self.client.get(f"/api/v1/payment-vouchers?q={a['ref']}")
         self.assertEqual(r3.data["total"], 1)
         self.assertEqual(r3.data["vouchers"][0]["ref"], a["ref"])

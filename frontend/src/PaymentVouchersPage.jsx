@@ -57,7 +57,14 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   // Opened straight from My Tasks: expand that voucher rather than dropping
   // the signatory on the list to hunt for it (owner 2026-08-16).
   const [open, setOpen] = useState(openRef || null);
-  const [tab, setTab] = useState("all");
+  // A signatory opens on what is waiting for them and Finance on what they
+  // are building. "All" put 800 vouchers, approved and paid included, in
+  // front of the signatory, who then hunted for the handful to sign (owner
+  // 2026-09-17). Approving a voucher drops it off the Awaiting tab; it is
+  // found again under Approved.
+  const [tab, setTab] = useState(
+    me.role === "SIGNATORY" ? "SUBMITTED" : isFinance ? "DRAFT" : "all");
+  const [counts, setCounts] = useState({});
   const [queries, setQueries] = useState({});    // line_id -> bool
   const [note, setNote] = useState("");
   const [error, setError] = useState(null);
@@ -88,6 +95,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
       setVouchers(reset ? r.vouchers : [...vouchers, ...r.vouchers]);
       setVTotal(r.total);
       setVHasMore(r.has_more);
+      setCounts(r.counts || {});
     }).catch((e) => setError(e.message));
   };
   const reload = () => {
@@ -731,7 +739,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                                color: tab === key ? "#fff" : "var(--navy)",
                                borderColor: tab === key
                                  ? "var(--navy)" : "var(--line)" }}>
-                {label}</button>
+                {label}{counts[key] != null ? ` ${counts[key]}` : ""}</button>
             ))}
           </div>
         </div>
@@ -824,8 +832,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
           })}
           {shown.length === 0 && (
             <p style={{ fontSize: 13.5, color: "var(--muted)", margin: 0 }}>
-              No vouchers{tab === "all" ? "" : ` (${tab.toLowerCase()})`}
-              {vq.trim() ? ` matching “${vq.trim()}”` : ""} yet.
+              {tab === "SUBMITTED" && !vq.trim()
+                ? "Nothing awaiting a signatory — every submitted voucher has been approved."
+                : <>No vouchers{tab === "all" ? "" : ` (${tab.toLowerCase()})`}
+                    {vq.trim() ? ` matching “${vq.trim()}”` : ""} yet.</>}
             </p>
           )}
         </div>

@@ -3,6 +3,8 @@ signatory approves or queries them."""
 from datetime import date
 from decimal import Decimal
 
+from django.db.models import Count
+
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 
@@ -393,10 +395,16 @@ def payment_vouchers(request):
         offset = 0
     total = qs.count()
     page = list(qs[offset:offset + limit])
+    # How many sit in each state, whatever tab is open — the tabs wear the
+    # numbers so a signatory sees the queue length without opening it.
+    counts = dict(Document.objects.filter(doc_type="PV", is_void=False)
+                  .values_list("status").annotate(n=Count("id")))
     return Response({
         "vouchers": [_voucher_info(pv) for pv in page],
         "total": total, "offset": offset, "limit": limit,
-        "has_more": offset + limit < total})
+        "has_more": offset + limit < total,
+        "counts": {k: counts.get(k, 0)
+                   for k in ("DRAFT", "SUBMITTED", "APPROVED")}})
 
 
 @api_view(["GET"])
