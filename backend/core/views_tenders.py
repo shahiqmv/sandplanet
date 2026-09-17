@@ -290,6 +290,48 @@ def tender_boq_save(request, pk):
     return Response(_boq_payload(t))
 
 
+@api_view(["GET", "PUT"])
+@permission_classes([IsAuthenticated])
+def tender_boq_item_workings(request, pk, item_id):
+    """The build-up behind one line. GET reads it; PUT replaces it and
+    writes the costs, markups and rates it produces onto the line."""
+    from . import commercial
+    from .models import BoqItem
+    from .views_commercial import _boq_payload
+    t, err = _boq_target(request, pk, writing=request.method == "PUT")
+    if err:
+        return err
+    if not svc.can_view(request.user):
+        return Response({"detail": "Not permitted."}, status=403)
+    item = BoqItem.objects.filter(pk=item_id, boq__tender=t).first()
+    if item is None:
+        return Response({"detail": "That line is not on this bill."},
+                        status=404)
+    if request.method == "GET":
+        return Response(commercial.workings_payload(item))
+    _rows, msg = commercial.set_workings(
+        item, request.data.get("rows") or [],
+        request.data.get("material_markup"),
+        request.data.get("labour_markup"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    item.refresh_from_db()
+    return Response({"working": commercial.workings_payload(item),
+                     "boq": _boq_payload(t)})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def tender_workings_search(request, pk):
+    """Lines with a working, for "Copy working from…"."""
+    from . import commercial
+    t, err = _boq_target(request, pk, writing=False)
+    if err:
+        return err
+    return Response({"results": commercial.search_workings(
+        request.GET.get("q"), request.user)})
+
+
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 @permission_classes([IsAuthenticated])

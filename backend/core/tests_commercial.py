@@ -121,6 +121,37 @@ class BoqTests(TestCase):
         self.assertEqual(str(r.data["estimated_cost"]), "1200.000")
         self.assertEqual(float(r.data["total"]), 1600.0)    # 50 × 32
 
+    def test_a_line_keeps_its_id_and_its_working_across_a_save(self):
+        """The save used to delete and recreate every line, so nothing
+        could ever hang off one (owner 2026-09-17)."""
+        from .models import BoqItemWorking
+        self.client.force_authenticate(self.qs)
+        r = self.client.post(self._url("/items"), {"rows": [
+            {"item_code": "1.1", "description": "Blockwork", "unit": "m2",
+             "qty": "50", "rate_combined": "20"},
+            {"item_code": "1.2", "description": "Render", "unit": "m2",
+             "qty": "50", "rate_combined": "8"}]}, format="json")
+        a, b = r.data["items"]
+        BoqItemWorking.objects.create(item_id=a["id"], kind="MATERIAL",
+                                      description="Blocks", qty_expr="12.5",
+                                      rate_expr="1.2", qty=12.5, rate=1.2,
+                                      amount=15)
+        r2 = self.client.post(self._url("/items"), {"rows": [
+            {"id": a["id"], "item_code": "1.1", "description": "Blockwork",
+             "unit": "m2", "qty": "60", "rate_combined": "21"},
+            {"item_code": "1.3", "description": "Paint", "unit": "m2",
+             "qty": "50", "rate_combined": "3"}]}, format="json")
+        self.assertEqual(r2.status_code, 200, r2.data)
+        ids = {i["item_code"]: i["id"] for i in r2.data["items"]}
+        self.assertEqual(ids["1.1"], a["id"])          # kept
+        self.assertNotIn("1.2", ids)                     # gone
+        self.assertNotEqual(ids["1.3"], b["id"])         # new
+        self.assertEqual(BoqItemWorking.objects.filter(
+            item_id=a["id"]).count(), 1)
+        kept = next(i for i in r2.data["items"] if i["item_code"] == "1.1")
+        self.assertEqual(float(kept["qty"]), 60.0)
+        self.assertTrue(kept["has_working"])
+
     def test_a_zero_in_labour_does_not_make_the_bill_split(self):
         """TDR-FAR-001: a 0 typed into Labour on one N/A line turned a
         supply-and-installation offer into two columns (owner 2026-09-17)."""

@@ -58,6 +58,7 @@ export default function BoqPanel({ projectId, project, me, base }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);   // BOQ-capture review draft
   const [pending, setPending] = useState(null); // an un-committed capture draft
+  const [workItem, setWorkItem] = useState(null); // the line whose working is open
   const [unitDraft, setUnitDraft] = useState(null); // reviewed unit categories
   const fileRef = useRef(null);
   const captureRef = useRef(null);
@@ -309,7 +310,13 @@ export default function BoqPanel({ projectId, project, me, base }) {
           onChanged={setBoq} />
       ) : (
         <>
-          <BoqTable boq={boq} working={onTender} />
+          <BoqTable boq={boq} working={onTender}
+                    onWork={canEdit || onTender ? setWorkItem : null} />
+          {workItem && (
+            <WorkingsModal root={root} boq={boq} item={workItem}
+                           canEdit={canEdit}
+                           onClose={() => setWorkItem(null)}
+                           onSaved={(b) => { setBoq(b); setWorkItem(null); }} />)}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 24,
                         marginTop: 10, fontSize: 13, flexWrap: "wrap" }}>
             {boq.split_rates && (
@@ -621,7 +628,7 @@ function BoqUnitReview({ projectId, draft, currency, onDone }) {
   );
 }
 
-function BoqTable({ boq, working }) {
+function BoqTable({ boq, working, onWork }) {
   const split = boq.split_rates;
   return (
     <div style={{ overflowX: "auto" }}>
@@ -651,12 +658,13 @@ function BoqTable({ boq, working }) {
               <th style={{ ...th, textAlign: "right" }}>Rate</th>
             )}
             <th style={{ ...th, textAlign: "right", width: 100 }}>Amount</th>
+            {working && <th style={{ ...th, width: 34 }} />}
           </tr>
         </thead>
         <tbody>
           {boq.items.map((it) => it.is_heading ? (
             <tr key={it.id}>
-              <td colSpan={(split ? 7 : 6) + (working ? (split ? 4 : 2) : 0)}
+              <td colSpan={(split ? 7 : 6) + (working ? (split ? 5 : 3) : 0)}
                   style={{ ...td, fontWeight: 700, color: "var(--navy)",
                            background: "#f4f7fa" }}>
                 {it.item_code ? `${it.item_code}  ` : ""}{it.description
@@ -672,6 +680,7 @@ function BoqTable({ boq, working }) {
               <td style={td} colSpan={(split ? 3 : 2) + (working ? (split ? 4 : 2) : 0)} />
               <td style={{ ...td, textAlign: "right", fontWeight: 600,
                            color: "#b0402f" }}>{fmt(it.amount)}</td>
+              {working && <td style={td} />}
             </tr>
           ) : (
             <tr key={it.id}>
@@ -706,6 +715,17 @@ function BoqTable({ boq, working }) {
               )}
               <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>
                 {fmt(it.amount)}</td>
+              {working && (
+                <td style={{ ...td, textAlign: "center" }}>
+                  <button onClick={() => onWork?.(it)}
+                          title={it.has_working ? "Open the working behind this rate"
+                                                : "Build up the cost of this line"}
+                          style={{ ...ghostButton, padding: "0 6px", fontSize: 13,
+                                   lineHeight: "20px",
+                                   color: it.has_working ? "#1a7f37" : "var(--muted)",
+                                   borderColor: it.has_working ? "#1a7f37" : "var(--line)" }}>
+                    {it.has_working ? "Σ" : "+"}</button>
+                </td>)}
             </tr>
           ))}
         </tbody>
@@ -723,8 +743,8 @@ function BoqEditor({ root, boq, onDone, working }) {
     is_heading: false, is_discount: false });
   const [rows, setRows] = useState(
     boq.items.length
-      ? boq.items.map((i) => ({ section: i.section, item_code: i.item_code,
-          description: i.description, unit: i.unit,
+      ? boq.items.map((i) => ({ id: i.id, section: i.section,
+          item_code: i.item_code, description: i.description, unit: i.unit,
           qty: i.qty ?? "", unit_cost: i.unit_cost ?? "",
           markup_percent: i.markup_percent ?? "",
           rate_supply: i.rate_supply ?? "",
@@ -881,6 +901,254 @@ function BoqEditor({ root, boq, onDone, working }) {
 
 const cell = (w) => ({ ...inputStyle, width: w, padding: "3px 5px",
   fontSize: 12 });
+
+/* The build-up behind one line's cost — the QS's working, kept as typed.
+ * Each row is a resource per unit of the item; a numeric cell takes a number
+ * or a formula (=1200/40). Labour rows total into the labour cost, the rest
+ * into the material cost; each leg's markup gives its rate, and Save writes
+ * all of it onto the line (owner 2026-09-17). Never printed. */
+const KINDS = [["MATERIAL", "Material"], ["LABOUR", "Labour"],
+               ["PLANT", "Plant"], ["SUBCONTRACT", "Subcontract"],
+               ["OTHER", "Other"]];
+const evalCell = (s) => {
+  s = String(s ?? "").trim();
+  if (!s) return null;
+  if (s[0] === "=") s = s.slice(1);
+  s = s.replace(/,/g, "");
+  if (!/^[\d\s.+\-*/()]+$/.test(s)) return NaN;
+  try { const v = Function(`"use strict"; return (${s})`)();
+        return Number.isFinite(v) ? v : NaN; } catch { return NaN; }
+};
+const rowAmount = (r) => {
+  const q = evalCell(r.qty), p = evalCell(r.rate), w = evalCell(r.waste) ?? 0;
+  if (q == null || p == null) return null;
+  if ([q, p, w].some(Number.isNaN)) return NaN;
+  return q * p * (1 + w / 100);
+};
+const blankRow = (kind = "MATERIAL") => ({ kind, description: "", qty: "",
+                                           unit: "", rate: "", waste: "" });
+
+function WorkingsModal({ root, boq, item, canEdit, onClose, onSaved }) {
+  const [rows, setRows] = useState(null);
+  const [mm, setMm] = useState("");
+  const [lm, setLm] = useState("");
+  const [err, setErr] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [copying, setCopying] = useState(false);
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState([]);
+  const tbodyRef = useRef(null);
+
+  useEffect(() => {
+    api(`${root}/boq/items/${item.id}/workings`).then((w) => {
+      setRows(w.rows.length ? w.rows.map((r) => ({ ...r })) : [blankRow()]);
+      setMm(w.material_markup ?? item.markup_percent ?? "");
+      setLm(w.labour_markup ?? item.labour_markup_percent ?? "");
+    }).catch((e) => setErr(e.message));
+  }, [root, item.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!copying) return undefined;
+    const id = setTimeout(() => {
+      api(`${root}/boq/workings/search?q=${encodeURIComponent(q)}`)
+        .then((r) => setHits(r.results)).catch(() => setHits([]));
+    }, 250);
+    return () => clearTimeout(id);
+  }, [copying, q, root]);
+
+  if (!rows) return null;
+  const set = (i, k, v) => setRows(rows.map((r, j) => j === i ? { ...r, [k]: v } : r));
+  const add = (after) => {
+    const next = [...rows];
+    next.splice(after == null ? rows.length : after + 1, 0, blankRow());
+    setRows(next);
+    setTimeout(() => {
+      const trs = tbodyRef.current?.querySelectorAll("tr");
+      const tr = trs?.[after == null ? trs.length - 1 : after + 1];
+      tr?.querySelector("input")?.focus();
+    }, 0);
+  };
+  const amounts = rows.map(rowAmount);
+  const mat = rows.reduce((s, r, i) => r.kind !== "LABOUR" && amounts[i] > 0 ? s + amounts[i] : s, 0);
+  const lab = rows.reduce((s, r, i) => r.kind === "LABOUR" && amounts[i] > 0 ? s + amounts[i] : s, 0);
+  const hasLab = rows.some((r) => r.kind === "LABOUR");
+  const mmN = Number(mm) || 0, lmN = Number(lm) || 0;
+  const mRate = mat * (1 + mmN / 100), lRate = lab * (1 + lmN / 100);
+  const bad = amounts.some(Number.isNaN);
+
+  async function save() {
+    setBusy(true); setErr(null);
+    try {
+      const r = await api(`${root}/boq/items/${item.id}/workings`, {
+        method: "PUT", body: { rows, material_markup: mm === "" ? null : mm,
+                               labour_markup: lm === "" ? null : lm } });
+      onSaved(r.boq);
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+  async function copyFrom(hit) {
+    try {
+      const w = await api(`/tenders/${hit.tender_id}/boq/items/${hit.item_id}/workings`);
+      setRows(w.rows.map((r) => ({ ...r })));
+      if (w.material_markup != null) setMm(w.material_markup);
+      if (w.labour_markup != null) setLm(w.labour_markup);
+      setCopying(false); setQ(""); setHits([]);
+    } catch (e) { setErr(e.message); }
+  }
+  const num = (v) => Number(v).toLocaleString(undefined,
+    { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const wcell = (w, extra) => ({ ...inputStyle, width: w, padding: "3px 5px",
+                                 fontSize: 12, ...extra });
+  const leg = { flex: "1 1 240px", background: "#f6f8fa", borderRadius: 8,
+                padding: "8px 12px", fontSize: 12.5 };
+
+  return (
+    <div onClick={onClose}
+         style={{ position: "fixed", inset: 0, background: "rgba(10,20,30,0.45)",
+                  zIndex: 60, display: "flex", alignItems: "center",
+                  justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()}
+           style={{ background: "#fff", borderRadius: 10, width: "min(960px, 100%)",
+                    maxHeight: "92vh", overflow: "auto", padding: "14px 18px",
+                    boxShadow: "0 12px 40px rgba(0,0,0,0.25)" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "baseline",
+                      flexWrap: "wrap" }}>
+          <strong style={{ fontSize: 15, color: "var(--sp-navy)" }}>
+            Workings — {item.item_code ? `${item.item_code} ` : ""}{item.description}
+          </strong>
+          <span style={{ fontSize: 12, color: "var(--muted)" }}>
+            per {item.unit || "unit"} · {fmt(item.qty)} {item.unit} in the bill ·
+            internal, never prints</span>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+            {canEdit && (
+              <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
+                      onClick={() => setCopying(!copying)}>⧉ Copy working from…</button>)}
+            <button style={{ ...ghostButton, padding: "3px 10px", fontSize: 12 }}
+                    onClick={onClose}>✕</button>
+          </span>
+        </div>
+        {err && <p style={{ color: "#c0392b", fontSize: 12.5, margin: "6px 0 0" }}>{err}</p>}
+
+        {copying && (
+          <div style={{ marginTop: 8, border: "1px solid var(--line)", borderRadius: 8,
+                        padding: 8 }}>
+            <input autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+                   placeholder="Search worked lines across tenders — e.g. piling"
+                   style={{ ...inputStyle, width: "100%" }} />
+            <div style={{ maxHeight: 180, overflow: "auto", marginTop: 6 }}>
+              {hits.map((h) => (
+                <div key={h.item_id} onClick={() => copyFrom(h)}
+                     style={{ display: "flex", gap: 10, padding: "4px 6px", cursor: "pointer",
+                              fontSize: 12.5, borderTop: "1px solid var(--line)" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", color: "var(--muted)" }}>{h.tender_ref}</span>
+                  <span style={{ flex: 1 }}>{h.item_code ? `${h.item_code} ` : ""}{h.description}</span>
+                  <span style={{ color: "var(--muted)" }}>{h.rows} rows · mat {h.unit_cost ?? "—"} · lab {h.labour_cost ?? "—"} / {h.unit}</span>
+                </div>))}
+              {q && hits.length === 0 && (
+                <div style={{ fontSize: 12, color: "var(--muted)", padding: 6 }}>No worked line matches.</div>)}
+            </div>
+          </div>)}
+
+        <div style={{ overflowX: "auto", marginTop: 10 }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 12, width: "100%" }}>
+            <thead><tr>
+              {["Kind", "Description", `Qty / ${item.unit || "unit"}`, "Unit", "Rate",
+                "Waste %", "Amount", ""].map((h, i) => (
+                <th key={i} style={{ ...th, textAlign: i >= 2 && i <= 6 && i !== 3 ? "right" : "left" }}>{h}</th>))}
+            </tr></thead>
+            <tbody ref={tbodyRef}>
+              {rows.map((r, i) => (
+                <tr key={i}>
+                  <td style={td}>
+                    <select value={r.kind} disabled={!canEdit}
+                            onChange={(e) => set(i, "kind", e.target.value)}
+                            style={wcell(112, { background: r.kind === "LABOUR" ? "#eeedfe" : "#e1f5ee" })}>
+                      {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select></td>
+                  <td style={td}><input value={r.description} disabled={!canEdit}
+                    style={wcell("100%")} placeholder="Resource"
+                    onChange={(e) => set(i, "description", e.target.value)} /></td>
+                  <td style={td}><input value={r.qty} disabled={!canEdit}
+                    style={wcell(86, { textAlign: "right", fontFamily: "var(--font-mono)" })}
+                    placeholder="=1/40"
+                    onChange={(e) => set(i, "qty", e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && canEdit && (e.preventDefault(), add(i))} /></td>
+                  <td style={td}><input value={r.unit} disabled={!canEdit}
+                    style={wcell(54)} placeholder="h"
+                    onChange={(e) => set(i, "unit", e.target.value)} /></td>
+                  <td style={td}><input value={r.rate} disabled={!canEdit}
+                    style={wcell(86, { textAlign: "right", fontFamily: "var(--font-mono)" })}
+                    onChange={(e) => set(i, "rate", e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && canEdit && (e.preventDefault(), add(i))} /></td>
+                  <td style={td}><input value={r.waste} disabled={!canEdit}
+                    style={wcell(60, { textAlign: "right" })}
+                    onChange={(e) => set(i, "waste", e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && canEdit && (e.preventDefault(), add(i))} /></td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums",
+                               color: Number.isNaN(amounts[i]) ? "#c0392b" : undefined }}>
+                    {amounts[i] == null ? "" : Number.isNaN(amounts[i]) ? "?" : num(amounts[i])}</td>
+                  <td style={td}>
+                    {canEdit && (
+                      <button title="Remove row" onClick={() => setRows(rows.filter((_, j) => j !== i))}
+                              style={{ ...ghostButton, padding: "0 6px", fontSize: 12,
+                                       color: "#c0392b" }}>✕</button>)}
+                  </td>
+                </tr>))}
+            </tbody>
+          </table>
+        </div>
+        {canEdit && (
+          <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
+            <button style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}
+                    onClick={() => add()}>+ Row</button>
+            <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+              Enter adds a row below. A cell takes a formula: =1200/40. Labour in h or day
+              counts towards the manpower on the offer snapshot.</span>
+          </div>)}
+
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginTop: 12 }}>
+          <div style={leg}>
+            <div style={{ color: "var(--muted)" }}>Material, plant and subcontract</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>cost / {item.unit || "unit"} {num(mat)}</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+              markup % <input value={mm} type="number" disabled={!canEdit}
+                              onChange={(e) => setMm(e.target.value)}
+                              style={wcell(70, { textAlign: "right" })} />
+              → Material rate <strong>{num(mRate)}</strong>
+            </div>
+          </div>
+          <div style={{ ...leg, opacity: hasLab ? 1 : 0.6 }}>
+            <div style={{ color: "var(--muted)" }}>Labour</div>
+            <div style={{ fontSize: 16, fontWeight: 700 }}>cost / {item.unit || "unit"} {num(lab)}</div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}>
+              markup % <input value={lm} type="number" disabled={!canEdit || !hasLab}
+                              onChange={(e) => setLm(e.target.value)}
+                              style={wcell(70, { textAlign: "right" })} />
+              → Labour rate <strong>{num(lRate)}</strong>
+            </div>
+            {!hasLab && <div style={{ fontSize: 11.5, color: "var(--muted)" }}>
+              no labour rows — the line is priced on one rate</div>}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12,
+                      flexWrap: "wrap", fontSize: 12.5 }}>
+          <span>Unit cost <strong>{num(mat + lab)}</strong> · combined rate{" "}
+            <strong>{num(mRate + lRate)}</strong> · overall markup{" "}
+            <strong>{mat + lab ? (((mRate + lRate) / (mat + lab) - 1) * 100).toFixed(1) : "0.0"}%</strong>
+            {" "}· line amount <strong>{boq.currency} {num((mRate + lRate) * Number(item.qty || 0))}</strong></span>
+          <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+            <button style={ghostButton} onClick={onClose}>{canEdit ? "Cancel" : "Close"}</button>
+            {canEdit && (
+              <button style={{ ...buttonStyle, padding: "5px 14px" }}
+                      disabled={busy || bad} onClick={save}
+                      title={bad ? "Fix the cells marked ? first" : ""}>
+                {busy ? "Saving…" : "Save to line"}</button>)}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 // Review the draft captured from a client PDF/Excel: correct any cell, watch
 // the reconciliation banner, then load it into the live BOQ.

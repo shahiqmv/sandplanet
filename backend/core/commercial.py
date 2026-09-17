@@ -4,8 +4,11 @@ This is the client-revenue counterpart to the cost-control ledger: the QS
 prices the contract (BOQ), values work done progressively, and claims it from
 the client. Slice 1 is the BOQ itself.
 """
+import ast as _ast
+import operator as _op
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
+from django.db import transaction
 from django.db.models import Max, Q, Sum
 
 from .audit import audit
@@ -89,7 +92,7 @@ def _row_items(boq, rows):
         is_discount = bool(r.get("is_discount"))
         is_heading = (not is_discount) and (bool(r.get("is_heading")) or (
             qty is None and not has_rate and not unit))
-        out.append(BoqItem(
+        item = BoqItem(
             boq=boq, sort_order=i, section=section, item_code=code,
             description=desc, unit=unit, qty=qty, rate_supply=supply,
             rate_install=install, is_heading=is_heading,
@@ -99,8 +102,47 @@ def _row_items(boq, rows):
             else _dec(r.get("markup_percent")),
             labour_cost=None if is_heading else _dec(r.get("labour_cost")),
             labour_markup_percent=None if is_heading
-            else _dec(r.get("labour_markup_percent"))))
+            else _dec(r.get("labour_markup_percent")))
+        # The editor sends the line it is editing; a line that keeps its id
+        # keeps everything hanging off it (its workings).
+        try:
+            item._row_id = int(r.get("id")) if r.get("id") else None
+        except (TypeError, ValueError):
+            item._row_id = None
+        out.append(item)
     return out
+
+
+ITEM_FIELDS = ("sort_order", "section", "item_code", "description", "unit",
+               "qty", "rate_supply", "rate_install", "is_heading",
+               "is_discount", "unit_cost", "markup_percent", "labour_cost",
+               "labour_markup_percent")
+
+
+def _write_items(boq, items):
+    """Write the editor's lines over the bill's, keeping every line whose id
+    came back so what hangs off it (its workings) survives the save. The
+    save used to delete and recreate every line — nothing could ever be
+    attached to one (owner 2026-09-17)."""
+    from .models import BoqItem
+    existing = {i.id: i for i in boq.items.all()}
+    keep = set()
+    fresh = []
+    for it in items:
+        rid = getattr(it, "_row_id", None)
+        cur = existing.get(rid) if rid else None
+        if cur is None:
+            fresh.append(it)
+            continue
+        for f in ITEM_FIELDS:
+            setattr(cur, f, getattr(it, f))
+        cur.save(update_fields=list(ITEM_FIELDS))
+        keep.add(cur.id)
+    gone = [i for i in existing.values() if i.id not in keep]
+    for i in gone:
+        i.delete()
+    if fresh:
+        BoqItem.objects.bulk_create(fresh)
 
 
 def cost_summary(items):
@@ -180,7 +222,7 @@ def set_boq_items(owner, rows, actor):
     it's locked (a claim has started). Records whether the schedule prices
     supply and installation separately. `owner` is a Project or a Tender.
     Returns (boq, error)."""
-    from .models import Boq, BoqItem
+    from .models import Boq
     from .models import ProgressClaimItem
     boq, _ = Boq.objects.get_or_create(
         **owner_key(owner), defaults={"created_by": actor})
@@ -212,7 +254,6 @@ def set_boq_items(owner, rows, actor):
     if not split:
         for i in items:
             i.rate_install = None
-    boq.items.all().delete()
     # Saving flat priced items is the conventional path: if this project was on
     # a unit-based BOQ, cleanly convert it back — reset the mode and drop the
     # now-orphan unit categories so contract_value stops summing them.
@@ -221,7 +262,7 @@ def set_boq_items(owner, rows, actor):
         boq.categories.all().delete()
         boq.mode = Boq.Mode.CONVENTIONAL
         fields.append("mode")
-    BoqItem.objects.bulk_create(items)
+    _write_items(boq, items)
     if boq.split_rates != split:
         boq.split_rates = split
         fields.append("split_rates")
@@ -1667,3 +1708,214 @@ def _certifier_title(user):
     return {"DIRECTOR": "Director, Projects",
             "ADMIN": "Administrator"}.get(
         user.role, user.get_role_display())
+
+
+
+# ---- workings: the build-up behind a line's cost ------------------------
+
+_OPS = {_ast.Add: _op.add, _ast.Sub: _op.sub, _ast.Mult: _op.mul,
+        _ast.Div: _op.truediv, _ast.USub: _op.neg, _ast.UAdd: _op.pos}
+
+
+def eval_expr(text):
+    """A cell's value: a number, or an arithmetic formula written like a
+    spreadsheet cell ("=1200/40", "=8*6.5/40"). Only + - * / and brackets;
+    anything else is refused rather than run. Returns Decimal or None for
+    blank; raises ValueError for a cell that cannot be read."""
+    s = str(text or "").strip()
+    if not s:
+        return None
+    if s.startswith("="):
+        s = s[1:].strip()
+    s = s.replace(",", "")
+    try:
+        tree = _ast.parse(s, mode="eval")
+    except SyntaxError:
+        raise ValueError(f"'{text}' is not a number or a formula.")
+
+    def walk(node):
+        if isinstance(node, _ast.Expression):
+            return walk(node.body)
+        if isinstance(node, _ast.Constant) and isinstance(
+                node.value, (int, float)) and not isinstance(node.value, bool):
+            return Decimal(str(node.value))
+        if isinstance(node, _ast.BinOp) and type(node.op) in _OPS:
+            return _OPS[type(node.op)](walk(node.left), walk(node.right))
+        if isinstance(node, _ast.UnaryOp) and type(node.op) in _OPS:
+            return _OPS[type(node.op)](walk(node.operand))
+        raise ValueError(f"'{text}' is not a number or a formula.")
+    try:
+        return walk(tree)
+    except (ZeroDivisionError, InvalidOperation):
+        raise ValueError(f"'{text}' divides by zero.")
+
+
+def set_workings(item, rows, material_markup, labour_markup, actor):
+    """Replace a line's build-up and write what it means onto the line:
+    material cost (every non-labour row), labour cost (labour rows), each
+    leg's markup, and the rates that follow. Returns (workings, error)."""
+    from .models import BoqItemWorking
+    if item.is_heading or item.is_discount:
+        return None, "A heading or a discount line has no working."
+    if item.boq.is_locked:
+        return None, "The BOQ is locked — a claim has already started."
+    parsed = []
+    for n, r in enumerate(rows or []):
+        kind = str(r.get("kind") or "MATERIAL").upper()
+        if kind not in BoqItemWorking.Kind.values:
+            return None, f"Row {n + 1}: unknown kind '{kind}'."
+        desc = str(r.get("description") or "").strip()[:200]
+        if not desc and not str(r.get("qty") or "").strip():
+            continue                                    # a blank row
+        try:
+            qty = eval_expr(r.get("qty"))
+            rate = eval_expr(r.get("rate"))
+            waste = eval_expr(r.get("waste"))
+        except ValueError as e:
+            return None, f"Row {n + 1} ({desc or 'blank'}): {e}"
+        amount = None
+        if qty is not None and rate is not None:
+            amount = (qty * rate * (1 + (waste or Decimal("0")) / 100)
+                      ).quantize(Decimal("0.001"))
+        parsed.append(BoqItemWorking(
+            item=item, sort_order=n, kind=kind, description=desc,
+            unit=str(r.get("unit") or "").strip()[:20],
+            qty_expr=str(r.get("qty") or "").strip()[:80],
+            rate_expr=str(r.get("rate") or "").strip()[:80],
+            waste_expr=str(r.get("waste") or "").strip()[:40],
+            qty=qty, rate=rate, waste_percent=waste, amount=amount))
+    mm = _dec(material_markup)
+    lm = _dec(labour_markup)
+    with transaction.atomic():
+        item.workings.all().delete()
+        BoqItemWorking.objects.bulk_create(parsed)
+        mat = sum((w.amount for w in parsed
+                   if w.kind != "LABOUR" and w.amount is not None),
+                  Decimal("0"))
+        lab = sum((w.amount for w in parsed
+                   if w.kind == "LABOUR" and w.amount is not None),
+                  Decimal("0"))
+        has_lab = any(w.kind == "LABOUR" for w in parsed)
+        item.unit_cost = mat.quantize(Decimal("0.001")) if parsed else None
+        item.labour_cost = (lab.quantize(Decimal("0.001"))
+                            if has_lab else None)
+        item.markup_percent = mm
+        item.labour_markup_percent = lm if has_lab else None
+        if item.unit_cost is not None and mm is not None:
+            item.rate_supply = (item.unit_cost * (1 + mm / 100)
+                                ).quantize(Decimal("0.001"))
+        if has_lab and lm is not None:
+            item.rate_install = (item.labour_cost * (1 + lm / 100)
+                                 ).quantize(Decimal("0.001"))
+        elif not has_lab:
+            item.rate_install = None
+        item.save()
+        boq = item.boq
+        split = boq.items.filter(rate_install__isnull=False).exclude(
+            rate_install=0).exists()
+        if boq.split_rates != split:
+            boq.split_rates = split
+            boq.save(update_fields=["split_rates"])
+    from .models import Tender
+    owner = boq.tender if boq.tender_id else boq.project
+    entity = "tender" if isinstance(owner, Tender) else "project"
+    audit(entity, owner.id, "BOQ_WORKING_SAVED", actor=actor,
+          detail={"item": item.id, "line": (item.item_code
+                                            or item.description[:40]),
+                  "rows": len(parsed), "material_cost": str(item.unit_cost),
+                  "labour_cost": str(item.labour_cost)})
+    return list(item.workings.all()), None
+
+
+def workings_payload(item):
+    return {
+        "item_id": item.id, "item_code": item.item_code,
+        "description": item.description, "unit": item.unit,
+        "qty": item.qty,
+        "material_markup": item.markup_percent,
+        "labour_markup": item.labour_markup_percent,
+        "rows": [{"id": w.id, "kind": w.kind, "description": w.description,
+                  "unit": w.unit, "qty": w.qty_expr, "rate": w.rate_expr,
+                  "waste": w.waste_expr, "amount": w.amount}
+                 for w in item.workings.all()],
+    }
+
+
+def search_workings(q, user, limit=20):
+    """Lines with a working, across every tender the user can see, matched
+    on description — what "Copy working from…" offers. Most recent first,
+    so last month's rate for the same item comes up before last year's."""
+    from . import tenders as svc
+    from .models import BoqItem
+    tenders = svc.visible_to(user)
+    qs = BoqItem.objects.filter(
+        boq__tender__in=tenders, workings__isnull=False).select_related(
+        "boq__tender__document").distinct()
+    q = (q or "").strip()
+    if q:
+        for word in q.split()[:4]:
+            qs = qs.filter(description__icontains=word)
+    out = []
+    for it in qs.order_by("-id")[:limit]:
+        out.append({"item_id": it.id, "tender_id": it.boq.tender_id,
+                    "tender_ref": it.boq.tender.document.ref,
+                    "item_code": it.item_code, "description": it.description,
+                    "unit": it.unit, "unit_cost": it.unit_cost,
+                    "labour_cost": it.labour_cost,
+                    "rows": it.workings.count()})
+    return out
+
+
+_HOUR_UNITS = {"h", "hr", "hrs", "hour", "hours", "mh", "man-hour",
+               "manhour", "man-hours", "manhours"}
+_DAY_UNITS = {"d", "day", "days", "md", "man-day", "manday", "man-days",
+              "mandays"}
+
+
+def hours_per_day():
+    from .models import CompanyParameter
+    try:
+        v = CompanyParameter.objects.get(key="tender_hours_per_day").value
+        return Decimal(str(v).strip() or "10")
+    except (CompanyParameter.DoesNotExist, InvalidOperation):
+        return Decimal("10")
+
+
+def manpower_summary(items, duration_days=None):
+    """What the bill's workings say about men: labour rows in hours or days
+    become man-hours per unit, × the line's quantity; over the programme
+    that is an average headcount. The labour cost is qty × the line's
+    labour cost. A labour row in some other unit (a lump "gang") is counted
+    but cannot be turned into hours (owner 2026-09-17)."""
+    from .models import BoqItemWorking
+    hpd = hours_per_day()
+    ids = [i.id for i in items if i.is_costed and (i.qty or 0)]
+    qty_of = {i.id: i.qty for i in items}
+    hours = Decimal("0")
+    unmeasured = 0
+    for w in BoqItemWorking.objects.filter(item_id__in=ids, kind="LABOUR"):
+        if w.qty is None:
+            continue
+        u = (w.unit or "").strip().lower()
+        if u in _HOUR_UNITS:
+            per_unit = w.qty
+        elif u in _DAY_UNITS:
+            per_unit = w.qty * hpd
+        else:
+            unmeasured += 1
+            continue
+        hours += per_unit * qty_of[w.item_id]
+    labour_cost = sum(((i.qty or Decimal("0")) * i.labour_cost
+                       for i in items if i.is_costed
+                       and i.labour_cost is not None), Decimal("0"))
+    man_days = (hours / hpd) if hpd else Decimal("0")
+    avg = None
+    if duration_days and man_days:
+        avg = (man_days / Decimal(duration_days)).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP)
+    return {"man_hours": hours.quantize(Decimal("0.01")),
+            "man_days": man_days.quantize(Decimal("0.01")),
+            "average_men": avg, "duration_days": duration_days,
+            "hours_per_day": format(hpd.normalize(), "f"),
+            "labour_cost": labour_cost.quantize(Decimal("0.001")),
+            "unmeasured_rows": unmeasured}

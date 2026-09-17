@@ -564,6 +564,16 @@ function Snapshot({ t, can, act, busy }) {
               + `GST ${Number(s.gst_percent)}% ${m(s.gst)}`)}
         {cell("Programme", s.duration_days ? `${s.duration_days} days` : "—",
               `validity ${s.validity_days || 30} days${s.due_date ? ` · due ${day(s.due_date)}` : ""}`)}
+        {s.manpower && cell("Manpower",
+              s.manpower.average_men != null
+                ? `~${Number(s.manpower.average_men).toFixed(1)} men avg`
+                : Number(s.manpower.man_days) > 0 ? `${Number(s.manpower.man_days).toFixed(0)} man-days` : "—",
+              `${Number(s.manpower.man_days).toFixed(0)} man-days at ${s.manpower.hours_per_day} h`
+              + `${s.manpower.duration_days ? ` over ${s.manpower.duration_days} days` : " · set the programme"}`
+              + ` · labour ${m(s.manpower.labour_cost)}`
+              + `${s.estimated_cost > 0 && Number(s.manpower.labour_cost) > 0
+                  ? ` (${(Number(s.manpower.labour_cost) / Number(s.estimated_cost) * 100).toFixed(0)}% of cost)` : ""}`
+              + `${s.manpower.unmeasured_rows ? ` · ${s.manpower.unmeasured_rows} labour row(s) not in h/day` : ""}`)}
         {cell("Tender file", `${s.documents} doc${s.documents === 1 ? "" : "s"}`,
               `${s.visits_held} visit${s.visits_held === 1 ? "" : "s"} held`
               + `${s.visits_planned ? `, ${s.visits_planned} planned` : ""}`

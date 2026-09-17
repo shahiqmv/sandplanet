@@ -10,6 +10,8 @@ from rest_framework.response import Response
 
 from decimal import Decimal
 
+from django.db.models import Count
+
 from . import commercial
 from .audit import audit
 from .models import (BoqItem, ClientReceipt, ProgressClaim, Project,
@@ -45,13 +47,18 @@ class BoqItemSerializer(serializers.ModelSerializer):
                                           read_only=True)
     cost_amount = serializers.DecimalField(max_digits=18, decimal_places=3,
                                            read_only=True)
+    has_working = serializers.SerializerMethodField()
+
+    def get_has_working(self, obj):
+        n = getattr(obj, "working_count", None)
+        return bool(n) if n is not None else obj.workings.exists()
 
     class Meta:
         model = BoqItem
         fields = ["id", "sort_order", "section", "item_code", "description",
                   "unit", "qty", "rate_supply", "rate_install", "rate_total",
                   "unit_cost", "markup_percent", "labour_cost",
-                  "labour_markup_percent", "cost_amount",
+                  "labour_markup_percent", "cost_amount", "has_working",
                   "is_heading", "is_discount", "amount", "amount_supply",
                   "amount_install"]
 
@@ -68,7 +75,8 @@ def _boq_payload(project):
     # 2026-08-11). Unit mode skips the flat list entirely: the screen reads
     # categories[].items, so serializing all build-ups twice was pure waste.
     is_unit = boq.mode == boq.Mode.UNIT
-    items = [] if is_unit else list(boq.items.all())
+    items = [] if is_unit else list(
+        boq.items.annotate(working_count=Count("workings")))
     data = {"exists": True, "currency": boq.currency,
             "is_locked": boq.is_locked, "split_rates": boq.split_rates,
             "mode": boq.mode, "claim_level": boq.claim_level,

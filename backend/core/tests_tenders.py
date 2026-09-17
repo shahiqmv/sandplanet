@@ -1337,3 +1337,133 @@ class TenderDigestTests(GateMixin, TestCase):
         self.assertEqual(self.client.get(self._url()).status_code, 200)
         r = self.client.post(self._url(), {}, format="json")
         self.assertEqual(r.status_code, 403)
+
+
+class TenderWorkingsTests(GateMixin, TestCase):
+    """The build-up behind a line's cost: rows of resources, formulas kept
+    as typed, labour and material totalled into their legs, each marked up
+    to its rate (owner 2026-09-17)."""
+
+    open_one = TenderRegisterTests.open_one
+
+    def setUp(self):
+        self.site = Site.objects.create(code="SJR", name="Soneva Jani",
+                                        status=Site.Status.ACTIVE)
+        self.qs = make_user("twk_qs", User.Role.QS)
+        self.make_approvers("twk")
+        self.pm = make_user("twk_pm", User.Role.PM, site=self.site)
+        SitePmHistory.objects.create(site=self.site, pm_user=self.pm,
+                                     from_date=date.today())
+        self.client = APIClient()
+        self.client.force_authenticate(self.qs)
+        self.t = self.open_one()
+        r = self.client.post(f"/api/v1/tenders/{self.t['id']}/boq/items",
+                             {"rows": [{"section": "Bill 1", "is_heading": True},
+                                       {"item_code": "1.1",
+                                        "description": "Piling", "unit": "m",
+                                        "qty": "100", "rate_combined": "500"}]},
+                             format="json")
+        self.item = next(i for i in r.data["items"] if not i["is_heading"])
+        self.head = next(i for i in r.data["items"] if i["is_heading"])
+
+    def _url(self, item_id=None):
+        return (f"/api/v1/tenders/{self.t['id']}/boq/items/"
+                f"{item_id or self.item['id']}/workings")
+
+    ROWS = [
+        {"kind": "MATERIAL", "description": "Timber pile", "qty": "=10/9",
+         "unit": "m", "rate": "38", "waste": "5"},
+        {"kind": "PLANT", "description": "Rig, day rate ÷ 40 m",
+         "qty": "=1/40", "unit": "day", "rate": "1200", "waste": ""},
+        {"kind": "LABOUR", "description": "Crew 4 × 8 h ÷ 40 m",
+         "qty": "=32/40", "unit": "h", "rate": "6.20", "waste": "0"},
+        {"kind": "MATERIAL", "description": "", "qty": "", "rate": ""},
+    ]
+
+    def test_a_working_writes_both_legs_and_their_rates_onto_the_line(self):
+        r = self.client.put(self._url(), {"rows": self.ROWS,
+                                          "material_markup": "25",
+                                          "labour_markup": "40"},
+                            format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        w = r.data["working"]
+        self.assertEqual(len(w["rows"]), 3)                # blank row dropped
+        self.assertEqual(w["rows"][0]["qty"], "=10/9")     # formula kept
+        # 10/9 × 38 × 1.05 = 44.333 ; 1/40 × 1200 = 30 ; material = 74.333
+        self.assertEqual(str(w["rows"][0]["amount"]), "44.333")
+        item = next(i for i in r.data["boq"]["items"]
+                    if i["id"] == self.item["id"])
+        self.assertEqual(item["unit_cost"], "74.333")
+        self.assertEqual(item["labour_cost"], "4.960")      # 0.8 × 6.20
+        self.assertEqual(item["markup_percent"], "25.00")
+        self.assertEqual(item["labour_markup_percent"], "40.00")
+        self.assertEqual(item["rate_supply"], "92.916")     # 74.333 × 1.25
+        self.assertEqual(item["rate_install"], "6.944")     # 4.96 × 1.40
+        self.assertTrue(item["has_working"])
+        self.assertTrue(r.data["boq"]["split_rates"])
+        got = self.client.get(self._url()).data
+        self.assertEqual([x["kind"] for x in got["rows"]],
+                         ["MATERIAL", "PLANT", "LABOUR"])
+        self.assertEqual(str(got["material_markup"]), "25.00")
+
+    def test_a_bad_cell_is_named_and_nothing_is_written(self):
+        rows = [dict(self.ROWS[0], qty="=10/0")]
+        r = self.client.put(self._url(), {"rows": rows, "material_markup": 20},
+                            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Timber pile", r.data["detail"])
+        self.assertIn("zero", r.data["detail"])
+        evil = [dict(self.ROWS[0], qty="__import__('os')")]
+        r = self.client.put(self._url(), {"rows": evil, "material_markup": 20},
+                            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(self.client.get(self._url()).data["rows"], [])
+
+    def test_a_heading_has_no_working_and_a_pm_only_reads(self):
+        r = self.client.put(self._url(self.head["id"]), {"rows": self.ROWS},
+                            format="json")
+        self.assertEqual(r.status_code, 400)
+        self.client.put(self._url(), {"rows": self.ROWS, "material_markup": 20,
+                                      "labour_markup": 30}, format="json")
+        self.client.force_authenticate(self.pm)
+        self.assertEqual(self.client.get(self._url()).status_code, 200)
+        r = self.client.put(self._url(), {"rows": []}, format="json")
+        self.assertEqual(r.status_code, 403)
+
+    def test_copy_from_finds_a_worked_line_on_another_tender(self):
+        self.client.put(self._url(), {"rows": self.ROWS, "material_markup": 20,
+                                      "labour_markup": 30}, format="json")
+        other = self.open_one(title="Second jetty")
+        r = self.client.get(f"/api/v1/tenders/{other['id']}/boq/workings/"
+                            "search?q=pil")
+        self.assertEqual(r.status_code, 200, r.data)
+        hit = r.data["results"][0]
+        self.assertEqual(hit["item_id"], self.item["id"])
+        self.assertEqual(hit["tender_ref"], self.t["ref"])
+        self.assertEqual(hit["rows"], 3)
+        self.assertEqual(self.client.get(
+            f"/api/v1/tenders/{other['id']}/boq/workings/search?q=zzz")
+            .data["results"], [])
+
+    def test_the_snapshot_reads_manpower_off_the_workings(self):
+        """Labour rows in hours and days become man-hours; over the
+        programme that is an average headcount; the labour cost is what the
+        job pays its men (owner 2026-09-17)."""
+        rows = self.ROWS + [{"kind": "LABOUR", "description": "Supervisor",
+                             "qty": "0.05", "unit": "day", "rate": "60",
+                             "waste": ""}]
+        self.client.put(self._url(), {"rows": rows, "material_markup": 20,
+                                      "labour_markup": 30}, format="json")
+        self.client.patch(f"/api/v1/tenders/{self.t['id']}",
+                          {"duration_days": 20}, format="json")
+        s = self.client.get(f"/api/v1/tenders/{self.t['id']}").data["snapshot"]
+        mp = s["manpower"]
+        # per m: 0.8 h + 0.05 day × 10 h = 1.3 h; × 100 m = 130 man-hours
+        self.assertEqual(str(mp["man_hours"]), "130.00")
+        self.assertEqual(str(mp["man_days"]), "13.00")
+        self.assertEqual(str(mp["average_men"]), "0.7")   # 13 / 20 days
+        self.assertEqual(mp["duration_days"], 20)
+        self.assertEqual(mp["hours_per_day"], "10")
+        # labour cost per m = 0.8×6.20 + 0.05×60 = 7.96 ; × 100 = 796
+        self.assertEqual(str(mp["labour_cost"]), "796.000")
+        self.assertEqual(mp["unmeasured_rows"], 0)

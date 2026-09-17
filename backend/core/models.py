@@ -3962,6 +3962,46 @@ class BoqItem(models.Model):
             self.rate_total)
 
 
+
+class BoqItemWorking(models.Model):
+    """One resource in the build-up behind a bill line's cost: the QS's
+    working, kept as they typed it — a cell holds a number or a formula
+    ("=1200/40") — with the evaluated figures beside it. Labour rows total
+    into the line's labour cost, everything else into its material cost;
+    each leg's markup then gives the rate (owner 2026-09-17). Internal,
+    never printed; travels with the bill to the project on award.
+    """
+
+    class Kind(models.TextChoices):
+        MATERIAL = "MATERIAL", "Material"
+        LABOUR = "LABOUR", "Labour"
+        PLANT = "PLANT", "Plant"
+        SUBCONTRACT = "SUBCONTRACT", "Subcontract"
+        OTHER = "OTHER", "Other"
+
+    item = models.ForeignKey(BoqItem, on_delete=models.CASCADE,
+                             related_name="workings")
+    sort_order = models.IntegerField(default=0)
+    kind = models.CharField(max_length=12, choices=Kind.choices,
+                            default=Kind.MATERIAL)
+    description = models.CharField(max_length=200, blank=True)
+    unit = models.CharField(max_length=20, blank=True)
+    qty_expr = models.CharField(max_length=80, blank=True)   # per unit of item
+    rate_expr = models.CharField(max_length=80, blank=True)
+    waste_expr = models.CharField(max_length=40, blank=True)  # percent
+    qty = models.DecimalField(max_digits=14, decimal_places=4, null=True,
+                              blank=True)
+    rate = models.DecimalField(max_digits=14, decimal_places=3, null=True,
+                               blank=True)
+    waste_percent = models.DecimalField(max_digits=7, decimal_places=2,
+                                        null=True, blank=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=3, null=True,
+                                 blank=True)
+
+    class Meta:
+        ordering = ["sort_order", "id"]
+
+
 class BoqCategory(models.Model):
     """Unit-mode only: a category priced once per unit then multiplied by its
     quantity (e.g. "Category D Villas", 11 no × the per-villa total), or a

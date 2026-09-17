@@ -584,7 +584,7 @@ def snapshot(t):
     value = _dec((rev.payload or {}).get("value")) if rev else None
     if value is None:
         value = t.value_submitted
-    from .commercial import cost_summary
+    from .commercial import cost_summary, manpower_summary
     cs = cost_summary(list(boq.items.all())) if boq is not None else {
         "estimated_cost": Decimal("0"), "priced_lines": 0, "costed_lines": 0}
     cost = cs["estimated_cost"]
@@ -603,6 +603,8 @@ def snapshot(t):
                                or value == bill_total),
         "estimated_cost": cost, "cost_note": t.cost_note,
         "priced_lines": cs["priced_lines"], "costed_lines": cs["costed_lines"],
+        "manpower": manpower_summary(list(boq.items.all()) if boq is not None
+                                     else [], t.duration_days),
         "markup": markup, "markup_percent": markup_pct,
         "margin_percent": margin_pct,
         "discount": stack["discount"], "discount_label": stack["discount_label"],
