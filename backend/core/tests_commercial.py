@@ -916,6 +916,19 @@ class ProgressClaimTests(TestCase):
                            gst_at)
         # the cumulative figures agree with the present ones on a first claim
         self.assertEqual(float(w["taxable_cumulative"]), float(w["taxable_due"]))
+        # the client's tax invoice and the IPA print the same order
+        from django.template.loader import render_to_string
+        claim = ProgressClaim.objects.get(pk=c["id"])
+        for tpl, ctx in (("pdf/tax_invoice.html",
+                          commercial.invoice_pdf_context(claim)),
+                         ("pdf/claim_ipa.html",
+                          commercial.claim_pdf_context(claim))):
+            html = render_to_string(tpl, ctx)
+            pre = html.index("Client-supplied cement")
+            taxable = html.index("Taxable amount")
+            gst = html.index("GST @ 8%")
+            post = html.index("Materials from store")
+            self.assertTrue(pre < taxable < gst < post, tpl)
 
     def test_ipa_and_invoice_pdfs_show_advance_and_deductions(self):
         from django.template.loader import render_to_string
