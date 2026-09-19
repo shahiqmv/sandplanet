@@ -621,6 +621,11 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 <W label="Advance received" v={w.advance_received} ccy={ccy} />}
               <W label="Less advance recovery" v={-w.advance_recovered}
                  ccy={ccy} neg />
+              {/* Back charges netted off before GST, above retention */}
+              {(d.deduction_lines || []).filter((dl) => dl.before_gst).map((dl, i) => (
+                <W key={`pre-${i}`} label={`Less back charge — ${dl.label}`}
+                   v={-dl.cumulative} ccy={ccy} neg />
+              ))}
               <W label="Less retention" v={-w.retention_held} ccy={ccy} neg />
               {Number(w.retention_released) !== 0 &&
                 <W label="Add retention released" v={w.retention_released}
@@ -630,13 +635,6 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               <W label="Less previously certified" v={-w.previously_certified}
                  ccy={ccy} neg />
               <W label="Net now due (ex-GST)" v={w.net_due} ccy={ccy} strong />
-              {/* Back charges netted off before GST reduce the taxable amount */}
-              {(d.deduction_lines || []).filter((dl) => dl.before_gst).map((dl, i) => (
-                <W key={`pre-${i}`} label={`Less back charge (before GST) — ${dl.label}`}
-                   v={-(dl.present ?? dl.cumulative)} ccy={ccy} neg />
-              ))}
-              {Number(w.deductions_pre_present) !== 0 &&
-                <W label="Taxable amount" v={w.taxable_due} ccy={ccy} strong />}
               <W label={`Output GST @ ${pct(c.gst_pct)}%`} v={w.gst}
                  ccy={ccy} />
               <W label="Total incl. GST" v={w.total} ccy={ccy} strong />

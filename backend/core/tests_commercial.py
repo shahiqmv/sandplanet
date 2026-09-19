@@ -892,12 +892,18 @@ class ProgressClaimTests(TestCase):
         w = d["waterfall"]
         self.assertEqual(float(w["deductions_pre_present"]), 100.0)
         self.assertEqual(float(w["deductions_present"]), 50.0)
-        self.assertEqual(round(float(w["taxable_due"]), 2),
-                         round(float(w["net_due"]) - 100, 2))
+        # the before-GST charge comes off in the cumulative block, so net
+        # now due IS the taxable amount; retention is still on the work done
+        self.assertEqual(round(float(w["net_due"]), 2),
+                         round(float(w["k_gross"]) - float(w["advance_recovered"])
+                               - float(w["retention_held"]) - 100, 2))
+        self.assertEqual(float(w["taxable_due"]), float(w["net_due"]))
+        self.assertEqual(round(float(w["retention_held"]), 3),
+                         round(float(w["k_gross"]) * 10 / 100, 3))
         self.assertEqual(round(float(w["gst"]), 2),
-                         round(float(w["taxable_due"]) * 8 / 100, 2))
+                         round(float(w["net_due"]) * 8 / 100, 2))
         self.assertEqual(round(float(w["total"]), 2),
-                         round(float(w["taxable_due"]) + float(w["gst"]), 2))
+                         round(float(w["net_due"]) + float(w["gst"]), 2))
         self.assertEqual(round(float(w["net_to_pay"]), 2),
                          round(float(w["total"]) - 50, 2))
         flags = {x["label"]: x["before_gst"] for x in d["deduction_lines"]}
@@ -909,9 +915,10 @@ class ProgressClaimTests(TestCase):
         labels = [row["label"] for row in commercial.claim_payment_summary(
             ProgressClaim.objects.get(pk=c["id"]))]
         gst_at = next(i for i, l in enumerate(labels) if l.startswith("GST"))
-        self.assertLess(labels.index("Less: back charge — Client-supplied cement"),
-                        gst_at)
-        self.assertLess(labels.index("Taxable amount"), gst_at)
+        pre_at = labels.index("Less: back charge — Client-supplied cement")
+        self.assertLess(pre_at, labels.index("Retention"))     # above retention
+        self.assertLess(labels.index("Retention"), gst_at)
+        self.assertNotIn("Taxable amount", labels)
         self.assertGreater(labels.index("Less: back charge — Materials from store"),
                            gst_at)
         # the cumulative figures agree with the present ones on a first claim
@@ -925,10 +932,10 @@ class ProgressClaimTests(TestCase):
                           commercial.claim_pdf_context(claim))):
             html = render_to_string(tpl, ctx)
             pre = html.index("Client-supplied cement")
-            taxable = html.index("Taxable amount")
+            retention = html.index("Retention")
             gst = html.index("GST @ 8%")
             post = html.index("Materials from store")
-            self.assertTrue(pre < taxable < gst < post, tpl)
+            self.assertTrue(pre < retention < gst < post, tpl)
 
     def test_ipa_and_invoice_pdfs_show_advance_and_deductions(self):
         from django.template.loader import render_to_string

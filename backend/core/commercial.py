@@ -1211,19 +1211,25 @@ def claim_valuation(claim, _cache=None):
             ded_cum += cum
             ded_present += (cum - pv)
 
+    # Before-GST back charges are netted off in the cumulative block, above
+    # retention, so the certificate reads gross → less back charges → less
+    # retention → net certified (owner 2026-09-19). Retention is still taken
+    # on the work done. "Previously certified" is the prior claim's net on
+    # the same definition, so the amount now due is unchanged by the layout.
+    pre_to_date = _deductions_to_date(claim, True)
     net_cumulative = _q(k_gross + advance_received - advance_recovered
-                        + net_retention)               # N (certified, ex GST)
+                        - pre_to_date + net_retention)  # N (certified, ex GST)
     previously = _claim_net(prev, _cache=_cache)                     # P
-    net_due = net_cumulative - previously                           # Q
-    taxable_due = net_due - pre_present          # less pre-GST back charges
-    gst = _q(claim.gst_pct / Decimal("100") * taxable_due)          # R
-    total = taxable_due + gst                    # total with GST (present)
+    net_due = net_cumulative - previously                           # Q (taxable)
+    taxable_due = net_due
+    gst = _q(claim.gst_pct / Decimal("100") * net_due)              # R
+    total = net_due + gst                        # total with GST (present)
     net_to_pay = total - ded_present             # less post-GST contra
     # Cumulative-to-date counterparts (for the 4-column IPA summary: the
     # "previous" column is the prior claim's cumulative, "present" = the delta).
-    taxable_cumulative = net_cumulative - _deductions_to_date(claim, True)
-    gst_cumulative = _q(claim.gst_pct / Decimal("100") * taxable_cumulative)
-    total_cumulative = taxable_cumulative + gst_cumulative
+    taxable_cumulative = net_cumulative
+    gst_cumulative = _q(claim.gst_pct / Decimal("100") * net_cumulative)
+    total_cumulative = net_cumulative + gst_cumulative
     # ...less EVERY back charge raised to date, not only the labels repeated
     # on this claim. A deduction convention where each claim restates the
     # running labels works until a claim drops one: NORTH JT IPA-03 carried a
@@ -1263,6 +1269,7 @@ def claim_valuation(claim, _cache=None):
             "net_due": net_due,
             "deductions_pre_present": pre_present,
             "deductions_pre_cumulative": pre_cum,
+            "deductions_pre_to_date": pre_to_date,
             "taxable_due": taxable_due,
             "taxable_cumulative": taxable_cumulative,
             "gst": gst, "total": total,
@@ -1469,21 +1476,18 @@ def claim_payment_summary(claim, dp=2):
             P("advance_received"))
         add("Less: recovery of advance", ZERO, w["advance_recovered"],
             P("advance_recovered"), sign=-1)
+    # Back charges netted off before GST sit above retention, in the
+    # cumulative block (owner 2026-09-19).
+    for d in val["deduction_lines"]:
+        if d["before_gst"]:
+            add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
+                d["previous"], sign=-1)
     add("Retention", ZERO, w["retention_held"], P("retention_held"), sign=-1)
     if w["retention_released"]:
         add("Retention released", ZERO, w["retention_released"],
             P("retention_released"))
     add("Total amount", revised, w["net_cumulative"], P("net_cumulative"),
         style="total")
-    # Back charges netted off before GST reduce the taxable amount.
-    pre = [d for d in val["deduction_lines"] if d["before_gst"]]
-    for d in pre:
-        add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
-            d["previous"], sign=-1)
-    if pre or w["taxable_cumulative"] != w["net_cumulative"]:
-        add("Taxable amount", revised, w["taxable_cumulative"],
-            P("taxable_cumulative") if wp and "taxable_cumulative" in wp
-            else P("net_cumulative"), style="total")
     add(f"GST @ {claim.gst_pct:.0f}%", contract_gst, w["gst_cumulative"],
         P("gst_cumulative"))
     add("Total with GST", revised + contract_gst, w["total_cumulative"],
