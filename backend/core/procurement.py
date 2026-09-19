@@ -715,11 +715,22 @@ def sync_pr_vendor_rows(pr):
     saying why."""
     from .models import CostPosting
     revision = pr.current_revision
+    # Every existing row, by supplier, oldest first. Two quotations from one
+    # supplier are two rows, and each must find ITS row again: keeping only
+    # the first row per supplier meant the second quotation created a fresh
+    # row on every rebuild and the extras were never looked at again —
+    # PR-231 grew three stale ALIA rows nobody could remove (2026-09-19).
     existing = {}
-    for ln in revision.lines.all():
-        # Two quotations from one supplier used to make two rows; keep the
-        # first for the name and let the second fall through to create.
-        existing.setdefault((ln.vendor or "").strip(), ln)
+    for ln in revision.lines.order_by("id"):
+        existing.setdefault((ln.vendor or "").strip(), []).append(ln)
+
+    def take(name, quote_ref):
+        rows = existing.get(name.strip()) or []
+        for i, ln in enumerate(rows):          # the row for this very quote
+            if (ln.quotation_ref or "") == (quote_ref or ""):
+                return rows.pop(i)
+        return rows.pop(0) if rows else None   # else the supplier's oldest
+
     rate = company_gst_rate()
     keep, line_no = set(), 0
     for quotation in pr.quotations.select_related("supplier") \
@@ -747,8 +758,7 @@ def sync_pr_vendor_rows(pr):
             gst_amount=gst,
             remarks=f"{len(awarded)}/{len(all_lines)} lines awarded",
         )
-        ln = existing.pop(name.strip(), None) if name.strip() not in keep \
-            else None
+        ln = take(name, quotation.quote_ref)
         if ln is None:
             ln = DocumentLine.objects.create(revision=revision, **fields)
         else:
@@ -756,7 +766,8 @@ def sync_pr_vendor_rows(pr):
                 setattr(ln, k, v)
             ln.save(update_fields=list(fields))
         keep.add(ln.id)
-    for ln in existing.values():
+    leftovers = [ln for rows in existing.values() for ln in rows]
+    for ln in leftovers:
         if CostPosting.objects.filter(document_line=ln).exists():
             line_no += 1
             ln.line_no = line_no

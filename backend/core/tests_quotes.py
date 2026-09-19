@@ -72,6 +72,52 @@ class QuoteBase(TestCase):
         return r.data
 
 
+class TwoQuotesOneSupplierTests(QuoteBase):
+    """Two quotations from the same supplier are two vendor rows that each
+    find their own row again on every rebuild. PR-231 grew three stale
+    ALIA rows because the second quotation created a new row on every
+    save and the extras were never revisited (2026-09-19)."""
+
+    def _rows(self, pr_ref):
+        from .models import Document
+        rev = Document.objects.get(ref=pr_ref).current_revision
+        return [(ln.vendor, ln.quotation_ref, str(ln.amount_cash or 0))
+                for ln in rev.lines.order_by("line_no", "id")]
+
+    def test_a_second_quote_from_the_same_supplier_keeps_one_row_each(self):
+        from .models import Document
+        mr = self.sent_mr()
+        pr = self.draft_pr(mr)
+        cement, rebar = mr["lines"][0]["id"], mr["lines"][1]["id"]
+        self.add_quote(pr["ref"], self.hw, [
+            {"description": "Cement", "unit": "bag", "qty": 150, "rate": 100,
+             "mr_line": cement, "awarded": True}])
+        # the same supplier again, a different quote reference
+        self.as_user(self.purchasing)
+        r = self.client.post(f"/api/v1/pr/{pr['ref']}/quotations", {
+            "supplier": self.hw.id, "quote_ref": "QT-HW-2", "payment_terms": "",
+            "lines": [{"description": "Rebar", "unit": "kg", "qty": 500,
+                       "rate": 2, "mr_line": rebar, "awarded": True}]},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        second = r.data["id"]
+        from . import procurement
+        doc = Document.objects.get(ref=pr["ref"])
+        # rebuilding again and again must not grow the rows
+        for _ in range(3):
+            procurement.sync_pr_vendor_rows(doc)
+        rows = self._rows(pr["ref"])
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual({q for _v, q, _a in rows}, {f"QT-{self.hw.id}", "QT-HW-2"})
+        self.assertEqual({a for _v, _q, a in rows}, {"15000.00", "1000.00"})
+        # removing the second quotation removes exactly its row
+        r = self.client.delete(f"/api/v1/quotations/{second}")
+        self.assertIn(r.status_code, (200, 204), getattr(r, "data", None))
+        rows = self._rows(pr["ref"])
+        self.assertEqual(len(rows), 1, rows)
+        self.assertEqual(rows[0][1], f"QT-{self.hw.id}")
+
+
 class SupplierTests(QuoteBase):
     def test_site_roles_cannot_edit_suppliers(self):
         self.as_user(self.sa)
