@@ -4611,6 +4611,10 @@ class ClaimDeduction(models.Model):
     label = models.CharField(max_length=160)
     cumulative_amount = models.DecimalField(max_digits=16, decimal_places=3,
                                             default=0)
+    # Most back charges are a GST-inclusive contra taken after GST. Some are
+    # netted off the certified work itself, before GST is charged, so they
+    # reduce the taxable amount (owner 2026-09-19).
+    before_gst = models.BooleanField(default=False)
     sort_order = models.IntegerField(default=0)
 
     class Meta:

@@ -299,7 +299,8 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
     });
     setVals(v);
     setDeds((detail.deduction_lines || []).map((dl) => ({
-      label: dl.label, cumulative_amount: dl.cumulative })));
+      label: dl.label, cumulative_amount: dl.cumulative,
+      before_gst: !!dl.before_gst })));
   }
   useEffect(() => {
     api(`/claims/${claimId}`).then(hydrate).catch((e) => setError(e.message));
@@ -558,7 +559,10 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
         <div style={{ margin: "6px 0 10px", fontSize: 12 }}>
           <div style={{ fontWeight: 600, color: "var(--navy)",
                         marginBottom: 4 }}>
-            Back charges (client deductions — cumulative, taken after GST)</div>
+            Back charges (client deductions — cumulative)</div>
+          <div style={{ fontSize: 11.5, color: "var(--muted)", marginBottom: 4 }}>
+            After GST: a GST-inclusive contra off the total. Before GST: netted
+            off the certified work, so it reduces the taxable amount.</div>
           {deds.map((row, i) => (
             <div key={i} style={{ display: "flex", gap: 6, marginBottom: 4,
                                   alignItems: "center" }}>
@@ -571,6 +575,15 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
                 onChange={(e) => { const n = deds.slice();
                   n[i] = { ...n[i], cumulative_amount: e.target.value };
                   setDeds(n); }} />
+              <select value={row.before_gst ? "before" : "after"}
+                style={{ ...inputStyle, width: 112, padding: "3px 6px" }}
+                title="Which side of GST this back charge is taken"
+                onChange={(e) => { const n = deds.slice();
+                  n[i] = { ...n[i], before_gst: e.target.value === "before" };
+                  setDeds(n); }}>
+                <option value="after">After GST</option>
+                <option value="before">Before GST</option>
+              </select>
               <button style={{ ...ghostButton, padding: "2px 8px" }}
                 onClick={() => setDeds(deds.filter((_, j) => j !== i))}>
                 ✕</button>
@@ -581,7 +594,7 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
           </datalist>
           <button style={{ ...ghostButton, padding: "2px 10px" }}
             onClick={() => setDeds([...deds,
-              { label: "", cumulative_amount: "" }])}>
+              { label: "", cumulative_amount: "", before_gst: false }])}>
             + Add deduction</button>
           <span style={{ marginLeft: 8, color: "var(--muted)" }}>
             (saved with “Save &amp; recalc”)</span>
@@ -617,11 +630,18 @@ function ClaimEditor({ claimId, ccy, canEdit, canCertify, isAdmin, onChange,
               <W label="Less previously certified" v={-w.previously_certified}
                  ccy={ccy} neg />
               <W label="Net now due (ex-GST)" v={w.net_due} ccy={ccy} strong />
+              {/* Back charges netted off before GST reduce the taxable amount */}
+              {(d.deduction_lines || []).filter((dl) => dl.before_gst).map((dl, i) => (
+                <W key={`pre-${i}`} label={`Less back charge (before GST) — ${dl.label}`}
+                   v={-(dl.present ?? dl.cumulative)} ccy={ccy} neg />
+              ))}
+              {Number(w.deductions_pre_present) !== 0 &&
+                <W label="Taxable amount" v={w.taxable_due} ccy={ccy} strong />}
               <W label={`Output GST @ ${pct(c.gst_pct)}%`} v={w.gst}
                  ccy={ccy} />
               <W label="Total incl. GST" v={w.total} ccy={ccy} strong />
               {/* Back charges: GST-inclusive client contra, after GST */}
-              {(d.deduction_lines || []).map((dl, i) => (
+              {(d.deduction_lines || []).filter((dl) => !dl.before_gst).map((dl, i) => (
                 <W key={i} label={`Less back charge — ${dl.label}`}
                    v={-(dl.present ?? dl.cumulative)} ccy={ccy} neg />
               ))}

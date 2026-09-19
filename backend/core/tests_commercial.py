@@ -875,6 +875,48 @@ class ProgressClaimTests(TestCase):
                          round(float(w["total"]) - 112.52, 2))
         self.assertEqual(d["deduction_lines"][0]["label"], "Materials from store")
 
+    def test_a_back_charge_can_be_taken_before_gst(self):
+        """Some back charges are netted off the certified work itself, so
+        GST is charged on the reduced amount; the rest stay a GST-inclusive
+        contra after GST (owner 2026-09-19)."""
+        c = self._create()
+        self._value_pct(c["id"], {"A": "65", "B": "65"})
+        r = self.client.post(
+            f"/api/v1/claims/{c['id']}/deductions",
+            {"rows": [{"label": "Client-supplied cement",
+                       "cumulative_amount": "100", "before_gst": True},
+                      {"label": "Materials from store",
+                       "cumulative_amount": "50"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        d = self._detail(c["id"])
+        w = d["waterfall"]
+        self.assertEqual(float(w["deductions_pre_present"]), 100.0)
+        self.assertEqual(float(w["deductions_present"]), 50.0)
+        self.assertEqual(round(float(w["taxable_due"]), 2),
+                         round(float(w["net_due"]) - 100, 2))
+        self.assertEqual(round(float(w["gst"]), 2),
+                         round(float(w["taxable_due"]) * 8 / 100, 2))
+        self.assertEqual(round(float(w["total"]), 2),
+                         round(float(w["taxable_due"]) + float(w["gst"]), 2))
+        self.assertEqual(round(float(w["net_to_pay"]), 2),
+                         round(float(w["total"]) - 50, 2))
+        flags = {x["label"]: x["before_gst"] for x in d["deduction_lines"]}
+        self.assertEqual(flags, {"Client-supplied cement": True,
+                                 "Materials from store": False})
+        # the client's payment summary puts each on its side of GST
+        from . import commercial
+        from .models import ProgressClaim
+        labels = [row["label"] for row in commercial.claim_payment_summary(
+            ProgressClaim.objects.get(pk=c["id"]))]
+        gst_at = next(i for i, l in enumerate(labels) if l.startswith("GST"))
+        self.assertLess(labels.index("Less: back charge — Client-supplied cement"),
+                        gst_at)
+        self.assertLess(labels.index("Taxable amount"), gst_at)
+        self.assertGreater(labels.index("Less: back charge — Materials from store"),
+                           gst_at)
+        # the cumulative figures agree with the present ones on a first claim
+        self.assertEqual(float(w["taxable_cumulative"]), float(w["taxable_due"]))
+
     def test_ipa_and_invoice_pdfs_show_advance_and_deductions(self):
         from django.template.loader import render_to_string
 

@@ -663,7 +663,7 @@ def create_claim(project, data, actor):
         ClaimDeduction.objects.bulk_create([
             ClaimDeduction(claim=claim, label=d.label,
                            cumulative_amount=d.cumulative_amount,
-                           sort_order=d.sort_order)
+                           before_gst=d.before_gst, sort_order=d.sort_order)
             for d in previous.deductions.all()])
     audit("project", project.id, "CLAIM_CREATED", actor=actor,
           detail={"ref": claim.ref, "lines": len(new_items)})
@@ -724,6 +724,8 @@ def set_claim_deductions(claim, rows, actor):
         cleaned.append(ClaimDeduction(
             claim=claim, label=label,
             cumulative_amount=_dec(r.get("cumulative_amount")) or ZERO,
+            before_gst=str(r.get("before_gst") or "").lower()
+            in ("1", "true", "yes", "before"),
             sort_order=i))
     claim.deductions.all().delete()
     ClaimDeduction.objects.bulk_create(cleaned)
@@ -938,8 +940,9 @@ def _cum_value(basis, cum_pct, cum_qty, contract_amount, rate, sign):
     return (cum_pct or ZERO) / Decimal("100") * contract_amount
 
 
-def _deductions_to_date(claim):
-    """Every back charge raised on this claim or any earlier one.
+def _deductions_to_date(claim, before_gst=False):
+    """Every back charge raised on this claim or any earlier one, on one
+    side of GST (the latest claim carrying a label decides which side).
 
     Each claim restates the running deduction labels with their cumulative
     amounts, so the latest claim carrying a label holds its true figure —
@@ -952,9 +955,10 @@ def _deductions_to_date(claim):
         node = node.previous
     for c in reversed(chain):                     # oldest first
         for d in c.deductions.all():
-            seen[d.label.strip().lower()] = Decimal(
-                str(d.cumulative_amount or 0))
-    return sum(seen.values(), ZERO)
+            seen[d.label.strip().lower()] = (
+                Decimal(str(d.cumulative_amount or 0)), d.before_gst)
+    return sum((amt for amt, pre in seen.values() if pre == before_gst),
+               ZERO)
 
 
 def _claim_net(claim, _cache=None):
@@ -1188,27 +1192,38 @@ def claim_valuation(claim, _cache=None):
         for d in prev.deductions.all():
             prev_ded[d.label.strip().lower()] = Decimal(
                 str(d.cumulative_amount or 0))
+    # A back charge is either netted off the certified work BEFORE GST (it
+    # reduces the taxable amount) or taken AFTER GST as a GST-inclusive
+    # contra. Each line says which (owner 2026-09-19).
     deduction_lines = []
-    ded_cum = ded_present = ZERO
+    ded_cum = ded_present = ZERO          # after GST (the contra)
+    pre_cum = pre_present = ZERO          # before GST (off the taxable amount)
     for d in claim.deductions.all():
         cum = Decimal(str(d.cumulative_amount or 0))
         pv = prev_ded.get(d.label.strip().lower(), ZERO)
         deduction_lines.append({"id": d.id, "label": d.label, "previous": pv,
-                                "present": cum - pv, "cumulative": cum})
-        ded_cum += cum
-        ded_present += (cum - pv)
+                                "present": cum - pv, "cumulative": cum,
+                                "before_gst": d.before_gst})
+        if d.before_gst:
+            pre_cum += cum
+            pre_present += (cum - pv)
+        else:
+            ded_cum += cum
+            ded_present += (cum - pv)
 
     net_cumulative = _q(k_gross + advance_received - advance_recovered
                         + net_retention)               # N (certified, ex GST)
     previously = _claim_net(prev, _cache=_cache)                     # P
-    net_due = net_cumulative - previously                           # Q (taxable)
-    gst = _q(claim.gst_pct / Decimal("100") * net_due)              # R
-    total = net_due + gst                        # total with GST (present)
-    net_to_pay = total - ded_present             # less back-charge contra
+    net_due = net_cumulative - previously                           # Q
+    taxable_due = net_due - pre_present          # less pre-GST back charges
+    gst = _q(claim.gst_pct / Decimal("100") * taxable_due)          # R
+    total = taxable_due + gst                    # total with GST (present)
+    net_to_pay = total - ded_present             # less post-GST contra
     # Cumulative-to-date counterparts (for the 4-column IPA summary: the
     # "previous" column is the prior claim's cumulative, "present" = the delta).
-    gst_cumulative = _q(claim.gst_pct / Decimal("100") * net_cumulative)
-    total_cumulative = net_cumulative + gst_cumulative
+    taxable_cumulative = net_cumulative - _deductions_to_date(claim, True)
+    gst_cumulative = _q(claim.gst_pct / Decimal("100") * taxable_cumulative)
+    total_cumulative = taxable_cumulative + gst_cumulative
     # ...less EVERY back charge raised to date, not only the labels repeated
     # on this claim. A deduction convention where each claim restates the
     # running labels works until a claim drops one: NORTH JT IPA-03 carried a
@@ -1245,7 +1260,12 @@ def claim_valuation(claim, _cache=None):
             "net_retention": net_retention,
             "net_cumulative": net_cumulative,
             "previously_certified": previously,
-            "net_due": net_due, "gst": gst, "total": total,
+            "net_due": net_due,
+            "deductions_pre_present": pre_present,
+            "deductions_pre_cumulative": pre_cum,
+            "taxable_due": taxable_due,
+            "taxable_cumulative": taxable_cumulative,
+            "gst": gst, "total": total,
             "gst_cumulative": gst_cumulative,
             "total_cumulative": total_cumulative,
             "deductions_present": ded_present,
@@ -1455,13 +1475,24 @@ def claim_payment_summary(claim, dp=2):
             P("retention_released"))
     add("Total amount", revised, w["net_cumulative"], P("net_cumulative"),
         style="total")
+    # Back charges netted off before GST reduce the taxable amount.
+    pre = [d for d in val["deduction_lines"] if d["before_gst"]]
+    for d in pre:
+        add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
+            d["previous"], sign=-1)
+    if pre or w["taxable_cumulative"] != w["net_cumulative"]:
+        add("Taxable amount", revised, w["taxable_cumulative"],
+            P("taxable_cumulative") if wp and "taxable_cumulative" in wp
+            else P("net_cumulative"), style="total")
     add(f"GST @ {claim.gst_pct:.0f}%", contract_gst, w["gst_cumulative"],
         P("gst_cumulative"))
     add("Total with GST", revised + contract_gst, w["total_cumulative"],
         P("total_cumulative"), style="total")
-    # Back charges are a GST-inclusive client contra, deducted after GST — not
+    # The rest are a GST-inclusive client contra, deducted after GST — not
     # part of the certified claim above.
     for d in val["deduction_lines"]:
+        if d["before_gst"]:
+            continue
         add(f"Less: back charge — {d['label']}", ZERO, d["cumulative"],
             d["previous"], sign=-1)
     add("Net amount to pay", revised + contract_gst, w["net_to_pay_cumulative"],
