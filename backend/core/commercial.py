@@ -1171,13 +1171,16 @@ def claim_valuation(claim, _cache=None):
             claim.recovery_pct / Decimal("100") * k_gross, advance_total)
     advance_recovered = _q(advance_recovered)
     # Retention held (M1) — the rate on work + on-site material + variations
-    # (never on off-site material). The QS may pin the exact cumulative held
-    # amount with an override before the claim is certified (owner 2026-07-27).
+    # (never on off-site material), net of the back charges taken before GST:
+    # the QS's rule is retention on the work certified after those deductions
+    # (owner 2026-09-20, MXR). The QS may pin the exact cumulative held amount
+    # with an override before the claim is certified (owner 2026-07-27).
+    pre_to_date = _deductions_to_date(claim, True)
     if claim.retention_held_override is not None:
         retention_held = _q(claim.retention_held_override)
     else:
         retention_held = _q(claim.retention_pct / Decimal("100")
-                            * (k1 + k2 + k4))
+                            * (k1 + k2 + k4 - pre_to_date))
     retention_released = Decimal(str(claim.retention_released or 0))  # M2
     net_retention = retention_released - retention_held              # M
 
@@ -1216,7 +1219,6 @@ def claim_valuation(claim, _cache=None):
     # retention → net certified (owner 2026-09-19). Retention is still taken
     # on the work done. "Previously certified" is the prior claim's net on
     # the same definition, so the amount now due is unchanged by the layout.
-    pre_to_date = _deductions_to_date(claim, True)
     net_cumulative = _q(k_gross + advance_received - advance_recovered
                         - pre_to_date + net_retention)  # N (certified, ex GST)
     previously = _claim_net(prev, _cache=_cache)                     # P

@@ -898,8 +898,9 @@ class ProgressClaimTests(TestCase):
                          round(float(w["k_gross"]) - float(w["advance_recovered"])
                                - float(w["retention_held"]) - 100, 2))
         self.assertEqual(float(w["taxable_due"]), float(w["net_due"]))
+        # retention is on the work certified net of the before-GST charges
         self.assertEqual(round(float(w["retention_held"]), 3),
-                         round(float(w["k_gross"]) * 10 / 100, 3))
+                         round((float(w["k_gross"]) - 100) * 10 / 100, 3))
         self.assertEqual(round(float(w["gst"]), 2),
                          round(float(w["net_due"]) * 8 / 100, 2))
         self.assertEqual(round(float(w["total"]), 2),
