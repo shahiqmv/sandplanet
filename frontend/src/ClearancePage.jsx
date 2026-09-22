@@ -18,6 +18,20 @@ export default function ClearancePage({ me, onOpenIpr }) {
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
   const [busy, setBusy] = useState(false);
+  // One box narrows all three lists — by shipment, order, supplier, mode,
+  // status, IRN, vessel or B/L — because the page grew past what the eye
+  // can scan (owner 2026-09-22). Words are ANDed.
+  const [q, setQ] = useState("");
+  const words = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (r) => {
+    if (!words.length) return true;
+    const h = [r.shipment_ref, r.supplier, r.mode, r.status, r.irn_ref,
+               r.vessel_flight, r.bl_no, r.container_awb,
+               ...(r.orders || []).map((o) => o.ref)]
+      .filter(Boolean).join(" ").toLowerCase().replace(/_/g, " ");
+    return words.every((w) => h.includes(w));
+  };
+  const narrow = (rows) => (rows || []).filter(hit);
 
   const load = () => api("/clearance/setup").then((d) => {
     setData(d);
@@ -183,6 +197,19 @@ export default function ClearancePage({ me, onOpenIpr }) {
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 
       <div style={{ display: "flex", gap: 10, marginTop: 12,
+                    flexWrap: "wrap", alignItems: "center" }}>
+        <input value={q} onChange={(e) => setQ(e.target.value)}
+               placeholder="Search — shipment, IPR, supplier, status, vessel, B/L…"
+               style={{ ...inputStyle, width: 340 }} />
+        {words.length > 0 && (
+          <span style={{ fontSize: 12, color: "#5a6b78" }}>
+            {narrow(data.at_port).length + narrow(data.incoming).length
+             + narrow(data.to_receive).length} of{" "}
+            {data.at_port.length + data.incoming.length + data.to_receive.length}
+            {" "}shipments</span>)}
+      </div>
+
+      <div style={{ display: "flex", gap: 10, marginTop: 12,
                     flexWrap: "wrap" }}>
         {tile("at sea", data.tiles.at_sea, false)}
         {tile("arriving ≤ 7 days", data.tiles.arriving_week, true)}
@@ -192,33 +219,34 @@ export default function ClearancePage({ me, onOpenIpr }) {
 
       {section("At the port — clear these now",
                "days at port in red past 5 — demurrage territory")}
-      {data.at_port.length === 0
+      {narrow(data.at_port).length === 0
         ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
-            Nothing at the port.</p>
+            {words.length ? "No match at the port." : "Nothing at the port."}</p>
         : <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse",
                             fontSize: 13 }}>
               {head("Arrived · days")}
-              <tbody>{shipRows(data.at_port, true)}</tbody>
+              <tbody>{shipRows(narrow(data.at_port), true)}</tbody>
             </table>
           </div>}
 
       {section("Arriving", "get documents in and shared before the vessel")}
-      {data.incoming.length === 0
+      {narrow(data.incoming).length === 0
         ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
-            Nothing on the water.</p>
+            {words.length ? "No match on the water." : "Nothing on the water."}</p>
         : <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse",
                             fontSize: 13 }}>
               {head("ETA")}
-              <tbody>{shipRows(data.incoming, false)}</tbody>
+              <tbody>{shipRows(narrow(data.incoming), false)}</tbody>
             </table>
           </div>}
 
       {section("Cleared — waiting to enter the store")}
-      {data.to_receive.length === 0
+      {narrow(data.to_receive).length === 0
         ? <p style={{ color: "#5a6b78", fontSize: 13 }}>
-            Nothing waiting — every cleared shipment is counted in.</p>
+            {words.length ? "No match waiting to be received."
+                          : "Nothing waiting — every cleared shipment is counted in."}</p>
         : <table style={{ borderCollapse: "collapse", fontSize: 13 }}>
             <thead><tr>
               <th style={th}>Shipment</th><th style={th}>Supplier</th>
@@ -226,7 +254,7 @@ export default function ClearancePage({ me, onOpenIpr }) {
               <th style={th}>Next action</th><th style={th} />
             </tr></thead>
             <tbody>
-              {data.to_receive.map((r, i) => (
+              {narrow(data.to_receive).map((r, i) => (
                 <tr key={i} onClick={() => openRow(r)}
                     style={{ cursor: onOpenIpr ? "pointer" : "default" }}>
                   <td style={{ ...td, fontWeight: 600,
