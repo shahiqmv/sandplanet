@@ -11,6 +11,7 @@ const VIA = [["EMAIL", "Email"], ["PHONE", "Phone"], ["WHATSAPP", "WhatsApp"],
              ["VISIT", "Visit"], ["OTHER", "Other"]];
 const TABS = [["overview", "Overview"], ["pricing", "Pricing sheet"],
               ["quotation", "Quotation"], ["order", "Order"], ["supply", "Supply"],
+              ["deliveries", "Deliveries"], ["invoices", "Invoices"],
               ["activity", "Activity"]];
 
 const IPR_STATUS = { DRAFT: "draft — with Purchasing", SUBMITTED: "awaiting award",
@@ -458,7 +459,7 @@ function Order({ o, onSaved }) {
         <div className="t-kv"><span>Recorded</span><b>{fmtDateTime(o.won_at)} by {o.won_by}</b></div>
         {o.po_file && <a className="t-link" href={o.po_file} target="_blank" rel="noreferrer">Customer's PO copy</a>}
         <p className="t-note" style={{ marginTop: 12 }}>
-          Next: raise the import orders on the <b>Supply</b> tab. The delivery note arrives with the next release.
+          Next: raise the import orders on the <b>Supply</b> tab, deliver on <b>Deliveries</b>, invoice on <b>Invoices</b>.
         </p>
       </div>
     );
@@ -607,8 +608,244 @@ function Supply({ o }) {
       )}
       {Number(sup.lots_on_hand) > 0 && (
         <p className="t-note" style={{ marginTop: 12 }}>
-          {fmtQty(sup.lots_on_hand)} units are in the HO store reserved to {o.so_ref}. The delivery note that takes them to the customer's boat arrives with the next release.
+          {fmtQty(sup.lots_on_hand)} units are in the HO store reserved to {o.so_ref}. Raise a delivery note on the Deliveries tab to take them to the customer's boat.
         </p>
+      )}
+    </div>
+  );
+}
+
+// ---- deliveries ----------------------------------------------------------------------
+function DeliveryForm({ o, deliverable, onSaved, onCancel }) {
+  const [d, setD] = useState({ delivery_date: new Date().toISOString().slice(0, 10),
+                               vessel: "", jetty: "Malé harbour", receiver: "", notes: "" });
+  const [qty, setQty] = useState(() => Object.fromEntries(deliverable.map((l) => [l.id, ""])));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api(`/trading/orders/${o.id}/deliveries`, { method: "POST", body: {
+        ...d, lines: Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([k, v]) => ({ line_id: Number(k), qty: v })) } }));
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={save} style={{ ...card, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>New delivery note</h3>
+      <div className="t-grid">
+        <label className="t-field"><span>Delivery date</span>
+          <input style={inputStyle} type="date" value={d.delivery_date} onChange={set("delivery_date")} /></label>
+        <label className="t-field"><span>Customer's vessel</span>
+          <input style={inputStyle} value={d.vessel} onChange={set("vessel")} placeholder={o.customer_detail?.vessels || "boat name"} /></label>
+        <label className="t-field"><span>Jetty</span>
+          <input style={inputStyle} value={d.jetty} onChange={set("jetty")} /></label>
+        <label className="t-field"><span>Received on board by</span>
+          <input style={inputStyle} value={d.receiver} onChange={set("receiver")} placeholder="captain / crew name" /></label>
+        <label className="t-field t-field-wide"><span>Notes</span>
+          <input style={inputStyle} value={d.notes} onChange={set("notes")} /></label>
+      </div>
+      <table className="t-table">
+        <thead><tr><th style={th}>Line</th><th style={{ ...th, textAlign: "right" }}>Ordered</th>
+          <th style={{ ...th, textAlign: "right" }}>On notes</th><th style={{ ...th, textAlign: "right" }}>In store</th>
+          <th style={{ ...th, textAlign: "right" }}>Deliver now</th></tr></thead>
+        <tbody>
+          {deliverable.map((l) => (
+            <tr key={l.id}>
+              <td style={td}>{l.section && <div className="t-sub">{l.section}</div>}{l.description}</td>
+              <td style={{ ...td, textAlign: "right" }}>{fmtQty(l.qty)} {l.uom}</td>
+              <td style={{ ...td, textAlign: "right" }}>{fmtQty(l.delivered)}</td>
+              <td style={{ ...td, textAlign: "right" }}>{l.needs_stock ? fmtQty(l.on_hand) : <span className="t-sub">n/a</span>}</td>
+              <td style={{ ...td, textAlign: "right" }}>
+                <Num value={qty[l.id]} width={90} disabled={Number(l.can_deliver) <= 0}
+                     placeholder={`≤ ${fmtQty(l.can_deliver)}`} onChange={(v) => setQty({ ...qty, [l.id]: v })} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <Btn type="submit" disabled={busy || !Object.values(qty).some((v) => Number(v) > 0)}>{busy ? "Saving…" : "Create delivery note"}</Btn>
+        <Btn type="button" variant="secondary" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
+const DN_TONE = { DRAFT: "warn", DESPATCHED: "info", RECEIVED: "ok", CANCELLED: "alert" };
+
+function Deliveries({ o }) {
+  const [data, setData] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState(null);
+  const file = useRef({});
+  function load() { return api(`/trading/orders/${o.id}/deliveries`).then(setData).catch((e) => setError(e.message)); }
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [o.id]);
+  async function act(dn, action) {
+    if (action === "despatch" && !window.confirm(`Despatch ${dn.ref}? The goods leave the store and cost of sales is posted.`)) return;
+    try { await api(`/trading/orders/${o.id}/deliveries/${dn.id}`, { method: "POST", body: { action } }); load(); }
+    catch (e) { setError(e.message); }
+  }
+  async function receive(dn) {
+    const fd = new FormData();
+    const f = file.current[dn.id]?.files?.[0];
+    if (f) fd.append("signed_copy", f);
+    try { await apiUpload(`/trading/orders/${o.id}/deliveries/${dn.id}/receive`, fd); load(); }
+    catch (e) { setError(e.message); }
+  }
+  if (o.stage !== "WON") return <p className="t-empty">Deliveries are made against a won order.</p>;
+  if (!data) return error ? <p className="t-note t-note-red">{error}</p> : <p>Loading…</p>;
+  const canNew = o.can_manage && data.deliverable.some((l) => Number(l.can_deliver) > 0);
+  return (
+    <div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      {creating ? <DeliveryForm o={o} deliverable={data.deliverable} onSaved={() => { setCreating(false); load(); }} onCancel={() => setCreating(false)} />
+        : canNew && <Btn onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>+ New delivery note</Btn>}
+      {data.deliveries.length === 0 ? <p className="t-empty">Nothing delivered yet. A delivery note takes goods from the store to the customer's boat; the invoice follows the despatch.</p> : (
+        <table className="t-table">
+          <thead><tr><th style={th}>Note</th><th style={th}>Status</th><th style={th}>Date</th><th style={th}>Vessel · receiver</th>
+            <th style={th}>Lines</th><th style={{ ...th, textAlign: "right" }}>Cost of sale MVR</th><th style={th}>Invoice</th><th style={th}></th></tr></thead>
+          <tbody>
+            {data.deliveries.map((dn) => (
+              <tr key={dn.id}>
+                <td style={td}><b>{dn.ref}</b></td>
+                <td style={td}><Chip tone={DN_TONE[dn.status]}>{dn.status.toLowerCase()}</Chip></td>
+                <td style={td}>{fmtDate(dn.delivery_date)}</td>
+                <td style={td}>{dn.vessel || <span className="t-sub">vessel?</span>}<div className="t-sub">{dn.receiver}</div></td>
+                <td style={td}>{dn.lines.map((l) => `${fmtQty(l.qty)} ${l.uom} ${l.description}`).join("; ")}</td>
+                <td style={{ ...td, textAlign: "right" }}>{Number(dn.cogs_mvr) ? fmtMoney(dn.cogs_mvr) : ""}</td>
+                <td style={td}>{dn.invoice || <span className="t-sub">—</span>}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  <a className="t-link" href={`/api/v1/trading/orders/${o.id}/deliveries/${dn.id}/pdf`} target="_blank" rel="noreferrer">PDF</a>
+                  {o.can_manage && dn.status === "DRAFT" && <> · <button className="t-link" onClick={() => act(dn, "despatch")}>Despatch</button>
+                    · <button className="t-link" onClick={() => act(dn, "cancel")}>Cancel</button></>}
+                  {o.can_manage && dn.status === "DESPATCHED" && <>
+                    <div style={{ marginTop: 4 }}><input type="file" accept=".pdf,image/*" ref={(el) => { file.current[dn.id] = el; }} style={{ fontSize: 12 }} />
+                    <button className="t-link" onClick={() => receive(dn)}>Mark received</button></div></>}
+                  {dn.signed_copy && <> · <a className="t-link" href={dn.signed_copy} target="_blank" rel="noreferrer">Signed copy</a></>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ---- invoices ------------------------------------------------------------------------
+const INV_TONE = { DRAFT: "warn", ISSUED: "info", PAID: "ok", VOID: "alert" };
+
+function InvoiceForm({ o, data, onSaved, onCancel }) {
+  const [picked, setPicked] = useState(new Set(data.invoiceable.map((d) => d.id)));
+  const [freight, setFreight] = useState(!data.freight_billed && !!data.freight_sell);
+  const [charges, setCharges] = useState([]);
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      onSaved(await api(`/trading/orders/${o.id}/invoices`, { method: "POST", body: {
+        delivery_ids: [...picked], include_freight: freight, charges, invoice_date: date } }));
+    } catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={save} style={{ ...card, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>New tax invoice</h3>
+      <label className="t-field" style={{ maxWidth: 200 }}><span>Invoice date</span>
+        <input style={inputStyle} type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+      <p className="t-sub">Deliveries to invoice, at the quoted prices:</p>
+      {data.invoiceable.map((dn) => (
+        <label key={dn.id} className="t-check">
+          <input type="checkbox" checked={picked.has(dn.id)} onChange={() => toggle(dn.id)} />
+          <b>{dn.ref}</b> · {fmtDate(dn.delivery_date)} · {dn.lines.map((l) => `${fmtQty(l.qty)} ${l.uom} ${l.description}`).join("; ")}
+        </label>
+      ))}
+      {data.freight_sell && (
+        <label className="t-check" style={{ marginTop: 8 }}>
+          <input type="checkbox" checked={freight} disabled={data.freight_billed} onChange={(e) => setFreight(e.target.checked)} />
+          Bill the quoted freight ({o.currency} {fmtMoney(data.freight_sell)}){data.freight_billed ? " — already billed" : ""}
+        </label>
+      )}
+      <div style={{ marginTop: 8 }}>
+        <span className="t-sub">Extra charges on this invoice</span>
+        {charges.map((c, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <input style={{ ...inputStyle, flex: 1 }} placeholder="label" value={c.label}
+                   onChange={(e) => setCharges(charges.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+            <Num value={c.amount} width={120} onChange={(v) => setCharges(charges.map((x, j) => (j === i ? { ...x, amount: v } : x)))} />
+            <button type="button" className="t-link" onClick={() => setCharges(charges.filter((_, j) => j !== i))}>×</button>
+          </div>
+        ))}
+        <button type="button" className="t-link" style={{ marginTop: 4 }} onClick={() => setCharges([...charges, { label: "", amount: "" }])}>+ charge</button>
+      </div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <Btn type="submit" disabled={busy || picked.size === 0}>{busy ? "Saving…" : "Create draft invoice"}</Btn>
+        <Btn type="button" variant="secondary" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
+function Invoices({ o }) {
+  const [data, setData] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState(null);
+  function load() { return api(`/trading/orders/${o.id}/invoices`).then(setData).catch((e) => setError(e.message)); }
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [o.id]);
+  async function act(inv, action, extra = {}) {
+    try { await api(`/trading/orders/${o.id}/invoices/${inv.id}`, { method: "POST", body: { action, ...extra } }); load(); }
+    catch (e) { setError(e.message); }
+  }
+  if (o.stage !== "WON") return <p className="t-empty">Invoices are raised against a won order.</p>;
+  if (!data) return error ? <p className="t-note t-note-red">{error}</p> : <p>Loading…</p>;
+  const m = data.money;
+  return (
+    <div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <div className="t-tiles" style={{ marginTop: 0 }}>
+        {[["Invoiced", m.invoiced], ["Credited", m.credited], ["Received", m.received], ["Outstanding", m.outstanding]].map(([l, v]) => (
+          <div key={l} className="t-tile t-tile-soon" style={{ opacity: 1, cursor: "default" }}>
+            <span className="t-tile-n" style={{ fontSize: 20 }}>{o.currency} {fmtMoney(v)}</span><span className="t-tile-l">{l}</span>
+          </div>
+        ))}
+      </div>
+      {creating ? <InvoiceForm o={o} data={data} onSaved={() => { setCreating(false); load(); }} onCancel={() => setCreating(false)} />
+        : o.can_manage && data.invoiceable.length > 0 && <Btn onClick={() => setCreating(true)} style={{ marginBottom: 12 }}>+ Invoice {data.invoiceable.length} despatched deliver{data.invoiceable.length === 1 ? "y" : "ies"}</Btn>}
+      {data.invoices.length === 0 ? <p className="t-empty">No invoice yet. Despatch a delivery note first; the invoice follows it.</p> : (
+        <table className="t-table">
+          <thead><tr><th style={th}>Invoice</th><th style={th}>Status</th><th style={th}>Date · due</th><th style={th}>Deliveries</th>
+            <th style={{ ...th, textAlign: "right" }}>Total</th><th style={{ ...th, textAlign: "right" }}>Outstanding</th><th style={th}></th></tr></thead>
+          <tbody>
+            {data.invoices.map((inv) => (
+              <tr key={inv.id}>
+                <td style={td}><b>{inv.ref}</b>{inv.credit_notes.map((c) => <div key={c.id} className="t-sub">{c.ref} −{fmtMoney(c.amount)} · {c.reason}</div>)}
+                  {inv.receipts.map((r, i) => <div key={i} className="t-sub">{r.receipt_no} {fmtDate(r.date)} {fmtMoney(r.amount)}</div>)}</td>
+                <td style={td}><Chip tone={INV_TONE[inv.status]}>{inv.status.toLowerCase()}</Chip>{inv.void_reason && <div className="t-sub">{inv.void_reason}</div>}</td>
+                <td style={td}>{fmtDate(inv.invoice_date)}<div className="t-sub">due {fmtDate(inv.due_date)}</div></td>
+                <td style={td}>{inv.deliveries.join(", ")}{inv.includes_freight ? " + freight" : ""}</td>
+                <td style={{ ...td, textAlign: "right" }}>{inv.currency} {fmtMoney(inv.total)}<div className="t-sub">GST {fmtMoney(inv.gst)}</div></td>
+                <td style={{ ...td, textAlign: "right" }}>{inv.status === "VOID" ? "" : fmtMoney(inv.outstanding)}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  <a className="t-link" href={`/api/v1/trading/orders/${o.id}/invoices/${inv.id}/pdf`} target="_blank" rel="noreferrer">{inv.status === "DRAFT" ? "Draft PDF" : "PDF"}</a>
+                  {inv.status === "DRAFT" && o.can_authorise && <> · <button className="t-link" onClick={() => act(inv, "issue")}>Issue</button></>}
+                  {inv.status !== "VOID" && o.can_manage && <> · <button className="t-link" onClick={() => { const r = window.prompt(`Void ${inv.ref} — why?`); if (r) act(inv, "void", { reason: r }); }}>Void</button></>}
+                  {["ISSUED", "PAID"].includes(inv.status) && o.can_authorise && <> · <button className="t-link" onClick={() => {
+                    const a = window.prompt("Credit note amount (incl. GST):"); if (!a) return;
+                    const r = window.prompt("Reason:"); if (!r) return; act(inv, "credit", { amount: a, reason: r }); }}>Credit note</button></>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
@@ -699,6 +936,8 @@ export default function OrderPage({ id, back, initialTab }) {
       {tab === "quotation" && <Quotation o={o} onSaved={setO} />}
       {tab === "order" && <Order o={o} onSaved={setO} />}
       {tab === "supply" && <Supply o={o} />}
+      {tab === "deliveries" && <Deliveries o={o} />}
+      {tab === "invoices" && <Invoices o={o} />}
       {tab === "activity" && <Activity o={o} />}
       <div className="t-sub" style={{ marginTop: 16 }}>
         {o.n_lines} line{o.n_lines === 1 ? "" : "s"} · quoted {o.currency} {fmtMoney(o.total)}

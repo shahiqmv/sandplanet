@@ -1481,6 +1481,134 @@ class TradingQuotation(models.Model):
         return base if self.revision == 1 else f"{base}/R{self.revision}"
 
 
+def trading_dn_path(instance, filename):
+    return f"trading/dn/{instance.order.ref}/{filename}"
+
+
+def trading_inv_path(instance, filename):
+    return f"trading/invoices/{instance.order.ref}/{filename}"
+
+
+class TradingDelivery(models.Model):
+    """A delivery note (TDN series): goods leaving the HO store for the
+    customer's vessel at Malé harbour (TRADING_BUILD_BRIEF.md §4). Despatch
+    draws the lots reserved to the order and posts cost of sales at landed
+    cost; the signed copy comes back as proof; the invoice follows despatch."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT"
+        DESPATCHED = "DESPATCHED"
+        RECEIVED = "RECEIVED"
+        CANCELLED = "CANCELLED"
+
+    order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
+                              related_name="deliveries")
+    ref = models.CharField(max_length=12, unique=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    delivery_date = models.DateField()
+    vessel = models.TextField(blank=True)                    # the customer's boat
+    jetty = models.TextField(blank=True, default="Malé harbour")
+    receiver = models.TextField(blank=True)                  # who signed on board
+    notes = models.TextField(blank=True)
+    signed_copy = models.FileField(upload_to=trading_dn_path, null=True, blank=True)
+    pdf = models.FileField(upload_to=trading_dn_path, null=True, blank=True)
+    invoice = models.ForeignKey("TradingInvoice", on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="deliveries")
+    cogs_mvr = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    posting_ids = models.JSONField(default=list, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    despatched_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                      blank=True, related_name="+")
+    despatched_at = models.DateTimeField(null=True, blank=True)
+    received_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def is_live(self):
+        return self.status in ("DESPATCHED", "RECEIVED")
+
+
+class TradingDeliveryLine(models.Model):
+    delivery = models.ForeignKey(TradingDelivery, on_delete=models.CASCADE,
+                                 related_name="lines")
+    line = models.ForeignKey(TradingLine, on_delete=models.PROTECT,
+                             related_name="delivery_lines")
+    qty = models.DecimalField(max_digits=12, decimal_places=2)
+    # cost of sale per unit in MVR (weighted landed cost of the lots drawn);
+    # NULL for a service line that never sat in the store
+    unit_cost_mvr = models.DecimalField(max_digits=16, decimal_places=4,
+                                        null=True, blank=True)
+    lots = models.JSONField(default=list, blank=True)   # [{lot, qty, unit_landed}]
+
+    class Meta:
+        ordering = ["id"]
+
+
+class TradingInvoice(models.Model):
+    """A tax invoice (TSI series) for one or more despatched deliveries,
+    at the quoted prices, with output GST unless the customer is exempt
+    (blueprint §7.5: invoices follow deliveries; nothing is invoiced twice)."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT"
+        ISSUED = "ISSUED"
+        PAID = "PAID"
+        VOID = "VOID"
+
+    order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
+                              related_name="invoices")
+    ref = models.CharField(max_length=12, unique=True)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.DRAFT)
+    invoice_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    includes_freight = models.BooleanField(default=False)
+    charges = models.JSONField(default=list, blank=True)    # [{label, amount}]
+    snapshot = models.JSONField(default=dict)
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pdf = models.FileField(upload_to=trading_inv_path, null=True, blank=True)
+    posting_ids = models.JSONField(default=list, blank=True)
+    void_reason = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    issued_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def is_live(self):
+        return self.status in ("ISSUED", "PAID")
+
+
+class TradingCreditNote(models.Model):
+    """Reduces what is owed on an issued invoice — a return, a shortfall
+    agreed, a settlement short-close (blueprint §7.6)."""
+
+    invoice = models.ForeignKey(TradingInvoice, on_delete=models.PROTECT,
+                                related_name="credit_notes")
+    ref = models.CharField(max_length=12, unique=True)
+    amount = models.DecimalField(max_digits=14, decimal_places=2)   # gross, incl. GST
+    gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    reason = models.TextField()
+    posting_ids = models.JSONField(default=list, blank=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    issued_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
 class ImportOrder(models.Model):
     """IPR typed header (§5.10.4) — one row per IPR document. The order is
     placed in the supplier's currency; a manually agreed exchange rate (D4)
@@ -4959,6 +5087,47 @@ class ClientReceipt(models.Model):
         return f"{self.project.code} receipt {self.amount} {self.currency}"
 
 
+class TradingReceipt(models.Model):
+    """Money in from a trading customer, on the company's shared official
+    receipt series (OR-nnnn), allocated across that customer's invoices
+    oldest-first (blueprint §7.6). Its own table because the project
+    receipt is keyed to a site; the number and the printed receipt are the
+    same."""
+
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="receipts")
+    receipt_no = models.CharField(max_length=20, unique=True)
+    receipt_date = models.DateField()
+    method = models.CharField(max_length=8, choices=OfficialReceipt.Method.choices,
+                              default="TT")
+    reference = models.CharField(max_length=120, blank=True)
+    bank_account = models.ForeignKey(CompanyBankAccount, on_delete=models.PROTECT,
+                                     null=True, blank=True, related_name="+")
+    currency = models.CharField(max_length=3, default="MVR")
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-receipt_date", "-id"]
+
+    @property
+    def total(self):
+        return sum((l.amount for l in self.lines.all()), Decimal("0"))
+
+
+class TradingReceiptLine(models.Model):
+    receipt = models.ForeignKey(TradingReceipt, on_delete=models.CASCADE,
+                                related_name="lines")
+    invoice = models.ForeignKey(TradingInvoice, on_delete=models.PROTECT,
+                                related_name="receipts")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
+
+    class Meta:
+        ordering = ["id"]
+
+
 class ManualInvoice(models.Model):
     """A client tax invoice recorded directly in Planet, NOT derived from a
     progress claim — so a mid-flight project can be tracked without rebuilding
@@ -5115,6 +5284,7 @@ class CostPosting(models.Model):
         FX = "FX"             # Phase 1B
         STOCK_ADJ = "STOCK_ADJ"      # Phase 1B
         SUBCONTRACT = "SUBCONTRACT"  # subcontractor valuations (SVC)
+        SALE = "SALE"                # trading revenue / output GST / credit notes
 
     class Book(models.TextChoices):
         PROJECT = "PROJECT"

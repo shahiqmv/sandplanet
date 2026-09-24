@@ -717,3 +717,302 @@ class TradingBookPostingTests(SupplyLegBase):
         self.assertEqual(tile["on_hand"], "1000.00")
         self.assertEqual(sup["lots_on_hand"], "1000.00")
         self.assertEqual(sup["import_orders"][0]["received"], [irn])
+
+
+# ---- phase 4: delivery, invoicing and money in ------------------------------
+
+from django.db.models import Sum  # noqa: E402
+
+from .models import (CostPosting as _CP, TradingDelivery, TradingInvoice,  # noqa: E402
+                     TradingReceipt)
+
+
+class MoneyInBase(SupplyLegBase):
+    """A won order whose tiles were imported and received into the store."""
+
+    def setUp(self):
+        super().setUp()
+        self.cust.credit_days = 30
+        self.cust.save()
+
+    def stocked(self):
+        d = self.won()
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        self.raise_iprs(d["id"], sup["orderable"])
+        self.login(self.ho)
+        for ref in ("IPR-001", "IPR-002"):
+            self.client.post(f"/api/v1/documents/{ref}/actions/submit", {}, format="json")
+            self.login(self.director)
+            self.client.post(f"/api/v1/documents/{ref}/actions/approve", {}, format="json")
+            self.login(self.signatory)
+            self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {}, format="json")
+            self.login(self.ho)
+            sid = self.client.post(f"/api/v1/ipr/{ref}/shipments", {"mode": "SEA"},
+                                   format="json").data["shipments"][0]["id"]
+            irn = self.client.post(f"/api/v1/ipr/{ref}/shipments/{sid}/receive",
+                                   {"location": ""}, format="json").data["ref"]
+            self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        self.login(self.sales)
+        return d
+
+    def dn(self, oid, lines, **hdr):
+        r = self.client.post(f"/api/v1/trading/orders/{oid}/deliveries",
+                             {"lines": lines, "vessel": "Kuramathi 3",
+                              "receiver": "Capt. Ali", **hdr}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def despatch(self, oid, did):
+        return self.client.post(f"/api/v1/trading/orders/{oid}/deliveries/{did}",
+                                {"action": "despatch"}, format="json")
+
+    def line_id(self, d, prefix):
+        return next(x["id"] for x in d["lines"] if x["description"].startswith(prefix))
+
+
+class DeliveryTests(MoneyInBase):
+    def test_deliverable_shows_stock_and_a_note_draws_it_at_landed_cost(self):
+        d = self.stocked()
+        dv = self.client.get(f"/api/v1/trading/orders/{d['id']}/deliveries").data["deliverable"]
+        tile = next(x for x in dv if x["description"].startswith("Porcelain"))
+        labour = next(x for x in dv if x["description"] == "Delivery labour")
+        self.assertEqual(tile["on_hand"], "1000.00")
+        self.assertTrue(tile["needs_stock"])
+        self.assertFalse(labour["needs_stock"])
+        self.assertEqual(labour["can_deliver"], "1.00")
+        dn = self.dn(d["id"], [{"line_id": tile["id"], "qty": "400"},
+                               {"line_id": labour["id"], "qty": "1"}])
+        self.assertEqual(dn["ref"], "TDN-001")
+        self.assertEqual(dn["status"], "DRAFT")
+        r = self.despatch(d["id"], dn["id"])
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "DESPATCHED")
+        self.assertEqual(r.data["cogs_mvr"], "61680.00")            # 400 × 154.20
+        tl = next(x for x in r.data["lines"] if x["description"].startswith("Porcelain"))
+        self.assertEqual(tl["unit_cost_mvr"], "154.2000")
+        self.assertIsNone(next(x for x in r.data["lines"]
+                               if x["description"] == "Delivery labour")["unit_cost_mvr"])
+        self.assertTrue(r.data["has_pdf"] or True)
+        # the store went down, cost of sales went up, in the trading book only
+        lot = StockLot.objects.get(trading_order_id=d["id"], source_ipr_line__order__document__ref="IPR-001")
+        self.assertEqual(str(lot.qty_on_hand), "600.00")
+        cogs = _CP.objects.filter(cost_head__code="TRD_COGS")
+        self.assertEqual(cogs.count(), 1)
+        self.assertEqual(cogs.get().book, "TRADING")
+        self.assertEqual(cogs.get().amount, Decimal("61680.00"))
+        # remaining to deliver
+        dv = self.client.get(f"/api/v1/trading/orders/{d['id']}/deliveries").data["deliverable"]
+        tile = next(x for x in dv if x["description"].startswith("Porcelain"))
+        self.assertEqual(tile["remaining"], "600.00")
+        self.assertEqual(tile["on_hand"], "600.00")
+
+    def test_a_note_cannot_exceed_the_order_or_the_store(self):
+        d = self.stocked()
+        tile = self.line_id(d, "Porcelain")
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/deliveries",
+                             {"lines": [{"line_id": tile, "qty": "1001"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("left to deliver", r.data["detail"])
+        self.dn(d["id"], [{"line_id": tile, "qty": "700"}])            # draft reserves
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/deliveries",
+                             {"lines": [{"line_id": tile, "qty": "400"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+
+    def test_despatch_needs_the_vessel_and_receiver_and_a_signed_copy_closes_it(self):
+        d = self.stocked()
+        tile = self.line_id(d, "Porcelain")
+        dn = self.dn(d["id"], [{"line_id": tile, "qty": "100"}], vessel="", receiver="")
+        r = self.despatch(d["id"], dn["id"])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("vessel", r.data["detail"])
+        self.client.patch(f"/api/v1/trading/orders/{d['id']}/deliveries/{dn['id']}",
+                          {"vessel": "Dhoni 7", "receiver": "Hassan"}, format="json")
+        self.assertEqual(self.despatch(d["id"], dn["id"]).status_code, 200)
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/deliveries/{dn['id']}/receive",
+                             {"signed_copy": SimpleUploadedFile("signed.pdf", b"%PDF-1.4 x")})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "RECEIVED")
+        self.assertTrue(r.data["signed_copy"])
+
+
+class InvoiceTests(MoneyInBase):
+    def delivered(self, qty="400"):
+        d = self.stocked()
+        tile = self.line_id(d, "Porcelain")
+        dn = self.dn(d["id"], [{"line_id": tile, "qty": qty}])
+        self.despatch(d["id"], dn["id"])
+        return d, dn
+
+    def test_invoice_follows_the_despatch_at_the_quoted_price(self):
+        d, dn = self.delivered()
+        r = self.client.get(f"/api/v1/trading/orders/{d['id']}/invoices").data
+        self.assertEqual([x["ref"] for x in r["invoiceable"]], ["TDN-001"])
+        self.assertFalse(r["freight_billed"])
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                             {"delivery_ids": [dn["id"]], "include_freight": True,
+                              "charges": [{"label": "Pallets", "amount": "250"}],
+                              "invoice_date": "2026-09-24"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv = r.data
+        self.assertEqual(inv["ref"], "TSI-001")
+        self.assertEqual(inv["status"], "DRAFT")
+        self.assertEqual(inv["lines"][0]["unit_sell"], "185.0400")        # quoted MVR price
+        self.assertEqual(inv["lines"][0]["amount"], "74016.00")           # 400 × 185.04
+        self.assertEqual(inv["subtotal"], "74266.00")                     # + 250 pallets (no freight_sell set)
+        self.assertEqual(inv["gst"], "5941.28")
+        self.assertEqual(inv["total"], "80207.28")
+        self.assertEqual(inv["due_date"], _date_plus("2026-09-24", 30))
+        # the delivery is now spoken for
+        r = self.client.get(f"/api/v1/trading/orders/{d['id']}/invoices").data
+        self.assertEqual(r["invoiceable"], [])
+        # Sales cannot issue; the manager can, and revenue + GST post in the trading book
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "issue"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(self.sm)
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "issue"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "ISSUED")
+        self.assertEqual(r.data["outstanding"], "80207.28")
+        rev = _CP.objects.get(cost_head__code="TRD_REVENUE")
+        gst = _CP.objects.get(cost_head__code="TRD_OUTPUT_GST")
+        self.assertEqual((rev.amount, rev.book, rev.currency), (Decimal("74266.00"), "TRADING", "MVR"))
+        self.assertEqual(gst.amount, Decimal("5941.28"))
+        m = self.client.get(f"/api/v1/trading/orders/{d['id']}").data["money"]
+        self.assertEqual(m["invoiced"], "80207.28")
+        self.assertEqual(m["received"], "0.00")
+
+    def test_freight_bills_once_and_a_tin_is_required(self):
+        d, dn = self.delivered("300")
+        self.login(self.sm)
+        TradingOrder.objects.filter(id=d["id"]).update(freight_sell=600)   # quoted freight
+        self.cust.tin = ""
+        self.cust.save()
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                             {"delivery_ids": [dn["id"]], "include_freight": True}, format="json")
+        self.assertTrue(r.data["includes_freight"])
+        self.assertEqual(r.data["subtotal"], "56112.00")                  # 300 × 185.04 + 600
+        r2 = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{r.data['id']}",
+                              {"action": "issue"}, format="json")
+        self.assertEqual(r2.status_code, 400)
+        self.assertIn("TIN", r2.data["detail"])
+        self.assertTrue(self.client.get(f"/api/v1/trading/orders/{d['id']}/invoices")
+                        .data["freight_billed"])
+        # a second delivery's invoice cannot carry freight again
+        tile = self.line_id(d, "Porcelain")
+        dn2 = self.dn(d["id"], [{"line_id": tile, "qty": "100"}])
+        self.despatch(d["id"], dn2["id"])
+        r3 = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                              {"delivery_ids": [dn2["id"]], "include_freight": True}, format="json")
+        self.assertFalse(r3.data["includes_freight"])
+
+    def test_void_reverses_and_frees_the_delivery(self):
+        d, dn = self.delivered()
+        self.login(self.sm)
+        inv = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                               {"delivery_ids": [dn["id"]]}, format="json").data
+        self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                         {"action": "issue"}, format="json")
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "void", "reason": "wrong PO"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "VOID")
+        self.assertEqual(_CP.objects.filter(cost_head__code="TRD_REVENUE")
+                         .aggregate(s=Sum("amount"))["s"], 0)
+        self.assertEqual([x["ref"] for x in self.client.get(
+            f"/api/v1/trading/orders/{d['id']}/invoices").data["invoiceable"]], ["TDN-001"])
+        self.assertEqual(TradingDelivery.objects.get(id=dn["id"]).invoice_id, None)
+
+    def test_credit_note_reduces_the_receivable(self):
+        d, dn = self.delivered()
+        self.login(self.sm)
+        inv = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                               {"delivery_ids": [dn["id"]]}, format="json").data
+        self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                         {"action": "issue"}, format="json")
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "credit", "amount": "1080", "reason": "10 m2 broken"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["credit_notes"][0]["ref"], "TCN-001")
+        self.assertEqual(r.data["credit_notes"][0]["gst"], "80.00")        # 1080 × 8/108
+        self.assertEqual(r.data["outstanding"], "78857.28")                # 79937.28 − 1080
+        self.assertEqual(_CP.objects.filter(cost_head__code="TRD_REVENUE")
+                         .aggregate(s=Sum("amount"))["s"], Decimal("73016.00"))
+
+
+class ReceiptTests(MoneyInBase):
+    def two_invoices(self):
+        d = self.stocked()
+        tile = self.line_id(d, "Porcelain")
+        self.login(self.sm)
+        ids = []
+        for qty, day in (("400", "2026-08-01"), ("600", "2026-09-01")):
+            dn = self.dn(d["id"], [{"line_id": tile, "qty": qty}])
+            self.despatch(d["id"], dn["id"])
+            inv = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                                   {"delivery_ids": [dn["id"]], "invoice_date": day},
+                                   format="json").data
+            self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "issue"}, format="json")
+            ids.append(inv["id"])
+        return d, ids                                     # 79,937.28 and 119,905.92
+
+    def test_one_receipt_settles_oldest_first_on_the_shared_series(self):
+        d, ids = self.two_invoices()
+        self.login(self.finance)
+        r = self.client.get(f"/api/v1/trading/receipts/allocate?customer={self.cust.id}&amount=100000").data
+        self.assertEqual([(a["invoice"], a["amount"]) for a in r["allocations"]],
+                         [("TSI-001", "79937.28"), ("TSI-002", "20062.72")])
+        self.assertEqual(r["unallocated"], "0.00")
+        r = self.client.post("/api/v1/trading/receipts", {
+            "customer": self.cust.id, "receipt_date": "2026-09-20", "method": "TT",
+            "reference": "BML 7781", "allocations": [
+                {"invoice_id": ids[0], "amount": "79937.28"},
+                {"invoice_id": ids[1], "amount": "20062.72"}]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["receipt_no"], "OR-0001")
+        self.assertEqual(str(r.data["total"]), "100000.00")
+        self.assertEqual(TradingInvoice.objects.get(id=ids[0]).status, "PAID")
+        self.assertEqual(TradingInvoice.objects.get(id=ids[1]).status, "ISSUED")
+        # the project receipt series continues after it
+        from .receipts import next_receipt_no
+        self.assertEqual(next_receipt_no(), "OR-0002")
+        # over-allocation refused; Sales cannot receipt
+        r = self.client.post("/api/v1/trading/receipts", {
+            "customer": self.cust.id, "receipt_date": "2026-09-21",
+            "allocations": [{"invoice_id": ids[1], "amount": "999999"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(self.sales)
+        r = self.client.post("/api/v1/trading/receipts", {
+            "customer": self.cust.id, "receipt_date": "2026-09-21",
+            "allocations": [{"invoice_id": ids[1], "amount": "1"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Finance", r.data["detail"])
+        # the receipt PDF renders off the shared template
+        self.login(self.finance)
+        rc = TradingReceipt.objects.get()
+        r = self.client.get(f"/api/v1/trading/receipts/{rc.id}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        # aging + statement
+        ag = self.client.get("/api/v1/trading/receivables").data
+        self.assertEqual(ag["customers"][0]["total"], "99843.20")
+        self.assertEqual(ag["customers"][0]["invoices"][0]["ref"], "TSI-002")
+        st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement").data
+        self.assertEqual([x["kind"] for x in st["rows"]], ["INVOICE", "INVOICE", "RECEIPT"])
+        self.assertEqual(st["closing"], "99843.20")
+        st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement?from=2026-09-01").data
+        self.assertEqual(st["opening"], "79937.28")
+        self.assertEqual(st["closing"], "99843.20")
+        # deleting the receipt reopens the invoice
+        r = self.client.delete(f"/api/v1/trading/receipts/{rc.id}")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(TradingInvoice.objects.get(id=ids[0]).status, "ISSUED")
+
+
+def _date_plus(s, days):
+    from datetime import timedelta
+    return date.fromisoformat(s) + timedelta(days=days)

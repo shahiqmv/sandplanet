@@ -682,6 +682,7 @@ def order_dict(order, user):
         "can_authorise": can_authorise(user),
         "is_closed": order.is_closed,
         "stages": STAGES,
+        "money": money(order) if order.stage == "WON" else None,
     })
     return d
 
@@ -885,3 +886,769 @@ def supply(order):
     return {"lines": lines_out, "import_orders": ipr_rows,
             "orderable": [r["id"] for r in lines_out if r["orderable"]],
             "lots_on_hand": _s(sum((lot.qty_on_hand for lot in order.lots.all()), ZERO))}
+
+
+# ---- phase 4: delivery, invoicing and money in --------------------------------------
+
+from django.db.models import Sum  # noqa: E402
+
+from .models import (CompanyBankAccount, StockLot, TradingCreditNote,  # noqa: E402
+                     TradingDelivery, TradingDeliveryLine, TradingInvoice,
+                     TradingReceipt, TradingReceiptLine)
+
+MONEY_ROLES = ("FINANCE", "ADMIN")
+
+
+def can_receipt(user):
+    """Finance is the money desk; Admin covers for it."""
+    return user.role in MONEY_ROLES
+
+
+def _ho():
+    from .vouchers import ho_site
+    return ho_site()
+
+
+def _post_trading(head_code, state, source, amount, currency, actor):
+    from . import costing
+    head = costing.by_code(head_code)
+    if head is None:
+        raise ValueError(f"Cost head {head_code} is missing — ask Finance.")
+    p = costing.post(site=_ho(), cost_head=head, state=state, source=source,
+                     amount=amount, currency=currency, actor=actor,
+                     book="TRADING")
+    return p.id
+
+
+def _reverse_postings(ids, actor):
+    from . import costing
+    from .models import CostPosting
+    out = []
+    for p in CostPosting.objects.filter(id__in=ids or []):
+        r = costing.post(site=p.site, cost_head=p.cost_head, state=p.state,
+                         source=p.source, amount=-p.amount, currency=p.currency,
+                         reversal_of=p, actor=actor, is_stock_pool=p.is_stock_pool)
+        out.append(r.id)
+    return out
+
+
+# --- deliveries ------------------------------------------------------------------
+
+def _line_lots(line):
+    return (StockLot.objects.filter(trading_order=line.order,
+                                    source_ipr_line__trading_line=line,
+                                    qty_on_hand__gt=0)
+            .order_by("received_date", "id"))
+
+
+def _needs_stock(line):
+    return _live_ipr_line(line) is not None
+
+
+def deliverable(order):
+    """Per line: ordered, already on a delivery note (draft or live), left
+    to deliver, and what is in the store for it."""
+    rows = []
+    for ln in order.lines.all():
+        on_dn = (TradingDeliveryLine.objects
+                 .filter(line=ln, delivery__status__in=("DRAFT", "DESPATCHED", "RECEIVED"))
+                 .aggregate(s=Sum("qty"))["s"] or ZERO)
+        stock = _needs_stock(ln)
+        on_hand = (sum((l.qty_on_hand for l in _line_lots(ln)), ZERO) if stock else None)
+        rows.append({"id": ln.id, "sr_no": ln.sr_no, "section": ln.section,
+                     "description": ln.description, "uom": ln.uom,
+                     "qty": _s(ln.qty), "delivered": _s(on_dn),
+                     "remaining": _s(ln.qty - on_dn), "needs_stock": stock,
+                     "on_hand": _s(on_hand) if on_hand is not None else None,
+                     "can_deliver": _s(min(ln.qty - on_dn, on_hand) if stock
+                                       else ln.qty - on_dn)})
+    return rows
+
+
+def _parse_dn_lines(order, rows, exclude_dn=None):
+    """Validate {line_id, qty} rows against what is left to deliver and what
+    is in the store. Returns (clean, error)."""
+    clean = []
+    for r in rows or []:
+        qty = _dec(r.get("qty"))
+        if qty is None or qty <= 0:
+            continue
+        ln = order.lines.filter(id=r.get("line_id") or r.get("line")).first()
+        if ln is None:
+            return None, "A delivery line is not on this order."
+        on_dn_qs = TradingDeliveryLine.objects.filter(
+            line=ln, delivery__status__in=("DRAFT", "DESPATCHED", "RECEIVED"))
+        if exclude_dn is not None:
+            on_dn_qs = on_dn_qs.exclude(delivery=exclude_dn)
+        on_dn = on_dn_qs.aggregate(s=Sum("qty"))["s"] or ZERO
+        left = ln.qty - on_dn
+        if qty > left:
+            return None, (f"{ln.description}: only {left} left to deliver "
+                          f"(ordered {ln.qty}, on delivery notes {on_dn}).")
+        if _needs_stock(ln):
+            on_hand = sum((l.qty_on_hand for l in _line_lots(ln)), ZERO)
+            if qty > on_hand:
+                return None, (f"{ln.description}: only {on_hand} in the store "
+                              "for this order.")
+        clean.append((ln, qty))
+    if not clean:
+        return None, "Add at least one line with a quantity."
+    return clean, None
+
+
+def _apply_dn_header(dn, data, errors):
+    if "delivery_date" in data:
+        try:
+            dn.delivery_date = date.fromisoformat(str(data["delivery_date"]))
+        except (TypeError, ValueError):
+            errors["delivery_date"] = "Enter the delivery date."
+    for k in ("vessel", "jetty", "receiver", "notes"):
+        if k in data:
+            setattr(dn, k, (data.get(k) or "").strip())
+
+
+def create_delivery(order, data, actor):
+    if order.stage != "WON":
+        return None, {"detail": "Deliveries are made against a won order."}
+    clean, err = _parse_dn_lines(order, data.get("lines"))
+    if err:
+        return None, {"detail": err}
+    dn = TradingDelivery(order=order, delivery_date=timezone.localdate(),
+                         created_by=actor)
+    errors = {}
+    _apply_dn_header(dn, data, errors)
+    if errors:
+        return None, errors
+    with transaction.atomic():
+        dn.ref = next_ref("TDN", None)
+        dn.save()
+        for ln, qty in clean:
+            TradingDeliveryLine.objects.create(delivery=dn, line=ln, qty=qty)
+    audit(ENTITY, order.id, "TDN_CREATED", actor=actor,
+          detail={"ref": order.ref, "dn": dn.ref, "lines": len(clean)})
+    return dn, None
+
+
+def update_delivery(dn, data, actor):
+    if dn.status != "DRAFT":
+        return {"detail": "Only a draft delivery note can change."}
+    errors = {}
+    _apply_dn_header(dn, data, errors)
+    if errors:
+        return errors
+    with transaction.atomic():
+        if "lines" in data:
+            clean, err = _parse_dn_lines(dn.order, data["lines"], exclude_dn=dn)
+            if err:
+                return {"detail": err}
+            dn.lines.all().delete()
+            for ln, qty in clean:
+                TradingDeliveryLine.objects.create(delivery=dn, line=ln, qty=qty)
+        dn.save()
+    audit(ENTITY, dn.order_id, "TDN_UPDATED", actor=actor,
+          detail={"ref": dn.order.ref, "dn": dn.ref})
+    return None
+
+
+def despatch_delivery(dn, actor):
+    """The goods leave for the harbour: draw the reserved lots (FIFO), post
+    cost of sales at their landed cost, file the delivery note PDF."""
+    if dn.status != "DRAFT":
+        return "This delivery note is not a draft."
+    if not dn.vessel.strip():
+        return "Enter the customer's vessel before despatching."
+    if not dn.receiver.strip():
+        return "Enter who receives the goods on board."
+    clean, err = _parse_dn_lines(dn.order, [{"line_id": l.line_id, "qty": l.qty}
+                                            for l in dn.lines.all()], exclude_dn=dn)
+    if err:
+        return err
+    with transaction.atomic():
+        dn = TradingDelivery.objects.select_for_update().get(id=dn.id)
+        cogs = ZERO
+        for dl in dn.lines.select_related("line"):
+            if not _needs_stock(dl.line):
+                dl.unit_cost_mvr = None
+                dl.lots = []
+                dl.save(update_fields=["unit_cost_mvr", "lots"])
+                continue
+            need, drawn, cost = dl.qty, [], ZERO
+            for lot in _line_lots(dl.line).select_for_update():
+                if need <= 0:
+                    break
+                take = min(lot.qty_on_hand, need)
+                lot.qty_on_hand -= take
+                lot.save(update_fields=["qty_on_hand"])
+                drawn.append({"lot": lot.id, "qty": str(take),
+                              "unit_landed": str(lot.unit_landed_cost)})
+                cost += take * lot.unit_landed_cost
+                need -= take
+            if need > 0:
+                transaction.set_rollback(True)
+                return f"{dl.line.description}: the store ran short by {need}."
+            dl.unit_cost_mvr = (cost / dl.qty).quantize(_4DP) if dl.qty else None
+            dl.lots = drawn
+            dl.save(update_fields=["unit_cost_mvr", "lots"])
+            cogs += cost
+        dn.cogs_mvr = _q2(cogs)
+        dn.posting_ids = ([_post_trading("TRD_COGS", "INCURRED", "STORE_ISSUE",
+                                         dn.cogs_mvr, "MVR", actor)]
+                          if dn.cogs_mvr else [])
+        dn.status = "DESPATCHED"
+        dn.despatched_by = actor
+        dn.despatched_at = timezone.now()
+        dn.save()
+        _store_pdf(dn, "pdf/trading_delivery_note.html", delivery_context(dn),
+                   dn.ref + ".pdf")
+    audit(ENTITY, dn.order_id, "TDN_DESPATCHED", actor=actor,
+          detail={"ref": dn.order.ref, "dn": dn.ref, "vessel": dn.vessel,
+                  "cogs_mvr": str(dn.cogs_mvr)})
+    return None
+
+
+def receive_delivery(dn, signed_copy, actor):
+    if dn.status != "DESPATCHED":
+        return "Only a despatched delivery note can be marked received."
+    if signed_copy is not None:
+        dn.signed_copy = signed_copy
+    dn.status = "RECEIVED"
+    dn.received_at = timezone.now()
+    dn.save()
+    audit(ENTITY, dn.order_id, "TDN_RECEIVED", actor=actor,
+          detail={"ref": dn.order.ref, "dn": dn.ref, "signed": bool(signed_copy)})
+    return None
+
+
+def cancel_delivery(dn, actor):
+    if dn.status != "DRAFT":
+        return "Only a draft delivery note can be cancelled."
+    dn.status = "CANCELLED"
+    dn.save(update_fields=["status"])
+    audit(ENTITY, dn.order_id, "TDN_CANCELLED", actor=actor,
+          detail={"ref": dn.order.ref, "dn": dn.ref})
+    return None
+
+
+def delivery_context(dn):
+    from .pdf import company_info, logo_src
+    rows, last, no = [], None, 0
+    for dl in dn.lines.select_related("line"):
+        ln = dl.line
+        if ln.section and ln.section != last:
+            rows.append({"heading": ln.section})
+            last = ln.section
+        no += 1
+        rows.append({"no": no, "description": ln.description,
+                     "qty_f": _fmt_qty(dl.qty), "uom": ln.uom})
+    return {"logo_src": logo_src(), "co": company_info(), "dn": dn,
+            "order": dn.order, "customer": _customer_block(dn.order.customer),
+            "rows": rows,
+            "despatched_by": dn.despatched_by.full_name if dn.despatched_by_id else ""}
+
+
+def _store_pdf(obj, template, ctx, name):
+    from django.conf import settings
+    from django.core.files.base import ContentFile
+
+    from .views_commercial import pdf_bytes
+    try:
+        pdf = pdf_bytes(template, ctx)
+    except Exception:                             # pragma: no cover - env dep
+        if settings.PDF_REQUIRED:
+            raise
+        return
+    obj.pdf.save(name.replace("/", "-"), ContentFile(pdf), save=True)
+
+
+def delivery_dict(dn):
+    return {
+        "id": dn.id, "ref": dn.ref, "status": dn.status,
+        "delivery_date": dn.delivery_date, "vessel": dn.vessel, "jetty": dn.jetty,
+        "receiver": dn.receiver, "notes": dn.notes,
+        "signed_copy": dn.signed_copy.url if dn.signed_copy else None,
+        "has_pdf": bool(dn.pdf), "invoice": dn.invoice.ref if dn.invoice_id else None,
+        "invoice_id": dn.invoice_id, "cogs_mvr": _s(dn.cogs_mvr),
+        "despatched_at": dn.despatched_at,
+        "despatched_by": dn.despatched_by.full_name if dn.despatched_by_id else None,
+        "received_at": dn.received_at,
+        "lines": [{"id": dl.id, "line": dl.line_id, "description": dl.line.description,
+                   "section": dl.line.section, "uom": dl.line.uom, "qty": _s(dl.qty),
+                   "unit_cost_mvr": _s(dl.unit_cost_mvr)}
+                  for dl in dn.lines.select_related("line")],
+    }
+
+
+# --- invoices ---------------------------------------------------------------------
+
+def _unit_sell_for(order, line):
+    """The price the customer agreed: the authorised quotation's, else the
+    sheet's."""
+    q = current_quotation(order)
+    if q is not None:
+        for row in q.snapshot.get("lines", []):
+            if row.get("id") == line.id:
+                return _dec(row.get("unit_sell"), ZERO)
+    return calc_line(line, (order.currency or "MVR").upper())["unit_sell"] or ZERO
+
+
+def invoiceable_deliveries(order):
+    return order.deliveries.filter(status__in=("DESPATCHED", "RECEIVED"),
+                                   invoice__isnull=True)
+
+
+def freight_billed(order):
+    return order.invoices.filter(includes_freight=True,
+                                 status__in=("DRAFT", "ISSUED", "PAID")).exists()
+
+
+def _invoice_figures(order, dns, charges, include_freight):
+    rows = []
+    for dn in dns:
+        for dl in dn.lines.select_related("line"):
+            unit = _unit_sell_for(order, dl.line)
+            rows.append({"line": dl.line_id, "dn_ref": dn.ref,
+                         "description": dl.line.description, "uom": dl.line.uom,
+                         "qty": str(dl.qty), "unit_sell": str(_q4(unit)),
+                         "amount": str(_q2(unit * dl.qty))})
+    goods = sum((Decimal(r["amount"]) for r in rows), ZERO)
+    freight = _q2(order.freight_sell) if include_freight and order.freight_sell else ZERO
+    clean_charges = []
+    for c in charges or []:
+        amt = _dec(c.get("amount"))
+        label = (c.get("label") or "").strip()
+        if amt is None or amt == 0 or not label:
+            continue
+        clean_charges.append({"label": label, "amount": str(_q2(amt))})
+    extra = sum((Decimal(c["amount"]) for c in clean_charges), ZERO)
+    subtotal = _q2(goods + freight + extra)
+    gst_pct = ZERO if order.customer.gst_exempt else gst_rate()
+    gst = _q2(subtotal * gst_pct / 100)
+    return {"rows": rows, "goods": goods, "freight": freight, "charges": clean_charges,
+            "subtotal": subtotal, "gst_percent": gst_pct, "gst": gst,
+            "total": _q2(subtotal + gst)}
+
+
+def create_invoice(order, data, actor):
+    if order.stage != "WON":
+        return None, "Invoices are raised against a won order."
+    ids = data.get("delivery_ids") or []
+    dns = list(invoiceable_deliveries(order).filter(id__in=ids))
+    if not dns or len(dns) != len(set(ids)):
+        return None, "Pick despatched delivery notes that are not yet invoiced."
+    include_freight = bool(data.get("include_freight")) and not freight_billed(order) \
+        and order.freight_sell is not None
+    f = _invoice_figures(order, dns, data.get("charges"), include_freight)
+    try:
+        inv_date = date.fromisoformat(str(data.get("invoice_date") or timezone.localdate()))
+    except ValueError:
+        return None, "Enter the invoice date."
+    due = inv_date + timedelta(days=order.customer.credit_days or 0)
+    with transaction.atomic():
+        inv = TradingInvoice.objects.create(
+            order=order, ref=next_ref("TSI", None), invoice_date=inv_date,
+            due_date=due, currency=(order.currency or "MVR").upper(),
+            includes_freight=include_freight, charges=f["charges"],
+            snapshot={"customer": _customer_block(order.customer),
+                      "lines": f["rows"], "dn_refs": [d.ref for d in dns]},
+            subtotal=f["subtotal"], gst_percent=f["gst_percent"], gst=f["gst"],
+            total=f["total"], created_by=actor)
+        for dn in dns:
+            dn.invoice = inv
+            dn.save(update_fields=["invoice"])
+    audit(ENTITY, order.id, "TSI_CREATED", actor=actor,
+          detail={"ref": order.ref, "invoice": inv.ref, "total": str(inv.total),
+                  "deliveries": [d.ref for d in dns]})
+    return inv, None
+
+
+def issue_invoice(inv, actor):
+    if not can_authorise(actor):
+        return "Only the Sales Manager issues a tax invoice."
+    if inv.status != "DRAFT":
+        return "This invoice is not a draft."
+    if not inv.order.customer.tin and not inv.order.customer.gst_exempt:
+        return ("The customer has no GST TIN on file — a tax invoice needs "
+                "it. Add it on the customer, or mark them GST exempt.")
+    with transaction.atomic():
+        inv.status = "ISSUED"
+        inv.issued_by = actor
+        inv.issued_at = timezone.now()
+        ids = [_post_trading("TRD_REVENUE", "INCURRED", "SALE", inv.subtotal,
+                             inv.currency, actor)]
+        if inv.gst:
+            ids.append(_post_trading("TRD_OUTPUT_GST", "INCURRED", "SALE", inv.gst,
+                                     inv.currency, actor))
+        inv.posting_ids = ids
+        inv.save()
+        _store_pdf(inv, "pdf/trading_tax_invoice.html", invoice_context(inv),
+                   inv.ref + ".pdf")
+    audit(ENTITY, inv.order_id, "TSI_ISSUED", actor=actor,
+          detail={"ref": inv.order.ref, "invoice": inv.ref, "total": str(inv.total)})
+    return None
+
+
+def void_invoice(inv, reason, actor):
+    if inv.status == "VOID":
+        return "Already void."
+    if inv.receipts.exists():
+        return "Money has been received against this invoice — it cannot be voided."
+    if inv.credit_notes.exists():
+        return "A credit note has been issued against this invoice."
+    reason = (reason or "").strip()
+    if not reason:
+        return "Say why the invoice is void."
+    with transaction.atomic():
+        if inv.status in ("ISSUED", "PAID"):
+            inv.posting_ids = _reverse_postings(inv.posting_ids, actor)
+        inv.status = "VOID"
+        inv.void_reason = reason
+        inv.save()
+        inv.deliveries.update(invoice=None)       # free the deliveries to re-invoice
+    audit(ENTITY, inv.order_id, "TSI_VOID", actor=actor,
+          detail={"ref": inv.order.ref, "invoice": inv.ref, "reason": reason})
+    return None
+
+
+def invoice_received(inv):
+    return _q2(inv.receipts.aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
+def invoice_credited(inv):
+    return _q2(inv.credit_notes.aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
+def invoice_outstanding(inv):
+    if inv.status not in ("ISSUED", "PAID"):
+        return ZERO
+    return _q2(inv.total - invoice_credited(inv) - invoice_received(inv))
+
+
+def _settle(inv):
+    if inv.status == "ISSUED" and invoice_outstanding(inv) <= ZERO:
+        inv.status = "PAID"
+        inv.save(update_fields=["status"])
+    elif inv.status == "PAID" and invoice_outstanding(inv) > ZERO:
+        inv.status = "ISSUED"
+        inv.save(update_fields=["status"])
+
+
+def invoice_context(inv, draft=False):
+    from .commercial import amount_in_words
+    from .pdf import company_info, logo_src
+    from .pdf import _money as money
+    s = inv.snapshot
+    signer = inv.issued_by
+    return {
+        "logo_src": logo_src(), "co": company_info(), "inv": inv, "order": inv.order,
+        "customer": s.get("customer", {}), "currency": inv.currency,
+        "draft": draft and inv.status == "DRAFT", "void": inv.status == "VOID",
+        "dn_refs": ", ".join(s.get("dn_refs", [])),
+        "rows": [{**r, "qty_f": _fmt_qty(r["qty"]), "unit_f": money(r["unit_sell"]),
+                  "amount_f": money(r["amount"])} for r in s.get("lines", [])],
+        "freight_f": money(inv.order.freight_sell) if inv.includes_freight else None,
+        "charges": [{**c, "amount_f": money(c["amount"])} for c in inv.charges],
+        "subtotal_f": money(inv.subtotal), "gst_pct": inv.gst_percent,
+        "gst_f": money(inv.gst), "total_f": money(inv.total),
+        "in_words": amount_in_words(inv.total, "USD" if inv.currency == "USD" else "Rufiyaa"),
+        "signer": ({"name": signer.full_name,
+                    "designation": "Sales Manager" if signer.role == "SALES_MANAGER"
+                    else _param("company_signee_designation", "Managing Director")}
+                   if signer else None),
+    }
+
+
+def invoice_pdf_bytes(inv):
+    from .views_commercial import pdf_bytes
+    return pdf_bytes("pdf/trading_tax_invoice.html", invoice_context(inv, draft=True))
+
+
+def invoice_dict(inv):
+    return {
+        "id": inv.id, "ref": inv.ref, "status": inv.status,
+        "invoice_date": inv.invoice_date, "due_date": inv.due_date,
+        "currency": inv.currency, "subtotal": _s(inv.subtotal),
+        "gst_percent": _s(inv.gst_percent), "gst": _s(inv.gst), "total": _s(inv.total),
+        "includes_freight": inv.includes_freight, "charges": inv.charges,
+        "deliveries": inv.snapshot.get("dn_refs", []),
+        "lines": inv.snapshot.get("lines", []),
+        "received": _s(invoice_received(inv)), "credited": _s(invoice_credited(inv)),
+        "outstanding": _s(invoice_outstanding(inv)),
+        "has_pdf": bool(inv.pdf), "void_reason": inv.void_reason,
+        "issued_at": inv.issued_at,
+        "issued_by": inv.issued_by.full_name if inv.issued_by_id else None,
+        "credit_notes": [{"id": c.id, "ref": c.ref, "amount": _s(c.amount),
+                          "gst": _s(c.gst), "reason": c.reason, "at": c.issued_at,
+                          "by": c.issued_by.full_name}
+                         for c in inv.credit_notes.select_related("issued_by")],
+        "receipts": [{"receipt_no": l.receipt.receipt_no, "date": l.receipt.receipt_date,
+                      "amount": _s(l.amount), "method": l.receipt.method,
+                      "reference": l.receipt.reference}
+                     for l in inv.receipts.select_related("receipt")],
+    }
+
+
+def create_credit_note(inv, data, actor):
+    if not can_authorise(actor):
+        return None, "Only the Sales Manager issues a credit note."
+    if inv.status not in ("ISSUED", "PAID"):
+        return None, "A credit note is issued against an issued invoice."
+    amt = _dec(data.get("amount"))
+    reason = (data.get("reason") or "").strip()
+    if amt is None or amt <= 0:
+        return None, "Enter the credit amount (including GST)."
+    if not reason:
+        return None, "Say why the credit is given."
+    if amt > invoice_outstanding(inv) + invoice_received(inv):
+        return None, "The credit exceeds the invoice."
+    gst_share = _q2(amt * inv.gst / inv.total) if inv.total else ZERO
+    with transaction.atomic():
+        cn = TradingCreditNote(invoice=inv, ref=next_ref("TCN", None), amount=_q2(amt),
+                               gst=gst_share, reason=reason, issued_by=actor)
+        ids = [_post_trading("TRD_REVENUE", "INCURRED", "SALE", -(cn.amount - gst_share),
+                             inv.currency, actor)]
+        if gst_share:
+            ids.append(_post_trading("TRD_OUTPUT_GST", "INCURRED", "SALE", -gst_share,
+                                     inv.currency, actor))
+        cn.posting_ids = ids
+        cn.save()
+        _settle(inv)
+    audit(ENTITY, inv.order_id, "TCN_ISSUED", actor=actor,
+          detail={"ref": inv.order.ref, "invoice": inv.ref, "credit_note": cn.ref,
+                  "amount": str(cn.amount), "reason": reason})
+    return cn, None
+
+
+def money(order):
+    live = order.invoices.filter(status__in=("ISSUED", "PAID"))
+    invoiced = _q2(sum((i.total for i in live), ZERO))
+    credited = _q2(sum((invoice_credited(i) for i in live), ZERO))
+    received = _q2(sum((invoice_received(i) for i in live), ZERO))
+    return {"invoiced": _s(invoiced), "credited": _s(credited),
+            "received": _s(received), "outstanding": _s(invoiced - credited - received),
+            "delivered_cogs_mvr": _s(sum((d.cogs_mvr for d in order.deliveries.filter(
+                status__in=("DESPATCHED", "RECEIVED"))), ZERO))}
+
+
+# --- receipts (money in) -----------------------------------------------------------
+
+def open_invoices(customer):
+    return [i for i in TradingInvoice.objects.filter(
+        order__customer=customer, status__in=("ISSUED", "PAID"))
+        .select_related("order").order_by("invoice_date", "id")
+        if invoice_outstanding(i) > ZERO]
+
+
+def auto_allocate(customer, amount):
+    """Oldest-first across the customer's open invoices (blueprint §7.6)."""
+    left, out = _q2(amount), []
+    for inv in open_invoices(customer):
+        if left <= ZERO:
+            break
+        take = min(invoice_outstanding(inv), left)
+        out.append({"invoice_id": inv.id, "invoice": inv.ref, "amount": str(take),
+                    "outstanding": str(invoice_outstanding(inv))})
+        left -= take
+    return out, _s(left)
+
+
+def record_receipt(data, actor):
+    from .models import Customer
+    from .receipts import next_receipt_no
+    if not can_receipt(actor):
+        return None, "Finance records customer receipts."
+    customer = Customer.objects.filter(id=data.get("customer")).first()
+    if customer is None:
+        return None, "Pick the customer the money is from."
+    try:
+        rdate = date.fromisoformat(str(data.get("receipt_date")))
+    except (TypeError, ValueError):
+        return None, "Enter the receipt date."
+    method = data.get("method") or "TT"
+    if method not in TradingReceipt._meta.get_field("method").choices and \
+            method not in [c[0] for c in TradingReceipt._meta.get_field("method").choices]:
+        return None, "Choose how the payment was received."
+    bank = None
+    if data.get("bank_account"):
+        bank = CompanyBankAccount.objects.filter(id=data["bank_account"]).first()
+        if bank is None:
+            return None, "That bank account no longer exists."
+    parsed, currency = [], None
+    for row in data.get("allocations") or []:
+        amt = _dec(row.get("amount"))
+        if amt is None or amt <= ZERO:
+            continue
+        inv = TradingInvoice.objects.filter(id=row.get("invoice_id"),
+                                            order__customer=customer,
+                                            status__in=("ISSUED", "PAID")).first()
+        if inv is None:
+            return None, "An invoice on this receipt is not this customer's."
+        due = invoice_outstanding(inv)
+        if amt > due + Decimal("0.01"):
+            return None, f"{amt:,.2f} exceeds the {due:,.2f} outstanding on {inv.ref}."
+        if currency and inv.currency != currency:
+            return None, "One receipt settles invoices in one currency."
+        currency = inv.currency
+        parsed.append((inv, _q2(amt)))
+    if not parsed:
+        return None, "Allocate the money to at least one invoice."
+    with transaction.atomic():
+        rc = TradingReceipt.objects.create(
+            customer=customer, receipt_no=next_receipt_no(), receipt_date=rdate,
+            method=method, reference=(data.get("reference") or "").strip(),
+            bank_account=bank, currency=currency, note=data.get("note") or "",
+            recorded_by=actor)
+        for inv, amt in parsed:
+            TradingReceiptLine.objects.create(receipt=rc, invoice=inv, amount=amt)
+        for inv, _ in parsed:
+            _settle(inv)
+    for inv, amt in parsed:
+        audit(ENTITY, inv.order_id, "RECEIPT", actor=actor,
+              detail={"ref": inv.order.ref, "invoice": inv.ref,
+                      "receipt_no": rc.receipt_no, "amount": str(amt)})
+    return rc, None
+
+
+def delete_receipt(rc, actor):
+    if not can_receipt(actor):
+        return "Finance records customer receipts."
+    invs = [l.invoice for l in rc.lines.select_related("invoice")]
+    no = rc.receipt_no
+    with transaction.atomic():
+        rc.lines.all().delete()
+        rc.delete()
+        for inv in invs:
+            _settle(inv)
+    for inv in invs:
+        audit(ENTITY, inv.order_id, "RECEIPT_DELETED", actor=actor,
+              detail={"ref": inv.order.ref, "invoice": inv.ref, "receipt_no": no})
+    return None
+
+
+def receipt_dict(rc):
+    ba = rc.bank_account
+    lines = [{"id": l.id, "invoice_id": l.invoice_id, "invoice_no": l.invoice.ref,
+              "claim_ref": l.invoice.order.so_ref or l.invoice.order.ref,
+              "project_code": l.invoice.order.so_ref or "",
+              "amount": l.amount, "invoice_amount": l.invoice.total}
+             for l in rc.lines.select_related("invoice__order")]
+    return {"id": rc.id, "receipt_no": rc.receipt_no, "receipt_date": rc.receipt_date,
+            "method": rc.method, "method_label": rc.get_method_display(),
+            "reference": rc.reference, "note": rc.note,
+            "customer": rc.customer_id, "client": rc.customer.name,
+            "bank_account": ba.label if ba else "", "currency": rc.currency,
+            "total": rc.total, "lines": lines,
+            "recorded_by": rc.recorded_by.full_name if rc.recorded_by_id else ""}
+
+
+def receipt_context(rc):
+    from .commercial import amount_in_words
+    from .pdf import company_info, logo_src
+    d = receipt_dict(rc)
+    ba = rc.bank_account
+    c = rc.customer
+    return {"logo_src": logo_src(), "co": company_info(), "receipt": rc, "r": d,
+            "currency": rc.currency,
+            "payer": {"name": c.name, "address": c.billing_address,
+                      "contact": c.contact_person, "designation": ""},
+            "bank_account": ({"label": ba.label, "bank_name": ba.bank_name,
+                              "account_name": ba.account_name, "account_no": ba.account_no,
+                              "currency": ba.currency} if ba else None),
+            "invoice_list": ", ".join(l["invoice_no"] for l in d["lines"]),
+            "amount_words": amount_in_words(rc.total, "USD" if rc.currency == "USD" else "Rufiyaa")}
+
+
+# --- receivables ------------------------------------------------------------------
+
+def _bucket(days):
+    if days <= 0:
+        return "current"
+    if days <= 30:
+        return "d30"
+    if days <= 60:
+        return "d60"
+    if days <= 90:
+        return "d90"
+    return "d90plus"
+
+
+def aging(as_of=None):
+    """Every open trading invoice by customer, bucketed by days past due."""
+    today = as_of or timezone.localdate()
+    by_cust = {}
+    for inv in TradingInvoice.objects.filter(status__in=("ISSUED", "PAID")) \
+            .select_related("order__customer"):
+        out = invoice_outstanding(inv)
+        if out <= ZERO:
+            continue
+        c = inv.order.customer
+        row = by_cust.setdefault(c.id, {
+            "customer": c.id, "customer_name": c.name, "currency": inv.currency,
+            "current": ZERO, "d30": ZERO, "d60": ZERO, "d90": ZERO, "d90plus": ZERO,
+            "total": ZERO, "invoices": []})
+        overdue = (today - (inv.due_date or inv.invoice_date)).days
+        row[_bucket(overdue)] += out
+        row["total"] += out
+        row["invoices"].append({"id": inv.id, "ref": inv.ref, "order": inv.order.ref,
+                                "order_id": inv.order_id,
+                                "so_ref": inv.order.so_ref, "invoice_date": inv.invoice_date,
+                                "due_date": inv.due_date, "total": _s(inv.total),
+                                "outstanding": _s(out), "overdue_days": max(0, overdue),
+                                "currency": inv.currency})
+    rows = sorted(by_cust.values(), key=lambda r: -r["total"])
+    for r in rows:
+        for k in ("current", "d30", "d60", "d90", "d90plus", "total"):
+            r[k] = _s(_q2(r[k]))
+    return {"as_of": today, "customers": rows,
+            "total": _s(_q2(sum((Decimal(r["total"]) for r in rows), ZERO)))}
+
+
+def statement(customer, date_from=None, date_to=None):
+    """Chronological invoices, credit notes and receipts for a customer, with
+    an opening balance for anything before the range (blueprint §7.6)."""
+    to = date_to or timezone.localdate()
+    entries = []
+    for inv in TradingInvoice.objects.filter(order__customer=customer,
+                                             status__in=("ISSUED", "PAID")) \
+            .select_related("order"):
+        entries.append({"date": inv.invoice_date, "kind": "INVOICE", "ref": inv.ref,
+                        "detail": f"{inv.order.so_ref} · {inv.order.title}",
+                        "debit": inv.total, "credit": ZERO, "currency": inv.currency})
+        for cn in inv.credit_notes.all():
+            entries.append({"date": cn.issued_at.date(), "kind": "CREDIT_NOTE", "ref": cn.ref,
+                            "detail": f"against {inv.ref} — {cn.reason}",
+                            "debit": ZERO, "credit": cn.amount, "currency": inv.currency})
+    seen = set()
+    for l in TradingReceiptLine.objects.filter(receipt__customer=customer) \
+            .select_related("receipt", "invoice"):
+        rc = l.receipt
+        if rc.id in seen:
+            continue
+        seen.add(rc.id)
+        settled = ", ".join(x.invoice.ref for x in rc.lines.select_related("invoice"))
+        entries.append({"date": rc.receipt_date, "kind": "RECEIPT", "ref": rc.receipt_no,
+                        "detail": f"{rc.get_method_display()}"
+                                  f"{' ' + rc.reference if rc.reference else ''} — {settled}",
+                        "debit": ZERO, "credit": rc.total, "currency": rc.currency})
+    entries.sort(key=lambda e: (e["date"], e["kind"] != "INVOICE", e["ref"]))
+    opening = ZERO
+    rows, bal = [], ZERO
+    for e in entries:
+        if e["date"] > to:
+            continue
+        if date_from and e["date"] < date_from:
+            opening += e["debit"] - e["credit"]
+            continue
+        bal += e["debit"] - e["credit"]
+        rows.append({**e, "debit": _s(_q2(e["debit"])) if e["debit"] else None,
+                     "credit": _s(_q2(e["credit"])) if e["credit"] else None,
+                     "balance": _s(_q2(opening + bal))})
+    return {"customer": customer.id, "customer_name": customer.name,
+            "date_from": date_from, "date_to": to, "opening": _s(_q2(opening)),
+            "rows": rows, "closing": _s(_q2(opening + bal))}
+
+
+def statement_context(customer, date_from, date_to):
+    from .pdf import company_info, logo_src
+    st = statement(customer, date_from, date_to)
+    return {"logo_src": logo_src(), "co": company_info(), "st": st,
+            "customer": _customer_block(customer)}

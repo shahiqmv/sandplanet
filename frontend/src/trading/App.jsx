@@ -10,6 +10,7 @@ import { Btn, Chip, card } from "../ui.jsx";
 import CustomersPage from "./CustomersPage.jsx";
 import InquiriesPage from "./InquiriesPage.jsx";
 import OrderPage from "./OrderPage.jsx";
+import ReceivablesPage from "./ReceivablesPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
 import { STAGE_LABEL, StageChip, fmtDate, fmtMoney } from "./shared.jsx";
 
@@ -22,6 +23,7 @@ const PAGES = [
   ["inquiries", "Inquiries"],
   ["customers", "Customers"],
   ["suppliers", "Suppliers"],
+  ["receivables", "Receivables"],
 ];
 
 const ROLE_LABEL = {
@@ -264,6 +266,7 @@ export default function App() {
         )}
         {page === "customers" && <CustomersPage canWrite={canWrite} />}
         {page === "suppliers" && <SuppliersPage canWrite={canWrite} />}
+        {page === "receivables" && <ReceivablesPage open={(inv, tab) => open(inv.order_id || inv.id, tab)} />}
       </main>
     </div>
   );

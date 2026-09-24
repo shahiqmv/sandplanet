@@ -81,7 +81,8 @@ the leg is a delivery, not an export.
   chain, unchanged, tagged `book=TRADING`. StockLot already values goods at
   landed cost, so cost of sale is the landed cost of what a delivery note
   draws down.
-- Customer side: OfficialReceipt (OR-####), receivables aging, statements.
+- Customer side: the same OR-#### receipt series and receipt PDF; trading
+  keeps its own receipt rows, aging and statements keyed to the Customer.
 - GST: company parameter `gst_rate` (8) already exists; sales invoices add
   the output-GST line and the customer's TIN. Output GST goes to its own
   head under the trading book (mirror of the input-GST pool).
@@ -117,6 +118,7 @@ the leg is a delivery, not an export.
 | `TradingDelivery` | DN ref, date, customer's vessel + jetty, receiver on board, lines + qty, stock lots drawn, signed copy attachment, status DRAFT → DESPATCHED → RECEIVED; DESPATCHED unlocks the invoice |
 | `TradingInvoice` | tax-invoice ref, date, deliveries covered, lines, extra charges, GST, authorised by, PDF; status DRAFT → ISSUED → PAID/VOID |
 | `TradingCreditNote` | adjusts a receivable (short-settlement, return) |
+| `TradingReceipt` / `TradingReceiptLine` | money in on the shared OR series, allocated across invoices; own table because the project receipt is keyed to a site |
 | `TradingThread` / `TradingComment` | one thread per order, one-level replies, resolve, mentions |
 | `ImportOrder.origin` + `ImportOrder.trading_order` | the supply link |
 | `CostPosting.book` | the ledger wall |
@@ -167,10 +169,22 @@ Each phase ships, is verified live, and stops for owner review.
    landed total. Trading heads seeded (TRD_COGS, TRD_REVENUE,
    TRD_OUTPUT_GST, TRD_FREIGHT; `CostHead.trading`) and hidden from every
    project picker.
-4. **Delivery and invoicing** — delivery notes drawing stock lots, signed
-   copy upload, tax invoice per despatch with GST and TIN, revenue / cost of
-   sale / output GST postings, official receipts allocated across invoices,
-   customer statement, aging, credit notes.
+4. **Delivery and invoicing** — DONE 2026-09-24. `TradingDelivery` (TDN):
+   lines capped by what is left to deliver and what is in the store for the
+   order; despatch needs the vessel and the receiver on board, draws the
+   order's lots FIFO, posts cost of sales (TRD_COGS, INCURRED, book TRADING)
+   at landed cost and files the delivery-note PDF; the signed copy marks it
+   received. `TradingInvoice` (TSI): one or more despatched notes at the
+   authorised quotation's prices, quoted freight billed once, extra charges,
+   GST unless exempt, due date from the customer's credit days; the Sales
+   Manager issues it (needs the customer's TIN), which posts revenue and
+   output GST and files the tax-invoice PDF; void reverses and frees the
+   deliveries. `TradingCreditNote` (TCN) reduces the receivable with the GST
+   share. `TradingReceipt` on the shared OR series (Finance/Admin only):
+   oldest-first auto-allocation across the customer's open invoices, the
+   official-receipt PDF, invoices flip to PAID when settled. Receivables
+   page: aging by customer (not due / 1–30 / 31–60 / 61–90 / 90+), receipts
+   register, statement of account with brought-forward and PDF.
 5. **Collaboration and reporting** — threads with mentions and a bell,
    trading P&L and margin per order, registers, exports.
 

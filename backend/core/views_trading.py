@@ -37,6 +37,15 @@ def can_write(user):
     return user.is_authenticated and user.role in TRADING_WRITERS
 
 
+class IsTradingReaderAnyMethod(BasePermission):
+    """Entry for everyone who may read trading; the service decides who may
+    act (Finance records receipts, which Sales never do)."""
+
+    def has_permission(self, request, view):
+        u = request.user
+        return u.is_authenticated and u.role in User.TRADING_READERS
+
+
 # ---- customers -----------------------------------------------------------
 
 class CustomerSerializer(serializers.ModelSerializer):
@@ -441,3 +450,254 @@ def order_import_orders(request, pk):
         return Response({"detail": msg}, status=400)
     return Response({"raised": [d.ref for d in docs],
                      **trading.supply(_order(pk))}, status=201)
+
+
+# ---- phase 4: deliveries, invoices, receipts, receivables ---------------------
+
+from datetime import date as _date  # noqa: E402
+
+from .models import (CompanyBankAccount, Customer as _Customer,  # noqa: E402
+                     TradingDelivery, TradingInvoice, TradingReceipt)
+
+
+def _dn(pk, did):
+    return TradingDelivery.objects.select_related("order__customer", "despatched_by") \
+        .filter(order_id=pk, id=did).first()
+
+
+def _inv(pk, iid):
+    return TradingInvoice.objects.select_related("order__customer", "issued_by") \
+        .filter(order_id=pk, id=iid).first()
+
+
+def _pdf_response(pdf, name):
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = f'inline; filename="{name}"'
+    return resp
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsTradingReader])
+def order_deliveries(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST":
+        err = _manage_or_403(request, order)
+        if err:
+            return err
+        dn, errors = trading.create_delivery(order, request.data, request.user)
+        if errors:
+            return Response(errors, status=400)
+        return Response(trading.delivery_dict(dn), status=201)
+    return Response({"deliverable": trading.deliverable(order),
+                     "deliveries": [trading.delivery_dict(d) for d in
+                                    order.deliveries.select_related("despatched_by", "invoice")],
+                     "money": trading.money(order)})
+
+
+@api_view(["PATCH", "POST"])
+@permission_classes([IsTradingReader])
+def delivery_detail(request, pk, did):
+    dn = _dn(pk, did)
+    if dn is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, dn.order)
+    if err:
+        return err
+    if request.method == "PATCH":
+        errors = trading.update_delivery(dn, request.data, request.user)
+        if errors:
+            return Response(errors, status=400)
+    else:
+        action = request.data.get("action")
+        if action == "despatch":
+            msg = trading.despatch_delivery(dn, request.user)
+        elif action == "cancel":
+            msg = trading.cancel_delivery(dn, request.user)
+        else:
+            msg = "Unknown action."
+        if msg:
+            return Response({"detail": msg}, status=400)
+    return Response(trading.delivery_dict(_dn(pk, did)))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def delivery_receive(request, pk, did):
+    dn = _dn(pk, did)
+    if dn is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, dn.order)
+    if err:
+        return err
+    msg = trading.receive_delivery(dn, request.FILES.get("signed_copy"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.delivery_dict(_dn(pk, did)))
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def delivery_pdf(request, pk, did):
+    dn = _dn(pk, did)
+    if dn is None:
+        return Response({"detail": "Not found."}, status=404)
+    if dn.pdf:
+        return _pdf_response(dn.pdf.read(), f"{dn.ref}.pdf")
+    from .views_commercial import pdf_bytes
+    try:
+        pdf = pdf_bytes("pdf/trading_delivery_note.html", trading.delivery_context(dn))
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf_response(pdf, f"{dn.ref}.pdf")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsTradingReader])
+def order_invoices(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST":
+        err = _manage_or_403(request, order)
+        if err:
+            return err
+        inv, msg = trading.create_invoice(order, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(trading.invoice_dict(inv), status=201)
+    return Response({
+        "invoices": [trading.invoice_dict(i) for i in
+                     order.invoices.select_related("issued_by")],
+        "invoiceable": [trading.delivery_dict(d) for d in
+                        trading.invoiceable_deliveries(order)],
+        "freight_sell": trading._s(order.freight_sell),
+        "freight_billed": trading.freight_billed(order),
+        "money": trading.money(order),
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def invoice_action(request, pk, iid):
+    inv = _inv(pk, iid)
+    if inv is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, inv.order)
+    if err:
+        return err
+    action = request.data.get("action")
+    if action == "issue":
+        msg = trading.issue_invoice(inv, request.user)
+    elif action == "void":
+        msg = trading.void_invoice(inv, request.data.get("reason"), request.user)
+    elif action == "credit":
+        cn, msg = trading.create_credit_note(inv, request.data, request.user)
+    else:
+        msg = "Unknown action."
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.invoice_dict(_inv(pk, iid)))
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def invoice_pdf(request, pk, iid):
+    inv = _inv(pk, iid)
+    if inv is None:
+        return Response({"detail": "Not found."}, status=404)
+    if inv.pdf and inv.status != "VOID":
+        return _pdf_response(inv.pdf.read(), f"{inv.ref}.pdf")
+    try:
+        pdf = trading.invoice_pdf_bytes(inv)
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf_response(pdf, f"{inv.ref}.pdf")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsTradingReaderAnyMethod])
+def receipts(request):
+    if request.method == "POST":
+        rc, msg = trading.record_receipt(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(trading.receipt_dict(rc), status=201)
+    qs = TradingReceipt.objects.select_related("customer", "bank_account", "recorded_by")
+    if request.GET.get("customer"):
+        qs = qs.filter(customer_id=request.GET["customer"])
+    return Response([trading.receipt_dict(r) for r in qs[:300]])
+
+
+@api_view(["DELETE", "GET"])
+@permission_classes([IsTradingReaderAnyMethod])
+def receipt_detail(request, rid):
+    rc = TradingReceipt.objects.filter(id=rid).first()
+    if rc is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        msg = trading.delete_receipt(rc, request.user)
+        if msg:
+            return Response({"detail": msg}, status=403)
+        return Response({"detail": "Receipt deleted."})
+    from .views_commercial import pdf_bytes
+    try:
+        pdf = pdf_bytes("pdf/official_receipt.html", trading.receipt_context(rc))
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf_response(pdf, f"{rc.receipt_no}.pdf")
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def receipt_allocate(request):
+    """Oldest-first suggestion for a customer and an amount."""
+    customer = _Customer.objects.filter(id=request.GET.get("customer")).first()
+    if customer is None:
+        return Response({"detail": "Pick the customer."}, status=400)
+    amount = trading._dec(request.GET.get("amount"), trading.ZERO)
+    rows, left = trading.auto_allocate(customer, amount)
+    return Response({"allocations": rows, "unallocated": left,
+                     "open_invoices": [{"id": i.id, "ref": i.ref, "order": i.order.ref,
+                                        "so_ref": i.order.so_ref, "currency": i.currency,
+                                        "total": trading._s(i.total),
+                                        "outstanding": trading._s(trading.invoice_outstanding(i)),
+                                        "due_date": i.due_date}
+                                       for i in trading.open_invoices(customer)],
+                     "bank_accounts": [{"id": b.id, "label": b.label, "currency": b.currency}
+                                       for b in CompanyBankAccount.objects.filter(is_active=True)
+                                       .order_by("label")],
+                     "can_receipt": trading.can_receipt(request.user)})
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def receivables(request):
+    return Response({**trading.aging(), "can_receipt": trading.can_receipt(request.user)})
+
+
+def _parse_date(v):
+    try:
+        return _date.fromisoformat(str(v)) if v else None
+    except ValueError:
+        return None
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def customer_statement(request, cid):
+    customer = _Customer.objects.filter(id=cid).first()
+    if customer is None:
+        return Response({"detail": "Not found."}, status=404)
+    dfrom, dto = _parse_date(request.GET.get("from")), _parse_date(request.GET.get("to"))
+    if request.GET.get("pdf") == "1":
+        from .views_commercial import pdf_bytes
+        try:
+            pdf = pdf_bytes("pdf/trading_statement.html",
+                            trading.statement_context(customer, dfrom, dto))
+        except Exception as e:                   # pragma: no cover - env dep
+            return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+        return _pdf_response(pdf, f"SOA-{customer.name[:20]}.pdf")
+    return Response(trading.statement(customer, dfrom, dto))
