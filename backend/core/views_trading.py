@@ -412,3 +412,32 @@ def sales_users(request):
                      for u in User.objects.filter(role__in=User.TRADING_ROLES,
                                                   is_active=True)
                      .order_by("full_name")])
+
+
+# ---- phase 3: the supply leg --------------------------------------------------
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def order_supply(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    return Response(trading.supply(order))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def order_import_orders(request, pk):
+    """Raise draft import orders (one per supplier) for the chosen lines."""
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    docs, msg = trading.raise_import_orders(order, request.data.get("line_ids"),
+                                            request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"raised": [d.ref for d in docs],
+                     **trading.supply(_order(pk))}, status=201)

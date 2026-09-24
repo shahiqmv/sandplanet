@@ -10,7 +10,14 @@ import { STAGES, STAGE_LABEL, StageChip, fmtDate, fmtDateTime, fmtMoney, fmtQty 
 const VIA = [["EMAIL", "Email"], ["PHONE", "Phone"], ["WHATSAPP", "WhatsApp"],
              ["VISIT", "Visit"], ["OTHER", "Other"]];
 const TABS = [["overview", "Overview"], ["pricing", "Pricing sheet"],
-              ["quotation", "Quotation"], ["order", "Order"], ["activity", "Activity"]];
+              ["quotation", "Quotation"], ["order", "Order"], ["supply", "Supply"],
+              ["activity", "Activity"]];
+
+const IPR_STATUS = { DRAFT: "draft — with Purchasing", SUBMITTED: "awaiting award",
+                     APPROVED: "awaiting authorisation", AUTHORISED: "ordered",
+                     CLOSED: "closed", CANCELLED: "cancelled" };
+const SHIP_STATUS = { PLANNED: "planned", SHIPPED: "shipped", IN_TRANSIT: "in transit",
+                      ARRIVED: "arrived", UNDER_CLEARING: "under clearing", CLEARED: "cleared" };
 
 // ---- local mirror of trading.calc (display only) -----------------------------
 function fxFor(row, sellCcy, usdRate) {
@@ -451,7 +458,7 @@ function Order({ o, onSaved }) {
         <div className="t-kv"><span>Recorded</span><b>{fmtDateTime(o.won_at)} by {o.won_by}</b></div>
         {o.po_file && <a className="t-link" href={o.po_file} target="_blank" rel="noreferrer">Customer's PO copy</a>}
         <p className="t-note" style={{ marginTop: 12 }}>
-          Next: the import order against this sales order and the delivery note arrive with the next release.
+          Next: raise the import orders on the <b>Supply</b> tab. The delivery note arrives with the next release.
         </p>
       </div>
     );
@@ -488,6 +495,121 @@ function Order({ o, onSaved }) {
                  placeholder="price, lead time, bought elsewhere…" /></label>
         <Btn variant="danger" onClick={lose} disabled={busy || !o.can_manage || !reason.trim()}>Mark lost</Btn>
       </div>
+    </div>
+  );
+}
+
+// ---- supply (won orders) ------------------------------------------------------------
+function Supply({ o }) {
+  const [sup, setSup] = useState(null);
+  const [picked, setPicked] = useState(new Set());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [raised, setRaised] = useState(null);
+
+  function load() {
+    return api(`/trading/orders/${o.id}/supply`).then((d) => {
+      setSup(d);
+      setPicked(new Set(d.orderable));
+    }).catch((e) => setError(e.message));
+  }
+  useEffect(() => { load(); /* eslint-disable-line react-hooks/exhaustive-deps */ }, [o.id]);
+
+  async function raise_() {
+    setBusy(true);
+    setError(null);
+    try {
+      const d = await api(`/trading/orders/${o.id}/import-orders`,
+                          { method: "POST", body: { line_ids: [...picked] } });
+      setRaised(d.raised);
+      setSup(d);
+      setPicked(new Set(d.orderable));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (o.stage !== "WON") {
+    return <p className="t-empty">The supply leg opens once the order is won — import orders are raised against the sales order.</p>;
+  }
+  if (!sup) return error ? <p className="t-note t-note-red">{error}</p> : <p>Loading…</p>;
+  const toggle = (id) => setPicked((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  return (
+    <div>
+      {raised && (
+        <p className="t-note">
+          Raised {raised.join(", ")} as draft import order{raised.length === 1 ? "" : "s"}. Purchasing completes the
+          draft (ports, proforma, payment schedule); it is then awarded and authorised like any other import.
+        </p>
+      )}
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <table className="t-table">
+        <thead><tr>
+          <th style={th}></th><th style={th}>#</th><th style={th}>Line</th>
+          <th style={{ ...th, textAlign: "right" }}>Qty</th><th style={th}>Supplier</th>
+          <th style={{ ...th, textAlign: "right" }}>Cost</th><th style={th}>Import order</th>
+          <th style={{ ...th, textAlign: "right" }}>Shipped</th><th style={{ ...th, textAlign: "right" }}>Received</th>
+          <th style={{ ...th, textAlign: "right" }}>In store</th><th style={{ ...th, textAlign: "right" }}>Landed MVR/unit</th>
+        </tr></thead>
+        <tbody>
+          {sup.lines.map((l) => (
+            <tr key={l.id}>
+              <td style={td}>{l.orderable && o.can_manage && (
+                <input type="checkbox" checked={picked.has(l.id)} onChange={() => toggle(l.id)} />)}</td>
+              <td style={td} className="t-sub">{l.sr_no}</td>
+              <td style={td}>{l.section && <div className="t-sub">{l.section}</div>}{l.description}</td>
+              <td style={{ ...td, textAlign: "right" }}>{fmtQty(l.qty)} {l.uom}</td>
+              <td style={td}>{l.supplier_name || <span className="t-sub">no supplier</span>}</td>
+              <td style={{ ...td, textAlign: "right" }}>{l.cost ? `${l.cost_currency} ${fmtMoney(l.cost, 4)}` : ""}</td>
+              <td style={td}>{l.ipr ? <><b>{l.ipr}</b><div className="t-sub">{IPR_STATUS[l.ipr_status] || l.ipr_status}</div></>
+                                    : l.orderable ? <span className="t-sub">not yet ordered</span> : <span className="t-sub">—</span>}</td>
+              <td style={{ ...td, textAlign: "right" }}>{l.shipped_qty ? fmtQty(l.shipped_qty) : ""}</td>
+              <td style={{ ...td, textAlign: "right" }}>{l.received_qty ? fmtQty(l.received_qty) : ""}</td>
+              <td style={{ ...td, textAlign: "right" }}>{Number(l.on_hand) ? fmtQty(l.on_hand) : ""}</td>
+              <td style={{ ...td, textAlign: "right" }}>{l.unit_landed_mvr ? fmtMoney(l.unit_landed_mvr, 4) : ""}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {o.can_manage && sup.orderable.length > 0 && (
+        <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 10 }}>
+          <Btn onClick={raise_} disabled={busy || picked.size === 0}>
+            {busy ? "Raising…" : `Raise import order${picked.size > 1 ? "s" : ""} for ${picked.size} line${picked.size === 1 ? "" : "s"}`}
+          </Btn>
+          <span className="t-sub">One import order per supplier, reserved to {o.so_ref}, in the trading book.</span>
+        </div>
+      )}
+
+      {sup.import_orders.length > 0 && (
+        <div className="t-tiles" style={{ marginTop: 20 }}>
+          {sup.import_orders.map((io) => (
+            <div key={io.ref} className="t-tile t-tile-soon" style={{ opacity: 1, cursor: "default", alignItems: "stretch" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                <b>{io.ref}</b>
+                <Chip tone={io.status === "AUTHORISED" ? "ok" : io.status === "CANCELLED" || io.is_void ? "alert" : "warn"}>
+                  {IPR_STATUS[io.status] || io.status}</Chip>
+              </div>
+              <div className="t-sub">{io.supplier} · {io.currency} {fmtMoney(io.order_total)} @ {io.exchange_rate}</div>
+              <div className="t-sub">MVR {fmtMoney(io.mvr_total)} goods{Number(io.charges_mvr) ? ` + ${fmtMoney(io.charges_mvr)} charges (${io.uplift_pct}%)` : ""}</div>
+              <div className="t-sub"><b>Landed MVR {fmtMoney(io.landed_total_mvr)}</b></div>
+              {io.shipments.map((sh) => (
+                <div key={sh.ref} className="t-sub">
+                  {sh.ref} · {sh.mode} · {SHIP_STATUS[sh.status] || sh.status}{sh.eta ? ` · ETA ${fmtDate(sh.eta)}` : ""}{sh.live ? ` · ${sh.live}` : ""}
+                </div>
+              ))}
+              {io.received.length > 0 && <div className="t-sub">received: {io.received.join(", ")}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+      {Number(sup.lots_on_hand) > 0 && (
+        <p className="t-note" style={{ marginTop: 12 }}>
+          {fmtQty(sup.lots_on_hand)} units are in the HO store reserved to {o.so_ref}. The delivery note that takes them to the customer's boat arrives with the next release.
+        </p>
+      )}
     </div>
   );
 }
@@ -576,6 +698,7 @@ export default function OrderPage({ id, back, initialTab }) {
       {tab === "pricing" && <PricingSheet o={o} onSaved={setO} />}
       {tab === "quotation" && <Quotation o={o} onSaved={setO} />}
       {tab === "order" && <Order o={o} onSaved={setO} />}
+      {tab === "supply" && <Supply o={o} />}
       {tab === "activity" && <Activity o={o} />}
       <div className="t-sub" style={{ marginTop: 16 }}>
         {o.n_lines} line{o.n_lines === 1 ? "" : "s"} · quoted {o.currency} {fmtMoney(o.total)}

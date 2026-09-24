@@ -13,8 +13,8 @@ from django.utils import timezone
 
 from . import fx
 from .audit import audit
-from .models import (Item, Supplier, TradingLine, TradingOrder,
-                     TradingQuotation, User)
+from .models import (ImportReceipt, Item, Supplier, TradingLine,
+                     TradingOrder, TradingQuotation, User)
 from .numbering import next_ref
 
 ZERO = Decimal("0")
@@ -727,3 +727,161 @@ def home(user):
                   .select_related("customer", "owner").order_by("-won_at")[:5]]
     return {"by_stage": by_stage, "open": mine.count(), "chase": chase,
             "awaiting_authorisation": awaiting, "recent_won": recent_won}
+
+
+# ---- phase 3: the supply leg ------------------------------------------------------
+
+LIVE_IPR = ("DRAFT", "SUBMITTED", "APPROVED", "AUTHORISED", "CLOSED")
+
+
+def _live_ipr_line(tline):
+    """The order line already buying for this pricing-sheet line, if any."""
+    for il in tline.ipr_lines.select_related("order__document"):
+        d = il.order.document
+        if d.status in LIVE_IPR and not d.is_void:
+            return il
+    return None
+
+
+def _mvr_rate_for(order, cost_currency, lines):
+    """Order currency → MVR for the import order: the company USD rate, 1
+    for rufiyaa, or the sheet's own rate through the sell currency."""
+    cc = cost_currency.upper()
+    if cc == "MVR":
+        return Decimal("1")
+    if cc == "USD":
+        return fx.usd_rate()
+    sell = (order.currency or "MVR").upper()
+    typed = [Decimal(str(ln.fx)) for ln in lines if ln.fx]
+    if typed:
+        to_sell = typed[0]
+        return (to_sell * (fx.usd_rate() if sell == "USD" else Decimal("1"))
+                ).quantize(Decimal("0.0001"))
+    return None
+
+
+def raise_import_orders(order, line_ids, actor):
+    """Turn the won order's supplier lines into draft import orders — one
+    per supplier — on the normal IPR chain, reserved to this trading order
+    and posting in the trading book. Purchasing completes the draft (ports,
+    proforma, payment schedule) and it is awarded and authorised as any
+    other import (TRADING_BUILD_BRIEF.md §5.5)."""
+    from . import costing, imports
+    if order.stage != "WON":
+        return None, "Import orders are raised against a won order (a sales order)."
+    head = costing.by_code(costing.TRD_COGS)
+    if head is None:
+        return None, "The trading cost-of-sales head is missing — ask Finance."
+    lines = list(order.lines.filter(id__in=line_ids or []).select_related("supplier"))
+    if not lines:
+        return None, "Pick the lines to order."
+    groups = {}
+    for ln in lines:
+        if not ln.supplier_id:
+            return None, f"Line {ln.sr_no} has no supplier."
+        if ln.cost is None:
+            return None, f"Line {ln.sr_no} has no cost."
+        if _live_ipr_line(ln) is not None:
+            return None, f"Line {ln.sr_no} is already on an import order."
+        groups.setdefault(ln.supplier_id, []).append(ln)
+    created = []
+    with transaction.atomic():
+        for sid, group in groups.items():
+            sup = group[0].supplier
+            ccys = {(ln.cost_currency or "USD").upper() for ln in group}
+            if len(ccys) > 1:
+                return None, (f"{sup.name}: the lines are costed in more than "
+                              "one currency — one import order takes one.")
+            ccy = ccys.pop()
+            rate = _mvr_rate_for(order, ccy, group)
+            if rate is None:
+                return None, (f"{sup.name}: no {ccy} → MVR rate. Enter the "
+                              "exchange rate on the pricing-sheet lines first.")
+            data = {
+                "supplier_id": sup.id, "order_currency": ccy,
+                "exchange_rate": str(rate),
+                "incoterm": sup.default_incoterm or "",
+                "notes": f"Trading — {order.so_ref} for {order.customer.name} "
+                         f"({order.ref}: {order.title})",
+                "trading_order_id": order.id,
+                "lines": [{
+                    "item_id": ln.item_id, "free_text_desc": ln.description,
+                    "unit": ln.uom, "spec": "", "order_qty": str(ln.qty),
+                    "unit_price": str(ln.cost), "cost_head_id": head.id,
+                    "remarks": ln.section, "trading_line_id": ln.id,
+                    "allocations": [{"trading_order_id": order.id,
+                                     "qty": str(ln.qty)}],
+                } for ln in group],
+            }
+            doc, err = imports.create_ipr(data, actor)
+            if err:
+                transaction.set_rollback(True)
+                return None, f"{sup.name}: {err}"
+            created.append(doc)
+    audit(ENTITY, order.id, "TIN_IPR_RAISED", actor=actor,
+          detail={"ref": order.ref, "so": order.so_ref,
+                  "iprs": [d.ref for d in created],
+                  "lines": [ln.id for ln in lines]})
+    return created, None
+
+
+def supply(order):
+    """The sales order's supply picture: each line's import status, and each
+    import order with its shipments, receipts and landed cost."""
+    from . import imports
+    lines_out, iprs = [], {}
+    for ln in order.lines.select_related("supplier"):
+        il = _live_ipr_line(ln)
+        row = {"id": ln.id, "sr_no": ln.sr_no, "section": ln.section,
+               "description": ln.description, "qty": _s(ln.qty), "uom": ln.uom,
+               "supplier": ln.supplier_id,
+               "supplier_name": ln.supplier.name if ln.supplier_id else "",
+               "cost": _s(ln.cost), "cost_currency": ln.cost_currency,
+               "orderable": bool(ln.supplier_id and ln.cost is not None and il is None),
+               "ipr": None, "ordered_qty": None, "shipped_qty": None,
+               "received_qty": None, "unit_landed_mvr": None,
+               "on_hand": _s(sum((lot.qty_on_hand for lot in
+                                  ln.order.lots.filter(source_ipr_line__trading_line=ln)),
+                                 ZERO))}
+        if il is not None:
+            d = il.order.document
+            row.update({"ipr": d.ref, "ipr_status": d.status,
+                        "ordered_qty": _s(il.order_qty),
+                        "shipped_qty": _s(imports.line_shipped(il)),
+                        "received_qty": _s(imports.line_received_qty(il))})
+            iprs.setdefault(d.ref, il.order)
+        lines_out.append(row)
+    for ref, io in iprs.items():
+        lc = imports.landed_cost(io)
+        for il in io.lines.all():
+            for row in lines_out:
+                if row["ipr"] == ref and il.trading_line_id == row["id"]:
+                    row["unit_landed_mvr"] = _s(lc["lines"].get(il.id, {}).get("unit_landed"))
+    ipr_rows = []
+    for ref, io in iprs.items():
+        d = io.document
+        lc = imports.landed_cost(io)
+        ships = []
+        for sh in imports.order_shipments(io):
+            t = sh.tracking.first() if hasattr(sh, "tracking") else None
+            ships.append({"ref": sh.ref, "seq": sh.seq, "mode": sh.mode,
+                          "status": sh.status, "eta": getattr(sh, "eta", None),
+                          "live": (t.raw_status if t and getattr(t, "raw_status", None) else None)})
+        ipr_rows.append({
+            "ref": d.ref, "status": d.status, "is_void": d.is_void,
+            "supplier": io.supplier.name, "currency": io.order_currency,
+            "exchange_rate": _s(io.exchange_rate),
+            "order_total": _s(imports.ipr_order_total(io)),
+            "mvr_total": _s(imports.ipr_mvr_total(io)),
+            "landed_total_mvr": _s(lc["total_landed"]),
+            "charges_mvr": _s(lc["total_charges"]),
+            "uplift_pct": _s(lc["uplift_pct"]),
+            "shipments": ships,
+            "received": [r.document.ref for r in
+                         ImportReceipt.objects.filter(shipment__order=io,
+                                                      document__status="RECEIVED")
+                         .select_related("document")],
+        })
+    return {"lines": lines_out, "import_orders": ipr_rows,
+            "orderable": [r["id"] for r in lines_out if r["orderable"]],
+            "lots_on_hand": _s(sum((lot.qty_on_hand for lot in order.lots.all()), ZERO))}

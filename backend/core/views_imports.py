@@ -32,10 +32,13 @@ class AllocationSerializer(serializers.ModelSerializer):
     project_title = serializers.CharField(source="project.title",
                                           read_only=True, default=None)
 
+    trading_order_ref = serializers.CharField(source="trading_order.so_ref",
+                                              read_only=True, default=None)
+
     class Meta:
         model = ImportAllocation
         fields = ["id", "project", "project_code", "project_title", "qty",
-                  "is_general_stock"]
+                  "is_general_stock", "trading_order", "trading_order_ref"]
 
 
 class OrderLineSerializer(serializers.ModelSerializer):
@@ -53,7 +56,7 @@ class OrderLineSerializer(serializers.ModelSerializer):
         fields = ["id", "line_no", "item", "description", "unit", "spec",
                   "order_qty", "unit_price", "cost_head", "cost_head_name",
                   "line_value", "remarks", "allocations",
-                  "shipped_qty", "remaining_qty"]
+                  "shipped_qty", "remaining_qty", "trading_line"]
 
     def get_shipped_qty(self, obj):
         return ipr_svc.line_shipped(obj)
@@ -69,6 +72,7 @@ class OrderSerializer(serializers.ModelSerializer):
                                              read_only=True)
     proforma_invoice_url = serializers.SerializerMethodField()
     lines = OrderLineSerializer(many=True, read_only=True)
+    trading = serializers.SerializerMethodField()
 
     class Meta:
         model = ImportOrder
@@ -76,7 +80,11 @@ class OrderSerializer(serializers.ModelSerializer):
                   "order_currency", "exchange_rate", "incoterm",
                   "loading_port", "discharge_port", "pi_ref",
                   "discount", "freight_handling", "misc_fee",
-                  "proforma_invoice_url", "notes", "lines"]
+                  "proforma_invoice_url", "notes", "lines", "trading_order",
+                  "trading"]
+
+    def get_trading(self, obj):
+        return _trading_tag(obj)
 
     def get_proforma_invoice_url(self, obj):
         return obj.proforma_invoice.url if obj.proforma_invoice else None
@@ -228,6 +236,16 @@ class ShipmentSerializer(serializers.ModelSerializer):
 
     def get_next_statuses(self, obj):
         return sorted(ImportShipment.NEXT.get(obj.status, set()))
+
+
+def _trading_tag(order):
+    """Where a trading-origin order is going: the sales order and customer,
+    the way a project order shows its project."""
+    if not order.trading_order_id:
+        return None
+    t = order.trading_order
+    return {"id": t.id, "ref": t.ref, "so_ref": t.so_ref,
+            "customer": t.customer.name}
 
 
 def _get_ipr(request, ref):
@@ -623,9 +641,12 @@ def store_lots(request):
             "value_on_hand": (lot.qty_on_hand * lot.unit_landed_cost)
             .quantize(Decimal("0.01")),
             "reserved_for": (lot.project.code if lot.project_id
-                             else "General stock"),
+                             else f"Trading · {lot.trading_order.so_ref or lot.trading_order.ref}"
+                             if lot.trading_order_id else "General stock"),
             "project_id": lot.project_id,
-            "site": lot.project.site.code if lot.project_id else "—",
+            "trading_order_id": lot.trading_order_id,
+            "site": (lot.project.site.code if lot.project_id
+                     else "Trading" if lot.trading_order_id else "—"),
             "source_irn": lot.source_ref,
             "location": lot.location, "received_date": lot.received_date,
         })
@@ -1112,7 +1133,8 @@ def ipr_list_create(request):
         "import_order__supplier", "created_by").prefetch_related(
         "import_order__milestones",
         "import_order__shipments__tracking",
-        "import_order__lines__allocations__project").order_by("-id")
+        "import_order__lines__allocations__project",
+        "import_order__trading_order__customer").order_by("-id")
     if request.GET.get("status"):
         qs = qs.filter(status=request.GET["status"])
 
@@ -1153,6 +1175,8 @@ def ipr_list_create(request):
                 "eta": sh.eta}
 
     def destinations(order):
+        if order.trading_order_id:
+            return [f"Trading · {order.trading_order.so_ref or order.trading_order.ref}"]
         codes = []
         for ln in order.lines.all():
             for a in ln.allocations.all():
@@ -1173,6 +1197,7 @@ def ipr_list_create(request):
             "order_total": total,
             "mvr_total": ipr_svc.ipr_mvr_total(order),
             "projects": destinations(order),
+            "trading": _trading_tag(order),
             "payment": payment_summary(order, total),
             "shipping": shipping_summary(order),
         })

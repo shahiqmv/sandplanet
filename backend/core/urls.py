@@ -967,5 +967,9 @@ urlpatterns = [
          name="trading-order-lost"),
     path("trading/orders/<int:pk>/activity", trading_api.order_activity,
          name="trading-order-activity"),
+    path("trading/orders/<int:pk>/supply", trading_api.order_supply,
+         name="trading-order-supply"),
+    path("trading/orders/<int:pk>/import-orders", trading_api.order_import_orders,
+         name="trading-order-import-orders"),
     path("", include(router.urls)),
 ]

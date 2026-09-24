@@ -151,9 +151,22 @@ Each phase ships, is verified live, and stops for owner review.
    Lost with a reason, activity trail, chase-list dashboard with the
    manager's authorisation queue. Sales manage their own inquiries; the
    manager and Admin manage all; Finance and Signatory read.
-3. **Supply leg** — raise an import order from the Sales Order into the IPR
-   chain (trading book, order-reserved lots); order screen shows the import's
-   live status and landed cost.
+3. **Supply leg** — DONE 2026-09-24. From a won order the Supply tab raises
+   one draft IPR per supplier (`trading.raise_import_orders`) into the
+   normal chain: `ImportOrder.trading_order`, every allocation
+   `trading_order`-reserved (never a project), lines linked back
+   (`ImportOrderLine.trading_line`), cost head `TRD_COGS`. Purchasing
+   completes and submits the draft as usual; award and signatory
+   authorisation are unchanged. Commitment and payment post to the General
+   Stock pool at HO in the **TRADING book**; FX and charge corrections
+   carry the book. The IRN files lots with `StockLot.trading_order`, which
+   site picks and MR availability never touch. The store shows "Trading ·
+   TSO-nnn"; the purchasing register and order header carry the trading
+   tag. The order's Supply tab shows each line's IPR, shipped, received,
+   in store and landed MVR/unit, plus each import order's shipments and
+   landed total. Trading heads seeded (TRD_COGS, TRD_REVENUE,
+   TRD_OUTPUT_GST, TRD_FREIGHT; `CostHead.trading`) and hidden from every
+   project picker.
 4. **Delivery and invoicing** — delivery notes drawing stock lots, signed
    copy upload, tax invoice per despatch with GST and TIN, revenue / cost of
    sale / output GST postings, official receipts allocated across invoices,
@@ -167,10 +180,10 @@ Each phase ships, is verified live, and stops for owner review.
   exists for any exception the owner names.
 - Sales users: the owner assigns the role on the Users page (existing people
   change role; new people are created as Sales).
-- **Carrier site for trading postings** (decide in phase 3/4): Document and
-  CostPosting both require a site. Options: a dedicated `TRD` site flagged
-  off every project list, or making `site` nullable for the trading book.
-  The brief leans to the `TRD` site so the IPR/PV chain needs no change.
+- **Carrier site — resolved 2026-09-24.** No trading site is needed: every
+  IPR already sits on the head-office site, and its cost is split per
+  allocation. A trading allocation posts to the stock pool at HO in the
+  TRADING book, so nothing reaches a project and no site list changes.
 
 ---
 *Source design: `ARCHITECTURE-BLUEPRINT.md` (SPH Inquiry Desk). July 2026

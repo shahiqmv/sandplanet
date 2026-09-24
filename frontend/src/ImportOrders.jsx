@@ -199,6 +199,7 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
     spec: l.spec || "", order_qty: String(l.order_qty ?? ""),
     unit_price: String(l.unit_price ?? ""),
     cost_head_id: String(l.cost_head || ""), remarks: l.remarks || "",
+    trading_line_id: l.trading_line || null,
     allocations: l.allocations?.length
       ? l.allocations.map((a) => ({ project_id: String(a.project || ""),
                                     qty: String(a.qty ?? "") }))
@@ -280,7 +281,7 @@ export function IprForm({ me, existing, onSaved, onCancel }) {
           item_id: l.item_id || null, free_text_desc: l.free_text_desc,
           unit: l.unit, spec: l.spec, order_qty: l.order_qty,
           unit_price: l.unit_price, cost_head_id: l.cost_head_id,
-          remarks: l.remarks,
+          remarks: l.remarks, trading_line_id: l.trading_line_id || null,
           allocations: l.allocations.map((a) => ({
             project_id: a.project_id || null, qty: a.qty })),
         })) };
@@ -569,6 +570,13 @@ export function IprView({ me, refIpr, onClose, onOpenIrn, onEdit,
         {o.incoterm ? ` · ${o.incoterm}` : ""}
         {o.pi_ref ? ` · PI ${o.pi_ref}` : ""}
       </p>
+      {o.trading && (
+        <p style={{ fontSize: 12, margin: "4px 0 0", color: "var(--sp-navy)" }}>
+          <b>Trading order {o.trading.so_ref || o.trading.ref}</b> for {o.trading.customer} —
+          the goods are the customer's, reserved to that order in the store; nothing here
+          is a project cost.
+        </p>
+      )}
       {doc.pmr_refs?.length > 0 && (
         <p style={{ fontSize: 12, color: "#5a6b78", margin: "4px 0 0" }}>
           Fulfils: {doc.pmr_refs.join(" · ")}</p>

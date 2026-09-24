@@ -1513,6 +1513,12 @@ class ImportOrder(models.Model):
                                    null=True, blank=True)
     # The supplier's proforma invoice file, uploaded by HO for the Director /
     # Signatory to view before authorising the order (owner 2026-07-13).
+    # Raised from a won trading order (TRADING_BUILD_BRIEF.md §5.5): the same
+    # purchasing screen and voucher, but every allocation is the trading
+    # order's and every posting is in the trading book.
+    trading_order = models.ForeignKey("TradingOrder", on_delete=models.PROTECT,
+                                      null=True, blank=True,
+                                      related_name="import_orders")
     proforma_invoice = models.FileField(upload_to="import-docs/pi/", null=True,
                                         blank=True)
     notes = models.TextField(blank=True)
@@ -1539,6 +1545,11 @@ class ImportOrderLine(models.Model):
     cost_head = models.ForeignKey("CostHead", on_delete=models.PROTECT,
                                   related_name="+")
     remarks = models.TextField(blank=True)
+    # The trading pricing-sheet line this order line buys for, so the sales
+    # order can show each line's import status and landed cost.
+    trading_line = models.ForeignKey("TradingLine", on_delete=models.SET_NULL,
+                                     null=True, blank=True,
+                                     related_name="ipr_lines")
 
     class Meta:
         ordering = ["line_no"]
@@ -1562,11 +1573,16 @@ class ImportAllocation(models.Model):
                              related_name="allocations")
     project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
                                 blank=True, related_name="import_allocations")
+    # Reserved to a trading order instead (stock for a customer, never a
+    # project; commitment to the stock pool in the trading book).
+    trading_order = models.ForeignKey("TradingOrder", on_delete=models.PROTECT,
+                                      null=True, blank=True,
+                                      related_name="import_allocations")
     qty = models.DecimalField(max_digits=12, decimal_places=2)
 
     @property
     def is_general_stock(self):
-        return self.project_id is None
+        return self.project_id is None and self.trading_order_id is None
 
 
 class ImportPaymentMilestone(models.Model):
@@ -2102,6 +2118,9 @@ class StockLot(models.Model):
                                         blank=True, related_name="+")
     # provenance for non-import lots, e.g. "Opening stock" + a note/ref
     origin_note = models.CharField(max_length=120, blank=True)
+    # reserved to a trading order: a customer's goods, never issued to a site
+    trading_order = models.ForeignKey("TradingOrder", on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="lots")
     # reserved to a project (committed exposure) or null = general stock
     project = models.ForeignKey("Project", on_delete=models.PROTECT, null=True,
                                 blank=True, related_name="stock_lots")
@@ -5063,6 +5082,10 @@ class CostHead(models.Model):
     # requests skip the site PM and go straight to the Director for approval,
     # then Finance — never the site payment chain (owner 2026-08-04).
     commercial = models.BooleanField(default=False)
+    # A trading-book head (Cost of sales, Revenue, Output GST, delivery). It
+    # never appears in a project picker or a project report; the trading arm
+    # reaches for it by code (TRADING_BUILD_BRIEF.md §5).
+    trading = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "name"]

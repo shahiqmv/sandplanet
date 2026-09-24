@@ -526,3 +526,194 @@ class QuotationPdfRowsTests(SalesFrontBase):
         kinds = [("H:" + x["heading"]) if "heading" in x else x["description"] for x in rows]
         self.assertEqual(kinds, ["H:Tiles", "Porcelain pool tile 300x300", "Grout",
                                  "H:Tools", "Trowel"])
+
+
+# ---- phase 3: the supply leg ------------------------------------------------
+
+from .models import Document, ImportOrder, Site, StockLot  # noqa: E402
+
+
+class SupplyLegBase(SalesFrontBase):
+    def setUp(self):
+        super().setUp()
+        self.ho = make_user("ho", User.Role.HO_PURCHASING)
+        self.director = make_user("dir", User.Role.DIRECTOR)
+        self.signatory = make_user("sig", User.Role.SIGNATORY)
+        self.sup2 = Supplier.objects.create(name="Colombo Grout", category="INTERNATIONAL",
+                                            is_trading=True, default_currency="USD")
+        Site.objects.get_or_create(code="MLE", defaults={"name": "Head Office",
+                                                          "is_head_office": True})
+
+    def won(self):
+        d = self.new_order()
+        self.put_lines(d["id"], [
+            {**self.TILE, "supplier": self.sup.id, "section": "Tiles"},
+            {**self.TILE, "supplier": self.sup2.id, "description": "Grout 5kg",
+             "qty": "50", "uom": "bag", "cost": "4"},
+            {"description": "Delivery labour", "qty": "1", "cost": "100",
+             "cost_currency": "MVR", "margin_percent": "10"},          # no supplier
+        ])
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations")
+        q = r.data["quotations"][0]
+        self.login(self.sm)
+        self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations/{q['id']}/authorise")
+        self.client.post(f"/api/v1/trading/orders/{d['id']}/won",
+                         {"po_number": "PO-1", "po_date": "2026-09-24"})
+        self.login(self.sales)
+        return self.client.get(f"/api/v1/trading/orders/{d['id']}").data
+
+    def raise_iprs(self, oid, line_ids):
+        return self.client.post(f"/api/v1/trading/orders/{oid}/import-orders",
+                                {"line_ids": line_ids}, format="json")
+
+
+class RaiseImportOrderTests(SupplyLegBase):
+    def test_one_draft_ipr_per_supplier_reserved_to_the_trading_order(self):
+        d = self.won()
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        self.assertEqual(len(sup["orderable"]), 2)          # the labour line has no supplier
+        r = self.raise_iprs(d["id"], sup["orderable"])
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["raised"], ["IPR-001", "IPR-002"])
+        io = ImportOrder.objects.get(document__ref="IPR-001")
+        self.assertEqual(io.trading_order_id, d["id"])
+        self.assertEqual(io.document.status, "DRAFT")
+        self.assertEqual(io.document.site.code, "MLE")
+        self.assertEqual(io.order_currency, "USD")
+        self.assertEqual(str(io.exchange_rate), "15.4200")
+        ln = io.lines.get()
+        self.assertEqual(ln.free_text_desc, "Porcelain pool tile 300x300")
+        self.assertEqual(str(ln.order_qty), "1000.00")
+        self.assertEqual(str(ln.unit_price), "10.0000")
+        self.assertEqual(ln.cost_head.code, "TRD_COGS")
+        self.assertIsNotNone(ln.trading_line_id)
+        a = ln.allocations.get()
+        self.assertEqual(a.trading_order_id, d["id"])
+        self.assertIsNone(a.project_id)
+        self.assertFalse(a.is_general_stock)
+        # the supply picture now shows the line on its order
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        tile = next(x for x in sup["lines"] if x["description"].startswith("Porcelain"))
+        self.assertEqual(tile["ipr"], "IPR-001")
+        self.assertEqual(tile["ipr_status"], "DRAFT")
+        self.assertFalse(tile["orderable"])
+        self.assertEqual(sup["orderable"], [])
+        self.assertEqual([x["ref"] for x in sup["import_orders"]], ["IPR-001", "IPR-002"])
+        # raising the same line again is refused
+        r = self.raise_iprs(d["id"], [tile["id"]])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("already", r.data["detail"])
+
+    def test_only_a_won_order_and_only_costed_supplier_lines(self):
+        d = self.new_order()
+        r = self.put_lines(d["id"], [{**self.TILE, "supplier": self.sup.id}])
+        lid = r.data["lines"][0]["id"]
+        r = self.raise_iprs(d["id"], [lid])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("won", r.data["detail"])
+        d = self.won()
+        labour = next(x["id"] for x in d["lines"] if x["description"] == "Delivery labour")
+        r = self.raise_iprs(d["id"], [labour])
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("supplier", r.data["detail"])
+        self.login(self.finance)
+        r = self.raise_iprs(d["id"], [d["lines"][0]["id"]])
+        self.assertEqual(r.status_code, 403)
+
+    def test_purchasing_sees_the_trading_tag_and_a_resave_keeps_the_link(self):
+        d = self.won()
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        self.raise_iprs(d["id"], sup["orderable"])
+        self.login(self.ho)
+        rows = self.client.get("/api/v1/ipr").data["rows"]
+        row = next(x for x in rows if x["ref"] == "IPR-001")
+        self.assertEqual(row["projects"], ["Trading · TSO-001"])
+        self.assertEqual(row["trading"]["customer"], "Kuramathi Maldives")
+        doc = self.client.get("/api/v1/ipr/IPR-001").data
+        self.assertEqual(doc["order"]["trading"]["so_ref"], "TSO-001")
+        line = doc["order"]["lines"][0]
+        self.assertIsNotNone(line["trading_line"])
+        # Purchasing edits the draft the usual way (ports, PI, rate) and the
+        # form sends allocations as it always has — the link survives.
+        body = {"supplier_id": doc["order"]["supplier"], "order_currency": "USD",
+                "exchange_rate": "15.5", "incoterm": "CIF", "loading_port": "Guangzhou",
+                "lines": [{"item_id": None, "free_text_desc": line["description"],
+                           "unit": line["unit"], "order_qty": line["order_qty"],
+                           "unit_price": line["unit_price"], "cost_head_id": line["cost_head"],
+                           "remarks": "", "trading_line_id": line["trading_line"],
+                           "allocations": [{"project_id": None, "qty": line["order_qty"]}]}]}
+        r = self.client.patch("/api/v1/ipr/IPR-001", body, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        io = ImportOrder.objects.get(document__ref="IPR-001")
+        ln = io.lines.get()
+        self.assertEqual(ln.trading_line_id, line["trading_line"])
+        self.assertEqual(ln.allocations.get().trading_order_id, d["id"])
+        self.assertEqual(io.loading_port, "Guangzhou")
+
+
+class TradingBookPostingTests(SupplyLegBase):
+    def authorise(self, ref):
+        self.login(self.ho)
+        self.client.post(f"/api/v1/documents/{ref}/actions/submit", {}, format="json")
+        self.login(self.director)
+        self.client.post(f"/api/v1/documents/{ref}/actions/approve", {}, format="json")
+        self.login(self.signatory)
+        r = self.client.post(f"/api/v1/documents/{ref}/actions/authorise", {}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+
+    def test_commitment_lands_in_the_trading_book_at_the_stock_pool(self):
+        d = self.won()
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        self.raise_iprs(d["id"], sup["orderable"])
+        self.authorise("IPR-001")
+        doc = Document.objects.get(ref="IPR-001")
+        self.assertEqual(doc.status, "AUTHORISED")
+        posts = CostPosting.objects.filter(document=doc)
+        self.assertTrue(posts.exists())
+        self.assertTrue(all(p.book == "TRADING" for p in posts))
+        self.assertTrue(all(p.is_stock_pool and p.site.is_head_office for p in posts))
+        self.assertEqual(sum(p.amount for p in posts), Decimal("154200.00"))   # 1000 × 10 × 15.42
+        # nothing of it reaches a project figure
+        self.login(self.finance)
+        r = self.client.get("/api/v1/cost/portfolio")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(sum(Decimal(str(x["committed"])) for x in r.data["sites"]), 0)
+        # and the trading heads stay out of the project cost-head picker
+        names = [h["name"] for h in self.client.get("/api/v1/cost-heads?pools=1").data]
+        self.assertNotIn("Trading — Cost of sales", names)        # the PYR picker
+        heads = self.client.get("/api/v1/cost-head-master").data
+        self.assertNotIn("TRD_COGS", [h["code"] for h in heads])  # the master list
+        heads = self.client.get("/api/v1/cost-head-master?trading=1").data
+        self.assertIn("TRD_COGS", [h["code"] for h in heads])
+
+    def test_receipt_reserves_lots_to_the_trading_order_and_sites_cannot_draw_them(self):
+        from . import imports
+        d = self.won()
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        self.raise_iprs(d["id"], sup["orderable"])
+        self.authorise("IPR-001")
+        self.login(self.ho)
+        sid = self.client.post("/api/v1/ipr/IPR-001/shipments", {"mode": "SEA"},
+                               format="json").data["shipments"][0]["id"]
+        irn = self.client.post(f"/api/v1/ipr/IPR-001/shipments/{sid}/receive",
+                               {"location": "Bay 3"}, format="json").data["ref"]
+        r = self.client.post(f"/api/v1/irn/{irn}/post", {}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        lot = StockLot.objects.get(source_ipr_line__order__document__ref="IPR-001")
+        self.assertEqual(lot.trading_order_id, d["id"])
+        self.assertIsNone(lot.project_id)
+        self.assertEqual(str(lot.qty_on_hand), "1000.00")
+        # the store shows who it is for; a site pick never touches it
+        store = self.client.get("/api/v1/store/lots").data
+        row = next(x for x in store["lots"] if x["id"] == lot.id)
+        self.assertEqual(row["reserved_for"], "Trading · TSO-001")
+        picks, err = imports.pick_lots_fifo(lot.item, None, Decimal("1"))
+        self.assertIsNone(picks)
+        # and the sales order sees it arrive
+        self.login(self.sales)
+        sup = self.client.get(f"/api/v1/trading/orders/{d['id']}/supply").data
+        tile = next(x for x in sup["lines"] if x["ipr"] == "IPR-001")
+        self.assertEqual(tile["received_qty"], "1000.00")
+        self.assertEqual(tile["on_hand"], "1000.00")
+        self.assertEqual(sup["lots_on_hand"], "1000.00")
+        self.assertEqual(sup["import_orders"][0]["received"], [irn])

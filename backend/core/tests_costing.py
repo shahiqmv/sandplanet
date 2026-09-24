@@ -19,7 +19,7 @@ class CostHeadSeedTests(TestCase):
         for pool in ("General Stock", "Foreign Exchange", "Stock Adjustment"):
             self.assertTrue(CostHead.objects.filter(name=pool,
                                                     is_pool=True).exists())
-        self.assertEqual(CostHead.objects.filter(is_pool=False).count(), 8)
+        self.assertEqual(CostHead.objects.filter(is_pool=False, trading=False).count(), 8)
 
 
 class PostingLedgerTests(TestCase):

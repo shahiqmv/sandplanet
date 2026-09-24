@@ -63,6 +63,8 @@ def _validate_lines(lines_data):
         allocs = ln.get("allocations") or []
         if not allocs:
             return f"Line {i}: allocate the quantity to project(s) / stock."
+        if any(a.get("project_id") and a.get("trading_order_id") for a in allocs):
+            return f"Line {i}: an allocation is a project's or a trading order's, not both."
         total = sum(_dec(a.get("qty")) for a in allocs)
         if total != order_qty:
             return (f"Line {i}: allocations ({total}) must sum to the order "
@@ -101,6 +103,13 @@ def create_ipr(data, actor):
                           "released requirement can be ordered.")
 
     from datetime import date
+    trading_order = None
+    if data.get("trading_order_id"):
+        from .models import TradingOrder
+        trading_order = TradingOrder.objects.filter(
+            id=data["trading_order_id"]).first()
+        if trading_order is None:
+            return None, "Unknown trading order."
     ref = next_ref("IPR", None)
     doc = Document.objects.create(
         doc_type="IPR", ref=ref, site=_ho_site(),
@@ -120,7 +129,8 @@ def create_ipr(data, actor):
         pi_ref=data.get("pi_ref", ""), notes=data.get("notes", ""),
         discount=_dec(data.get("discount")) or None,
         freight_handling=_dec(data.get("freight_handling")) or None,
-        misc_fee=_dec(data.get("misc_fee")) or None)
+        misc_fee=_dec(data.get("misc_fee")) or None,
+        trading_order=trading_order)
     _save_lines(order, lines_data)
 
     for pmr in pmrs:
@@ -170,12 +180,19 @@ def update_ipr(doc, data, actor):
 
 
 def _save_lines(order, lines_data):
+    """Replace the draft's lines. A trading order's lines stay the trading
+    order's whatever the form sends: every allocation is reserved to it and
+    none to a project (TRADING_BUILD_BRIEF.md §5.5)."""
     order.lines.all().delete()
-    from .models import CostHead
+    from .models import CostHead, TradingLine
     for i, ln in enumerate(lines_data, 1):
         item = None
         if ln.get("item_id"):
             item = Item.objects.filter(pk=ln["item_id"]).first()
+        tline = None
+        if order.trading_order_id and ln.get("trading_line_id"):
+            tline = TradingLine.objects.filter(
+                pk=ln["trading_line_id"], order_id=order.trading_order_id).first()
         line = ImportOrderLine.objects.create(
             order=order, line_no=i, item=item,
             free_text_desc="" if item else (ln.get("free_text_desc") or ""),
@@ -183,7 +200,12 @@ def _save_lines(order, lines_data):
             spec=ln.get("spec", ""), order_qty=_dec(ln.get("order_qty")),
             unit_price=_dec(ln.get("unit_price")),
             cost_head=CostHead.objects.get(pk=ln["cost_head_id"]),
-            remarks=ln.get("remarks", ""))
+            remarks=ln.get("remarks", ""), trading_line=tline)
+        if order.trading_order_id:
+            ImportAllocation.objects.create(
+                line=line, project=None, trading_order=order.trading_order,
+                qty=_dec(ln.get("order_qty")))
+            continue
         for a in ln.get("allocations") or []:
             project = None
             if a.get("project_id"):
@@ -234,10 +256,15 @@ def _post_split(order, doc, state, fraction, rate, actor, milestone=None):
                              currency="MVR", document=doc, ipr_line=line,
                              ipr_milestone=milestone, actor=actor)
             else:
+                # General stock — or a trading order's goods, which are stock
+                # in the trading book until the delivery note turns them into
+                # cost of sales (never a project figure).
                 costing.post(site=ho, cost_head=gs_head, state=state,
                              source="IPR", amount=amount, currency="MVR",
                              document=doc, ipr_line=line, is_stock_pool=True,
-                             ipr_milestone=milestone, actor=actor)
+                             ipr_milestone=milestone, actor=actor,
+                             book="TRADING" if alloc.trading_order_id
+                             else "PROJECT")
 
 
 def generate_po_for_ipr(doc, actor):
@@ -724,6 +751,7 @@ def _apply_charge_correction(doc, corr, actor):
             costing.post(site=p.site, cost_head=p.cost_head, state="COMMITTED",
                          source="IPR", amount=-p.amount, document=doc,
                          ipr_line=line, is_stock_pool=p.is_stock_pool,
+                         book=p.book,
                          reversal_of=p, actor=actor)
         line.allocations.all().delete()
         line.order_qty = ZERO
@@ -783,6 +811,7 @@ def _reconcile_committed(order, doc, actor):
     costing.post(site=biggest.site, cost_head=biggest.cost_head,
                  state="COMMITTED", source="IPR", amount=residual,
                  currency="MVR", document=doc, ipr_line=biggest.ipr_line,
+                 book=biggest.book,
                  is_stock_pool=biggest.is_stock_pool, actor=actor)
     audit("document", doc.id, "IPR_COMMITMENT_ROUNDED", actor=actor,
           detail={"amount": str(residual), "target": str(target)})
@@ -814,6 +843,7 @@ def _apply_line_amendments(doc, order, corr, actor):
             costing.post(site=p.site, cost_head=p.cost_head, state="COMMITTED",
                          source="IPR", amount=-p.amount, document=doc,
                          ipr_line=line, is_stock_pool=p.is_stock_pool,
+                         book=p.book,
                          reversal_of=p, actor=actor)
         line.order_qty, line.unit_price = qty, price
         line.save(update_fields=["order_qty", "unit_price"])
@@ -904,7 +934,9 @@ def _apply_new_lines(doc, order, corr, actor):
                 costing.post(site=ho, cost_head=gs_head, state="COMMITTED",
                              source="IPR", amount=amount, currency="MVR",
                              document=doc, ipr_line=line, is_stock_pool=True,
-                             actor=actor)
+                             actor=actor,
+                             book="TRADING" if alloc.trading_order_id
+                             else "PROJECT")
         audit("document", doc.id, "IPR_LINE_ADDED", actor=actor,
               detail={"line": line.line_no, "description": line.description,
                       "qty": str(line.order_qty),
@@ -1197,6 +1229,7 @@ def pay_milestone(milestone, mvr_paid, tt_ref, actor):
             costing.post(site=_ho_site(),
                 cost_head=costing.by_code(costing.FOREX),
                 state="PAID", source="FX",
+                book="TRADING" if order.trading_order_id else "PROJECT",
                 amount=fx_delta, currency="MVR", document=doc,
                 ipr_milestone=milestone, is_stock_pool=True, actor=actor)
         milestone.status = "PAID"
@@ -2021,6 +2054,7 @@ def post_receipt(irn_doc, actor):
                 item=ipr_line.item, free_text_desc=ipr_line.free_text_desc,
                 unit=ipr_line.unit, source_receipt=receipt,
                 source_ipr_line=ipr_line, project=alloc.project,
+                trading_order=alloc.trading_order,
                 qty_received=qty, qty_on_hand=qty, unit_landed_cost=unit,
                 location=receipt.location, received_date=date.today())
     irn_doc.status = "RECEIVED"
@@ -2114,6 +2148,7 @@ def pick_lots_fifo(item, project, qty):
                                        qty_on_hand__gt=0).order_by(
         "received_date", "id") if project else StockLot.objects.none()
     general = StockLot.objects.filter(item=item, project__isnull=True,
+                                      trading_order__isnull=True,
                                       qty_on_hand__gt=0).order_by(
         "received_date", "id")
     picks, remaining = [], need
@@ -2307,7 +2342,8 @@ def mr_store_availability(mr):
         if not ln.item_id:
             out[ln.id] = ZERO
             continue
-        qs = StockLot.objects.filter(item_id=ln.item_id, qty_on_hand__gt=0)
+        qs = StockLot.objects.filter(item_id=ln.item_id, qty_on_hand__gt=0,
+                                     trading_order__isnull=True)
         avail = ZERO
         for lot in qs:
             if lot.project_id in ((project.id if project else None), None):
