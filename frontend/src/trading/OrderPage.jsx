@@ -1,0 +1,586 @@
+// One trading inquiry, end to end: header, the pricing sheet, quotation
+// revisions, and the customer's order. Money on screen comes from the
+// server's calc; the sheet mirrors the same formula only so a typed figure
+// shows its effect before the save lands.
+import { useEffect, useRef, useState } from "react";
+import { api, apiUpload } from "../api.js";
+import { Btn, Chip, card, inputStyle, td, th } from "../ui.jsx";
+import { STAGES, STAGE_LABEL, StageChip, fmtDate, fmtDateTime, fmtMoney, fmtQty } from "./shared.jsx";
+
+const VIA = [["EMAIL", "Email"], ["PHONE", "Phone"], ["WHATSAPP", "WhatsApp"],
+             ["VISIT", "Visit"], ["OTHER", "Other"]];
+const TABS = [["overview", "Overview"], ["pricing", "Pricing sheet"],
+              ["quotation", "Quotation"], ["order", "Order"], ["activity", "Activity"]];
+
+// ---- local mirror of trading.calc (display only) -----------------------------
+function fxFor(row, sellCcy, usdRate) {
+  if (row.fx && Number(row.fx) > 0) return Number(row.fx);
+  const cc = (row.cost_currency || sellCcy).toUpperCase();
+  if (cc === sellCcy) return 1;
+  if (cc === "USD" && sellCcy === "MVR") return usdRate;
+  if (cc === "MVR" && sellCcy === "USD") return 1 / usdRate;
+  return null;
+}
+function calcRow(row, sellCcy, usdRate) {
+  const qty = Number(row.qty) || 0;
+  const cost = row.cost === "" || row.cost === null || row.cost === undefined ? null : Number(row.cost);
+  const fx = fxFor(row, sellCcy, usdRate);
+  const unitCost = cost !== null && fx !== null ? cost * fx : null;
+  let unitSell = null;
+  if (row.sell !== "" && row.sell !== null && row.sell !== undefined) unitSell = Number(row.sell);
+  else if (unitCost !== null && row.margin_percent !== "" && row.margin_percent !== null && row.margin_percent !== undefined)
+    unitSell = unitCost * (1 + Number(row.margin_percent) / 100);
+  else if (unitCost !== null) unitSell = unitCost;
+  const margin = unitCost && unitSell !== null ? (unitSell / unitCost - 1) * 100 : null;
+  return { fx, unitCost, unitSell, lineCost: unitCost !== null ? unitCost * qty : null,
+           lineSell: unitSell !== null ? unitSell * qty : null, margin, fxMissing: cost !== null && fx === null };
+}
+
+function Num({ value, onChange, disabled, width = 90, step = "0.01", placeholder }) {
+  return <input type="number" step={step} min="0" value={value ?? ""} disabled={disabled}
+                placeholder={placeholder}
+                onChange={(e) => onChange(e.target.value)}
+                style={{ ...inputStyle, width, textAlign: "right", padding: "4px 6px" }} />;
+}
+
+// ---- pricing sheet ---------------------------------------------------------
+function PricingSheet({ o, onSaved }) {
+  const [rows, setRows] = useState(o.lines.map((l) => ({ ...l })));
+  const [freightCost, setFreightCost] = useState(o.freight_cost ?? "0");
+  const [freightSell, setFreightSell] = useState(o.freight_sell ?? "");
+  const [suppliers, setSuppliers] = useState([]);
+  const [dirty, setDirty] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const locked = !o.can_manage || o.is_closed;
+  const usdRate = Number(o.calc.usd_rate) || 15.42;
+  const ccy = o.currency;
+
+  useEffect(() => { api("/trading/suppliers").then(setSuppliers).catch(() => {}); }, []);
+  useEffect(() => {
+    setRows(o.lines.map((l) => ({ ...l })));
+    setFreightCost(o.freight_cost ?? "0");
+    setFreightSell(o.freight_sell ?? "");
+    setDirty(false);
+  }, [o]);
+
+  function upd(i, patch) {
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
+    setDirty(true);
+  }
+  function add(section) {
+    const last = rows[rows.length - 1];
+    setRows([...rows, { description: "", qty: "1", uom: last?.uom || "", section: section ?? (last?.section || ""),
+                        supplier: last?.supplier || null, cost: "", cost_currency: last?.cost_currency || "USD",
+                        fx: "", margin_percent: last?.margin_percent ?? "", sell: "", notes: "" }]);
+    setDirty(true);
+  }
+  function move(i, dir) {
+    const j = i + dir;
+    if (j < 0 || j >= rows.length) return;
+    const rs = [...rows];
+    [rs[i], rs[j]] = [rs[j], rs[i]];
+    setRows(rs);
+    setDirty(true);
+  }
+  function setAllMargins() {
+    const v = window.prompt("Set every line's margin % to:");
+    if (v === null || v === "") return;
+    setRows(rows.map((r) => ({ ...r, margin_percent: v, sell: "" })));
+    setDirty(true);
+  }
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/trading/orders/${o.id}`, { method: "PATCH",
+        body: { freight_cost: freightCost || "0", freight_sell: freightSell === "" ? null : freightSell } });
+      const d = await api(`/trading/orders/${o.id}/lines`, { method: "PUT",
+        body: { lines: rows.map((r) => ({ ...r, id: r.id || null, supplier: r.supplier || null,
+                                           cost: r.cost === "" ? null : r.cost,
+                                           sell: r.sell === "" ? null : r.sell,
+                                           margin_percent: r.margin_percent === "" ? null : r.margin_percent,
+                                           fx: r.fx === "" ? null : r.fx })) } });
+      setDirty(false);
+      onSaved(d);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const calcs = rows.map((r) => calcRow(r, ccy, usdRate));
+  const costLines = calcs.reduce((a, c) => a + (c.lineCost || 0), 0);
+  const sellLines = calcs.reduce((a, c) => a + (c.lineSell || 0), 0);
+  const costTotal = costLines + (Number(freightCost) || 0);
+  const subtotal = sellLines + (freightSell === "" ? 0 : Number(freightSell) || 0);
+  const gstPct = Number(o.calc.gst_percent) || 0;
+  const gst = subtotal * gstPct / 100;
+  const marginAmt = subtotal - costTotal;
+
+  return (
+    <div>
+      {locked && (
+        <p className="t-note">
+          {o.is_closed ? `This order is ${STAGE_LABEL[o.stage].toLowerCase()} — the pricing sheet is locked.`
+                       : "You can read this sheet; only the inquiry's owner or the Sales Manager can change it."}
+        </p>
+      )}
+      <div className="t-sheet-wrap">
+        <table className="t-table t-sheet">
+          <thead>
+            <tr>
+              <th style={th}>#</th>
+              <th style={th}>Section</th>
+              <th style={th}>Description</th>
+              <th style={{ ...th, textAlign: "right" }}>Qty</th>
+              <th style={th}>Unit</th>
+              <th style={th}>Supplier</th>
+              <th style={{ ...th, textAlign: "right" }}>Cost</th>
+              <th style={th}>Ccy</th>
+              <th style={{ ...th, textAlign: "right" }}>FX</th>
+              <th style={{ ...th, textAlign: "right" }}>Cost {ccy}</th>
+              <th style={{ ...th, textAlign: "right" }}>Margin %</th>
+              <th style={{ ...th, textAlign: "right" }}>Sell {ccy}</th>
+              <th style={{ ...th, textAlign: "right" }}>Amount</th>
+              <th style={th}></th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => {
+              const c = calcs[i];
+              return (
+                <tr key={r.id || `n${i}`}>
+                  <td style={td} className="t-sub">{i + 1}</td>
+                  <td style={td}><input style={{ ...inputStyle, width: 110, padding: "4px 6px" }} value={r.section || ""}
+                                        disabled={locked} placeholder="heading" onChange={(e) => upd(i, { section: e.target.value })} /></td>
+                  <td style={td}><input style={{ ...inputStyle, width: 240, padding: "4px 6px" }} value={r.description || ""}
+                                        disabled={locked} onChange={(e) => upd(i, { description: e.target.value })} /></td>
+                  <td style={td}><Num value={r.qty} width={70} disabled={locked} onChange={(v) => upd(i, { qty: v })} /></td>
+                  <td style={td}><input style={{ ...inputStyle, width: 56, padding: "4px 6px" }} value={r.uom || ""}
+                                        disabled={locked} onChange={(e) => upd(i, { uom: e.target.value })} /></td>
+                  <td style={td}>
+                    <select style={{ ...inputStyle, width: 140, padding: "4px 6px" }} value={r.supplier || ""} disabled={locked}
+                            onChange={(e) => {
+                              const s = suppliers.find((x) => String(x.id) === e.target.value);
+                              upd(i, { supplier: e.target.value ? Number(e.target.value) : null,
+                                       cost_currency: s?.default_currency || r.cost_currency });
+                            }}>
+                      <option value="">—</option>
+                      {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </td>
+                  <td style={td}><Num value={r.cost} step="0.0001" disabled={locked} onChange={(v) => upd(i, { cost: v })} /></td>
+                  <td style={td}>
+                    <select style={{ ...inputStyle, width: 64, padding: "4px 6px" }} value={r.cost_currency || "USD"} disabled={locked}
+                            onChange={(e) => upd(i, { cost_currency: e.target.value })}>
+                      {["USD", "MVR", "EUR", "CNY", "INR", "AED", "LKR"].map((x) => <option key={x}>{x}</option>)}
+                    </select>
+                  </td>
+                  <td style={td}><Num value={r.fx} step="0.000001" width={80} disabled={locked}
+                                      placeholder={c.fx !== null ? String(+c.fx.toFixed(4)) : "rate?"}
+                                      onChange={(v) => upd(i, { fx: v })} /></td>
+                  <td style={{ ...td, textAlign: "right" }} className={c.fxMissing ? "t-bad" : ""}>
+                    {c.fxMissing ? "no rate" : c.unitCost !== null ? fmtMoney(c.unitCost, 4) : ""}
+                  </td>
+                  <td style={td}><Num value={r.margin_percent} width={70} disabled={locked}
+                                      placeholder={c.margin !== null ? c.margin.toFixed(2) : ""}
+                                      onChange={(v) => upd(i, { margin_percent: v, sell: "" })} /></td>
+                  <td style={td}><Num value={r.sell} step="0.0001" width={100} disabled={locked}
+                                      placeholder={c.unitSell !== null ? c.unitSell.toFixed(4) : ""}
+                                      onChange={(v) => upd(i, { sell: v })} /></td>
+                  <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
+                    {c.lineSell !== null ? fmtMoney(c.lineSell) : ""}
+                  </td>
+                  <td style={{ ...td, whiteSpace: "nowrap" }}>
+                    {!locked && (<>
+                      <button className="t-link" title="Move up" onClick={() => move(i, -1)}>↑</button>{" "}
+                      <button className="t-link" title="Move down" onClick={() => move(i, 1)}>↓</button>{" "}
+                      <button className="t-link" title="Remove" onClick={() => { setRows(rows.filter((_, j) => j !== i)); setDirty(true); }}>×</button>
+                    </>)}
+                  </td>
+                </tr>
+              );
+            })}
+            {rows.length === 0 && (
+              <tr><td style={td} colSpan={14} className="t-sub">No lines yet. Add what the customer asked for, one line each.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      {!locked && (
+        <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+          <Btn variant="secondary" onClick={() => add()}>+ Line</Btn>
+          <Btn variant="secondary" onClick={() => add(window.prompt("Section heading:") || "")}>+ Section</Btn>
+          <Btn variant="secondary" onClick={setAllMargins}>Set all margins…</Btn>
+        </div>
+      )}
+
+      <div className="t-totals">
+        <div style={card}>
+          <div className="t-kv"><span>Freight to harbour — our cost</span>
+            <Num value={freightCost} disabled={locked} onChange={(v) => { setFreightCost(v); setDirty(true); }} /></div>
+          <div className="t-kv"><span>Freight charged to customer <i className="t-sub">(blank = absorbed)</i></span>
+            <Num value={freightSell} disabled={locked} onChange={(v) => { setFreightSell(v); setDirty(true); }} /></div>
+        </div>
+        <div style={card}>
+          <div className="t-kv"><span>Cost of lines</span><b>{fmtMoney(costLines)}</b></div>
+          <div className="t-kv"><span>Total cost incl. freight</span><b>{fmtMoney(costTotal)}</b></div>
+          <div className="t-kv"><span>Subtotal to customer</span><b>{fmtMoney(subtotal)}</b></div>
+          <div className="t-kv"><span>GST @ {gstPct}%</span><b>{fmtMoney(gst)}</b></div>
+          <div className="t-kv t-kv-total"><span>Total {ccy}</span><b>{fmtMoney(subtotal + gst)}</b></div>
+          <div className="t-kv"><span>Margin</span>
+            <b className={marginAmt < 0 ? "t-bad" : ""}>{fmtMoney(marginAmt)}{costTotal ? ` · ${(marginAmt / costTotal * 100).toFixed(1)}%` : ""}</b></div>
+          <div className="t-sub">USD rate {usdRate} · {o.n_lines} line{o.n_lines === 1 ? "" : "s"} saved</div>
+        </div>
+      </div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      {!locked && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+          <Btn onClick={save} disabled={busy || !dirty}>{busy ? "Saving…" : dirty ? "Save sheet" : "Saved"}</Btn>
+          {dirty && <span className="t-sub">Unsaved changes — the quotation uses the saved sheet.</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---- overview -----------------------------------------------------------------
+function Overview({ o, onSaved }) {
+  const [d, setD] = useState({});
+  const [users, setUsers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const locked = !o.can_manage;
+  useEffect(() => {
+    setD({ title: o.title, received_via: o.received_via, customer_ref: o.customer_ref,
+           currency: o.currency, next_action: o.next_action, next_action_date: o.next_action_date || "",
+           notes: o.notes, quote_valid_days: o.quote_valid_days, payment_terms: o.payment_terms,
+           delivery_terms: o.delivery_terms, owner: o.owner, inquiry_date: o.inquiry_date });
+  }, [o]);
+  useEffect(() => { if (o.can_authorise) api("/trading/users").then(setUsers).catch(() => {}); }, [o.can_authorise]);
+  const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
+
+  async function save() {
+    setBusy(true);
+    setError(null);
+    const body = o.is_closed
+      ? { next_action: d.next_action, next_action_date: d.next_action_date || null, notes: d.notes }
+      : { ...d, next_action_date: d.next_action_date || null, owner: Number(d.owner) };
+    if (!o.can_authorise) delete body.owner;
+    try {
+      onSaved(await api(`/trading/orders/${o.id}`, { method: "PATCH", body }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const ro = locked || o.is_closed;
+  return (
+    <div className="t-two">
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Inquiry</h3>
+        <label className="t-field"><span>What they asked for</span>
+          <input style={inputStyle} value={d.title || ""} onChange={set("title")} disabled={ro} /></label>
+        <div className="t-grid">
+          <label className="t-field"><span>Received via</span>
+            <select style={inputStyle} value={d.received_via || "EMAIL"} onChange={set("received_via")} disabled={ro}>
+              {VIA.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select></label>
+          <label className="t-field"><span>Inquiry date</span>
+            <input style={inputStyle} type="date" value={d.inquiry_date || ""} onChange={set("inquiry_date")} disabled={ro} /></label>
+          <label className="t-field"><span>Their reference</span>
+            <input style={inputStyle} value={d.customer_ref || ""} onChange={set("customer_ref")} disabled={ro} /></label>
+          <label className="t-field"><span>Quote in</span>
+            <select style={inputStyle} value={d.currency || "MVR"} onChange={set("currency")} disabled={ro || o.quotations.length > 0}>
+              <option>MVR</option><option>USD</option>
+            </select></label>
+          {o.can_authorise && (
+            <label className="t-field"><span>Owner</span>
+              <select style={inputStyle} value={d.owner || ""} onChange={set("owner")} disabled={o.is_closed}>
+                {users.map((u) => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+              </select></label>
+          )}
+        </div>
+        <label className="t-field"><span>Next action</span>
+          <input style={inputStyle} value={d.next_action || ""} onChange={set("next_action")} disabled={locked} /></label>
+        <label className="t-field"><span>By</span>
+          <input style={inputStyle} type="date" value={d.next_action_date || ""} onChange={set("next_action_date")} disabled={locked} /></label>
+        <label className="t-field"><span>Notes</span>
+          <textarea style={{ ...inputStyle, minHeight: 70 }} value={d.notes || ""} onChange={set("notes")} disabled={locked} /></label>
+      </div>
+      <div>
+        <div style={card}>
+          <h3 style={{ marginTop: 0 }}>Customer</h3>
+          <b>{o.customer_detail.name}</b>
+          {o.customer_detail.island && <div className="t-sub">{o.customer_detail.island}</div>}
+          {o.customer_detail.address && <div className="t-sub" style={{ whiteSpace: "pre-line" }}>{o.customer_detail.address}</div>}
+          {o.customer_detail.contact && <div className="t-sub">{o.customer_detail.contact}</div>}
+          {o.customer_detail.tin ? <div className="t-sub">GST TIN {o.customer_detail.tin}</div>
+                                 : <div className="t-sub t-bad">No GST TIN on file — needed on the tax invoice</div>}
+          {o.customer_detail.gst_exempt && <Chip tone="warn">GST exempt</Chip>}
+        </div>
+        <div style={{ ...card, marginTop: 12 }}>
+          <h3 style={{ marginTop: 0 }}>Terms on the quotation</h3>
+          <label className="t-field"><span>Valid for (days)</span>
+            <input style={inputStyle} type="number" min="1" value={d.quote_valid_days || 14} onChange={set("quote_valid_days")} disabled={ro} /></label>
+          <label className="t-field"><span>Payment</span>
+            <input style={inputStyle} value={d.payment_terms || ""} onChange={set("payment_terms")} disabled={ro}
+                   placeholder="e.g. 50% with order, balance before delivery" /></label>
+          <label className="t-field"><span>Delivery</span>
+            <input style={inputStyle} value={d.delivery_terms || ""} onChange={set("delivery_terms")} disabled={ro} /></label>
+        </div>
+        {error && <p className="t-note t-note-red" style={{ marginTop: 12 }}>{error}</p>}
+        {!locked && <Btn style={{ marginTop: 12 }} onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Btn>}
+      </div>
+    </div>
+  );
+}
+
+// ---- quotation ------------------------------------------------------------------
+function Quotation({ o, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  async function act(path) {
+    setBusy(true);
+    setError(null);
+    try { onSaved(await api(path, { method: "POST", body: {} })); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  const pdf = (q) => `/api/v1/trading/orders/${o.id}/quotations/${q.id}/pdf`;
+  return (
+    <div>
+      {o.can_manage && !o.is_closed && (
+        <div style={{ ...card, marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Issue a quotation</h3>
+          {o.quotation_blocker ? <p className="t-note t-note-amber">{o.quotation_blocker}</p> : (
+            <p className="t-sub">
+              Freezes the saved pricing sheet as revision {o.quotations.length + 1}
+              {o.can_authorise ? " and authorises it — the PDF is ready to send." :
+                " and hands it to the Sales Manager. The customer copy prints only once it is authorised."}
+            </p>
+          )}
+          <Btn disabled={busy || !!o.quotation_blocker} onClick={() => act(`/trading/orders/${o.id}/quotations`)}>
+            {o.quotations.length ? "Issue revision" : "Issue quotation"}
+          </Btn>
+        </div>
+      )}
+      {error && <p className="t-note t-note-red">{error}</p>}
+      {o.quotations.length === 0 ? <p className="t-empty">No quotation yet.</p> : (
+        <table className="t-table">
+          <thead><tr>
+            <th style={th}>Quotation</th><th style={th}>Status</th>
+            <th style={{ ...th, textAlign: "right" }}>Total</th>
+            <th style={th}>Issued</th><th style={th}>Authorised</th><th style={th}>Valid until</th><th style={th}></th>
+          </tr></thead>
+          <tbody>
+            {[...o.quotations].reverse().map((q) => (
+              <tr key={q.id}>
+                <td style={td}><b>{q.ref}</b><div className="t-sub">{q.n_lines} lines</div></td>
+                <td style={td}><Chip tone={q.status === "AUTHORISED" ? "ok" : q.status === "AWAITING_AUTH" ? "warn" : "alert"}>
+                  {q.status.replace("_", " ").toLowerCase()}</Chip></td>
+                <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{q.currency} {fmtMoney(q.total)}</td>
+                <td style={td}>{fmtDate(q.created_at)}<div className="t-sub">{q.created_by}</div></td>
+                <td style={td}>{q.authorised_at ? <>{fmtDate(q.authorised_at)}<div className="t-sub">{q.authorised_by}</div></> : "—"}</td>
+                <td style={td}>{fmtDate(q.valid_until)}</td>
+                <td style={{ ...td, whiteSpace: "nowrap" }}>
+                  <a className="t-link" href={pdf(q)} target="_blank" rel="noreferrer">
+                    {q.status === "AUTHORISED" ? "PDF" : "Draft PDF"}
+                  </a>
+                  {q.status === "AWAITING_AUTH" && o.can_authorise && (
+                    <> · <button className="t-link" disabled={busy}
+                                 onClick={() => act(`/trading/orders/${o.id}/quotations/${q.id}/authorise`)}>Authorise</button></>
+                  )}
+                  {["AWAITING_AUTH", "AUTHORISED"].includes(q.status) && o.can_manage && !o.is_closed && (
+                    <> · <button className="t-link" disabled={busy}
+                                 onClick={() => window.confirm(`Withdraw ${q.ref}?`) &&
+                                   act(`/trading/orders/${o.id}/quotations/${q.id}/withdraw`)}>Withdraw</button></>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ---- order (won / lost) ---------------------------------------------------------
+function Order({ o, onSaved }) {
+  const [po, setPo] = useState({ po_number: "", po_date: "" });
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const file = useRef(null);
+  const authorised = o.quotations.find((q) => q.status === "AUTHORISED");
+
+  async function win(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const fd = new FormData();
+    fd.append("po_number", po.po_number);
+    fd.append("po_date", po.po_date);
+    if (file.current?.files?.[0]) fd.append("po_file", file.current.files[0]);
+    try { onSaved(await apiUpload(`/trading/orders/${o.id}/won`, fd)); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+  async function lose() {
+    if (!window.confirm("Mark this inquiry as lost?")) return;
+    setBusy(true);
+    setError(null);
+    try { onSaved(await api(`/trading/orders/${o.id}/lost`, { method: "POST", body: { reason } })); }
+    catch (err) { setError(err.message); }
+    finally { setBusy(false); }
+  }
+
+  if (o.stage === "WON") {
+    return (
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Sales order {o.so_ref}</h3>
+        <div className="t-kv"><span>Customer PO</span><b>{o.po_number}</b></div>
+        <div className="t-kv"><span>PO date</span><b>{fmtDate(o.po_date)}</b></div>
+        <div className="t-kv"><span>Against quotation</span><b>{authorised?.ref} · {authorised?.currency} {fmtMoney(authorised?.total)}</b></div>
+        <div className="t-kv"><span>Recorded</span><b>{fmtDateTime(o.won_at)} by {o.won_by}</b></div>
+        {o.po_file && <a className="t-link" href={o.po_file} target="_blank" rel="noreferrer">Customer's PO copy</a>}
+        <p className="t-note" style={{ marginTop: 12 }}>
+          Next: the import order against this sales order and the delivery note arrive with the next release.
+        </p>
+      </div>
+    );
+  }
+  if (o.stage === "LOST") {
+    return (
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Lost</h3>
+        <p>{o.lost_reason}</p>
+        <div className="t-sub">{fmtDateTime(o.lost_at)}</div>
+      </div>
+    );
+  }
+  return (
+    <div className="t-two">
+      <form onSubmit={win} style={card}>
+        <h3 style={{ marginTop: 0 }}>Record the customer's order</h3>
+        {!authorised && <p className="t-note t-note-amber">Needs an authorised quotation first — nothing is ordered against a price the customer has not seen.</p>}
+        <label className="t-field"><span>Customer PO number</span>
+          <input style={inputStyle} value={po.po_number} onChange={(e) => setPo({ ...po, po_number: e.target.value })} disabled={!o.can_manage} /></label>
+        <label className="t-field"><span>PO date</span>
+          <input style={inputStyle} type="date" value={po.po_date} onChange={(e) => setPo({ ...po, po_date: e.target.value })} disabled={!o.can_manage} /></label>
+        <label className="t-field"><span>PO copy (PDF or photo)</span>
+          <input type="file" ref={file} accept=".pdf,image/*" disabled={!o.can_manage} /></label>
+        {error && <p className="t-note t-note-red">{error}</p>}
+        <Btn type="submit" disabled={busy || !o.can_manage || !authorised || !po.po_number || !po.po_date}>
+          {busy ? "Saving…" : "Won — issue sales order"}
+        </Btn>
+      </form>
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Or mark it lost</h3>
+        <label className="t-field"><span>Why</span>
+          <input style={inputStyle} value={reason} onChange={(e) => setReason(e.target.value)} disabled={!o.can_manage}
+                 placeholder="price, lead time, bought elsewhere…" /></label>
+        <Btn variant="danger" onClick={lose} disabled={busy || !o.can_manage || !reason.trim()}>Mark lost</Btn>
+      </div>
+    </div>
+  );
+}
+
+function Activity({ o }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => { api(`/trading/orders/${o.id}/activity`).then(setRows).catch(() => setRows([])); }, [o]);
+  if (rows === null) return <p>Loading…</p>;
+  return (
+    <table className="t-table">
+      <tbody>
+        {rows.map((a, i) => (
+          <tr key={i}>
+            <td style={{ ...td, whiteSpace: "nowrap" }}>{fmtDateTime(a.at)}</td>
+            <td style={td}>{a.actor}</td>
+            <td style={td}><b>{a.event.replace(/_/g, " ").toLowerCase()}</b>
+              {a.from && a.to ? ` ${STAGE_LABEL[a.from] || a.from} → ${STAGE_LABEL[a.to] || a.to}` : ""}
+              {a.detail?.quotation ? ` · ${a.detail.quotation}` : ""}
+              {a.detail?.so ? ` · ${a.detail.so}` : ""}
+              {a.detail?.reason ? ` · ${a.detail.reason}` : ""}
+              {a.detail?.lines !== undefined ? ` · ${a.detail.lines} lines` : ""}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+// ---- page -------------------------------------------------------------------------
+export default function OrderPage({ id, back, initialTab }) {
+  const [o, setO] = useState(null);
+  const [tab, setTab] = useState(initialTab || "overview");
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    setO(null);
+    api(`/trading/orders/${id}`).then(setO).catch((e) => setError(e.message));
+  }, [id]);
+
+  async function pick(stage) {
+    setBusy(true);
+    try { setO(await api(`/trading/orders/${id}/stage`, { method: "POST", body: { stage } })); }
+    catch (e) { window.alert(e.message); }
+    finally { setBusy(false); }
+  }
+
+  if (error) return <div className="t-page"><p className="t-note t-note-red">{error}</p><button className="t-link" onClick={back}>Back</button></div>;
+  if (!o) return <div className="t-page"><p>Loading…</p></div>;
+  const idx = STAGES.indexOf(o.stage);
+
+  return (
+    <div className="t-page">
+      <button className="t-link" onClick={back}>← Inquiries</button>
+      <div className="t-page-head" style={{ marginTop: 6 }}>
+        <div>
+          <h1 className="t-h1">{o.ref} <span className="t-h1-sub">{o.title}</span></h1>
+          <div className="t-sub">{o.customer_name} · owner {o.owner_name}
+            {o.quote_ref && <> · {o.quote_ref}</>}{o.so_ref && <> · <b>{o.so_ref}</b></>}</div>
+        </div>
+        <div className="t-tools">
+          <StageChip stage={o.stage} />
+          {o.stage !== "LOST" && (
+            <div className="t-stepper">
+              {STAGES.map((s, i) => (
+                <button key={s} className={"t-step" + (i <= idx ? " is-done" : "") + (s === o.stage ? " is-now" : "")}
+                        disabled={busy || !o.can_manage || o.is_closed || i <= idx || s === "WON"}
+                        title={s === "WON" ? "Recorded on the Order tab with the customer's PO" : i > idx ? `Move to ${STAGE_LABEL[s]}` : ""}
+                        onClick={() => pick(s)}>{STAGE_LABEL[s]}</button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="t-tabs">
+        {TABS.map(([k, l]) => (
+          <button key={k} className={"t-tab" + (tab === k ? " is-active" : "")} onClick={() => setTab(k)}>
+            {l}{k === "quotation" && o.quotations.some((q) => q.status === "AWAITING_AUTH") ? " •" : ""}
+          </button>
+        ))}
+      </div>
+
+      {tab === "overview" && <Overview o={o} onSaved={setO} />}
+      {tab === "pricing" && <PricingSheet o={o} onSaved={setO} />}
+      {tab === "quotation" && <Quotation o={o} onSaved={setO} />}
+      {tab === "order" && <Order o={o} onSaved={setO} />}
+      {tab === "activity" && <Activity o={o} />}
+      <div className="t-sub" style={{ marginTop: 16 }}>
+        {o.n_lines} line{o.n_lines === 1 ? "" : "s"} · quoted {o.currency} {fmtMoney(o.total)}
+        {o.calc.margin_percent && o.can_manage ? ` · margin ${o.calc.margin_percent}%` : ""} · {fmtQty(o.calc.n_priced)}/{o.n_lines} priced
+      </div>
+    </div>
+  );
+}

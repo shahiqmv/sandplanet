@@ -140,9 +140,17 @@ Each phase ships, is verified live, and stops for owner review.
    (`Supplier.is_trading`); `/t/` shell with sign-in, nav, customers and
    suppliers pages; numbering series. Trading cost heads move to phase 4,
    where their sign convention is designed with the postings.
-2. **Sales front** — inquiry register, pricing sheet + calc, quotation PDF
-   with revisions and manager authorisation, Won, Sales Order with PO
-   capture, chase-list dashboard.
+2. **Sales front** — DONE 2026-09-24. Inquiry register (`TradingOrder`,
+   TIN series), pricing sheet (`TradingLine`, `trading.calc`: cost ccy →
+   sell ccy at the company USD rate or a typed rate, margin ↔ sell,
+   freight cost vs charge, GST from the company rate or exempt), stages
+   derived forward from the work with explicit forward picks, quotation
+   revisions frozen as snapshots (`TradingQuotation`, TQ series, `/R2`),
+   Sales Manager authorisation → filed letterhead PDF (draft render
+   before), Won with the customer's PO → TSO series and a locked sheet,
+   Lost with a reason, activity trail, chase-list dashboard with the
+   manager's authorisation queue. Sales manage their own inquiries; the
+   manager and Admin manage all; Finance and Signatory read.
 3. **Supply leg** — raise an import order from the Sales Order into the IPR
    chain (trading book, order-reserved lots); order screen shows the import's
    live status and landed cost.

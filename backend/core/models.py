@@ -1321,6 +1321,166 @@ class Customer(models.Model):
         return self.name
 
 
+def trading_po_path(instance, filename):
+    return f"trading/po/{instance.ref}/{filename}"
+
+
+def trading_quote_path(instance, filename):
+    return f"trading/quotes/{instance.order.ref}/{filename}"
+
+
+class TradingOrder(models.Model):
+    """The trading hub (TRADING_BUILD_BRIEF.md §6): an inquiry that becomes
+    a quotation, then a customer order. Everything in the trading arm hangs
+    off this row — lines, quotation revisions, later the deliveries and
+    invoices. It never carries a site.
+
+    Pre-Won stages derive forward from the work actually done (a supplier
+    assigned, a cost entered, a quotation authorised) and an explicit pick
+    wins; nothing moves backward (blueprint §6). WON and LOST are terminal
+    and set only through won()/lost()."""
+
+    class Stage(models.TextChoices):
+        INQUIRY = "INQUIRY"
+        SOURCING = "SOURCING"
+        PRICING = "PRICING"
+        QUOTED = "QUOTED"
+        WON = "WON"
+        LOST = "LOST"
+
+    STAGE_ORDER = ["INQUIRY", "SOURCING", "PRICING", "QUOTED", "WON"]
+
+    class Via(models.TextChoices):
+        EMAIL = "EMAIL"
+        PHONE = "PHONE"
+        WHATSAPP = "WHATSAPP"
+        VISIT = "VISIT"
+        OTHER = "OTHER"
+
+    ref = models.CharField(max_length=12, unique=True)           # TIN-001
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="orders")
+    title = models.TextField()                                   # what they asked for
+    owner = models.ForeignKey(User, on_delete=models.PROTECT,
+                              related_name="trading_orders")     # the Sales person
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    inquiry_date = models.DateField()
+    received_via = models.CharField(max_length=10, choices=Via.choices,
+                                    default=Via.EMAIL)
+    customer_ref = models.TextField(blank=True)                  # their inquiry / RFQ ref
+    stage = models.CharField(max_length=10, choices=Stage.choices,
+                             default=Stage.INQUIRY)
+    stage_since = models.DateField(null=True, blank=True)
+    currency = models.CharField(max_length=3, default="MVR")     # what we quote in
+    next_action = models.TextField(blank=True)
+    next_action_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+    # Commercial terms printed on the quotation
+    quote_valid_days = models.PositiveIntegerField(default=14)
+    payment_terms = models.TextField(blank=True)
+    delivery_terms = models.TextField(
+        blank=True, default="Delivered to your vessel at Malé harbour")
+    # Freight to the harbour: what it costs us, and what (if anything) we
+    # charge the customer for it. NULL = not charged (absorbed in margin).
+    freight_cost = models.DecimalField(max_digits=12, decimal_places=2,
+                                       default=0)
+    freight_sell = models.DecimalField(max_digits=12, decimal_places=2,
+                                       null=True, blank=True)
+    # Quotation series (TQ-001) is issued once, on the first revision.
+    quote_ref = models.CharField(max_length=12, blank=True)
+    # Won: the customer's PO and our sales order number (TSO-001)
+    po_number = models.TextField(blank=True)
+    po_date = models.DateField(null=True, blank=True)
+    po_file = models.FileField(upload_to=trading_po_path, null=True, blank=True)
+    so_ref = models.CharField(max_length=12, blank=True)
+    won_at = models.DateTimeField(null=True, blank=True)
+    won_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                               blank=True, related_name="+")
+    lost_reason = models.TextField(blank=True)
+    lost_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.ref} {self.title[:40]}"
+
+    @property
+    def is_closed(self):
+        return self.stage in (self.Stage.WON, self.Stage.LOST)
+
+
+class TradingLine(models.Model):
+    """One pricing-sheet line. Cost is per unit in the supplier's currency;
+    `fx` converts it to the order's sell currency (NULL = the company rate
+    at calc time). Sell is either an explicit unit price or derived from the
+    margin — one of the two is the truth at any moment (blueprint §7.2)."""
+
+    order = models.ForeignKey(TradingOrder, on_delete=models.CASCADE,
+                              related_name="lines")
+    sr_no = models.PositiveIntegerField()
+    section = models.TextField(blank=True)                       # heading the line sits under
+    description = models.TextField()
+    item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    qty = models.DecimalField(max_digits=12, decimal_places=2, default=1)
+    uom = models.CharField(max_length=20, blank=True)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT, null=True,
+                                 blank=True, related_name="+")
+    cost = models.DecimalField(max_digits=14, decimal_places=4, null=True,
+                               blank=True)                       # unit, cost_currency
+    cost_currency = models.CharField(max_length=3, default="USD")
+    fx = models.DecimalField(max_digits=12, decimal_places=6, null=True,
+                             blank=True)                         # cost ccy → sell ccy
+    margin_percent = models.DecimalField(max_digits=7, decimal_places=2,
+                                         null=True, blank=True)
+    sell = models.DecimalField(max_digits=14, decimal_places=4, null=True,
+                               blank=True)                       # unit sell override
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["sr_no", "id"]
+
+
+class TradingQuotation(models.Model):
+    """A quotation revision: the priced sheet frozen at issue, authorised by
+    the Sales Manager before the signed PDF goes out (blueprint §7.3)."""
+
+    class Status(models.TextChoices):
+        AWAITING_AUTH = "AWAITING_AUTH"
+        AUTHORISED = "AUTHORISED"
+        SUPERSEDED = "SUPERSEDED"
+        WITHDRAWN = "WITHDRAWN"
+
+    order = models.ForeignKey(TradingOrder, on_delete=models.CASCADE,
+                              related_name="quotations")
+    revision = models.PositiveIntegerField()
+    status = models.CharField(max_length=14, choices=Status.choices,
+                              default=Status.AWAITING_AUTH)
+    snapshot = models.JSONField(default=dict)
+    valid_until = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    authorised_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                      null=True, blank=True, related_name="+")
+    authorised_at = models.DateTimeField(null=True, blank=True)
+    pdf = models.FileField(upload_to=trading_quote_path, null=True, blank=True)
+
+    class Meta:
+        ordering = ["order_id", "revision"]
+        constraints = [models.UniqueConstraint(fields=["order", "revision"],
+                                               name="uniq_trading_quote_rev")]
+
+    @property
+    def ref(self):
+        base = self.order.quote_ref or "TQ-?"
+        return base if self.revision == 1 else f"{base}/R{self.revision}"
+
+
 class ImportOrder(models.Model):
     """IPR typed header (§5.10.4) — one row per IPR document. The order is
     placed in the supplier's currency; a manually agreed exchange rate (D4)

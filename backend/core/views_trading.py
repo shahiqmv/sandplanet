@@ -178,10 +178,237 @@ class TradingSupplierViewSet(viewsets.ModelViewSet):
 def home(request):
     """What the trading dashboard opens on. Phase 1 carries the directory
     counts and the caller's rights; the chase list arrives with phase 2."""
+    from . import trading as svc
     return Response({
         "role": request.user.role,
         "can_write": can_write(request.user),
         "customers": Customer.objects.filter(is_active=True).count(),
         "suppliers": Supplier.objects.filter(is_trading=True,
                                              is_active=True).count(),
+        **svc.home(request.user),
     })
+
+
+# ---- orders (phase 2: the sales front) --------------------------------------
+
+from django.http import HttpResponse  # noqa: E402
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser  # noqa: E402
+from rest_framework.decorators import parser_classes  # noqa: E402
+
+from . import trading  # noqa: E402
+from .models import TradingOrder, TradingQuotation  # noqa: E402
+
+
+def _order(pk):
+    return (TradingOrder.objects.select_related("customer", "owner", "won_by")
+            .filter(id=pk).first())
+
+
+def _manage_or_403(request, order):
+    if not can_write(request.user) or not trading.can_manage(request.user, order):
+        return Response({"detail": "Only the inquiry's owner or the Sales "
+                                   "Manager can change it."}, status=403)
+    return None
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsTradingReader])
+def orders(request):
+    """The inquiry register. Everyone in trading sees every inquiry
+    (blueprint §6); `mine=1` narrows to the caller's own."""
+    if request.method == "POST":
+        if not can_write(request.user):
+            return Response({"detail": "Finance reads the register; Sales raise "
+                                       "inquiries."}, status=403)
+        order, errors = trading.create_order(request.data, request.user)
+        if errors:
+            return Response(errors, status=400)
+        return Response(trading.order_dict(order, request.user), status=201)
+    qs = TradingOrder.objects.select_related("customer", "owner")
+    stage = request.GET.get("stage")
+    if stage == "open":
+        qs = qs.exclude(stage__in=("WON", "LOST"))
+    elif stage:
+        qs = qs.filter(stage=stage)
+    if request.GET.get("mine") == "1":
+        qs = qs.filter(owner=request.user)
+    search = (request.GET.get("search") or "").strip()
+    if search:
+        qs = qs.filter(Q(ref__icontains=search) | Q(title__icontains=search)
+                       | Q(customer__name__icontains=search)
+                       | Q(quote_ref__icontains=search)
+                       | Q(so_ref__icontains=search)
+                       | Q(po_number__icontains=search))
+    return Response([trading.order_summary(o) for o in qs[:300]])
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsTradingReader])
+def order_detail(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "PATCH":
+        err = _manage_or_403(request, order)
+        if err:
+            return err
+        errors = trading.update_order(order, request.data, request.user)
+        if errors:
+            return Response(errors, status=400)
+    return Response(trading.order_dict(order, request.user))
+
+
+@api_view(["PUT"])
+@permission_classes([IsTradingReader])
+def order_lines(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    rows = request.data.get("lines") if isinstance(request.data, dict) else request.data
+    if not isinstance(rows, list):
+        return Response({"detail": "Send the lines as a list."}, status=400)
+    msg = trading.write_lines(order, rows, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(_order(pk), request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def order_stage(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    msg = trading.set_stage(order, request.data.get("stage"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(order, request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def order_quotations(request, pk):
+    """Issue the next quotation revision (the manager's own is authorised
+    in the same step)."""
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    q, msg = trading.issue_quotation(order, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(_order(pk), request.user), status=201)
+
+
+def _quotation(pk, qid):
+    return (TradingQuotation.objects.select_related("order__customer", "order__owner",
+                                                    "created_by", "authorised_by")
+            .filter(order_id=pk, id=qid).first())
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def quotation_authorise(request, pk, qid):
+    q = _quotation(pk, qid)
+    if q is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = trading.authorise_quotation(q, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(_order(pk), request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def quotation_withdraw(request, pk, qid):
+    q = _quotation(pk, qid)
+    if q is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, q.order)
+    if err:
+        return err
+    msg = trading.withdraw_quotation(q, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(_order(pk), request.user))
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def quotation_pdf(request, pk, qid):
+    """The authorised PDF as filed; before authorisation, a DRAFT render of
+    the frozen revision so Sales can read what they are sending up."""
+    q = _quotation(pk, qid)
+    if q is None:
+        return Response({"detail": "Not found."}, status=404)
+    if q.status == "AUTHORISED" and q.pdf:
+        pdf = q.pdf.read()
+    else:
+        try:
+            pdf = trading.quotation_pdf_bytes(q, draft=q.status != "AUTHORISED")
+        except Exception as e:                       # pragma: no cover - env dep
+            return Response({"detail": f"PDF engine unavailable: {e}"},
+                            status=500)
+    resp = HttpResponse(pdf, content_type="application/pdf")
+    resp["Content-Disposition"] = (
+        f'inline; filename="{q.ref.replace("/", "-")}.pdf"')
+    return resp
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def order_won(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    msg = trading.win_order(order, request.data, request.user,
+                            po_file=request.FILES.get("po_file"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(_order(pk), request.user))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReader])
+def order_lost(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    err = _manage_or_403(request, order)
+    if err:
+        return err
+    msg = trading.lose_order(order, request.data.get("reason"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.order_dict(order, request.user))
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def order_activity(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    return Response(trading.activity(order))
+
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def sales_users(request):
+    """Who an inquiry can be owned by."""
+    return Response([{"id": u.id, "full_name": u.full_name, "role": u.role}
+                     for u in User.objects.filter(role__in=User.TRADING_ROLES,
+                                                  is_active=True)
+                     .order_by("full_name")])

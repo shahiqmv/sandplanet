@@ -6,9 +6,12 @@
 // the Signatory and Admin can enter both worlds.
 import { useEffect, useState } from "react";
 import { api, resetSessionNotice, SESSION_EXPIRED } from "../api.js";
-import { Btn, card } from "../ui.jsx";
+import { Btn, Chip, card } from "../ui.jsx";
 import CustomersPage from "./CustomersPage.jsx";
+import InquiriesPage from "./InquiriesPage.jsx";
+import OrderPage from "./OrderPage.jsx";
 import SuppliersPage from "./SuppliersPage.jsx";
+import { STAGE_LABEL, StageChip, fmtDate, fmtMoney } from "./shared.jsx";
 
 const TRADING_ROLES = new Set(["SALES", "SALES_MANAGER"]);
 const READERS = new Set([...TRADING_ROLES, "FINANCE", "SIGNATORY", "ADMIN"]);
@@ -33,9 +36,12 @@ const ROLE_LABEL = {
 // Vite dev server serves index.html at /.
 const PLANET_URL = "/";
 
-function pageFromHash() {
-  const key = (window.location.hash || "").replace(/^#\/?/, "").split("/")[0];
-  return PAGES.some(([k]) => k === key) ? key : "home";
+// #/inquiries/12 → {page: "inquiries", id: 12}
+function routeFromHash() {
+  const parts = (window.location.hash || "").replace(/^#\/?/, "").split("/");
+  const key = PAGES.some(([k]) => k === parts[0]) ? parts[0] : "home";
+  const id = key === "inquiries" && /^\d+$/.test(parts[1] || "") ? Number(parts[1]) : null;
+  return { page: key, id, tab: parts[2] || null };
 }
 
 function Login({ onLogin, expired }) {
@@ -109,20 +115,22 @@ function NotTrading({ me, onSignOut }) {
   );
 }
 
-function Home({ me, canWrite, go }) {
+function Home({ me, canWrite, go, open }) {
   const [info, setInfo] = useState(null);
   useEffect(() => {
     api("/trading/home").then(setInfo).catch(() => setInfo({}));
   }, []);
+  const stages = info?.by_stage || {};
   return (
     <div className="t-page">
       <h1 className="t-h1">Good day, {me.full_name.split(" ")[0]}</h1>
-      <p className="t-lead">
-        Inquiries, quotations, orders and deliveries for Sand Planet's trading
-        customers. The inquiry desk opens with the next release; the
-        directories are ready now.
-      </p>
       <div className="t-tiles">
+        {["INQUIRY", "SOURCING", "PRICING", "QUOTED"].map((s) => (
+          <button key={s} className="t-tile" onClick={() => go("inquiries", null, s)}>
+            <span className="t-tile-n">{info ? stages[s] ?? 0 : "…"}</span>
+            <span className="t-tile-l">{STAGE_LABEL[s]}</span>
+          </button>
+        ))}
         <button className="t-tile" onClick={() => go("customers")}>
           <span className="t-tile-n">{info ? info.customers ?? "—" : "…"}</span>
           <span className="t-tile-l">Customers</span>
@@ -131,14 +139,46 @@ function Home({ me, canWrite, go }) {
           <span className="t-tile-n">{info ? info.suppliers ?? "—" : "…"}</span>
           <span className="t-tile-l">Trading suppliers</span>
         </button>
-        <div className="t-tile t-tile-soon">
-          <span className="t-tile-n">—</span>
-          <span className="t-tile-l">Open inquiries</span>
-          <span className="t-tile-s">next release</span>
-        </div>
       </div>
+
+      {info?.awaiting_authorisation?.length > 0 && (
+        <div style={{ ...card, marginBottom: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Quotations awaiting your authorisation</h3>
+          {info.awaiting_authorisation.map((q) => (
+            <div key={q.quotation} className="t-kv t-row-link" onClick={() => open(q.order_id, "quotation")}>
+              <span><b>{q.quotation}</b> · {q.customer} · {q.by}</span>
+              <b>{q.currency} {fmtMoney(q.total)}</b>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={card}>
+        <h3 style={{ marginTop: 0 }}>Chase list — next actions due this week</h3>
+        {!info ? <p>Loading…</p> : info.chase?.length ? info.chase.map((o) => (
+          <div key={o.id} className="t-kv t-row-link" onClick={() => open(o.id)}>
+            <span>
+              {o.overdue ? <Chip tone="alert">overdue</Chip> : <Chip tone="info">{fmtDate(o.next_action_date)}</Chip>}
+              {" "}<b>{o.ref}</b> {o.customer_name} — {o.next_action || o.title}
+            </span>
+            <StageChip stage={o.stage} />
+          </div>
+        )) : <p className="t-sub">Nothing due. Give every open inquiry a next action and a date, and this list becomes your morning.</p>}
+      </div>
+
+      {info?.recent_won?.length > 0 && (
+        <div style={{ ...card, marginTop: 16 }}>
+          <h3 style={{ marginTop: 0 }}>Recently won</h3>
+          {info.recent_won.map((o) => (
+            <div key={o.id} className="t-kv t-row-link" onClick={() => open(o.id, "order")}>
+              <span><b>{o.so_ref}</b> · {o.customer_name} — {o.title}</span>
+              <b>{o.currency} {fmtMoney(o.total)}</b>
+            </div>
+          ))}
+        </div>
+      )}
       {!canWrite && (
-        <p className="t-note">
+        <p className="t-note" style={{ marginTop: 16 }}>
           You are reading the trading world as {ROLE_LABEL[me.role] || me.role}.
           Sales enter customers, suppliers and orders; Finance pays and receipts.
         </p>
@@ -147,22 +187,10 @@ function Home({ me, canWrite, go }) {
   );
 }
 
-function Inquiries() {
-  return (
-    <div className="t-page">
-      <h1 className="t-h1">Inquiries</h1>
-      <p className="t-lead">
-        The inquiry register, pricing sheet, quotations and sales orders arrive
-        with phase 2. Until then, get the customer and supplier directories in
-        order — every inquiry will hang off them.
-      </p>
-    </div>
-  );
-}
-
 export default function App() {
   const [me, setMe] = useState(null);
-  const [page, setPage] = useState(pageFromHash);
+  const [route, setRoute] = useState(routeFromHash);
+  const [stageFilter, setStageFilter] = useState(null);
 
   useEffect(() => {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
@@ -171,7 +199,7 @@ export default function App() {
   useEffect(() => {
     const onExpired = () => setMe({ authenticated: false, expired: true });
     window.addEventListener(SESSION_EXPIRED, onExpired);
-    const onHash = () => setPage(pageFromHash());
+    const onHash = () => setRoute(routeFromHash());
     window.addEventListener("hashchange", onHash);
     return () => {
       window.removeEventListener(SESSION_EXPIRED, onExpired);
@@ -179,9 +207,14 @@ export default function App() {
     };
   }, []);
 
-  function go(key) {
-    window.location.hash = `#/${key}`;
-    setPage(key);
+  function go(key, id = null, stage = null) {
+    setStageFilter(stage);
+    window.location.hash = id ? `#/${key}/${id}` : `#/${key}`;
+    setRoute(routeFromHash());
+  }
+  function open(id, tab = null) {
+    window.location.hash = tab ? `#/inquiries/${id}/${tab}` : `#/inquiries/${id}`;
+    setRoute(routeFromHash());
   }
 
   async function signOut() {
@@ -196,6 +229,7 @@ export default function App() {
   }
   if (!READERS.has(me.role)) return <NotTrading me={me} onSignOut={signOut} />;
   const canWrite = WRITERS.has(me.role);
+  const { page, id, tab } = route;
 
   return (
     <div className="t-app">
@@ -220,8 +254,14 @@ export default function App() {
         </div>
       </header>
       <main className="t-main">
-        {page === "home" && <Home me={me} canWrite={canWrite} go={go} />}
-        {page === "inquiries" && <Inquiries />}
+        {page === "home" && <Home me={me} canWrite={canWrite} go={go} open={open} />}
+        {page === "inquiries" && !id && (
+          <InquiriesPage me={me} canWrite={canWrite} open={open}
+                         initialStage={stageFilter} key={stageFilter || "list"} />
+        )}
+        {page === "inquiries" && id && (
+          <OrderPage id={id} initialTab={tab} back={() => go("inquiries")} key={id} />
+        )}
         {page === "customers" && <CustomersPage canWrite={canWrite} />}
         {page === "suppliers" && <SuppliersPage canWrite={canWrite} />}
       </main>
