@@ -53,7 +53,8 @@ function Num({ value, onChange, disabled, width = 90, step = "0.01", placeholder
 
 // ---- pricing sheet ---------------------------------------------------------
 function PricingSheet({ o, onSaved }) {
-  const [rows, setRows] = useState(o.lines.map((l) => ({ ...l })));
+  const withText = (l) => ({ ...l, description: l.spec ? `${l.description}\n${l.spec}` : l.description });
+  const [rows, setRows] = useState(o.lines.map(withText));
   const [freightCost, setFreightCost] = useState(o.freight_cost ?? "0");
   const [freightSell, setFreightSell] = useState(o.freight_sell ?? "");
   const [suppliers, setSuppliers] = useState([]);
@@ -66,7 +67,7 @@ function PricingSheet({ o, onSaved }) {
 
   useEffect(() => { api("/trading/suppliers").then(setSuppliers).catch(() => {}); }, []);
   useEffect(() => {
-    setRows(o.lines.map((l) => ({ ...l })));
+    setRows(o.lines.map(withText));
     setFreightCost(o.freight_cost ?? "0");
     setFreightSell(o.freight_sell ?? "");
     setDirty(false);
@@ -119,6 +120,13 @@ function PricingSheet({ o, onSaved }) {
     }
   }
 
+  // The sheet needs the whole window: 13 columns do not fit in the reading
+  // width the other tabs use (owner 2026-09-24).
+  useEffect(() => {
+    document.body.dataset.wide = "1";
+    return () => { delete document.body.dataset.wide; };
+  }, []);
+
   const calcs = rows.map((r) => calcRow(r, ccy, usdRate));
   const costLines = calcs.reduce((a, c) => a + (c.lineCost || 0), 0);
   const sellLines = calcs.reduce((a, c) => a + (c.lineSell || 0), 0);
@@ -162,15 +170,18 @@ function PricingSheet({ o, onSaved }) {
               return (
                 <tr key={r.id || `n${i}`}>
                   <td style={td} className="t-sub">{i + 1}</td>
-                  <td style={td}><input style={{ ...inputStyle, width: 110, padding: "4px 6px" }} value={r.section || ""}
+                  <td style={td}><input style={{ ...inputStyle, width: 80, padding: "4px 6px" }} value={r.section || ""}
                                         disabled={locked} placeholder="heading" onChange={(e) => upd(i, { section: e.target.value })} /></td>
-                  <td style={td}><input style={{ ...inputStyle, width: 240, padding: "4px 6px" }} value={r.description || ""}
-                                        disabled={locked} onChange={(e) => upd(i, { description: e.target.value })} /></td>
-                  <td style={td}><Num value={r.qty} width={70} disabled={locked} onChange={(v) => upd(i, { qty: v })} /></td>
-                  <td style={td}><input style={{ ...inputStyle, width: 56, padding: "4px 6px" }} value={r.uom || ""}
+                  <td style={td} className="t-desc-cell">
+                    <textarea className="t-desc" value={r.description || ""} disabled={locked} rows={Math.max(2, (r.description || "").split("\n").length)}
+                              placeholder={"Product name\nspecs on the lines below"}
+                              onChange={(e) => upd(i, { description: e.target.value })} />
+                  </td>
+                  <td style={td}><Num value={r.qty} width={64} disabled={locked} onChange={(v) => upd(i, { qty: v })} /></td>
+                  <td style={td}><input style={{ ...inputStyle, width: 48, padding: "4px 6px" }} value={r.uom || ""}
                                         disabled={locked} onChange={(e) => upd(i, { uom: e.target.value })} /></td>
                   <td style={td}>
-                    <select style={{ ...inputStyle, width: 140, padding: "4px 6px" }} value={r.supplier || ""} disabled={locked}
+                    <select style={{ ...inputStyle, width: 110, padding: "4px 6px" }} value={r.supplier || ""} disabled={locked}
                             onChange={(e) => {
                               const s = suppliers.find((x) => String(x.id) === e.target.value);
                               upd(i, { supplier: e.target.value ? Number(e.target.value) : null,
@@ -180,23 +191,23 @@ function PricingSheet({ o, onSaved }) {
                       {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </td>
-                  <td style={td}><Num value={r.cost} step="0.0001" disabled={locked} onChange={(v) => upd(i, { cost: v })} /></td>
+                  <td style={td}><Num value={r.cost} step="0.0001" width={80} disabled={locked} onChange={(v) => upd(i, { cost: v })} /></td>
                   <td style={td}>
-                    <select style={{ ...inputStyle, width: 64, padding: "4px 6px" }} value={r.cost_currency || "USD"} disabled={locked}
+                    <select style={{ ...inputStyle, width: 60, padding: "4px 6px" }} value={r.cost_currency || "USD"} disabled={locked}
                             onChange={(e) => upd(i, { cost_currency: e.target.value })}>
                       {["USD", "MVR", "EUR", "CNY", "INR", "AED", "LKR"].map((x) => <option key={x}>{x}</option>)}
                     </select>
                   </td>
-                  <td style={td}><Num value={r.fx} step="0.000001" width={80} disabled={locked}
+                  <td style={td}><Num value={r.fx} step="0.000001" width={70} disabled={locked}
                                       placeholder={c.fx !== null ? String(+c.fx.toFixed(4)) : "rate?"}
                                       onChange={(v) => upd(i, { fx: v })} /></td>
                   <td style={{ ...td, textAlign: "right" }} className={c.fxMissing ? "t-bad" : ""}>
                     {c.fxMissing ? "no rate" : c.unitCost !== null ? fmtMoney(c.unitCost, 4) : ""}
                   </td>
-                  <td style={td}><Num value={r.margin_percent} width={70} disabled={locked}
+                  <td style={td}><Num value={r.margin_percent} width={62} disabled={locked}
                                       placeholder={c.margin !== null ? c.margin.toFixed(2) : ""}
                                       onChange={(v) => upd(i, { margin_percent: v, sell: "" })} /></td>
-                  <td style={td}><Num value={r.sell} step="0.0001" width={100} disabled={locked}
+                  <td style={td}><Num value={r.sell} step="0.0001" width={90} disabled={locked}
                                       placeholder={c.unitSell !== null ? c.unitSell.toFixed(4) : ""}
                                       onChange={(v) => upd(i, { sell: v })} /></td>
                   <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
@@ -561,7 +572,7 @@ function Supply({ o }) {
               <td style={td}>{l.orderable && o.can_manage && (
                 <input type="checkbox" checked={picked.has(l.id)} onChange={() => toggle(l.id)} />)}</td>
               <td style={td} className="t-sub">{l.sr_no}</td>
-              <td style={td}>{l.section && <div className="t-sub">{l.section}</div>}{l.description}</td>
+              <td style={td}>{l.section && <div className="t-sub">{l.section}</div>}<b>{l.description}</b>{l.spec && <div className="t-spec">{l.spec}</div>}</td>
               <td style={{ ...td, textAlign: "right" }}>{fmtQty(l.qty)} {l.uom}</td>
               <td style={td}>{l.supplier_name || <span className="t-sub">no supplier</span>}</td>
               <td style={{ ...td, textAlign: "right" }}>{l.cost ? `${l.cost_currency} ${fmtMoney(l.cost, 4)}` : ""}</td>

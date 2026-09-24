@@ -33,6 +33,9 @@
   table.doc td { padding: 5px 4mm; font-size: 10pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.doc td.sr { color: #61707C; width: 9mm; }
+  table.doc td .spec { display: block; font-style: italic; color: #55656f;
+    font-size: 9pt; white-space: pre-line; margin-top: 1pt; }
+  table.doc td .nm { font-weight: 700; }
   table.doc tbody tr.section td { background: #E7F1F9; font-weight: 700; color: #10344F; font-size: 9.5pt; }
   .note { margin-top: 5mm; font-size: 9.5pt; color: #33424d; }
   .sign { width: 100%; margin-top: 14mm; border-collapse: collapse; }
@@ -84,7 +87,7 @@
       {% if r.heading %}
         <tr class="section"><td colspan="4">{{ r.heading }}</td></tr>
       {% else %}
-        <tr><td class="sr">{{ r.no }}</td><td>{{ r.description }}</td>
+        <tr><td class="sr">{{ r.no }}</td><td><span class="nm">{{ r.description }}</span>{% if r.spec %}<span class="spec">{{ r.spec }}</span>{% endif %}</td>
             <td class="n">{{ r.qty_f }}</td><td>{{ r.uom }}</td></tr>
       {% endif %}
     {% endfor %}

@@ -33,6 +33,9 @@
   table.doc td { padding: 4.5px 4mm; font-size: 10pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   table.doc td.sr { color: #61707C; width: 9mm; }
+  table.doc td .spec { display: block; font-style: italic; color: #55656f;
+    font-size: 9pt; white-space: pre-line; margin-top: 1pt; }
+  table.doc td .nm { font-weight: 700; }
   table.doc td.dn { color: #61707C; font-size: 8.5pt; }
   table.doc tr.sub td { font-weight: 700; color: #10344F; border-bottom: none; }
   table.doc tr.net td { background: #DCEBF8; font-weight: 800; color: #10344F;
@@ -101,7 +104,7 @@
   <tbody>
     {% for r in rows %}
       <tr><td class="sr">{{ forloop.counter }}</td>
-          <td>{{ r.description }}{% if r.dn_ref %} <span class="dn">· {{ r.dn_ref }}</span>{% endif %}</td>
+          <td><span class="nm">{{ r.description }}</span>{% if r.dn_ref %} <span class="dn">· {{ r.dn_ref }}</span>{% endif %}{% if r.spec %}<span class="spec">{{ r.spec }}</span>{% endif %}</td>
           <td class="n">{{ r.qty_f }}</td><td>{{ r.uom }}</td>
           <td class="n">{{ r.unit_f }}</td><td class="n">{{ r.amount_f }}</td></tr>
     {% endfor %}

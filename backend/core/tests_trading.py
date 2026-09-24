@@ -1016,3 +1016,25 @@ class ReceiptTests(MoneyInBase):
 def _date_plus(s, days):
     from datetime import timedelta
     return date.fromisoformat(s) + timedelta(days=days)
+
+
+class LineSpecTests(SalesFrontBase):
+    def test_first_line_is_the_product_and_the_rest_its_spec(self):
+        """One multi-line description field on the sheet: the product on the
+        first line (bold), its specs below (italic) — carried to the
+        quotation, the delivery note, the invoice and the import order
+        (owner 2026-09-24)."""
+        d = self.new_order()
+        r = self.put_lines(d["id"], [{**self.TILE,
+                                      "description": "Porcelain pool tile 300x300\r\nAnti-slip R11\nColour: ocean blue"}])
+        ln = r.data["lines"][0]
+        self.assertEqual(ln["description"], "Porcelain pool tile 300x300")
+        self.assertEqual(ln["spec"], "Anti-slip R11\nColour: ocean blue")
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations")
+        q = TradingQuotation.objects.get(id=r.data["quotations"][0]["id"])
+        self.assertEqual(q.snapshot["lines"][0]["spec"], "Anti-slip R11\nColour: ocean blue")
+        row = trading.quotation_context(q, draft=True)["rows"][0]
+        self.assertEqual(row["spec"], "Anti-slip R11\nColour: ocean blue")
+        # a resave with the spec already split keeps it
+        r = self.put_lines(d["id"], [{**ln, "description": "Porcelain pool tile 300x300"}])
+        self.assertEqual(r.data["lines"][0]["spec"], "Anti-slip R11\nColour: ocean blue")

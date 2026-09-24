@@ -1423,7 +1423,8 @@ class TradingLine(models.Model):
                               related_name="lines")
     sr_no = models.PositiveIntegerField()
     section = models.TextField(blank=True)                       # heading the line sits under
-    description = models.TextField()
+    description = models.TextField()                             # the product, one line
+    spec = models.TextField(blank=True)                          # its specs, printed in italic below
     item = models.ForeignKey(Item, on_delete=models.PROTECT, null=True,
                              blank=True, related_name="+")
     qty = models.DecimalField(max_digits=12, decimal_places=2, default=1)

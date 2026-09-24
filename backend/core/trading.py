@@ -327,7 +327,12 @@ def write_lines(order, rows, actor):
         return "This order is closed — the pricing sheet is locked."
     clean, errors = [], []
     for i, r in enumerate(rows or [], 1):
-        desc = (r.get("description") or "").strip()
+        # One multi-line field on the sheet: the first line is the product,
+        # the rest its specs (owner 2026-09-24).
+        raw = (r.get("description") or "").replace("\r", "").strip()
+        desc, _, spec = raw.partition("\n")
+        desc = desc.strip()
+        spec = (r.get("spec") if r.get("spec") is not None and not spec else spec).strip()
         if not desc:
             errors.append(f"Line {i}: enter a description.")
             continue
@@ -345,7 +350,7 @@ def write_lines(order, rows, actor):
         clean.append({
             "id": r.get("id"), "sr_no": i,
             "section": (r.get("section") or "").strip(),
-            "description": desc, "item_id": r.get("item") or None,
+            "description": desc, "spec": spec, "item_id": r.get("item") or None,
             "qty": qty, "uom": (r.get("uom") or "").strip()[:20],
             "supplier_id": r.get("supplier") or None,
             "cost": cost, "cost_currency": (r.get("cost_currency") or "USD").upper()[:3],
@@ -397,7 +402,8 @@ def snapshot(order):
     for ln in lines:
         p = k["lines"][ln.id]
         rows.append({"id": ln.id, "sr_no": ln.sr_no, "section": ln.section,
-                     "description": ln.description, "qty": str(ln.qty),
+                     "description": ln.description, "spec": ln.spec,
+                     "qty": str(ln.qty),
                      "uom": ln.uom, "unit_sell": str(p["unit_sell"] or 0),
                      "line_sell": str(p["line_sell"] or 0)})
     return {
@@ -616,7 +622,7 @@ def _s(v):
 def line_dict(ln, p):
     return {
         "id": ln.id, "sr_no": ln.sr_no, "section": ln.section,
-        "description": ln.description, "item": ln.item_id,
+        "description": ln.description, "spec": ln.spec, "item": ln.item_id,
         "qty": _s(ln.qty), "uom": ln.uom,
         "supplier": ln.supplier_id,
         "supplier_name": ln.supplier.name if ln.supplier_id else "",
@@ -807,7 +813,7 @@ def raise_import_orders(order, line_ids, actor):
                 "trading_order_id": order.id,
                 "lines": [{
                     "item_id": ln.item_id, "free_text_desc": ln.description,
-                    "unit": ln.uom, "spec": "", "order_qty": str(ln.qty),
+                    "unit": ln.uom, "spec": ln.spec, "order_qty": str(ln.qty),
                     "unit_price": str(ln.cost), "cost_head_id": head.id,
                     "remarks": ln.section, "trading_line_id": ln.id,
                     "allocations": [{"trading_order_id": order.id,
@@ -1138,7 +1144,7 @@ def delivery_context(dn):
             rows.append({"heading": ln.section})
             last = ln.section
         no += 1
-        rows.append({"no": no, "description": ln.description,
+        rows.append({"no": no, "description": ln.description, "spec": ln.spec,
                      "qty_f": _fmt_qty(dl.qty), "uom": ln.uom})
     return {"logo_src": logo_src(), "co": company_info(), "dn": dn,
             "order": dn.order, "customer": _customer_block(dn.order.customer),
@@ -1207,7 +1213,8 @@ def _invoice_figures(order, dns, charges, include_freight):
         for dl in dn.lines.select_related("line"):
             unit = _unit_sell_for(order, dl.line)
             rows.append({"line": dl.line_id, "dn_ref": dn.ref,
-                         "description": dl.line.description, "uom": dl.line.uom,
+                         "description": dl.line.description, "spec": dl.line.spec,
+                         "uom": dl.line.uom,
                          "qty": str(dl.qty), "unit_sell": str(_q4(unit)),
                          "amount": str(_q2(unit * dl.qty))})
     goods = sum((Decimal(r["amount"]) for r in rows), ZERO)

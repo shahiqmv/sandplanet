@@ -124,3 +124,13 @@
 @media (max-width: 900px) {
   .t-two, .t-totals { grid-template-columns: 1fr; }
 }
+
+/* --- the pricing sheet gets the whole window; multi-line descriptions --- */
+body[data-wide="1"] .t-main { max-width: none; padding-left: 12px; padding-right: 12px; }
+.t-desc { width: 100%; min-width: 240px; box-sizing: border-box; padding: 4px 6px; font: inherit; font-size: 13px;
+  line-height: 1.35; border: 1px solid var(--line, #dcd5c6); border-radius: 6px; resize: vertical; }
+.t-desc:disabled { background: transparent; color: inherit; }
+.t-desc-cell { min-width: 250px; }
+.t-spec { font-style: italic; font-size: 12px; opacity: .75; white-space: pre-line; }
+.t-sheet input[type=number] { padding: 4px 4px; }
+.t-sheet .btn, .t-sheet select { font-size: 12.5px; }
