@@ -28,6 +28,15 @@ class User(AbstractUser):
         # projects/commercials for coordination. A support role — NOT a
         # purchasing, finance, site-ops or user-admin operator.
         PA = "PA", "Personal Assistant — Director's Office"
+        # Trading arm (TRADING_BUILD_BRIEF.md §5): a separate app surface at
+        # /t/ on the same backend. Sales roles never see sites; site roles
+        # never see trading. Finance, Signatory and Admin see both worlds.
+        SALES = "SALES", "Sales — trading inquiries, quotes and orders"
+        SALES_MANAGER = "SALES_MANAGER", "Sales Manager — authorises trading quotes and invoices"
+
+    # The trading app: who works in it, and who may read it from Finance.
+    TRADING_ROLES = {"SALES", "SALES_MANAGER"}
+    TRADING_READERS = TRADING_ROLES | {"FINANCE", "SIGNATORY", "ADMIN"}
 
     # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6; QS sees
     # the whole project portfolio; PA reads across projects to support the PD)
@@ -79,6 +88,11 @@ class User(AbstractUser):
     @property
     def is_ho(self) -> bool:
         return self.role in self.HO_ROLES
+
+    @property
+    def is_trading(self) -> bool:
+        """Works in the trading app (Sales / Sales Manager)."""
+        return self.role in self.TRADING_ROLES
 
     def allocated_site_ids(self):
         """Open allocations only (to_date null)."""
@@ -1250,6 +1264,11 @@ class Supplier(models.Model):
     # 2026-08-24); "Share with clearing agent" emails shipping documents to
     # this supplier. Set via the swap action, which moves the flag atomically.
     is_clearing_agent = models.BooleanField(default=False)
+    # Listed in the trading app's own supplier directory (Sales enter their
+    # sources themselves, owner 2026-09-24). One directory underneath, so a
+    # trading import order rides the same IPR chain; the flag only decides
+    # which app shows the supplier.
+    is_trading = models.BooleanField(default=False)
     # payment terms live per quotation, not per supplier — terms vary by
     # goods/volume (owner, 2026-07-07)
     notes = models.TextField(blank=True)
@@ -1264,6 +1283,39 @@ class Supplier(models.Model):
                 condition=models.Q(is_clearing_agent=True),
                 name="one_clearing_agent"),
         ]
+
+    def __str__(self):
+        return self.name
+
+
+class Customer(models.Model):
+    """A trading customer — who Sales quote, deliver to and invoice
+    (TRADING_BUILD_BRIEF.md §6). Nothing to do with a project's employer:
+    projects are keyed to a Site, trading to a Customer, and the two never
+    share a screen. Delivery is to the customer's boat at Malé harbour, so
+    the record carries the vessel(s) they usually send."""
+
+    name = models.TextField()
+    tin = models.CharField(max_length=30, blank=True)       # GST TIN on the tax invoice
+    business_reg_no = models.CharField(max_length=40, blank=True)
+    billing_address = models.TextField(blank=True)
+    island = models.TextField(blank=True)                    # where the goods end up
+    vessels = models.TextField(blank=True)                   # boats they collect with
+    contact_person = models.TextField(blank=True)
+    phone = models.TextField(blank=True)
+    email = models.TextField(blank=True)
+    default_currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
+    credit_days = models.PositiveIntegerField(null=True, blank=True)
+    gst_exempt = models.BooleanField(default=False)
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
 
     def __str__(self):
         return self.name
@@ -4881,10 +4933,20 @@ class CostPosting(models.Model):
         STOCK_ADJ = "STOCK_ADJ"      # Phase 1B
         SUBCONTRACT = "SUBCONTRACT"  # subcontractor valuations (SVC)
 
+    class Book(models.TextChoices):
+        PROJECT = "PROJECT"
+        TRADING = "TRADING"
+
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="cost_postings")
     cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
                                   related_name="postings")
+    # The ledger wall (TRADING_BUILD_BRIEF.md §5): every posting belongs to
+    # one book. Project cost control, the portfolio roll-up and the overhead
+    # totals read the PROJECT book only; the trading arm's revenue, cost of
+    # sales and GST live in TRADING and never reach a project figure.
+    book = models.CharField(max_length=8, choices=Book.choices,
+                            default=Book.PROJECT, db_index=True)
     state = models.CharField(max_length=10, choices=State.choices)
     source = models.CharField(max_length=12, choices=Source.choices)
     amount = models.DecimalField(max_digits=14, decimal_places=2)  # -ve = rev

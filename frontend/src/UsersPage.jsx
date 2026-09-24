@@ -17,6 +17,9 @@ const ROLES = [
   ["PA", "Personal Assistant (Director's Office) — full HR (employees, "
    + "attendance, payroll), meetings, onboarding entry, company profile; "
    + "read-only projects, commercials & receivables"],
+  ["SALES", "Sales — trading app only: customers, inquiries, quotes, orders"],
+  ["SALES_MANAGER", "Sales Manager — trading app only; authorises quotations "
+   + "and tax invoices"],
   ["ADMIN", "Admin — user management, site configuration, full access"],
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];

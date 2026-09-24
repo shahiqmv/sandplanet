@@ -6,8 +6,9 @@ import react from "@vitejs/plugin-react";
 // then references /static/assets/*, matching STATICFILES_DIRS). The dev
 // server stays at / so localhost:5173 works unchanged.
 //
-// Two entry points share one build: the desktop SPA (index.html) and Planet
-// Mobile, the installable PWA (m.html → served by Django at /m/).
+// Entry points sharing one build: the desktop SPA (index.html), Planet
+// Mobile, the installable PWA (m.html → served by Django at /m/), the client
+// portal (portal.html → /portal/) and Sand Planet Trading (t.html → /t/).
 export default defineConfig(({ mode }) => ({
   base: mode === "production" ? "/static/" : "/",
   plugins: [react()],
@@ -17,6 +18,7 @@ export default defineConfig(({ mode }) => ({
         main: resolve(__dirname, "index.html"),
         mobile: resolve(__dirname, "m.html"),
         portal: resolve(__dirname, "portal.html"),
+        trading: resolve(__dirname, "t.html"),
       },
     },
   },

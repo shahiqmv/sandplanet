@@ -182,7 +182,8 @@ def overheads_summary(request):
         for st in totals:
             amt = sum(
                 (fx.to_usd(r["t"] or 0, r["currency"], rate) for r in
-                 CostPosting.objects.filter(cost_head=c, state=st)
+                 CostPosting.objects.filter(cost_head=c, state=st,
+                                            book="PROJECT")
                  .values("currency").annotate(t=Sum("amount"))),
                 0)
             row[st.lower()] = float(round(amt, 2))

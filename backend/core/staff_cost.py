@@ -179,7 +179,7 @@ def current_run_rate():
 def history(site=None):
     """Past-months salary summary from the locked Labour & Staff postings —
     net (originals + reversals) per site per month."""
-    qs = CostPosting.objects.filter(source="STAFF")
+    qs = CostPosting.objects.filter(source="STAFF", book="PROJECT")
     if site is not None:
         qs = qs.filter(site=site)
     grouped = qs.values("site__code", "staff_year", "staff_month") \

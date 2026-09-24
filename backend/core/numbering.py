@@ -7,6 +7,10 @@ from .models import DocCounter
 # IPR/IRN global per §5.10 / D5
 GLOBAL_TYPES = {"PR", "LM", "PO", "PV", "IPR", "IRN", "SIN", "LOA", "SPL", "AC",
                 "IM30", "SHP"}
+# Trading series (TRADING_BUILD_BRIEF.md §7): company-wide, no site —
+# inquiry, quotation, sales order, delivery note, tax invoice, credit note.
+TRADING_TYPES = {"TIN", "TQ", "TSO", "TDN", "TSI", "TCN"}
+GLOBAL_TYPES |= TRADING_TYPES
 
 
 def next_ref(doc_type, site):

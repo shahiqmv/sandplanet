@@ -17,6 +17,7 @@ from . import version as version_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
+    views_trading as trading_api, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
@@ -43,6 +44,10 @@ router.register("item-categories", views.ItemCategoryViewSet,
                 basename="itemcategory")
 router.register("items", views.ItemViewSet, basename="item")
 router.register("suppliers", quotes.SupplierViewSet, basename="supplier")
+router.register("trading/customers", trading_api.CustomerViewSet,
+                basename="trading-customer")
+router.register("trading/suppliers", trading_api.TradingSupplierViewSet,
+                basename="trading-supplier")
 router.register("employees", hr.EmployeeViewSet, basename="employee")
 
 urlpatterns = [
@@ -937,5 +942,8 @@ urlpatterns = [
     path("cameras/<int:pk>", cameras_api.camera_detail, name="camera-detail"),
     path("cameras/<int:pk>/ticket", cameras_api.camera_ticket,
          name="camera-ticket"),
+    # --- Trading arm (TRADING_BUILD_BRIEF.md): its own app at /t/, its own
+    # API prefix. Nothing under /api/trading takes a site.
+    path("trading/home", trading_api.home, name="trading-home"),
     path("", include(router.urls)),
 ]

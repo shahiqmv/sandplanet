@@ -548,6 +548,15 @@ export default function App() {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
   }, []);
 
+  // The trading arm has its own app (TRADING_BUILD_BRIEF.md §5). A Sales
+  // sign-in here has nothing to see: send them to /t/ before any project
+  // page renders.
+  useEffect(() => {
+    if (me?.authenticated && ["SALES", "SALES_MANAGER"].includes(me.role)) {
+      window.location.replace(import.meta.env.DEV ? "/t.html" : "/t/");
+    }
+  }, [me]);
+
   // Apply what the URL asked for, once we are signed in.
   useEffect(() => {
     if (!me?.authenticated || !pendingUrl) return;

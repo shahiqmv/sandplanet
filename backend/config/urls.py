@@ -65,6 +65,14 @@ if (settings.BASE_DIR.parent / "frontend" / "dist" / "portal.html").exists():
                 TemplateView.as_view(template_name="portal.html"),
                 name="client-portal-shell"))
 
+# Trading app shell (frontend/dist/t.html) — the trading arm's own surface at
+# /t/ (TRADING_BUILD_BRIEF.md §5). Same session, same API origin, own nav.
+if (settings.BASE_DIR.parent / "frontend" / "dist" / "t.html").exists():
+    urlpatterns.append(
+        re_path(r"^t(/.*)?$",
+                TemplateView.as_view(template_name="t.html"),
+                name="trading-shell"))
+
 # Serve the built SPA (frontend/dist) same-origin — used by the team-review
 # tunnel and by production; harmless in dev (dist may not exist).
 if (settings.BASE_DIR.parent / "frontend" / "dist" / "index.html").exists():
