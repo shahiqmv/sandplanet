@@ -216,7 +216,53 @@ def set_stage(order, stage, actor):
 HEADER_FIELDS = ("title", "received_via", "customer_ref", "currency",
                  "next_action", "next_action_date", "notes",
                  "quote_valid_days", "payment_terms", "delivery_terms",
+                 "lead_time", "incoterm", "extra_terms",
                  "freight_cost", "freight_sell", "inquiry_date")
+
+# The company's standard quotation lines. Company parameters, so they are
+# the owner's to change without a release; a new inquiry copies them and
+# the order's own copy is what prints.
+STANDARD_TERMS = {
+    "payment_terms": ("trading_terms_payment",
+                      "50% with the order, balance before delivery"),
+    "delivery_terms": ("trading_terms_delivery",
+                       "Delivered to your vessel at Malé harbour"),
+    "lead_time": ("trading_terms_lead_time",
+                  "6–8 weeks from receipt of order and advance"),
+    "incoterm": ("trading_terms_incoterm", "Delivered Malé (local supply)"),
+    "extra_terms": ("trading_terms_extra",
+                    "Prices are valid for the quantities quoted.\n"
+                    "Goods remain the property of Sand Planet until paid in full."),
+    "quote_valid_days": ("trading_terms_valid_days", 14),
+}
+
+
+def standard_terms():
+    return {k: _param(key, default) for k, (key, default) in STANDARD_TERMS.items()}
+
+
+def set_standard_terms(data, actor):
+    from .models import CompanyParameter
+    if not can_authorise(actor):
+        return "Only the Sales Manager sets the standard terms."
+    changed = []
+    for k, (key, default) in STANDARD_TERMS.items():
+        if k not in data:
+            continue
+        v = data[k]
+        if k == "quote_valid_days":
+            try:
+                v = max(1, int(v or 14))
+            except (TypeError, ValueError):
+                return "Validity is a number of days."
+        else:
+            v = (v or "").strip()
+        CompanyParameter.objects.update_or_create(
+            key=key, defaults={"value": v,
+                               "description": f"Trading quotation standard line — {k}"})
+        changed.append(k)
+    audit(ENTITY, 0, "TERMS_STANDARD_SET", actor=actor, detail={"fields": changed})
+    return None
 
 
 def _apply_header(order, data, errors):
@@ -280,7 +326,8 @@ def create_order(data, actor):
     order = TradingOrder(customer=customer, owner=owner, created_by=actor,
                          inquiry_date=timezone.localdate(),
                          stage_since=timezone.localdate(),
-                         currency=customer.default_currency or "MVR")
+                         currency=customer.default_currency or "MVR",
+                         **standard_terms())
     _apply_header(order, {"title": data.get("title"), **{
         k: data[k] for k in HEADER_FIELDS if k in data and k != "title"}}, errors)
     if errors:
@@ -417,7 +464,10 @@ def snapshot(order):
                    "total": str(k["total"])},
         "terms": {"valid_days": order.quote_valid_days,
                   "payment": order.payment_terms,
-                  "delivery": order.delivery_terms},
+                  "delivery": order.delivery_terms,
+                  "lead_time": order.lead_time, "incoterm": order.incoterm,
+                  "extra": [t.strip() for t in (order.extra_terms or "").splitlines()
+                            if t.strip()]},
     }
 
 
@@ -670,6 +720,8 @@ def order_dict(order, user):
         "notes": order.notes, "quote_valid_days": order.quote_valid_days,
         "payment_terms": order.payment_terms,
         "delivery_terms": order.delivery_terms,
+        "lead_time": order.lead_time, "incoterm": order.incoterm,
+        "extra_terms": order.extra_terms,
         "freight_cost": _s(order.freight_cost), "freight_sell": _s(order.freight_sell),
         "po_number": order.po_number, "po_date": order.po_date,
         "po_file": order.po_file.url if order.po_file else None,

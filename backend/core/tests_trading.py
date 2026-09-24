@@ -1038,3 +1038,41 @@ class LineSpecTests(SalesFrontBase):
         # a resave with the spec already split keeps it
         r = self.put_lines(d["id"], [{**ln, "description": "Porcelain pool tile 300x300"}])
         self.assertEqual(r.data["lines"][0]["spec"], "Anti-slip R11\nColour: ocean blue")
+
+
+class QuotationTermsTests(SalesFrontBase):
+    def test_new_inquiries_start_from_the_standard_lines_and_print_their_own(self):
+        """Payment, delivery, lead time, incoterms and any extra lines are
+        company standard lines the manager keeps; every inquiry copies them
+        and prints its own copy (owner 2026-09-24)."""
+        self.login(self.finance)
+        r = self.client.put("/api/v1/trading/terms", {"payment_terms": "x"}, format="json")
+        self.assertEqual(r.status_code, 403)
+        self.login(self.sm)
+        r = self.client.put("/api/v1/trading/terms", {
+            "payment_terms": "30% advance, 70% before despatch",
+            "lead_time": "4 weeks", "incoterm": "Delivered Malé",
+            "extra_terms": "No returns on cut tiles.\nPrices exclude unloading.",
+            "quote_valid_days": 21}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertTrue(r.data["can_edit"])
+        d = self.new_order()
+        self.assertEqual(d["payment_terms"], "30% advance, 70% before despatch")
+        self.assertEqual(d["lead_time"], "4 weeks")
+        self.assertEqual(d["quote_valid_days"], 21)
+        self.assertEqual(d["delivery_terms"], "Delivered to your vessel at Malé harbour")
+        # the order's own terms are edited on the Quotation tab before issue
+        r = self.client.patch(f"/api/v1/trading/orders/{d['id']}",
+                              {"lead_time": "In stock — 3 days", "extra_terms": "Unloading by the customer."},
+                              format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.put_lines(d["id"], [self.TILE])
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations")
+        q = TradingQuotation.objects.get(id=r.data["quotations"][0]["id"])
+        t = q.snapshot["terms"]
+        self.assertEqual(t["lead_time"], "In stock — 3 days")
+        self.assertEqual(t["incoterm"], "Delivered Malé")
+        self.assertEqual(t["extra"], ["Unloading by the customer."])
+        self.assertEqual(t["valid_days"], 21)
+        ctx = trading.quotation_context(q, draft=True)
+        self.assertEqual(ctx["terms"]["payment"], "30% advance, 70% before despatch")

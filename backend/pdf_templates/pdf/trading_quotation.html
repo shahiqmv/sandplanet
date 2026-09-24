@@ -140,10 +140,13 @@
 <div class="words">{{ in_words }}</div>
 
 <div class="terms">
-  {% if terms.delivery %}<div><span class="tk">Delivery</span>{{ terms.delivery }}</div>{% endif %}
   {% if terms.payment %}<div><span class="tk">Payment</span>{{ terms.payment }}</div>{% endif %}
+  {% if terms.delivery %}<div><span class="tk">Delivery</span>{{ terms.delivery }}</div>{% endif %}
+  {% if terms.lead_time %}<div><span class="tk">Lead time</span>{{ terms.lead_time }}</div>{% endif %}
+  {% if terms.incoterm %}<div><span class="tk">Incoterms</span>{{ terms.incoterm }}</div>{% endif %}
   <div><span class="tk">Validity</span>{{ terms.valid_days }} days from the date above</div>
   {% if not gst_pct %}<div><span class="tk">GST</span>No GST is charged on this quotation</div>{% endif %}
+  {% for t in terms.extra %}<div><span class="tk">{% if forloop.first %}Terms{% endif %}</span>{{ t }}</div>{% endfor %}
 </div>
 
 <table class="approve"><tr>

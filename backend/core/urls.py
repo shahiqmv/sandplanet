@@ -991,6 +991,7 @@ urlpatterns = [
     path("trading/receipts/<int:rid>", trading_api.receipt_detail,
          name="trading-receipt"),
     path("trading/receivables", trading_api.receivables, name="trading-receivables"),
+    path("trading/terms", trading_api.standard_terms, name="trading-terms"),
     path("trading/customers/<int:cid>/statement", trading_api.customer_statement,
          name="trading-customer-statement"),
     path("", include(router.urls)),

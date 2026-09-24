@@ -1376,11 +1376,16 @@ class TradingOrder(models.Model):
     next_action = models.TextField(blank=True)
     next_action_date = models.DateField(null=True, blank=True)
     notes = models.TextField(blank=True)
-    # Commercial terms printed on the quotation
+    # Commercial terms printed on the quotation — seeded from the company's
+    # standard lines when the inquiry is logged, edited on the Quotation tab
+    # before a revision is issued (owner 2026-09-24).
     quote_valid_days = models.PositiveIntegerField(default=14)
     payment_terms = models.TextField(blank=True)
     delivery_terms = models.TextField(
         blank=True, default="Delivered to your vessel at Malé harbour")
+    lead_time = models.TextField(blank=True)
+    incoterm = models.TextField(blank=True)
+    extra_terms = models.TextField(blank=True)                   # one term per line
     # Freight to the harbour: what it costs us, and what (if anything) we
     # charge the customer for it. NULL = not charged (absorbed in margin).
     freight_cost = models.DecimalField(max_digits=12, decimal_places=2,

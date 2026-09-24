@@ -701,3 +701,17 @@ def customer_statement(request, cid):
             return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
         return _pdf_response(pdf, f"SOA-{customer.name[:20]}.pdf")
     return Response(trading.statement(customer, dfrom, dto))
+
+
+
+# ---- standard quotation terms ---------------------------------------------------
+
+@api_view(["GET", "PUT"])
+@permission_classes([IsTradingReaderAnyMethod])
+def standard_terms(request):
+    if request.method == "PUT":
+        msg = trading.set_standard_terms(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=403)
+    return Response({**trading.standard_terms(),
+                     "can_edit": trading.can_authorise(request.user)})

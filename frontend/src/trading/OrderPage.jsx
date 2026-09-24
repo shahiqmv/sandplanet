@@ -276,8 +276,7 @@ function Overview({ o, onSaved }) {
   useEffect(() => {
     setD({ title: o.title, received_via: o.received_via, customer_ref: o.customer_ref,
            currency: o.currency, next_action: o.next_action, next_action_date: o.next_action_date || "",
-           notes: o.notes, quote_valid_days: o.quote_valid_days, payment_terms: o.payment_terms,
-           delivery_terms: o.delivery_terms, owner: o.owner, inquiry_date: o.inquiry_date });
+           notes: o.notes, owner: o.owner, inquiry_date: o.inquiry_date });
   }, [o]);
   useEffect(() => { if (o.can_authorise) api("/trading/users").then(setUsers).catch(() => {}); }, [o.can_authorise]);
   const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
@@ -343,16 +342,7 @@ function Overview({ o, onSaved }) {
                                  : <div className="t-sub t-bad">No GST TIN on file — needed on the tax invoice</div>}
           {o.customer_detail.gst_exempt && <Chip tone="warn">GST exempt</Chip>}
         </div>
-        <div style={{ ...card, marginTop: 12 }}>
-          <h3 style={{ marginTop: 0 }}>Terms on the quotation</h3>
-          <label className="t-field"><span>Valid for (days)</span>
-            <input style={inputStyle} type="number" min="1" value={d.quote_valid_days || 14} onChange={set("quote_valid_days")} disabled={ro} /></label>
-          <label className="t-field"><span>Payment</span>
-            <input style={inputStyle} value={d.payment_terms || ""} onChange={set("payment_terms")} disabled={ro}
-                   placeholder="e.g. 50% with order, balance before delivery" /></label>
-          <label className="t-field"><span>Delivery</span>
-            <input style={inputStyle} value={d.delivery_terms || ""} onChange={set("delivery_terms")} disabled={ro} /></label>
-        </div>
+        <p className="t-sub" style={{ marginTop: 12 }}>The commercial terms that print on the quotation are on the Quotation tab.</p>
         {error && <p className="t-note t-note-red" style={{ marginTop: 12 }}>{error}</p>}
         {!locked && <Btn style={{ marginTop: 12 }} onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Btn>}
       </div>
@@ -361,6 +351,106 @@ function Overview({ o, onSaved }) {
 }
 
 // ---- quotation ------------------------------------------------------------------
+const TERM_FIELDS = [
+  ["payment_terms", "Payment terms", "e.g. 50% with the order, balance before delivery"],
+  ["delivery_terms", "Delivery", "e.g. Delivered to your vessel at Malé harbour"],
+  ["lead_time", "Lead time", "e.g. 6–8 weeks from receipt of order and advance"],
+  ["incoterm", "Incoterms", "e.g. Delivered Malé (local supply)"],
+];
+
+function TermsCard({ o, onSaved }) {
+  const [d, setD] = useState({});
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [dirty, setDirty] = useState(false);
+  const locked = !o.can_manage || o.is_closed;
+  useEffect(() => {
+    setD({ payment_terms: o.payment_terms, delivery_terms: o.delivery_terms, lead_time: o.lead_time,
+           incoterm: o.incoterm, extra_terms: o.extra_terms, quote_valid_days: o.quote_valid_days });
+    setDirty(false);
+  }, [o]);
+  const set = (k) => (e) => { setD({ ...d, [k]: e.target.value }); setDirty(true); };
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try { onSaved(await api(`/trading/orders/${o.id}`, { method: "PATCH", body: d })); setDirty(false); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  async function resetToStandard() {
+    try {
+      const st = await api("/trading/terms");
+      setD({ payment_terms: st.payment_terms, delivery_terms: st.delivery_terms, lead_time: st.lead_time,
+             incoterm: st.incoterm, extra_terms: st.extra_terms, quote_valid_days: st.quote_valid_days });
+      setDirty(true);
+    } catch (err) { setError(err.message); }
+  }
+  return (
+    <div style={{ ...card, marginBottom: 16 }}>
+      <div className="t-page-head" style={{ marginBottom: 8 }}>
+        <h3 style={{ margin: 0 }}>Terms on this quotation</h3>
+        {!locked && <button className="t-link" onClick={resetToStandard}>Reset to the standard lines</button>}
+      </div>
+      <div className="t-grid">
+        {TERM_FIELDS.map(([k, label, ph]) => (
+          <label key={k} className="t-field"><span>{label}</span>
+            <input style={inputStyle} value={d[k] || ""} onChange={set(k)} disabled={locked} placeholder={ph} /></label>
+        ))}
+        <label className="t-field"><span>Valid for (days)</span>
+          <input style={inputStyle} type="number" min="1" value={d.quote_valid_days || 14} onChange={set("quote_valid_days")} disabled={locked} /></label>
+        <label className="t-field t-field-wide"><span>Additional terms — one per line</span>
+          <textarea style={{ ...inputStyle, minHeight: 72 }} value={d.extra_terms || ""} onChange={set("extra_terms")} disabled={locked}
+                    placeholder={"Prices are valid for the quantities quoted.\nGoods remain our property until paid in full."} /></label>
+      </div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      {!locked && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn onClick={save} disabled={busy || !dirty}>{busy ? "Saving…" : dirty ? "Save terms" : "Saved"}</Btn>
+          {dirty && <span className="t-sub">Unsaved — a revision issued now would print the saved terms.</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StandardTerms() {
+  const [st, setSt] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/trading/terms").then(setSt).catch(() => {}); }, []);
+  if (!st || !st.can_edit) return null;
+  const set = (k) => (e) => setSt({ ...st, [k]: e.target.value });
+  async function save() {
+    setBusy(true);
+    setError(null);
+    try { setSt(await api("/trading/terms", { method: "PUT", body: st })); setOpen(false); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <div style={{ ...card, marginBottom: 16 }}>
+      <div className="t-page-head" style={{ marginBottom: open ? 8 : 0 }}>
+        <h3 style={{ margin: 0 }}>Standard lines <span className="t-sub">— what every new inquiry starts with</span></h3>
+        <button className="t-link" onClick={() => setOpen(!open)}>{open ? "Close" : "Edit"}</button>
+      </div>
+      {open && (<>
+        <div className="t-grid">
+          {TERM_FIELDS.map(([k, label]) => (
+            <label key={k} className="t-field"><span>{label}</span>
+              <input style={inputStyle} value={st[k] || ""} onChange={set(k)} /></label>
+          ))}
+          <label className="t-field"><span>Valid for (days)</span>
+            <input style={inputStyle} type="number" min="1" value={st.quote_valid_days || 14} onChange={set("quote_valid_days")} /></label>
+          <label className="t-field t-field-wide"><span>Additional terms — one per line</span>
+            <textarea style={{ ...inputStyle, minHeight: 72 }} value={st.extra_terms || ""} onChange={set("extra_terms")} /></label>
+        </div>
+        {error && <p className="t-note t-note-red">{error}</p>}
+        <Btn onClick={save} disabled={busy}>{busy ? "Saving…" : "Save standard lines"}</Btn>
+        <span className="t-sub" style={{ marginLeft: 10 }}>Changes apply to inquiries logged from now on; open ones keep their own terms.</span>
+      </>)}
+    </div>
+  );
+}
+
 function Quotation({ o, onSaved }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -374,6 +464,7 @@ function Quotation({ o, onSaved }) {
   const pdf = (q) => `/api/v1/trading/orders/${o.id}/quotations/${q.id}/pdf`;
   return (
     <div>
+      <TermsCard o={o} onSaved={onSaved} />
       {o.can_manage && !o.is_closed && (
         <div style={{ ...card, marginBottom: 16 }}>
           <h3 style={{ marginTop: 0 }}>Issue a quotation</h3>
@@ -390,6 +481,7 @@ function Quotation({ o, onSaved }) {
         </div>
       )}
       {error && <p className="t-note t-note-red">{error}</p>}
+      <StandardTerms />
       {o.quotations.length === 0 ? <p className="t-empty">No quotation yet.</p> : (
         <table className="t-table">
           <thead><tr>
@@ -898,6 +990,9 @@ export default function OrderPage({ id, back, initialTab }) {
     setO(null);
     api(`/trading/orders/${id}`).then(setO).catch((e) => setError(e.message));
   }, [id]);
+  // A deep link into a tab (#/inquiries/12/quotation) opens that tab even
+  // when the order page is already showing.
+  useEffect(() => { if (initialTab) setTab(initialTab); }, [initialTab]);
 
   async function pick(stage) {
     setBusy(true);
