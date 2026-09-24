@@ -192,11 +192,10 @@ export default function HsePage({ me, sites, site }) {
           </label>
         )}
         {!site && (sites || []).length > 1 && (
-          <select value={siteFilter} style={{ marginLeft: tab === "incidents"
-            ? 10 : "auto" }}
+          <select value={siteFilter}
                   onChange={(e) => setSiteFilter(e.target.value)}
                   style={{ ...inputStyle, width: "auto", marginBottom: 5,
-                           marginLeft: 10 }}>
+                           marginLeft: tab === "incidents" ? 10 : "auto" }}>
             <option value="">All sites</option>
             {sites.map((s) => (
               <option key={s.id} value={s.id}>{s.code}</option>
