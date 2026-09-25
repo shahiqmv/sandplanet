@@ -643,7 +643,7 @@ def vehicle_costs(request, pk):
                      "ho_site": ho_site().id,
                      "jobs": [fleet_costs.job_dict(j) for j in
                               v.jobs.select_related("vehicle", "created_by", "closed_by")],
-                     "can_raise": request.user.role in ("RENTAL", "RENTAL_MANAGER", "ADMIN")})
+                     "can_raise": fleet.can_write(request.user)})
 
 
 @api_view(["GET"])

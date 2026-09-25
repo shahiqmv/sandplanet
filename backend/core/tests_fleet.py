@@ -632,3 +632,19 @@ class CustomerRecordTests(RentalBase):
         self.assertEqual((c.tin, c.billing_address), ("1100200GST999", "New address"))
         blank = Site.objects.create(code="NOC", name="No client", status=Site.Status.ACTIVE)
         self.assertEqual(self.client.post("/api/v1/fleet/customers", {"from_site": blank.id}, format="json").status_code, 400)
+
+
+class DirectorAccessTests(RentalBase):
+    def test_the_director_has_everything_admin_has_on_the_fleet(self):
+        pd = make_user("pd1", User.Role.DIRECTOR)
+        self.login(pd)
+        r = self.client.post("/api/v1/fleet/vehicles", {"reg_no": "PD 1", "vehicle_class": "Crane",
+                                                        "rate_daily": "9000"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        r = self.client.patch(f"/api/v1/fleet/vehicles/{r.data['id']}", {"rate_daily": "9500"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)                # sets rates
+        a = self.with_vehicles(self.agreement(user=pd))
+        self.login(pd)
+        self.assertEqual(self.activate(a)["status"], "ACTIVE")       # activates
+        self.assertEqual(self.client.get("/api/v1/fleet/receivables").data["can_receipt"], True)
+        self.assertTrue(self.client.get(f"/api/v1/fleet/vehicles/{self.ex.id}/costs").data["can_raise"])

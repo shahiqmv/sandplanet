@@ -28,12 +28,16 @@ def can_read(user):
     return user.is_authenticated and user.role in User.FLEET_READERS
 
 
+# The Director (PD) has everything Admin has on the fleet (owner 2026-09-25).
+FULL_ACCESS = ("ADMIN", "DIRECTOR")
+
+
 def can_write(user):
-    return user.is_authenticated and user.role in ("RENTAL", "RENTAL_MANAGER", "ADMIN")
+    return user.is_authenticated and user.role in ("RENTAL", "RENTAL_MANAGER", *FULL_ACCESS)
 
 
 def can_set_rates(user):
-    return user.is_authenticated and user.role in ("RENTAL_MANAGER", "ADMIN")
+    return user.is_authenticated and user.role in ("RENTAL_MANAGER", *FULL_ACCESS)
 
 
 def _dec(v):

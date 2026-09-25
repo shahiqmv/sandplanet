@@ -555,7 +555,7 @@ from .models import (CompanyBankAccount, RentalInvoice, RentalReceipt,  # noqa: 
                      RentalReceiptLine)
 
 _CENT = Decimal("0.01")
-MONEY_ROLES = ("FINANCE", "ADMIN")
+MONEY_ROLES = ("FINANCE", "ADMIN", "DIRECTOR")
 
 
 def _q2(v):
