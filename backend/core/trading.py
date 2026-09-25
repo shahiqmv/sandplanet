@@ -1825,7 +1825,7 @@ def aging(as_of=None):
     for r in rows:
         for k in ("current", "d30", "d60", "d90", "d90plus", "total"):
             r[k] = _s(_q2(r[k]))
-        r["advance_on_account"] = _s(r.get("advance_on_account", ZERO))
+        r["advance_on_account"] = _s(_q2(r.get("advance_on_account", ZERO)))
     return {"as_of": today, "customers": rows,
             "total": _s(_q2(sum((Decimal(r["total"]) for r in rows), ZERO)))}
 
