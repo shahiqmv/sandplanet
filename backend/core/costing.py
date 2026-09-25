@@ -47,7 +47,7 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
          ipr_line=None, ipr_milestone=None, is_stock_pool=False,
          staff_year=None, staff_month=None,
          work_package="", reversal_of=None, actor=None, currency="MVR",
-         book="PROJECT"):
+         book="PROJECT", vehicle=None):
     """Append one cost posting. The single low-level writer — callers are
     the typed trigger functions below, never views directly.
 
@@ -55,8 +55,10 @@ def post(*, site, cost_head, state, source, amount, posted_on=None,
     TRADING for the trading arm. A reversal keeps its original's book."""
     if reversal_of is not None:
         book = reversal_of.book
+        vehicle = vehicle or reversal_of.vehicle
     return CostPosting.objects.create(
         site=site, cost_head=cost_head, state=state, source=source, book=book,
+        vehicle=vehicle,
         amount=Decimal(str(amount)), currency=currency,
         posted_on=posted_on or date.today(),
         document=document, document_line=document_line,

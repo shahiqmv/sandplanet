@@ -30,10 +30,12 @@ def _dec(v):
 def next_receipt_no():
     """One official-receipt series for the company: project receipts and
     trading receipts share it (TRADING_BUILD_BRIEF.md §7)."""
-    from .models import TradingReceipt
-    n = OfficialReceipt.objects.count() + TradingReceipt.objects.count() + 1
+    from .models import RentalReceipt, TradingReceipt
+    n = (OfficialReceipt.objects.count() + TradingReceipt.objects.count()
+         + RentalReceipt.objects.count() + 1)
     while (OfficialReceipt.objects.filter(receipt_no=f"OR-{n:04d}").exists()
-           or TradingReceipt.objects.filter(receipt_no=f"OR-{n:04d}").exists()):
+           or TradingReceipt.objects.filter(receipt_no=f"OR-{n:04d}").exists()
+           or RentalReceipt.objects.filter(receipt_no=f"OR-{n:04d}").exists()):
         n += 1
     return f"OR-{n:04d}"
 

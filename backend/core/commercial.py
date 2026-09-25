@@ -1380,17 +1380,19 @@ def _next_invoice_no():
     INV-2026-0001 (owner 2026-07-25). Shared across claim invoices and
     Planet-issued manual invoices so numbers never collide."""
     from django.utils import timezone
-    from .models import ManualInvoice, ProgressClaim, TradingInvoice
+    from .models import ManualInvoice, ProgressClaim, RentalInvoice, TradingInvoice
     prefix = f"INV-{timezone.now().year}-"
     # One series for the company: project claim invoices, manual invoices
     # and trading tax invoices (owner 2026-09-25).
     n = (ProgressClaim.objects.filter(invoice_no__startswith=prefix).count()
          + ManualInvoice.objects.filter(invoice_no__startswith=prefix).count()
          + TradingInvoice.objects.filter(ref__startswith=prefix).count()
+         + RentalInvoice.objects.filter(ref__startswith=prefix).count()
          + 1)
     while (ProgressClaim.objects.filter(invoice_no=f"{prefix}{n:04d}").exists()
            or ManualInvoice.objects.filter(invoice_no=f"{prefix}{n:04d}").exists()
-           or TradingInvoice.objects.filter(ref=f"{prefix}{n:04d}").exists()):
+           or TradingInvoice.objects.filter(ref=f"{prefix}{n:04d}").exists()
+           or RentalInvoice.objects.filter(ref=f"{prefix}{n:04d}").exists()):
         n += 1
     return f"{prefix}{n:04d}"
 

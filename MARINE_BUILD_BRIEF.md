@@ -258,8 +258,27 @@ Each phase ships and stops for the owner's review.
    roles), `/fleet/terms`; Fleet page tabs Vehicles / Hire agreements
    (`FleetRental.jsx`). Mobile entry of the register and the client-portal
    approval are deferred to the portal work.
-5. **Rental invoicing and money in** — invoice generation from logs, issue,
-   PDF, the shared receipts / aging / statements generalised for rental.
+5. **Rental invoicing and money in** — DONE 2026-09-25. `RentalInvoice` on
+   the company INV series (`commercial._next_invoice_no` counts it): raised
+   on an agreement for a period from the APPROVED billable days not yet
+   billed (one row per vehicle: days × agreed rate, operator days at the
+   operator rate when priced separately), plus mobilisation / demobilisation
+   once each and ad-hoc charges; GST at the company rate unless the customer
+   is exempt; due = invoice date + the customer's credit days; each billed
+   `HireLog` points at its invoice so nothing bills twice. The Rental
+   Manager issues (TIN guard) → revenue posts per VEHICLE cost centre
+   (`CostPosting.vehicle`, book RENTAL, head RNT_REVENUE; charges without a
+   vehicle; RNT_OUTPUT_GST) and the tax-invoice PDF is stored; void reverses
+   the postings and frees the days (refused once money is received).
+   `RentalReceipt` / `RentalReceiptLine` on the shared OR series
+   (`receipts.next_receipt_no` counts it), Finance-only, allocated
+   oldest-first; aging and the statement of account mirror trading's on the
+   rental tables (same statement PDF template). Fleet page tabs Invoices and
+   Receivables; the agreement shows its invoices and the "bill approved
+   days" preview (`FleetMoney.jsx`). Also 2026-09-25: Marine's palette
+   moved off Sand Planet's navy to a sea-teal family so the two apps read
+   differently at a glance — `manage.py brand_palette marine` (the seed
+   applies it on first run; the Company page can fine-tune tokens).
 6. **Costs and P&L** — vehicle cost centres on PYRs and payroll allocation,
    maintenance job cards, vehicle and fleet P&L, utilisation.
 

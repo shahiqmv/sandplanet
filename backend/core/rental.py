@@ -490,3 +490,494 @@ def agreement_dict(a, user=None, full=False):
             "can_manage": fleet.can_set_rates(user) if user else False,
         })
     return out
+
+
+# ================================================================================
+# Phase 5: invoicing the approved days, and the money that comes in
+# ================================================================================
+
+from decimal import ROUND_HALF_UP  # noqa: E402
+
+from django.db.models import Sum  # noqa: E402
+
+from .models import (CompanyBankAccount, RentalInvoice, RentalReceipt,  # noqa: E402
+                     RentalReceiptLine)
+
+_CENT = Decimal("0.01")
+MONEY_ROLES = ("FINANCE", "ADMIN")
+
+
+def _q2(v):
+    return Decimal(str(v or 0)).quantize(_CENT, rounding=ROUND_HALF_UP)
+
+
+def can_receipt(user):
+    """Finance is the money desk; Admin covers for it."""
+    return user.is_authenticated and user.role in MONEY_ROLES
+
+
+def gst_rate():
+    from .trading import gst_rate as g
+    return g()
+
+
+def _ho():
+    from .vouchers import ho_site
+    return ho_site()
+
+
+def _post(head_code, amount, currency, actor, vehicle=None):
+    from . import costing
+    head = costing.by_code(head_code)
+    if head is None:
+        raise ValueError(f"Cost head {head_code} is missing — ask Finance.")
+    p = costing.post(site=_ho(), cost_head=head, state="INCURRED", source="SALE",
+                     amount=amount, currency=currency, actor=actor, book="RENTAL",
+                     vehicle=vehicle)
+    return p.id
+
+
+def _reverse_postings(ids, actor):
+    from .trading import _reverse_postings as rev
+    return rev(ids, actor)
+
+
+def _customer_block(c):
+    return {"name": c.name, "address": c.billing_address, "tin": c.tin,
+            "contact": c.contact_person, "island": c.island}
+
+
+# ---- what is billable -----------------------------------------------------------
+
+def unbilled_days(a, d_from, d_to):
+    return (a.register.filter(date__gte=d_from, date__lte=d_to, approved=True,
+                              state__in=HireLog.BILLABLE, invoice__isnull=True)
+            .select_related("line__vehicle").order_by("line_id", "date"))
+
+
+def charge_billed(a, kind):
+    return any(c.get("kind") == kind
+               for inv in a.invoices.filter(status__in=("DRAFT", "ISSUED", "PAID"))
+               for c in inv.charges)
+
+
+def _rows(a, days):
+    """One row per vehicle: billable days × the agreed rate, and the operator
+    days at the operator rate when the operator is priced separately."""
+    by_line = {}
+    for h in days:
+        by_line.setdefault(h.line_id, []).append(h)
+    rows = []
+    for ln in a.vehicles.select_related("vehicle"):
+        hs = by_line.get(ln.id)
+        if not hs:
+            continue
+        v = ln.vehicle
+        n = len(hs)
+        amount = _q2(ln.rate_daily * n)
+        rows.append({"line": ln.id, "vehicle": v.id, "reg_no": v.reg_no, "fleet_no": v.fleet_no,
+                     "description": f"{v.vehicle_class}{' · ' + v.make if v.make else ''}"
+                                    f"{' ' + v.model if v.model else ''}",
+                     "from": str(hs[0].date), "to": str(hs[-1].date),
+                     "worked": sum(1 for h in hs if h.state == "WORKED"),
+                     "standby": sum(1 for h in hs if h.state == "STANDBY"),
+                     "days": n, "rate": str(ln.rate_daily), "amount": str(amount),
+                     "operator_days": n if (not ln.operator_included and ln.operator_rate_daily) else 0,
+                     "operator_rate": str(ln.operator_rate_daily or 0),
+                     "operator_amount": str(_q2((ln.operator_rate_daily or 0) * n))
+                     if not ln.operator_included and ln.operator_rate_daily else "0"})
+    return rows
+
+
+def invoice_preview(a, d_from, d_to):
+    days = list(unbilled_days(a, d_from, d_to))
+    rows = _rows(a, days)
+    sub = sum((Decimal(r["amount"]) + Decimal(r["operator_amount"]) for r in rows), ZERO)
+    pending = a.register.filter(date__gte=d_from, date__lte=d_to, approved=False,
+                                state__in=HireLog.BILLABLE).count()
+    return {"from": d_from, "to": d_to, "rows": rows, "days": len(days),
+            "subtotal": str(_q2(sub)), "unapproved_days": pending,
+            "mobilisation": (str(a.mobilisation_charge)
+                             if a.mobilisation_charge and not charge_billed(a, "MOB") else None),
+            "demobilisation": (str(a.demobilisation_charge)
+                               if a.demobilisation_charge and not charge_billed(a, "DEMOB") else None),
+            "currency": a.currency}
+
+
+def create_invoice(a, data, actor):
+    from .commercial import _next_invoice_no
+    if a.status == "DRAFT":
+        return None, "Activate the agreement before invoicing."
+    d_from, d_to = _date(data.get("from")), _date(data.get("to"))
+    if d_from in (None, "bad") or d_to in (None, "bad") or d_to < d_from:
+        return None, "Pick the period to invoice."
+    try:
+        inv_date = date.fromisoformat(str(data.get("invoice_date") or timezone.localdate()))
+    except ValueError:
+        return None, "Enter the invoice date."
+    days = list(unbilled_days(a, d_from, d_to))
+    charges = []
+    if data.get("include_mobilisation") and a.mobilisation_charge and not charge_billed(a, "MOB"):
+        charges.append({"kind": "MOB", "label": "Mobilisation to site",
+                        "amount": str(_q2(a.mobilisation_charge))})
+    if data.get("include_demobilisation") and a.demobilisation_charge and not charge_billed(a, "DEMOB"):
+        charges.append({"kind": "DEMOB", "label": "Demobilisation from site",
+                        "amount": str(_q2(a.demobilisation_charge))})
+    for c in data.get("charges") or []:
+        amt = _dec(c.get("amount"))
+        label = (c.get("label") or "").strip()
+        if amt in (None, "bad") or amt == 0 or not label:
+            continue
+        charges.append({"kind": "OTHER", "label": label, "amount": str(_q2(amt))})
+    if not days and not charges:
+        return None, ("No approved, unbilled days in that period — the customer's "
+                      "representative approves the register first.")
+    rows = _rows(a, days)
+    sub = _q2(sum((Decimal(r["amount"]) + Decimal(r["operator_amount"]) for r in rows), ZERO)
+              + sum((Decimal(c["amount"]) for c in charges), ZERO))
+    gst_pct = ZERO if a.customer.gst_exempt else gst_rate()
+    gst = _q2(sub * gst_pct / 100)
+    due = inv_date + timedelta(days=a.customer.credit_days or 0)
+    with transaction.atomic():
+        inv = RentalInvoice.objects.create(
+            agreement=a, customer=a.customer, ref=_next_invoice_no(), invoice_date=inv_date,
+            due_date=due, period_from=d_from, period_to=d_to, currency=a.currency,
+            charges=charges,
+            snapshot={"customer": _customer_block(a.customer), "lines": rows,
+                      "agreement": a.ref, "title": a.title, "site": a.site_location,
+                      "po": a.customer_po},
+            subtotal=sub, gst_percent=gst_pct, gst=gst, total=_q2(sub + gst),
+            created_by=actor)
+        HireLog.objects.filter(id__in=[h.id for h in days]).update(invoice=inv)
+    audit(ENTITY, a.id, "RINV_CREATED", actor=actor,
+          detail={"ref": a.ref, "invoice": inv.ref, "days": len(days), "total": str(inv.total)})
+    return inv, None
+
+
+def issue_invoice(inv, actor):
+    from . import fleet
+    if not fleet.can_set_rates(actor):
+        return "Only the Rental Manager issues a tax invoice."
+    if inv.status != "DRAFT":
+        return "This invoice is not a draft."
+    c = inv.customer
+    if not c.tin and not c.gst_exempt:
+        return ("The customer has no GST TIN on file — a tax invoice needs it. "
+                "Add it on the customer, or mark them GST exempt.")
+    with transaction.atomic():
+        inv.status = "ISSUED"
+        inv.issued_by = actor
+        inv.issued_at = timezone.now()
+        ids = []
+        for r in inv.snapshot.get("lines", []):
+            v = Vehicle.objects.filter(id=r["vehicle"]).first()
+            amt = Decimal(r["amount"]) + Decimal(r["operator_amount"])
+            if amt:
+                ids.append(_post("RNT_REVENUE", amt, inv.currency, actor, vehicle=v))
+        other = sum((Decimal(c["amount"]) for c in inv.charges), ZERO)
+        if other:
+            ids.append(_post("RNT_REVENUE", other, inv.currency, actor))
+        if inv.gst:
+            ids.append(_post("RNT_OUTPUT_GST", inv.gst, inv.currency, actor))
+        inv.posting_ids = ids
+        inv.save()
+        _store_invoice_pdf(inv)
+    audit(ENTITY, inv.agreement_id, "RINV_ISSUED", actor=actor,
+          detail={"ref": inv.agreement.ref, "invoice": inv.ref, "total": str(inv.total)})
+    return None
+
+
+def void_invoice(inv, reason, actor):
+    from . import fleet
+    if not fleet.can_set_rates(actor):
+        return "Only the Rental Manager voids an invoice."
+    if inv.status == "VOID":
+        return "Already void."
+    if inv.receipts.exists():
+        return "Money has been received against this invoice — it cannot be voided."
+    reason = (reason or "").strip()
+    if not reason:
+        return "Say why the invoice is void."
+    with transaction.atomic():
+        if inv.status in ("ISSUED", "PAID"):
+            inv.posting_ids = _reverse_postings(inv.posting_ids, actor)
+        inv.status = "VOID"
+        inv.void_reason = reason
+        inv.save()
+        inv.days.update(invoice=None)                # the days bill again
+    audit(ENTITY, inv.agreement_id, "RINV_VOID", actor=actor,
+          detail={"ref": inv.agreement.ref, "invoice": inv.ref, "reason": reason})
+    return None
+
+
+def invoice_received(inv):
+    return _q2(inv.receipts.aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
+def invoice_outstanding(inv):
+    if inv.status not in ("ISSUED", "PAID"):
+        return ZERO
+    return _q2(inv.total - invoice_received(inv))
+
+
+def _settle(inv):
+    if inv.status == "ISSUED" and invoice_outstanding(inv) <= ZERO:
+        inv.status = "PAID"
+        inv.save(update_fields=["status"])
+    elif inv.status == "PAID" and invoice_outstanding(inv) > ZERO:
+        inv.status = "ISSUED"
+        inv.save(update_fields=["status"])
+
+
+def invoice_context(inv, draft=False):
+    from .commercial import amount_in_words
+    from .pdf import company_info, logo_src
+    s = inv.snapshot
+    signer = inv.issued_by
+    rows = []
+    for r in s.get("lines", []):
+        rows.append({**r, "rate_f": _money(r["rate"]), "amount_f": _money(r["amount"]),
+                     "period": f"{date.fromisoformat(r['from']):%d %b} – {date.fromisoformat(r['to']):%d %b %Y}",
+                     "op_rate_f": _money(r["operator_rate"]),
+                     "op_amount_f": _money(r["operator_amount"])})
+    return {
+        "logo_src": logo_src(), "co": company_info(), "inv": inv, "a": inv.agreement,
+        "customer": s.get("customer", {}), "currency": inv.currency,
+        "draft": draft and inv.status == "DRAFT", "void": inv.status == "VOID",
+        "title": s.get("title", ""), "site": s.get("site", ""), "po": s.get("po", ""),
+        "rows": rows,
+        "charges": [{**c, "amount_f": _money(c["amount"])} for c in inv.charges],
+        "subtotal_f": _money(inv.subtotal), "gst_pct": inv.gst_percent,
+        "gst_f": _money(inv.gst), "total_f": _money(inv.total),
+        "in_words": amount_in_words(inv.total, "USD" if inv.currency == "USD" else "Rufiyaa"),
+        "signer": ({"name": signer.full_name,
+                    "designation": "Rental Manager" if signer.role == "RENTAL_MANAGER"
+                    else _param("company_signee_designation", "Managing Director")}
+                   if signer else None),
+    }
+
+
+def invoice_pdf_bytes(inv):
+    from .views_commercial import pdf_bytes
+    return pdf_bytes("pdf/rental_tax_invoice.html", invoice_context(inv, draft=True))
+
+
+def _store_invoice_pdf(inv):
+    from django.conf import settings
+    from django.core.files.base import ContentFile
+    try:
+        pdf = invoice_pdf_bytes(inv)
+    except Exception:                                 # pragma: no cover - env dep
+        if settings.PDF_REQUIRED:
+            raise
+        return
+    inv.pdf.save(f"{inv.ref}.pdf", ContentFile(pdf), save=True)
+
+
+def invoice_dict(inv):
+    return {"id": inv.id, "ref": inv.ref, "status": inv.status,
+            "agreement": inv.agreement_id, "agreement_ref": inv.agreement.ref,
+            "customer": inv.customer_id, "customer_name": inv.customer.name,
+            "invoice_date": inv.invoice_date, "due_date": inv.due_date,
+            "period_from": inv.period_from, "period_to": inv.period_to,
+            "currency": inv.currency, "subtotal": _s(inv.subtotal),
+            "gst_percent": _s(inv.gst_percent), "gst": _s(inv.gst), "total": _s(inv.total),
+            "charges": inv.charges, "lines": inv.snapshot.get("lines", []),
+            "days": sum(r["days"] for r in inv.snapshot.get("lines", [])),
+            "received": _s(invoice_received(inv)), "outstanding": _s(invoice_outstanding(inv)),
+            "has_pdf": bool(inv.pdf), "void_reason": inv.void_reason,
+            "issued_at": inv.issued_at,
+            "issued_by": inv.issued_by.full_name if inv.issued_by_id else None}
+
+
+# ---- receipts -----------------------------------------------------------------------
+
+def open_invoices(customer):
+    return [i for i in RentalInvoice.objects.filter(customer=customer, status__in=("ISSUED", "PAID"))
+            .select_related("agreement").order_by("invoice_date", "id")
+            if invoice_outstanding(i) > ZERO]
+
+
+def auto_allocate(customer, amount):
+    left, out = _q2(amount), []
+    for inv in open_invoices(customer):
+        if left <= ZERO:
+            break
+        take = min(invoice_outstanding(inv), left)
+        out.append({"invoice_id": inv.id, "invoice": inv.ref, "amount": str(take),
+                    "outstanding": str(invoice_outstanding(inv))})
+        left -= take
+    return out, _s(left)
+
+
+def record_receipt(data, actor):
+    from .receipts import next_receipt_no
+    if not can_receipt(actor):
+        return None, "Finance records customer receipts."
+    customer = Customer.objects.filter(id=data.get("customer")).first()
+    if customer is None:
+        return None, "Pick the customer the money is from."
+    try:
+        rdate = date.fromisoformat(str(data.get("receipt_date")))
+    except (TypeError, ValueError):
+        return None, "Enter the receipt date."
+    method = data.get("method") or "TT"
+    if method not in [c[0] for c in RentalReceipt._meta.get_field("method").choices]:
+        return None, "Choose how the payment was received."
+    bank = None
+    if data.get("bank_account"):
+        bank = CompanyBankAccount.objects.filter(id=data["bank_account"]).first()
+        if bank is None:
+            return None, "That bank account no longer exists."
+    parsed, currency = [], None
+    for row in data.get("allocations") or []:
+        amt = _dec(row.get("amount"))
+        if amt in (None, "bad") or amt <= ZERO:
+            continue
+        inv = RentalInvoice.objects.filter(id=row.get("invoice_id"), customer=customer,
+                                           status__in=("ISSUED", "PAID")).first()
+        if inv is None:
+            return None, "An invoice on this receipt is not this customer's."
+        due = invoice_outstanding(inv)
+        if amt > due + Decimal("0.01"):
+            return None, f"{amt:,.2f} exceeds the {due:,.2f} outstanding on {inv.ref}."
+        if currency and inv.currency != currency:
+            return None, "One receipt settles invoices in one currency."
+        currency = inv.currency
+        parsed.append((inv, _q2(amt)))
+    if not parsed:
+        return None, "Allocate the money to at least one invoice."
+    with transaction.atomic():
+        rc = RentalReceipt.objects.create(
+            customer=customer, receipt_no=next_receipt_no(), receipt_date=rdate,
+            method=method, reference=(data.get("reference") or "").strip(),
+            bank_account=bank, currency=currency, note=data.get("note") or "",
+            recorded_by=actor)
+        for inv, amt in parsed:
+            RentalReceiptLine.objects.create(receipt=rc, invoice=inv, amount=amt)
+        for inv, _ in parsed:
+            _settle(inv)
+    for inv, amt in parsed:
+        audit(ENTITY, inv.agreement_id, "RECEIPT", actor=actor,
+              detail={"ref": inv.agreement.ref, "invoice": inv.ref,
+                      "receipt_no": rc.receipt_no, "amount": str(amt)})
+    return rc, None
+
+
+def delete_receipt(rc, actor):
+    if not can_receipt(actor):
+        return "Finance records customer receipts."
+    lines = list(rc.lines.select_related("invoice"))
+    no = rc.receipt_no
+    with transaction.atomic():
+        rc.lines.all().delete()
+        rc.delete()
+        for l in lines:
+            _settle(l.invoice)
+    for l in lines:
+        audit(ENTITY, l.invoice.agreement_id, "RECEIPT_DELETED", actor=actor,
+              detail={"receipt_no": no, "invoice": l.invoice.ref})
+    return None
+
+
+def receipt_dict(rc):
+    ba = rc.bank_account
+    lines = [{"id": l.id, "invoice_id": l.invoice_id, "invoice_no": l.invoice.ref,
+              "claim_ref": l.invoice.agreement.ref, "project_code": l.invoice.agreement.ref,
+              "amount": l.amount, "invoice_amount": l.invoice.total}
+             for l in rc.lines.select_related("invoice__agreement")]
+    return {"id": rc.id, "receipt_no": rc.receipt_no, "receipt_date": rc.receipt_date,
+            "method": rc.method, "method_label": rc.get_method_display(),
+            "reference": rc.reference, "note": rc.note,
+            "customer": rc.customer_id, "client": rc.customer.name,
+            "bank_account": ba.label if ba else "", "currency": rc.currency,
+            "total": rc.total, "lines": lines,
+            "recorded_by": rc.recorded_by.full_name if rc.recorded_by_id else ""}
+
+
+def receipt_context(rc):
+    from .commercial import amount_in_words
+    from .pdf import company_info, logo_src
+    d = receipt_dict(rc)
+    ba = rc.bank_account
+    c = rc.customer
+    return {"logo_src": logo_src(), "co": company_info(), "receipt": rc, "r": d,
+            "currency": rc.currency,
+            "payer": {"name": c.name, "address": c.billing_address,
+                      "contact": c.contact_person, "designation": ""},
+            "bank_account": ({"label": ba.label, "bank_name": ba.bank_name,
+                              "account_name": ba.account_name, "account_no": ba.account_no,
+                              "currency": ba.currency} if ba else None),
+            "invoice_list": ", ".join(l["invoice_no"] for l in d["lines"]),
+            "amount_words": amount_in_words(rc.total, "USD" if rc.currency == "USD" else "Rufiyaa")}
+
+
+# ---- receivables ---------------------------------------------------------------------
+
+def aging(as_of=None):
+    from .trading import _bucket
+    today = as_of or timezone.localdate()
+    by_cust = {}
+    for inv in RentalInvoice.objects.filter(status__in=("ISSUED", "PAID")) \
+            .select_related("customer", "agreement"):
+        out = invoice_outstanding(inv)
+        if out <= ZERO:
+            continue
+        c = inv.customer
+        row = by_cust.setdefault(c.id, {
+            "customer": c.id, "customer_name": c.name, "currency": inv.currency,
+            "current": ZERO, "d30": ZERO, "d60": ZERO, "d90": ZERO, "d90plus": ZERO,
+            "total": ZERO, "invoices": []})
+        overdue = (today - (inv.due_date or inv.invoice_date)).days
+        row[_bucket(overdue)] += out
+        row["total"] += out
+        row["invoices"].append({"id": inv.id, "ref": inv.ref, "agreement": inv.agreement.ref,
+                                "agreement_id": inv.agreement_id,
+                                "invoice_date": inv.invoice_date, "due_date": inv.due_date,
+                                "total": _s(inv.total), "outstanding": _s(out),
+                                "overdue_days": max(0, overdue), "currency": inv.currency})
+    rows = sorted(by_cust.values(), key=lambda r: -r["total"])
+    for r in rows:
+        for k in ("current", "d30", "d60", "d90", "d90plus", "total"):
+            r[k] = _s(_q2(r[k]))
+    return {"as_of": today, "customers": rows,
+            "total": _s(_q2(sum((Decimal(r["total"]) for r in rows), ZERO)))}
+
+
+def statement(customer, date_from=None, date_to=None):
+    to = date_to or timezone.localdate()
+    entries = []
+    for inv in RentalInvoice.objects.filter(customer=customer, status__in=("ISSUED", "PAID")) \
+            .select_related("agreement"):
+        entries.append({"date": inv.invoice_date, "kind": "INVOICE", "ref": inv.ref,
+                        "detail": f"{inv.agreement.ref} · {inv.period_from:%d %b} – {inv.period_to:%d %b %Y}",
+                        "debit": inv.total, "credit": ZERO, "currency": inv.currency})
+    for rc in RentalReceipt.objects.filter(customer=customer).prefetch_related("lines__invoice"):
+        settled = ", ".join(x.invoice.ref for x in rc.lines.all())
+        entries.append({"date": rc.receipt_date, "kind": "RECEIPT", "ref": rc.receipt_no,
+                        "detail": f"{rc.get_method_display()}"
+                                  f"{' ' + rc.reference if rc.reference else ''} — {settled}",
+                        "debit": ZERO, "credit": rc.total, "currency": rc.currency})
+    entries.sort(key=lambda e: (e["date"], e["kind"] != "INVOICE", e["ref"]))
+    opening = ZERO
+    rows, bal = [], ZERO
+    for e in entries:
+        if e["date"] > to:
+            continue
+        if date_from and e["date"] < date_from:
+            opening += e["debit"] - e["credit"]
+            continue
+        bal += e["debit"] - e["credit"]
+        rows.append({**e, "debit": _s(_q2(e["debit"])) if e["debit"] else None,
+                     "credit": _s(_q2(e["credit"])) if e["credit"] else None,
+                     "balance": _s(_q2(opening + bal))})
+    return {"customer": customer.id, "customer_name": customer.name,
+            "date_from": date_from, "date_to": to, "opening": _s(_q2(opening)),
+            "rows": rows, "closing": _s(_q2(opening + bal))}
+
+
+def statement_context(customer, date_from, date_to):
+    from .pdf import company_info, logo_src
+    return {"logo_src": logo_src(), "co": company_info(),
+            "st": statement(customer, date_from, date_to),
+            "customer": _customer_block(customer)}

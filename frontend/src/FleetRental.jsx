@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { API_BASE } from "./brand.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
+import { AgreementInvoices } from "./FleetMoney.jsx";
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "");
 const fmtMoney = (v) => (v == null || v === "" ? "" : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -335,17 +336,19 @@ function AgreementDetail({ id, onBack }) {
       </div>
       <VehicleLines a={a} onSaved={setA} />
       {a.status !== "DRAFT" && <Register a={a} />}
+      {a.status !== "DRAFT" && <AgreementInvoices a={a} />}
     </div>
   );
 }
 
 // ---- list ---------------------------------------------------------------------------
-export default function AgreementsPanel() {
+export default function AgreementsPanel({ initialOpen = null, onOpened }) {
   const [rows, setRows] = useState(null);
   const [status, setStatus] = useState("open");
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
-  const [open, setOpen] = useState(null);
+  const [open, setOpen] = useState(initialOpen);
+  useEffect(() => { if (initialOpen) { setOpen(initialOpen); onOpened?.(); } }, [initialOpen, onOpened]);
   const [canWrite, setCanWrite] = useState(false);
   function load() {
     const q = new URLSearchParams(); if (status) q.set("status", status); if (search.trim()) q.set("search", search.trim());

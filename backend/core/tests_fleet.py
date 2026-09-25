@@ -290,3 +290,150 @@ class RegisterTests(RentalBase):
         self.assertEqual(r.status_code, 200)                    # Finance reads
         self.assertEqual(self.client.get("/api/v1/fleet/customers").status_code, 200)
         self.assertEqual(self.client.post("/api/v1/fleet/customers", {"name": "x"}, format="json").status_code, 403)
+
+
+# ---- phase 5: invoicing the approved days, receipts and receivables -------------
+
+from decimal import Decimal  # noqa: E402
+
+from .models import RentalInvoice, RentalReceipt  # noqa: E402
+
+
+class InvoiceBase(RentalBase):
+    def billed_setup(self):
+        """An active agreement with a week of approved days on the excavator
+        (5 worked + 1 standby billable, 1 breakdown not) and two unapproved."""
+        self.cust.tin = "1100200GST001"
+        self.cust.credit_days = 30
+        self.cust.save()
+        a = self.activate(self.with_vehicles(self.agreement(mobilisation_charge="5000")))
+        ex = next(v for v in a["vehicles"] if v["fleet_no"] == "EX-01")
+        tp = next(v for v in a["vehicles"] if v["fleet_no"] == "TP-02")
+        rows = [{"line": ex["id"], "date": f"2026-09-0{d}", "state": s} for d, s in
+                [(1, "WORKED"), (2, "WORKED"), (3, "WORKED"), (4, "STANDBY"), (5, "BREAKDOWN"),
+                 (6, "WORKED"), (7, "WORKED")]]
+        rows += [{"line": tp["id"], "date": "2026-09-01", "state": "WORKED"},
+                 {"line": tp["id"], "date": "2026-09-02", "state": "WORKED"}]
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-09-01&to=2026-09-07",
+                            {"rows": rows}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/register/approve",
+                             {"from": "2026-09-01", "to": "2026-09-07", "approved_by": "Ali Rasheed"})
+        self.assertEqual(r.status_code, 200, r.data)
+        return a
+
+
+class RentalInvoiceTests(InvoiceBase):
+    def test_invoice_bills_approved_days_once_at_agreed_rates_with_gst(self):
+        a = self.billed_setup()
+        r = self.client.get(f"/api/v1/fleet/agreements/{a['id']}/invoices?from=2026-09-01&to=2026-09-30")
+        pv = r.data["preview"]
+        self.assertEqual(pv["days"], 8)                        # 6 excavator + 2 tipper
+        self.assertEqual(pv["mobilisation"], "5000.00")
+        self.assertEqual(pv["subtotal"], "31000.00")           # 6×4500 + 2×2000
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/invoices",
+                             {"from": "2026-09-01", "to": "2026-09-30", "invoice_date": "2026-10-01",
+                              "include_mobilisation": True}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv = r.data
+        self.assertEqual(inv["ref"], f"INV-{date.today().year}-0001")
+        self.assertEqual(inv["subtotal"], "36000.00")
+        self.assertEqual(inv["gst"], "2880.00")                # 8 %
+        self.assertEqual(inv["total"], "38880.00")
+        self.assertEqual(str(inv["due_date"]), "2026-10-31")
+        self.assertEqual([x["days"] for x in inv["lines"]], [6, 2])
+        # the days are stamped; nothing bills twice, the mobilisation neither
+        r = self.client.get(f"/api/v1/fleet/agreements/{a['id']}/invoices?from=2026-09-01&to=2026-09-30")
+        self.assertEqual(r.data["preview"]["days"], 0)
+        self.assertIsNone(r.data["preview"]["mobilisation"])
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/invoices",
+                             {"from": "2026-09-01", "to": "2026-09-30"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # the rental user cannot issue; the manager does, and revenue posts per vehicle
+        self.login(self.rental)
+        r = self.client.post(f"/api/v1/fleet/invoices/{inv['id']}", {"action": "issue"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(self.rm)
+        r = self.client.post(f"/api/v1/fleet/invoices/{inv['id']}", {"action": "issue"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "ISSUED")
+        posts = CostPosting.objects.filter(book="RENTAL", source="SALE")
+        self.assertEqual(posts.count(), 4)                     # 2 vehicles + mobilisation + GST
+        self.assertEqual(posts.filter(vehicle=self.ex).get().amount, Decimal("27000.00"))
+        self.assertEqual(posts.filter(cost_head__code="RNT_OUTPUT_GST").get().amount, Decimal("2880.00"))
+        self.assertEqual(self.client.get(f"/api/v1/fleet/invoices/{inv['id']}/pdf")["Content-Type"],
+                         "application/pdf")
+        # void reverses the postings and frees the days
+        r = self.client.post(f"/api/v1/fleet/invoices/{inv['id']}", {"action": "void", "reason": "wrong rate"},
+                             format="json")
+        self.assertEqual(r.data["status"], "VOID")
+        self.assertEqual(CostPosting.objects.filter(book="RENTAL").count(), 8)
+        self.assertEqual(sum(p.amount for p in CostPosting.objects.filter(book="RENTAL")), 0)
+        r = self.client.get(f"/api/v1/fleet/agreements/{a['id']}/invoices?from=2026-09-01&to=2026-09-30")
+        self.assertEqual(r.data["preview"]["days"], 8)
+
+    def test_gst_exempt_customer_and_no_tin_guard(self):
+        a = self.billed_setup()
+        self.cust.tin = ""
+        self.cust.save()
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/invoices",
+                             {"from": "2026-09-01", "to": "2026-09-30"}, format="json")
+        inv = r.data
+        r = self.client.post(f"/api/v1/fleet/invoices/{inv['id']}", {"action": "issue"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("TIN", r.data["detail"])
+
+
+class RentalReceiptTests(InvoiceBase):
+    def issued(self):
+        a = self.billed_setup()
+        inv = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/invoices",
+                               {"from": "2026-09-01", "to": "2026-09-30"}, format="json").data
+        self.client.post(f"/api/v1/fleet/invoices/{inv['id']}", {"action": "issue"}, format="json")
+        return a, RentalInvoice.objects.get(id=inv["id"])
+
+    def test_finance_records_a_receipt_and_the_aging_and_statement_follow(self):
+        a, inv = self.issued()
+        self.assertEqual(inv.total, Decimal("33480.00"))       # 31000 + 8 %
+        self.login(self.rm)
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-05",
+                                                        "allocations": [{"invoice_id": inv.id, "amount": "10000"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)                   # the Rental Manager is not the money desk
+        self.login(self.finance)
+        r = self.client.get(f"/api/v1/fleet/receipts/allocate?customer={self.cust.id}&amount=10000")
+        self.assertEqual(r.data["allocations"][0]["amount"], "10000.00")
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-05",
+                                                        "method": "TT", "reference": "TT-778",
+                                                        "allocations": r.data["allocations"]}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["receipt_no"], "OR-0001")
+        ag = self.client.get("/api/v1/fleet/receivables").data
+        self.assertEqual(ag["total"], "23480.00")
+        self.assertEqual(ag["customers"][0]["invoices"][0]["outstanding"], "23480.00")
+        st = self.client.get(f"/api/v1/fleet/customers/{self.cust.id}/statement?to=2026-12-31").data
+        self.assertEqual([e["kind"] for e in st["rows"]], ["INVOICE", "RECEIPT"])
+        self.assertEqual(st["closing"], "23480.00")
+        # settle the rest → PAID; an over-allocation is refused
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-20",
+                                                        "allocations": [{"invoice_id": inv.id, "amount": "30000"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.post("/api/v1/fleet/receipts", {"customer": self.cust.id, "receipt_date": "2026-10-20",
+                                                        "allocations": [{"invoice_id": inv.id, "amount": "23480"}]},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "PAID")
+        self.assertEqual(self.client.get("/api/v1/fleet/receivables").data["customers"], [])
+        # a paid invoice cannot be voided; deleting the receipt reopens it
+        self.login(self.rm)
+        r = self.client.post(f"/api/v1/fleet/invoices/{inv.id}", {"action": "void", "reason": "x"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(self.finance)
+        rid = r.data.get("id") or RentalReceipt.objects.latest("id").id
+        self.assertEqual(self.client.delete(f"/api/v1/fleet/receipts/{rid}").status_code, 200)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "ISSUED")
+        self.assertEqual(self.client.get(f"/api/v1/fleet/receipts/{RentalReceipt.objects.first().id}")["Content-Type"],
+                         "application/pdf")

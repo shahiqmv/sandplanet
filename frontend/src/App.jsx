@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getBrand, nameParts, onBrand } from "./brand.js";
 import { api, resetSessionNotice, SESSION_EXPIRED } from "./api.js";
 import { decodeView, encodeView } from "./urlState.js";
@@ -538,11 +538,16 @@ export default function App() {
   const [error, setError] = useState(null);
   const [pendingCount, setPendingCount] = useState(0);
 
+  // Once per sign-in, not on every refresh of `me`: /auth/me is re-fetched
+  // after boot, and re-running this after the URL's page had been applied
+  // (and pendingUrl cleared) threw a reload back onto the landing page.
+  const landedRef = useRef(false);
   useEffect(() => {
+    if (!me?.authenticated) { landedRef.current = false; return; }
+    if (landedRef.current) return;
+    landedRef.current = true;
     // A URL naming a page wins over the role's landing page.
-    if (me?.authenticated && !pendingUrl?.hoPage) {
-      setHoPage(landingPage(me));
-    }
+    if (!pendingUrl?.hoPage) setHoPage(landingPage(me));
   }, [me]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Escape closes the drawer, and it must never be left open behind a page

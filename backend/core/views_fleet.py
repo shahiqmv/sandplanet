@@ -349,3 +349,181 @@ def rental_terms(request):
         if msg:
             return Response({"detail": msg}, status=403)
     return Response({**rental.standard_terms(), "can_edit": fleet.can_set_rates(request.user)})
+
+
+# ---- phase 5: invoices, receipts and receivables ------------------------------------
+
+from .models import RentalInvoice, RentalReceipt  # noqa: E402
+
+
+class IsFleetReaderAnyMethod(IsFleetReader):
+    """Readers may also POST/DELETE here — the service decides who may
+    (Finance records receipts; the Rental Manager issues invoices)."""
+
+
+def _inv(iid):
+    return RentalInvoice.objects.select_related("agreement", "customer", "issued_by").filter(id=iid).first()
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsFleetReader])
+def agreement_invoices(request, pk):
+    if not fleet.enabled():
+        return _off()
+    a = _agreement(pk)
+    if a is None:
+        return _off()
+    if request.method == "POST":
+        if not fleet.can_write(request.user):
+            return Response({"detail": "The Rental team raises invoices."}, status=403)
+        inv, msg = rental.create_invoice(a, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(rental.invoice_dict(inv), status=201)
+    d_from, d_to = _parse(request.GET.get("from")), _parse(request.GET.get("to"))
+    out = {"invoices": [rental.invoice_dict(i) for i in
+                        a.invoices.select_related("agreement", "customer", "issued_by")]}
+    if d_from and d_to and d_to >= d_from:
+        out["preview"] = rental.invoice_preview(a, d_from, d_to)
+    return Response(out)
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def invoices(request):
+    if not fleet.enabled():
+        return _off()
+    qs = RentalInvoice.objects.select_related("agreement", "customer", "issued_by").order_by("-id")
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+    if request.GET.get("customer"):
+        qs = qs.filter(customer_id=request.GET["customer"])
+    return Response([rental.invoice_dict(i) for i in qs[:300]])
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsFleetReader])
+def invoice_detail(request, iid):
+    if not fleet.enabled():
+        return _off()
+    inv = _inv(iid)
+    if inv is None:
+        return _off()
+    if request.method == "POST":
+        if not fleet.can_write(request.user):
+            return Response({"detail": "The Rental team keeps invoices."}, status=403)
+        action = request.data.get("action")
+        if action == "issue":
+            msg = rental.issue_invoice(inv, request.user)
+        elif action == "void":
+            msg = rental.void_invoice(inv, request.data.get("reason"), request.user)
+        else:
+            msg = "Unknown action."
+        if msg:
+            return Response({"detail": msg}, status=400)
+    return Response(rental.invoice_dict(_inv(iid)))
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def invoice_pdf(request, iid):
+    if not fleet.enabled():
+        return _off()
+    inv = _inv(iid)
+    if inv is None:
+        return _off()
+    if inv.pdf and inv.status != "VOID":
+        return _pdf(inv.pdf.read(), f"{inv.ref}.pdf")
+    try:
+        pdf = rental.invoice_pdf_bytes(inv)
+    except Exception as e:                            # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf(pdf, f"{inv.ref}.pdf")
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsFleetReaderAnyMethod])
+def receipts(request):
+    if not fleet.enabled():
+        return _off()
+    if request.method == "POST":
+        rc, msg = rental.record_receipt(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(rental.receipt_dict(rc), status=201)
+    qs = RentalReceipt.objects.select_related("customer", "bank_account", "recorded_by")
+    if request.GET.get("customer"):
+        qs = qs.filter(customer_id=request.GET["customer"])
+    return Response([rental.receipt_dict(r) for r in qs[:300]])
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsFleetReaderAnyMethod])
+def receipt_detail(request, rid):
+    if not fleet.enabled():
+        return _off()
+    rc = RentalReceipt.objects.filter(id=rid).first()
+    if rc is None:
+        return _off()
+    if request.method == "DELETE":
+        msg = rental.delete_receipt(rc, request.user)
+        if msg:
+            return Response({"detail": msg}, status=403)
+        return Response({"detail": "Receipt deleted."})
+    from .views_commercial import pdf_bytes
+    try:
+        pdf = pdf_bytes("pdf/official_receipt.html", rental.receipt_context(rc))
+    except Exception as e:                            # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf(pdf, f"{rc.receipt_no}.pdf")
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def receipt_allocate(request):
+    from .models import CompanyBankAccount
+    if not fleet.enabled():
+        return _off()
+    customer = Customer.objects.filter(id=request.GET.get("customer")).first()
+    if customer is None:
+        return Response({"detail": "Pick the customer."}, status=400)
+    amount = rental._dec(request.GET.get("amount"), rental.ZERO)
+    rows, left = rental.auto_allocate(customer, amount if amount != "bad" else rental.ZERO)
+    return Response({"allocations": rows, "unallocated": left,
+                     "open_invoices": [{"id": i.id, "ref": i.ref, "agreement": i.agreement.ref,
+                                        "currency": i.currency, "total": rental._s(i.total),
+                                        "outstanding": rental._s(rental.invoice_outstanding(i)),
+                                        "due_date": i.due_date}
+                                       for i in rental.open_invoices(customer)],
+                     "bank_accounts": [{"id": b.id, "label": b.label, "currency": b.currency}
+                                       for b in CompanyBankAccount.objects.filter(is_active=True)
+                                       .order_by("label")],
+                     "can_receipt": rental.can_receipt(request.user)})
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def receivables(request):
+    if not fleet.enabled():
+        return _off()
+    return Response({**rental.aging(), "can_receipt": rental.can_receipt(request.user)})
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def customer_statement(request, cid):
+    if not fleet.enabled():
+        return _off()
+    customer = Customer.objects.filter(id=cid).first()
+    if customer is None:
+        return _off()
+    d_from, d_to = _parse(request.GET.get("from")), _parse(request.GET.get("to"))
+    if request.GET.get("pdf") == "1":
+        from .views_commercial import pdf_bytes
+        try:
+            pdf = pdf_bytes("pdf/trading_statement.html",
+                            rental.statement_context(customer, d_from, d_to))
+        except Exception as e:                        # pragma: no cover - env dep
+            return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+        return _pdf(pdf, f"SOA-{customer.name[:20]}.pdf")
+    return Response(rental.statement(customer, d_from, d_to))

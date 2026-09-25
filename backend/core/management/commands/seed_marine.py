@@ -22,17 +22,8 @@ COMPANY = [
     ("brand_name", "SANDPLANET MARINE"),
     ("brand_tagline", "Marine & Fleet"),
     ("brand_short_code", "SPM"),
-    # Palette from SANDPLANET_MARINE_BRAND.md — the shared navy and sky stay,
-    # the deep tones go oceanic.
-    ("brand_primary", "#16527E"),
-    ("brand_primary_deep", "#0E1C29"),
-    ("brand_primary_dark", "#0E1C29"),
-    ("brand_heading", "#0E1C29"),
-    ("brand_accent", "#29ABE2"),
-    ("brand_accent_light", "#407FAF"),
-    ("brand_accent_deep", "#2E6FA6"),
-    ("brand_soft", "#EAF3F9"),
-    ("brand_soft2", "#EAF3F9"),
+    # The palette is applied by the brand_palette command (the "marine"
+    # preset) after the parameters below, so it stays in one place.
     ("features", {"trading": False, "rental": True, "profile": False}),
     ("apps", [{"key": "sandplanet", "name": "Sand Planet Projects", "url": "/"}]),
 ]
@@ -49,11 +40,14 @@ class Command(BaseCommand):
     help = "Seed the Sandplanet Marine instance: identity, brand, HO site, admin."
 
     def handle(self, *args, **options):
+        from django.core.management import call_command
         for key, value in COMPANY:
             _, created = CompanyParameter.objects.get_or_create(
                 key=key, defaults={"value": value, "description": "Sandplanet Marine"})
             if created:
                 self.stdout.write(f"  parameter {key}")
+        if not CompanyParameter.objects.filter(key="brand_primary").exists():
+            call_command("brand_palette", "marine")
         assets = Path(settings.BASE_DIR) / "pdf_templates" / "assets" / "marine"
         for name, asset in FILES:
             if default_storage.exists(name):

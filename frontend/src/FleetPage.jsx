@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 import AgreementsPanel from "./FleetRental.jsx";
+import { InvoicesPanel, ReceivablesPanel } from "./FleetMoney.jsx";
 
 const STATUS = [["AVAILABLE", "Available"], ["ON_HIRE", "On hire"], ["MAINTENANCE", "In maintenance"],
                 ["OFF_ROAD", "Off road"], ["DISPOSED", "Disposed"]];
@@ -224,10 +225,12 @@ function VehicleDetail({ id, onBack, onChanged }) {
   );
 }
 
-const TABS = [["vehicles", "Vehicles"], ["agreements", "Hire agreements"]];
+const TABS = [["vehicles", "Vehicles"], ["agreements", "Hire agreements"], ["invoices", "Invoices"], ["receivables", "Receivables"]];
 
 export default function FleetPage() {
   const [tab, setTab] = useState("vehicles");
+  const [jump, setJump] = useState(null);           // agreement id opened from a money tab
+  const openAgreement = (id) => { setJump(id); setTab("agreements"); };
   const tabs = (
     <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 14 }}>
       {TABS.map(([k, l]) => (
@@ -237,7 +240,9 @@ export default function FleetPage() {
       ))}
     </div>
   );
-  if (tab === "agreements") return <div>{tabs}<AgreementsPanel /></div>;
+  if (tab === "agreements") return <div>{tabs}<AgreementsPanel initialOpen={jump} onOpened={() => setJump(null)} /></div>;
+  if (tab === "invoices") return <div>{tabs}<InvoicesPanel openAgreement={openAgreement} /></div>;
+  if (tab === "receivables") return <div>{tabs}<ReceivablesPanel openAgreement={openAgreement} /></div>;
   return <div>{tabs}<VehiclesPanel /></div>;
 }
 

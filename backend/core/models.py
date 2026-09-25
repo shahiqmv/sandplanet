@@ -5376,15 +5376,89 @@ class HireLog(models.Model):
         return self.state in self.BILLABLE
 
 
+def rental_inv_path(instance, filename):
+    return f"fleet/invoices/{instance.ref}/{filename}"
+
+
 class RentalInvoice(models.Model):
-    """Placeholder for phase 5 (rental invoicing): a register day is linked
-    to the invoice that billed it, so nothing bills twice."""
+    """A tax invoice on the company INV series for the approved billable days
+    of one agreement over a period (MARINE_BUILD_BRIEF.md §4, phase 5). Each
+    register day it bills points back at it, so nothing bills twice; voiding
+    frees the days."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT"
+        ISSUED = "ISSUED"
+        PAID = "PAID"
+        VOID = "VOID"
 
     agreement = models.ForeignKey(RentalAgreement, on_delete=models.PROTECT,
                                   related_name="invoices")
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="rental_invoices")
     ref = models.CharField(max_length=20, unique=True)
-    status = models.CharField(max_length=8, default="DRAFT")
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.DRAFT)
+    invoice_date = models.DateField()
+    due_date = models.DateField(null=True, blank=True)
+    period_from = models.DateField()
+    period_to = models.DateField()
+    currency = models.CharField(max_length=3, default="MVR")
+    charges = models.JSONField(default=list, blank=True)    # [{kind, label, amount}]
+    snapshot = models.JSONField(default=dict)               # customer block + vehicle rows
+    subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    pdf = models.FileField(upload_to=rental_inv_path, null=True, blank=True)
+    posting_ids = models.JSONField(default=list, blank=True)
+    void_reason = models.TextField(blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
+    issued_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                  blank=True, related_name="+")
+    issued_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    @property
+    def is_live(self):
+        return self.status in ("ISSUED", "PAID")
+
+
+class RentalReceipt(models.Model):
+    """Money in from a rental customer on the company's official receipt
+    series, allocated across that customer's rental invoices oldest-first.
+    Its own table, like the trading receipt, so the rental book stays
+    walled; the number and the printed receipt are the company's."""
+
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="rental_receipts")
+    receipt_no = models.CharField(max_length=20, unique=True)
+    receipt_date = models.DateField()
+    method = models.CharField(max_length=8, choices=OfficialReceipt.Method.choices,
+                              default="TT")
+    reference = models.CharField(max_length=120, blank=True)
+    bank_account = models.ForeignKey(CompanyBankAccount, on_delete=models.PROTECT,
+                                     null=True, blank=True, related_name="+")
+    currency = models.CharField(max_length=3, default="MVR")
+    note = models.TextField(blank=True)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-receipt_date", "-id"]
+
+    @property
+    def total(self):
+        return sum((l.amount for l in self.lines.all()), Decimal("0"))
+
+
+class RentalReceiptLine(models.Model):
+    receipt = models.ForeignKey(RentalReceipt, on_delete=models.CASCADE, related_name="lines")
+    invoice = models.ForeignKey(RentalInvoice, on_delete=models.PROTECT, related_name="receipts")
+    amount = models.DecimalField(max_digits=14, decimal_places=2)
 
     class Meta:
         ordering = ["id"]
