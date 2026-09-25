@@ -1357,7 +1357,7 @@ class TradingOrder(models.Model):
         VISIT = "VISIT"
         OTHER = "OTHER"
 
-    ref = models.CharField(max_length=12, unique=True)           # TIN-001
+    ref = models.CharField(max_length=20, unique=True)           # 2026-IN-001
     customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
                                  related_name="orders")
     title = models.TextField()                                   # what they asked for
@@ -1393,12 +1393,12 @@ class TradingOrder(models.Model):
     freight_sell = models.DecimalField(max_digits=12, decimal_places=2,
                                        null=True, blank=True)
     # Quotation series (TQ-001) is issued once, on the first revision.
-    quote_ref = models.CharField(max_length=12, blank=True)
+    quote_ref = models.CharField(max_length=20, blank=True)
     # Won: the customer's PO and our sales order number (TSO-001)
     po_number = models.TextField(blank=True)
     po_date = models.DateField(null=True, blank=True)
     po_file = models.FileField(upload_to=trading_po_path, null=True, blank=True)
-    so_ref = models.CharField(max_length=12, blank=True)
+    so_ref = models.CharField(max_length=20, blank=True)
     won_at = models.DateTimeField(null=True, blank=True)
     won_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                blank=True, related_name="+")
@@ -1509,7 +1509,7 @@ class TradingDelivery(models.Model):
 
     order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
                               related_name="deliveries")
-    ref = models.CharField(max_length=12, unique=True)
+    ref = models.CharField(max_length=20, unique=True)
     status = models.CharField(max_length=10, choices=Status.choices,
                               default=Status.DRAFT)
     delivery_date = models.DateField()
@@ -1567,7 +1567,7 @@ class TradingInvoice(models.Model):
 
     order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
                               related_name="invoices")
-    ref = models.CharField(max_length=12, unique=True)
+    ref = models.CharField(max_length=20, unique=True)             # INV-2026-0040
     status = models.CharField(max_length=8, choices=Status.choices,
                               default=Status.DRAFT)
     invoice_date = models.DateField()
@@ -1603,7 +1603,7 @@ class TradingCreditNote(models.Model):
 
     invoice = models.ForeignKey(TradingInvoice, on_delete=models.PROTECT,
                                 related_name="credit_notes")
-    ref = models.CharField(max_length=12, unique=True)
+    ref = models.CharField(max_length=20, unique=True)
     amount = models.DecimalField(max_digits=14, decimal_places=2)   # gross, incl. GST
     gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     reason = models.TextField()

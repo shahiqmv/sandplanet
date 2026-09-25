@@ -3,7 +3,7 @@
 # 2026-DN-001 / 2026-CN-001, and trading tax invoices join the company's
 # INV-YYYY-NNNN series (owner 2026-09-25). Existing rows are renumbered in id
 # order within their year; the counters are set so the next number follows.
-from django.db import migrations
+from django.db import migrations, models
 
 
 def renumber(apps, schema_editor):
@@ -78,4 +78,13 @@ def renumber(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [("core", "0248_trading_order_terms")]
-    operations = [migrations.RunPython(renumber, migrations.RunPython.noop)]
+    operations = [
+        # INV-2026-0001 is 13 characters; the first scheme's fields were 12.
+        migrations.AlterField("tradingorder", "ref", models.CharField(max_length=20, unique=True)),
+        migrations.AlterField("tradingorder", "quote_ref", models.CharField(max_length=20, blank=True)),
+        migrations.AlterField("tradingorder", "so_ref", models.CharField(max_length=20, blank=True)),
+        migrations.AlterField("tradingdelivery", "ref", models.CharField(max_length=20, unique=True)),
+        migrations.AlterField("tradinginvoice", "ref", models.CharField(max_length=20, unique=True)),
+        migrations.AlterField("tradingcreditnote", "ref", models.CharField(max_length=20, unique=True)),
+        migrations.RunPython(renumber, migrations.RunPython.noop),
+    ]
