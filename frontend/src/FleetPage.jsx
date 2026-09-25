@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
+import AgreementsPanel from "./FleetRental.jsx";
 
 const STATUS = [["AVAILABLE", "Available"], ["ON_HIRE", "On hire"], ["MAINTENANCE", "In maintenance"],
                 ["OFF_ROAD", "Off road"], ["DISPOSED", "Disposed"]];
@@ -223,7 +224,24 @@ function VehicleDetail({ id, onBack, onChanged }) {
   );
 }
 
+const TABS = [["vehicles", "Vehicles"], ["agreements", "Hire agreements"]];
+
 export default function FleetPage() {
+  const [tab, setTab] = useState("vehicles");
+  const tabs = (
+    <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 14 }}>
+      {TABS.map(([k, l]) => (
+        <button key={k} onClick={() => setTab(k)} style={{ background: "none", border: 0, cursor: "pointer", padding: "8px 14px", fontSize: 14,
+          fontWeight: tab === k ? 700 : 500, color: tab === k ? "var(--sp-navy)" : "var(--muted)",
+          borderBottom: tab === k ? "2px solid var(--sp-navy)" : "2px solid transparent", marginBottom: -1 }}>{l}</button>
+      ))}
+    </div>
+  );
+  if (tab === "agreements") return <div>{tabs}<AgreementsPanel /></div>;
+  return <div>{tabs}<VehiclesPanel /></div>;
+}
+
+function VehiclesPanel() {
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [search, setSearch] = useState("");

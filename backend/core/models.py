@@ -5246,6 +5246,150 @@ class VehicleDocument(models.Model):
         ordering = ["vehicle_id", "kind", "-expires_on"]
 
 
+def agreement_path(instance, filename):
+    return f"fleet/agreements/{instance.ref}/{filename}"
+
+
+def register_path(instance, filename):
+    return f"fleet/register/{instance.agreement.ref}/{filename}"
+
+
+class RentalAgreement(models.Model):
+    """A hire contract with a customer (MARINE_BUILD_BRIEF.md §4): the
+    vehicles, their agreed daily rates, the period, the deposit and the
+    terms, printed on the company's letterhead. Activation puts the vehicles
+    on hire; the daily register runs under it; invoices bill from the
+    register."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT"
+        ACTIVE = "ACTIVE"
+        COMPLETED = "COMPLETED"
+        TERMINATED = "TERMINATED"
+
+    class Cycle(models.TextChoices):
+        MONTHLY = "MONTHLY", "Monthly, in arrears"
+        ON_COMPLETION = "ON_COMPLETION", "On completion of the hire"
+
+    ref = models.CharField(max_length=20, unique=True)                 # 2026-RA-001
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="rental_agreements")
+    title = models.TextField(blank=True)                               # the job / site
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.DRAFT)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)                 # NULL = open-ended
+    billing_cycle = models.CharField(max_length=14, choices=Cycle.choices,
+                                     default=Cycle.MONTHLY)
+    currency = models.CharField(max_length=3, default="MVR")
+    deposit = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    mobilisation_charge = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    demobilisation_charge = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    site_location = models.TextField(blank=True)                        # where the vehicles work
+    customer_rep = models.TextField(blank=True)                         # who approves the register
+    customer_rep_phone = models.TextField(blank=True)
+    customer_po = models.TextField(blank=True)
+    payment_terms = models.TextField(blank=True)
+    extra_terms = models.TextField(blank=True)                          # one per line
+    notes = models.TextField(blank=True)
+    pdf = models.FileField(upload_to=agreement_path, null=True, blank=True)
+    signed_copy = models.FileField(upload_to=agreement_path, null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    activated_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    activated_at = models.DateTimeField(null=True, blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    close_reason = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-id"]
+
+    def __str__(self):
+        return f"{self.ref} {self.customer.name}"
+
+
+class RentalAgreementVehicle(models.Model):
+    """One vehicle on an agreement, at its agreed rate (defaults from the
+    rate card; the manager may negotiate it off the card)."""
+
+    agreement = models.ForeignKey(RentalAgreement, on_delete=models.CASCADE,
+                                  related_name="vehicles")
+    vehicle = models.ForeignKey(Vehicle, on_delete=models.PROTECT,
+                                related_name="agreement_lines")
+    rate_daily = models.DecimalField(max_digits=12, decimal_places=2)
+    operator_included = models.BooleanField(default=True)
+    operator_rate_daily = models.DecimalField(max_digits=12, decimal_places=2,
+                                              null=True, blank=True)
+    from_date = models.DateField(null=True, blank=True)                 # within the agreement
+    to_date = models.DateField(null=True, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["id"]
+        constraints = [models.UniqueConstraint(fields=["agreement", "vehicle"],
+                                               name="uniq_agreement_vehicle")]
+
+
+class HireLog(models.Model):
+    """The daily register: one line per vehicle per day under an agreement.
+    Worked and standby days bill at the agreed daily rate; breakdown and
+    off-hire days do not and count against the vehicle's availability. The
+    customer's representative approves the register at their site; a day
+    bills only once approved (owner 2026-09-25)."""
+
+    class State(models.TextChoices):
+        WORKED = "WORKED", "Worked"
+        STANDBY = "STANDBY", "Standby (billable)"
+        BREAKDOWN = "BREAKDOWN", "Breakdown"
+        OFF_HIRE = "OFF_HIRE", "Off hire"
+
+    BILLABLE = ("WORKED", "STANDBY")
+
+    agreement = models.ForeignKey(RentalAgreement, on_delete=models.PROTECT,
+                                  related_name="register")
+    line = models.ForeignKey(RentalAgreementVehicle, on_delete=models.PROTECT,
+                             related_name="register")
+    date = models.DateField()
+    state = models.CharField(max_length=10, choices=State.choices, default=State.WORKED)
+    hours = models.DecimalField(max_digits=5, decimal_places=1, null=True, blank=True)
+    operator = models.ForeignKey("Employee", on_delete=models.SET_NULL, null=True,
+                                 blank=True, related_name="+")
+    remarks = models.TextField(blank=True)
+    entered_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    entered_at = models.DateTimeField(auto_now=True)
+    approved = models.BooleanField(default=False)
+    approved_by = models.TextField(blank=True)                          # the customer's rep
+    approved_at = models.DateTimeField(null=True, blank=True)
+    approved_via = models.CharField(max_length=8, blank=True)           # APP / PAPER
+    signed_register = models.FileField(upload_to=register_path, null=True, blank=True)
+    invoice = models.ForeignKey("RentalInvoice", on_delete=models.SET_NULL, null=True,
+                                blank=True, related_name="days")
+
+    class Meta:
+        ordering = ["date", "line_id"]
+        constraints = [models.UniqueConstraint(fields=["line", "date"],
+                                               name="uniq_hirelog_line_day")]
+
+    @property
+    def billable(self):
+        return self.state in self.BILLABLE
+
+
+class RentalInvoice(models.Model):
+    """Placeholder for phase 5 (rental invoicing): a register day is linked
+    to the invoice that billed it, so nothing bills twice."""
+
+    agreement = models.ForeignKey(RentalAgreement, on_delete=models.PROTECT,
+                                  related_name="invoices")
+    ref = models.CharField(max_length=20, unique=True)
+    status = models.CharField(max_length=8, default="DRAFT")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+
 class ManualInvoice(models.Model):
     """A client tax invoice recorded directly in Planet, NOT derived from a
     progress claim — so a mid-flight project can be tracked without rebuilding

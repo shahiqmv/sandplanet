@@ -1,0 +1,119 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: A4 portrait; margin: 14mm 14mm 26mm 14mm; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #22303B; }
+  .masthead { text-align: center; }
+  .masthead img { height: 16mm; }
+  .accent { height: 2.4pt; margin-top: 3mm; border-radius: 2pt;
+    background: linear-gradient(90deg, {% brand "accent_light" %}, {% brand "accent_deep" %} 55%, {% brand "primary_dark" %}); }
+  h1 { text-align: center; font-weight: 400; font-size: 20pt; color: {% brand "heading" %}; margin: 5mm 0 4mm; letter-spacing: .5px; }
+  h1 strong { font-weight: 800; }
+  .parties { width: 100%; border-collapse: collapse; }
+  .parties td { border: none; vertical-align: top; padding: 0 4px; }
+  .lbl { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 2pt; }
+  .nm { font-weight: 700; font-size: 12pt; color: {% brand "heading" %}; }
+  .sub { font-size: 9.5pt; color: #43535f; line-height: 1.45; white-space: pre-line; }
+  .meta { border-collapse: collapse; margin-left: auto; }
+  .meta td { border: none; padding: 1.5pt 0 1.5pt 10px; font-size: 9.5pt; text-align: right; }
+  .meta td.k { color: #61707C; text-transform: uppercase; font-size: 8pt; letter-spacing: .06em; }
+  .meta td.inv { font-weight: 800; color: {% brand "accent_deep" %}; }
+  hr.rule { border: none; border-top: 1px solid #D8E3EC; margin: 5mm 0 0; }
+  .narrative { font-size: 10.5pt; color: #33424d; line-height: 1.5; margin: 4mm 0 3.5mm; }
+  table.doc { width: 100%; border-collapse: collapse; }
+  table.doc thead th { background: {% brand "accent_deep" %}; color: #fff; font-weight: 700; font-size: 8.5pt;
+    text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 2.4mm 4mm; }
+  table.doc thead th.n { text-align: right; }
+  table.doc td { padding: 4.5px 4mm; font-size: 10pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
+  table.doc td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  table.doc tbody tr:nth-child(even) { background: {% brand "soft4" %}; }
+  .box { width: 100%; border-collapse: collapse; margin-top: 5mm; }
+  .box td { border: 0.6px solid #D8E3EC; padding: 2mm 3mm; font-size: 9.5pt; width: 25%; }
+  .box .k { font-size: 7.5pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
+  .box .v { font-weight: 700; color: {% brand "heading" %}; }
+  .terms { margin-top: 5mm; font-size: 9.5pt; color: #33424d; line-height: 1.55; }
+  .terms h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: .07em; color: #61707C; margin: 4mm 0 1.5mm; }
+  .terms ol { margin: 0; padding-left: 5mm; }
+  .sign { width: 100%; margin-top: 14mm; border-collapse: collapse; }
+  .sign td { border: none; width: 50%; vertical-align: bottom; padding: 0 6mm; }
+  .sign .line { border-top: 0.8px solid #1c2b36; padding-top: 2mm; font-size: 9pt; color: #43535f; }
+  .sign .who { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
+  .draft { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 72pt;
+    color: rgba(176, 36, 24, .13); font-weight: 800; transform: rotate(-24deg); letter-spacing: .2em; }
+  .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
+            border-top: 0.8px solid #d6e2ec; padding-top: 3mm; font-size: 8.5pt; color: #5a6b78; }
+  thead { display: table-header-group; }
+</style>
+</head>
+<body>
+{% if draft %}<div class="draft">DRAFT</div>{% endif %}
+<div class="footer">
+  {{ co.address }}{% if co.reg_no %} · Reg No {{ co.reg_no }}{% endif %}{% if co.tin %} · TIN {{ co.tin }}{% endif %}<br>
+  {% if co.phone %}{{ co.phone }} · {% endif %}{% if co.email %}{{ co.email }}{% endif %}{% if co.website %} · {{ co.website }}{% endif %}
+</div>
+<div class="masthead"><img src="{{ logo_src }}"></div>
+<div class="accent"></div>
+<h1>VEHICLE HIRE <strong>AGREEMENT</strong></h1>
+
+<table class="parties"><tr>
+  <td style="width: 54%">
+    <div class="lbl">Hirer</div>
+    <div class="nm">{{ customer.name }}</div>
+    {% if customer.address %}<div class="sub">{{ customer.address }}</div>{% endif %}
+    {% if customer.contact %}<div class="sub">Attn: {{ customer.contact }}{% if customer.phone %} · {{ customer.phone }}{% endif %}</div>{% endif %}
+    {% if customer.tin %}<div class="sub">GST TIN {{ customer.tin }}</div>{% endif %}
+  </td>
+  <td>
+    <table class="meta">
+      <tr><td class="k">Agreement</td><td class="inv">{{ a.ref }}</td></tr>
+      <tr><td class="k">Date</td><td>{{ date|date:"d M Y" }}</td></tr>
+      {% if a.customer_po %}<tr><td class="k">Your PO</td><td>{{ a.customer_po }}</td></tr>{% endif %}
+      <tr><td class="k">Currency</td><td>{{ currency }}</td></tr>
+    </table>
+  </td>
+</tr></table>
+<hr class="rule">
+
+<p class="narrative">
+  {{ co.legal_name }} (the Owner) agrees to hire to {{ customer.name }} (the Hirer) the
+  vehicles listed below{% if a.title %} for <b>{{ a.title }}</b>{% endif %}{% if a.site_location %} at <b>{{ a.site_location }}</b>{% endif %},
+  on the terms set out in this agreement.
+</p>
+
+<table class="box"><tr>
+  <td><div class="k">Hire starts</div><div class="v">{{ a.start_date|date:"d M Y" }}</div></td>
+  <td><div class="k">Hire ends</div><div class="v">{% if a.end_date %}{{ a.end_date|date:"d M Y" }}{% else %}Open-ended{% endif %}</div></td>
+  <td><div class="k">Billing</div><div class="v">{{ a.get_billing_cycle_display }}</div></td>
+  <td><div class="k">Customer's representative</div><div class="v">{{ a.customer_rep|default:"—" }}{% if a.customer_rep_phone %}<br>{{ a.customer_rep_phone }}{% endif %}</div></td>
+</tr></table>
+
+<table class="doc" style="margin-top:5mm">
+  <thead><tr><th>Vehicle</th><th>Description</th><th>Operator</th><th>Period</th><th class="n">Rate / day {{ currency }}</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+      <tr><td><b>{{ r.vehicle }}</b></td><td>{{ r.desc }}</td><td>{{ r.operator }}</td><td>{{ r.period|default:"as agreement" }}</td><td class="n">{{ r.rate_f }}</td></tr>
+    {% endfor %}
+    {% if mob_f %}<tr><td colspan="4">Mobilisation to site</td><td class="n">{{ mob_f }}</td></tr>{% endif %}
+    {% if demob_f %}<tr><td colspan="4">Demobilisation from site</td><td class="n">{{ demob_f }}</td></tr>{% endif %}
+    {% if deposit_f %}<tr><td colspan="4">Security deposit (refundable on return of the vehicles in good order)</td><td class="n">{{ deposit_f }}</td></tr>{% endif %}
+  </tbody>
+</table>
+
+<div class="terms">
+  <h3>Payment</h3>
+  <div>{{ a.payment_terms|default:"As agreed." }}</div>
+  <h3>Conditions of hire</h3>
+  <ol>
+    <li>Days on hire are recorded in the daily register kept by the Owner's operator and approved by the Hirer's representative at the site; approved days are invoiced at the rates above.</li>
+    {% for t in extra %}<li>{{ t }}</li>{% endfor %}
+  </ol>
+</div>
+
+<table class="sign"><tr>
+  <td><div class="line">For {{ co.legal_name }}{% if signer %} — {{ signer.name }}{% endif %}</div><div class="who">The Owner — name, signature, date</div></td>
+  <td><div class="line">&nbsp;</div><div class="who">For {{ customer.name }} — name, signature, date</div></td>
+</tr></table>
+</body>
+</html>

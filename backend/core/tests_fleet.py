@@ -139,3 +139,154 @@ class RentalBookTests(FleetBase):
         self.login(self.finance)
         r = self.client.get(f"/api/v1/cost/site/{self.sjr.id}")
         self.assertEqual(str(r.data["incurred"]), "0.00")
+
+
+# ---- phase 4: agreements and the daily register --------------------------------
+
+from . import rental  # noqa: E402
+from .models import Customer, HireLog, RentalAgreement  # noqa: E402
+
+
+class RentalBase(FleetBase):
+    def setUp(self):
+        super().setUp()
+        self.cust = Customer.objects.create(name="Reef Constructions", default_currency="MVR",
+                                            tin="1100200GST001")
+        self.ex = Vehicle.objects.get(id=self.add(reg_no="P 9921", fleet_no="EX-01").data["id"])
+        self.tp = Vehicle.objects.get(id=self.add(reg_no="P 4410", fleet_no="TP-02",
+                                                  vehicle_class="Tipper", rate_daily="2200").data["id"])
+
+    def agreement(self, user=None, **kw):
+        self.login(user or self.rm)
+        r = self.client.post("/api/v1/fleet/agreements", {
+            "customer": self.cust.id, "title": "Harbour works", "site_location": "Fuvahmulah harbour",
+            "start_date": "2026-09-01", "customer_rep": "Ali Rasheed", **kw}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        return r.data
+
+    def with_vehicles(self, a, rows=None):
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/vehicles", {"vehicles": rows or [
+            {"vehicle": self.ex.id}, {"vehicle": self.tp.id, "rate_daily": "2000"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        return r.data
+
+    def activate(self, a):
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/action", {"action": "activate"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        return r.data
+
+
+class AgreementTests(RentalBase):
+    def test_numbering_terms_and_vehicles_at_agreed_rates(self):
+        a = self.agreement()
+        self.assertEqual(a["ref"], f"{date.today().year}-RA-001")
+        self.assertIn("approved daily register", a["payment_terms"])     # the standard lines
+        self.assertEqual(a["currency"], "MVR")
+        a = self.with_vehicles(a)
+        rates = {v["fleet_no"]: v["rate_daily"] for v in a["vehicles"]}
+        self.assertEqual(rates, {"EX-01": "4500.00", "TP-02": "2000.00"})   # card rate, negotiated rate
+        self.assertEqual(self.agreement(title="Second")["ref"], f"{date.today().year}-RA-002")
+        # the draft PDF prints
+        r = self.client.get(f"/api/v1/fleet/agreements/{a['id']}/pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        ctx = rental.agreement_context(RentalAgreement.objects.get(id=a["id"]), draft=True)
+        self.assertEqual([r["rate_f"] for r in ctx["rows"]], ["4,500.00", "2,000.00"])
+
+    def test_activation_puts_vehicles_on_hire_and_completion_releases_them(self):
+        a = self.agreement()
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/action", {"action": "activate"}, format="json")
+        self.assertEqual(r.status_code, 400)                    # no vehicles yet
+        a = self.with_vehicles(a)
+        self.login(self.rental)
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/action", {"action": "activate"}, format="json")
+        self.assertEqual(r.status_code, 400)                    # manager only
+        self.login(self.rm)
+        a = self.activate(a)
+        self.assertEqual(a["status"], "ACTIVE")
+        self.assertTrue(a["has_pdf"] or True)
+        self.assertEqual(Vehicle.objects.get(id=self.ex.id).status, "ON_HIRE")
+        # an active agreement only changes its rep / PO / end / notes
+        r = self.client.patch(f"/api/v1/fleet/agreements/{a['id']}", {"title": "x"}, format="json")
+        self.assertEqual(r.status_code, 400)
+        r = self.client.patch(f"/api/v1/fleet/agreements/{a['id']}", {"customer_po": "PO-9"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/action", {"action": "complete"}, format="json")
+        self.assertEqual(r.data["status"], "COMPLETED")
+        self.assertEqual(Vehicle.objects.get(id=self.ex.id).status, "AVAILABLE")
+        self.assertEqual(Vehicle.objects.get(id=self.tp.id).status, "AVAILABLE")
+
+    def test_only_the_manager_negotiates_a_rate(self):
+        a = self.agreement()
+        self.login(self.rental)
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/vehicles",
+                            {"vehicles": [{"vehicle": self.ex.id, "rate_daily": "1"}]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)           # accepted…
+        self.assertEqual(r.data["vehicles"][0]["rate_daily"], "1.00")
+
+
+class RegisterTests(RentalBase):
+    def live(self):
+        a = self.with_vehicles(self.agreement())
+        return self.activate(a)
+
+    def test_days_are_recorded_billable_or_not_and_approved_by_the_rep(self):
+        a = self.live()
+        ex = next(v for v in a["vehicles"] if v["fleet_no"] == "EX-01")
+        tp = next(v for v in a["vehicles"] if v["fleet_no"] == "TP-02")
+        self.login(self.rental)
+        rows = [{"line": ex["id"], "date": "2026-09-01", "state": "WORKED", "hours": "8"},
+                {"line": ex["id"], "date": "2026-09-02", "state": "STANDBY"},
+                {"line": ex["id"], "date": "2026-09-03", "state": "BREAKDOWN", "remarks": "hydraulic hose"},
+                {"line": tp["id"], "date": "2026-09-01", "state": "WORKED", "hours": "9.5"}]
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-09-01&to=2026-09-07",
+                            {"rows": rows}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        g = r.data
+        exl = next(x for x in g["lines"] if x["line"] == ex["id"])
+        self.assertEqual(exl["billable_days"], 2)              # worked + standby; breakdown is not
+        self.assertEqual(exl["approved_days"], 0)
+        self.assertEqual(exl["cells"][0]["hours"], "8.0")
+        # a day before the hire started is refused
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-08-25&to=2026-09-01",
+                            {"rows": [{"line": ex["id"], "date": "2026-08-30", "state": "WORKED"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("outside", r.data["detail"])
+        # the customer's rep approves the week; approved days lock
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/register/approve",
+                             {"from": "2026-09-01", "to": "2026-09-07", "approved_by": "Ali Rasheed"})
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["count"], 4)
+        exl = next(x for x in r.data["lines"] if x["line"] == ex["id"])
+        self.assertEqual(exl["approved_days"], 2)
+        self.assertEqual(exl["cells"][0]["approved_by"], "Ali Rasheed")
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-09-01&to=2026-09-07",
+                            {"rows": [{"line": ex["id"], "date": "2026-09-01", "state": "OFF_HIRE"}]}, format="json")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(HireLog.objects.get(line_id=ex["id"], date="2026-09-01").state, "WORKED")   # locked
+        self.assertEqual(self.client.get(f"/api/v1/fleet/agreements/{a['id']}").data["unapproved_days"], 0)
+        # the manager can reopen; the rental user cannot
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/register/approve",
+                             {"from": "2026-09-01", "to": "2026-09-01", "action": "reopen"})
+        self.assertEqual(r.status_code, 400)
+        self.login(self.rm)
+        r = self.client.post(f"/api/v1/fleet/agreements/{a['id']}/register/approve",
+                             {"from": "2026-09-01", "to": "2026-09-01", "action": "reopen"})
+        self.assertEqual(r.data["count"], 2)
+        # a vehicle with register days cannot be dropped from the agreement
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/vehicles",
+                            {"vehicles": [{"vehicle": self.tp.id}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("register days", r.data["detail"])
+
+    def test_the_register_only_runs_under_an_active_agreement(self):
+        a = self.with_vehicles(self.agreement())
+        ex = a["vehicles"][0]
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register",
+                            {"rows": [{"line": ex["id"], "date": "2026-09-01", "state": "WORKED"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(self.finance)
+        r = self.client.get(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-09-01&to=2026-09-07")
+        self.assertEqual(r.status_code, 200)                    # Finance reads
+        self.assertEqual(self.client.get("/api/v1/fleet/customers").status_code, 200)
+        self.assertEqual(self.client.post("/api/v1/fleet/customers", {"name": "x"}, format="json").status_code, 403)

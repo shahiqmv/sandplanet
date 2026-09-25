@@ -96,16 +96,20 @@ export function AppSwitcher({ apps, current, light = true }) {
   const [open, setOpen] = useState(false);
   // Closes on any click outside — a header menu must never be left hanging
   // over the page.
+  // Not on mouse-leave: the menu hangs below the button with a gap, and
+  // closing when the pointer crossed that gap made it impossible to pick.
   useEffect(() => {
     if (!open) return undefined;
     const close = (e) => { if (!e.target.closest?.(".appswitch")) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
     document.addEventListener("click", close);
-    return () => document.removeEventListener("click", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("click", close); document.removeEventListener("keydown", esc); };
   }, [open]);
   if (!apps || apps.length < 2) return null;
   const now = apps.find((a) => a.key === current) || apps[0];
   return (
-    <div className="appswitch" onMouseLeave={() => setOpen(false)}>
+    <div className="appswitch">
       <button className={"appswitch-btn" + (light ? " light" : "")} onClick={() => setOpen((o) => !o)}
               title="Switch app" aria-haspopup="menu" aria-expanded={open}>
         {now.name} <span aria-hidden="true">▾</span>

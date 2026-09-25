@@ -234,8 +234,30 @@ Each phase ships and stops for the owner's review.
    register, summary tiles, the expiring-documents watch, the vehicle
    detail with rate card and documents. Only the Rental Manager changes a
    rate on the register; whoever adds a vehicle may type its first rate.
-4. **Agreements and hire logs** — `RentalAgreement` with PDF, hire log entry
-   (desktop + mobile), customer approval.
+4. **Agreements and the daily register** — DONE 2026-09-25. `RentalAgreement`
+   (`YYYY-RA-001`, customer, job, site, start / open-ended end, monthly or
+   on-completion billing, currency, deposit, mobilisation / demobilisation,
+   the customer's representative who approves the register, PO, payment
+   terms and conditions copied from the standard lines in company
+   parameters `rental_terms_*`) with `RentalAgreementVehicle` lines at the
+   agreed daily rate (defaults to the card; only the Rental Manager
+   negotiates), the letterhead agreement PDF (draft watermark until
+   activated, stored on activation, signed copy uploaded after), and the
+   status flow DRAFT → ACTIVE (vehicles go ON_HIRE; header locked to rep /
+   PO / location / end / notes) → COMPLETED or TERMINATED with a reason
+   (vehicles released unless another live agreement holds them).
+   `HireLog` is the daily register: one row per vehicle-line per day,
+   WORKED / STANDBY (billable) / BREAKDOWN / OFF_HIRE (not), hours,
+   operator, remarks; days outside the hire period refused; bulk-saved
+   from a month grid on the agreement; approved for a window in the name
+   of the customer's representative (in the app, or on paper with the
+   signed sheet attached) — approved days lock, the Rental Manager can
+   reopen unbilled ones; a vehicle with register days cannot leave the
+   agreement. `core/rental.py`, `/api/v1/fleet/agreements…`,
+   `/fleet/customers` (the trading Customer rows, reachable by the Rental
+   roles), `/fleet/terms`; Fleet page tabs Vehicles / Hire agreements
+   (`FleetRental.jsx`). Mobile entry of the register and the client-portal
+   approval are deferred to the portal work.
 5. **Rental invoicing and money in** — invoice generation from logs, issue,
    PDF, the shared receipts / aging / statements generalised for rental.
 6. **Costs and P&L** — vehicle cost centres on PYRs and payroll allocation,
