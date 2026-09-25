@@ -463,9 +463,20 @@ class WonLostTests(SalesFrontBase):
         self.assertEqual(r.data["stage"], "WON")
         self.assertEqual(r.data["so_ref"], f"{Y}-SO-001")
         self.assertTrue(r.data["is_closed"])
-        # the sheet is locked
-        r = self.put_lines(d["id"], [self.TILE])
-        self.assertEqual(r.status_code, 400)
+        # the customer's side of the sheet is frozen: a resave can only move
+        # supplier / cost / currency / rate, and the selling price is pinned
+        line = self.client.get(f"/api/v1/trading/orders/{d['id']}").data["lines"][0]
+        r = self.put_lines(d["id"], [{**line, "description": "Changed", "qty": "5", "cost": "9",
+                                      "supplier": self.sup.id, "margin_percent": "50"}])
+        self.assertEqual(r.status_code, 200, r.data)
+        ln = r.data["lines"][0]
+        self.assertEqual(ln["description"], "Porcelain pool tile 300x300")   # unchanged
+        self.assertEqual(ln["qty"], "1000.00")
+        self.assertEqual(ln["cost"], "9.0000")                               # cost moved
+        self.assertEqual(ln["supplier"], self.sup.id)
+        self.assertEqual(ln["calc"]["unit_sell"], "185.0400")               # price pinned
+        self.assertEqual(ln["calc"]["margin_percent"], "33.33")              # margin recalculated
+        self.assertEqual(TradingLine.objects.filter(order_id=d["id"]).count(), 1)
         r = self.client.post(f"/api/v1/trading/orders/{d['id']}/quotations")
         self.assertEqual(r.status_code, 400)
         # but a note still can be kept
@@ -1079,3 +1090,70 @@ class QuotationTermsTests(SalesFrontBase):
         self.assertEqual(t["valid_days"], 21)
         ctx = trading.quotation_context(q, draft=True)
         self.assertEqual(ctx["terms"]["payment"], "30% advance, 70% before despatch")
+
+
+
+class AdvanceAndProformaTests(MoneyInBase):
+    def test_advance_on_the_proforma_comes_off_the_tax_invoice(self):
+        d = self.stocked()                                   # won: tiles + grout + labour
+        total = Decimal(trading.current_quotation(TradingOrder.objects.get(id=d["id"]))
+                        .snapshot["totals"]["total"])
+        adv = trading._q2(total * Decimal("0.75"))
+        # the pro-forma prints off the authorised quotation with the SO ref
+        r = self.client.get(f"/api/v1/trading/orders/{d['id']}/proforma.pdf?advance=75")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        ctx = trading.proforma_context(TradingOrder.objects.get(id=d["id"]), "75")
+        self.assertEqual(ctx["advance_f"], f"{adv:,.2f}")
+        # Finance records the advance on account of the order
+        self.login(self.finance)
+        info = self.client.get(f"/api/v1/trading/receipts/allocate?customer={self.cust.id}&amount=0").data
+        self.assertEqual(info["won_orders"][0]["so_ref"], d["so_ref"])
+        r = self.client.post("/api/v1/trading/receipts", {
+            "customer": self.cust.id, "receipt_date": "2026-09-20", "method": "TT",
+            "reference": "BML 1001", "allocations": [{"order_id": d["id"], "amount": str(adv)}]},
+            format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["lines"][0]["invoice_no"], f"Advance — {d['so_ref']}")
+        m = self.client.get(f"/api/v1/trading/orders/{d['id']}").data["money"]
+        self.assertEqual(m["advance_received"], str(adv))
+        self.assertEqual(m["advance_available"], str(adv))
+        ag = self.client.get("/api/v1/trading/receivables").data
+        self.assertEqual(ag["customers"][0]["advance_on_account"], str(adv))
+        self.assertEqual(ag["customers"][0]["total"], "0.00")
+        # too much advance is refused
+        r = self.client.post("/api/v1/trading/receipts", {
+            "customer": self.cust.id, "receipt_date": "2026-09-21",
+            "allocations": [{"order_id": d["id"], "amount": str(total)}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        # the first tax invoice absorbs the advance
+        self.login(self.sales)
+        tile = self.line_id(d, "Porcelain")
+        dn = self.dn(d["id"], [{"line_id": tile, "qty": "1000"}])
+        self.despatch(d["id"], dn["id"])
+        self.login(self.sm)
+        inv = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
+                               {"delivery_ids": [dn["id"]]}, format="json").data
+        self.assertEqual(inv["total"], "199843.20")                     # the tiles only
+        self.assertEqual(inv["advance_applied"], str(adv))
+        balance = Decimal("199843.20") - adv
+        r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices/{inv['id']}",
+                             {"action": "issue"}, format="json")
+        self.assertEqual(r.data["outstanding"], str(balance))
+        ctx = trading.invoice_context(TradingInvoice.objects.get(id=inv["id"]))
+        self.assertEqual(ctx["balance_f"], f"{balance:,.2f}")
+        self.assertIn("OR-", ctx["advance_receipts"])
+        m = self.client.get(f"/api/v1/trading/orders/{d['id']}").data["money"]
+        self.assertEqual(m["advance_available"], "0.00")
+        self.assertEqual(m["outstanding"], str(balance))
+        ag = self.client.get("/api/v1/trading/receivables").data
+        self.assertEqual(ag["customers"][0]["total"], str(balance))
+        self.assertEqual(ag["customers"][0]["advance_on_account"], "0.00")
+        # the advance receipt cannot be deleted once applied
+        self.login(self.finance)
+        rc = TradingReceipt.objects.get()
+        r = self.client.delete(f"/api/v1/trading/receipts/{rc.id}")
+        self.assertEqual(r.status_code, 403)
+        st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement").data
+        self.assertEqual([x["kind"] for x in st["rows"]], ["RECEIPT", "INVOICE"])
+        self.assertEqual(st["closing"], str(balance))

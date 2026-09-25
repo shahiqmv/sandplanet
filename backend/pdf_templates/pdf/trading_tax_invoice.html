@@ -118,7 +118,13 @@
     {% if gst_pct %}
       <tr><td colspan="5" class="n">Output GST @ {{ gst_pct|floatformat:"-2" }}%</td><td class="n">{{ gst_f }}</td></tr>
     {% endif %}
-    <tr class="net"><td colspan="5" class="n">Total payable {{ currency }}</td><td class="n">{{ total_f }}</td></tr>
+    {% if advance_f %}
+      <tr class="sub"><td colspan="5" class="n">Total {{ currency }}</td><td class="n">{{ total_f }}</td></tr>
+      <tr><td colspan="5" class="n">Less advance received{% if advance_receipts %} ({{ advance_receipts }}){% endif %}</td><td class="n">({{ advance_f }})</td></tr>
+      <tr class="net"><td colspan="5" class="n">Balance payable {{ currency }}</td><td class="n">{{ balance_f }}</td></tr>
+    {% else %}
+      <tr class="net"><td colspan="5" class="n">Total payable {{ currency }}</td><td class="n">{{ total_f }}</td></tr>
+    {% endif %}
   </tbody>
 </table>
 <div class="words">{{ in_words }}</div>

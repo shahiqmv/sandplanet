@@ -26,6 +26,14 @@ function ReceiptForm({ customers, onSaved, onCancel, preset }) {
   }, [d.customer, d.amount]);
 
   const allocated = alloc.reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  function setAdvance(orderId, v) {
+    setAlloc((rows) => {
+      const has = rows.find((r) => r.order_id === orderId);
+      const o = info.won_orders.find((w) => w.id === orderId);
+      const row = { order_id: orderId, invoice: `Advance — ${o.so_ref}`, amount: v };
+      return has ? rows.map((r) => (r.order_id === orderId ? row : r)) : [...rows, row];
+    });
+  }
   function setAmount(invId, v) {
     setAlloc((rows) => {
       const has = rows.find((r) => r.invoice_id === invId);
@@ -103,6 +111,34 @@ function ReceiptForm({ customers, onSaved, onCancel, preset }) {
                 })}
               </tbody>
             </table>
+          )}
+          {info.won_orders?.length > 0 && (
+            <>
+              <p className="t-sub" style={{ marginTop: 10 }}>Or an advance against a pro-forma (on account of the order, applied when its tax invoice issues):</p>
+              <table className="t-table">
+                <thead><tr><th style={th}>Sales order</th><th style={th}>Inquiry</th>
+                  <th style={{ ...th, textAlign: "right" }}>Order value</th><th style={{ ...th, textAlign: "right" }}>Advance so far</th>
+                  <th style={{ ...th, textAlign: "right" }}>Advance now</th></tr></thead>
+                <tbody>
+                  {info.won_orders.map((w) => {
+                    const row = alloc.find((a) => a.order_id === w.id);
+                    return (
+                      <tr key={w.id}>
+                        <td style={td}><b>{w.so_ref}</b></td>
+                        <td style={td}>{w.ref} · {w.title}</td>
+                        <td style={{ ...td, textAlign: "right" }}>{w.currency} {fmtMoney(w.order_total)}</td>
+                        <td style={{ ...td, textAlign: "right" }}>{fmtMoney(w.advance_received)}</td>
+                        <td style={{ ...td, textAlign: "right" }}>
+                          <input type="number" step="0.01" min="0" value={row?.amount ?? ""}
+                                 onChange={(e) => setAdvance(w.id, e.target.value)}
+                                 style={{ ...inputStyle, width: 120, textAlign: "right", padding: "4px 6px" }} />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </>
           )}
           <div className="t-sub" style={{ marginTop: 6 }}>
             Allocated {fmtMoney(allocated)} of {fmtMoney(d.amount || 0)}
@@ -199,7 +235,7 @@ export default function ReceivablesPage({ open }) {
       )}
       {statementFor && <Statement customer={statementFor} onClose={() => setStatementFor(null)} />}
 
-      {data.customers.length === 0 ? <p className="t-empty">Nothing outstanding. Every issued invoice is settled.</p> : (
+      {data.customers.length === 0 ? <p className="t-empty">Nothing outstanding and no advances held. Every issued invoice is settled.</p> : (
         <table className="t-table">
           <thead><tr>
             <th style={th}>Customer</th>
@@ -216,7 +252,8 @@ export default function ReceivablesPage({ open }) {
                       {Number(c[b]) ? fmtMoney(c[b]) : ""}
                     </td>
                   ))}
-                  <td style={{ ...td, textAlign: "right" }}><b>{fmtMoney(c.total)}</b></td>
+                  <td style={{ ...td, textAlign: "right" }}><b>{fmtMoney(c.total)}</b>
+                    {Number(c.advance_on_account) > 0 && <div className="t-sub">advance held {fmtMoney(c.advance_on_account)}</div>}</td>
                   <td style={{ ...td, whiteSpace: "nowrap" }} onClick={(e) => e.stopPropagation()}>
                     <button className="t-link" onClick={() => setStatementFor(c)}>Statement</button>
                     {data.can_receipt && <> · <button className="t-link" onClick={() => setRecording(String(c.customer))}>Receipt</button></>}

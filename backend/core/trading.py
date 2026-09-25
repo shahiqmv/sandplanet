@@ -366,10 +366,50 @@ def update_order(order, data, actor):
     return None
 
 
+COST_FIELDS = ("supplier_id", "cost", "cost_currency", "fx")
+
+
+def update_costs(order, rows, actor):
+    """A won order's customer prices are frozen with the quotation, but the
+    supplier side keeps moving — the real supplier and landed cost are often
+    known only later (owner 2026-09-25). Only supplier / cost / currency /
+    rate change; each line's selling price is pinned first so a new cost
+    cannot move it."""
+    lines = {ln.id: ln for ln in order.lines.all()}
+    cur = (order.currency or "MVR").upper()
+    changed = 0
+    with transaction.atomic():
+        for r in rows or []:
+            ln = lines.get(r.get("id"))
+            if ln is None:
+                continue
+            if ln.sell is None:
+                ln.sell = calc_line(ln, cur)["unit_sell"]      # pin the customer's price
+                ln.margin_percent = None
+            cost = _dec(r.get("cost"))
+            fxv = _dec(r.get("fx"))
+            new = {"supplier_id": r.get("supplier") or None,
+                   "cost": cost if cost is None or cost >= 0 else ln.cost,
+                   "cost_currency": (r.get("cost_currency") or ln.cost_currency or "USD").upper()[:3],
+                   "fx": fxv if fxv and fxv > 0 else None}
+            if new["supplier_id"] and not Supplier.objects.filter(id=new["supplier_id"]).exists():
+                return "A line names a supplier that is not on file."
+            if any(getattr(ln, k) != v for k, v in new.items()):
+                changed += 1
+            for k, v in new.items():
+                setattr(ln, k, v)
+            ln.save()
+    audit(ENTITY, order.id, "TIN_COSTS", actor=actor,
+          detail={"ref": order.ref, "lines_changed": changed})
+    return None
+
+
 def write_lines(order, rows, actor):
     """Replace the pricing sheet, keeping the ids of rows that survive (a
     later delivery note will reference them). One transaction — the
     blueprint's duplicated-list bug can't happen here."""
+    if order.stage == "WON":
+        return update_costs(order, rows, actor)
     if order.is_closed:
         return "This order is closed — the pricing sheet is locked."
     clean, errors = [], []
@@ -1303,6 +1343,11 @@ def create_invoice(order, data, actor):
     except ValueError:
         return None, "Enter the invoice date."
     due = inv_date + timedelta(days=order.customer.credit_days or 0)
+    # The advance the customer paid on the pro-forma comes off this invoice
+    # (all of what is still unapplied, up to the invoice total) unless told
+    # to hold it back for a later delivery.
+    apply_adv = data.get("apply_advance", True)
+    advance = min(advance_available(order), f["total"]) if apply_adv else ZERO
     with transaction.atomic():
         inv = TradingInvoice.objects.create(
             order=order, ref=_next_invoice_no(), invoice_date=inv_date,
@@ -1311,7 +1356,7 @@ def create_invoice(order, data, actor):
             snapshot={"customer": _customer_block(order.customer),
                       "lines": f["rows"], "dn_refs": [d.ref for d in dns]},
             subtotal=f["subtotal"], gst_percent=f["gst_percent"], gst=f["gst"],
-            total=f["total"], created_by=actor)
+            total=f["total"], advance_applied=_q2(advance), created_by=actor)
         for dn in dns:
             dn.invoice = inv
             dn.save(update_fields=["invoice"])
@@ -1380,7 +1425,61 @@ def invoice_credited(inv):
 def invoice_outstanding(inv):
     if inv.status not in ("ISSUED", "PAID"):
         return ZERO
-    return _q2(inv.total - invoice_credited(inv) - invoice_received(inv))
+    return _q2(inv.total - inv.advance_applied - invoice_credited(inv)
+               - invoice_received(inv))
+
+
+# --- advances (money in before delivery, on the pro-forma) -------------------------
+
+def advance_received(order):
+    return _q2(TradingReceiptLine.objects.filter(order=order)
+               .aggregate(s=Sum("amount"))["s"] or ZERO)
+
+
+def advance_applied(order):
+    return _q2(order.invoices.filter(status__in=("DRAFT", "ISSUED", "PAID"))
+               .aggregate(s=Sum("advance_applied"))["s"] or ZERO)
+
+
+def advance_available(order):
+    return _q2(advance_received(order) - advance_applied(order))
+
+
+def proforma_context(order, advance_pct=None):
+    """A pro-forma invoice off the authorised quotation, carrying the sales
+    order reference rather than a number of its own (the owner's practice):
+    what the customer pays against before anything ships."""
+    from .commercial import amount_in_words
+    from .pdf import _money as money
+    q = current_quotation(order)
+    if q is None:
+        return None
+    ctx = quotation_context(q, draft=False)
+    t = q.snapshot["totals"]
+    total = Decimal(t["total"])
+    pct = _dec(advance_pct)
+    adv = _q2(total * pct / 100) if pct and pct > 0 else None
+    received = advance_received(order)
+    ctx.update({
+        "proforma": True, "order": order,
+        "advance_pct": pct if adv is not None else None,
+        "advance_f": money(adv) if adv is not None else None,
+        "advance_words": amount_in_words(adv, "USD" if ctx["currency"] == "USD" else "Rufiyaa")
+        if adv is not None else None,
+        "received_f": money(received) if received else None,
+        "balance_f": money(_q2(total - received)) if received else None,
+        "date": order.won_at or q.authorised_at or timezone.now(),
+        "signer": None,
+    })
+    return ctx
+
+
+def proforma_pdf_bytes(order, advance_pct=None):
+    from .views_commercial import pdf_bytes
+    ctx = proforma_context(order, advance_pct)
+    if ctx is None:
+        raise ValueError("no authorised quotation")
+    return pdf_bytes("pdf/trading_proforma.html", ctx)
 
 
 def _settle(inv):
@@ -1409,7 +1508,13 @@ def invoice_context(inv, draft=False):
         "charges": [{**c, "amount_f": money(c["amount"])} for c in inv.charges],
         "subtotal_f": money(inv.subtotal), "gst_pct": inv.gst_percent,
         "gst_f": money(inv.gst), "total_f": money(inv.total),
-        "in_words": amount_in_words(inv.total, "USD" if inv.currency == "USD" else "Rufiyaa"),
+        "advance_f": money(inv.advance_applied) if inv.advance_applied else None,
+        "balance_f": money(_q2(inv.total - inv.advance_applied)),
+        "advance_receipts": ", ".join(sorted({l.receipt.receipt_no for l in
+                                              TradingReceiptLine.objects.filter(order=inv.order)
+                                              .select_related("receipt")})),
+        "in_words": amount_in_words(_q2(inv.total - inv.advance_applied),
+                                    "USD" if inv.currency == "USD" else "Rufiyaa"),
         "signer": ({"name": signer.full_name,
                     "designation": "Sales Manager" if signer.role == "SALES_MANAGER"
                     else _param("company_signee_designation", "Managing Director")}
@@ -1429,6 +1534,7 @@ def invoice_dict(inv):
         "currency": inv.currency, "subtotal": _s(inv.subtotal),
         "gst_percent": _s(inv.gst_percent), "gst": _s(inv.gst), "total": _s(inv.total),
         "includes_freight": inv.includes_freight, "charges": inv.charges,
+        "advance_applied": _s(inv.advance_applied),
         "deliveries": inv.snapshot.get("dn_refs", []),
         "lines": inv.snapshot.get("lines", []),
         "received": _s(invoice_received(inv)), "credited": _s(invoice_credited(inv)),
@@ -1483,8 +1589,12 @@ def money(order):
     invoiced = _q2(sum((i.total for i in live), ZERO))
     credited = _q2(sum((invoice_credited(i) for i in live), ZERO))
     received = _q2(sum((invoice_received(i) for i in live), ZERO))
+    adv_in, adv_applied = advance_received(order), advance_applied(order)
+    applied_live = _q2(live.aggregate(s=Sum("advance_applied"))["s"] or ZERO)
     return {"invoiced": _s(invoiced), "credited": _s(credited),
-            "received": _s(received), "outstanding": _s(invoiced - credited - received),
+            "received": _s(received), "advance_received": _s(adv_in),
+            "advance_applied": _s(adv_applied), "advance_available": _s(adv_in - adv_applied),
+            "outstanding": _s(invoiced - credited - received - applied_live),
             "delivered_cogs_mvr": _s(sum((d.cogs_mvr for d in order.deliveries.filter(
                 status__in=("DESPATCHED", "RECEIVED"))), ZERO))}
 
@@ -1537,6 +1647,23 @@ def record_receipt(data, actor):
         amt = _dec(row.get("amount"))
         if amt is None or amt <= ZERO:
             continue
+        if row.get("order_id"):
+            # An advance against the pro-forma: on account of the won order.
+            o = TradingOrder.objects.filter(id=row["order_id"], customer=customer,
+                                            stage="WON").first()
+            if o is None:
+                return None, "An advance on this receipt is not against this customer's won order."
+            q = current_quotation(o)
+            cap = Decimal(q.snapshot["totals"]["total"]) if q else ZERO
+            if advance_received(o) + amt > cap + Decimal("0.01"):
+                return None, (f"{amt:,.2f} would take the advance on {o.so_ref} past "
+                              f"the order value {cap:,.2f}.")
+            ccy = (o.currency or "MVR").upper()
+            if currency and ccy != currency:
+                return None, "One receipt is in one currency."
+            currency = ccy
+            parsed.append((o, _q2(amt)))
+            continue
         inv = TradingInvoice.objects.filter(id=row.get("invoice_id"),
                                             order__customer=customer,
                                             status__in=("ISSUED", "PAID")).first()
@@ -1550,47 +1677,72 @@ def record_receipt(data, actor):
         currency = inv.currency
         parsed.append((inv, _q2(amt)))
     if not parsed:
-        return None, "Allocate the money to at least one invoice."
+        return None, "Allocate the money to at least one invoice or order."
     with transaction.atomic():
         rc = TradingReceipt.objects.create(
             customer=customer, receipt_no=next_receipt_no(), receipt_date=rdate,
             method=method, reference=(data.get("reference") or "").strip(),
             bank_account=bank, currency=currency, note=data.get("note") or "",
             recorded_by=actor)
-        for inv, amt in parsed:
-            TradingReceiptLine.objects.create(receipt=rc, invoice=inv, amount=amt)
-        for inv, _ in parsed:
-            _settle(inv)
-    for inv, amt in parsed:
-        audit(ENTITY, inv.order_id, "RECEIPT", actor=actor,
-              detail={"ref": inv.order.ref, "invoice": inv.ref,
-                      "receipt_no": rc.receipt_no, "amount": str(amt)})
+        for target, amt in parsed:
+            if isinstance(target, TradingOrder):
+                TradingReceiptLine.objects.create(receipt=rc, order=target, amount=amt)
+            else:
+                TradingReceiptLine.objects.create(receipt=rc, invoice=target, amount=amt)
+        for target, _ in parsed:
+            if isinstance(target, TradingInvoice):
+                _settle(target)
+    for target, amt in parsed:
+        if isinstance(target, TradingOrder):
+            audit(ENTITY, target.id, "ADVANCE_RECEIPT", actor=actor,
+                  detail={"ref": target.ref, "so": target.so_ref,
+                          "receipt_no": rc.receipt_no, "amount": str(amt)})
+        else:
+            audit(ENTITY, target.order_id, "RECEIPT", actor=actor,
+                  detail={"ref": target.order.ref, "invoice": target.ref,
+                          "receipt_no": rc.receipt_no, "amount": str(amt)})
     return rc, None
 
 
 def delete_receipt(rc, actor):
     if not can_receipt(actor):
         return "Finance records customer receipts."
-    invs = [l.invoice for l in rc.lines.select_related("invoice")]
+    lines = list(rc.lines.select_related("invoice", "order"))
+    for l in lines:
+        if l.order_id and advance_applied(l.order) > advance_received(l.order) - l.amount:
+            return (f"The advance on {l.order.so_ref} has already been applied to an "
+                    "invoice — void that invoice first.")
+    invs = [l.invoice for l in lines if l.invoice_id]
     no = rc.receipt_no
     with transaction.atomic():
         rc.lines.all().delete()
         rc.delete()
         for inv in invs:
             _settle(inv)
-    for inv in invs:
-        audit(ENTITY, inv.order_id, "RECEIPT_DELETED", actor=actor,
-              detail={"ref": inv.order.ref, "invoice": inv.ref, "receipt_no": no})
+    for l in lines:
+        oid = l.invoice.order_id if l.invoice_id else l.order_id
+        audit(ENTITY, oid, "RECEIPT_DELETED", actor=actor,
+              detail={"receipt_no": no, "invoice": l.invoice.ref if l.invoice_id else None,
+                      "so": l.order.so_ref if l.order_id else None})
     return None
 
 
 def receipt_dict(rc):
     ba = rc.bank_account
-    lines = [{"id": l.id, "invoice_id": l.invoice_id, "invoice_no": l.invoice.ref,
-              "claim_ref": l.invoice.order.so_ref or l.invoice.order.ref,
-              "project_code": l.invoice.order.so_ref or "",
-              "amount": l.amount, "invoice_amount": l.invoice.total}
-             for l in rc.lines.select_related("invoice__order")]
+    lines = []
+    for l in rc.lines.select_related("invoice__order", "order"):
+        if l.invoice_id:
+            lines.append({"id": l.id, "invoice_id": l.invoice_id, "invoice_no": l.invoice.ref,
+                          "claim_ref": l.invoice.order.so_ref or l.invoice.order.ref,
+                          "project_code": l.invoice.order.so_ref or "",
+                          "amount": l.amount, "invoice_amount": l.invoice.total})
+        else:
+            q = current_quotation(l.order)
+            lines.append({"id": l.id, "invoice_id": None, "order_id": l.order_id,
+                          "invoice_no": f"Advance — {l.order.so_ref}",
+                          "claim_ref": l.order.so_ref, "project_code": l.order.so_ref,
+                          "amount": l.amount,
+                          "invoice_amount": Decimal(q.snapshot["totals"]["total"]) if q else None})
     return {"id": rc.id, "receipt_no": rc.receipt_no, "receipt_date": rc.receipt_date,
             "method": rc.method, "method_label": rc.get_method_display(),
             "reference": rc.reference, "note": rc.note,
@@ -1654,10 +1806,26 @@ def aging(as_of=None):
                                 "due_date": inv.due_date, "total": _s(inv.total),
                                 "outstanding": _s(out), "overdue_days": max(0, overdue),
                                 "currency": inv.currency})
+    # Advances paid on pro-formas that no invoice has yet absorbed: money the
+    # company holds for that customer, shown beside what they owe.
+    for o in TradingOrder.objects.filter(stage="WON", advance_receipts__isnull=False) \
+            .select_related("customer").distinct():
+        avail = advance_available(o)
+        if avail <= ZERO:
+            continue
+        c = o.customer
+        row = by_cust.setdefault(c.id, {
+            "customer": c.id, "customer_name": c.name, "currency": o.currency,
+            "current": ZERO, "d30": ZERO, "d60": ZERO, "d90": ZERO, "d90plus": ZERO,
+            "total": ZERO, "invoices": []})
+        row["advance_on_account"] = _q2(row.get("advance_on_account", ZERO) + avail)
+        row.setdefault("advances", []).append({"order_id": o.id, "order": o.ref, "so_ref": o.so_ref,
+                                               "available": _s(avail)})
     rows = sorted(by_cust.values(), key=lambda r: -r["total"])
     for r in rows:
         for k in ("current", "d30", "d60", "d90", "d90plus", "total"):
             r[k] = _s(_q2(r[k]))
+        r["advance_on_account"] = _s(r.get("advance_on_account", ZERO))
     return {"as_of": today, "customers": rows,
             "total": _s(_q2(sum((Decimal(r["total"]) for r in rows), ZERO)))}
 
@@ -1684,7 +1852,8 @@ def statement(customer, date_from=None, date_to=None):
         if rc.id in seen:
             continue
         seen.add(rc.id)
-        settled = ", ".join(x.invoice.ref for x in rc.lines.select_related("invoice"))
+        settled = ", ".join((x.invoice.ref if x.invoice_id else f"advance on {x.order.so_ref}")
+                            for x in rc.lines.select_related("invoice", "order"))
         entries.append({"date": rc.receipt_date, "kind": "RECEIPT", "ref": rc.receipt_no,
                         "detail": f"{rc.get_method_display()}"
                                   f"{' ' + rc.reference if rc.reference else ''} — {settled}",

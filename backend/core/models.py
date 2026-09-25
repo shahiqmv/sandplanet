@@ -1576,6 +1576,9 @@ class TradingInvoice(models.Model):
     includes_freight = models.BooleanField(default=False)
     charges = models.JSONField(default=list, blank=True)    # [{label, amount}]
     snapshot = models.JSONField(default=dict)
+    # Advance received on the order and applied to this invoice: the invoice
+    # prints "less advance received" and only the balance is payable.
+    advance_applied = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     subtotal = models.DecimalField(max_digits=14, decimal_places=2, default=0)
     gst_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     gst = models.DecimalField(max_digits=14, decimal_places=2, default=0)
@@ -5124,10 +5127,15 @@ class TradingReceipt(models.Model):
 
 
 class TradingReceiptLine(models.Model):
+    """One allocation of a receipt: to an issued tax invoice, or — an advance
+    paid against the pro-forma before anything is delivered — on account of
+    the won order, to be applied to its tax invoices as they issue."""
     receipt = models.ForeignKey(TradingReceipt, on_delete=models.CASCADE,
                                 related_name="lines")
     invoice = models.ForeignKey(TradingInvoice, on_delete=models.PROTECT,
-                                related_name="receipts")
+                                null=True, blank=True, related_name="receipts")
+    order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
+                              null=True, blank=True, related_name="advance_receipts")
     amount = models.DecimalField(max_digits=14, decimal_places=2)
 
     class Meta:

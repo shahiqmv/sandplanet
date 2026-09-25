@@ -979,6 +979,8 @@ urlpatterns = [
          trading_api.delivery_receive, name="trading-delivery-receive"),
     path("trading/orders/<int:pk>/deliveries/<int:did>/pdf",
          trading_api.delivery_pdf, name="trading-delivery-pdf"),
+    path("trading/orders/<int:pk>/proforma.pdf", trading_api.order_proforma,
+         name="trading-order-proforma"),
     path("trading/orders/<int:pk>/invoices", trading_api.order_invoices,
          name="trading-order-invoices"),
     path("trading/orders/<int:pk>/invoices/<int:iid>", trading_api.invoice_action,

@@ -61,7 +61,11 @@ function PricingSheet({ o, onSaved }) {
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  const locked = !o.can_manage || o.is_closed;
+  // Won: the customer's prices are frozen with the quotation, but supplier,
+  // cost, currency and rate stay open — the real cost is often known later.
+  const won = o.stage === "WON" && o.can_manage;
+  const locked = !o.can_manage || (o.is_closed && !won);
+  const costOpen = !locked || won;
   const usdRate = Number(o.calc.usd_rate) || 15.42;
   const ccy = o.currency;
 
@@ -103,8 +107,10 @@ function PricingSheet({ o, onSaved }) {
     setBusy(true);
     setError(null);
     try {
-      await api(`/trading/orders/${o.id}`, { method: "PATCH",
-        body: { freight_cost: freightCost || "0", freight_sell: freightSell === "" ? null : freightSell } });
+      if (!won) {
+        await api(`/trading/orders/${o.id}`, { method: "PATCH",
+          body: { freight_cost: freightCost || "0", freight_sell: freightSell === "" ? null : freightSell } });
+      }
       const d = await api(`/trading/orders/${o.id}/lines`, { method: "PUT",
         body: { lines: rows.map((r) => ({ ...r, id: r.id || null, supplier: r.supplier || null,
                                            cost: r.cost === "" ? null : r.cost,
@@ -144,6 +150,12 @@ function PricingSheet({ o, onSaved }) {
                        : "You can read this sheet; only the inquiry's owner or the Sales Manager can change it."}
         </p>
       )}
+      {won && (
+        <p className="t-note">
+          This order is won: the customer's prices, quantities and descriptions are fixed with the quotation.
+          Supplier, cost, cost currency and rate can still be updated — the margin recalculates, the selling price does not move.
+        </p>
+      )}
       <div className="t-sheet-wrap">
         <table className="t-table t-sheet">
           <thead>
@@ -171,17 +183,17 @@ function PricingSheet({ o, onSaved }) {
                 <tr key={r.id || `n${i}`}>
                   <td style={td} className="t-sub">{i + 1}</td>
                   <td style={td}><input style={{ ...inputStyle, width: 80, padding: "4px 6px" }} value={r.section || ""}
-                                        disabled={locked} placeholder="heading" onChange={(e) => upd(i, { section: e.target.value })} /></td>
+                                        disabled={locked || won} placeholder="heading" onChange={(e) => upd(i, { section: e.target.value })} /></td>
                   <td style={td} className="t-desc-cell">
-                    <textarea className="t-desc" value={r.description || ""} disabled={locked} rows={Math.max(2, (r.description || "").split("\n").length)}
+                    <textarea className="t-desc" value={r.description || ""} disabled={locked || won} rows={Math.max(2, (r.description || "").split("\n").length)}
                               placeholder={"Product name\nspecs on the lines below"}
                               onChange={(e) => upd(i, { description: e.target.value })} />
                   </td>
-                  <td style={td}><Num value={r.qty} width={64} disabled={locked} onChange={(v) => upd(i, { qty: v })} /></td>
+                  <td style={td}><Num value={r.qty} width={64} disabled={locked || won} onChange={(v) => upd(i, { qty: v })} /></td>
                   <td style={td}><input style={{ ...inputStyle, width: 48, padding: "4px 6px" }} value={r.uom || ""}
-                                        disabled={locked} onChange={(e) => upd(i, { uom: e.target.value })} /></td>
+                                        disabled={locked || won} onChange={(e) => upd(i, { uom: e.target.value })} /></td>
                   <td style={td}>
-                    <select style={{ ...inputStyle, width: 110, padding: "4px 6px" }} value={r.supplier || ""} disabled={locked}
+                    <select style={{ ...inputStyle, width: 110, padding: "4px 6px" }} value={r.supplier || ""} disabled={!costOpen}
                             onChange={(e) => {
                               const s = suppliers.find((x) => String(x.id) === e.target.value);
                               upd(i, { supplier: e.target.value ? Number(e.target.value) : null,
@@ -191,30 +203,30 @@ function PricingSheet({ o, onSaved }) {
                       {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
                     </select>
                   </td>
-                  <td style={td}><Num value={r.cost} step="0.0001" width={80} disabled={locked} onChange={(v) => upd(i, { cost: v })} /></td>
+                  <td style={td}><Num value={r.cost} step="0.0001" width={80} disabled={!costOpen} onChange={(v) => upd(i, { cost: v })} /></td>
                   <td style={td}>
-                    <select style={{ ...inputStyle, width: 60, padding: "4px 6px" }} value={r.cost_currency || "USD"} disabled={locked}
+                    <select style={{ ...inputStyle, width: 60, padding: "4px 6px" }} value={r.cost_currency || "USD"} disabled={!costOpen}
                             onChange={(e) => upd(i, { cost_currency: e.target.value })}>
                       {["USD", "MVR", "EUR", "CNY", "INR", "AED", "LKR"].map((x) => <option key={x}>{x}</option>)}
                     </select>
                   </td>
-                  <td style={td}><Num value={r.fx} step="0.000001" width={70} disabled={locked}
+                  <td style={td}><Num value={r.fx} step="0.000001" width={70} disabled={!costOpen}
                                       placeholder={c.fx !== null ? String(+c.fx.toFixed(4)) : "rate?"}
                                       onChange={(v) => upd(i, { fx: v })} /></td>
                   <td style={{ ...td, textAlign: "right" }} className={c.fxMissing ? "t-bad" : ""}>
                     {c.fxMissing ? "no rate" : c.unitCost !== null ? fmtMoney(c.unitCost, 4) : ""}
                   </td>
-                  <td style={td}><Num value={r.margin_percent} width={62} disabled={locked}
+                  <td style={td}><Num value={r.margin_percent} width={62} disabled={locked || won}
                                       placeholder={c.margin !== null ? c.margin.toFixed(2) : ""}
                                       onChange={(v) => upd(i, { margin_percent: v, sell: "" })} /></td>
-                  <td style={td}><Num value={r.sell} step="0.0001" width={90} disabled={locked}
+                  <td style={td}><Num value={r.sell} step="0.0001" width={90} disabled={locked || won}
                                       placeholder={c.unitSell !== null ? c.unitSell.toFixed(4) : ""}
                                       onChange={(v) => upd(i, { sell: v })} /></td>
                   <td style={{ ...td, textAlign: "right", fontVariantNumeric: "tabular-nums" }}>
                     {c.lineSell !== null ? fmtMoney(c.lineSell) : ""}
                   </td>
                   <td style={{ ...td, whiteSpace: "nowrap" }}>
-                    {!locked && (<>
+                    {!locked && !won && (<>
                       <button className="t-link" title="Move up" onClick={() => move(i, -1)}>↑</button>{" "}
                       <button className="t-link" title="Move down" onClick={() => move(i, 1)}>↓</button>{" "}
                       <button className="t-link" title="Remove" onClick={() => { setRows(rows.filter((_, j) => j !== i)); setDirty(true); }}>×</button>
@@ -229,7 +241,7 @@ function PricingSheet({ o, onSaved }) {
           </tbody>
         </table>
       </div>
-      {!locked && (
+      {!locked && !won && (
         <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
           <Btn variant="secondary" onClick={() => add()}>+ Line</Btn>
           <Btn variant="secondary" onClick={() => add(window.prompt("Section heading:") || "")}>+ Section</Btn>
@@ -240,9 +252,9 @@ function PricingSheet({ o, onSaved }) {
       <div className="t-totals">
         <div style={card}>
           <div className="t-kv"><span>Freight to harbour — our cost</span>
-            <Num value={freightCost} disabled={locked} onChange={(v) => { setFreightCost(v); setDirty(true); }} /></div>
+            <Num value={freightCost} disabled={locked || won} onChange={(v) => { setFreightCost(v); setDirty(true); }} /></div>
           <div className="t-kv"><span>Freight charged to customer <i className="t-sub">(blank = absorbed)</i></span>
-            <Num value={freightSell} disabled={locked} onChange={(v) => { setFreightSell(v); setDirty(true); }} /></div>
+            <Num value={freightSell} disabled={locked || won} onChange={(v) => { setFreightSell(v); setDirty(true); }} /></div>
         </div>
         <div style={card}>
           <div className="t-kv"><span>Cost of lines</span><b>{fmtMoney(costLines)}</b></div>
@@ -522,6 +534,35 @@ function Quotation({ o, onSaved }) {
   );
 }
 
+// ---- pro-forma invoice --------------------------------------------------------
+function Proforma({ o }) {
+  const [pct, setPct] = useState(() => {
+    const m = /(\d{1,3})\s*%/.exec(o.payment_terms || "");
+    return m ? m[1] : "";
+  });
+  const m = o.money || {};
+  const q = pct ? `?advance=${encodeURIComponent(pct)}` : "";
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: "1px solid var(--row-line, #efeae0)" }}>
+      <h4 style={{ margin: "0 0 6px" }}>Pro-forma invoice</h4>
+      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+        <label className="t-check">advance
+          <input type="number" min="0" max="100" step="1" value={pct} onChange={(e) => setPct(e.target.value)}
+                 style={{ ...inputStyle, width: 70, padding: "4px 6px" }} /> %</label>
+        <a className="t-btn-link" href={`/api/v1/trading/orders/${o.id}/proforma.pdf${q}`} target="_blank" rel="noreferrer">
+          Pro-forma PDF{pct ? ` — ${pct}% advance` : ""}
+        </a>
+      </div>
+      <div className="t-sub" style={{ marginTop: 6 }}>
+        Carries the sales order reference {o.so_ref}, not a number of its own. Advance received so far:
+        {" "}<b>{o.currency} {fmtMoney(m.advance_received || 0)}</b>
+        {Number(m.advance_available) > 0 ? ` (${fmtMoney(m.advance_available)} not yet applied to an invoice)` : ""}.
+        Finance records the advance on the Receivables page against this order.
+      </div>
+    </div>
+  );
+}
+
 // ---- order (won / lost) ---------------------------------------------------------
 function Order({ o, onSaved }) {
   const [po, setPo] = useState({ po_number: "", po_date: "" });
@@ -561,6 +602,7 @@ function Order({ o, onSaved }) {
         <div className="t-kv"><span>Against quotation</span><b>{authorised?.ref} · {authorised?.currency} {fmtMoney(authorised?.total)}</b></div>
         <div className="t-kv"><span>Recorded</span><b>{fmtDateTime(o.won_at)} by {o.won_by}</b></div>
         {o.po_file && <a className="t-link" href={o.po_file} target="_blank" rel="noreferrer">Customer's PO copy</a>}
+        <Proforma o={o} />
         <p className="t-note" style={{ marginTop: 12 }}>
           Next: raise the import orders on the <b>Supply</b> tab, deliver on <b>Deliveries</b>, invoice on <b>Invoices</b>.
         </p>
@@ -915,7 +957,8 @@ function Invoices({ o }) {
     <div>
       {error && <p className="t-note t-note-red">{error}</p>}
       <div className="t-tiles" style={{ marginTop: 0 }}>
-        {[["Invoiced", m.invoiced], ["Credited", m.credited], ["Received", m.received], ["Outstanding", m.outstanding]].map(([l, v]) => (
+        {[["Invoiced", m.invoiced], ["Advance received", m.advance_received], ["Received on invoices", m.received],
+          ["Credited", m.credited], ["Outstanding", m.outstanding]].map(([l, v]) => (
           <div key={l} className="t-tile t-tile-soon" style={{ opacity: 1, cursor: "default" }}>
             <span className="t-tile-n" style={{ fontSize: 20 }}>{o.currency} {fmtMoney(v)}</span><span className="t-tile-l">{l}</span>
           </div>
@@ -935,7 +978,7 @@ function Invoices({ o }) {
                 <td style={td}><Chip tone={INV_TONE[inv.status]}>{inv.status.toLowerCase()}</Chip>{inv.void_reason && <div className="t-sub">{inv.void_reason}</div>}</td>
                 <td style={td}>{fmtDate(inv.invoice_date)}<div className="t-sub">due {fmtDate(inv.due_date)}</div></td>
                 <td style={td}>{inv.deliveries.join(", ")}{inv.includes_freight ? " + freight" : ""}</td>
-                <td style={{ ...td, textAlign: "right" }}>{inv.currency} {fmtMoney(inv.total)}<div className="t-sub">GST {fmtMoney(inv.gst)}</div></td>
+                <td style={{ ...td, textAlign: "right" }}>{inv.currency} {fmtMoney(inv.total)}<div className="t-sub">GST {fmtMoney(inv.gst)}{Number(inv.advance_applied) ? ` · less advance ${fmtMoney(inv.advance_applied)}` : ""}</div></td>
                 <td style={{ ...td, textAlign: "right" }}>{inv.status === "VOID" ? "" : fmtMoney(inv.outstanding)}</td>
                 <td style={{ ...td, whiteSpace: "nowrap" }}>
                   <a className="t-link" href={`/api/v1/trading/orders/${o.id}/invoices/${inv.id}/pdf`} target="_blank" rel="noreferrer">{inv.status === "DRAFT" ? "Draft PDF" : "PDF"}</a>

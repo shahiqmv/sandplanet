@@ -659,7 +659,15 @@ def receipt_allocate(request):
         return Response({"detail": "Pick the customer."}, status=400)
     amount = trading._dec(request.GET.get("amount"), trading.ZERO)
     rows, left = trading.auto_allocate(customer, amount)
-    return Response({"allocations": rows, "unallocated": left,
+    won = [{"id": o.id, "ref": o.ref, "so_ref": o.so_ref, "title": o.title,
+            "currency": o.currency,
+            "order_total": (trading.current_quotation(o).snapshot["totals"]["total"]
+                            if trading.current_quotation(o) else None),
+            "advance_received": trading._s(trading.advance_received(o)),
+            "advance_available": trading._s(trading.advance_available(o))}
+           for o in TradingOrder.objects.filter(customer=customer, stage="WON")
+           .order_by("-won_at")]
+    return Response({"allocations": rows, "unallocated": left, "won_orders": won,
                      "open_invoices": [{"id": i.id, "ref": i.ref, "order": i.order.ref,
                                         "so_ref": i.order.so_ref, "currency": i.currency,
                                         "total": trading._s(i.total),
@@ -715,3 +723,23 @@ def standard_terms(request):
             return Response({"detail": msg}, status=403)
     return Response({**trading.standard_terms(),
                      "can_edit": trading.can_authorise(request.user)})
+
+
+
+# ---- pro-forma invoice ------------------------------------------------------------
+
+@api_view(["GET"])
+@permission_classes([IsTradingReader])
+def order_proforma(request, pk):
+    order = _order(pk)
+    if order is None:
+        return Response({"detail": "Not found."}, status=404)
+    if order.stage != "WON":
+        return Response({"detail": "A pro-forma is issued against a won order."}, status=400)
+    try:
+        pdf = trading.proforma_pdf_bytes(order, request.GET.get("advance"))
+    except ValueError as e:
+        return Response({"detail": str(e)}, status=400)
+    except Exception as e:                       # pragma: no cover - env dep
+        return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
+    return _pdf_response(pdf, f"PI-{order.so_ref}.pdf")
