@@ -129,7 +129,9 @@ else:  # DECISIONS.md D1 — local dev without Docker only
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
+            # SQLITE_NAME lets a second local instance (the Marine brand on
+            # port 8001) keep its own file beside the main one.
+            "NAME": BASE_DIR / os.environ.get("SQLITE_NAME", "db.sqlite3"),
         }
     }
 
@@ -207,7 +209,25 @@ if os.environ.get("S3_ENDPOINT_URL"):
         },
     }
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+# MEDIA_DIR lets a second local instance keep its own uploads (dev only;
+# production uses Spaces, a bucket per company).
+MEDIA_ROOT = BASE_DIR / os.environ.get("MEDIA_DIR", "media")
+
+# A sister instance under a path prefix on the same host — Sandplanet Marine
+# at app.sandplanet.mv/marine/ (MARINE_BUILD_BRIEF.md §2). Caddy strips the
+# prefix before proxying, so the URL resolver sees plain paths; the script
+# name makes every URL Django builds carry it, WhiteNoise strips it again
+# for static files, and the cookies get their own names and path so the two
+# instances' sessions never collide on one host.
+APP_PREFIX = os.environ.get("APP_PREFIX", "").rstrip("/")
+if APP_PREFIX:
+    FORCE_SCRIPT_NAME = APP_PREFIX
+    MEDIA_URL = f"{APP_PREFIX}/media/"
+    _slug = APP_PREFIX.strip("/").replace("/", "_")
+    SESSION_COOKIE_NAME = f"{_slug}_sessionid"
+    SESSION_COOKIE_PATH = APP_PREFIX
+    CSRF_COOKIE_NAME = f"{_slug}_csrftoken"
+    CSRF_COOKIE_PATH = APP_PREFIX
 
 # PDFs block issue when true (staging/production); local dev may lack the
 # WeasyPrint GTK libraries (DECISIONS.md D4).

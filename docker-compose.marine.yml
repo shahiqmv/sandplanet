@@ -1,0 +1,45 @@
+# Sandplanet Marine — a second instance of the same image on the same
+# droplet (MARINE_BUILD_BRIEF.md §1, §3): its own database and its own
+# session, served by the SAME Caddy under app.sandplanet.mv/marine/.
+#
+#   docker compose -f docker-compose.prod.yml -f docker-compose.marine.yml up -d --build
+#
+# Secrets in .env.marine (see .env.marine.example). update.sh adds this file
+# automatically when .env.marine exists.
+
+services:
+  db-marine:
+    image: postgres:16
+    restart: unless-stopped
+    env_file: .env.marine
+    volumes:
+      - pgdata_marine:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web-marine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env.marine
+    environment:
+      POSTGRES_HOST: db-marine
+      APP_PREFIX: /marine
+      SEED_COMMAND: seed_marine
+      RUN_SEED: ${RUN_SEED_MARINE:-0}   # first deploy: RUN_SEED_MARINE=1
+    depends_on:
+      db-marine:
+        condition: service_healthy
+    expose:
+      - "8000"
+
+  caddy:
+    depends_on:
+      - web-marine
+
+volumes:
+  pgdata_marine:

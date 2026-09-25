@@ -19,11 +19,18 @@ DEPLOY_LOG="$(pwd)/deploy.log"
 # Faster, lower-memory image builds.
 export DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1
 
+# Sandplanet Marine rides along as a second stack once its env file exists
+# (MARINE_BUILD_BRIEF.md §3): same image, own database, same Caddy.
+COMPOSE_FILES="-f docker-compose.prod.yml"
+if [ -f .env.marine ]; then
+  COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.marine.yml"
+fi
+
 run_deploy() {
   echo "==> $(date '+%Y-%m-%d %H:%M:%S') Pulling latest code…"
   git pull
   echo "==> Rebuilding and restarting (BuildKit)…"
-  docker compose -f docker-compose.prod.yml up -d --build
+  docker compose $COMPOSE_FILES up -d --build
   # Caddy's config is a single-file bind mount, and `git pull` REPLACES the
   # file rather than editing it. Docker binds the old inode, so the running
   # container keeps serving the config it started with — a `caddy reload`
@@ -32,9 +39,9 @@ run_deploy() {
   # hard way when the camera relay's routes silently never appeared,
   # 2026-08-12).
   echo "==> Recreating caddy so Caddyfile changes take effect…"
-  docker compose -f docker-compose.prod.yml up -d --force-recreate caddy
+  docker compose $COMPOSE_FILES up -d --force-recreate caddy
   echo "==> Status:"
-  docker compose -f docker-compose.prod.yml ps
+  docker compose $COMPOSE_FILES ps
   echo "Done."
 }
 
@@ -120,6 +127,32 @@ ensure_crons() {
   add_cron "# planet-meeting-reminders" "*/15 * * * *" \
     "$C meeting_reminders >> /var/log/meeting_reminders.log 2>&1" \
     "meeting reminders"
+
+  # The Marine instance gets the same clocks against its own database.
+  if [ -f "$APP_DIR/.env.marine" ]; then
+    CM="cd $APP_DIR && docker compose -f docker-compose.prod.yml -f docker-compose.marine.yml exec -T web-marine python manage.py"
+    add_cron "# marine-backup" "50 2 * * *" \
+      "STACK=marine $APP_DIR/deploy/backup.sh >> /var/log/marine-backup.log 2>&1" \
+      "the nightly Marine database backup (02:50)"
+    add_cron "# marine-backup-verify" "10 4 * * 0" \
+      "STACK=marine $APP_DIR/deploy/backup.sh --verify >> /var/log/marine-backup.log 2>&1" \
+      "the weekly Marine restore test (Sunday 04:10)"
+    add_cron "# marine-onboarding-clocks" "10 6 * * *" \
+      "$CM onboarding_clocks >> /var/log/marine_clocks.log 2>&1" \
+      "Marine onboarding clocks"
+    add_cron "# marine-training-expiry" "50 6 * * *" \
+      "$CM training_expiry >> /var/log/marine_clocks.log 2>&1" \
+      "Marine training expiry"
+    add_cron "# marine-bonds-expiry" "35 6 * * *" \
+      "$CM bonds_expiry >> /var/log/marine_clocks.log 2>&1" \
+      "Marine bond and insurance expiry"
+    add_cron "# marine-procurement-risk" "5 7 * * *" \
+      "$CM procurement_risk >> /var/log/marine_clocks.log 2>&1" \
+      "Marine procurement late-risk"
+    add_cron "# marine-meeting-reminders" "*/15 * * * *" \
+      "$CM meeting_reminders >> /var/log/marine_clocks.log 2>&1" \
+      "Marine meeting reminders"
+  fi
 }
 
 ensure_crons

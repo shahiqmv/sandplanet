@@ -566,6 +566,9 @@ export default function App() {
   useEffect(() => {
     api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
   }, []);
+  // The brand (and with it the app switcher) may arrive after first paint.
+  const [brandState, setBrandState] = useState(getBrand());
+  useEffect(() => onBrand(setBrandState), []);
 
   // The trading arm has its own app (TRADING_BUILD_BRIEF.md §5). A Sales
   // sign-in here has nothing to see: send them to /t/ before any project
@@ -786,8 +789,9 @@ export default function App() {
                     || me.role === "MARKETING" || me.role === "SITE_ADMIN"
                     || me.role === "SITE_ENGINEER");
   const groups = me.authenticated
-    ? visibleGroups(me).filter((g) =>
-        !(g.subs || []).some(([k]) => k === "profile") || featureOn("profile"))
+    ? visibleGroups(me)
+        .map((g) => ({ ...g, subs: (g.subs || []).filter(([k]) => k !== "profile" || featureOn("profile")) }))
+        .filter((g) => g.subs.length > 0)
     : [];
   const activeGroup = groups.find((g) =>
     g.subs.some(([key]) => key === hoPage));
@@ -882,7 +886,7 @@ export default function App() {
                               if (!me.landing_site_id) setOpenSite(null); }}>
           <BrandBlock />
         </div>
-        <AppSwitcher apps={getBrand()?.apps} current="planet" />
+        <AppSwitcher apps={brandState?.apps} current="planet" />
         {showHoNav && (
           <nav className="navtabs">
             {groups.map((g) => (

@@ -197,9 +197,26 @@ Each phase ships and stops for the owner's review.
    prefix-aware API/cookie names so the same build can serve a sister
    instance under app.sandplanet.mv/marine/ (phase 2). Sand Planet's
    instance is unchanged.
-2. **Second instance** — compose file, env, Caddy host, `update.sh` for two
-   stacks, backups for two databases, seed script; marine.sandplanet.mv live
-   with the Marine brand and the full project workflow.
+2. **Second instance** — DONE 2026-09-25 (code); goes live on the droplet
+   with `.env.marine`. `APP_PREFIX=/marine` in settings (FORCE_SCRIPT_NAME,
+   prefixed MEDIA_URL, `marine_sessionid` / `marine_csrftoken` cookies on
+   path `/marine`), `docker-compose.marine.yml` (db-marine + web-marine,
+   own volume, `.env.marine`, `SEED_COMMAND=seed_marine`), the Caddy
+   `handle_path /marine/*` route on the main domain, `update.sh` deploying
+   both stacks when `.env.marine` exists and installing the Marine crons,
+   `deploy/backup.sh` with `STACK=marine`, the `seed_marine` command
+   (identity, brand, palette, logo files from the assets folder, FVM head
+   office, categories, admin), a `backend-marine` dev entry on port 8001
+   with its own SQLite file and media folder, and the Vite proxy for
+   `/marine/`. Verified locally: app.sandplanet.mv/marine/ signs in on its
+   own session while the root session stays untouched.
+
+   **Go-live steps on the droplet:** copy `.env.marine.example` to
+   `.env.marine` and fill it (Marine's own Spaces bucket, secret key,
+   password); `RUN_SEED_MARINE=1 bash update.sh` once; on Sand Planet's
+   Company page add the sister app "Sandplanet Marine → /marine/"; on
+   Marine's Company page enter the bank accounts and change the admin
+   password; create the users.
 3. **Rental foundations** — RENTAL book, `Vehicle` + cost centre, rate card,
    documents and expiry alerts, roles, fleet page.
 4. **Agreements and hire logs** — `RentalAgreement` with PDF, hire log entry

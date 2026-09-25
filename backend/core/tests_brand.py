@@ -1,15 +1,22 @@
 """The brand layer (MARINE_BUILD_BRIEF.md §2): Sand Planet's look is the
 default, a sister instance overrides it with company parameters, and every
 PDF and screen reads the same values."""
+import tempfile
+
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.template import Context, Template
+from django.test import override_settings
 
 from . import brand
 from .models import CompanyParameter, User
 from .tests import BaseCase, make_user
 
 
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix="brand-test-"))
 class BrandTests(BaseCase):
+    """Runs on its own empty media folder: the brand files are storage, and
+    a developer's local uploads must not decide the outcome."""
+
     def setUp(self):
         super().setUp()
         brand.invalidate()
@@ -85,3 +92,9 @@ class BrandTests(BaseCase):
         r = self.client.put("/api/v1/parameters/brand_name", {"value": "x"}, format="json")
         self.assertEqual(r.status_code, 403)
         self.assertEqual(CompanyParameter.objects.filter(key="brand_name").count(), 0)
+
+
+    def test_the_switcher_carries_the_instances_own_prefix(self):
+        with override_settings(FORCE_SCRIPT_NAME="/marine"):
+            r = self.client.get("/api/v1/brand").data
+        self.assertEqual([a["url"] for a in r["apps"]], ["/marine/", "/marine/t/"])

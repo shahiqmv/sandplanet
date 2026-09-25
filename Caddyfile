@@ -43,6 +43,17 @@
 {$DOMAIN} {
 	encode gzip
 	import relay
+	# Sandplanet Marine: the same image, its own database and session, under
+	# /marine/ on this domain (MARINE_BUILD_BRIEF.md §2). The prefix is
+	# stripped here; Django puts it back on every URL it builds
+	# (APP_PREFIX). The SPA's own assets are under /static/ and are the same
+	# build in both containers, so they may come from either.
+	handle_path /marine/* {
+		header -Server
+		reverse_proxy web-marine:8000 {
+			request_buffers 16MB
+		}
+	}
 	import app
 }
 {$PORTAL_DOMAIN} {

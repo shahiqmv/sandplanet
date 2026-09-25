@@ -29,3 +29,8 @@ guide/screenshots/
 guide/_preview/
 guide/_server.log
 deploy.log
+
+# Sandplanet Marine local dev instance (backend-marine on :8001)
+backend/db.marine.sqlite3
+backend/media-marine/
+.env.marine

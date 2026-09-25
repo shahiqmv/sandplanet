@@ -109,12 +109,15 @@ def file_url(kind):
 def public_dict(request=None):
     """What the apps load before anyone signs in: name, colours, marks,
     features and the sister-app switcher."""
+    from django.conf import settings
     b = brand()
+    prefix = (getattr(settings, "FORCE_SCRIPT_NAME", "") or "").rstrip("/")
     apps = list(b["apps"])
     if b["features"]["trading"]:
         apps.insert(0, {"key": "trading", "name": f"{b['brand_name'].title()} Trading",
-                        "url": "/t/"})
-    apps.insert(0, {"key": "planet", "name": f"{b['brand_name'].title()} Projects", "url": "/"})
+                        "url": f"{prefix}/t/"})
+    apps.insert(0, {"key": "planet", "name": f"{b['brand_name'].title()} Projects",
+                    "url": f"{prefix}/"})
     return {
         "name": b["brand_name"], "tagline": b["brand_tagline"],
         "short_code": b["brand_short_code"],

@@ -42,7 +42,10 @@ urlpatterns = [
 ]
 
 if settings.DEBUG:  # local-disk media fallback only (DECISIONS.md D3)
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # The route is the path Django receives: a sister instance's prefix is
+    # stripped by the proxy before it gets here (MEDIA_URL still carries it
+    # for the links the app builds).
+    urlpatterns += static("media/", document_root=settings.MEDIA_ROOT)
 
 # Planet Mobile PWA shell (frontend/dist/m.html) + its manifest / service
 # worker. Deep-link paths like /m/track/<ref> also render the shell; the app

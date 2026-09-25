@@ -25,6 +25,11 @@ export default defineConfig(({ mode }) => ({
   server: {
     port: 5173,
     proxy: {
+      // The Marine instance in dev: a second backend on 8001 with its own
+      // database, reached under the same /marine/ prefix as production
+      // (Caddy strips it there; the proxy strips it here).
+      "/marine/api": { target: "http://127.0.0.1:8001", rewrite: (p) => p.replace(/^\/marine/, "") },
+      "/marine/media": { target: "http://127.0.0.1:8001", rewrite: (p) => p.replace(/^\/marine/, "") },
       "/api": "http://127.0.0.1:8000",
       "/admin": "http://127.0.0.1:8000",
       "/media": "http://127.0.0.1:8000",

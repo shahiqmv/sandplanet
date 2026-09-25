@@ -20,7 +20,9 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 
 // Register the service worker (app-shell cache + push). Served by Django at
 // /m/sw.js with Service-Worker-Allowed:/m/ so its scope covers the app.
-if ("serviceWorker" in navigator) {
+// Not under a sister instance's path prefix: that worker would be the main
+// instance's and would push the wrong company's approvals.
+if ("serviceWorker" in navigator && !/^\/marine(\/|$)/.test(window.location.pathname)) {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/m/sw.js", { scope: "/m/" })

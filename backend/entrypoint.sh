@@ -16,7 +16,7 @@ python manage.py collectstatic --noinput
 # First-deploy seed (sites, worker categories, company params, admin user) —
 # idempotent; enable once with RUN_SEED=1, then leave it off.
 if [ "${RUN_SEED:-0}" = "1" ]; then
-  python manage.py seed
+  python manage.py "${SEED_COMMAND:-seed}"
 fi
 
 exec gunicorn config.wsgi:application \
