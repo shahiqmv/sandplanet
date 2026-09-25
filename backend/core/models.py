@@ -5298,6 +5298,10 @@ class RentalAgreement(models.Model):
     customer_po = models.TextField(blank=True)
     payment_terms = models.TextField(blank=True)
     extra_terms = models.TextField(blank=True)                          # one per line
+    # The long-form agreement: the company's standard clauses copied here at
+    # creation, each {heading, text}, edited per agreement while a draft so
+    # what does not apply is struck out (owner 2026-09-25).
+    clauses = models.JSONField(default=list, blank=True)
     notes = models.TextField(blank=True)
     pdf = models.FileField(upload_to=agreement_path, null=True, blank=True)
     signed_copy = models.FileField(upload_to=agreement_path, null=True, blank=True)

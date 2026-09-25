@@ -31,6 +31,65 @@ STANDARD_TERMS = {
 }
 
 
+# The long-form hire agreement's standard clauses. Company parameter
+# `rental_clauses` overrides them; every agreement takes a copy the user
+# edits — strike what does not apply, add what the job needs.
+STANDARD_CLAUSES = [
+    {"heading": "Definitions",
+     "text": "\"Owner\" is the company named above; \"Hirer\" is the customer named above; \"Equipment\" is each vehicle or machine listed in the schedule with its attachments and, where stated, its operator; \"Hire Period\" runs from the start date to the end date, or until off-hire is given under these clauses; \"Register\" is the daily hire register kept at the site; \"Rates\" are the daily rates in the schedule."},
+    {"heading": "Hire period",
+     "text": "The Hire Period begins on the start date whether or not the Hirer puts the Equipment to work. An open-ended hire continues until either party gives seven days' written notice of off-hire. Equipment is on hire, and chargeable, on every calendar day of the Hire Period other than a breakdown day or an off-hire day recorded in the Register."},
+    {"heading": "Rates and what they cover",
+     "text": "The Rates are per calendar day on hire, for a working day of up to ten hours. Standby days at the Hirer's site are charged at the full daily rate. Where the schedule says the operator is included, the operator's wages, accommodation and meals are the Owner's; otherwise the operator is charged at the operator rate per day. Fuel, lubricants and consumables are the Hirer's unless the schedule says the rate is with fuel. Rates exclude GST, which is charged at the prevailing rate."},
+    {"heading": "The daily register",
+     "text": "The Owner's operator records each day's status and hours in the Register. The Hirer's representative named in this agreement approves the Register at the site, in the Owner's application or by signing the paper register, at least weekly. Approved days are final and are invoiced at the Rates. A day not disputed in writing within seven days of the entry is taken as approved."},
+    {"heading": "Mobilisation and demobilisation",
+     "text": "The mobilisation and demobilisation charges in the schedule cover transport of the Equipment to and from the Hirer's site by the agreed means. The Hirer provides a safe landing, a level standing area, access and any permits the site requires. Delay at the site caused by the Hirer's failure to provide these is a standby day."},
+    {"heading": "Hirer's obligations",
+     "text": "The Hirer shall use the Equipment only for the purpose stated, within its rated capacity and on ground fit for it; provide site security and secure storage overnight; not move the Equipment from the site, sub-hire it or let any person other than the Owner's operator drive or operate it; keep the Equipment accessible for inspection and servicing; and comply with all laws and site safety rules."},
+    {"heading": "Maintenance and breakdown",
+     "text": "The Owner maintains the Equipment in working order and carries out scheduled servicing, arranging it around the Hirer's programme where practicable. A breakdown not caused by the Hirer is not charged from the time it is reported until the Equipment is working again; the Owner will repair or replace with equivalent Equipment as soon as practicable. A breakdown or damage caused by the Hirer's misuse, overloading, unsafe ground or want of care is the Hirer's cost, and standby is charged while it is repaired."},
+    {"heading": "Damage, loss and return",
+     "text": "Risk in the Equipment passes to the Hirer on delivery to the site and returns to the Owner on off-hire. The Hirer is liable for loss of, or damage to, the Equipment at the site beyond fair wear and tear, up to its replacement value, and for the Rates while it is out of service for repair. The Equipment is returned clean and in the condition delivered."},
+    {"heading": "Insurance",
+     "text": "The Owner insures the Equipment for third-party liability as required by law. The Hirer insures its own works, materials and personnel, and indemnifies the Owner against claims arising from the Hirer's use of the Equipment or the condition of the site, except to the extent caused by the Owner's negligence."},
+    {"heading": "Safety and compliance",
+     "text": "The Owner's operator works under the Hirer's site supervision but may refuse any instruction that is unsafe or outside the Equipment's capacity. The Hirer provides the site induction, personal protective equipment for the operator where the site requires it, and a competent banksman for lifting and reversing operations. Either party may stop work where there is a danger to persons or property."},
+    {"heading": "Invoicing and payment",
+     "text": "Invoices are raised from the approved Register under the billing cycle in this agreement, plus mobilisation, demobilisation and any agreed charges. Payment is due within the credit period stated, without set-off. The security deposit, if any, is held against damage and unpaid charges and returned within fourteen days of off-hire less any amounts due. The Owner may suspend the hire or take the Equipment off hire where an invoice is more than fourteen days overdue, with standby charged until it is settled."},
+    {"heading": "Termination",
+     "text": "Either party may terminate on seven days' written notice. The Owner may terminate immediately if the Hirer breaches these clauses and does not remedy the breach within three days of notice, becomes insolvent, or uses the Equipment unlawfully or unsafely. On termination the Hirer pays for the days on hire, the demobilisation charge and any damage."},
+    {"heading": "Force majeure",
+     "text": "Neither party is liable for delay or failure caused by events beyond its reasonable control, including severe weather, sea conditions preventing transport, government action or epidemic. Equipment stranded at the site by such an event is on standby at half the daily rate until it can be moved."},
+    {"heading": "Governing law and disputes",
+     "text": "This agreement is governed by the laws of the Republic of Maldives. The parties first try to settle any dispute by discussion between their managers within fourteen days; failing that, either party may refer it to the courts of the Maldives."},
+    {"heading": "Entire agreement",
+     "text": "This agreement, its schedule and the approved Register are the whole agreement between the parties for this hire and replace any earlier quotation or correspondence. A change is binding only if made in writing and signed by both parties."},
+]
+
+
+def standard_clauses():
+    v = _param("rental_clauses", None)
+    return [dict(c) for c in v] if isinstance(v, list) and v else [dict(c) for c in STANDARD_CLAUSES]
+
+
+def clean_clauses(rows):
+    """[{heading, text}] with blanks dropped; None if the shape is wrong."""
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            return None
+        h, t = (r.get("heading") or "").strip(), (r.get("text") or "").strip()
+        if not h and not t:
+            continue
+        if not h or not t:
+            return None
+        out.append({"heading": h[:80], "text": t})
+    return out
+
+
 def _param(key, default):
     from .models import CompanyParameter
     try:
@@ -40,7 +99,8 @@ def _param(key, default):
 
 
 def standard_terms():
-    return {k: _param(key, default) for k, (key, default) in STANDARD_TERMS.items()}
+    return {**{k: _param(key, default) for k, (key, default) in STANDARD_TERMS.items()},
+            "clauses": standard_clauses()}
 
 
 def set_standard_terms(data, actor):
@@ -53,6 +113,13 @@ def set_standard_terms(data, actor):
             CompanyParameter.objects.update_or_create(
                 key=key, defaults={"value": (data[k] or "").strip(),
                                    "description": f"Rental agreement standard line — {k}"})
+    if "clauses" in data:
+        rows = clean_clauses(data["clauses"])
+        if rows is None:
+            return "Each clause needs a heading and its text."
+        CompanyParameter.objects.update_or_create(
+            key="rental_clauses", defaults={"value": rows,
+                                            "description": "Rental agreement — standard clauses"})
     audit(ENTITY, 0, "RENTAL_TERMS_SET", actor=actor, detail={"fields": [k for k in data if k in STANDARD_TERMS]})
     return None
 
@@ -111,6 +178,12 @@ def _apply(a, data, errors):
                 errors[k] = "Enter a valid amount."
             else:
                 setattr(a, k, d)
+    if "clauses" in data:
+        rows = clean_clauses(data["clauses"])
+        if rows is None:
+            errors["clauses"] = "Each clause needs a heading and its text."
+        else:
+            a.clauses = rows
 
 
 def create_agreement(data, actor):
@@ -120,7 +193,8 @@ def create_agreement(data, actor):
     st = standard_terms()
     a = RentalAgreement(customer=customer, created_by=actor,
                         currency=customer.default_currency or "MVR",
-                        payment_terms=st["payment_terms"], extra_terms=st["extra_terms"])
+                        payment_terms=st["payment_terms"], extra_terms=st["extra_terms"],
+                        clauses=st["clauses"])
     errors = {}
     _apply(a, data, errors)
     if errors:
@@ -302,6 +376,7 @@ def agreement_context(a, draft=False):
         "mob_f": _money(a.mobilisation_charge) if a.mobilisation_charge else None,
         "demob_f": _money(a.demobilisation_charge) if a.demobilisation_charge else None,
         "extra": [t.strip() for t in (a.extra_terms or "").splitlines() if t.strip()],
+        "clauses": a.clauses or [],
         "signer": ({"name": a.activated_by.full_name} if a.activated_by_id else None),
         "date": a.activated_at or a.created_at,
     }
@@ -532,6 +607,7 @@ def agreement_dict(a, user=None, full=False):
             "deposit": _s(a.deposit), "mobilisation_charge": _s(a.mobilisation_charge),
             "demobilisation_charge": _s(a.demobilisation_charge),
             "payment_terms": a.payment_terms, "extra_terms": a.extra_terms, "notes": a.notes,
+            "clauses": a.clauses or [],
             "signed_copy": a.signed_copy.url if a.signed_copy else None,
             "activated_at": a.activated_at,
             "activated_by": a.activated_by.full_name if a.activated_by_id else None,

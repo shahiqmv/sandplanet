@@ -648,3 +648,29 @@ class DirectorAccessTests(RentalBase):
         self.assertEqual(self.activate(a)["status"], "ACTIVE")       # activates
         self.assertEqual(self.client.get("/api/v1/fleet/receivables").data["can_receipt"], True)
         self.assertTrue(self.client.get(f"/api/v1/fleet/vehicles/{self.ex.id}/costs").data["can_raise"])
+
+
+class ClauseTests(RentalBase):
+    def test_the_long_form_agreement_takes_the_standard_clauses_and_each_copy_is_edited(self):
+        a = self.agreement()
+        self.assertEqual(len(a["clauses"]), 15)
+        self.assertEqual(a["clauses"][0]["heading"], "Definitions")
+        # strike what does not apply, add one; the standard set is untouched
+        kept = [c for c in a["clauses"] if c["heading"] not in ("Force majeure", "Insurance")]
+        kept.append({"heading": "Night work", "text": "Night shifts are charged at 1.5 × the daily rate."})
+        r = self.client.patch(f"/api/v1/fleet/agreements/{a['id']}", {"clauses": kept}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(r.data["clauses"]), 14)
+        self.assertEqual(r.data["clauses"][-1]["heading"], "Night work")
+        self.assertEqual(len(self.client.get("/api/v1/fleet/terms").data["clauses"]), 15)
+        r = self.client.patch(f"/api/v1/fleet/agreements/{a['id']}", {"clauses": [{"heading": "x"}]}, format="json")
+        self.assertEqual(r.status_code, 400)
+        ctx = rental.agreement_context(RentalAgreement.objects.get(id=a["id"]))
+        self.assertEqual(len(ctx["clauses"]), 14)
+        self.assertEqual(self.client.get(f"/api/v1/fleet/agreements/{a['id']}/pdf").status_code, 200)
+        # the manager rewrites the company's standard set; new agreements take it
+        r = self.client.put("/api/v1/fleet/terms", {"clauses": kept[:3]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(len(self.agreement(title="Second")["clauses"]), 3)
+        self.login(self.rental)
+        self.assertEqual(self.client.put("/api/v1/fleet/terms", {"clauses": kept[:1]}, format="json").status_code, 403)

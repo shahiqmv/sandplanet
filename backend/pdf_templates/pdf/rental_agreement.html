@@ -36,7 +36,12 @@
   .terms { margin-top: 5mm; font-size: 9.5pt; color: #33424d; line-height: 1.55; }
   .terms h3 { font-size: 9pt; text-transform: uppercase; letter-spacing: .07em; color: #61707C; margin: 4mm 0 1.5mm; }
   .terms ol { margin: 0; padding-left: 5mm; }
-  .sign { width: 100%; margin-top: 14mm; border-collapse: collapse; }
+  .clauses { margin-top: 6mm; page-break-before: always; }
+  .clauses h2 { font-size: 13pt; color: {% brand "heading" %}; margin: 0 0 3mm; letter-spacing: .3px; }
+  .clause { margin-bottom: 2.6mm; page-break-inside: avoid; }
+  .clause .ch { font-weight: 700; font-size: 9.5pt; color: {% brand "heading" %}; }
+  .clause .ct { font-size: 9pt; color: #33424d; line-height: 1.5; text-align: justify; white-space: pre-line; }
+  .sign { width: 100%; margin-top: 14mm; border-collapse: collapse; page-break-inside: avoid; }
   .sign td { border: none; width: 50%; vertical-align: bottom; padding: 0 6mm; }
   .sign .line { border-top: 0.8px solid #1c2b36; padding-top: 2mm; font-size: 9pt; color: #43535f; }
   .sign .who { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
@@ -105,12 +110,24 @@
 <div class="terms">
   <h3>Payment</h3>
   <div>{{ a.payment_terms|default:"As agreed." }}</div>
-  <h3>Conditions of hire</h3>
-  <ol>
-    <li>Days on hire are recorded in the daily register kept by the Owner's operator and approved by the Hirer's representative at the site; approved days are invoiced at the rates above.</li>
-    {% for t in extra %}<li>{{ t }}</li>{% endfor %}
-  </ol>
+  {% if extra %}
+  <h3>Special conditions of this hire</h3>
+  <ol>{% for t in extra %}<li>{{ t }}</li>{% endfor %}</ol>
+  {% endif %}
 </div>
+
+{% if clauses %}
+<div class="clauses">
+  <h2>Terms and conditions of hire</h2>
+  {% for c in clauses %}
+    <div class="clause">
+      <div class="ch">{{ forloop.counter }}. {{ c.heading }}</div>
+      <div class="ct">{{ c.text }}</div>
+    </div>
+  {% endfor %}
+  <p style="margin-top:3mm; font-size:9pt; color:#33424d; line-height:1.5">Signed for and on behalf of the parties below; the special conditions above prevail over these clauses where they differ.</p>
+</div>
+{% endif %}
 
 <table class="sign"><tr>
   <td><div class="line">For {{ co.legal_name }}{% if signer %} — {{ signer.name }}{% endif %}</div><div class="who">The Owner — name, signature, date</div></td>

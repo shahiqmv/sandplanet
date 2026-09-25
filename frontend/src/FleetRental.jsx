@@ -74,16 +74,76 @@ function CustomerPicker({ value, onChange }) {
   );
 }
 
+// ---- clauses: the long-form agreement's terms, edited per agreement -------------
+export function ClauseEditor({ value, onChange, disabled, note }) {
+  const rows = value || [];
+  const upd = (i, patch) => onChange(rows.map((c, j) => (j === i ? { ...c, ...patch } : c)));
+  const move = (i, d) => { const r = [...rows]; const [c] = r.splice(i, 1); r.splice(i + d, 0, c); onChange(r); };
+  return (
+    <div style={{ gridColumn: "1 / -1", marginBottom: 10 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 13, opacity: .8 }}>Terms and conditions — {rows.length} clause{rows.length === 1 ? "" : "s"}</span>
+        <span style={{ fontSize: 12, opacity: .7 }}>{note}</span>
+      </div>
+      {rows.map((c, i) => (
+        <div key={i} style={{ display: "grid", gridTemplateColumns: "220px 1fr auto", gap: 8, alignItems: "start", marginTop: 8, padding: 8, background: "var(--paper)", border: "1px solid var(--line)", borderRadius: 6 }}>
+          <div>
+            <div style={{ fontSize: 11, opacity: .6 }}>{i + 1}.</div>
+            <input style={{ ...inputStyle, fontWeight: 600 }} value={c.heading} disabled={disabled} placeholder="heading" onChange={(e) => upd(i, { heading: e.target.value })} />
+          </div>
+          <textarea style={{ ...inputStyle, minHeight: 64, fontSize: 12.5 }} value={c.text} disabled={disabled} placeholder="clause text" onChange={(e) => upd(i, { text: e.target.value })} />
+          {!disabled && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <button type="button" title="move up" style={{ ...inputStyle, padding: "2px 6px", cursor: "pointer" }} disabled={i === 0} onClick={() => move(i, -1)}>↑</button>
+              <button type="button" title="move down" style={{ ...inputStyle, padding: "2px 6px", cursor: "pointer" }} disabled={i === rows.length - 1} onClick={() => move(i, 1)}>↓</button>
+              <button type="button" title="remove — not applicable to this hire" style={{ ...inputStyle, padding: "2px 6px", cursor: "pointer", color: "var(--red-fg)" }} onClick={() => onChange(rows.filter((_, j) => j !== i))}>×</button>
+            </div>
+          )}
+        </div>
+      ))}
+      {!disabled && <Btn type="button" variant="ghost" style={{ marginTop: 8 }} onClick={() => onChange([...rows, { heading: "", text: "" }])}>+ add a clause</Btn>}
+    </div>
+  );
+}
+
+// The company's standard clauses and lines, kept by the Rental Manager.
+function StandardTermsEditor({ onClose }) {
+  const [t, setT] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  useEffect(() => { api("/fleet/terms").then(setT).catch((e) => setError(e.message)); }, []);
+  async function save() {
+    setBusy(true); setError(null);
+    try { setT(await api("/fleet/terms", { method: "PUT", body: { payment_terms: t.payment_terms, extra_terms: t.extra_terms, clauses: t.clauses } })); onClose(); }
+    catch (e) { setError(e.message); } finally { setBusy(false); }
+  }
+  if (!t) return error ? <p style={{ color: "var(--red-fg)" }}>{error}</p> : <p>Loading…</p>;
+  return (
+    <div style={{ ...card, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Standard terms for new agreements</h3>
+      <p style={{ fontSize: 13, opacity: .75, marginTop: 0 }}>Every new agreement starts from these. Agreements already raised keep their own copy.</p>
+      <Field label="Payment terms (one line)"><input style={inputStyle} value={t.payment_terms} disabled={!t.can_edit} onChange={(e) => setT({ ...t, payment_terms: e.target.value })} /></Field>
+      <Field label="Special conditions offered by default — one per line"><textarea style={{ ...inputStyle, minHeight: 70 }} value={t.extra_terms} disabled={!t.can_edit} onChange={(e) => setT({ ...t, extra_terms: e.target.value })} /></Field>
+      <ClauseEditor value={t.clauses} onChange={(v) => setT({ ...t, clauses: v })} disabled={!t.can_edit} note="The long-form clauses printed on every agreement." />
+      {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
+      <div style={{ display: "flex", gap: 8 }}>
+        {t.can_edit && <Btn onClick={save} disabled={busy}>{busy ? "Saving…" : "Save standard terms"}</Btn>}
+        <Btn variant="secondary" onClick={onClose}>Close</Btn>
+      </div>
+    </div>
+  );
+}
+
 // ---- agreement form --------------------------------------------------------------
 const EMPTY = { customer: "", title: "", site_location: "", start_date: "", end_date: "", billing_cycle: "MONTHLY",
                 currency: "MVR", deposit: "", mobilisation_charge: "", demobilisation_charge: "", customer_rep: "",
-                customer_rep_phone: "", customer_po: "", payment_terms: "", extra_terms: "", notes: "" };
+                customer_rep_phone: "", customer_po: "", payment_terms: "", extra_terms: "", notes: "", clauses: [] };
 
 function AgreementForm({ initial, onSaved, onCancel }) {
   const [d, setD] = useState({ ...EMPTY, ...(initial || {}) });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
-  useEffect(() => { if (!initial) api("/fleet/terms").then((t) => setD((x) => ({ ...x, payment_terms: t.payment_terms, extra_terms: t.extra_terms }))).catch(() => {}); }, [initial]);
+  useEffect(() => { if (!initial) api("/fleet/terms").then((t) => setD((x) => ({ ...x, payment_terms: t.payment_terms, extra_terms: t.extra_terms, clauses: t.clauses }))).catch(() => {}); }, [initial]);
   const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
   const active = initial?.status === "ACTIVE";
   async function save(e) {
@@ -124,7 +184,9 @@ function AgreementForm({ initial, onSaved, onCancel }) {
         <Field label="Mobilisation charge"><input style={inputStyle} type="number" min="0" step="0.01" value={d.mobilisation_charge ?? ""} onChange={set("mobilisation_charge")} disabled={active} /></Field>
         <Field label="Demobilisation charge"><input style={inputStyle} type="number" min="0" step="0.01" value={d.demobilisation_charge ?? ""} onChange={set("demobilisation_charge")} disabled={active} /></Field>
         <Field label="Payment terms" wide><input style={inputStyle} value={d.payment_terms} onChange={set("payment_terms")} disabled={active} /></Field>
-        <Field label="Conditions of hire — one per line" wide><textarea style={{ ...inputStyle, minHeight: 90 }} value={d.extra_terms} onChange={set("extra_terms")} disabled={active} /></Field>
+        <Field label="Special conditions of this hire — one per line; these prevail over the clauses" wide><textarea style={{ ...inputStyle, minHeight: 70 }} value={d.extra_terms} onChange={set("extra_terms")} disabled={active} /></Field>
+        <ClauseEditor value={d.clauses} onChange={(v) => setD({ ...d, clauses: v })} disabled={active}
+                      note={active ? "Locked once the agreement is active." : "Strike out (×) what does not apply to this hire, edit the wording, or add a clause."} />
         <Field label="Notes (internal)" wide><textarea style={{ ...inputStyle, minHeight: 50 }} value={d.notes} onChange={set("notes")} /></Field>
       </div>
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
@@ -370,6 +432,7 @@ export default function AgreementsPanel({ initialOpen = null, onOpened }) {
   const [status, setStatus] = useState("open");
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
+  const [terms, setTerms] = useState(false);
   const [open, setOpen] = useState(initialOpen);
   useEffect(() => { if (initialOpen) { setOpen(initialOpen); onOpened?.(); } }, [initialOpen, onOpened]);
   const [canWrite, setCanWrite] = useState(false);
@@ -391,8 +454,10 @@ export default function AgreementsPanel({ initialOpen = null, onOpened }) {
             <option value="COMPLETED">Completed</option><option value="TERMINATED">Terminated</option><option value="">All</option>
           </select>
           {canWrite && !creating && <Btn onClick={() => setCreating(true)}>+ New agreement</Btn>}
+          {canWrite && !terms && <Btn variant="secondary" onClick={() => setTerms(true)}>Standard terms</Btn>}
         </div>
       </div>
+      {terms && <div style={{ marginTop: 12 }}><StandardTermsEditor onClose={() => setTerms(false)} /></div>}
       {creating && <AgreementForm onSaved={(a) => { setCreating(false); setOpen(a.id); }} onCancel={() => setCreating(false)} />}
       {rows === null ? <p>Loading…</p> : rows.length === 0 ? <p style={{ opacity: .7, marginTop: 12 }}>No agreements{status ? " in this state" : ""}. A hire agreement puts vehicles on hire with a customer; the daily register runs under it.</p> : (
         <table style={{ width: "100%", borderCollapse: "collapse", background: "var(--paper)", border: "1px solid var(--line)", borderRadius: 8, marginTop: 12 }}>

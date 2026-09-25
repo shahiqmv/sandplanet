@@ -318,6 +318,18 @@ Each phase ships and stops for the owner's review.
    and warns when the TIN is missing, and the agreement (screen and PDF)
    carries the customer's full block (`rental.customer_info`).
 
+   **Long-form agreement** (owner 2026-09-25): fifteen standard clauses
+   (`rental.STANDARD_CLAUSES`: definitions, hire period, rates, the daily
+   register, mobilisation, hirer's obligations, maintenance and breakdown,
+   damage and loss, insurance, safety, invoicing and payment, termination,
+   force majeure, governing law, entire agreement), overridable company-wide
+   in parameter `rental_clauses` (Standard terms editor on the Hire
+   agreements tab, Rental Manager); every agreement takes a copy in
+   `RentalAgreement.clauses` (mig 0256) that the user edits while a draft —
+   strike what does not apply, reword, add, reorder — locked on activation;
+   the PDF prints them numbered on a page of their own after the schedule,
+   with the agreement's special conditions prevailing.
+
 ## 7. Inputs — settled and open
 
 Settled (2026-09-25): brand and company details (`SANDPLANET_MARINE_BRAND.md`);
