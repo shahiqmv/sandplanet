@@ -27,8 +27,8 @@ export function CustomerForm({ initial, onSaved, onCancel, compact }) {
   function fromClient(siteId) {
     const c = clients.find((x) => String(x.site) === String(siteId));
     if (!c) { setD({ ...d, project_client: "" }); return; }
-    setD({ ...d, project_client: c.site, name: d.name || c.name, tin: d.tin || c.tin, billing_address: d.billing_address || c.billing_address,
-           contact_person: d.contact_person || c.contact_person, phone: d.phone || c.phone, email: d.email || c.email });
+    setD({ ...d, project_client: c.site, name: c.name, tin: c.tin, billing_address: c.billing_address,
+           contact_person: c.contact_person, phone: c.phone, email: c.email });
   }
   async function save(e) {
     e.preventDefault(); setBusy(true); setError(null);
@@ -45,16 +45,16 @@ export function CustomerForm({ initial, onSaved, onCancel, compact }) {
             <option value="">— not a project client / not linked —</option>
             {clients.map((c) => <option key={c.site} value={c.site} disabled={!!c.customer && c.customer !== initial?.id}>{c.code} · {c.name}{c.customer && c.customer !== initial?.id ? " (already a customer)" : ""}</option>)}
           </select>
-          <span style={{ fontSize: 11, opacity: .65 }}>Picking a site copies its client's name, address, TIN and contact into the blanks below.</span>
+          <span style={{ fontSize: 11, opacity: .65 }}>{d.project_client ? "Linked: the name, address, TIN, contact, phone and email are the site's client block and follow it — change them on the site." : "Picking a site takes its client's name, address, TIN and contact — one record, kept in step with the site."}</span>
         </Field>
-        <Field label="Customer name" wide><input style={inputStyle} value={d.name} onChange={set("name")} required /></Field>
-        <Field label="GST TIN"><input style={inputStyle} value={d.tin} onChange={set("tin")} placeholder="printed on the tax invoice" /></Field>
+        <Field label="Customer name" wide><input style={inputStyle} value={d.name} onChange={set("name")} readOnly={!!d.project_client} required /></Field>
+        <Field label="GST TIN"><input style={inputStyle} value={d.tin} onChange={set("tin")} readOnly={!!d.project_client} placeholder="printed on the tax invoice" /></Field>
         <Field label="Business registration no."><input style={inputStyle} value={d.business_reg_no} onChange={set("business_reg_no")} /></Field>
-        <Field label="Billing address" wide><textarea style={{ ...inputStyle, minHeight: 56 }} value={d.billing_address} onChange={set("billing_address")} /></Field>
+        <Field label="Billing address" wide><textarea style={{ ...inputStyle, minHeight: 56 }} value={d.billing_address} onChange={set("billing_address")} readOnly={!!d.project_client} /></Field>
         <Field label="Island / location"><input style={inputStyle} value={d.island} onChange={set("island")} /></Field>
-        <Field label="Contact person"><input style={inputStyle} value={d.contact_person} onChange={set("contact_person")} /></Field>
-        <Field label="Phone"><input style={inputStyle} value={d.phone} onChange={set("phone")} /></Field>
-        <Field label="Email"><input style={inputStyle} type="email" value={d.email} onChange={set("email")} /></Field>
+        <Field label="Contact person"><input style={inputStyle} value={d.contact_person} onChange={set("contact_person")} readOnly={!!d.project_client} /></Field>
+        <Field label="Phone"><input style={inputStyle} value={d.phone} onChange={set("phone")} readOnly={!!d.project_client} /></Field>
+        <Field label="Email"><input style={inputStyle} type="email" value={d.email} onChange={set("email")} readOnly={!!d.project_client} /></Field>
         <Field label="Billing currency"><select style={inputStyle} value={d.default_currency} onChange={set("default_currency")}><option value="MVR">MVR</option><option value="USD">USD</option></select></Field>
         <Field label="Credit days"><input style={inputStyle} type="number" min="0" value={d.credit_days} onChange={set("credit_days")} placeholder="blank = pay on invoice" /></Field>
         <Field label="Notes" wide><textarea style={{ ...inputStyle, minHeight: 44 }} value={d.notes} onChange={set("notes")} /></Field>

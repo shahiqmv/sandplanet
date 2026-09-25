@@ -610,3 +610,25 @@ class CustomerRecordTests(RentalBase):
         self.assertEqual(info["credit_days"], 30)
         ctx = rental.agreement_context(RentalAgreement.objects.get(id=a["id"]))
         self.assertEqual(ctx["customer"]["tin"], "1100200GST001")
+
+    def test_an_existing_client_becomes_the_hirer_without_retyping_and_follows_the_site(self):
+        from .models import Site
+        site = Site.objects.create(code="HRB", name="Harbour job", status=Site.Status.ACTIVE,
+                                   client_name="Reef Constructions Pvt Ltd", client_tin="1100200GST001",
+                                   client_address="Boduthakurufaanu Magu, Malé", client_contact="Ahmed",
+                                   client_phone="3300000", client_email="ahmed@reef.mv")
+        self.login(self.rental)
+        r = self.client.post("/api/v1/fleet/customers", {"from_site": site.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual((r.data["name"], r.data["tin"], r.data["billing_address"], r.data["email"]),
+                         ("Reef Constructions Pvt Ltd", "1100200GST001", "Boduthakurufaanu Magu, Malé", "ahmed@reef.mv"))
+        cid = r.data["id"]
+        r = self.client.post("/api/v1/fleet/customers", {"from_site": site.id}, format="json")
+        self.assertEqual((r.status_code, r.data["id"]), (200, cid))         # one record, not two
+        site.client_tin = "1100200GST999"
+        site.client_address = "New address"
+        site.save()
+        c = Customer.objects.get(id=cid)
+        self.assertEqual((c.tin, c.billing_address), ("1100200GST999", "New address"))
+        blank = Site.objects.create(code="NOC", name="No client", status=Site.Status.ACTIVE)
+        self.assertEqual(self.client.post("/api/v1/fleet/customers", {"from_site": blank.id}, format="json").status_code, 400)

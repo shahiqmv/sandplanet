@@ -155,6 +155,16 @@ def customers(request):
     if request.method == "POST":
         if not fleet.can_write(request.user):
             return Response({"detail": "The Rental team keeps the customers."}, status=403)
+        if request.data.get("from_site"):
+            # An existing project client becomes the hirer in one step.
+            from .models import Site
+            site = Site.objects.filter(id=request.data["from_site"]).first()
+            if site is None:
+                return Response({"detail": "Unknown site."}, status=400)
+            c, created = rental.customer_from_client(site, request.user)
+            if c is None:
+                return Response({"detail": created}, status=400)
+            return Response(CustomerSerializer(c).data, status=201 if created else 200)
         ser = CustomerSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         c = ser.save(created_by=request.user)

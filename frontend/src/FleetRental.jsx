@@ -27,22 +27,41 @@ function Field({ label, children, wide }) {
 // ---- customers (the hirer; the record lives on the Customers tab) --------------
 function CustomerPicker({ value, onChange }) {
   const [list, setList] = useState([]);
+  const [clients, setClients] = useState([]);
   const [adding, setAdding] = useState(false);
-  const load = () => api("/fleet/customers").then(setList).catch(() => {});
+  const [error, setError] = useState(null);
+  const load = () => Promise.all([api("/fleet/customers").then(setList), api("/fleet/project-clients").then(setClients)]).catch(() => {});
   useEffect(() => { load(); }, []);
   const chosen = list.find((c) => String(c.id) === String(value));
+  // A project client who is not yet a customer: picking them makes the
+  // customer record from the site's client block — nothing typed twice.
+  async function pick(v) {
+    setError(null);
+    if (!v.startsWith("site:")) { onChange(v); return; }
+    try { const c = await api("/fleet/customers", { method: "POST", body: { from_site: Number(v.slice(5)) } }); await load(); onChange(String(c.id)); }
+    catch (e) { setError(e.message); }
+  }
+  const newClients = clients.filter((c) => !c.customer);
   return (
     <div>
       <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
         <Field label="Customer (the hirer)">
-          <select style={{ ...inputStyle, minWidth: 300 }} value={value} onChange={(e) => onChange(e.target.value)} required>
+          <select style={{ ...inputStyle, minWidth: 300 }} value={value} onChange={(e) => pick(e.target.value)} required>
             <option value="">— pick —</option>
-            {list.map((c) => <option key={c.id} value={c.id}>{c.name}{c.project_client_code ? ` · client at ${c.project_client_code}` : ""}</option>)}
+            <optgroup label="Customers">
+              {list.map((c) => <option key={c.id} value={c.id}>{c.name}{c.project_client_code ? ` · our client at ${c.project_client_code}` : ""}</option>)}
+            </optgroup>
+            {newClients.length > 0 && (
+              <optgroup label="Our project clients (not yet a customer — pick to use their record)">
+                {newClients.map((c) => <option key={c.site} value={`site:${c.site}`}>{c.name} · {c.code}</option>)}
+              </optgroup>
+            )}
           </select>
         </Field>
         {!adding && <Btn type="button" variant="ghost" onClick={() => setAdding(true)} style={{ marginBottom: 10 }}>+ new customer</Btn>}
       </div>
       {adding && <CustomerForm compact onSaved={async (c) => { await load(); onChange(String(c.id)); setAdding(false); }} onCancel={() => setAdding(false)} />}
+      {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
       {chosen && (
         <div style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>
           <CustomerDetails c={{ address: chosen.billing_address, tin: chosen.tin, reg_no: chosen.business_reg_no, contact: chosen.contact_person,

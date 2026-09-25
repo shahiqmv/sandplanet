@@ -306,7 +306,13 @@ Each phase ships and stops for the owner's review.
    block); the same company is often both, so `Customer.project_client`
    names the site it is the client of, `/fleet/project-clients` lists the
    sites' clients to start a customer from (name, address, TIN, contact
-   copied), the Fleet page has a Customers tab with the full record (TIN,
+   copied); an existing client is picked straight from the agreement's
+   hirer list ("Our project clients") and `POST /fleet/customers
+   {from_site}` makes the linked customer from the site's client block in
+   one step — or returns the one already linked, so a client is never
+   duplicated; a linked customer's name, address, TIN, contact, phone and
+   email are read-only and follow the site (post_save on Site →
+   `rental.sync_client_customers`); the Fleet page has a Customers tab with the full record (TIN,
    reg no, billing address, contact, phone, email, currency, credit days,
    GST exemption), the agreement form shows the picked customer's details
    and warns when the TIN is missing, and the agreement (screen and PDF)

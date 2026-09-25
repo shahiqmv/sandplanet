@@ -307,6 +307,44 @@ def agreement_context(a, draft=False):
     }
 
 
+CLIENT_FIELDS = (("name", "client_name"), ("billing_address", "client_address"),
+                 ("tin", "client_tin"), ("contact_person", "client_contact"),
+                 ("phone", "client_phone"), ("email", "client_email"))
+
+
+def customer_from_client(site, actor):
+    """The customer record for a project client — the one already linked to
+    the site, or a new one taken from the site's client block. Nothing is
+    typed twice: the block on the site stays the source and the customer
+    follows it (sync_client_customers)."""
+    c = Customer.objects.filter(project_client=site, is_active=True).first()
+    if c is not None:
+        return c, False
+    if not (site.client_name or "").strip():
+        return None, "That site has no client on record yet — enter the client on the site first."
+    c = Customer(project_client=site, created_by=actor, default_currency="MVR")
+    for cf, sf in CLIENT_FIELDS:
+        setattr(c, cf, getattr(site, sf) or "")
+    c.save()
+    audit(ENTITY, 0, "CUSTOMER_FROM_CLIENT", actor=actor,
+          detail={"site": site.code, "customer": c.id, "name": c.name})
+    return c, True
+
+
+def sync_client_customers(site):
+    """Called when a site is saved: customers that are this site's client
+    take its client block (name, address, TIN, contact, phone, email)."""
+    for c in Customer.objects.filter(project_client=site):
+        changed = []
+        for cf, sf in CLIENT_FIELDS:
+            v = getattr(site, sf) or ""
+            if getattr(c, cf) != v:
+                setattr(c, cf, v)
+                changed.append(cf)
+        if changed:
+            c.save(update_fields=changed + ["updated_at"])
+
+
 def customer_info(c):
     """Everything the agreement and its invoices need to know about the
     hirer — the customer record in full, plus which project site they are
