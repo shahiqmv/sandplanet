@@ -528,7 +528,7 @@ def cost_heads(request):
     from .models import CostHead
 
     # Trading-book heads never reach a project picker (TRADING_BUILD_BRIEF §5).
-    qs = CostHead.objects.filter(is_active=True, trading=False)
+    qs = CostHead.objects.filter(is_active=True, trading=False, rental=False)
     if request.GET.get("pools") != "1":
         qs = qs.filter(is_pool=False)
     return Response([{"id": c.id, "name": c.name, "is_pool": c.is_pool}

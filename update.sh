@@ -127,6 +127,9 @@ ensure_crons() {
   add_cron "# planet-meeting-reminders" "*/15 * * * *" \
     "$C meeting_reminders >> /var/log/meeting_reminders.log 2>&1" \
     "meeting reminders"
+  add_cron "# planet-fleet-expiry" "40 6 * * *" \
+    "$C fleet_expiry >> /var/log/fleet_expiry.log 2>&1" \
+    "vehicle document expiry alerts (no-op without the rental module)"
 
   # The Marine instance gets the same clocks against its own database.
   if [ -f "$APP_DIR/.env.marine" ]; then
@@ -152,6 +155,9 @@ ensure_crons() {
     add_cron "# marine-meeting-reminders" "*/15 * * * *" \
       "$CM meeting_reminders >> /var/log/marine_clocks.log 2>&1" \
       "Marine meeting reminders"
+    add_cron "# marine-fleet-expiry" "45 6 * * *" \
+      "$CM fleet_expiry >> /var/log/marine_clocks.log 2>&1" \
+      "Marine vehicle document expiry alerts"
   fi
 }
 

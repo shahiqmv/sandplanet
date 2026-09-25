@@ -33,10 +33,17 @@ class User(AbstractUser):
         # never see trading. Finance, Signatory and Admin see both worlds.
         SALES = "SALES", "Sales — trading inquiries, quotes and orders"
         SALES_MANAGER = "SALES_MANAGER", "Sales Manager — authorises trading quotes and invoices"
+        # Heavy-vehicle rental (MARINE_BUILD_BRIEF.md §4): the fleet, the
+        # agreements, the daily register; the manager sets rates and issues.
+        RENTAL = "RENTAL", "Rental — fleet, agreements and the daily register"
+        RENTAL_MANAGER = "RENTAL_MANAGER", "Rental Manager — rates, agreements and invoices"
 
     # The trading app: who works in it, and who may read it from Finance.
     TRADING_ROLES = {"SALES", "SALES_MANAGER"}
     TRADING_READERS = TRADING_ROLES | {"FINANCE", "SIGNATORY", "ADMIN"}
+    # The rental module: who runs the fleet, and who may read it.
+    FLEET_ROLES = {"RENTAL", "RENTAL_MANAGER"}
+    FLEET_READERS = FLEET_ROLES | {"FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR"}
 
     # Roles with all-site read scope (spec §3 + R3; SIGNATORY at M6; QS sees
     # the whole project portfolio; PA reads across projects to support the PD)
@@ -5142,6 +5149,103 @@ class TradingReceiptLine(models.Model):
         ordering = ["id"]
 
 
+def vehicle_photo_path(instance, filename):
+    return f"fleet/{instance.reg_no or instance.id}/{filename}"
+
+
+def vehicle_doc_path(instance, filename):
+    return f"fleet/{instance.vehicle.reg_no or instance.vehicle_id}/docs/{filename}"
+
+
+class Vehicle(models.Model):
+    """A heavy vehicle in the rental fleet (MARINE_BUILD_BRIEF.md §4): its
+    rate card, and its cost centre — every running cost it causes posts
+    against it, so it earns and spends as one line of the fleet P&L."""
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE"
+        ON_HIRE = "ON_HIRE"
+        MAINTENANCE = "MAINTENANCE"
+        OFF_ROAD = "OFF_ROAD"
+        DISPOSED = "DISPOSED"
+
+    class FuelBasis(models.TextChoices):
+        WITH_FUEL = "WITH_FUEL", "Fuel included in the rate"
+        WITHOUT_FUEL = "WITHOUT_FUEL", "Customer supplies fuel"
+
+    reg_no = models.CharField(max_length=30, unique=True)          # registration / plate
+    fleet_no = models.CharField(max_length=20, blank=True)          # the company's own number
+    vehicle_class = models.CharField(max_length=60)                 # excavator, tipper, crane…
+    make = models.CharField(max_length=60, blank=True)
+    model = models.CharField(max_length=60, blank=True)
+    year = models.PositiveIntegerField(null=True, blank=True)
+    capacity = models.CharField(max_length=60, blank=True)          # 20 t, 1.2 m³ bucket…
+    engine_no = models.CharField(max_length=60, blank=True)
+    chassis_no = models.CharField(max_length=60, blank=True)
+    status = models.CharField(max_length=12, choices=Status.choices,
+                              default=Status.AVAILABLE)
+    photo = models.FileField(upload_to=vehicle_photo_path, null=True, blank=True)
+    # Rate card — what the vehicle earns. Daily is the billing basis (owner
+    # 2026-09-25); the others cover the odd job.
+    rate_currency = models.CharField(max_length=3, default="MVR")
+    rate_hourly = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    rate_daily = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    rate_weekly = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    rate_monthly = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    operator_included = models.BooleanField(default=True)
+    operator_rate_daily = models.DecimalField(max_digits=12, decimal_places=2,
+                                              null=True, blank=True)   # when not included
+    minimum_charge_days = models.PositiveIntegerField(default=1)
+    fuel_basis = models.CharField(max_length=12, choices=FuelBasis.choices,
+                                  default=FuelBasis.WITHOUT_FUEL)
+    # Cost centre identity: opening book value and the acquisition, for the
+    # fleet P&L; running costs arrive as postings against the vehicle.
+    purchase_date = models.DateField(null=True, blank=True)
+    purchase_cost = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    hour_meter = models.DecimalField(max_digits=10, decimal_places=1, null=True, blank=True)
+    default_operator = models.ForeignKey("Employee", on_delete=models.SET_NULL, null=True,
+                                         blank=True, related_name="+")
+    notes = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["fleet_no", "reg_no"]
+
+    def __str__(self):
+        return f"{self.fleet_no or self.reg_no} {self.vehicle_class}"
+
+
+class VehicleDocument(models.Model):
+    """Registration, insurance, roadworthiness, permits — with the expiry
+    the fleet is alerted on at 30 and 7 days and when overdue."""
+
+    class Kind(models.TextChoices):
+        REGISTRATION = "REGISTRATION", "Registration"
+        INSURANCE = "INSURANCE", "Insurance"
+        ROADWORTHINESS = "ROADWORTHINESS", "Roadworthiness"
+        PERMIT = "PERMIT", "Permit / licence"
+        OTHER = "OTHER", "Other"
+
+    vehicle = models.ForeignKey(Vehicle, on_delete=models.CASCADE, related_name="documents")
+    kind = models.CharField(max_length=15, choices=Kind.choices)
+    reference = models.CharField(max_length=80, blank=True)         # policy / cert number
+    issued_on = models.DateField(null=True, blank=True)
+    expires_on = models.DateField(null=True, blank=True)
+    file = models.FileField(upload_to=vehicle_doc_path, null=True, blank=True)
+    notes = models.TextField(blank=True)
+    alert_level = models.CharField(max_length=8, blank=True)         # last alert fired: 30 / 7 / OVERDUE
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["vehicle_id", "kind", "-expires_on"]
+
+
 class ManualInvoice(models.Model):
     """A client tax invoice recorded directly in Planet, NOT derived from a
     progress claim — so a mid-flight project can be tracked without rebuilding
@@ -5269,6 +5373,9 @@ class CostHead(models.Model):
     # never appears in a project picker or a project report; the trading arm
     # reaches for it by code (TRADING_BUILD_BRIEF.md §5).
     trading = models.BooleanField(default=False)
+    # A rental-book head (vehicle revenue, maintenance, fuel, operator
+    # wages, insurance): the fleet's, never a project's.
+    rental = models.BooleanField(default=False)
 
     class Meta:
         ordering = ["sort_order", "name"]
@@ -5303,6 +5410,7 @@ class CostPosting(models.Model):
     class Book(models.TextChoices):
         PROJECT = "PROJECT"
         TRADING = "TRADING"
+        RENTAL = "RENTAL"      # heavy-vehicle rental: vehicle cost centres
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="cost_postings")
@@ -5314,6 +5422,10 @@ class CostPosting(models.Model):
     # sales and GST live in TRADING and never reach a project figure.
     book = models.CharField(max_length=8, choices=Book.choices,
                             default=Book.PROJECT, db_index=True)
+    # The vehicle cost centre a RENTAL posting belongs to (maintenance,
+    # fuel, operator wages, insurance) — never set on a project posting.
+    vehicle = models.ForeignKey("Vehicle", on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="postings")
     state = models.CharField(max_length=10, choices=State.choices)
     source = models.CharField(max_length=12, choices=Source.choices)
     amount = models.DecimalField(max_digits=14, decimal_places=2)  # -ve = rev

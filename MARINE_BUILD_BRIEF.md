@@ -217,8 +217,23 @@ Each phase ships and stops for the owner's review.
    Company page add the sister app "Sandplanet Marine → /marine/"; on
    Marine's Company page enter the bank accounts and change the admin
    password; create the users.
-3. **Rental foundations** — RENTAL book, `Vehicle` + cost centre, rate card,
-   documents and expiry alerts, roles, fleet page.
+3. **Rental foundations** — DONE 2026-09-25. `CostPosting.book = RENTAL`
+   and `CostPosting.vehicle` (the cost centre); rental heads seeded
+   (RNT_REVENUE / MAINTENANCE / FUEL / OPERATOR / INSURANCE / OUTPUT_GST,
+   `CostHead.rental`, kept out of every project picker); roles `RENTAL`
+   and `RENTAL_MANAGER` (`User.FLEET_ROLES`; Finance, Signatory, Admin,
+   Director read); `Vehicle` (register, status, photo, rate card with the
+   daily rate as the billing basis, operator included or priced, fuel
+   basis, minimum charge, purchase cost, hour meter, default operator) and
+   `VehicleDocument` (registration / insurance / roadworthiness / permit
+   with expiry); `core/fleet.py` + `/api/v1/fleet/…` behind the `rental`
+   switch (404 when off); the `fleet_expiry` daily command (alerts at 30
+   and 7 days and overdue, once per level, to the Rental team and Admin;
+   cron installed for both stacks); the Fleet page in the main app (nav
+   group shown only with the switch on; Rental roles land on it) with the
+   register, summary tiles, the expiring-documents watch, the vehicle
+   detail with rate card and documents. Only the Rental Manager changes a
+   rate on the register; whoever adds a vehicle may type its first rate.
 4. **Agreements and hire logs** — `RentalAgreement` with PDF, hire log entry
    (desktop + mobile), customer approval.
 5. **Rental invoicing and money in** — invoice generation from logs, issue,

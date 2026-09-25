@@ -55,7 +55,7 @@ def _row(c, usage):
         "id": c.id, "code": c.code, "name": c.name,
         "sort_order": c.sort_order, "is_pool": c.is_pool,
         "overhead": c.overhead, "commercial": c.commercial,
-        "trading": c.trading,
+        "trading": c.trading, "rental": c.rental,
         "is_active": c.is_active, "is_system": c.is_system,
         "postings": used,
         # A head the code depends on stays; one that has carried money can be
@@ -96,6 +96,8 @@ def cost_head_list(request):
     qs = CostHead.objects.all()
     if request.GET.get("trading") != "1":
         qs = qs.filter(trading=False)
+    if request.GET.get("rental") != "1":
+        qs = qs.filter(rental=False)
     return Response([_row(c, usage) for c in qs])
 
 

@@ -55,6 +55,7 @@ import MeetingsPage from "./MeetingsPage.jsx";
 import CostControlPage from "./CostControlPage.jsx";
 import FinanceDashboard from "./FinanceDashboard.jsx";
 import CostHeadsPage from "./CostHeadsPage.jsx";
+import FleetPage from "./FleetPage.jsx";
 import ErrorBoundary from "./ErrorBoundary.jsx";
 import TendersPage from "./TendersPage.jsx";
 import ReceivablesPage from "./ReceivablesPage.jsx";
@@ -171,6 +172,11 @@ const NAV_GROUPS = [
            ["procurement-schedule", "Procurement Schedule",
             ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY", "QS", "ADMIN",
              "PA"]]] },
+  // The rental fleet (MARINE_BUILD_BRIEF.md §4) — shown only where the
+  // rental feature is on (a sister company); featureOn() filters it below.
+  { key: "fleet", label: "Fleet", feature: "rental",
+    roles: ["RENTAL", "RENTAL_MANAGER", "FINANCE", "SIGNATORY", "ADMIN", "DIRECTOR"],
+    subs: [["fleet", "Fleet", null]] },
   { key: "meetingsGrp", label: "Meetings",
     roles: ["DIRECTOR", "ADMIN", "PM", "SITE_ADMIN", "SITE_ENGINEER", "QS",
             "MARKETING", "HO_PURCHASING", "SIGNATORY", "PA"],
@@ -238,6 +244,7 @@ function visibleGroups(me) {
 }
 
 function landingPage(me) {
+  if (["RENTAL", "RENTAL_MANAGER"].includes(me.role)) return "fleet";
   if (me.role === "FINANCE") return "finance-dash";
   if (me.role === "SIGNATORY") return "vouchers";
   if (APPROVERS.includes(me.role)) return "approvals";
@@ -790,6 +797,7 @@ export default function App() {
                     || me.role === "SITE_ENGINEER");
   const groups = me.authenticated
     ? visibleGroups(me)
+        .filter((g) => !g.feature || featureOn(g.feature))
         .map((g) => ({ ...g, subs: (g.subs || []).filter(([k]) => k !== "profile" || featureOn("profile")) }))
         .filter((g) => g.subs.length > 0)
     : [];
@@ -1396,6 +1404,10 @@ export default function App() {
           )}
           {!docView && !openSite &&
             ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"].includes(me.role) &&
+            hoPage === "fleet" && (
+              <FleetPage />
+            )}
+          {!docView && !openSite &&
             hoPage === "cost-heads" && (
             <CostHeadsPage me={me} />
           )}

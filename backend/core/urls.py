@@ -17,7 +17,7 @@ from . import version as version_api, \
     views_notify as notify_api, \
     views_petty_cash as petty, views_projects as projects, \
     views_payroll as payroll_api, views_quotes as quotes, \
-    views_trading as trading_api, \
+    views_trading as trading_api, views_fleet as fleet_api, \
     views_stock as stock, views_subcontract as subcontract_api, \
     views_units as units_api, views_tools as tools_api, views_transfers as transfers_api, \
     views_tracking as tracking_api, views_vessels as vessels_api, \
@@ -996,6 +996,15 @@ urlpatterns = [
          name="trading-receipt"),
     path("trading/receivables", trading_api.receivables, name="trading-receivables"),
     path("trading/terms", trading_api.standard_terms, name="trading-terms"),
+    # --- Rental fleet (MARINE_BUILD_BRIEF.md §4), behind the `rental` switch
+    path("fleet/summary", fleet_api.summary, name="fleet-summary"),
+    path("fleet/vehicles", fleet_api.vehicles, name="fleet-vehicles"),
+    path("fleet/vehicles/<int:pk>", fleet_api.vehicle_detail, name="fleet-vehicle"),
+    path("fleet/vehicles/<int:pk>/documents", fleet_api.vehicle_documents,
+         name="fleet-vehicle-documents"),
+    path("fleet/vehicles/<int:pk>/documents/<int:did>", fleet_api.vehicle_document,
+         name="fleet-vehicle-document"),
+    path("fleet/operators", fleet_api.operators, name="fleet-operators"),
     path("trading/customers/<int:cid>/statement", trading_api.customer_statement,
          name="trading-customer-statement"),
     path("", include(router.urls)),

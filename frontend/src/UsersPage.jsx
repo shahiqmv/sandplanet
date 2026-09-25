@@ -20,6 +20,8 @@ const ROLES = [
   ["SALES", "Sales — trading app only: customers, inquiries, quotes, orders"],
   ["SALES_MANAGER", "Sales Manager — trading app only; authorises quotations "
    + "and tax invoices"],
+  ["RENTAL", "Rental — fleet register, agreements, the daily register"],
+  ["RENTAL_MANAGER", "Rental Manager — rate cards, agreements and rental invoices"],
   ["ADMIN", "Admin — user management, site configuration, full access"],
 ];
 const SITE_ROLES = ["SITE_ENGINEER", "SITE_ADMIN", "PM"];
