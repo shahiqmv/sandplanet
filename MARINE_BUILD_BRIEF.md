@@ -14,6 +14,12 @@ Owner decisions this brief rests on (2026-09-25):
   each vehicle has its own rate and its own cost centre (maintenance,
   operator expenses, other running costs).
 - Company Profile module not needed.
+- Brand and company details: `SANDPLANET_MARINE_BRAND.md` (authoritative);
+  logo files in `backend/pdf_templates/assets/marine/`.
+- Vehicles are billed **per day**, from a **daily register approved by the
+  customer's representative at their site**; operators are **Marine
+  employees** (payroll allocation to the vehicle's cost centre).
+- Domain: **marine.sandplanet.mv** (owner: on sandplanet.mv).
 
 ---
 
@@ -57,6 +63,16 @@ not built up front.
 
 ## 2. The brand layer (one change, both companies)
 
+Marine's values, from `SANDPLANET_MARINE_BRAND.md`: legal name SANDPLANET
+MARINE PRIVATE LIMITED, Reg. C21442026 (16 June 2026), TIN 1184934, Fehiali,
+Gn. Fuvahmulah. Palette: marine navy `#0E1C29`, deep blue `#16527E` (shared
+with the parent), ocean `#2E6FA6`, wave `#407FAF`, sky `#29ABE2` (shared),
+mist `#EAF3F9`. Same type family as Planet (Barlow Condensed / Inter / IBM
+Plex Mono). Lockup = document header and app bar; emblem = favicon and
+small marks; white wordmark on navy. The logo files are raster (upscaled
+from a PNG) — sized explicitly in templates, never stretched; replace with
+the designer's vector when it arrives.
+
 Today the company name, TIN, address, bank accounts and signatory come from
 company parameters (`pdf.company_info`); the logo is the file uploaded on
 the Company page (`pdf.logo_src`, falling back to the Sand Planet asset);
@@ -70,7 +86,8 @@ Add, as company parameters editable on the Company page:
 |---|---|
 | `brand_name` (short name shown in the app header) | SPA header, mobile app, trading app |
 | `brand_primary`, `brand_accent`, `brand_soft` | CSS custom properties set at load from `/api/v1/auth/me` or a public `/api/v1/brand` endpoint; `index.css` keeps Sand Planet's values as the defaults |
-| `brand_mark` (upload, SVG/PNG) | official-correspondence letterhead (`_letterhead_letter.html`) |
+| `brand_mark` (upload, SVG/PNG) | official-correspondence letterhead (`_letterhead_letter.html`); Marine: `spm-emblem.png` |
+| `brand_wordmark_white` (upload) | app header on the navy bar; Marine: `spm-wordmark-white.png` |
 | `brand_letterhead_rule` colours | `_letterhead.html`, the invoice/quotation masthead accents |
 | `company_short_code` (e.g. `SP`, `SPM`) | optional prefix on the shared series (INV, OR, PV) so a Marine document can never be mistaken for a Sand Planet one |
 | `features` (JSON: `{"rental": true, "trading": false, "profile": false}`) | nav groups and API entry gates |
@@ -106,8 +123,8 @@ forked.
 | `CostPosting.vehicle` (nullable FK) + `book = RENTAL` | maintenance PYRs, fuel, insurance, spares and the operator's payroll share post here; the project cost views ignore the RENTAL book exactly as they ignore TRADING |
 | `RentalCustomer` → reuse `Customer` | the trading customer model already carries TIN, address, credit days, GST exemption |
 | `RentalAgreement` (`RA` series, YYYY-RA-001) | customer, vehicles with their agreed rates (a rate can be negotiated off the card), start / end / open-ended, billing cycle (monthly / on completion / per hire), deposit, operator included, mobilisation & demobilisation charges, site/location, terms (standard lines like trading's), signed PDF; status DRAFT → ACTIVE → COMPLETED / TERMINATED |
-| `HireLog` | per vehicle per day: hours run (from the operator's sheet or the site DPR), idle, breakdown; the operator (employee); the site; approved by the customer's representative |
-| `RentalInvoice` (company `INV-YYYY-NNNN` series) | one per agreement per period, built from the hire logs (hours × rate, or the flat monthly), plus mobilisation, fuel, damages, extras; GST; due date from credit days; DRAFT → ISSUED → PAID / VOID; PDF |
+| `HireLog` (the daily register) | one row per vehicle per day: on hire (billable day) / idle / breakdown / off-hire, hours run for the record, the operator (a Marine employee), the customer site, remarks; **approved by the customer's representative at their site** (the site's client user on the mobile app, or a signed register uploaded) — a day bills only once approved |
+| `RentalInvoice` (company `INV-YYYY-NNNN` series) | one per agreement per period: **approved billable days × the daily rate** per vehicle (the rate card also holds hourly / weekly / monthly for the odd job), plus mobilisation, fuel, damages, extras; GST; due date from credit days; DRAFT → ISSUED → PAID / VOID; PDF listing the days billed |
 | Receipts, credit notes, aging, statements | the trading models generalised: `TradingReceipt` → company-wide `CustomerReceipt` (the OR series already shared), `TradingCreditNote` → `CustomerCreditNote`; the Receivables page shows trading and rental invoices together |
 | `VehicleMaintenance` | service schedule (hours / date based), job cards, parts from the store, downtime; the PYR for outside work posts to the vehicle's cost centre |
 
@@ -118,18 +135,21 @@ forked.
 2. **Agreement** — draft from the customer's request, pick vehicles and
    rates, issue the PDF, customer signs, activate; the vehicle goes ON_HIRE
    for the period.
-3. **Hire log** — daily hours per vehicle, entered by the operator or the
-   site admin (mobile), approved weekly by the customer's representative;
-   breakdown hours are not billable and count against the vehicle's
-   availability.
+3. **Daily register** — one line per vehicle per day, entered by the
+   operator (a Marine employee) or the site admin on the mobile app;
+   the customer's representative approves the register at their site (the
+   client user on the mobile app, or a signed paper register uploaded);
+   breakdown and off-hire days are not billable and count against the
+   vehicle's availability.
 4. **Invoice** — at the cycle end, the invoice is generated from the approved
-   logs; Sales Manager / Finance issues it (posts revenue and output GST in
-   the RENTAL book); the customer's receipt settles it through the shared
-   receipt flow.
+   days at the daily rate; Rental Manager / Finance issues it (posts revenue
+   and output GST in the RENTAL book); the customer's receipt settles it
+   through the shared receipt flow.
 5. **Costs** — maintenance and running costs reach the vehicle's cost centre
    through the ordinary PYR / voucher chain (the PYR form offers vehicle cost
-   centres when the rental flag is on), operator wages through a payroll
-   allocation of the operator's days to vehicles.
+   centres when the rental flag is on); operators are Marine employees, so
+   their wages reach the vehicle through a payroll allocation of the
+   operator's days to the vehicles they ran (from the same daily register).
 6. **Vehicle P&L** — revenue from invoices against the cost centre, per
    vehicle and for the fleet, by month; utilisation (hours hired / hours
    available).
@@ -167,18 +187,20 @@ Each phase ships and stops for the owner's review.
 6. **Costs and P&L** — vehicle cost centres on PYRs and payroll allocation,
    maintenance job cards, vehicle and fleet P&L, utilisation.
 
-## 7. Open inputs from the owner
+## 7. Inputs — settled and open
 
-- The Marine brand: logo, mark, primary and accent colours, legal name, TIN,
-  address, bank accounts.
+Settled (2026-09-25): brand and company details (`SANDPLANET_MARINE_BRAND.md`);
+billing per day from the customer-approved daily register; operators are
+Marine employees; domain marine.sandplanet.mv. The starting fleet and rate
+card the owner enters on the Fleet page once phase 3 ships.
+
+Still open:
+
+- Bank accounts for Marine (entered on its Company page at seed time).
 - Whether Marine documents get a company prefix on the shared series
-  (`SPM-INV-2026-0001`) or plain `INV-2026-0001`.
-- The fleet at start: vehicle list, classes, rate card, operators.
-- Billing practice: monthly in arrears on approved hours, or flat monthly per
-  vehicle; who approves the hours on the customer side.
-- Whether operators are Marine employees (payroll allocation) or hired with
-  the vehicle from a third party (a cost centre PYR).
-- Domain: marine.sandplanet.mv or a Marine domain of its own.
+  (`SPM-INV-2026-0001`) or plain `INV-2026-0001` — the brief assumes plain,
+  since the instance is separate.
+- The vector logo from the designer, when available.
 
 ---
 *Precedents: the trading arm (`TRADING_BUILD_BRIEF.md`) for the ledger book
