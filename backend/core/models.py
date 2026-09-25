@@ -1483,8 +1483,8 @@ class TradingQuotation(models.Model):
 
     @property
     def ref(self):
-        base = self.order.quote_ref or "TQ-?"
-        return base if self.revision == 1 else f"{base}/R{self.revision}"
+        base = self.order.quote_ref or "SQ-?"
+        return base if self.revision == 1 else f"{base}-R{self.revision}"
 
 
 def trading_dn_path(instance, filename):

@@ -7,10 +7,30 @@ from .models import DocCounter
 # IPR/IRN global per §5.10 / D5
 GLOBAL_TYPES = {"PR", "LM", "PO", "PV", "IPR", "IRN", "SIN", "LOA", "SPL", "AC",
                 "IM30", "SHP"}
-# Trading series (TRADING_BUILD_BRIEF.md §7): company-wide, no site —
-# inquiry, quotation, sales order, delivery note, tax invoice, credit note.
-TRADING_TYPES = {"TIN", "TQ", "TSO", "TDN", "TSI", "TCN"}
-GLOBAL_TYPES |= TRADING_TYPES
+# Trading series (TRADING_BUILD_BRIEF.md §7): company-wide, no site, the
+# year in the number and a running number that restarts each year —
+# 2026-IN-001 inquiry, 2026-SQ-001 quotation, 2026-SO-001 sales order,
+# 2026-DN-001 delivery note, 2026-CN-001 credit note (owner 2026-09-25,
+# after the old 2026/SO/665 form: dashes, because a slash cannot be a file
+# name). Tax invoices continue the company's INV-YYYY-NNNN series.
+TRADING_CODES = ("IN", "SQ", "SO", "DN", "CN")
+
+
+def next_trading_ref(code, year=None):
+    """Gap-free per code per year, row-locked like every other counter."""
+    from django.utils import timezone
+    assert code in TRADING_CODES, code
+    year = year or timezone.now().year
+    key = f"T{code}{year}"                          # its own counter row
+    try:
+        with transaction.atomic():
+            DocCounter.objects.get_or_create(doc_type=key, site=None)
+    except IntegrityError:
+        pass
+    counter = DocCounter.objects.select_for_update().get(doc_type=key, site=None)
+    counter.last_no += 1
+    counter.save(update_fields=["last_no"])
+    return f"{year}-{code}-{counter.last_no:03d}"
 
 
 def next_ref(doc_type, site):

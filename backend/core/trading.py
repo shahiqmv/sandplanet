@@ -15,7 +15,7 @@ from . import fx
 from .audit import audit
 from .models import (ImportReceipt, Item, Supplier, TradingLine,
                      TradingOrder, TradingQuotation, User)
-from .numbering import next_ref
+from .numbering import next_trading_ref
 
 ZERO = Decimal("0")
 _CENT = Decimal("0.01")
@@ -333,7 +333,7 @@ def create_order(data, actor):
     if errors:
         return None, errors
     with transaction.atomic():
-        order.ref = next_ref("TIN", None)
+        order.ref = next_trading_ref("IN")
         order.save()
     audit(ENTITY, order.id, "TIN_CREATED", actor=actor,
           detail={"ref": order.ref, "customer": customer.name,
@@ -497,7 +497,7 @@ def issue_quotation(order, actor):
     with transaction.atomic():
         order = TradingOrder.objects.select_for_update().get(id=order.id)
         if not order.quote_ref:
-            order.quote_ref = next_ref("TQ", None)
+            order.quote_ref = next_trading_ref("SQ")
             order.save(update_fields=["quote_ref", "updated_at"])
         order.quotations.filter(status="AWAITING_AUTH").update(status="WITHDRAWN")
         rev = (order.quotations.order_by("-revision").first() or
@@ -605,7 +605,7 @@ def _store_quotation_pdf(q):
         if settings.PDF_REQUIRED:
             raise
         return
-    name = q.ref.replace("/", "-") + ".pdf"
+    name = q.ref + ".pdf"
     q.pdf.save(name, ContentFile(pdf), save=True)
 
 
@@ -633,7 +633,7 @@ def win_order(order, data, actor, po_file=None):
         order.po_date = po_date
         if po_file is not None:
             order.po_file = po_file
-        order.so_ref = next_ref("TSO", None)
+        order.so_ref = next_trading_ref("SO")
         order.stage = "WON"
         order.stage_since = timezone.localdate()
         order.won_at = timezone.now()
@@ -950,6 +950,7 @@ def supply(order):
 
 from django.db.models import Sum  # noqa: E402
 
+from .commercial import _next_invoice_no  # noqa: E402
 from .models import (CompanyBankAccount, StockLot, TradingCreditNote,  # noqa: E402
                      TradingDelivery, TradingDeliveryLine, TradingInvoice,
                      TradingReceipt, TradingReceiptLine)
@@ -1078,7 +1079,7 @@ def create_delivery(order, data, actor):
     if errors:
         return None, errors
     with transaction.atomic():
-        dn.ref = next_ref("TDN", None)
+        dn.ref = next_trading_ref("DN")
         dn.save()
         for ln, qty in clean:
             TradingDeliveryLine.objects.create(delivery=dn, line=ln, qty=qty)
@@ -1304,7 +1305,7 @@ def create_invoice(order, data, actor):
     due = inv_date + timedelta(days=order.customer.credit_days or 0)
     with transaction.atomic():
         inv = TradingInvoice.objects.create(
-            order=order, ref=next_ref("TSI", None), invoice_date=inv_date,
+            order=order, ref=_next_invoice_no(), invoice_date=inv_date,
             due_date=due, currency=(order.currency or "MVR").upper(),
             includes_freight=include_freight, charges=f["charges"],
             snapshot={"customer": _customer_block(order.customer),
@@ -1461,7 +1462,7 @@ def create_credit_note(inv, data, actor):
         return None, "The credit exceeds the invoice."
     gst_share = _q2(amt * inv.gst / inv.total) if inv.total else ZERO
     with transaction.atomic():
-        cn = TradingCreditNote(invoice=inv, ref=next_ref("TCN", None), amount=_q2(amt),
+        cn = TradingCreditNote(invoice=inv, ref=next_trading_ref("CN"), amount=_q2(amt),
                                gst=gst_share, reason=reason, issued_by=actor)
         ids = [_post_trading("TRD_REVENUE", "INCURRED", "SALE", -(cn.amount - gst_share),
                              inv.currency, actor)]

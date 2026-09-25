@@ -126,12 +126,18 @@ the leg is a delivery, not an export.
 Money truth: `trading.calc(order)` for pricing, `trading.money(order)` for
 invoiced / received / outstanding. No screen computes money itself.
 
-## 7. Numbering (confirmed 2026-09-24)
+## 7. Numbering (revised 2026-09-25)
 
-Planet style, company-wide, no site: `TIN-001` inquiry, `TQ-001` quotation
-(revision suffix `/R2`), `TSO-001` sales order, `TDN-001` delivery note,
-`TSI-001` tax invoice, `TCN-001` credit note. Receipts stay on the shared
-`OR-####` series. Issued through `next_ref` (`numbering.TRADING_TYPES`).
+Year in the number, running number restarting each year, dashes not
+slashes (a slash cannot be a file name — the old system's `2026/SO/665`
+became `2026_SO_665` on disk): `2026-IN-001` inquiry, `2026-SQ-001`
+quotation (revision suffix `-R2`), `2026-SO-001` sales order, `2026-DN-001`
+delivery note, `2026-CN-001` credit note. Tax invoices continue the
+company's own `INV-YYYY-NNNN` series shared with project claim invoices and
+manual invoices (`commercial._next_invoice_no`). Receipts stay on the shared
+`OR-####` series. Issued through `numbering.next_trading_ref`; migration
+0249 renumbered the rows entered under the first scheme (TIN/TQ/TSO/TDN/
+TSI/TCN).
 
 ## 8. Build order
 

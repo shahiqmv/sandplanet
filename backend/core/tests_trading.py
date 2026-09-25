@@ -11,8 +11,9 @@ from django.db import transaction
 
 from . import costing
 from .models import CostHead, CostPosting, Customer, Supplier, User
-from .numbering import next_ref
 from .tests import BaseCase, make_user
+
+Y = __import__("django.utils.timezone", fromlist=["now"]).now().year
 
 
 class TradingAccessTests(BaseCase):
@@ -184,15 +185,17 @@ class LedgerBookTests(BaseCase):
 
 
 class TradingNumberingTests(BaseCase):
-    def test_trading_series_are_company_wide(self):
+    def test_trading_series_carry_the_year_and_restart_each_year(self):
+        from .numbering import next_trading_ref
         with transaction.atomic():
-            self.assertEqual(next_ref("TIN", self.sjr), "TIN-001")
-            self.assertEqual(next_ref("TIN", self.vkr), "TIN-002")
-            self.assertEqual(next_ref("TQ", None), "TQ-001")
-            self.assertEqual(next_ref("TSO", None), "TSO-001")
-            self.assertEqual(next_ref("TDN", None), "TDN-001")
-            self.assertEqual(next_ref("TSI", None), "TSI-001")
-            self.assertEqual(next_ref("TCN", None), "TCN-001")
+            self.assertEqual(next_trading_ref("IN"), f"{Y}-IN-001")
+            self.assertEqual(next_trading_ref("IN"), f"{Y}-IN-002")
+            self.assertEqual(next_trading_ref("SQ"), f"{Y}-SQ-001")
+            self.assertEqual(next_trading_ref("SO"), f"{Y}-SO-001")
+            self.assertEqual(next_trading_ref("DN"), f"{Y}-DN-001")
+            self.assertEqual(next_trading_ref("CN"), f"{Y}-CN-001")
+            self.assertEqual(next_trading_ref("IN", year=Y + 1), f"{Y + 1}-IN-001")
+        self.assertNotIn("/", next_trading_ref("SQ"))     # a slash cannot be a file name
 
 
 # ---- phase 2: the sales front ----------------------------------------------
@@ -249,13 +252,13 @@ class SalesFrontBase(BaseCase):
 class InquiryRegisterTests(SalesFrontBase):
     def test_create_numbers_and_owns_the_inquiry(self):
         d = self.new_order()
-        self.assertEqual(d["ref"], "TIN-001")
+        self.assertEqual(d["ref"], f"{Y}-IN-001")
         self.assertEqual(d["owner"], self.sales.id)
         self.assertEqual(d["stage"], "INQUIRY")
         self.assertEqual(d["currency"], "MVR")       # the customer's default
         self.assertTrue(d["can_manage"])
         d2 = self.new_order(title="Second")
-        self.assertEqual(d2["ref"], "TIN-002")
+        self.assertEqual(d2["ref"], f"{Y}-IN-002")
         r = self.client.get("/api/v1/trading/orders?search=kuramathi")
         self.assertEqual(len(r.data), 2)
         r = self.client.get("/api/v1/trading/orders?mine=1")
@@ -379,7 +382,7 @@ class QuotationTests(SalesFrontBase):
         r = self.issue(d["id"])
         self.assertEqual(r.status_code, 201, r.data)
         q = r.data["quotations"][0]
-        self.assertEqual(q["ref"], "TQ-001")
+        self.assertEqual(q["ref"], f"{Y}-SQ-001")
         self.assertEqual(q["status"], "AWAITING_AUTH")
         self.assertEqual(q["total"], "199843.20")
         self.assertEqual(r.data["stage"], "PRICING")          # not quoted yet
@@ -408,7 +411,7 @@ class QuotationTests(SalesFrontBase):
         self.put_lines(d["id"], [{**self.TILE, "margin_percent": "25"}], user=self.sm)
         r = self.issue(d["id"], user=self.sm)
         refs = [(x["ref"], x["status"]) for x in r.data["quotations"]]
-        self.assertEqual(refs, [("TQ-001", "SUPERSEDED"), ("TQ-001/R2", "AUTHORISED")])
+        self.assertEqual(refs, [(f"{Y}-SQ-001", "SUPERSEDED"), (f"{Y}-SQ-001-R2", "AUTHORISED")])
         self.assertEqual(r.data["quotations"][1]["total"], "208170.00")
 
     def test_gst_exempt_customer_is_quoted_without_gst(self):
@@ -458,7 +461,7 @@ class WonLostTests(SalesFrontBase):
                              {"po_number": "PO-77", "po_date": "2026-09-24"})
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["stage"], "WON")
-        self.assertEqual(r.data["so_ref"], "TSO-001")
+        self.assertEqual(r.data["so_ref"], f"{Y}-SO-001")
         self.assertTrue(r.data["is_closed"])
         # the sheet is locked
         r = self.put_lines(d["id"], [self.TILE])
@@ -504,7 +507,7 @@ class ChaseListTests(SalesFrontBase):
         self.login(self.sm)
         h = self.client.get("/api/v1/trading/home").data
         self.assertEqual(h["open"], 2)                          # the manager sees all
-        self.assertEqual(h["awaiting_authorisation"][0]["quotation"], "TQ-001")
+        self.assertEqual(h["awaiting_authorisation"][0]["quotation"], f"{Y}-SQ-001")
         self.assertNotIn(d2["ref"], [c["ref"] for c in h["chase"]])   # not due yet
         self.assertEqual(len(self.client.get("/api/v1/trading/users").data), 3)
         self.assertTrue(Item.objects.count() >= 0)
@@ -627,10 +630,10 @@ class RaiseImportOrderTests(SupplyLegBase):
         self.login(self.ho)
         rows = self.client.get("/api/v1/ipr").data["rows"]
         row = next(x for x in rows if x["ref"] == "IPR-001")
-        self.assertEqual(row["projects"], ["Trading · TSO-001"])
+        self.assertEqual(row["projects"], [f"Trading · {Y}-SO-001"])
         self.assertEqual(row["trading"]["customer"], "Kuramathi Maldives")
         doc = self.client.get("/api/v1/ipr/IPR-001").data
-        self.assertEqual(doc["order"]["trading"]["so_ref"], "TSO-001")
+        self.assertEqual(doc["order"]["trading"]["so_ref"], f"{Y}-SO-001")
         line = doc["order"]["lines"][0]
         self.assertIsNotNone(line["trading_line"])
         # Purchasing edits the draft the usual way (ports, PI, rate) and the
@@ -706,7 +709,7 @@ class TradingBookPostingTests(SupplyLegBase):
         # the store shows who it is for; a site pick never touches it
         store = self.client.get("/api/v1/store/lots").data
         row = next(x for x in store["lots"] if x["id"] == lot.id)
-        self.assertEqual(row["reserved_for"], "Trading · TSO-001")
+        self.assertEqual(row["reserved_for"], f"Trading · {Y}-SO-001")
         picks, err = imports.pick_lots_fifo(lot.item, None, Decimal("1"))
         self.assertIsNone(picks)
         # and the sales order sees it arrive
@@ -782,7 +785,7 @@ class DeliveryTests(MoneyInBase):
         self.assertEqual(labour["can_deliver"], "1.00")
         dn = self.dn(d["id"], [{"line_id": tile["id"], "qty": "400"},
                                {"line_id": labour["id"], "qty": "1"}])
-        self.assertEqual(dn["ref"], "TDN-001")
+        self.assertEqual(dn["ref"], f"{Y}-DN-001")
         self.assertEqual(dn["status"], "DRAFT")
         r = self.despatch(d["id"], dn["id"])
         self.assertEqual(r.status_code, 200, r.data)
@@ -847,7 +850,7 @@ class InvoiceTests(MoneyInBase):
     def test_invoice_follows_the_despatch_at_the_quoted_price(self):
         d, dn = self.delivered()
         r = self.client.get(f"/api/v1/trading/orders/{d['id']}/invoices").data
-        self.assertEqual([x["ref"] for x in r["invoiceable"]], ["TDN-001"])
+        self.assertEqual([x["ref"] for x in r["invoiceable"]], [f"{Y}-DN-001"])
         self.assertFalse(r["freight_billed"])
         r = self.client.post(f"/api/v1/trading/orders/{d['id']}/invoices",
                              {"delivery_ids": [dn["id"]], "include_freight": True,
@@ -855,7 +858,7 @@ class InvoiceTests(MoneyInBase):
                               "invoice_date": "2026-09-24"}, format="json")
         self.assertEqual(r.status_code, 201, r.data)
         inv = r.data
-        self.assertEqual(inv["ref"], "TSI-001")
+        self.assertEqual(inv["ref"], f"INV-{Y}-0001")
         self.assertEqual(inv["status"], "DRAFT")
         self.assertEqual(inv["lines"][0]["unit_sell"], "185.0400")        # quoted MVR price
         self.assertEqual(inv["lines"][0]["amount"], "74016.00")           # 400 × 185.04
@@ -922,7 +925,7 @@ class InvoiceTests(MoneyInBase):
         self.assertEqual(_CP.objects.filter(cost_head__code="TRD_REVENUE")
                          .aggregate(s=Sum("amount"))["s"], 0)
         self.assertEqual([x["ref"] for x in self.client.get(
-            f"/api/v1/trading/orders/{d['id']}/invoices").data["invoiceable"]], ["TDN-001"])
+            f"/api/v1/trading/orders/{d['id']}/invoices").data["invoiceable"]], [f"{Y}-DN-001"])
         self.assertEqual(TradingDelivery.objects.get(id=dn["id"]).invoice_id, None)
 
     def test_credit_note_reduces_the_receivable(self):
@@ -936,7 +939,7 @@ class InvoiceTests(MoneyInBase):
                              {"action": "credit", "amount": "1080", "reason": "10 m2 broken"},
                              format="json")
         self.assertEqual(r.status_code, 200, r.data)
-        self.assertEqual(r.data["credit_notes"][0]["ref"], "TCN-001")
+        self.assertEqual(r.data["credit_notes"][0]["ref"], f"{Y}-CN-001")
         self.assertEqual(r.data["credit_notes"][0]["gst"], "80.00")        # 1080 × 8/108
         self.assertEqual(r.data["outstanding"], "78857.28")                # 79937.28 − 1080
         self.assertEqual(_CP.objects.filter(cost_head__code="TRD_REVENUE")
@@ -965,7 +968,7 @@ class ReceiptTests(MoneyInBase):
         self.login(self.finance)
         r = self.client.get(f"/api/v1/trading/receipts/allocate?customer={self.cust.id}&amount=100000").data
         self.assertEqual([(a["invoice"], a["amount"]) for a in r["allocations"]],
-                         [("TSI-001", "79937.28"), ("TSI-002", "20062.72")])
+                         [(f"INV-{Y}-0001", "79937.28"), (f"INV-{Y}-0002", "20062.72")])
         self.assertEqual(r["unallocated"], "0.00")
         r = self.client.post("/api/v1/trading/receipts", {
             "customer": self.cust.id, "receipt_date": "2026-09-20", "method": "TT",
@@ -1000,7 +1003,7 @@ class ReceiptTests(MoneyInBase):
         # aging + statement
         ag = self.client.get("/api/v1/trading/receivables").data
         self.assertEqual(ag["customers"][0]["total"], "99843.20")
-        self.assertEqual(ag["customers"][0]["invoices"][0]["ref"], "TSI-002")
+        self.assertEqual(ag["customers"][0]["invoices"][0]["ref"], f"INV-{Y}-0002")
         st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement").data
         self.assertEqual([x["kind"] for x in st["rows"]], ["INVOICE", "INVOICE", "RECEIPT"])
         self.assertEqual(st["closing"], "99843.20")

@@ -368,7 +368,7 @@ def quotation_pdf(request, pk, qid):
                             status=500)
     resp = HttpResponse(pdf, content_type="application/pdf")
     resp["Content-Disposition"] = (
-        f'inline; filename="{q.ref.replace("/", "-")}.pdf"')
+        f'inline; filename="{q.ref}.pdf"')
     return resp
 
 
