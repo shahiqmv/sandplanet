@@ -7,6 +7,7 @@ import { api, apiUpload } from "./api.js";
 import { API_BASE } from "./brand.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 import { AgreementInvoices } from "./FleetMoney.jsx";
+import { CustomerDetails, CustomerForm } from "./FleetCustomers.jsx";
 
 const fmtDate = (v) => (v ? new Date(v).toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" }) : "");
 const fmtMoney = (v) => (v == null || v === "" ? "" : Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -23,31 +24,33 @@ function Field({ label, children, wide }) {
   );
 }
 
-// ---- customers (shared with trading) --------------------------------------------
+// ---- customers (the hirer; the record lives on the Customers tab) --------------
 function CustomerPicker({ value, onChange }) {
   const [list, setList] = useState([]);
   const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
   const load = () => api("/fleet/customers").then(setList).catch(() => {});
   useEffect(() => { load(); }, []);
-  async function add() {
-    try { const c = await api("/fleet/customers", { method: "POST", body: { name } }); await load(); onChange(String(c.id)); setAdding(false); setName(""); }
-    catch (e) { window.alert(e.message); }
-  }
+  const chosen = list.find((c) => String(c.id) === String(value));
   return (
-    <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-      <Field label="Customer">
-        <select style={{ ...inputStyle, minWidth: 260 }} value={value} onChange={(e) => onChange(e.target.value)} required>
-          <option value="">— pick —</option>
-          {list.map((c) => <option key={c.id} value={c.id}>{c.name}{c.island ? ` · ${c.island}` : ""}</option>)}
-        </select>
-      </Field>
-      {adding ? (
-        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
-          <input style={inputStyle} placeholder="new customer name" value={name} onChange={(e) => setName(e.target.value)} />
-          <Btn type="button" variant="secondary" onClick={add} disabled={!name.trim()}>Add</Btn>
+    <div>
+      <div style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+        <Field label="Customer (the hirer)">
+          <select style={{ ...inputStyle, minWidth: 300 }} value={value} onChange={(e) => onChange(e.target.value)} required>
+            <option value="">— pick —</option>
+            {list.map((c) => <option key={c.id} value={c.id}>{c.name}{c.project_client_code ? ` · client at ${c.project_client_code}` : ""}</option>)}
+          </select>
+        </Field>
+        {!adding && <Btn type="button" variant="ghost" onClick={() => setAdding(true)} style={{ marginBottom: 10 }}>+ new customer</Btn>}
+      </div>
+      {adding && <CustomerForm compact onSaved={async (c) => { await load(); onChange(String(c.id)); setAdding(false); }} onCancel={() => setAdding(false)} />}
+      {chosen && (
+        <div style={{ fontSize: 12, marginTop: -4, marginBottom: 10 }}>
+          <CustomerDetails c={{ address: chosen.billing_address, tin: chosen.tin, reg_no: chosen.business_reg_no, contact: chosen.contact_person,
+                                phone: chosen.phone, email: chosen.email, credit_days: chosen.credit_days, gst_exempt: chosen.gst_exempt,
+                                project_client: chosen.project_client_code ? { code: chosen.project_client_code } : null }} />
+          {!chosen.tin && !chosen.gst_exempt && <div style={{ color: "var(--amber-fg, #8a5a00)", marginTop: 4 }}>No GST TIN on this customer — a tax invoice will need it. Add it on the Customers tab.</div>}
         </div>
-      ) : <Btn type="button" variant="ghost" onClick={() => setAdding(true)} style={{ marginBottom: 10 }}>+ new customer</Btn>}
+      )}
     </div>
   );
 }
@@ -311,6 +314,7 @@ function AgreementDetail({ id, onBack }) {
           <Chip tone={STATUS_TONE[a.status]}>{a.status.toLowerCase()}</Chip>
         </div>
         <div style={{ fontSize: 13.5, marginTop: 6 }}>{a.title}{a.site_location ? ` · ${a.site_location}` : ""}</div>
+        <CustomerDetails c={a.customer_info} />
         <div style={{ fontSize: 13, opacity: .8, marginTop: 4 }}>
           {a.start_date ? fmtDate(a.start_date) : "start?"} → {a.end_date ? fmtDate(a.end_date) : "open-ended"} · {a.billing_cycle === "MONTHLY" ? "monthly in arrears" : "on completion"} · {a.currency}
           {a.customer_rep && <> · rep {a.customer_rep}{a.customer_rep_phone ? ` (${a.customer_rep_phone})` : ""}</>}

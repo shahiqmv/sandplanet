@@ -296,8 +296,7 @@ def agreement_context(a, draft=False):
                                (f" – {ln.to_date:%d %b %Y}" if ln.to_date else "")})
     return {
         "logo_src": logo_src(), "co": company_info(), "a": a, "draft": draft,
-        "customer": {"name": c.name, "address": c.billing_address, "tin": c.tin,
-                     "contact": c.contact_person, "phone": c.phone},
+        "customer": customer_info(c),
         "rows": rows, "currency": a.currency,
         "deposit_f": _money(a.deposit) if a.deposit else None,
         "mob_f": _money(a.mobilisation_charge) if a.mobilisation_charge else None,
@@ -306,6 +305,19 @@ def agreement_context(a, draft=False):
         "signer": ({"name": a.activated_by.full_name} if a.activated_by_id else None),
         "date": a.activated_at or a.created_at,
     }
+
+
+def customer_info(c):
+    """Everything the agreement and its invoices need to know about the
+    hirer — the customer record in full, plus which project site they are
+    the client of, if any."""
+    return {"id": c.id, "name": c.name, "address": c.billing_address, "tin": c.tin,
+            "reg_no": c.business_reg_no, "contact": c.contact_person, "phone": c.phone,
+            "email": c.email, "island": c.island, "credit_days": c.credit_days,
+            "gst_exempt": c.gst_exempt, "currency": c.default_currency,
+            "project_client": ({"site": c.project_client_id, "code": c.project_client.code,
+                                "name": c.project_client.name}
+                               if c.project_client_id else None)}
 
 
 def agreement_pdf_bytes(a, draft=False):
@@ -477,6 +489,7 @@ def agreement_dict(a, user=None, full=False):
            "has_pdf": bool(a.pdf), "signed": bool(a.signed_copy)}
     if full:
         out.update({
+            "customer_info": customer_info(a.customer),
             "customer_rep_phone": a.customer_rep_phone, "customer_po": a.customer_po,
             "deposit": _s(a.deposit), "mobilisation_charge": _s(a.mobilisation_charge),
             "demobilisation_charge": _s(a.demobilisation_charge),

@@ -1314,6 +1314,13 @@ class Customer(models.Model):
     default_currency = models.CharField(max_length=3, default="MVR")  # MVR / USD
     credit_days = models.PositiveIntegerField(null=True, blank=True)
     gst_exempt = models.BooleanField(default=False)
+    # A customer is who we sell or hire to; a client is who we build for
+    # (on the Site). The same company is often both — this says which of our
+    # project sites this customer is the client of, so the two records are
+    # one party on paper and the customer's details can be taken from the
+    # site's client block (owner 2026-09-25).
+    project_client = models.ForeignKey("Site", on_delete=models.SET_NULL, null=True,
+                                       blank=True, related_name="customer_records")
     notes = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
@@ -5464,6 +5471,45 @@ class RentalReceiptLine(models.Model):
         ordering = ["id"]
 
 
+class MaintenanceJob(models.Model):
+    """A job card on a vehicle (MARINE_BUILD_BRIEF.md §4, phase 6): what was
+    done, when, by whom, the hour meter and the downtime. The money is not
+    typed here — the PYRs for parts and outside work carry the vehicle (and
+    this card) and post to its cost centre through the ordinary chain."""
+
+    class Kind(models.TextChoices):
+        SERVICE = "SERVICE", "Scheduled service"
+        REPAIR = "REPAIR", "Repair"
+        INSPECTION = "INSPECTION", "Inspection"
+        TYRES = "TYRES", "Tyres / tracks"
+        OTHER = "OTHER", "Other"
+
+    class Status(models.TextChoices):
+        OPEN = "OPEN"
+        CLOSED = "CLOSED"
+
+    vehicle = models.ForeignKey(Vehicle, on_delete=models.PROTECT, related_name="jobs")
+    ref = models.CharField(max_length=20, unique=True)               # YYYY-MJ-001
+    kind = models.CharField(max_length=12, choices=Kind.choices, default=Kind.REPAIR)
+    status = models.CharField(max_length=8, choices=Status.choices, default=Status.OPEN)
+    opened_on = models.DateField()
+    closed_on = models.DateField(null=True, blank=True)
+    hour_meter_at = models.DecimalField(max_digits=10, decimal_places=1, null=True, blank=True)
+    description = models.TextField()                                 # the fault / the service due
+    work_done = models.TextField(blank=True)
+    vendor = models.CharField(max_length=120, blank=True)            # workshop, if outside
+    downtime_days = models.PositiveIntegerField(null=True, blank=True)
+    next_service_hours = models.DecimalField(max_digits=10, decimal_places=1, null=True, blank=True)
+    next_service_date = models.DateField(null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    closed_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True, blank=True,
+                                  related_name="+")
+
+    class Meta:
+        ordering = ["-opened_on", "-id"]
+
+
 class ManualInvoice(models.Model):
     """A client tax invoice recorded directly in Planet, NOT derived from a
     progress claim — so a mid-flight project can be tracked without rebuilding
@@ -5712,6 +5758,13 @@ class PaymentRequest(models.Model):
         blank=True, related_name="payments")
     payment_type = models.CharField(max_length=24, choices=Type.choices,
                                     default=Type.DIRECT)
+    # The vehicle cost centre a fleet cost belongs to (a rental cost head
+    # requires one) and the job card it was done under, if any
+    # (MARINE_BUILD_BRIEF.md §4, phase 6).
+    vehicle = models.ForeignKey("Vehicle", on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="payment_requests")
+    maintenance_job = models.ForeignKey("MaintenanceJob", on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name="payment_requests")
     cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
                                   related_name="payment_requests")
     # A capitalized PYR pays a cost that is recognised elsewhere (an import

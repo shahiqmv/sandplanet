@@ -62,7 +62,8 @@
     <div class="lbl">Hirer</div>
     <div class="nm">{{ customer.name }}</div>
     {% if customer.address %}<div class="sub">{{ customer.address }}</div>{% endif %}
-    {% if customer.contact %}<div class="sub">Attn: {{ customer.contact }}{% if customer.phone %} · {{ customer.phone }}{% endif %}</div>{% endif %}
+    {% if customer.contact %}<div class="sub">Attn: {{ customer.contact }}{% if customer.phone %} · {{ customer.phone }}{% endif %}{% if customer.email %} · {{ customer.email }}{% endif %}</div>{% endif %}
+    {% if customer.reg_no %}<div class="sub">Reg No {{ customer.reg_no }}</div>{% endif %}
     {% if customer.tin %}<div class="sub">GST TIN {{ customer.tin }}</div>{% endif %}
   </td>
   <td>

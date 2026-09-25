@@ -437,3 +437,176 @@ class RentalReceiptTests(InvoiceBase):
         self.assertEqual(inv.status, "ISSUED")
         self.assertEqual(self.client.get(f"/api/v1/fleet/receipts/{RentalReceipt.objects.first().id}")["Content-Type"],
                          "application/pdf")
+
+
+# ---- phase 6: vehicle cost centres, job cards and the P&L -----------------------
+
+from django.db.models import Sum  # noqa: E402
+
+from . import fleet_costs, payroll  # noqa: E402
+from .models import (Document, Employee, PaymentRequest,  # noqa: E402
+                     PayrollLine, PayrollRun)
+from .vouchers import ho_site  # noqa: E402
+
+
+class JobCardTests(RentalBase):
+    def test_open_and_close_a_job_card_moves_the_vehicle_status(self):
+        self.login(self.rental)
+        r = self.client.post(f"/api/v1/fleet/vehicles/{self.ex.id}/jobs",
+                             {"kind": "REPAIR", "description": "Hydraulic hose burst", "hour_meter_at": "1250.5",
+                              "opened_on": "2026-09-10"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        job = r.data
+        self.assertEqual(job["ref"], f"{date.today().year}-MJ-001")
+        self.ex.refresh_from_db()
+        self.assertEqual(self.ex.status, "MAINTENANCE")
+        self.assertEqual(self.ex.hour_meter, Decimal("1250.5"))
+        r = self.client.post(f"/api/v1/fleet/jobs/{job['id']}", {"action": "close"}, format="json")
+        self.assertEqual(r.status_code, 400)                    # work done first
+        r = self.client.post(f"/api/v1/fleet/jobs/{job['id']}",
+                             {"action": "close", "work_done": "Hose replaced, system bled",
+                              "closed_on": "2026-09-12", "hour_meter_at": "1251", "next_service_hours": "1500"},
+                             format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "CLOSED")
+        self.assertEqual(r.data["downtime_days"], 3)
+        self.ex.refresh_from_db()
+        self.assertEqual(self.ex.status, "AVAILABLE")
+        self.assertEqual(self.ex.hour_meter, Decimal("1251.0"))
+        self.login(self.finance)
+        self.assertEqual(self.client.get("/api/v1/fleet/jobs").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/v1/fleet/vehicles/{self.ex.id}/jobs",
+                                          {"description": "x"}, format="json").status_code, 403)
+
+
+class VehicleCostTests(RentalBase):
+    def head(self, code):
+        return CostHead.objects.get(code=code)
+
+    def test_a_fleet_cost_head_needs_its_vehicle_and_the_rental_team_raises_it(self):
+        ho = ho_site()
+        self.login(self.rm)
+        body = {"doc_type": "PYR", "site_id": ho.id, "payload": {},
+                "cost_head_id": self.head("RNT_MAINTENANCE").id, "payee": "Island Workshop",
+                "payment_type": "DIRECT", "payment_method": "BANK", "amount_requested": "3200",
+                "purpose": "Hydraulic hose", "has_supporting_doc": True}
+        r = self.client.post("/api/v1/documents", body, format="json")
+        self.assertEqual(r.status_code, 400, r.data)             # no vehicle
+        r = self.client.post("/api/v1/documents", {**body, "vehicle_id": self.ex.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        pr = PaymentRequest.objects.get(document__ref=r.data["ref"])
+        self.assertEqual(pr.vehicle_id, self.ex.id)
+        self.assertEqual(pr.origin, "CENTRAL")
+        self.assertEqual(self.client.get(f"/api/v1/documents/{r.data['ref']}").data["payment_request"]["vehicle"],
+                         "EX-01 · P 9921")
+        # a project head refuses a vehicle
+        proj = CostHead.objects.filter(rental=False, trading=False, is_pool=False).first()
+        r = self.client.post("/api/v1/documents", {**body, "cost_head_id": proj.id, "vehicle_id": self.ex.id},
+                             format="json")
+        self.assertEqual(r.status_code, 400)
+        # the fleet's own cost-head list
+        codes = {h["code"] for h in self.client.get("/api/v1/cost-heads?rental=1").data}
+        self.assertEqual(codes, {"RNT_MAINTENANCE", "RNT_FUEL", "RNT_OPERATOR", "RNT_INSURANCE"})
+        self.assertNotIn("Vehicle maintenance", [h["name"] for h in self.client.get("/api/v1/cost-heads").data])
+
+    def test_payment_posts_to_the_vehicle_cost_centre_in_the_rental_book(self):
+        ho = ho_site()
+        doc = Document.objects.create(doc_type="PYR", ref="PYR-FLEET-1", site=ho, doc_date=date.today(),
+                                      status="AUTHORISED", created_by=self.rm)
+        PaymentRequest.objects.create(document=doc, cost_head=self.head("RNT_FUEL"), vehicle=self.ex,
+                                      currency="MVR", amount_requested=Decimal("800"),
+                                      payment_type="DIRECT", payment_method="TRANSFER",
+                                      payee="STO", purpose="Diesel")
+        self.login(self.finance)
+        r = self.client.post(f"/api/v1/documents/{doc.ref}/actions/pay",
+                             {"amount_paid": "800", "payment_ref": "TT-1"}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        posts = CostPosting.objects.filter(document=doc)
+        self.assertEqual({(p.state, p.book, p.vehicle_id) for p in posts},
+                         {("PAID", "RENTAL", self.ex.id), ("INCURRED", "RENTAL", self.ex.id)})
+        self.assertFalse(CostPosting.objects.filter(document=doc, book="PROJECT").exists())
+        # the vehicle's cost centre reads it back
+        self.login(self.rental)
+        r = self.client.get(f"/api/v1/fleet/vehicles/{self.ex.id}/costs?from=2026-01-01&to=2026-12-31")
+        self.assertEqual(r.data["pyrs"][0]["ref"], "PYR-FLEET-1")
+        self.assertEqual(r.data["pnl"]["rows"][0]["costs"]["RNT_FUEL"], "800.00")
+
+
+class OperatorAllocationTests(RentalBase):
+    def setUp(self):
+        super().setUp()
+        self.op = Employee.objects.create(emp_no="EMP-0301", full_name="Hassan Operator",
+                                          basic_pay=Decimal("13000"), currency="MVR")
+        a = self.activate(self.with_vehicles(self.agreement()))
+        self.ln = next(v for v in a["vehicles"] if v["fleet_no"] == "EX-01")
+        rows = [{"line": self.ln["id"], "date": f"2026-09-{d:02d}", "state": "WORKED", "operator": self.op.id}
+                for d in range(1, 6)]                                    # 5 days on the excavator
+        r = self.client.put(f"/api/v1/fleet/agreements/{a['id']}/register?from=2026-09-01&to=2026-09-07",
+                            {"rows": rows}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.run = PayrollRun.objects.create(kind="MONTHLY", year=2026, month=9, currency="MVR",
+                                             working_days=26, created_by=self.rm)
+        self.line = PayrollLine.objects.create(run=self.run, employee=self.op, site=ho_site(),
+                                               basic_pay=Decimal("13000"), days_worked=Decimal("26"))
+
+    def test_the_operators_wages_follow_the_vehicle_for_the_days_run(self):
+        shares = fleet_costs.operator_allocation(self.line, Decimal("13000"))
+        self.assertEqual([(v.id, s) for v, s in shares], [(self.ex.id, Decimal("2500.00"))])  # 13000/26 × 5
+        # the whole gross is the ceiling
+        shares = fleet_costs.operator_allocation(self.line, Decimal("100"))
+        self.assertEqual(shares[0][1], Decimal("19.23"))
+        # a man who ran nothing allocates nothing
+        other = PayrollLine.objects.create(run=self.run, employee=Employee.objects.create(
+            emp_no="EMP-0302", full_name="Mason"), site=ho_site(), basic_pay=Decimal("9000"),
+            days_worked=Decimal("26"))
+        self.assertEqual(fleet_costs.operator_allocation(other, Decimal("9000")), [])
+
+    def test_locking_the_run_posts_the_share_to_the_vehicle_and_the_rest_to_site_labour(self):
+        gross = payroll.compute_line(self.line)["gross"]
+        payroll.lock_run(self.run, self.rm)
+        veh = CostPosting.objects.get(book="RENTAL", source="STAFF", vehicle=self.ex)
+        self.assertEqual(veh.cost_head.code, "RNT_OPERATOR")
+        self.assertEqual(veh.amount, (gross / 26 * 5).quantize(Decimal("0.01")))
+        site = CostPosting.objects.get(book="PROJECT", source="STAFF", staff_year=2026, staff_month=9)
+        self.assertEqual(site.amount + veh.amount, gross)
+        # the P&L sees it
+        self.login(self.rental)
+        r = self.client.get("/api/v1/fleet/pnl?from=2026-09-01&to=2026-09-30")
+        row = next(x for x in r.data["rows"] if x["vehicle"] == self.ex.id)
+        self.assertEqual(row["costs"]["RNT_OPERATOR"], str(veh.amount))
+        self.assertEqual(row["hire_days"], 5)
+        self.assertEqual(row["utilisation"], 16.7)                    # 5 of 30 days
+        # reopening reverses the vehicle share with the site labour
+        payroll.reopen_run(self.run, self.rm)
+        self.assertEqual(CostPosting.objects.filter(book="RENTAL", source="STAFF")
+                         .aggregate(s=Sum("amount"))["s"], 0)
+
+
+class CustomerRecordTests(RentalBase):
+    def test_a_customer_carries_its_details_and_may_be_a_project_client(self):
+        from .models import Site
+        site = Site.objects.create(code="HRB", name="Harbour job", status=Site.Status.ACTIVE,
+                                   client_name="Reef Constructions Pvt Ltd", client_tin="1100200GST001",
+                                   client_address="Boduthakurufaanu Magu, Malé", client_phone="3300000")
+        self.login(self.rental)
+        clients = self.client.get("/api/v1/fleet/project-clients").data
+        self.assertEqual([c["code"] for c in clients], ["HRB"])
+        self.assertIsNone(clients[0]["customer"])
+        r = self.client.post("/api/v1/fleet/customers", {
+            "name": clients[0]["name"], "tin": clients[0]["tin"], "billing_address": clients[0]["billing_address"],
+            "business_reg_no": "C-0123/2010", "contact_person": "Ahmed", "phone": "7770000",
+            "email": "ahmed@reef.mv", "credit_days": 30, "project_client": site.id}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(r.data["project_client_code"], "HRB")
+        self.assertEqual(self.client.get("/api/v1/fleet/project-clients").data[0]["customer"], r.data["id"])
+        self.login(self.rm)
+        a = self.client.post("/api/v1/fleet/agreements", {"customer": r.data["id"], "title": "x",
+                                                          "start_date": "2026-09-01", "customer_rep": "Ali"},
+                             format="json").data
+        info = self.client.get(f"/api/v1/fleet/agreements/{a['id']}").data["customer_info"]
+        self.assertEqual(info["reg_no"], "C-0123/2010")
+        self.assertEqual(info["email"], "ahmed@reef.mv")
+        self.assertEqual(info["project_client"]["code"], "HRB")
+        self.assertEqual(info["credit_days"], 30)
+        ctx = rental.agreement_context(RentalAgreement.objects.get(id=a["id"]))
+        self.assertEqual(ctx["customer"]["tin"], "1100200GST001")

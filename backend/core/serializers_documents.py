@@ -214,6 +214,10 @@ class DocumentSerializer(serializers.ModelSerializer):
         pr = obj.payment_request
         return {
             "payment_type": pr.payment_type, "cost_head": pr.cost_head.name,
+            "vehicle": (f"{pr.vehicle.fleet_no + ' · ' if pr.vehicle.fleet_no else ''}"
+                        f"{pr.vehicle.reg_no}") if pr.vehicle_id else None,
+            "vehicle_id": pr.vehicle_id,
+            "maintenance_job": pr.maintenance_job.ref if pr.maintenance_job_id else None,
             "cost_head_id": pr.cost_head_id, "payee": pr.payee,
             "payment_method": pr.payment_method,
             "payee_account": pr.payee_account, "currency": pr.currency,

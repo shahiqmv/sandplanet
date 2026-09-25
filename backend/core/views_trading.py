@@ -53,12 +53,15 @@ class CustomerSerializer(serializers.ModelSerializer):
     # defaults (DRF reads an absent form boolean as False).
     is_active = serializers.BooleanField(default=True)
     gst_exempt = serializers.BooleanField(default=False)
+    project_client_code = serializers.CharField(source="project_client.code", read_only=True)
+    project_client_name = serializers.CharField(source="project_client.name", read_only=True)
 
     class Meta:
         model = Customer
         fields = ["id", "name", "tin", "business_reg_no", "billing_address",
                   "island", "vessels", "contact_person", "phone", "email",
                   "default_currency", "credit_days", "gst_exempt", "notes",
+                  "project_client", "project_client_code", "project_client_name",
                   "is_active", "created_at", "updated_at"]
         read_only_fields = ["created_at", "updated_at"]
 

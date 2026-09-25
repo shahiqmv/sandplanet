@@ -1084,18 +1084,45 @@ def lock_run(run, actor):
         return
     head = costing.by_code(costing.LABOUR)
     by_site = defaultdict(Decimal)
+    # An operator's wages follow the vehicles they ran that month (the daily
+    # register), to the vehicle cost centres; what is left stays site labour
+    # (MARINE_BUILD_BRIEF.md §4, phase 6).
+    from .fleet_costs import operator_allocation
+    vehicle_shares = []
     for line in run.lines.all():
-        by_site[line.site_id] += compute_line(line)["gross"]
+        gross = compute_line(line)["gross"]
+        for vehicle, share in operator_allocation(line, gross):
+            vehicle_shares.append((line, vehicle, share))
+            gross -= share
+        by_site[line.site_id] += gross
     with transaction.atomic():
+        reversed_sites = set()
         for site_id, gross in by_site.items():
             if not site_id or gross <= 0 or head is None:
                 continue
             site = Site.objects.get(pk=site_id)
             staff_cost.reverse_staff_cost(site, run.year, run.month, actor)
+            reversed_sites.add(site.id)
             costing.post(site=site, cost_head=head, state="INCURRED",
                          source="STAFF", amount=gross, currency=run.currency,
                          staff_year=run.year, staff_month=run.month,
                          actor=actor)
+        # The vehicle shares go in AFTER the estimate reversal, which would
+        # otherwise catch them: they are STAFF postings of the same site and
+        # month. A site whose whole gross went to vehicles is reversed here.
+        op_head = costing.by_code(costing.RNT_OPERATOR)
+        ho = Site.objects.filter(is_head_office=True).first()
+        for line, vehicle, share in vehicle_shares:
+            if op_head is None or share <= 0:
+                continue
+            site = line.site or ho
+            if site.id not in reversed_sites:
+                staff_cost.reverse_staff_cost(site, run.year, run.month, actor)
+                reversed_sites.add(site.id)
+            costing.post(site=site, cost_head=op_head, state="INCURRED",
+                         source="STAFF", amount=share, currency=run.currency,
+                         staff_year=run.year, staff_month=run.month,
+                         actor=actor, book="RENTAL", vehicle=vehicle)
         run.status = "LOCKED"
         run.locked_by = actor
         run.locked_at = timezone.now()

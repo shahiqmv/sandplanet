@@ -76,7 +76,8 @@ CREATE_ROLES = {  # spec §3 "can create"
     # Payment request (M6): site teams + Head-Office centres (HO Purchasing,
     # HR, Accounts/Finance) for non-purchase spend (owner 2026-07-13)
     "PYR": {"SITE_ADMIN", "SITE_ENGINEER", "PM", "HO_PURCHASING", "HO_HR",
-            "FINANCE", "DIRECTOR", "SIGNATORY", "QS", "PA"},  # PA = delegated HR
+            "FINANCE", "DIRECTOR", "SIGNATORY", "QS", "PA",   # PA = delegated HR
+            "RENTAL", "RENTAL_MANAGER"},                      # fleet costs at HO
     "PMR": {"SITE_ENGINEER", "SITE_ADMIN", "PM"},  # import requirement (§5.10)
     "SCA": {"SITE_ADMIN", "SITE_ENGINEER", "PM"},  # subcontract agreement
 }

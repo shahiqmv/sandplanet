@@ -16,7 +16,10 @@ from .audit import audit
 from .models import Approval, CostHead, Document, PaymentRequest
 
 SITE_RAISERS = {"SITE_ADMIN", "SITE_ENGINEER", "PM"}
-CENTRAL_RAISERS = {"HO_PURCHASING", "HO_HR", "DIRECTOR", "SIGNATORY", "QS"}
+CENTRAL_RAISERS = {"HO_PURCHASING", "HO_HR", "DIRECTOR", "SIGNATORY", "QS",
+                   # the Rental team raises fleet costs (a vehicle's cost centre)
+                   # on the Head-Office chain (MARINE_BUILD_BRIEF.md §4, phase 6)
+                   "RENTAL", "RENTAL_MANAGER"}
 # HR-raised manual PYRs (worker salary advances / welfare) get a Director (PD)
 # gate before the voucher — no PM (owner 2026-08-08). PA = the delegated HR
 # person, so she raises them too. This is deliberately SEPARATE from the
@@ -35,6 +38,14 @@ RAISER_ROLES = (SITE_RAISERS | CENTRAL_RAISERS | FINANCE_RAISERS
 USD_RAISERS = RAISER_ROLES
 RETURN_REASONS = {"SIGNATORY_DECLINED", "INCORRECT_DETAILS",
                   "MISSING_DOCUMENT", "DUPLICATE", "ON_HOLD", "OTHER"}
+
+
+def cost_centre(pr):
+    """The ledger dimension a PYR's postings carry: a fleet cost sits in the
+    RENTAL book against its vehicle; everything else is a project cost."""
+    if pr.vehicle_id:
+        return {"vehicle": pr.vehicle, "book": "RENTAL"}
+    return {}
 
 
 def origin_for(role):
@@ -88,6 +99,20 @@ def create_payment_request(doc, data, user):
         return None, "A valid cost head is required."
     if cost_head.is_pool:
         return None, "That cost head is a Head Office pool, not a project head."
+    # A fleet cost head needs its vehicle (the cost centre); a project head
+    # never carries one.
+    vehicle = job = None
+    if cost_head.rental:
+        from .models import MaintenanceJob, Vehicle
+        vehicle = Vehicle.objects.filter(pk=data.get("vehicle_id"), is_active=True).first()
+        if vehicle is None:
+            return None, "A fleet cost head needs the vehicle it is for."
+        if data.get("maintenance_job_id"):
+            job = MaintenanceJob.objects.filter(pk=data["maintenance_job_id"], vehicle=vehicle).first()
+            if job is None:
+                return None, "That job card is not on this vehicle."
+    elif data.get("vehicle_id"):
+        return None, "Only a fleet cost head is charged to a vehicle."
     # Salary advance/loan: a worker breakdown drives the amount and payee
     salary_lines = data.get("salary_lines") or []
     # Work-permit renewal: a per-worker fee breakdown drives the amount
@@ -134,6 +159,7 @@ def create_payment_request(doc, data, user):
         else "PERMIT_RENEWAL" if permit_lines
         else data.get("payment_type", "DIRECT"),
         cost_head=cost_head,
+        vehicle=vehicle, maintenance_job=job,
         payee=payee,
         payment_method=data.get("payment_method", "BANK"),
         payee_account=data.get("payee_account", ""),
@@ -463,11 +489,11 @@ def pyr_action(request, doc, action_name):
             costing.post(site=doc.site, cost_head=pr.cost_head, state="PAID",
                          source="PYR", amount=ledger_amount,
                          currency="MVR", document=doc, actor=user,
-                         posted_on=pr.paid_date)
+                         posted_on=pr.paid_date, **cost_centre(pr))
             costing.post(site=doc.site, cost_head=pr.cost_head,
                          state="INCURRED", source="PYR", amount=ledger_amount,
                          currency="MVR", document=doc, actor=user,
-                         posted_on=pr.paid_date)
+                         posted_on=pr.paid_date, **cost_centre(pr))
         # Work-permit renewals extend the expiries only now, on payment
         if pr.payment_type == "PERMIT_RENEWAL":
             from . import permits

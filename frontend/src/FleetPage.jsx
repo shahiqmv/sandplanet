@@ -6,6 +6,8 @@ import { api, apiUpload } from "./api.js";
 import { Btn, Chip, card, inputStyle, td, th } from "./ui.jsx";
 import AgreementsPanel from "./FleetRental.jsx";
 import { InvoicesPanel, ReceivablesPanel } from "./FleetMoney.jsx";
+import { PnlPanel, VehicleCostCentre } from "./FleetCosts.jsx";
+import { CustomersPanel } from "./FleetCustomers.jsx";
 
 const STATUS = [["AVAILABLE", "Available"], ["ON_HIRE", "On hire"], ["MAINTENANCE", "In maintenance"],
                 ["OFF_ROAD", "Off road"], ["DISPOSED", "Disposed"]];
@@ -220,17 +222,20 @@ function VehicleDetail({ id, onBack, onChanged }) {
           </div>
         </div>
       </div>
+      <VehicleCostCentre v={v} />
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
     </div>
   );
 }
 
-const TABS = [["vehicles", "Vehicles"], ["agreements", "Hire agreements"], ["invoices", "Invoices"], ["receivables", "Receivables"]];
+const TABS = [["vehicles", "Vehicles"], ["customers", "Customers"], ["agreements", "Hire agreements"], ["invoices", "Invoices"], ["receivables", "Receivables"], ["pnl", "P&L"]];
 
 export default function FleetPage() {
   const [tab, setTab] = useState("vehicles");
   const [jump, setJump] = useState(null);           // agreement id opened from a money tab
   const openAgreement = (id) => { setJump(id); setTab("agreements"); };
+  const [jumpVehicle, setJumpVehicle] = useState(null);
+  const openVehicle = (id) => { setJumpVehicle(id); setTab("vehicles"); };
   const tabs = (
     <div style={{ display: "flex", gap: 4, borderBottom: "1px solid var(--line)", marginBottom: 14 }}>
       {TABS.map(([k, l]) => (
@@ -243,16 +248,19 @@ export default function FleetPage() {
   if (tab === "agreements") return <div>{tabs}<AgreementsPanel initialOpen={jump} onOpened={() => setJump(null)} /></div>;
   if (tab === "invoices") return <div>{tabs}<InvoicesPanel openAgreement={openAgreement} /></div>;
   if (tab === "receivables") return <div>{tabs}<ReceivablesPanel openAgreement={openAgreement} /></div>;
-  return <div>{tabs}<VehiclesPanel /></div>;
+  if (tab === "pnl") return <div>{tabs}<PnlPanel openVehicle={openVehicle} /></div>;
+  if (tab === "customers") return <div>{tabs}<CustomersPanel /></div>;
+  return <div>{tabs}<VehiclesPanel initialOpen={jumpVehicle} onOpened={() => setJumpVehicle(null)} /></div>;
 }
 
-function VehiclesPanel() {
+function VehiclesPanel({ initialOpen = null, onOpened }) {
   const [summary, setSummary] = useState(null);
   const [rows, setRows] = useState(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
   const [adding, setAdding] = useState(false);
-  const [open, setOpen] = useState(null);
+  const [open, setOpen] = useState(initialOpen);
+  useEffect(() => { if (initialOpen) { setOpen(initialOpen); onOpened?.(); } }, [initialOpen, onOpened]);
   function load() {
     api("/fleet/summary").then(setSummary).catch(() => setSummary({ fleet: 0, by_status: {}, expiring: [] }));
     const q = new URLSearchParams();

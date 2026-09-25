@@ -141,6 +141,7 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
           {[["Site", doc.site_code],
             ["Payment type", pr.payment_type],
             ["Cost head", pr.cost_head],
+            ...(pr.vehicle ? [["Vehicle", `${pr.vehicle}${pr.maintenance_job ? " · job card " + pr.maintenance_job : ""}`]] : []),
             ["Payee", pr.payee],
             ["Method", `${pr.payment_method}${pr.payee_account
               ? " · " + pr.payee_account : ""}`],

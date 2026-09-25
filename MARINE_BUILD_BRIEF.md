@@ -279,8 +279,38 @@ Each phase ships and stops for the owner's review.
    moved off Sand Planet's navy to a sea-teal family so the two apps read
    differently at a glance — `manage.py brand_palette marine` (the seed
    applies it on first run; the Company page can fine-tune tokens).
-6. **Costs and P&L** — vehicle cost centres on PYRs and payroll allocation,
-   maintenance job cards, vehicle and fleet P&L, utilisation.
+6. **Costs and P&L** — DONE 2026-09-25. `PaymentRequest.vehicle` (+ optional
+   `maintenance_job`): a PYR on a fleet cost head (`/cost-heads?rental=1`:
+   maintenance / fuel / operator / insurance) needs its vehicle and every
+   posting it makes — COMMITTED, PAID, INCURRED — carries the vehicle in the
+   RENTAL book (`payments.cost_centre`); the Rental team raises them from
+   the vehicle page, filed at Head Office on the central chain (Rental roles
+   added to the PYR creators and central raisers; `scoped_site_ids` treats
+   them as HO). Payroll: on lock, an operator's gross follows the vehicles
+   they ran that month per the register (`fleet_costs.operator_allocation`:
+   the line's per-day rate × days on each vehicle, never more than the
+   gross) to RNT_OPERATOR against the vehicle; the rest stays site labour;
+   reopen reverses both. `MaintenanceJob` (`YYYY-MJ-001`): kind, opened /
+   closed, hour meter (updates the vehicle's), description, work done,
+   vendor, downtime, next service; an open card puts an AVAILABLE vehicle
+   into MAINTENANCE and closing it releases it; its cost is the PYRs charged
+   to it. `fleet_costs.pnl` per vehicle over a period: revenue (the
+   invoices' per-vehicle postings), costs by head, margin and %, days on
+   hire, breakdown days, hours, utilisation (hire days / calendar days), a
+   "not on a vehicle" row and the fleet total; USD postings at the company
+   rate. Fleet page tab P&L; the vehicle page carries its cost centre P&L,
+   job cards and the costs charged (`FleetCosts.jsx`).
+
+   **Customers vs clients** (owner 2026-09-25): a customer is who we hire or
+   sell to (`Customer`), a client is who we build for (the site's client
+   block); the same company is often both, so `Customer.project_client`
+   names the site it is the client of, `/fleet/project-clients` lists the
+   sites' clients to start a customer from (name, address, TIN, contact
+   copied), the Fleet page has a Customers tab with the full record (TIN,
+   reg no, billing address, contact, phone, email, currency, credit days,
+   GST exemption), the agreement form shows the picked customer's details
+   and warns when the TIN is missing, and the agreement (screen and PDF)
+   carries the customer's full block (`rental.customer_info`).
 
 ## 7. Inputs — settled and open
 

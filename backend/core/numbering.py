@@ -13,7 +13,7 @@ GLOBAL_TYPES = {"PR", "LM", "PO", "PV", "IPR", "IRN", "SIN", "LOA", "SPL", "AC",
 # 2026-DN-001 delivery note, 2026-CN-001 credit note (owner 2026-09-25,
 # after the old 2026/SO/665 form: dashes, because a slash cannot be a file
 # name). Tax invoices continue the company's INV-YYYY-NNNN series.
-TRADING_CODES = ("IN", "SQ", "SO", "DN", "CN",
+TRADING_CODES = ("IN", "SQ", "SO", "DN", "CN", "MJ",
                  "RA")                            # rental agreement (MARINE brief §4)
 
 

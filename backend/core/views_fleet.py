@@ -184,6 +184,25 @@ def customer_detail(request, pk):
     return Response(ser.data)
 
 
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def project_clients(request):
+    """The clients of our project sites, to start a customer record from:
+    the same company is often both our client and our hirer."""
+    from .models import Site
+    if not fleet.enabled():
+        return _off()
+    out = []
+    for s in Site.objects.exclude(client_name="").exclude(status="CLOSED").order_by("code"):
+        out.append({"site": s.id, "code": s.code, "site_name": s.name, "name": s.client_name,
+                    "billing_address": s.client_address, "tin": s.client_tin,
+                    "contact_person": s.client_contact, "phone": s.client_phone,
+                    "email": s.client_email,
+                    "customer": (s.customer_records.filter(is_active=True)
+                                 .values_list("id", flat=True).first())})
+    return Response(out)
+
+
 def _agreement(pk):
     return RentalAgreement.objects.select_related("customer", "activated_by").filter(id=pk).first()
 
@@ -527,3 +546,102 @@ def customer_statement(request, cid):
             return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
         return _pdf(pdf, f"SOA-{customer.name[:20]}.pdf")
     return Response(rental.statement(customer, d_from, d_to))
+
+
+# ---- phase 6: job cards, vehicle costs and the P&L -------------------------------
+
+from . import fleet_costs  # noqa: E402
+from .models import MaintenanceJob  # noqa: E402
+
+
+def _period(request):
+    d_from, d_to = _parse(request.GET.get("from")), _parse(request.GET.get("to"))
+    if not d_from or not d_to:
+        today = _date.today()
+        d_from, d_to = today.replace(month=1, day=1), today
+    if d_to < d_from:
+        return None, None
+    return d_from, d_to
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsFleetReader])
+def vehicle_jobs(request, pk):
+    if not fleet.enabled():
+        return _off()
+    v = _vehicle(pk)
+    if v is None:
+        return _off()
+    if request.method == "POST":
+        if not fleet.can_write(request.user):
+            return Response({"detail": "The Rental team keeps the job cards."}, status=403)
+        job, msg = fleet_costs.open_job(v, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(fleet_costs.job_dict(job), status=201)
+    return Response([fleet_costs.job_dict(j) for j in
+                     v.jobs.select_related("vehicle", "created_by", "closed_by")])
+
+
+@api_view(["GET", "PATCH", "POST"])
+@permission_classes([IsFleetReader])
+def job_detail(request, jid):
+    if not fleet.enabled():
+        return _off()
+    job = MaintenanceJob.objects.select_related("vehicle", "created_by", "closed_by").filter(id=jid).first()
+    if job is None:
+        return _off()
+    if request.method in ("PATCH", "POST"):
+        if not fleet.can_write(request.user):
+            return Response({"detail": "The Rental team keeps the job cards."}, status=403)
+        if request.method == "POST" and request.data.get("action") == "close":
+            msg = fleet_costs.close_job(job, request.data, request.user)
+        else:
+            msg = fleet_costs.update_job(job, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        job.refresh_from_db()
+    return Response(fleet_costs.job_dict(job))
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def jobs(request):
+    if not fleet.enabled():
+        return _off()
+    qs = MaintenanceJob.objects.select_related("vehicle", "created_by", "closed_by")
+    if request.GET.get("status"):
+        qs = qs.filter(status=request.GET["status"])
+    return Response([fleet_costs.job_dict(j) for j in qs[:300]])
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def vehicle_costs(request, pk):
+    """The vehicle's cost centre: its PYRs, and its P&L for the period."""
+    if not fleet.enabled():
+        return _off()
+    v = _vehicle(pk)
+    if v is None:
+        return _off()
+    d_from, d_to = _period(request)
+    if d_from is None:
+        return Response({"detail": "Pick a valid period."}, status=400)
+    from .vouchers import ho_site
+    p = fleet_costs.pnl(d_from, d_to, vehicle=v)
+    return Response({"pyrs": fleet_costs.vehicle_costs(v), "pnl": p,
+                     "ho_site": ho_site().id,
+                     "jobs": [fleet_costs.job_dict(j) for j in
+                              v.jobs.select_related("vehicle", "created_by", "closed_by")],
+                     "can_raise": request.user.role in ("RENTAL", "RENTAL_MANAGER", "ADMIN")})
+
+
+@api_view(["GET"])
+@permission_classes([IsFleetReader])
+def fleet_pnl(request):
+    if not fleet.enabled():
+        return _off()
+    d_from, d_to = _period(request)
+    if d_from is None:
+        return Response({"detail": "Pick a valid period."}, status=400)
+    return Response(fleet_costs.pnl(d_from, d_to))

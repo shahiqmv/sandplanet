@@ -528,6 +528,16 @@ def cost_heads(request):
     from .models import CostHead
 
     # Trading-book heads never reach a project picker (TRADING_BUILD_BRIEF §5).
+    # ?rental=1 is the fleet's own list — the vehicle cost centres' heads,
+    # only where the rental switch is on (MARINE_BUILD_BRIEF.md §4).
+    if request.GET.get("rental") == "1":
+        from . import fleet
+        if not fleet.enabled():
+            return Response([])
+        qs = CostHead.objects.filter(is_active=True, rental=True) \
+            .exclude(code__in=("RNT_REVENUE", "RNT_OUTPUT_GST"))
+        return Response([{"id": c.id, "name": c.name, "code": c.code, "is_pool": False}
+                         for c in qs])
     qs = CostHead.objects.filter(is_active=True, trading=False, rental=False)
     if request.GET.get("pools") != "1":
         qs = qs.filter(is_pool=False)

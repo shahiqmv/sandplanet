@@ -351,9 +351,11 @@ def authorise_source(doc, actor):
                 from . import fx
                 committed = (pr.amount_requested * fx.usd_rate()).quantize(
                     Decimal("0.01"))
+            from .payments import cost_centre
             costing.post(site=doc.site, cost_head=pr.cost_head,
                          state="COMMITTED", source="PYR", amount=committed,
-                         currency="MVR", document=doc, actor=actor)
+                         currency="MVR", document=doc, actor=actor,
+                         **cost_centre(pr))
         doc.status = "AUTHORISED"
         doc.save(update_fields=["status", "updated_at"])
         # An onboarding fee is settled at authorisation — that is when the
