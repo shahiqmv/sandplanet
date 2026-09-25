@@ -258,6 +258,7 @@ import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm, SUBMITTAL_TYPES } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
+import SideNav from "./SideNav.jsx";
 import { StatusChip, buttonStyle, card, ghostButton, inputStyle, AppSwitcher } from "./ui.jsx";
 
 function ChangePassword({ forced, onDone }) {
@@ -497,6 +498,16 @@ export default function App() {
   // expands it instead of showing the list.
   const [voucherRef, setVoucherRef] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  // Where the menu lives: the vertical rail (default since 2026-09-25) or the
+  // old top bar — each user's own choice while both exist.
+  const [navMode, setNavMode] = useState(() => {
+    try { return localStorage.getItem("planet:nav") || "side"; } catch { return "side"; }
+  });
+  const [railHidden, setRailHidden] = useState(false);
+  function switchNav(mode) {
+    setNavMode(mode);
+    try { localStorage.setItem("planet:nav", mode); } catch { /* private mode */ }
+  }
   const [docView, setDocViewRaw] = useState(null);
   // Every view change goes through here so "close" always has somewhere to
   // go back to. Opening a document, a form or another page FROM a page
@@ -874,6 +885,40 @@ export default function App() {
     openDoc(item.ref);
   }
 
+  const mainMax = // The day grid carries 9 columns + gate evidence —
+                         // give it the room (owner 2026-08-26).
+                         docView?.mode === "attendance" ? 1560
+                         : ["workforce", "dma"].includes(docView?.mode)
+                         || (!docView && hoPage === "meetings")
+                           ? 1160
+                         // The salary grid is 17 columns wide — at the 900px
+                         // default it hid ~400px of every row behind a
+                         // scrollbar, which is no way to check pay (owner
+                         // 2026-08-13). maxWidth only caps, so a laptop still
+                         // uses its full window.
+                         : (!docView && hoPage === "payroll")
+                           ? 1800
+                         // A tender carries the same bill of quantities the
+                         // project page does — section, code, description,
+                         // unit, qty, supply and install rates, amount — and
+                         // pricing one at 900px is no better here than there
+                         // (owner 2026-09-09).
+                         : (docView?.mode === "project"
+                            || (!docView && hoPage === "procurement-schedule")
+                            || (!docView && hoPage === "tenders"))
+                           ? 1500
+                         : (!docView && hoPage === "employees")
+                           ? 1300
+                         // Nine columns since the application reference and
+                         // the BV clock joined them — at 900px the status,
+                         // the one people read, sat under the scrollbar
+                         // (owner 2026-08-18).
+                         : (!docView && ["onboarding",
+                                         "bv-register"].includes(hoPage))
+                           ? 1500
+                         : 900;
+  const sideNav = showHoNav && navMode === "side" && !railHidden;
+
   return (
     <div>
       {/* Mounted once, above everything: it reports any request the app makes,
@@ -883,11 +928,15 @@ export default function App() {
           left open on the sign-in screen can still tell it is stale. */}
       <NewReleaseBanner />
       {showNotes && <ReleaseNotes onClose={() => setShowNotes(false)} />}
-      <header className="topbar">
+      <header className={"topbar" + (showHoNav && navMode === "side" ? " side" : "")}>
         {showHoNav && (
           <button className="navtoggle" aria-label="Menu"
                   aria-expanded={menuOpen}
-                  onClick={() => setMenuOpen((o) => !o)}>
+                  title={navMode === "side" ? (railHidden ? "Show the menu" : "Hide the menu — full width for this page") : "Menu"}
+                  onClick={() => {
+                    if (navMode === "side" && window.innerWidth > 900) setRailHidden((h) => !h);
+                    else setMenuOpen((o) => !o);
+                  }}>
             <span aria-hidden="true">{menuOpen ? "✕" : "☰"}</span>
             {!menuOpen && pendingCount > 0 && (
               <span className="nav-badge nav-badge-dot" />
@@ -900,7 +949,7 @@ export default function App() {
           <BrandBlock />
         </div>
         <AppSwitcher apps={brandState?.apps} current="planet" />
-        {showHoNav && (
+        {showHoNav && navMode !== "side" && (
           <nav className="navtabs">
             {groups.map((g) => (
               <button key={g.key}
@@ -934,6 +983,13 @@ export default function App() {
                   setInstallPrompt(null);
                 }}>
                 Install app
+              </button>
+            )}
+            {showHoNav && (
+              <button className="signout-btn navmode-btn"
+                      title={navMode === "side" ? "Put the menu back across the top" : "Move the menu to a rail on the left"}
+                      onClick={() => switchNav(navMode === "side" ? "top" : "side")}>
+                {navMode === "side" ? "Top menu" : "Side menu"}
               </button>
             )}
             {/* Reachable at any time, not only when a release banner is up. */}
@@ -1003,39 +1059,14 @@ export default function App() {
         <ChangePassword forced onDone={() =>
           api("/auth/me").then(setMe)} />
       ) : (
-        <main style={{ maxWidth:
-                         // The day grid carries 9 columns + gate evidence —
-                         // give it the room (owner 2026-08-26).
-                         docView?.mode === "attendance" ? 1560
-                         : ["workforce", "dma"].includes(docView?.mode)
-                         || (!docView && hoPage === "meetings")
-                           ? 1160
-                         // The salary grid is 17 columns wide — at the 900px
-                         // default it hid ~400px of every row behind a
-                         // scrollbar, which is no way to check pay (owner
-                         // 2026-08-13). maxWidth only caps, so a laptop still
-                         // uses its full window.
-                         : (!docView && hoPage === "payroll")
-                           ? 1800
-                         // A tender carries the same bill of quantities the
-                         // project page does — section, code, description,
-                         // unit, qty, supply and install rates, amount — and
-                         // pricing one at 900px is no better here than there
-                         // (owner 2026-09-09).
-                         : (docView?.mode === "project"
-                            || (!docView && hoPage === "procurement-schedule")
-                            || (!docView && hoPage === "tenders"))
-                           ? 1500
-                         : (!docView && hoPage === "employees")
-                           ? 1300
-                         // Nine columns since the application reference and
-                         // the BV clock joined them — at 900px the status,
-                         // the one people read, sat under the scrollbar
-                         // (owner 2026-08-18).
-                         : (!docView && ["onboarding",
-                                         "bv-register"].includes(hoPage))
-                           ? 1500
-                         : 900,
+        <div className={"shell" + (sideNav ? " with-rail" : "")}>
+        {sideNav && (
+          <SideNav groups={groups} activeKey={activeGroup?.key} hoPage={hoPage}
+                   isCurrent={!openSite && !docView} pendingCount={pendingCount}
+                   wide={mainMax >= 1300}
+                   onGo={(key) => { setHoPage(key); setOpenSite(null); setDocView(null); }} />
+        )}
+        <main style={{ maxWidth: mainMax,
                        margin: "28px auto", padding: "0 20px" }}>
           {error && <p style={{ color: "#c0392b" }}>{error}</p>}
 
@@ -1044,7 +1075,7 @@ export default function App() {
               the header unusable (owner 2026-08-12). Its layout lives in CSS,
               not inline: an inline `display` would outrank the media query
               that hides it. */}
-          {!docView && !openSite && activeGroup &&
+          {!docView && !openSite && activeGroup && !sideNav &&
             activeGroup.subs.length > 1 && (
             <div className="subtabs">
               {activeGroup.subs.map(([key, label]) => (
@@ -1656,6 +1687,7 @@ export default function App() {
             <SiteList sites={sites} onOpen={setOpenSite} />
           )}
         </main>
+        </div>
       )}
     </div>
   );

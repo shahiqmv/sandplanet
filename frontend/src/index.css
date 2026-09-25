@@ -429,3 +429,96 @@ main tbody tr:hover > td {
 .appswitch-item:hover { background: var(--sky-soft); }
 .appswitch-item.current { font-weight: 700; color: var(--navy); }
 .topbar .brand-logo { height: 26px; margin-right: 8px; }
+
+
+/* --- the vertical navigation rail (owner 2026-09-25) --------------------
+   The top bar keeps the brand, the app switcher and the user; the groups and
+   their pages move to a rail down the left. Two widths: labels, or a 52px
+   icon strip that expands over the page on hover. */
+.shell { display: flex; align-items: flex-start; }
+.shell > main { flex: 1; min-width: 0; }
+.sidenav {
+  flex: none;
+  width: 222px;
+  position: sticky;
+  top: 59px;                                  /* below the top bar */
+  height: calc(100vh - 59px);
+  transition: width 160ms ease;
+  z-index: 90;
+}
+.sidenav.collapsed { width: 52px; }
+.rail {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+  padding: 10px 0 12px;
+  display: flex;
+  flex-direction: column;
+  scrollbar-width: thin;
+}
+.sidenav.collapsed .rail { width: 52px; }
+.sidenav.collapsed:hover .rail {
+  width: 222px;
+  box-shadow: 6px 0 22px rgba(11, 32, 51, 0.18);
+}
+.rail-group { padding: 2px 8px; }
+.rail-group + .rail-group { margin-top: 2px; }
+.rail-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 0;
+  background: none;
+  color: var(--sp-navy);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+.rail-head:hover { background: var(--sky-soft); }
+.rail-head.on { background: var(--sky-soft); color: var(--navy-deep); }
+.rail-group.active .rail-head { box-shadow: inset 3px 0 0 var(--sky); }
+.rail-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.rail-chev { font-size: 11px; color: var(--faint); }
+.rail-badge { margin-left: auto; }
+.rail-ico { width: 17px; text-align: center; font-size: 15px; color: var(--faint); }
+.rail-subs { padding: 2px 0 6px 6px; }
+.rail-item {
+  display: block;
+  padding: 6px 10px 6px 31px;
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 13px;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rail-item:hover { background: var(--sand); }
+.rail-item.on { background: var(--sp-navy); color: #fff; font-weight: 600; }
+.rail-foot { margin-top: auto; padding: 8px 8px 0; border-top: 1px solid var(--row-line); }
+.rail-foot .rail-head { font-weight: 500; color: var(--muted); font-size: 12.5px; }
+.sidenav.collapsed .rail-label,
+.sidenav.collapsed .rail-chev,
+.sidenav.collapsed .rail-subs,
+.sidenav.collapsed .rail-badge { display: none; }
+.sidenav.collapsed .rail-head { justify-content: center; padding: 9px 0; }
+.sidenav.collapsed:hover .rail-label,
+.sidenav.collapsed:hover .rail-chev,
+.sidenav.collapsed:hover .rail-subs { display: revert; }
+.sidenav.collapsed:hover .rail-badge { display: inline-block; }
+.sidenav.collapsed:hover .rail-head { justify-content: flex-start; padding: 8px 10px; }
+.topbar.side .navtoggle { display: flex; }
+@media (max-width: 900px) {
+  .sidenav { display: none; }             /* the phone drawer takes over */
+  .navmode-btn { display: none; }
+}
