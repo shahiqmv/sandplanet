@@ -1,6 +1,7 @@
 // Planet Mobile API client — Bearer device token against /api/mobile/v1/.
 // The token is the only client-held secret; every rule is server-enforced.
-const BASE = "/api/mobile/v1";
+const PREFIX = (() => { const m = /^\/(marine)(?=\/|$)/.exec(window.location.pathname); return m ? `/${m[1]}` : ""; })();
+const BASE = `${PREFIX}/api/mobile/v1`;
 const TOKEN_KEY = "planet.mobile.token";
 
 export function getToken() {

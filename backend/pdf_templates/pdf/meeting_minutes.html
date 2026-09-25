@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -6,11 +6,11 @@
 <style>
   .mins { white-space: pre-wrap; font-size: 10pt; line-height: 1.5;
           color: #22303B; margin: 2mm 0 4mm; }
-  .sec { font-size: 11pt; font-weight: 700; color: #10344F;
+  .sec { font-size: 11pt; font-weight: 700; color: {% brand "heading" %};
          margin: 5mm 0 2mm; }
   .att span { display: inline-block; font-size: 9pt; padding: 2px 8px;
               margin: 0 4px 4px 0; border-radius: 10px;
-              background: #EAF3FB; color: #10344F; }
+              background: #EAF3FB; color: {% brand "heading" %}; }
   .att span.ext { background: #FBF2E0; }
   table.act td, table.act th { font-size: 9pt; }
   .st { font-size: 8pt; font-weight: 700; padding: 1px 7px; border-radius: 8px; }

@@ -415,3 +415,17 @@ main tbody tr:hover > td {
 @media (max-width: 560px) {
   .subtabs { display: none; }          /* the drawer already lists these */
 }
+
+/* --- sister-app switcher in the top bar (brand layer) --- */
+.appswitch { position: relative; }
+.appswitch-btn { background: none; border: 1px solid rgba(255,255,255,.35); border-radius: 6px;
+  color: #fff; font: inherit; font-size: 12px; padding: 4px 10px; cursor: pointer; white-space: nowrap; }
+.appswitch-btn:hover { border-color: #fff; }
+.appswitch-menu { position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; z-index: 50;
+  background: var(--paper); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 4px; }
+.appswitch-item { display: block; padding: 8px 10px; border-radius: 6px; color: var(--ink);
+  text-decoration: none; font-size: 13.5px; }
+.appswitch-item:hover { background: var(--sky-soft); }
+.appswitch-item.current { font-weight: 700; color: var(--navy); }
+.topbar .brand-logo { height: 26px; margin-right: 8px; }

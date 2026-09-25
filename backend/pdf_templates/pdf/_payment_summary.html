@@ -1,9 +1,9 @@
-<style>
+{% load brand %}<style>
   table.paysum { width: 100%; border-collapse: collapse; margin-top: 3mm; }
   table.paysum th, table.paysum td {
     border: 0.6px solid #B9C4CD; padding: 3.5px 7px; font-size: 8.6pt; }
   table.paysum thead th {
-    background: #FBEEE3; color: #10344F; font-weight: 700;
+    background: #FBEEE3; color: {% brand "heading" %}; font-weight: 700;
     text-align: right; }
   table.paysum thead th.lbl { text-align: left; }
   table.paysum td.lbl { text-align: left; }

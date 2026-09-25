@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{% load brand %}<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -17,8 +17,8 @@
   .signblock .sfor { color: #5B6672; font-size: 8.5pt; margin-top: 1pt; }
   .accept-title { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
                   font-weight: 700; font-size: 12pt; letter-spacing: 2pt;
-                  text-transform: uppercase; color: #16527E; }
-  .accept-rule { width: 120pt; height: 1.5pt; background: #29ABE2; margin: 3pt 0 12pt 0; }
+                  text-transform: uppercase; color: {% brand "primary" %}; }
+  .accept-rule { width: 120pt; height: 1.5pt; background: {% brand "accent" %}; margin: 3pt 0 12pt 0; }
   .acc-sig { margin-top: 40pt; width: 100%; border-collapse: collapse; }
   .acc-sig td { width: 50%; padding-right: 24pt; }
   .acc-line { border-top: 1pt solid #1A2530; padding-top: 4pt; font-size: 8.5pt;

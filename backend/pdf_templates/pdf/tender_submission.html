@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{% load brand %}<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -13,8 +13,8 @@
   .cover .addr { font-size: 8pt; color: #5B6672; letter-spacing: .02em; }
   .cover .kind { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
                  font-weight: 700; font-size: 15pt; letter-spacing: 3pt;
-                 text-transform: uppercase; color: #16527E; margin-top: 40pt; }
-  .cover .kind-rule { width: 150pt; height: 2pt; background: #29ABE2;
+                 text-transform: uppercase; color: {% brand "primary" %}; margin-top: 40pt; }
+  .cover .kind-rule { width: 150pt; height: 2pt; background: {% brand "accent" %};
                       margin: 6pt auto 0 auto; }
   .cover .subject { font-size: 13pt; line-height: 1.45; font-weight: 600;
                     color: #1A2530; margin: 22pt auto 0 auto; max-width: 400pt;
@@ -27,44 +27,44 @@
                   margin-top: 2pt; }
   table.meta { width: 78%; margin: 34pt auto 0 auto; border-collapse: collapse;
                border: 1pt solid #C9D9E5; }
-  table.meta th { background: #16527E; color: #fff; font-size: 7.5pt;
+  table.meta th { background: {% brand "primary" %}; color: #fff; font-size: 7.5pt;
                   letter-spacing: 1pt; text-transform: uppercase;
                   padding: 4pt 6pt; }
   table.meta td { padding: 5pt 6pt; font-size: 9.5pt; text-align: center;
                   border-top: 1pt solid #EAF1F6; }
   table.sign { width: 78%; margin: 12pt auto 0 auto; border-collapse: collapse;
                border: 1pt solid #C9D9E5; }
-  table.sign th { background: #F6F2E9; color: #16527E; font-size: 7.5pt;
+  table.sign th { background: #F6F2E9; color: {% brand "primary" %}; font-size: 7.5pt;
                   letter-spacing: 1pt; text-transform: uppercase;
                   padding: 4pt 6pt; }
   table.sign td { padding: 5pt 6pt 16pt 6pt; font-size: 9.5pt;
                   text-align: center; border-top: 1pt solid #EAF1F6; }
   .tagline { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
              font-weight: 700; font-size: 10pt; letter-spacing: 2.4pt;
-             text-transform: uppercase; color: #16527E; margin-top: 40pt; }
+             text-transform: uppercase; color: {% brand "primary" %}; margin-top: 40pt; }
   .confid { font-size: 7.5pt; color: #5B6672; margin: 10pt auto 0 auto;
             max-width: 400pt; line-height: 1.5; }
 
   .page2 { page-break-before: always; }
   .secttitle { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
                font-weight: 700; font-size: 13pt; letter-spacing: 2pt;
-               text-transform: uppercase; color: #16527E; }
-  .sect-rule { width: 110pt; height: 1.5pt; background: #29ABE2;
+               text-transform: uppercase; color: {% brand "primary" %}; }
+  .sect-rule { width: 110pt; height: 1.5pt; background: {% brand "accent" %};
                margin: 3pt 0 8pt 0; }
   .strap { font-size: 8.5pt; color: #5B6672; line-height: 1.5;
            margin-bottom: 8pt; }
   table.sum { width: 100%; border-collapse: collapse;
               border: 1pt solid #C9D9E5; }
-  table.sum th { background: #16527E; color: #fff; font-size: 8pt;
+  table.sum th { background: {% brand "primary" %}; color: #fff; font-size: 8pt;
                  text-transform: uppercase; letter-spacing: .5pt;
                  padding: 4pt 6pt; text-align: left; }
   table.sum th.n, table.sum td.n { text-align: right; }
   table.sum td { padding: 3.5pt 6pt; border-bottom: 1pt solid #EAF1F6;
                  font-size: 9pt; }
-  table.sum tr.sub td { border-top: 1.2pt solid #16527E; font-weight: 600;
+  table.sum tr.sub td { border-top: 1.2pt solid {% brand "primary" %}; font-weight: 600;
                         background: #F6F9FC; }
-  table.sum tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
-                        background: #DCEBF8; font-size: 10pt; }
+  table.sum tr.tot td { border-top: 1.5pt solid {% brand "primary" %}; font-weight: 700;
+                        background: {% brand "soft3" %}; font-size: 10pt; }
   .words { font-size: 8.5pt; color: #5B6672; margin-top: 4pt;
            font-style: italic; }
   .warn { color: #B35900; font-weight: 600; font-size: 8.5pt; margin-top: 5pt; }
@@ -72,29 +72,29 @@
                 border: 1pt solid #C9D9E5; }
   table.terms td { padding: 4pt 6pt; border-bottom: 1pt solid #EAF1F6;
                    font-size: 8.5pt; vertical-align: top; }
-  table.terms td.k { width: 108pt; font-weight: 600; color: #16527E;
+  table.terms td.k { width: 108pt; font-weight: 600; color: {% brand "primary" %};
                      background: #F6F9FC; }
   table.ack { width: 100%; border-collapse: collapse; margin-top: 6pt; }
   table.ack td { width: 50%; padding: 0 14pt; vertical-align: top; }
   table.ack td.left { border-right: 1pt solid #EAF1F6; padding-left: 0; }
   .ack-for { font-family: "Barlow Condensed", "Arial Narrow", Helvetica, sans-serif;
              font-weight: 700; font-size: 9.5pt; letter-spacing: 1.2pt;
-             text-transform: uppercase; color: #16527E; }
+             text-transform: uppercase; color: {% brand "primary" %}; }
   .ack-row { font-size: 8.5pt; color: #5B6672; margin-top: 12pt; }
   .ack-line { display: inline-block; border-bottom: 1pt solid #9AA4AD;
               width: 132pt; }
 
   .bill { width: 100%; border-collapse: collapse; margin-top: 6pt;
           border: 1pt solid #C9D9E5; }
-  .bill th { background: #16527E; color: #fff; font-size: 7.5pt;
+  .bill th { background: {% brand "primary" %}; color: #fff; font-size: 7.5pt;
              text-transform: uppercase; letter-spacing: .4pt;
              padding: 3pt 5pt; text-align: left; }
   .bill th.n, .bill td.n { text-align: right; }
   .bill td { padding: 2pt 5pt; border-bottom: 1pt solid #EAF1F6;
              font-size: 8pt; vertical-align: top; }
-  .bill tr.head td { background: #F6F2E9; font-weight: 600; color: #16527E; }
-  .bill tr.tot td { border-top: 1.5pt solid #16527E; font-weight: 700;
-                    background: #DCEBF8; }
+  .bill tr.head td { background: #F6F2E9; font-weight: 600; color: {% brand "primary" %}; }
+  .bill tr.tot td { border-top: 1.5pt solid {% brand "primary" %}; font-weight: 700;
+                    background: {% brand "soft3" %}; }
 </style>
 </head>
 <body>

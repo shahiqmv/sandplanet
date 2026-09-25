@@ -1,3 +1,5 @@
+import { API_BASE, CSRF_COOKIE } from "./brand.js";
+
 function getCookie(name) {
   const match = document.cookie.match(new RegExp("(^| )" + name + "=([^;]+)"));
   return match ? decodeURIComponent(match[2]) : null;
@@ -126,9 +128,9 @@ export function apiUpload(path, formData, method = "POST") {
   return new Promise((resolve, reject) => {
     const id = _start("Uploading", true);
     const xhr = new XMLHttpRequest();
-    xhr.open(method, `/api/v1${path}`, true);
+    xhr.open(method, `${API_BASE}${path}`, true);
     xhr.withCredentials = true;
-    xhr.setRequestHeader("X-CSRFToken", getCookie("csrftoken"));
+    xhr.setRequestHeader("X-CSRFToken", getCookie(CSRF_COOKIE));
 
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable) _progress(id, e.loaded / e.total);
@@ -162,11 +164,11 @@ export function apiUpload(path, formData, method = "POST") {
 export async function api(path, { method = "GET", body } = {}) {
   const headers = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (method !== "GET") headers["X-CSRFToken"] = getCookie("csrftoken");
+  if (method !== "GET") headers["X-CSRFToken"] = getCookie(CSRF_COOKIE);
   const id = _start(_label(method, path), method !== "GET");
   let res;
   try {
-    res = await fetch(`/api/v1${path}`, {
+    res = await fetch(`${API_BASE}${path}`, {
       method,
       headers,
       credentials: "same-origin",
@@ -201,7 +203,7 @@ export async function apiDownload(path) {
   const id = _start("Preparing the download", false);
   let res;
   try {
-    res = await fetch(`/api/v1${path}`, { credentials: "same-origin" });
+    res = await fetch(`${API_BASE}${path}`, { credentials: "same-origin" });
   } finally {
     _end(id);
   }

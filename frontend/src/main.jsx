@@ -11,7 +11,10 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import App from "./App.jsx";
 import ErrorBoundary from "./ErrorBoundary.jsx";
+import { PREFIX, loadBrand } from "./brand.js";
 import "./index.css";
+
+loadBrand();
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
@@ -27,7 +30,8 @@ ReactDOM.createRoot(document.getElementById("root")).render(
 // (own window + Dock icon) and delivers desktop push. Served by Django at
 // /sw.js with Service-Worker-Allowed:/ — the Vite dev server has no such
 // route, so only the built app registers.
-if (import.meta.env.PROD && "serviceWorker" in navigator) {
+// A sister instance under a path prefix has no worker of its own yet.
+if (import.meta.env.PROD && !PREFIX && "serviceWorker" in navigator) {
   window.addEventListener("load", () => {
     navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch(() => {
       /* installability is a progressive enhancement — ignore failures */

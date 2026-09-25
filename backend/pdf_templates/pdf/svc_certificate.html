@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 {% include "pdf/_styles.html" %}
@@ -6,12 +6,12 @@
   table.dv { width: 100%; border-collapse: collapse; margin-top: 3mm; }
   table.dv th, table.dv td { border: 0.5px solid #C4D0DA; padding: 2.5px 6px;
                              font-size: 8.4pt; vertical-align: top; }
-  table.dv thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+  table.dv thead th { background: #EAF1F6; color: {% brand "heading" %}; font-weight: 700;
                       text-align: right; }
   table.dv thead th.l { text-align: left; }
   table.dv td.num { text-align: right; font-variant-numeric: tabular-nums;
                     white-space: nowrap; }
-  table.dv tr.grand td { background: #BFD3E3; font-weight: 800; color: #10344F;
+  table.dv tr.grand td { background: #BFD3E3; font-weight: 800; color: {% brand "heading" %};
                          font-size: 8.8pt; }
   table.dv tbody tr { page-break-inside: avoid; }
   table.dv tr.over td { background: #FBEDEA; }
@@ -20,10 +20,10 @@
              width: 38mm; }
   .wf .sub td { background: #EAF1F6; font-weight: 700; }
   .wf .grand td { background: #BFD3E3; font-weight: 800; font-size: 10pt;
-                  color: #10344F; }
+                  color: {% brand "heading" %}; }
   .neg { color: #b0402f; }
   .words { margin-top: 3mm; font-style: italic; font-size: 9pt;
-           color: #10344F; }
+           color: {% brand "heading" %}; }
   .overnote { margin-top: 2mm; font-size: 8.4pt; color: #b0402f; }
   .provisional { display: inline-block; margin-left: 3mm; padding: 1px 8px;
                  border: 1.2pt solid #9a5b00; border-radius: 3px;
@@ -32,13 +32,13 @@
   table.sig4 { width: 100%; border-collapse: collapse; margin-top: 9mm;
                page-break-inside: avoid; }
   table.sig4 td { width: 25%; padding: 0 3mm 0 0; vertical-align: top; }
-  table.sig4 .t { border-top: 0.75pt solid #10344F; padding-top: 1.5mm;
+  table.sig4 .t { border-top: 0.75pt solid {% brand "heading" %}; padding-top: 1.5mm;
                   font-size: 8pt; color: #5a6b78; }
-  table.sig4 .dn { font-size: 9pt; color: #10344F; font-weight: 700; }
+  table.sig4 .dn { font-size: 9pt; color: {% brand "heading" %}; font-weight: 700; }
   table.sig4 .dd { font-size: 7.6pt; color: #5a6b78; }
   .ack { margin-top: 8mm; page-break-inside: avoid; }
-  .ack .h { font-size: 9pt; font-weight: 700; color: #10344F; }
-  .ack .l { margin-top: 9mm; border-top: 0.75pt solid #10344F; width: 70mm;
+  .ack .h { font-size: 9pt; font-weight: 700; color: {% brand "heading" %}; }
+  .ack .l { margin-top: 9mm; border-top: 0.75pt solid {% brand "heading" %}; width: 70mm;
             padding-top: 1.5mm; font-size: 8pt; color: #5a6b78; }
 </style>
 </head>

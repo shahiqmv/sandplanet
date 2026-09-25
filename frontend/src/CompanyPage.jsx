@@ -38,6 +38,115 @@ const SETTINGS = [
 ];
 const ALL = [...IDENTITY, ...SIGNEE, ...SETTINGS];
 
+
+// ---- brand layer (MARINE_BUILD_BRIEF.md §2) ---------------------------------
+// The company's name, colours, marks, feature switches and sister apps as
+// company parameters. Sand Planet's values are the defaults; a sister
+// instance sets its own here and every PDF and screen follows.
+const BRAND_TEXT = [["brand_name", "Brand name (app bar)", "SAND PLANET"],
+                    ["brand_tagline", "Tagline under the name", "Project Management"],
+                    ["brand_short_code", "Short code", "SP"]];
+const BRAND_COLOURS = [["primary", "Primary (navy)", "#16527E"], ["primary_deep", "Primary deep", "#0e3a5c"],
+                       ["primary_dark", "Gradient dark end", "#0C4E82"], ["heading", "Document headings", "#10344F"],
+                       ["accent", "Accent (sky)", "#29ABE2"], ["accent_light", "Gradient light end", "#26A9E0"],
+                       ["accent_deep", "Table heads", "#1685CC"], ["soft", "Soft fill (app)", "#dff1fa"],
+                       ["soft2", "Section bands", "#E7F1F9"], ["soft3", "Total bands", "#DCEBF8"],
+                       ["soft4", "Zebra rows", "#F4F9FD"]];
+const BRAND_FILES = [["mark", "Letterhead mark (emblem)"], ["wordmark_white", "White wordmark (app bar)"],
+                     ["emblem", "Emblem (icons)"]];
+const FEATURES = [["trading", "Trading app (/t/)"], ["rental", "Rental module"], ["profile", "Company Profile"]];
+
+function BrandSection({ canEdit }) {
+  const [vals, setVals] = useState(null);
+  const [files, setFiles] = useState({});
+  const [features, setFeatures] = useState({ trading: true, rental: false, profile: true });
+  const [apps, setApps] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  useEffect(() => {
+    const keys = [...BRAND_TEXT.map(([k]) => k), ...BRAND_COLOURS.map(([k]) => `brand_${k}`)];
+    Promise.all(keys.map((k) => api(`/parameters/${k}`).then((p) => [k, p.value ?? ""]).catch(() => [k, ""])))
+      .then((pairs) => setVals(Object.fromEntries(pairs)));
+    api("/brand").then((b) => { setFeatures(b.features || {}); setApps((b.apps || []).filter((a) => !["planet", "trading"].includes(a.key))); }).catch(() => {});
+    BRAND_FILES.forEach(([k]) => api(`/company/brand/${k}`).then((r) => setFiles((f) => ({ ...f, [k]: r }))).catch(() => {}));
+  }, []);
+  if (!vals) return null;
+  const set = (k) => (e) => setVals({ ...vals, [k]: e.target.value });
+  async function save() {
+    setBusy(true); setMsg(null);
+    try {
+      for (const [k, v] of Object.entries(vals)) await api(`/parameters/${k}`, { method: "PUT", body: { value: v } });
+      await api("/parameters/features", { method: "PUT", body: { value: features } });
+      await api("/parameters/apps", { method: "PUT", body: { value: apps.filter((a) => a.name && a.url) } });
+      setMsg("Brand saved — reload to see the app colours; PDFs pick it up within a minute.");
+    } catch (e) { setMsg(e.message); } finally { setBusy(false); }
+  }
+  async function upload(kind, file) {
+    const fd = new FormData(); fd.append("file", file);
+    try { setFiles({ ...files, [kind]: await apiUpload(`/company/brand/${kind}`, fd) }); }
+    catch (e) { setMsg(e.message); }
+  }
+  return (
+    <div style={{ ...card, marginTop: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Brand</h3>
+      <p style={{ fontSize: 13, color: "var(--muted)", marginTop: 0 }}>
+        Name, colours and marks for this company's app and stationery. Leave a colour blank to keep Sand Planet's.
+      </p>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "4px 16px" }}>
+        {BRAND_TEXT.map(([k, label, ph]) => (
+          <label key={k} style={{ fontSize: 13 }}>{label}
+            <input style={{ ...inputStyle, width: "100%" }} value={vals[k] || ""} placeholder={ph} disabled={!canEdit} onChange={set(k)} /></label>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: "4px 16px", marginTop: 8 }}>
+        {BRAND_COLOURS.map(([k, label, ph]) => (
+          <label key={k} style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 8 }}>
+            <input type="color" value={vals[`brand_${k}`] || ph} disabled={!canEdit}
+                   onChange={(e) => setVals({ ...vals, [`brand_${k}`]: e.target.value })} style={{ width: 34, height: 28, padding: 0, border: 0 }} />
+            <span style={{ flex: 1 }}>{label}<br /><code style={{ fontSize: 11 }}>{vals[`brand_${k}`] || `${ph} (default)`}</code></span>
+            {vals[`brand_${k}`] && canEdit && <button className="t-link" type="button" style={{ background: "none", border: 0, cursor: "pointer", color: "var(--sp-navy)" }}
+                     onClick={() => setVals({ ...vals, [`brand_${k}`]: "" })}>reset</button>}
+          </label>
+        ))}
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: 12, marginTop: 12 }}>
+        {BRAND_FILES.map(([k, label]) => (
+          <div key={k} style={{ fontSize: 13 }}>
+            <div>{label}</div>
+            {files[k]?.url ? <img src={files[k].url} alt={label} style={{ maxHeight: 40, maxWidth: 200, background: k === "wordmark_white" ? "var(--navy)" : "transparent", padding: 4, borderRadius: 4 }} />
+                           : <span style={{ color: "var(--muted)" }}>none — Sand Planet's default</span>}
+            {canEdit && <input type="file" accept="image/png,image/jpeg,image/svg+xml" style={{ display: "block", marginTop: 4 }}
+                               onChange={(e) => e.target.files[0] && upload(k, e.target.files[0])} />}
+          </div>
+        ))}
+      </div>
+      <div style={{ marginTop: 12, fontSize: 13 }}>
+        <b>Features</b>{" "}
+        {FEATURES.map(([k, label]) => (
+          <label key={k} style={{ marginLeft: 14 }}>
+            <input type="checkbox" checked={!!features[k]} disabled={!canEdit} onChange={(e) => setFeatures({ ...features, [k]: e.target.checked })} /> {label}
+          </label>
+        ))}
+      </div>
+      <div style={{ marginTop: 12, fontSize: 13 }}>
+        <b>Sister apps in the switcher</b>
+        {apps.map((a, i) => (
+          <div key={i} style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <input style={{ ...inputStyle, flex: 1 }} placeholder="Name, e.g. Sandplanet Marine" value={a.name || ""} disabled={!canEdit}
+                   onChange={(e) => setApps(apps.map((x, j) => (j === i ? { ...x, name: e.target.value, key: x.key || `app${i}` } : x)))} />
+            <input style={{ ...inputStyle, flex: 1 }} placeholder="URL, e.g. /marine/ or https://marine.sandplanet.mv" value={a.url || ""} disabled={!canEdit}
+                   onChange={(e) => setApps(apps.map((x, j) => (j === i ? { ...x, url: e.target.value } : x)))} />
+            {canEdit && <button type="button" style={ghostButton} onClick={() => setApps(apps.filter((_, j) => j !== i))}>×</button>}
+          </div>
+        ))}
+        {canEdit && <button type="button" style={{ ...ghostButton, marginTop: 6 }} onClick={() => setApps([...apps, { key: `app${apps.length}`, name: "", url: "" }])}>+ sister app</button>}
+      </div>
+      {msg && <p style={{ fontSize: 13, marginTop: 10 }}>{msg}</p>}
+      {canEdit && <button style={{ ...buttonStyle, marginTop: 12 }} onClick={save} disabled={busy}>{busy ? "Saving…" : "Save brand"}</button>}
+    </div>
+  );
+}
+
 export default function CompanyPage({ me }) {
   const [values, setValues] = useState({});
   const [logo, setLogo] = useState(null);       // {url, uploaded}
@@ -251,6 +360,7 @@ export default function CompanyPage({ me }) {
       </button>
     </section>
     <BankAccounts />
+    <BrandSection canEdit={me.role === "ADMIN"} />
     </div>
   );
 }

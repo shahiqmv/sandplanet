@@ -11,8 +11,11 @@ import "@fontsource/ibm-plex-mono/500.css";
 import "@fontsource/ibm-plex-mono/600.css";
 import App from "./App.jsx";
 import ErrorBoundary from "../ErrorBoundary.jsx";
+import { loadBrand } from "../brand.js";
 import "../index.css";
 import "./trading.css";
+
+loadBrand();
 
 // Sand Planet Trading — the trading arm's own app (TRADING_BUILD_BRIEF.md
 // §5). Same server, same session, same API origin as Planet; its own entry,

@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -11,7 +11,7 @@
   .encl { display: inline-block; border: 0.6px solid #A9B6C0;
           border-radius: 3px; padding: 2px 8px; margin: 0 4px 4px 0;
           font-size: 8pt; }
-  .encl.yes { background: #EAF1F6; font-weight: 700; color: #10344F; }
+  .encl.yes { background: #EAF1F6; font-weight: 700; color: {% brand "heading" %}; }
 </style>
 </head>
 <body>

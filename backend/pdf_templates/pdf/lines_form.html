@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -53,9 +53,9 @@
     <td colspan="{{ tax_footer.label_colspan }}"
         style="border:none;text-align:right;
                {% if row.4 %}font-weight:bold{% endif %}">{{ row.0 }}</td>
-    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.1 }}</td>
-    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.2 }}</td>
-    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid #16527E{% endif %}">{{ row.3 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid {% brand "primary" %}{% endif %}">{{ row.1 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid {% brand "primary" %}{% endif %}">{{ row.2 }}</td>
+    <td class="num" style="{% if row.4 %}font-weight:bold;border-top:1.2px solid {% brand "primary" %}{% endif %}">{{ row.3 }}</td>
   </tr>
   {% endfor %}
   {% endif %}

@@ -587,6 +587,51 @@ def pm_overview(request):
     })
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def brand_public(request):
+    """The brand before sign-in: name, colours, marks, feature switches and
+    the sister-app switcher (MARINE_BUILD_BRIEF.md §2)."""
+    from . import brand
+    return Response(brand.public_dict(request))
+
+
+@api_view(["GET", "POST", "DELETE"])
+@permission_classes([IsAuthenticated])
+def company_brand_file(request, kind):
+    """A brand file other than the logo: the letterhead mark, the white
+    wordmark for the app bar, the emblem. Admin uploads; stored beside the
+    logo."""
+    from django.core.files.base import ContentFile
+    from django.core.files.storage import default_storage
+
+    from . import brand
+    if kind not in brand.FILE_KINDS:
+        return Response({"detail": "Unknown brand file."}, status=404)
+    base, exts = brand.FILE_KINDS[kind]
+    if request.method in ("POST", "DELETE"):
+        if request.user.role != User.Role.ADMIN:
+            return Response({"detail": "Admin only."}, status=403)
+        for ext in exts:
+            if default_storage.exists(f"{base}.{ext}"):
+                default_storage.delete(f"{base}.{ext}")
+        if request.method == "POST":
+            file = request.FILES.get("file")
+            if not file:
+                return Response({"detail": "Attach the file as 'file'."}, status=400)
+            ext = {"image/png": "png", "image/jpeg": "jpg",
+                   "image/svg+xml": "svg"}.get(file.content_type)
+            if ext not in exts:
+                return Response({"detail": f"{', '.join(e.upper() for e in exts)} only."},
+                                status=400)
+            default_storage.save(f"{base}.{ext}", ContentFile(file.read()))
+        audit("parameter", 0, "COMPANY_BRAND_FILE", actor=request.user,
+              detail={"kind": kind, "action": request.method})
+        brand.invalidate()
+    url = brand.file_url(kind)
+    return Response({"url": url, "uploaded": bool(url)})
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsAuthenticated])
 def company_logo(request):
@@ -744,6 +789,8 @@ def parameter_detail(request, key):
         serializer.save()
         audit("parameter", 0, "PARAMETER_UPDATED", actor=request.user,
               detail={"key": key})
+        from . import brand
+        brand.invalidate()
         return Response(serializer.data)
     try:
         param = CompanyParameter.objects.get(key=key)

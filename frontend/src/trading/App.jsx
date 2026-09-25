@@ -6,7 +6,8 @@
 // the Signatory and Admin can enter both worlds.
 import { useEffect, useState } from "react";
 import { api, resetSessionNotice, SESSION_EXPIRED } from "../api.js";
-import { Btn, Chip, card } from "../ui.jsx";
+import { AppSwitcher, Btn, Chip, card } from "../ui.jsx";
+import { getBrand, nameParts, onBrand } from "../brand.js";
 import CustomersPage from "./CustomersPage.jsx";
 import InquiriesPage from "./InquiriesPage.jsx";
 import OrderPage from "./OrderPage.jsx";
@@ -109,7 +110,7 @@ function NotTrading({ me, onSignOut }) {
           work, not trading. Your pages are in the main app.
         </p>
         <div style={{ display: "flex", gap: 8 }}>
-          <a href={PLANET_URL} className="t-btn-link">Open Planet</a>
+          <a href={PLANET_URL} className="t-btn-link">Open Projects</a>
           <Btn variant="secondary" onClick={onSignOut}>Sign out</Btn>
         </div>
       </div>
@@ -192,6 +193,9 @@ function Home({ me, canWrite, go, open }) {
 export default function App() {
   const [me, setMe] = useState(null);
   const [route, setRoute] = useState(routeFromHash);
+  const [brand, setBrand] = useState(getBrand());
+  useEffect(() => onBrand(setBrand), []);
+  const brandName = nameParts(brand?.name).join(" ").replace(/\b\w+/g, (w) => w[0] + w.slice(1).toLowerCase());
   const [stageFilter, setStageFilter] = useState(null);
 
   useEffect(() => {
@@ -237,9 +241,10 @@ export default function App() {
     <div className="t-app">
       <header className="t-header">
         <div className="t-brand">
-          <span className="t-brand-name">Sand Planet</span>
+          <span className="t-brand-name">{brandName}</span>
           <span className="t-brand-arm">Trading</span>
         </div>
+        <AppSwitcher apps={brand?.apps} current="trading" />
         <nav className="t-nav">
           {PAGES.map(([key, label]) => (
             <button key={key} className={"t-nav-item" + (page === key ? " is-active" : "")}
@@ -249,9 +254,6 @@ export default function App() {
         <div className="t-user">
           <span className="t-user-name">{me.full_name}</span>
           <span className="t-user-role">{ROLE_LABEL[me.role] || me.role}</span>
-          {!TRADING_ROLES.has(me.role) && (
-            <a href={PLANET_URL} className="t-user-link">Planet</a>
-          )}
           <button className="t-user-link" onClick={signOut}>Sign out</button>
         </div>
       </header>

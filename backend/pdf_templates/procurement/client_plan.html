@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -7,8 +7,8 @@
 <title>Procurement Plan — {{ plan.project_title }}</title>
 <style>
   :root {
-    --navy: #10344F; --blue: #1685CC; --line: #D8E3EC; --ink: #22303B;
-    --muted: #61707C; --band: #E7F1F9; --tint: #F4F9FD;
+    --navy: {% brand "heading" %}; --blue: {% brand "accent_deep" %}; --line: #D8E3EC; --ink: #22303B;
+    --muted: #61707C; --band: {% brand "soft2" %}; --tint: {% brand "soft4" %};
     --green: #1A7F37; --amber: #B35900; --red: #B02418; --grey: #8A94A0;
   }
   * { box-sizing: border-box; }
@@ -20,7 +20,7 @@
            overflow: hidden; box-shadow: 0 1px 3px rgba(16,52,79,.06); }
   .masthead { padding: 20px 22px 14px; }
   .accent { height: 3px; border-radius: 2px;
-    background: linear-gradient(90deg, #26A9E0, #1685CC 55%, #0C4E82); }
+    background: linear-gradient(90deg, {% brand "accent_light" %}, {% brand "accent_deep" %} 55%, {% brand "primary_dark" %}); }
   .contractor { font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
     color: var(--blue); font-weight: 700; }
   h1 { margin: 4px 0 2px; font-size: 22px; color: var(--navy); font-weight: 800; }

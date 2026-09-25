@@ -49,7 +49,13 @@ def logo_src():
 
 
 def mark_src():
-    """The ring brandmark used on official-correspondence letterheads."""
+    """The brandmark on official-correspondence letterheads: the one uploaded
+    on the Company page (a sister company's emblem), else Sand Planet's
+    ring."""
+    from . import brand
+    url = brand.file_url("mark")
+    if url:
+        return url
     asset = settings.BASE_DIR / "pdf_templates" / "assets" / "sp-mark.svg"
     return f"file:///{asset}"
 

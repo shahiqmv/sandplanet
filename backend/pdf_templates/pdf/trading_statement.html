@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -8,25 +8,25 @@
   .masthead { text-align: center; }
   .masthead img { height: 16mm; }
   .accent { height: 2.4pt; margin-top: 3mm; border-radius: 2pt;
-    background: linear-gradient(90deg, #26A9E0, #1685CC 55%, #0C4E82); }
-  h1 { text-align: center; font-weight: 400; font-size: 18pt; color: #10344F; margin: 5mm 0 4mm; }
+    background: linear-gradient(90deg, {% brand "accent_light" %}, {% brand "accent_deep" %} 55%, {% brand "primary_dark" %}); }
+  h1 { text-align: center; font-weight: 400; font-size: 18pt; color: {% brand "heading" %}; margin: 5mm 0 4mm; }
   h1 strong { font-weight: 800; }
   .parties { width: 100%; border-collapse: collapse; }
   .parties td { border: none; vertical-align: top; padding: 0 4px; }
   .lbl { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
-  .nm { font-weight: 700; font-size: 12pt; color: #10344F; }
+  .nm { font-weight: 700; font-size: 12pt; color: {% brand "heading" %}; }
   .sub { font-size: 9.5pt; color: #43535f; white-space: pre-line; }
   .meta { border-collapse: collapse; margin-left: auto; }
   .meta td { border: none; padding: 1.5pt 0 1.5pt 10px; font-size: 9.5pt; text-align: right; }
   .meta td.k { color: #61707C; text-transform: uppercase; font-size: 8pt; letter-spacing: .06em; }
   table.doc { width: 100%; border-collapse: collapse; margin-top: 5mm; }
-  table.doc thead th { background: #1685CC; color: #fff; font-weight: 700; font-size: 8.5pt;
+  table.doc thead th { background: {% brand "accent_deep" %}; color: #fff; font-weight: 700; font-size: 8.5pt;
     text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 2.2mm 3mm; }
   table.doc thead th.n { text-align: right; }
   table.doc td { padding: 4px 3mm; font-size: 9.5pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  table.doc tr.open td { background: #F4F9FD; font-style: italic; }
-  table.doc tr.net td { background: #DCEBF8; font-weight: 800; color: #10344F; border-top: 1.3pt solid #1685CC; }
+  table.doc tr.open td { background: {% brand "soft4" %}; font-style: italic; }
+  table.doc tr.net td { background: {% brand "soft3" %}; font-weight: 800; color: {% brand "heading" %}; border-top: 1.3pt solid {% brand "accent_deep" %}; }
   .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
             border-top: 0.8px solid #d6e2ec; padding-top: 3mm; font-size: 8.5pt; color: #5a6b78; }
   thead { display: table-header-group; }

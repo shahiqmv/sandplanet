@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { getBrand, nameParts, onBrand } from "./brand.js";
 import { api, resetSessionNotice, SESSION_EXPIRED } from "./api.js";
 import { decodeView, encodeView } from "./urlState.js";
 import BusyBar from "./BusyBar.jsx";
@@ -80,6 +81,12 @@ const APPROVERS = ["PM", "HO_PURCHASING", "DIRECTOR", "SIGNATORY",
 // Company Profile is office-only marketing; MARKETING is a minimal role that
 // sees ONLY this section.
 const PROFILE_ROLES = ["ADMIN", "DIRECTOR", "SIGNATORY", "MARKETING", "PA"];
+// Feature switches from the brand layer: a sister instance turns modules
+// off on its Company page (MARINE_BUILD_BRIEF.md §2).
+function featureOn(key) {
+  const f = getBrand()?.features;
+  return !f || f[key] !== false;
+}
 // Who could reach the overseas import chain before Procurement absorbed the
 // Planning tab. Spelled out so widening the GROUP never widens these pages.
 const IMPORT_CHAIN = ["HO_PURCHASING", "DIRECTOR", "FINANCE", "ADMIN", "QS",
@@ -244,7 +251,7 @@ import { LineDocForm, LineDocView } from "./LineDoc.jsx";
 import { QADocView, QAForm, SUBMITTAL_TYPES } from "./QADocs.jsx";
 import { MatchingWorkspace } from "./QuotationsPanel.jsx";
 import SiteDashboard from "./SiteDashboard.jsx";
-import { StatusChip, buttonStyle, card, ghostButton, inputStyle } from "./ui.jsx";
+import { StatusChip, buttonStyle, card, ghostButton, inputStyle, AppSwitcher } from "./ui.jsx";
 
 function ChangePassword({ forced, onDone }) {
   const [current, setCurrent] = useState("");
@@ -297,6 +304,18 @@ function ChangePassword({ forced, onDone }) {
       </form>
     </div>
   );
+}
+
+function BrandBlock() {
+  const [b, setB] = useState(getBrand());
+  useEffect(() => onBrand(setB), []);
+  const [first, rest] = nameParts(b?.name);
+  return (<>
+    {b?.wordmark_white_url
+      ? <img className="brand-logo" src={b.wordmark_white_url} alt={b.name} />
+      : <h1 className="brand-name">{first} {rest}</h1>}
+    <span className="brand-sub">{b?.tagline || "Project Management"}</span>
+  </>);
 }
 
 function Login({ onLogin, expired }) {
@@ -766,7 +785,10 @@ export default function App() {
   const showHoNav = me.authenticated && (me.is_ho || me.role === "PM"
                     || me.role === "MARKETING" || me.role === "SITE_ADMIN"
                     || me.role === "SITE_ENGINEER");
-  const groups = me.authenticated ? visibleGroups(me) : [];
+  const groups = me.authenticated
+    ? visibleGroups(me).filter((g) =>
+        !(g.subs || []).some(([k]) => k === "profile") || featureOn("profile"))
+    : [];
   const activeGroup = groups.find((g) =>
     g.subs.some(([key]) => key === hoPage));
 
@@ -858,9 +880,9 @@ export default function App() {
         <div className="brand"
              onClick={() => { setDocView(null); setHoPage(landingPage(me));
                               if (!me.landing_site_id) setOpenSite(null); }}>
-          <h1 className="brand-name">SAND PLANET</h1>
-          <span className="brand-sub">Project Management</span>
+          <BrandBlock />
         </div>
+        <AppSwitcher apps={getBrand()?.apps} current="planet" />
         {showHoNav && (
           <nav className="navtabs">
             {groups.map((g) => (

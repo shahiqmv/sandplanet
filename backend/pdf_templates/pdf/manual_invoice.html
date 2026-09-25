@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -12,15 +12,15 @@
   .masthead { text-align: center; }
   .masthead img { height: 16mm; }
   .accent { height: 2.4pt; margin-top: 3mm; border-radius: 2pt;
-    background: linear-gradient(90deg, #26A9E0, #1685CC 55%, #0C4E82); }
-  h1 { text-align: center; font-weight: 400; font-size: 20pt; color: #10344F;
+    background: linear-gradient(90deg, {% brand "accent_light" %}, {% brand "accent_deep" %} 55%, {% brand "primary_dark" %}); }
+  h1 { text-align: center; font-weight: 400; font-size: 20pt; color: {% brand "heading" %};
        margin: 5mm 0 4mm; letter-spacing: .5px; }
   h1 strong { font-weight: 800; }
   .parties { width: 100%; border-collapse: collapse; }
   .parties td { border: none; vertical-align: top; padding: 0 4px; }
   .lbl { font-size: 8pt; color: #61707C; text-transform: uppercase;
          letter-spacing: .07em; margin-bottom: 2pt; }
-  .parties .nm { font-weight: 700; font-size: 12pt; color: #10344F; }
+  .parties .nm { font-weight: 700; font-size: 12pt; color: {% brand "heading" %}; }
   .parties .sub { font-size: 9.5pt; color: #43535f; line-height: 1.45; }
   .ctin { margin-top: 3pt; font-size: 9pt; color: #43535f;
           font-variant-numeric: tabular-nums; }
@@ -31,12 +31,12 @@
              text-align: right; }
   .meta td.k { color: #61707C; text-transform: uppercase; font-size: 8pt;
                letter-spacing: .06em; }
-  .meta td.inv { font-weight: 800; color: #1685CC; }
+  .meta td.inv { font-weight: 800; color: {% brand "accent_deep" %}; }
   hr.rule { border: none; border-top: 1px solid #D8E3EC; margin: 5mm 0 0; }
   .narrative { font-size: 10.5pt; color: #33424d; line-height: 1.5;
                margin: 4mm 0 3.5mm; }
   table.doc { width: 100%; border-collapse: collapse; }
-  table.doc thead th { background: #1685CC; color: #fff; font-weight: 700;
+  table.doc thead th { background: {% brand "accent_deep" %}; color: #fff; font-weight: 700;
     font-size: 8.5pt; text-transform: uppercase; letter-spacing: .06em;
     text-align: left; padding: 2.4mm 4mm; }
   table.doc thead th.n { text-align: right; }
@@ -44,18 +44,18 @@
     border-bottom: 0.6px solid #D8E3EC; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
     white-space: nowrap; width: 42mm; }
-  table.doc tr.sub td { background: #E7F1F9; font-weight: 700; color: #10344F; }
-  table.doc tr.net td { background: #DCEBF8; font-weight: 800; color: #10344F;
-    border-top: 1.3pt solid #1685CC; border-bottom: none;
+  table.doc tr.sub td { background: {% brand "soft2" %}; font-weight: 700; color: {% brand "heading" %}; }
+  table.doc tr.net td { background: {% brand "soft3" %}; font-weight: 800; color: {% brand "heading" %};
+    border-top: 1.3pt solid {% brand "accent_deep" %}; border-bottom: none;
     padding-top: 2mm; padding-bottom: 2mm; }
-  .words { margin-top: 3mm; font-style: italic; font-size: 9.5pt; color: #0C4E82; }
+  .words { margin-top: 3mm; font-style: italic; font-size: 9.5pt; color: {% brand "primary_dark" %}; }
   .bankbox { width: 100%; border: 0.6px solid #D8E3EC; margin-top: 5mm;
              border-collapse: collapse; border-radius: 4px; }
-  .bankbox .bh { background: #E7F1F9; font-weight: 700; color: #10344F;
+  .bankbox .bh { background: {% brand "soft2" %}; font-weight: 700; color: {% brand "heading" %};
                  padding: 4px 9px; font-size: 9pt; text-transform: uppercase;
                  letter-spacing: .04em; }
   .bankbox td { padding: 5px 9px; font-size: 9pt; line-height: 1.5; color: #33424d; }
-  .bankbox b { color: #10344F; }
+  .bankbox b { color: {% brand "heading" %}; }
   .sigline { text-align: right; margin-top: 14mm; }
   .sigline .line { display: inline-block; border-top: 0.8px solid #1c2b36;
     width: 70mm; padding-top: 2mm; font-size: 9.5pt; }

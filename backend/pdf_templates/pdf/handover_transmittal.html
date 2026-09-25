@@ -1,28 +1,28 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 {% include "pdf/_styles.html" %}
 <style>
   .brief { margin-top: 3mm; padding: 3mm 4mm; background: #F3F7FA;
-           border-left: 2.5px solid #29ABE2; font-size: 9.2pt;
+           border-left: 2.5px solid {% brand "accent" %}; font-size: 9.2pt;
            line-height: 1.45; }
   table.tr { width: 100%; border-collapse: collapse; margin-top: 3mm; }
   table.tr th, table.tr td { border: 0.5px solid #C4D0DA; padding: 2.5px 6px;
                              font-size: 8.4pt; vertical-align: top; }
-  table.tr thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+  table.tr thead th { background: #EAF1F6; color: {% brand "heading" %}; font-weight: 700;
                       text-align: left; }
   table.tr td.c { text-align: center; white-space: nowrap; }
-  table.tr tr.sec td { background: #F3F7FA; font-weight: 700; color: #10344F;
+  table.tr tr.sec td { background: #F3F7FA; font-weight: 700; color: {% brand "heading" %};
                        text-transform: uppercase; letter-spacing: .03em;
                        font-size: 8pt; }
   table.tr tbody tr { page-break-inside: avoid; }
-  .due { margin-top: 4mm; font-size: 9pt; font-weight: 700; color: #10344F; }
+  .due { margin-top: 4mm; font-size: 9pt; font-weight: 700; color: {% brand "heading" %}; }
   .note { margin-top: 4mm; font-size: 8.4pt; color: #5a6b78;
           line-height: 1.5; }
   .sign { margin-top: 10mm; width: 100%; border-collapse: collapse; }
-  .sign td { width: 50%; font-size: 8.6pt; color: #10344F;
+  .sign td { width: 50%; font-size: 8.6pt; color: {% brand "heading" %};
              padding: 0 6mm 0 0; vertical-align: top; }
-  .sign .line { margin-top: 14mm; border-top: 0.6px solid #10344F;
+  .sign .line { margin-top: 14mm; border-top: 0.6px solid {% brand "heading" %};
                 padding-top: 1.5mm; }
   .sign .hint { color: #5a6b78; font-size: 7.8pt; }
 </style>

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+{% load brand %}<!DOCTYPE html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -13,13 +13,13 @@
   .facts td.k { width: 108pt; color: #5B6672; }
   table.q { width: 100%; border-collapse: collapse; margin-top: 10pt;
             border: 1pt solid #C9D9E5; }
-  table.q th { background: #16527E; color: #fff; font-size: 8pt;
+  table.q th { background: {% brand "primary" %}; color: #fff; font-size: 8pt;
                text-transform: uppercase; letter-spacing: .5pt;
                padding: 3pt 6pt; text-align: left; }
   table.q td { padding: 4pt 6pt; border-bottom: 1pt solid #EAF1F6;
                font-size: 8.5pt; vertical-align: top; }
   table.q td.n { width: 24pt; text-align: right; font-weight: 700;
-                 color: #16527E; }
+                 color: {% brand "primary" %}; }
   .qref { display: block; font-size: 7.5pt; color: #5B6672; margin-top: 1.5pt; }
   .ans { min-height: 26pt; color: #1A2530; }
   .ans-empty { color: #9AA4AD; font-style: italic; }

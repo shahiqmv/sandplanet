@@ -96,6 +96,19 @@ The PDF templates already read `co.*`; the masthead colours move from
 literals to `co.brand.*` with the current values as defaults. No template is
 forked.
 
+### One address for all three (owner 2026-09-25)
+
+The main URL stays **app.sandplanet.mv**. The top bar carries an app
+switcher: Projects, Trading (`/t/`), and Sandplanet Marine. Marine is still
+its own instance (own database, own session), but Caddy serves it under
+the path **app.sandplanet.mv/marine/** (`handle_path /marine/*` →
+the marine `web` container; Django `FORCE_SCRIPT_NAME=/marine`,
+`SESSION_COOKIE_NAME=marine_sessionid`, `CSRF_COOKIE_NAME=marine_csrftoken`,
+cookie paths `/marine`, `STATIC_URL=/marine/static/`). The front end detects
+the prefix (`brand.js: PREFIX`) and points every request and cookie at it,
+so one build serves both. A person signs in once per company; the switcher
+takes them across.
+
 ## 3. Deployment
 
 - `docker-compose.marine.yml` alongside `docker-compose.prod.yml`: its own
@@ -172,9 +185,18 @@ site roles enter hire logs for vehicles on their site.
 
 Each phase ships and stops for the owner's review.
 
-1. **Brand layer + feature flags** — parameters, Company page fields, CSS
-   variables from the brand, PDF mastheads from `co.brand`, nav gating.
-   Sand Planet's instance looks exactly as it does today.
+1. **Brand layer + feature flags** — DONE 2026-09-25. `core/brand.py`
+   (tokens + Sand Planet defaults, `features`, `apps`), the `{% brand
+   "token" %}` template tag (all 28 PDF templates carry no literal brand
+   colour any more — a test guards it), `GET /api/v1/brand` (public),
+   `company/brand/<kind>` uploads (mark, white wordmark, emblem; the mark
+   feeds the letterhead), the Brand section on the Company page, CSS
+   variables applied at load (`frontend/src/brand.js`), brand-aware headers,
+   the **app switcher** in the top bar (Projects / Trading / sister apps
+   from the Company page), the Company Profile nav gated on its flag, and
+   prefix-aware API/cookie names so the same build can serve a sister
+   instance under app.sandplanet.mv/marine/ (phase 2). Sand Planet's
+   instance is unchanged.
 2. **Second instance** — compose file, env, Caddy host, `update.sh` for two
    stacks, backups for two databases, seed script; marine.sandplanet.mv live
    with the Marine brand and the full project workflow.

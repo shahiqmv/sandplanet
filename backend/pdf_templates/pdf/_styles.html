@@ -1,4 +1,4 @@
-<style>
+{% load brand %}<style>
   /* Shared stationery styles — matched to the owner's printed DPR
      (owner sample, 2026-07-08): white background, light-blue label
      cells, thin steel borders, numbered section bars, double sky/navy
@@ -18,16 +18,16 @@
                         padding-top: 1px; }
   /* Owner (2026-07-08): no band at the page top edge; the rule under the
      header is sky with a THIN navy line — keep the pair proportionate */
-  .rule-sky { height: 1.5mm; background: #29ABE2; }
-  .rule-navy { height: 0.4mm; background: #16527E; margin-top: 0.5mm;
+  .rule-sky { height: 1.5mm; background: {% brand "accent" %}; }
+  .rule-navy { height: 0.4mm; background: {% brand "primary" %}; margin-top: 0.5mm;
                margin-bottom: 4mm; }
 
   /* Page footer (repeats on every page) */
   .pagefoot { position: fixed; bottom: -19mm; left: 0; right: 0;
               text-align: center; font-size: 7pt; color: #6a7681; }
   .pagefoot .bands { margin-top: 2mm; }
-  .pagefoot .b1 { height: 1.2mm; background: #29ABE2; }
-  .pagefoot .b2 { height: 0.4mm; background: #16527E; margin-top: 0.4mm; }
+  .pagefoot .b1 { height: 1.2mm; background: {% brand "accent" %}; }
+  .pagefoot .b2 { height: 0.4mm; background: {% brand "primary" %}; margin-top: 0.4mm; }
 
   /* Meta grid: bordered cells, light-blue bold label cells */
   table { width: 100%; border-collapse: collapse; margin-bottom: 6px; }
@@ -40,7 +40,7 @@
   .kv .k { background: #EAF1F6; font-weight: 700; width: 16%; }
 
   /* Numbered section bars */
-  h2 { font-size: 9.5pt; font-weight: 800; color: #10344F;
+  h2 { font-size: 9.5pt; font-weight: 800; color: {% brand "heading" %};
        background: #BFD3E3; border: 0.6px solid #A9B6C0;
        padding: 3px 7px; margin: 9px 0 0; page-break-after: avoid; }
   h2 + table, h2 + .box { margin-top: -0.6px; } /* butt against the bar */

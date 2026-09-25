@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 // Shared components per SP_Design_Brief.md — build screens from these
 // only; tokens live in index.css and are never hard-coded elsewhere.
 
@@ -88,6 +89,41 @@ const ICON_PATHS = {
   card: <><rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
     <line x1="1" y1="10" x2="23" y2="10" /></>,
 };
+// The sister-app switcher (MARINE_BUILD_BRIEF.md §2): Projects, Trading and
+// any sister company the Company page lists, from /api/v1/brand. `current`
+// is the key of the app this header belongs to.
+export function AppSwitcher({ apps, current, light = true }) {
+  const [open, setOpen] = useState(false);
+  // Closes on any click outside — a header menu must never be left hanging
+  // over the page.
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!e.target.closest?.(".appswitch")) setOpen(false); };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+  if (!apps || apps.length < 2) return null;
+  const now = apps.find((a) => a.key === current) || apps[0];
+  return (
+    <div className="appswitch" onMouseLeave={() => setOpen(false)}>
+      <button className={"appswitch-btn" + (light ? " light" : "")} onClick={() => setOpen((o) => !o)}
+              title="Switch app" aria-haspopup="menu" aria-expanded={open}>
+        {now.name} <span aria-hidden="true">▾</span>
+      </button>
+      {open && (
+        <div className="appswitch-menu" role="menu">
+          {apps.map((a) => (
+            <a key={a.key || a.url} role="menuitem" href={a.url}
+               className={"appswitch-item" + (a.key === current ? " current" : "")}>
+              {a.name}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Icon({ name, size = 14, style }) {
   const paths = ICON_PATHS[name];
   if (!paths) return null;

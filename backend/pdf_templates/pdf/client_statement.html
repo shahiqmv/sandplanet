@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -17,7 +17,7 @@
   .parties td { border: none; vertical-align: top; padding: 0 6px; }
   .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
          letter-spacing: .05em; }
-  .parties .nm { font-weight: 700; font-size: 10.5pt; color: #10344F; }
+  .parties .nm { font-weight: 700; font-size: 10.5pt; color: {% brand "heading" %}; }
   .meta { border-collapse: collapse; margin-left: auto; }
   .meta td { border: none; padding: 1px 0 1px 10px; font-size: 9pt;
              text-align: right; }
@@ -26,16 +26,16 @@
   table.stmt { width: 100%; border-collapse: collapse; margin-top: 2mm; }
   table.stmt th, table.stmt td { border: 0.5px solid #C4D0DA;
     padding: 3px 6px; font-size: 8.4pt; }
-  table.stmt thead th { background: #EAF1F6; color: #10344F; font-weight: 700;
+  table.stmt thead th { background: #EAF1F6; color: {% brand "heading" %}; font-weight: 700;
     text-align: right; }
   table.stmt thead th.l { text-align: left; }
   table.stmt td.num { text-align: right; font-variant-numeric: tabular-nums;
     white-space: nowrap; }
   table.stmt tr.open td, table.stmt tr.close td { font-weight: 700;
     background: #F3F7FA; }
-  table.stmt tr.close td { border-top: 1.2px solid #16527E; color: #10344F; }
+  table.stmt tr.close td { border-top: 1.2px solid {% brand "primary" %}; color: {% brand "heading" %}; }
   .baldue { margin-top: 5mm; text-align: right; font-size: 11pt;
-            font-weight: 800; color: #16527E; }
+            font-weight: 800; color: {% brand "primary" %}; }
   .foot-note { margin-top: 4mm; font-size: 8pt; color: #6a7681; }
   .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
             border-top: 0.8px solid #d6e2ec; padding-top: 3mm;

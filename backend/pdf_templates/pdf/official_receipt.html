@@ -1,4 +1,4 @@
-<!doctype html>
+{% load brand %}<!doctype html>
 <html>
 <head>
 <meta charset="utf-8">
@@ -17,17 +17,17 @@
   .parties td { border: none; vertical-align: top; padding: 0 6px; }
   .lbl { font-size: 7.5pt; color: #6a7681; text-transform: uppercase;
          letter-spacing: .05em; }
-  .parties .nm { font-weight: 700; font-size: 10.5pt; color: #10344F; }
+  .parties .nm { font-weight: 700; font-size: 10.5pt; color: {% brand "heading" %}; }
   .meta { border-collapse: collapse; margin-left: auto; }
   .meta td { border: none; padding: 1px 0 1px 10px; font-size: 9pt;
              text-align: right; }
   .meta td.k { color: #6a7681; text-transform: uppercase; font-size: 7.5pt;
                letter-spacing: .05em; }
-  hr.rule { border: none; border-top: 1px solid #16527E; margin: 5mm 0 0; }
+  hr.rule { border: none; border-top: 1px solid {% brand "primary" %}; margin: 5mm 0 0; }
   .narrative { font-size: 9.5pt; color: #26333d; line-height: 1.55;
                margin: 5mm 0 4mm; }
   table.doc { width: 100%; border-collapse: collapse; }
-  table.doc th { background: #E9EEF2; color: #10344F; font-weight: 700;
+  table.doc th { background: #E9EEF2; color: {% brand "heading" %}; font-weight: 700;
     font-size: 8pt; text-transform: uppercase; letter-spacing: .06em;
     text-align: left; padding: 3mm 4mm; border: 0.6px solid #cdd8e1; }
   table.doc th.n { text-align: right; }
@@ -35,13 +35,13 @@
     border: 0.6px solid #cdd8e1; border-top: none; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums;
     white-space: nowrap; width: 34mm; }
-  table.doc tr.grand td { border-top: 1.4px solid #16527E; font-weight: 800;
-    font-size: 11.5pt; color: #16527E; }
-  .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: #10344F; }
+  table.doc tr.grand td { border-top: 1.4px solid {% brand "primary" %}; font-weight: 800;
+    font-size: 11.5pt; color: {% brand "primary" %}; }
+  .words { margin-top: 5mm; font-style: italic; font-size: 9pt; color: {% brand "heading" %}; }
   .payinfo { width: 100%; border-collapse: collapse; margin-top: 6mm; }
   .payinfo td { border: 0.6px solid #cdd8e1; padding: 5px 8px; font-size: 8.6pt;
     vertical-align: top; }
-  .payinfo td.k { background: #F3F7FA; color: #10344F; font-weight: 700;
+  .payinfo td.k { background: #F3F7FA; color: {% brand "heading" %}; font-weight: 700;
     width: 34mm; }
   .note { margin-top: 6mm; font-size: 8pt; color: #6a7681; }
   .sig { margin-top: 14mm; text-align: right; }
