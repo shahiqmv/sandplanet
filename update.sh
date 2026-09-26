@@ -99,6 +99,12 @@ ensure_crons() {
       || echo "!! Could not install cron for $4 — add by hand: $2 $3"
   }
 
+  # Keep the app workers warm: an idle gunicorn worker paged out by the kernel
+  # cost the first user after a lull two to three seconds (the attendance
+  # grid complaint, 2026-09-26). A minute's ping keeps them resident.
+  add_cron "# planet-keep-warm" "* * * * *" \
+    "curl -s -o /dev/null https://app.sandplanet.mv/api/v1/version; curl -s -o /dev/null https://app.sandplanet.mv/marine/api/v1/version" \
+    "keep-warm ping"
   add_cron "# planet-backup" "20 2 * * *" \
     "$APP_DIR/deploy/backup.sh >> /var/log/planet-backup.log 2>&1" \
     "the nightly database backup (02:20, off-server copy)"

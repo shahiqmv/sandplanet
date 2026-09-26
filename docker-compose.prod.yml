@@ -7,6 +7,9 @@
 services:
   db:
     image: postgres:16
+    # Sized for the 8 GB droplet (2026-09-26): the databases are small, so a
+    # modest cache keeps them fully in memory without starving the two apps.
+    command: postgres -c shared_buffers=256MB -c effective_cache_size=1GB -c work_mem=8MB -c maintenance_work_mem=64MB
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
