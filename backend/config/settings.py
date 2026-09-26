@@ -341,7 +341,8 @@ if not DEBUG and not TESTING:
     # follow the redirect — it just reports "failed to authenticate". The path
     # is not routable from the internet (Caddy 404s /api/relay/*), so nothing
     # is exposed by exempting it.
-    SECURE_REDIRECT_EXEMPT = [r"^api/relay/"]
+    SECURE_REDIRECT_EXEMPT = [r"^api/relay/",
+                              r"^api/v1/auth/peer-verify$"]   # sister instance, private network
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     SESSION_COOKIE_HTTPONLY = True

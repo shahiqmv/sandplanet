@@ -68,10 +68,13 @@ def verify_at_peer(username, password):
     if not enabled() or not base or not username or not password:
         return None
     body = json.dumps({"username": username, "password": password}).encode()
+    # Over the private Docker network straight to gunicorn: "web" is in every
+    # instance's ALLOWED_HOSTS (the camera relay needs it too), and the
+    # forwarded-proto header keeps the HTTPS redirect out of the way.
     req = urllib.request.Request(
         f"{base}/auth/peer-verify", data=body, method="POST",
         headers={"Content-Type": "application/json", "X-Peer-Signature": sign_body(body),
-                 "Host": "localhost"})
+                 "Host": "web", "X-Forwarded-Proto": "https"})
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
             data = json.loads(resp.read().decode())
