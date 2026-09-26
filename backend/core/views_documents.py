@@ -218,7 +218,8 @@ def document_create(request):
     site_ids = scoped_site_ids(request.user)
     if site_ids is not None and site.id not in site_ids:
         return Response({"detail": "Not allocated to this site."}, status=403)
-    if not _can(request, doc_type, CREATE_ROLES[doc_type]):
+    if not _can(request, doc_type, CREATE_ROLES[doc_type]) and not (
+            doc_type == "PYR" and request.user.has_any(User.FLEET_ROLES)):
         return Response({"detail": "Role cannot create this document."}, status=403)
     # Lifecycle rules (spec §2.2); MAR/MR may begin at AWARDED (mobilization)
     if site.status == Site.Status.CLOSED:

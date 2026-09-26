@@ -103,7 +103,7 @@ const FILTERS = [["open", "Open"], ["INQUIRY", "Inquiry"], ["SOURCING", "Sourcin
 export default function InquiriesPage({ me, canWrite, open, initialStage }) {
   const [rows, setRows] = useState(null);
   const [stage, setStage] = useState(initialStage || "open");
-  const [mine, setMine] = useState(me.role === "SALES");
+  const [mine, setMine] = useState(me.role === "SALES" || ((me.extra_roles || []).includes("SALES") && !(me.extra_roles || []).includes("SALES_MANAGER") && me.role !== "SALES_MANAGER" && me.role !== "ADMIN"));
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
 

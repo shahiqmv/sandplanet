@@ -640,7 +640,7 @@ def _q2(v):
 
 def can_receipt(user):
     """Finance is the money desk; Admin covers for it."""
-    return user.is_authenticated and user.role in MONEY_ROLES
+    return user.is_authenticated and user.has_any(MONEY_ROLES)
 
 
 def gst_rate():

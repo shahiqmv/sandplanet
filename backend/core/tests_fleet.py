@@ -674,3 +674,23 @@ class ClauseTests(RentalBase):
         self.assertEqual(len(self.agreement(title="Second")["clauses"]), 3)
         self.login(self.rental)
         self.assertEqual(self.client.put("/api/v1/fleet/terms", {"clauses": kept[:1]}, format="json").status_code, 403)
+
+
+class ExtraFleetAccessTests(RentalBase):
+    def test_a_purchaser_with_rental_access_runs_the_fleet(self):
+        hp = make_user("hp9", User.Role.HO_PURCHASING)
+        hp.extra_roles = ["RENTAL"]
+        hp.save()
+        self.login(hp)
+        self.assertEqual(self.client.get("/api/v1/fleet/summary").data["can_write"], True)
+        r = self.client.post("/api/v1/fleet/vehicles", {"reg_no": "X 1", "vehicle_class": "Loader",
+                                                        "rate_daily": "3000"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        # a fleet cost from them goes on the central chain, as Rental would
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "PYR", "site_id": ho_site().id, "payload": {},
+            "cost_head_id": CostHead.objects.get(code="RNT_FUEL").id, "vehicle_id": self.ex.id,
+            "payee": "STO", "payment_type": "DIRECT", "payment_method": "BANK",
+            "amount_requested": "500", "purpose": "Diesel", "has_supporting_doc": True}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual(PaymentRequest.objects.get(document__ref=r.data["ref"]).origin, "CENTRAL")

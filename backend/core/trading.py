@@ -60,13 +60,13 @@ def gst_rate():
 def can_manage(user, order):
     """Sales manage their own inquiries; the Sales Manager and Admin manage
     all (blueprint §6). Finance / Signatory read only."""
-    if user.role in ("SALES_MANAGER", "ADMIN"):
+    if user.has_any(("SALES_MANAGER", "ADMIN")):
         return True
-    return user.role == "SALES" and order.owner_id == user.id
+    return user.has_role("SALES") and order.owner_id == user.id
 
 
 def can_authorise(user):
-    return user.role in ("SALES_MANAGER", "ADMIN")
+    return user.has_any(("SALES_MANAGER", "ADMIN"))
 
 
 # ---- pricing ---------------------------------------------------------------
@@ -803,7 +803,8 @@ def home(user):
     today = timezone.localdate()
     open_q = TradingOrder.objects.exclude(stage__in=("WON", "LOST")) \
         .select_related("customer", "owner")
-    mine = open_q.filter(owner=user) if user.role == "SALES" else open_q
+    mine = (open_q.filter(owner=user) if user.has_role("SALES") and not user.has_role("SALES_MANAGER")
+            else open_q)
     by_stage = {s: 0 for s in STAGES[:-1]}
     for o in mine:
         by_stage[o.stage] = by_stage.get(o.stage, 0) + 1
@@ -1000,7 +1001,7 @@ MONEY_ROLES = ("FINANCE", "ADMIN")
 
 def can_receipt(user):
     """Finance is the money desk; Admin covers for it."""
-    return user.role in MONEY_ROLES
+    return user.has_any(MONEY_ROLES)
 
 
 def _ho():
@@ -1628,7 +1629,7 @@ def create_historic_invoice(data, actor):
     the old books), no PDF (the original exists); the aging, the statement
     and receipts treat it like any other (owner 2026-09-26)."""
     from .models import Customer
-    if actor.role not in HISTORIC_ROLES:
+    if not actor.has_any(HISTORIC_ROLES):
         return None, "Finance or the Sales Manager enters historic invoices."
     customer = Customer.objects.filter(id=data.get("customer"), is_active=True).first()
     if customer is None:

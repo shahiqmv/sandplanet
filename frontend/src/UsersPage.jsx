@@ -91,6 +91,21 @@ export default function UsersPage({ me, sites }) {
     load();
   }
 
+  // Access beyond the primary role — Sales / Sales Manager / Rental /
+  // Rental Manager — for people who wear two hats (owner 2026-09-26).
+  const EXTRA = [["SALES", "Sales"], ["SALES_MANAGER", "Sales Manager"],
+                 ["RENTAL", "Rental"], ["RENTAL_MANAGER", "Rental Manager"]];
+  const [extraEdit, setExtraEdit] = useState(null);   // {id, roles}
+  async function saveExtra(user) {
+    setError(null); setNotice(null);
+    try {
+      await api(`/users/${user.id}/extra-roles`, { method: "POST", body: { extra_roles: extraEdit.roles } });
+      setNotice(`${user.full_name}'s extra access: ${extraEdit.roles.length ? extraEdit.roles.map((r) => r.replace(/_/g, " ")).join(", ") : "none"}.`);
+      setExtraEdit(null);
+      load();
+    } catch (e) { setError(e.message); }
+  }
+
   async function changeRole(user, role, assignSiteId) {
     setError(null); setNotice(null);
     try {
@@ -313,8 +328,33 @@ export default function UsersPage({ me, sites }) {
                   </div>
                 ) : (
                   <span style={{ display: "flex", gap: 6,
-                    alignItems: "baseline" }}>
+                    alignItems: "baseline", flexWrap: "wrap" }}>
                     {user.role.replace(/_/g, " ")}
+                    {(user.extra_roles || []).map((r) => (
+                      <span key={r} title="extra access" style={{ fontSize: 11, padding: "1px 7px", borderRadius: 10,
+                        background: "var(--sky-soft)", color: "var(--sp-navy)" }}>+ {r.replace(/_/g, " ")}</span>
+                    ))}
+                    {extraEdit?.id === user.id ? (
+                      <span style={{ display: "flex", flexDirection: "column", gap: 3, fontSize: 12, width: "100%", marginTop: 4 }}>
+                        {EXTRA.filter(([v]) => v !== user.role).map(([v, l]) => (
+                          <label key={v} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                            <input type="checkbox" checked={extraEdit.roles.includes(v)}
+                              onChange={(e) => setExtraEdit({ ...extraEdit, roles: e.target.checked
+                                ? [...extraEdit.roles, v] : extraEdit.roles.filter((x) => x !== v) })} />
+                            {l}
+                          </label>
+                        ))}
+                        <span style={{ display: "flex", gap: 4 }}>
+                          <button onClick={() => saveExtra(user)} style={{ ...buttonStyle, padding: "2px 12px", fontSize: 12 }}>Save</button>
+                          <button onClick={() => setExtraEdit(null)} style={{ ...ghostButton, padding: "2px 10px", fontSize: 12 }}>Cancel</button>
+                        </span>
+                      </span>
+                    ) : me.role === "ADMIN" && user.is_active && (
+                      <button title="Extra access: Sales / Rental on top of their role"
+                        onClick={() => setExtraEdit({ id: user.id, roles: [...(user.extra_roles || [])] })}
+                        style={{ border: "none", background: "none", cursor: "pointer",
+                          color: "#2b7bb9", fontSize: 11, padding: 0 }}>+ access</button>
+                    )}
                     {me.role === "ADMIN" && user.is_active
                       && user.id !== me.id && (
                       <button title="Change this user's role"

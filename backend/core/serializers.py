@@ -91,11 +91,20 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             "id", "username", "full_name", "email", "phone", "notify_external",
-            "role", "is_active", "last_login", "password", "allocations",
+            "role", "extra_roles", "is_active", "last_login", "password", "allocations",
             "must_change_password", "designation", "employee",
             "employee_detail",
         ]
         read_only_fields = ["last_login", "is_active", "must_change_password"]
+
+    def validate_extra_roles(self, value):
+        roles = [r for r in (value or []) if isinstance(r, str)]
+        bad = sorted(set(roles) - User.EXTRA_ROLES)
+        if bad:
+            raise serializers.ValidationError(
+                f"Only Sales, Sales Manager, Rental and Rental Manager can be added "
+                f"as extra access — not {', '.join(bad)}.")
+        return sorted(set(roles))
 
     def get_employee_detail(self, user):
         """The HR record behind the login, so the admin screen can show who

@@ -237,7 +237,10 @@ const NAV_GROUPS = [
 ];
 
 function visibleGroups(me) {
-  const can = (roles) => !roles || roles.includes(me.role);
+  // Extra access (Sales / Rental on top of the primary role) opens those
+  // groups too (owner 2026-09-26).
+  const mine = [me.role, ...(me.extra_roles || [])];
+  const can = (roles) => !roles || roles.some((r) => mine.includes(r));
   return NAV_GROUPS.filter((g) => can(g.roles)).map((g) => ({
     ...g, subs: g.subs.filter(([, , roles]) => can(roles)),
   })).filter((g) => g.subs.length);

@@ -1209,3 +1209,42 @@ class HistoricInvoiceTests(BaseCase):
         # void refused once money is in
         r = self.client.post(f"/api/v1/trading/invoices/historic/{inv.id}/void", {"reason": "x"}, format="json")
         self.assertEqual(r.status_code, 400)
+
+
+class ExtraRolesTests(BaseCase):
+    """A user keeps one primary role; Sales / Sales Manager / Rental /
+    Rental Manager can be added as extra access (owner 2026-09-26)."""
+
+    def setUp(self):
+        super().setUp()
+        self.admin = make_user("adm9", User.Role.ADMIN)
+        self.pm = make_user("pm9", User.Role.PM)
+
+    def test_admin_grants_extra_access_and_the_gates_honour_it(self):
+        from .models import Customer
+        self.login(self.pm)
+        self.assertEqual(self.client.get("/api/v1/trading/orders").status_code, 403)
+        self.login(self.admin)
+        r = self.client.post(f"/api/v1/users/{self.pm.id}/extra-roles",
+                             {"extra_roles": ["SALES", "SITE_ADMIN"]}, format="json")
+        self.assertEqual(r.status_code, 400)                    # only the four
+        r = self.client.post(f"/api/v1/users/{self.pm.id}/extra-roles",
+                             {"extra_roles": ["SALES"]}, format="json")
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["extra_roles"], ["SALES"])
+        self.pm.refresh_from_db()
+        self.assertTrue(self.pm.is_trading)
+        self.assertEqual(self.pm.role, "PM")                    # primary untouched
+        self.login(self.pm)
+        me = self.client.get("/api/v1/auth/me").data
+        self.assertEqual((me["role"], me["extra_roles"]), ("PM", ["SALES"]))
+        self.assertEqual(self.client.get("/api/v1/trading/orders").status_code, 200)   # reads
+        c = Customer.objects.create(name="Reef Traders", created_by=self.admin)
+        r = self.client.post("/api/v1/trading/orders", {"customer": c.id, "title": "Tiles"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)           # writes as Sales
+        # taken away again
+        self.login(self.admin)
+        self.client.post(f"/api/v1/users/{self.pm.id}/extra-roles", {"extra_roles": []}, format="json")
+        self.pm.refresh_from_db()
+        self.login(self.pm)
+        self.assertEqual(self.client.get("/api/v1/trading/orders").status_code, 403)

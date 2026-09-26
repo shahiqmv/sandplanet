@@ -152,6 +152,7 @@ def _me_payload(user):
         "username": user.username,
         "full_name": user.full_name,
         "role": user.role,
+        "extra_roles": user.extra_roles or [],
         "is_ho": user.is_ho,
         "allocations": allocations,
         "landing_site_id": landing_site,
@@ -395,6 +396,31 @@ class UserViewSet(viewsets.ModelViewSet):
         user = serializer.save()
         audit("user", user.id, "USER_UPDATED", actor=self.request.user,
               detail={"fields": sorted(self.request.data.keys())})
+
+    @action(detail=True, methods=["post"], url_path="extra-roles")
+    def extra_roles(self, request, pk=None):
+        """Grant or take away access beyond the primary role: Sales, Sales
+        Manager, Rental, Rental Manager (owner 2026-09-26). The primary role
+        and the project workflow are untouched."""
+        user = self.get_object()
+        wanted = request.data.get("extra_roles")
+        if not isinstance(wanted, list):
+            return Response({"detail": "Send the list of extra roles."}, status=400)
+        roles = sorted({r for r in wanted if isinstance(r, str)})
+        bad = sorted(set(roles) - User.EXTRA_ROLES)
+        if bad:
+            return Response({"detail": "Only Sales, Sales Manager, Rental and Rental "
+                                       f"Manager can be added — not {', '.join(bad)}."},
+                            status=400)
+        roles = [r for r in roles if r != user.role]      # already theirs
+        before = sorted(user.extra_roles or [])
+        user.extra_roles = roles
+        user.save(update_fields=["extra_roles"])
+        if before != roles:
+            audit("user", user.id, "USER_EXTRA_ROLES", actor=request.user,
+                  from_state=",".join(before), to_state=",".join(roles),
+                  detail={"username": user.username})
+        return Response(UserSerializer(user).data)
 
     @action(detail=True, methods=["post"], url_path="change-role")
     def change_role(self, request, pk=None):

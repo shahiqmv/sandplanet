@@ -55,6 +55,7 @@ class User(AbstractUser):
     full_name = models.TextField()
     # Set when an admin issues a temporary password by invite email; the user
     # must choose their own password before using the app.
+    extra_roles = models.JSONField(default=list, blank=True)   # subset of EXTRA_ROLES
     must_change_password = models.BooleanField(default=False)
     # Mobile (E.164, e.g. +9607xxxxxx) for SMS/WhatsApp approval alerts, and an
     # opt-out if the in-app bell is enough for this user.
@@ -96,10 +97,26 @@ class User(AbstractUser):
     def is_ho(self) -> bool:
         return self.role in self.HO_ROLES
 
+    # Access beyond the one primary role: a PM or a purchaser who also does
+    # sales, or who also runs the fleet, holds those roles as extras (owner
+    # 2026-09-26). Only the trading and fleet roles may be extras — the
+    # project workflow keeps one role per user.
+    EXTRA_ROLES = TRADING_ROLES | FLEET_ROLES
+
+    @property
+    def roles(self) -> set:
+        return {self.role, *(self.extra_roles or [])}
+
+    def has_role(self, role) -> bool:
+        return role == self.role or role in (self.extra_roles or [])
+
+    def has_any(self, roles) -> bool:
+        return bool(self.roles & set(roles))
+
     @property
     def is_trading(self) -> bool:
         """Works in the trading app (Sales / Sales Manager)."""
-        return self.role in self.TRADING_ROLES
+        return self.has_any(self.TRADING_ROLES)
 
     def allocated_site_ids(self):
         """Open allocations only (to_date null)."""

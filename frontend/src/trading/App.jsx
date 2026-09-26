@@ -233,8 +233,9 @@ export default function App() {
     return <Login expired={me.expired}
                   onLogin={(u) => { resetSessionNotice(); setMe(u); }} />;
   }
-  if (!READERS.has(me.role)) return <NotTrading me={me} onSignOut={signOut} />;
-  const canWrite = WRITERS.has(me.role);
+  const roles = [me.role, ...(me.extra_roles || [])];
+  if (!roles.some((r) => READERS.has(r))) return <NotTrading me={me} onSignOut={signOut} />;
+  const canWrite = roles.some((r) => WRITERS.has(r));
   const { page, id, tab } = route;
 
   return (

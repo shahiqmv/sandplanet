@@ -26,15 +26,15 @@ class IsTradingReader(BasePermission):
 
     def has_permission(self, request, view):
         u = request.user
-        if not u.is_authenticated or u.role not in User.TRADING_READERS:
+        if not u.is_authenticated or not u.has_any(User.TRADING_READERS):
             return False
         if request.method in ("GET", "HEAD", "OPTIONS"):
             return True
-        return u.role in TRADING_WRITERS
+        return u.has_any(TRADING_WRITERS)
 
 
 def can_write(user):
-    return user.is_authenticated and user.role in TRADING_WRITERS
+    return user.is_authenticated and user.has_any(TRADING_WRITERS)
 
 
 class IsTradingReaderAnyMethod(BasePermission):
@@ -43,7 +43,7 @@ class IsTradingReaderAnyMethod(BasePermission):
 
     def has_permission(self, request, view):
         u = request.user
-        return u.is_authenticated and u.role in User.TRADING_READERS
+        return u.is_authenticated and u.has_any(User.TRADING_READERS)
 
 
 # ---- customers -----------------------------------------------------------
@@ -192,7 +192,7 @@ def home(request):
     counts and the caller's rights; the chase list arrives with phase 2."""
     from . import trading as svc
     return Response({
-        "role": request.user.role,
+        "role": request.user.role, "extra_roles": request.user.extra_roles or [],
         "can_write": can_write(request.user),
         "customers": Customer.objects.filter(is_active=True).count(),
         "suppliers": Supplier.objects.filter(is_trading=True,
@@ -767,7 +767,7 @@ def historic_invoice_void(request, iid):
     inv = TradingInvoice.objects.filter(id=iid, historic=True).first()
     if inv is None:
         return Response({"detail": "Not found."}, status=404)
-    if request.user.role not in trading.HISTORIC_ROLES:
+    if not request.user.has_any(trading.HISTORIC_ROLES):
         return Response({"detail": "Finance or the Sales Manager voids a historic invoice."},
                         status=403)
     msg = trading.void_invoice(inv, request.data.get("reason"), request.user)

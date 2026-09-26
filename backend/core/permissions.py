@@ -43,7 +43,7 @@ class IsHrAdminOrReadOnly(BasePermission):
 def scoped_site_ids(user):
     """Site ids the user may read. None = all sites (HO roles, spec §3; the
     Rental team is head-office too — it files fleet costs at HO)."""
-    if user.is_ho or user.role in user.FLEET_ROLES:
+    if user.is_ho or user.has_any(user.FLEET_ROLES):
         return None
     return user.allocated_site_ids()
 

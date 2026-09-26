@@ -152,7 +152,10 @@ def create_payment_request(doc, data, user):
         return None, "Your role cannot raise a payment request."
     # A commercial cost head (Insurance & Bonds…) routes to the Director for
     # approval then Finance, skipping the site PM — whoever raises it.
-    origin = "COMMERCIAL" if cost_head.commercial else origin_for(user.role)
+    # A fleet cost goes on the Head-Office chain whoever raises it (a PM who
+    # also runs the fleet raises it as Rental, not as site).
+    origin = ("COMMERCIAL" if cost_head.commercial
+              else "CENTRAL" if cost_head.rental else origin_for(user.role))
     pr = PaymentRequest.objects.create(
         document=doc,
         payment_type="ADVANCE" if salary_lines
