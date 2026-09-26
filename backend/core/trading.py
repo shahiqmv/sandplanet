@@ -1956,8 +1956,86 @@ def statement(customer, date_from=None, date_to=None):
             "rows": rows, "closing": _s(_q2(opening + bal))}
 
 
-def statement_context(customer, date_from, date_to):
+def statement_extras(open_invs, outstanding_fn, as_of=None, currency="MVR"):
+    """What a customer needs beside the ledger: the invoices still open with
+    their due dates and days overdue, and the balance by age. Shared with the
+    rental statement (owner 2026-09-26)."""
+    from .pdf import _money as money
+    today = as_of or timezone.localdate()
+    rows, buckets = [], {"current": ZERO, "d30": ZERO, "d60": ZERO, "d90": ZERO, "d90plus": ZERO}
+    for inv in open_invs:
+        out = outstanding_fn(inv)
+        overdue = (today - (inv.due_date or inv.invoice_date)).days
+        buckets[_bucket(overdue)] += out
+        rows.append({"ref": inv.ref, "invoice_date": inv.invoice_date, "due_date": inv.due_date,
+                     "label": invoice_label(inv) if hasattr(inv, "order_id") else "",
+                     "total_f": money(inv.total), "outstanding_f": money(out),
+                     "overdue_days": max(0, overdue), "currency": inv.currency})
+    total = sum(buckets.values(), ZERO)
+    return {"open_invoices": rows, "open_total_f": money(total),
+            "aging": [{"label": l, "amount_f": money(buckets[k]) if buckets[k] else ""}
+                      for k, l in (("current", "Not yet due"), ("d30", "1–30 days"), ("d60", "31–60 days"),
+                                   ("d90", "61–90 days"), ("d90plus", "Over 90 days"))],
+            "as_of": today, "currency": currency}
+
+
+def statement_context(customer, date_from, date_to, actor=None):
+    from .pdf import _money as money
     from .pdf import company_info, logo_src
     st = statement(customer, date_from, date_to)
+    invs = open_invoices(customer)
+    currency = invs[0].currency if invs else (customer.default_currency or "MVR")
+    for r in st["rows"]:
+        for k in ("debit", "credit", "balance"):
+            r[k + "_f"] = money(r[k]) if r[k] not in (None, "") else ""
+    advance = sum((advance_available(o) for o in TradingOrder.objects.filter(customer=customer, stage="WON")), ZERO)
     return {"logo_src": logo_src(), "co": company_info(), "st": st,
-            "customer": _customer_block(customer)}
+            "customer": _customer_block(customer), "opening_f": money(st["opening"]),
+            "invoiced_f": money(sum((Decimal(r["debit"]) for r in st["rows"] if r["debit"]), ZERO)),
+            "received_f": money(sum((Decimal(r["credit"]) for r in st["rows"] if r["credit"]), ZERO)),
+            "closing_f": money(st["closing"]),
+            "advance_f": money(advance) if advance > 0 else None,
+            "prepared_by": actor.full_name if actor else None,
+            **statement_extras(invs, invoice_outstanding, currency=currency)}
+
+
+def email_statement(customer, date_from, date_to, actor, note=""):
+    """Send the customer their statement as a PDF, from the person who sent
+    it (reply-to), on the company's mail account."""
+    from django.conf import settings
+    from django.core.mail import EmailMessage
+
+    from .views_commercial import pdf_bytes
+    if not (customer.email or "").strip():
+        return "This customer has no email address on file — add it on the customer first."
+    if not getattr(settings, "EMAIL_HOST", ""):
+        return "Email is not configured on this app — download the PDF and send it yourself."
+    ctx = statement_context(customer, date_from, date_to, actor)
+    pdf = pdf_bytes("pdf/trading_statement.html", ctx)
+    co = ctx["co"]
+    period = (f"{date_from:%d %b %Y} to " if date_from else "up to ") + f"{ctx['st']['date_to']:%d %b %Y}"
+    lines = [f"Dear {customer.contact_person or customer.name},", "",
+             f"Please find attached your statement of account with {co['legal_name']} for the period {period}.",
+             f"Balance due: {ctx['currency']} {ctx['closing_f']}."]
+    if ctx["open_invoices"]:
+        lines += ["", "Invoices outstanding:"] + [
+            f"  {r['ref']}  due {r['due_date']:%d %b %Y}  {r['currency']} {r['outstanding_f']}"
+            + (f"  ({r['overdue_days']} days overdue)" if r["overdue_days"] else "")
+            for r in ctx["open_invoices"] if r["due_date"]]
+    if note.strip():
+        lines += ["", note.strip()]
+    lines += ["", "Please quote the invoice numbers when remitting.", "", "Best regards,",
+              actor.full_name or actor.username, co["legal_name"]]
+    msg = EmailMessage(
+        subject=f"Statement of account — {customer.name} — {ctx['st']['date_to']:%d %b %Y}",
+        body="\n".join(lines),
+        from_email=f"{actor.full_name or actor.username} <{settings.DEFAULT_FROM_EMAIL}>",
+        to=[customer.email.strip()],
+        reply_to=[actor.email] if actor.email else None)
+    msg.attach(f"SOA-{customer.name[:30].replace('/', '-')}-{ctx['st']['date_to']:%Y-%m-%d}.pdf", pdf,
+               "application/pdf")
+    msg.send()
+    audit(ENTITY, 0, "STATEMENT_EMAILED", actor=actor,
+          detail={"customer": customer.name, "to": customer.email, "period": period,
+                  "balance": ctx["closing_f"]})
+    return None

@@ -709,7 +709,7 @@ def customer_statement(request, cid):
         from .views_commercial import pdf_bytes
         try:
             pdf = pdf_bytes("pdf/trading_statement.html",
-                            trading.statement_context(customer, dfrom, dto))
+                            trading.statement_context(customer, dfrom, dto, request.user))
         except Exception as e:                   # pragma: no cover - env dep
             return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
         return _pdf_response(pdf, f"SOA-{customer.name[:20]}.pdf")
@@ -774,3 +774,22 @@ def historic_invoice_void(request, iid):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(trading.invoice_dict(inv))
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReaderAnyMethod])
+def customer_statement_email(request, cid):
+    """Email the statement PDF to the customer (Finance or the Sales Manager)."""
+    customer = _Customer.objects.filter(id=cid).first()
+    if customer is None:
+        return Response({"detail": "Not found."}, status=404)
+    if not (trading.can_receipt(request.user) or trading.can_authorise(request.user)):
+        return Response({"detail": "Finance or the Sales Manager sends statements."}, status=403)
+    dfrom, dto = _parse_date(request.data.get("from")), _parse_date(request.data.get("to"))
+    try:
+        msg = trading.email_statement(customer, dfrom, dto, request.user, request.data.get("note") or "")
+    except Exception as e:                            # pragma: no cover - mail / pdf env
+        return Response({"detail": f"Could not send: {e}"}, status=500)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"detail": f"Statement sent to {customer.email}.", "to": customer.email})

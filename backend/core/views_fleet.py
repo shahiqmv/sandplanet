@@ -551,7 +551,7 @@ def customer_statement(request, cid):
         from .views_commercial import pdf_bytes
         try:
             pdf = pdf_bytes("pdf/trading_statement.html",
-                            rental.statement_context(customer, d_from, d_to))
+                            rental.statement_context(customer, d_from, d_to, request.user))
         except Exception as e:                        # pragma: no cover - env dep
             return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
         return _pdf(pdf, f"SOA-{customer.name[:20]}.pdf")

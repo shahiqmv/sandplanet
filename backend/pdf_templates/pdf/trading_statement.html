@@ -3,33 +3,75 @@
 <head>
 <meta charset="utf-8">
 <style>
+  /* Statement of account — the same house style as the invoices. */
   @page { size: A4 portrait; margin: 14mm 14mm 26mm 14mm; }
-  body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #22303B; }
+  body { font-family: Helvetica, Arial, sans-serif; font-size: 10.5pt; color: #22303B; }
   .masthead { text-align: center; }
   .masthead img { max-height: 26mm; max-width: 64mm; width: auto; height: auto; }
   .accent { height: 2.4pt; margin-top: 3mm; border-radius: 2pt;
     background: linear-gradient(90deg, {% brand "accent_light" %}, {% brand "accent_deep" %} 55%, {% brand "primary_dark" %}); }
-  h1 { text-align: center; font-weight: 400; font-size: 18pt; color: {% brand "heading" %}; margin: 5mm 0 4mm; }
+  h1 { text-align: center; font-weight: 400; font-size: 20pt; color: {% brand "heading" %}; margin: 5mm 0 4mm; letter-spacing: .5px; }
   h1 strong { font-weight: 800; }
   .parties { width: 100%; border-collapse: collapse; }
   .parties td { border: none; vertical-align: top; padding: 0 4px; }
-  .lbl { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
-  .nm { font-weight: 700; font-size: 12pt; color: {% brand "heading" %}; }
-  .sub { font-size: 9.5pt; color: #43535f; white-space: pre-line; }
+  .lbl { font-size: 8pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; margin-bottom: 2pt; }
+  .parties .nm { font-weight: 700; font-size: 12pt; color: {% brand "heading" %}; }
+  .parties .sub { font-size: 9.5pt; color: #43535f; line-height: 1.45; white-space: pre-line; }
+  .ctin { margin-top: 3pt; font-size: 9pt; color: #43535f; }
+  .ctin b { font-size: 7.5pt; letter-spacing: .07em; text-transform: uppercase; color: #61707C; margin-right: 5pt; }
   .meta { border-collapse: collapse; margin-left: auto; }
   .meta td { border: none; padding: 1.5pt 0 1.5pt 10px; font-size: 9.5pt; text-align: right; }
   .meta td.k { color: #61707C; text-transform: uppercase; font-size: 8pt; letter-spacing: .06em; }
-  table.doc { width: 100%; border-collapse: collapse; margin-top: 5mm; }
+  .meta td.inv { font-weight: 800; color: {% brand "accent_deep" %}; }
+  hr.rule { border: none; border-top: 1px solid #D8E3EC; margin: 5mm 0 0; }
+  .narrative { font-size: 10.5pt; color: #33424d; line-height: 1.5; margin: 4mm 0 3.5mm; }
+  table.doc { width: 100%; border-collapse: collapse; }
   table.doc thead th { background: {% brand "accent_deep" %}; color: #fff; font-weight: 700; font-size: 8.5pt;
-    text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 2.2mm 3mm; }
+    text-transform: uppercase; letter-spacing: .06em; text-align: left; padding: 2.4mm 4mm; }
   table.doc thead th.n { text-align: right; }
-  table.doc td { padding: 4px 3mm; font-size: 9.5pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
+  table.doc td { padding: 4.5px 4mm; font-size: 10pt; border-bottom: 0.6px solid #D8E3EC; vertical-align: top; }
   table.doc td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  table.doc tr.open td { background: {% brand "soft4" %}; font-style: italic; }
-  table.doc tr.net td { background: {% brand "soft3" %}; font-weight: 800; color: {% brand "heading" %}; border-top: 1.3pt solid {% brand "accent_deep" %}; }
+  table.doc td.sr { color: #61707C; width: 9mm; }
+  table.doc td .spec { display: block; font-style: italic; color: #55656f;
+    font-size: 9pt; white-space: pre-line; margin-top: 1pt; }
+  table.doc td .nm { font-weight: 700; }
+  table.doc td.dn { color: #61707C; font-size: 8.5pt; }
+  table.doc tr.sub td { font-weight: 700; color: {% brand "heading" %}; border-bottom: none; }
+  table.doc tr.net td { background: {% brand "soft3" %}; font-weight: 800; color: {% brand "heading" %};
+    border-top: 1.3pt solid {% brand "accent_deep" %}; border-bottom: none; padding-top: 2mm; padding-bottom: 2mm; }
+  .words { margin-top: 3mm; font-style: italic; font-size: 9.5pt; color: {% brand "primary_dark" %}; }
+  .terms { margin-top: 4mm; font-size: 9.5pt; color: #33424d; line-height: 1.5; }
+  .bankbox { width: 100%; border: 0.6px solid #D8E3EC; margin-top: 5mm; border-collapse: collapse; }
+  .bankbox .bh { background: {% brand "soft2" %}; font-weight: 700; color: {% brand "heading" %}; padding: 4px 9px; font-size: 9pt;
+                 text-transform: uppercase; letter-spacing: .04em; }
+  .bankbox td { padding: 5px 9px; font-size: 9pt; line-height: 1.5; color: #33424d; }
+  .bankbox b { color: {% brand "heading" %}; }
+  .approve { width: 100%; margin-top: 8mm; border-collapse: collapse; }
+  .approve td { border: none; vertical-align: bottom; }
+  .auth { text-align: right; }
+  .auth .ak { font-size: 7.5pt; letter-spacing: .09em; text-transform: uppercase; color: {% brand "accent_deep" %}; font-weight: 700; }
+  .auth .an { font-size: 12pt; font-weight: 800; color: {% brand "heading" %}; }
+  .auth .ar { font-size: 9pt; color: #43535f; }
+  .sigline { text-align: right; margin-top: 10mm; }
+  .sigline .line { display: inline-block; border-top: 0.8px solid #1c2b36; width: 70mm; padding-top: 2mm; font-size: 9.5pt; }
+  .draft { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 72pt;
+    color: rgba(176, 36, 24, .13); font-weight: 800; transform: rotate(-24deg); letter-spacing: .2em; }
   .footer { position: fixed; bottom: -22mm; left: 0; right: 0; text-align: center;
             border-top: 0.8px solid #d6e2ec; padding-top: 3mm; font-size: 8.5pt; color: #5a6b78; }
   thead { display: table-header-group; }
+  .box { width: 100%; border-collapse: collapse; margin: 4mm 0 5mm; }
+  .box td { border: 0.6px solid #D8E3EC; padding: 2mm 3mm; font-size: 9.5pt; width: 25%; vertical-align: top; }
+  .box .k { font-size: 7.5pt; color: #61707C; text-transform: uppercase; letter-spacing: .07em; }
+  .box .v { font-weight: 700; color: {% brand "heading" %}; font-size: 11pt; font-variant-numeric: tabular-nums; }
+  .box td.due { background: {% brand "soft3" %}; }
+  .box td.due .v { font-size: 13pt; }
+  h2 { font-size: 10pt; text-transform: uppercase; letter-spacing: .07em; color: #61707C; margin: 6mm 0 2mm; font-weight: 700; }
+  table.doc tr.open td { color: #61707C; font-style: italic; }
+  table.doc td.d { white-space: nowrap; }
+  table.doc td.late { color: #a13327; font-weight: 700; }
+  .agebar { width: 100%; border-collapse: collapse; }
+  .agebar td { border: 0.6px solid #D8E3EC; padding: 1.6mm 2mm; font-size: 9pt; text-align: right; font-variant-numeric: tabular-nums; }
+  .agebar td.k { font-size: 7.5pt; color: #61707C; text-transform: uppercase; letter-spacing: .05em; text-align: center; background: {% brand "soft4" %}; }
 </style>
 </head>
 <body>
@@ -40,32 +82,95 @@
 <div class="masthead"><img src="{{ logo_src }}"></div>
 <div class="accent"></div>
 <h1>STATEMENT OF <strong>ACCOUNT</strong></h1>
+
 <table class="parties"><tr>
   <td style="width: 54%">
     <div class="lbl">Customer</div>
     <div class="nm">{{ customer.name }}</div>
     {% if customer.address %}<div class="sub">{{ customer.address }}</div>{% endif %}
-    {% if customer.tin %}<div class="sub">GST TIN {{ customer.tin }}</div>{% endif %}
+    {% if customer.contact %}<div class="sub">Attn: {{ customer.contact }}</div>{% endif %}
+    {% if customer.tin %}<div class="ctin"><b>GST TIN</b>{{ customer.tin }}</div>{% endif %}
   </td>
   <td>
     <table class="meta">
-      {% if st.date_from %}<tr><td class="k">From</td><td>{{ st.date_from|date:"d M Y" }}</td></tr>{% endif %}
-      <tr><td class="k">To</td><td>{{ st.date_to|date:"d M Y" }}</td></tr>
+      <tr><td class="k">Statement date</td><td class="inv">{{ as_of|date:"d M Y" }}</td></tr>
+      <tr><td class="k">Period</td><td>{% if st.date_from %}{{ st.date_from|date:"d M Y" }} – {% else %}up to {% endif %}{{ st.date_to|date:"d M Y" }}</td></tr>
+      <tr><td class="k">Currency</td><td>{{ currency }}</td></tr>
     </table>
   </td>
 </tr></table>
+<hr class="rule">
+
+<table class="box"><tr>
+  <td><div class="k">Balance brought forward</div><div class="v">{{ opening_f }}</div></td>
+  <td><div class="k">Invoiced in the period</div><div class="v">{{ invoiced_f }}</div></td>
+  <td><div class="k">Received / credited</div><div class="v">{{ received_f }}</div></td>
+  <td class="due"><div class="k">Balance due</div><div class="v">{{ currency }} {{ closing_f }}</div></td>
+</tr></table>
+
+<h2>Account activity</h2>
 <table class="doc">
-  <thead><tr><th>Date</th><th>Ref</th><th>Detail</th><th class="n">Invoiced</th><th class="n">Received / credited</th><th class="n">Balance</th></tr></thead>
+  <thead><tr><th>Date</th><th>Reference</th><th>Detail</th><th class="n">Invoiced</th><th class="n">Received / credited</th><th class="n">Balance</th></tr></thead>
   <tbody>
     {% if st.date_from %}
-      <tr class="open"><td>{{ st.date_from|date:"d M Y" }}</td><td></td><td>Balance brought forward</td><td class="n"></td><td class="n"></td><td class="n">{{ st.opening }}</td></tr>
+      <tr class="open"><td>{{ st.date_from|date:"d M Y" }}</td><td></td><td>Balance brought forward</td><td class="n"></td><td class="n"></td><td class="n">{{ opening_f }}</td></tr>
     {% endif %}
     {% for r in st.rows %}
-      <tr><td>{{ r.date|date:"d M Y" }}</td><td>{{ r.ref }}</td><td>{{ r.detail }}</td>
-          <td class="n">{{ r.debit|default:"" }}</td><td class="n">{{ r.credit|default:"" }}</td><td class="n">{{ r.balance }}</td></tr>
+      <tr><td class="d">{{ r.date|date:"d M Y" }}</td><td><b>{{ r.ref }}</b></td><td>{{ r.detail }}</td>
+          <td class="n">{{ r.debit_f }}</td><td class="n">{{ r.credit_f }}</td><td class="n">{{ r.balance_f }}</td></tr>
+    {% empty %}
+      <tr><td colspan="6" style="color:#61707C">No activity in this period.</td></tr>
     {% endfor %}
-    <tr class="net"><td colspan="5">Balance due</td><td class="n">{{ st.closing }}</td></tr>
+    <tr class="net"><td colspan="5" class="n">Balance due {{ currency }}</td><td class="n">{{ closing_f }}</td></tr>
   </tbody>
 </table>
+
+{% if open_invoices %}
+<h2>Invoices outstanding as at {{ as_of|date:"d M Y" }}</h2>
+<table class="doc">
+  <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th>Against</th><th class="n">Invoice total</th><th class="n">Outstanding</th></tr></thead>
+  <tbody>
+    {% for r in open_invoices %}
+      <tr><td><b>{{ r.ref }}</b></td><td class="d">{{ r.invoice_date|date:"d M Y" }}</td>
+          <td class="d{% if r.overdue_days %} late{% endif %}">{% if r.due_date %}{{ r.due_date|date:"d M Y" }}{% endif %}{% if r.overdue_days %} · {{ r.overdue_days }} days overdue{% endif %}</td>
+          <td>{{ r.label }}</td><td class="n">{{ r.total_f }}</td><td class="n">{{ r.outstanding_f }}</td></tr>
+    {% endfor %}
+    <tr class="sub"><td colspan="5" class="n">Total outstanding</td><td class="n">{{ open_total_f }}</td></tr>
+  </tbody>
+</table>
+<table class="agebar" style="margin-top:3mm">
+  <tr>{% for a in aging %}<td class="k">{{ a.label }}</td>{% endfor %}</tr>
+  <tr>{% for a in aging %}<td>{{ a.amount_f|default:"—" }}</td>{% endfor %}</tr>
+</table>
+{% endif %}
+{% if advance_f %}<p class="terms">Advance held on your account, to be applied to invoices as they issue: {{ currency }} {{ advance_f }}.</p>{% endif %}
+
+<div class="terms">Please quote the invoice numbers when remitting. Queries on this statement to {% if co.email %}{{ co.email }}{% else %}our office{% endif %}.</div>
+
+{% if co.bank.name or co.bank.account_no %}
+<table class="bankbox">
+  <tr><td class="bh" colspan="2">Payment details — please remit to</td></tr>
+  <tr>
+    <td style="width:50%">
+      {% if co.bank.name %}<b>Bank:</b> {{ co.bank.name }}{% if co.bank.branch %}, {{ co.bank.branch }}{% endif %}<br>{% endif %}
+      {% if co.bank.account_name %}<b>Account name:</b> {{ co.bank.account_name }}<br>{% endif %}
+      {% if co.bank.account_no %}<b>Account no:</b> {{ co.bank.account_no }}{% if co.bank.currency %} ({{ co.bank.currency }}){% endif %}{% endif %}
+    </td>
+    <td>
+      {% if co.bank.swift %}<b>SWIFT / BIC:</b> {{ co.bank.swift }}<br>{% endif %}
+      {% if co.bank.iban %}<b>IBAN:</b> {{ co.bank.iban }}<br>{% endif %}
+      {% if co.tin %}<b>TIN:</b> {{ co.tin }}{% endif %}
+    </td>
+  </tr>
+</table>
+{% endif %}
+
+<table class="approve"><tr>
+  <td></td>
+  <td class="auth">
+    {% if prepared_by %}<div class="ak">Prepared by</div><div class="an">{{ prepared_by }}</div><div class="ar">{{ co.legal_name }}</div>
+    {% else %}<div class="sigline"><span class="line">For {{ co.legal_name }}</span></div>{% endif %}
+  </td>
+</tr></table>
 </body>
 </html>

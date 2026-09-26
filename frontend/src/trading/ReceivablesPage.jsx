@@ -199,9 +199,20 @@ function HistoricInvoiceForm({ customers, onSaved, onCancel }) {
   );
 }
 
-function Statement({ customer, onClose }) {
+function Statement({ customer, onClose, canSend }) {
   const [range, setRange] = useState({ from: "", to: "" });
   const [st, setSt] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [note, setNote] = useState("");
+  const [sent, setSent] = useState(null);
+  async function email() {
+    if (!window.confirm(`Email this statement (PDF) to ${customer.customer_name}?`)) return;
+    setSending(true); setSent(null);
+    try {
+      const r = await api(`/trading/customers/${customer.customer}/statement/email`, { method: "POST", body: { from: range.from || null, to: range.to || null, note } });
+      setSent(r.detail);
+    } catch (e) { setSent(e.message); } finally { setSending(false); }
+  }
   useEffect(() => {
     const q = new URLSearchParams();
     if (range.from) q.set("from", range.from);
@@ -216,10 +227,17 @@ function Statement({ customer, onClose }) {
         <div className="t-tools">
           <input type="date" style={inputStyle} value={range.from} onChange={(e) => setRange({ ...range, from: e.target.value })} />
           <input type="date" style={inputStyle} value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
-          <a className="t-btn-link" href={`/api/v1/trading/customers/${customer.customer}/statement?${q}`} target="_blank" rel="noreferrer">PDF</a>
+          <a className="t-btn-link" href={`/api/v1/trading/customers/${customer.customer}/statement?${q}`} target="_blank" rel="noreferrer">Statement PDF</a>
           <button className="t-link" onClick={onClose}>Close</button>
         </div>
       </div>
+      {canSend && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "8px 0 4px" }}>
+          <input style={{ ...inputStyle, flex: 1, minWidth: 240 }} placeholder="a line for the email (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
+          <Btn variant="secondary" onClick={email} disabled={sending}>{sending ? "Sending…" : "Email to customer"}</Btn>
+          {sent && <span className="t-sub">{sent}</span>}
+        </div>
+      )}
       {!st ? <p>Loading…</p> : (
         <table className="t-table">
           <thead><tr><th style={th}>Date</th><th style={th}>Ref</th><th style={th}>Detail</th>
@@ -280,7 +298,7 @@ export default function ReceivablesPage({ open }) {
         <ReceiptForm customers={customers} preset={recording}
                      onSaved={() => { setRecording(null); load(); }} onCancel={() => setRecording(null)} />
       )}
-      {statementFor && <Statement customer={statementFor} onClose={() => setStatementFor(null)} />}
+      {statementFor && <Statement customer={statementFor} canSend={data.can_receipt} onClose={() => setStatementFor(null)} />}
 
       {data.customers.length === 0 ? <p className="t-empty">Nothing outstanding and no advances held. Every issued invoice is settled.</p> : (
         <table className="t-table">

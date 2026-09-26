@@ -1248,3 +1248,49 @@ class ExtraRolesTests(BaseCase):
         self.pm.refresh_from_db()
         self.login(self.pm)
         self.assertEqual(self.client.get("/api/v1/trading/orders").status_code, 403)
+
+
+class StatementPdfTests(BaseCase):
+    def setUp(self):
+        super().setUp()
+        from .models import Customer
+        self.finance = make_user("fin8", User.Role.FINANCE)
+        self.cust = Customer.objects.create(name="Conrad Maldives", default_currency="USD", credit_days=30,
+                                            tin="1000100GST001", email="ap@conrad.mv", contact_person="Aisha")
+        self.login(self.finance)
+        for ref, d, sub in (("INV-2025-0410", "2025-10-01", "5000"), ("INV-2025-0455", "2025-12-15", "8000")):
+            self.client.post("/api/v1/trading/invoices/historic", {"customer": self.cust.id, "ref": ref,
+                             "invoice_date": d, "currency": "USD", "subtotal": sub, "gst": "0"}, format="json")
+
+    def test_the_statement_carries_open_invoices_and_the_aging(self):
+        ctx = trading.statement_context(self.cust, None, None, self.finance)
+        self.assertEqual(ctx["closing_f"], "13,000.00")
+        self.assertEqual([r["ref"] for r in ctx["open_invoices"]], ["INV-2025-0410", "INV-2025-0455"])
+        self.assertTrue(all(r["overdue_days"] > 90 for r in ctx["open_invoices"]))
+        self.assertEqual(ctx["aging"][-1]["amount_f"], "13,000.00")
+        self.assertEqual(ctx["prepared_by"], "Fin8")
+        r = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement?pdf=1")
+        self.assertEqual(r["Content-Type"], "application/pdf")
+
+    def test_finance_emails_the_statement_as_a_pdf(self):
+        from django.core import mail
+        with self.settings(EMAIL_HOST="smtp.test", DEFAULT_FROM_EMAIL="accounts@sandplanet.mv",
+                           EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend"):
+            r = self.client.post(f"/api/v1/trading/customers/{self.cust.id}/statement/email",
+                                 {"note": "Kindly settle the older invoice first."}, format="json")
+            self.assertEqual(r.status_code, 200, r.data)
+            self.assertEqual(len(mail.outbox), 1)
+            m = mail.outbox[0]
+            self.assertEqual(m.to, ["ap@conrad.mv"])
+            self.assertIn("Statement of account — Conrad Maldives", m.subject)
+            self.assertIn("Balance due: USD 13,000.00", m.body)
+            self.assertIn("Kindly settle", m.body)
+            self.assertEqual(m.attachments[0][2], "application/pdf")
+            self.assertTrue(m.attachments[0][0].startswith("SOA-Conrad Maldives"))
+        self.cust.email = ""
+        self.cust.save()
+        r = self.client.post(f"/api/v1/trading/customers/{self.cust.id}/statement/email", {}, format="json")
+        self.assertEqual(r.status_code, 400)
+        self.login(make_user("sales8", User.Role.SALES))
+        r = self.client.post(f"/api/v1/trading/customers/{self.cust.id}/statement/email", {}, format="json")
+        self.assertEqual(r.status_code, 403)

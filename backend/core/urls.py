@@ -1045,5 +1045,7 @@ urlpatterns = [
     path("fleet/pnl", fleet_api.fleet_pnl, name="fleet-pnl"),
     path("trading/customers/<int:cid>/statement", trading_api.customer_statement,
          name="trading-customer-statement"),
+    path("trading/customers/<int:cid>/statement/email", trading_api.customer_statement_email,
+         name="trading-customer-statement-email"),
     path("", include(router.urls)),
 ]

@@ -1103,8 +1103,20 @@ def statement(customer, date_from=None, date_to=None):
             "rows": rows, "closing": _s(_q2(opening + bal))}
 
 
-def statement_context(customer, date_from, date_to):
+def statement_context(customer, date_from, date_to, actor=None):
+    from .pdf import _money as money
     from .pdf import company_info, logo_src
-    return {"logo_src": logo_src(), "co": company_info(),
-            "st": statement(customer, date_from, date_to),
-            "customer": _customer_block(customer)}
+    from .trading import statement_extras
+    st = statement(customer, date_from, date_to)
+    for r in st["rows"]:
+        for k in ("debit", "credit", "balance"):
+            r[k + "_f"] = money(r[k]) if r[k] not in (None, "") else ""
+    invs = open_invoices(customer)
+    return {"logo_src": logo_src(), "co": company_info(), "st": st,
+            "customer": _customer_block(customer), "opening_f": money(st["opening"]),
+            "invoiced_f": money(sum((Decimal(r["debit"]) for r in st["rows"] if r["debit"]), ZERO)),
+            "received_f": money(sum((Decimal(r["credit"]) for r in st["rows"] if r["credit"]), ZERO)),
+            "closing_f": money(st["closing"]), "advance_f": None,
+            "prepared_by": actor.full_name if actor else None,
+            **statement_extras(invs, invoice_outstanding,
+                               currency=invs[0].currency if invs else (customer.default_currency or "MVR"))}
