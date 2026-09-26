@@ -125,4 +125,6 @@ def public_dict(request=None):
         "logo_url": file_url("logo"), "mark_url": file_url("mark"),
         "wordmark_white_url": file_url("wordmark_white"),
         "emblem_url": file_url("emblem"),
+        # the app switcher carries a sign-in across when the bridge is up
+        "sso": bool(getattr(settings, "PEER_AUTH_SECRET", "")),
     }

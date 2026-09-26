@@ -330,6 +330,28 @@ Each phase ships and stops for the owner's review.
    the PDF prints them numbered on a page of their own after the schedule,
    with the agreement's special conditions prevailing.
 
+## 6b. One sign-in for both apps (the bridge, 2026-09-26)
+
+Separate databases, one trust (`core/peer_auth.py`). `PEER_AUTH_SECRET` is
+the same value in `.env` and `.env.marine`; `PEER_URL` is each instance's
+internal address of the other (`http://web-marine:8000/marine/api/v1` on
+Planet, `http://web:8000/api/v1` on Marine). With it set:
+
+- **Switching apps carries the sign-in.** The switcher asks
+  `POST /auth/handoff` for a 90-second signed token and opens the other app
+  with `?sso=<token>`; that app's `POST /auth/sso` verifies it, mirrors the
+  user (same username, name, email, phone; an unusable local password;
+  `User.home_instance` = where the password lives) and starts a session.
+  On first arrival the user keeps their sister role as a starting point;
+  the local admin changes it on the Users page. Extras are per instance.
+- **Cold sign-in with the sister's credentials.** `POST /auth/login` tries
+  locally first; for an unknown or mirrored username it calls the sister's
+  `POST /auth/peer-verify` (body signed with the secret; only accounts whose
+  password lives there answer, never a mirrored one) and mirrors on success.
+- Deactivating a mirrored user locally shuts the bridge for them here;
+  deactivating the home account shuts it everywhere (verify fails; the
+  handoff needs a live session there).
+
 ## 7. Inputs — settled and open
 
 Settled (2026-09-25): brand and company details (`SANDPLANET_MARINE_BRAND.md`);

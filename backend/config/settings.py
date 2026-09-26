@@ -219,6 +219,11 @@ MEDIA_ROOT = BASE_DIR / os.environ.get("MEDIA_DIR", "media")
 # name makes every URL Django builds carry it, WhiteNoise strips it again
 # for static files, and the cookies get their own names and path so the two
 # instances' sessions never collide on one host.
+# The bridge to the sister instance (core/peer_auth.py): the same secret in
+# both .env files, and each instance's internal address of the other.
+PEER_AUTH_SECRET = os.environ.get("PEER_AUTH_SECRET", "")
+PEER_URL = os.environ.get("PEER_URL", "")
+
 APP_PREFIX = os.environ.get("APP_PREFIX", "").rstrip("/")
 if APP_PREFIX:
     FORCE_SCRIPT_NAME = APP_PREFIX

@@ -353,6 +353,12 @@ function Login({ onLogin, expired }) {
     <div style={{ maxWidth: 380, margin: "10vh auto", padding: "0 16px" }}>
       <form onSubmit={submit} style={card}>
         <h2 style={{ marginTop: 0, color: "var(--sp-navy)" }}>Sign in</h2>
+        {getBrand()?.sso && (
+          <p style={{ fontSize: 12.5, color: "var(--muted)", marginTop: -6 }}>
+            One sign-in for both apps: use the username and password you have on
+            the sister app if you have no account here yet.
+          </p>
+        )}
         {expired && (
           <p style={{ background: "#fdf8e7", border: "1px solid #e0c66b",
                       borderRadius: 6, padding: "8px 10px", fontSize: 13,
@@ -590,7 +596,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
+    // Arriving from the sister app with a handoff token: redeem it for a
+    // session here first, then drop it from the address bar.
+    const params = new URLSearchParams(window.location.search);
+    const sso = params.get("sso");
+    const boot = sso
+      ? api("/auth/sso", { method: "POST", body: { token: sso } }).catch(() => null)
+      : Promise.resolve(null);
+    boot.then((u) => {
+      if (sso) {
+        params.delete("sso");
+        const q = params.toString();
+        window.history.replaceState(null, "", `${window.location.pathname}${q ? "?" + q : ""}${window.location.hash}`);
+      }
+      if (u?.authenticated) { setMe(u); return; }
+      api("/auth/me").then(setMe).catch(() => setMe({ authenticated: false }));
+    });
   }, []);
   // The brand (and with it the app switcher) may arrive after first paint.
   const [brandState, setBrandState] = useState(getBrand());
@@ -951,7 +972,7 @@ export default function App() {
                               if (!me.landing_site_id) setOpenSite(null); }}>
           <BrandBlock />
         </div>
-        <AppSwitcher apps={brandState?.apps} current="planet" />
+        <AppSwitcher apps={brandState?.apps} current="planet" sso={!!brandState?.sso} />
         {showHoNav && navMode !== "side" && (
           <nav className="navtabs">
             {groups.map((g) => (

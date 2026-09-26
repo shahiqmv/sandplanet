@@ -111,14 +111,80 @@ def auth_login(request):
                                    f"{LOGIN_WINDOW_MIN} minutes and try "
                                    "again, or ask an administrator to reset "
                                    "your password."}, status=429)
-    user = authenticate(request, username=username,
-                        password=request.data.get("password", ""))
+    password = request.data.get("password", "")
+    user = authenticate(request, username=username, password=password)
+    if user is None:
+        # Not ours, or mirrored from the sister instance: ask it. The
+        # password goes over the private network to the instance that owns
+        # it and never lands here (core/peer_auth.py).
+        from . import peer_auth
+        local = User.objects.filter(username=username).first()
+        if peer_auth.enabled() and (local is None or local.home_instance):
+            profile = peer_auth.verify_at_peer(username, password)
+            if profile:
+                user = peer_auth.mirror(profile)
     if user is None or not user.is_active:
         record_login_event(request, "FAILED", username=username)
         return Response({"detail": "Invalid credentials."}, status=400)
     login(request, user)
     record_login_event(request, "LOGIN", user=user)
     return Response(_me_payload(user))
+
+
+@api_view(["POST"])
+def auth_handoff(request):
+    """A token the sister instance redeems for a session of this user's own —
+    the app switcher carries it across (core/peer_auth.py)."""
+    from . import peer_auth
+    if not request.user.is_authenticated:
+        return Response({"detail": "Sign in first."}, status=401)
+    if not peer_auth.enabled():
+        return Response({"detail": "The sister-app bridge is not configured."}, status=404)
+    return Response({"token": peer_auth.issue_handoff(request.user)})
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_sso(request):
+    """Redeem a handoff token from the sister instance: mirror the user here
+    and sign them in."""
+    from . import peer_auth
+    if not peer_auth.enabled():
+        return Response({"detail": "The sister-app bridge is not configured."}, status=404)
+    profile = peer_auth.redeem_handoff(str(request.data.get("token") or ""))
+    if profile is None:
+        record_login_event(request, "FAILED", username="(sso)")
+        return Response({"detail": "That sign-in link has expired — switch apps again."}, status=400)
+    user = peer_auth.mirror(profile)
+    if user is None:
+        record_login_event(request, "FAILED", username=profile["u"])
+        return Response({"detail": "Your account is deactivated on this app."}, status=403)
+    login(request, user)
+    record_login_event(request, "LOGIN", user=user, source="SSO")
+    return Response(_me_payload(user))
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def auth_peer_verify(request):
+    """The sister instance asks whether a username and password are ours.
+    Signed with the shared secret; only accounts whose password lives here
+    answer, so a mirrored account can never be chained back."""
+    from . import peer_auth
+    if not peer_auth.enabled():
+        return Response({"detail": "Not configured."}, status=404)
+    if not peer_auth.signature_ok(request.body, request.headers.get("X-Peer-Signature", "")):
+        return Response({"detail": "Bad signature."}, status=403)
+    username = request.data.get("username", "")
+    local = User.objects.filter(username=username).first()
+    if local is None or local.home_instance or not local.is_active:
+        return Response({"detail": "Not ours."}, status=403)
+    user = authenticate(request, username=username, password=request.data.get("password", ""))
+    if user is None:
+        record_login_event(request, "FAILED", username=username, source="PEER")
+        return Response({"detail": "Invalid credentials."}, status=403)
+    record_login_event(request, "LOGIN", user=user, source="PEER")
+    return Response(peer_auth._profile(user))
 
 
 @api_view(["POST"])

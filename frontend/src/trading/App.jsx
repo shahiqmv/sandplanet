@@ -245,7 +245,7 @@ export default function App() {
           <span className="t-brand-name">{brandName}</span>
           <span className="t-brand-arm">Trading</span>
         </div>
-        <AppSwitcher apps={brand?.apps} current="trading" />
+        <AppSwitcher apps={brand?.apps} current="trading" sso={!!brand?.sso} />
         <nav className="t-nav">
           {PAGES.map(([key, label]) => (
             <button key={key} className={"t-nav-item" + (page === key ? " is-active" : "")}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { api } from "./api.js";
 // Shared components per SP_Design_Brief.md — build screens from these
 // only; tokens live in index.css and are never hard-coded elsewhere.
 
@@ -92,8 +93,20 @@ const ICON_PATHS = {
 // The sister-app switcher (MARINE_BUILD_BRIEF.md §2): Projects, Trading and
 // any sister company the Company page lists, from /api/v1/brand. `current`
 // is the key of the app this header belongs to.
-export function AppSwitcher({ apps, current, light = true }) {
+export function AppSwitcher({ apps, current, light = true, sso = false }) {
   const [open, setOpen] = useState(false);
+  // With the sister-app bridge up, switching carries the sign-in across: a
+  // short-lived token from this instance that the other one redeems.
+  async function go(e, a) {
+    if (!sso || a.key === current || e.metaKey || e.ctrlKey || e.shiftKey) return;
+    e.preventDefault();
+    try {
+      const { token } = await api("/auth/handoff", { method: "POST", body: {} });
+      window.location.href = `${a.url}${a.url.includes("?") ? "&" : "?"}sso=${encodeURIComponent(token)}`;
+    } catch {
+      window.location.href = a.url;          // the other app's sign-in page
+    }
+  }
   // Closes on any click outside — a header menu must never be left hanging
   // over the page.
   // Not on mouse-leave: the menu hangs below the button with a gap, and
@@ -117,7 +130,7 @@ export function AppSwitcher({ apps, current, light = true }) {
       {open && (
         <div className="appswitch-menu" role="menu">
           {apps.map((a) => (
-            <a key={a.key || a.url} role="menuitem" href={a.url}
+            <a key={a.key || a.url} role="menuitem" href={a.url} onClick={(e) => go(e, a)}
                className={"appswitch-item" + (a.key === current ? " current" : "")}>
               {a.name}
             </a>

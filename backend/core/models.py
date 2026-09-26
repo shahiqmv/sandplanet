@@ -56,6 +56,9 @@ class User(AbstractUser):
     # Set when an admin issues a temporary password by invite email; the user
     # must choose their own password before using the app.
     extra_roles = models.JSONField(default=list, blank=True)   # subset of EXTRA_ROLES
+    # Where this account's password lives when it is not here: a user
+    # mirrored over the bridge from the sister instance (core/peer_auth.py).
+    home_instance = models.CharField(max_length=20, blank=True)
     must_change_password = models.BooleanField(default=False)
     # Mobile (E.164, e.g. +9607xxxxxx) for SMS/WhatsApp approval alerts, and an
     # opt-out if the in-app bell is enough for this user.
