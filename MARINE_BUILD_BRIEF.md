@@ -334,8 +334,10 @@ Each phase ships and stops for the owner's review.
 
 Separate databases, one trust (`core/peer_auth.py`). `PEER_AUTH_SECRET` is
 the same value in `.env` and `.env.marine`; `PEER_URL` is each instance's
-internal address of the other (`http://web-marine:8000/marine/api/v1` on
-Planet, `http://web:8000/api/v1` on Marine). With it set:
+internal address of the other (`http://web-marine:8000/api/v1` on
+Planet, `http://web:8000/api/v1` on Marine — straight to gunicorn, so NO
+`/marine` prefix: Caddy's `handle_path` strips it and FORCE_SCRIPT_NAME
+expects it gone). With it set:
 
 - **Switching apps carries the sign-in.** The switcher asks
   `POST /auth/handoff` for a 90-second signed token and opens the other app

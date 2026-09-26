@@ -12,7 +12,7 @@
       "env": {
         "DJANGO_DEBUG": "1",
         "PEER_AUTH_SECRET": "local-dev-peer-secret",
-        "PEER_URL": "http://127.0.0.1:8001/marine/api/v1"
+        "PEER_URL": "http://127.0.0.1:8001/api/v1"
       },
       "port": 8000
     },
