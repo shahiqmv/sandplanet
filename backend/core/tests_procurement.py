@@ -526,6 +526,35 @@ class ChainTests(ProcBase):
         self.assertEqual(row.cleared_lm.ref, lm2["ref"])
         self.assertEqual(Document.objects.get(ref=mr_ref).status, "LOADED")
 
+    def test_one_receipt_in_progress_per_manifest(self):
+        """SJR counted LM-068 three times because the dashboard kept offering
+        a new GRN while the first sat COUNTED, waiting on the engineer."""
+        mr_ref = self.mr_to_sent()
+        lm = self.make_lm(mr_ref)
+        self.act(lm["ref"], "depart")
+        self.as_user(self.sa)
+        body = {"doc_type": "GRN", "site_id": self.site.id, "lm_ref": lm["ref"]}
+        first = self.client.post("/api/v1/documents", body, format="json").data
+        r = self.client.post("/api/v1/documents", body, format="json")
+        self.assertEqual(r.status_code, 400)                    # draft in progress
+        self.assertEqual(r.data["grn_ref"], first["ref"])
+        self.assertIn("continue it", r.data["detail"])
+        self.client.patch(f"/api/v1/documents/{first['ref']}", {"lines": [
+            {"item_id": self.cement.id, "qty_manifest": 150, "qty_received": 150},
+            {"item_id": self.rebar.id, "qty_manifest": 300, "qty_received": 300},
+        ]}, format="json")
+        self.assertEqual(self.act(first["ref"], "count").data["status"], "COUNTED")
+        r = self.client.post("/api/v1/documents", body, format="json")
+        self.assertEqual(r.status_code, 400)                    # counted, awaiting verify
+        self.assertIn("verification", r.data["detail"])
+        self.as_user(self.se)
+        self.act(first["ref"], "verify")
+        self.as_user(self.sa)
+        # once verified the manifest is received; a further GRN (a balance
+        # delivery after a shortage) is the existing rule's business
+        r = self.client.post("/api/v1/documents", body, format="json")
+        self.assertNotIn("grn_ref", r.data)
+
     def test_grn_prefill_count_verify_shortage(self):
         mr_ref = self.mr_to_sent()
         lm = self.make_lm(mr_ref)

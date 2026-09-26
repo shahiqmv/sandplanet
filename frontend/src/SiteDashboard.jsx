@@ -488,13 +488,34 @@ that adds your existing quantities to the system"
             <span style={{ fontSize: 13, color: "var(--muted)" }}>
               {lm.payload?.vessel} · expected {lm.payload?.expected_arrival}
             </span>
-            {canMr && (
-              <Btn variant="navy" onClick={() => onCreateGrn(lm.ref)}
-                   style={{ marginLeft: "auto", padding: "4px 12px",
-                            fontSize: 13 }}>
-                Receive → New GRN
-              </Btn>
-            )}
+            {(() => {
+              // A receipt already in progress for this boat: continue it,
+              // never start a second one (SJR counted LM-068 three times).
+              const live = (grns || []).find((g) => !g.is_void
+                && g.payload?.manifest_ref === lm.ref
+                && ["DRAFT", "COUNTED"].includes(g.status));
+              if (live) {
+                return (
+                  <Btn variant="secondary" onClick={() => onOpenDoc(live.ref)}
+                       style={{ marginLeft: "auto", padding: "4px 12px",
+                                fontSize: 13 }}
+                       title={live.status === "COUNTED"
+                         ? "Counted — waiting for the Site Engineer to verify"
+                         : "A draft GRN is open for this manifest"}>
+                    {live.status === "COUNTED"
+                      ? `${live.ref} counted · awaiting verification`
+                      : `Continue ${live.ref}`}
+                  </Btn>
+                );
+              }
+              return canMr && (
+                <Btn variant="navy" onClick={() => onCreateGrn(lm.ref)}
+                     style={{ marginLeft: "auto", padding: "4px 12px",
+                              fontSize: 13 }}>
+                  Receive → New GRN
+                </Btn>
+              );
+            })()}
           </div>
         ))}
         {incomingLms.length === 0 && (

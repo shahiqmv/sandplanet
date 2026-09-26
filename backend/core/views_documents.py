@@ -359,6 +359,22 @@ def document_create(request):
             if lm.site_id != site.id:
                 return Response({"detail": "Manifest is for a different site."},
                                 status=400)
+            # One receipt in progress per manifest. The dashboard kept
+            # offering "Receive → New GRN" for a manifest whose GRN was
+            # already counted and waiting on the engineer, so the site admin
+            # counted it three times (SJR, 2026-09-26).
+            from .procurement import linked_docs
+            live = [g for g in linked_docs(lm, "LM_GRN", "to")
+                    if not g.is_void and g.status in ("DRAFT", "COUNTED")]
+            if live:
+                g = live[0]
+                what = ("is a draft — continue it" if g.status == "DRAFT"
+                        else "is counted and waiting for the Site Engineer's "
+                             "verification")
+                return Response(
+                    {"detail": f"{lm.ref} is already being received on {g.ref}, "
+                               f"which {what}. Open {g.ref} instead of raising "
+                               "another GRN.", "grn_ref": g.ref}, status=400)
             if not lines_data:
                 lines_data = grn_lines_from_lm(lm)
             else:                       # client sent lines — receive only what's
