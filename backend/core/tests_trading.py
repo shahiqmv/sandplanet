@@ -1157,3 +1157,55 @@ class AdvanceAndProformaTests(MoneyInBase):
         st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement").data
         self.assertEqual([x["kind"] for x in st["rows"]], ["RECEIPT", "INVOICE"])
         self.assertEqual(st["closing"], str(balance))
+
+
+class HistoricInvoiceTests(BaseCase):
+    """Invoices issued before Planet, still unpaid: entered for collection so
+    the statement and the aging are complete and a receipt settles them."""
+
+    def setUp(self):
+        super().setUp()
+        from .models import Customer
+        self.finance = make_user("fin9", User.Role.FINANCE)
+        self.sales = make_user("sales9", User.Role.SALES)
+        self.cust = Customer.objects.create(name="Conrad Maldives", default_currency="USD",
+                                            credit_days=30, tin="1000100GST001")
+
+    def test_entered_for_collection_only_and_settled_by_a_receipt(self):
+        from .models import CostPosting, TradingInvoice
+        self.login(self.sales)
+        body = {"customer": self.cust.id, "ref": "INV-2025-0412", "invoice_date": "2025-11-02",
+                "currency": "USD", "subtotal": "12000", "gst": "960", "received": "3000",
+                "description": "Carpet tiles, PI 2025/SO/510"}
+        self.assertEqual(self.client.post("/api/v1/trading/invoices/historic", body, format="json").status_code, 400)
+        self.login(self.finance)
+        r = self.client.post("/api/v1/trading/invoices/historic", body, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv = TradingInvoice.objects.get(ref="INV-2025-0412")
+        self.assertTrue(inv.historic)
+        self.assertIsNone(inv.order_id)
+        self.assertEqual((inv.status, str(inv.total), str(inv.due_date)), ("ISSUED", "12960.00", "2025-12-02"))
+        self.assertEqual(CostPosting.objects.filter(book="TRADING").count(), 0)      # no revenue posted
+        self.assertEqual(self.client.post("/api/v1/trading/invoices/historic", body, format="json").status_code, 400)  # no duplicates
+        # aging shows the balance still owed; the statement shows the invoice and what was paid before
+        ag = self.client.get("/api/v1/trading/receivables").data
+        row = next(c for c in ag["customers"] if c["customer"] == self.cust.id)
+        self.assertEqual(row["invoices"][0]["outstanding"], "9960.00")
+        self.assertTrue(row["invoices"][0]["historic"])
+        st = self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement").data
+        self.assertEqual([(e["kind"], e["debit"], e["credit"]) for e in st["rows"]],
+                         [("INVOICE", "12960.00", None), ("RECEIPT", None, "3000.00")])
+        self.assertEqual(st["closing"], "9960.00")
+        self.assertEqual(self.client.get(f"/api/v1/trading/customers/{self.cust.id}/statement?pdf=1").status_code, 200)
+        # a receipt settles it like any other invoice
+        alloc = self.client.get(f"/api/v1/trading/receipts/allocate?customer={self.cust.id}&amount=9960").data
+        self.assertEqual(alloc["allocations"][0]["amount"], "9960.00")
+        r = self.client.post("/api/v1/trading/receipts", {"customer": self.cust.id, "receipt_date": "2026-09-26",
+                                                          "method": "TT", "allocations": alloc["allocations"]},
+                             format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv.refresh_from_db()
+        self.assertEqual(inv.status, "PAID")
+        # void refused once money is in
+        r = self.client.post(f"/api/v1/trading/invoices/historic/{inv.id}/void", {"reason": "x"}, format="json")
+        self.assertEqual(r.status_code, 400)

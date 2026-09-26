@@ -1350,7 +1350,7 @@ def create_invoice(order, data, actor):
     advance = min(advance_available(order), f["total"]) if apply_adv else ZERO
     with transaction.atomic():
         inv = TradingInvoice.objects.create(
-            order=order, ref=_next_invoice_no(), invoice_date=inv_date,
+            order=order, customer=order.customer, ref=_next_invoice_no(), invoice_date=inv_date,
             due_date=due, currency=(order.currency or "MVR").upper(),
             includes_freight=include_freight, charges=f["charges"],
             snapshot={"customer": _customer_block(order.customer),
@@ -1371,7 +1371,7 @@ def issue_invoice(inv, actor):
         return "Only the Sales Manager issues a tax invoice."
     if inv.status != "DRAFT":
         return "This invoice is not a draft."
-    if not inv.order.customer.tin and not inv.order.customer.gst_exempt:
+    if not inv.customer.tin and not inv.customer.gst_exempt:
         return ("The customer has no GST TIN on file — a tax invoice needs "
                 "it. Add it on the customer, or mark them GST exempt.")
     with transaction.atomic():
@@ -1409,8 +1409,9 @@ def void_invoice(inv, reason, actor):
         inv.void_reason = reason
         inv.save()
         inv.deliveries.update(invoice=None)       # free the deliveries to re-invoice
-    audit(ENTITY, inv.order_id, "TSI_VOID", actor=actor,
-          detail={"ref": inv.order.ref, "invoice": inv.ref, "reason": reason})
+    audit(ENTITY, inv.order_id or 0, "TSI_VOID", actor=actor,
+          detail={"ref": inv.order.ref if inv.order_id else "historic", "invoice": inv.ref,
+                  "reason": reason})
     return None
 
 
@@ -1529,7 +1530,9 @@ def invoice_pdf_bytes(inv):
 
 def invoice_dict(inv):
     return {
-        "id": inv.id, "ref": inv.ref, "status": inv.status,
+        "id": inv.id, "ref": inv.ref, "status": inv.status, "historic": inv.historic,
+        "description": inv.description, "customer": inv.customer_id,
+        "customer_name": inv.customer.name if inv.customer_id else None,
         "invoice_date": inv.invoice_date, "due_date": inv.due_date,
         "currency": inv.currency, "subtotal": _s(inv.subtotal),
         "gst_percent": _s(inv.gst_percent), "gst": _s(inv.gst), "total": _s(inv.total),
@@ -1578,8 +1581,9 @@ def create_credit_note(inv, data, actor):
         cn.posting_ids = ids
         cn.save()
         _settle(inv)
-    audit(ENTITY, inv.order_id, "TCN_ISSUED", actor=actor,
-          detail={"ref": inv.order.ref, "invoice": inv.ref, "credit_note": cn.ref,
+    audit(ENTITY, inv.order_id or 0, "TCN_ISSUED", actor=actor,
+          detail={"ref": inv.order.ref if inv.order_id else "historic", "invoice": inv.ref,
+                  "credit_note": cn.ref,
                   "amount": str(cn.amount), "reason": reason})
     return cn, None
 
@@ -1603,9 +1607,74 @@ def money(order):
 
 def open_invoices(customer):
     return [i for i in TradingInvoice.objects.filter(
-        order__customer=customer, status__in=("ISSUED", "PAID"))
+        customer=customer, status__in=("ISSUED", "PAID"))
         .select_related("order").order_by("invoice_date", "id")
         if invoice_outstanding(i) > ZERO]
+
+
+def invoice_label(inv):
+    """What a receipt or statement line calls the invoice's job."""
+    if inv.order_id:
+        return inv.order.so_ref or inv.order.ref
+    return inv.description or "Historic invoice"
+
+
+HISTORIC_ROLES = ("FINANCE", "ADMIN", "SALES_MANAGER")
+
+
+def create_historic_invoice(data, actor):
+    """An invoice issued before Planet, still unpaid: entered only to be
+    collected. ISSUED at once, no order, no postings (its revenue lives in
+    the old books), no PDF (the original exists); the aging, the statement
+    and receipts treat it like any other (owner 2026-09-26)."""
+    from .models import Customer
+    if actor.role not in HISTORIC_ROLES:
+        return None, "Finance or the Sales Manager enters historic invoices."
+    customer = Customer.objects.filter(id=data.get("customer"), is_active=True).first()
+    if customer is None:
+        return None, "Pick the customer."
+    ref = (data.get("ref") or "").strip()[:20]
+    if not ref:
+        return None, "Enter the invoice number as it was issued."
+    if TradingInvoice.objects.filter(ref__iexact=ref).exists():
+        return None, f"{ref} is already on file."
+    try:
+        inv_date = date.fromisoformat(str(data.get("invoice_date")))
+    except (TypeError, ValueError):
+        return None, "Enter the invoice date."
+    due = None
+    if data.get("due_date"):
+        try:
+            due = date.fromisoformat(str(data["due_date"]))
+        except (TypeError, ValueError):
+            return None, "Enter a valid due date."
+    else:
+        due = inv_date + timedelta(days=customer.credit_days or 0)
+    currency = (data.get("currency") or customer.default_currency or "MVR").upper()
+    if currency not in ("MVR", "USD"):
+        return None, "MVR or USD."
+    subtotal = _dec(data.get("subtotal"))
+    gst = _dec(data.get("gst"), ZERO)
+    if subtotal is None or subtotal <= 0 or gst is None or gst < 0:
+        return None, "Enter the invoice amount (before GST) and the GST, if any."
+    subtotal, gst = _q2(subtotal), _q2(gst)
+    total = _q2(subtotal + gst)
+    received = _dec(data.get("received"), ZERO)          # part-paid before Planet
+    if received is None or received < 0 or received > total:
+        return None, "Amount already received must be between 0 and the total."
+    inv = TradingInvoice.objects.create(
+        order=None, customer=customer, historic=True,
+        description=(data.get("description") or "").strip()[:200],
+        ref=ref, status="ISSUED", invoice_date=inv_date, due_date=due, currency=currency,
+        snapshot={"customer": _customer_block(customer), "lines": [], "dn_refs": []},
+        subtotal=subtotal, gst_percent=(gst / subtotal * 100).quantize(Decimal("0.01"))
+        if gst else ZERO, gst=gst, total=total,
+        advance_applied=_q2(received),                    # the part already paid comes off
+        created_by=actor, issued_by=actor, issued_at=timezone.now())
+    audit(ENTITY, 0, "HISTORIC_INVOICE", actor=actor,
+          detail={"invoice": inv.ref, "customer": customer.name, "total": str(total),
+                  "received_before": str(_q2(received))})
+    return inv, None
 
 
 def auto_allocate(customer, amount):
@@ -1665,7 +1734,7 @@ def record_receipt(data, actor):
             parsed.append((o, _q2(amt)))
             continue
         inv = TradingInvoice.objects.filter(id=row.get("invoice_id"),
-                                            order__customer=customer,
+                                            customer=customer,
                                             status__in=("ISSUED", "PAID")).first()
         if inv is None:
             return None, "An invoice on this receipt is not this customer's."
@@ -1698,8 +1767,9 @@ def record_receipt(data, actor):
                   detail={"ref": target.ref, "so": target.so_ref,
                           "receipt_no": rc.receipt_no, "amount": str(amt)})
         else:
-            audit(ENTITY, target.order_id, "RECEIPT", actor=actor,
-                  detail={"ref": target.order.ref, "invoice": target.ref,
+            audit(ENTITY, target.order_id or 0, "RECEIPT", actor=actor,
+                  detail={"ref": target.order.ref if target.order_id else "historic",
+                          "invoice": target.ref,
                           "receipt_no": rc.receipt_no, "amount": str(amt)})
     return rc, None
 
@@ -1720,7 +1790,7 @@ def delete_receipt(rc, actor):
         for inv in invs:
             _settle(inv)
     for l in lines:
-        oid = l.invoice.order_id if l.invoice_id else l.order_id
+        oid = (l.invoice.order_id or 0) if l.invoice_id else l.order_id
         audit(ENTITY, oid, "RECEIPT_DELETED", actor=actor,
               detail={"receipt_no": no, "invoice": l.invoice.ref if l.invoice_id else None,
                       "so": l.order.so_ref if l.order_id else None})
@@ -1733,8 +1803,8 @@ def receipt_dict(rc):
     for l in rc.lines.select_related("invoice__order", "order"):
         if l.invoice_id:
             lines.append({"id": l.id, "invoice_id": l.invoice_id, "invoice_no": l.invoice.ref,
-                          "claim_ref": l.invoice.order.so_ref or l.invoice.order.ref,
-                          "project_code": l.invoice.order.so_ref or "",
+                          "claim_ref": invoice_label(l.invoice),
+                          "project_code": (l.invoice.order.so_ref or "") if l.invoice.order_id else "",
                           "amount": l.amount, "invoice_amount": l.invoice.total})
         else:
             q = current_quotation(l.order)
@@ -1788,11 +1858,11 @@ def aging(as_of=None):
     today = as_of or timezone.localdate()
     by_cust = {}
     for inv in TradingInvoice.objects.filter(status__in=("ISSUED", "PAID")) \
-            .select_related("order__customer"):
+            .select_related("order", "customer"):
         out = invoice_outstanding(inv)
         if out <= ZERO:
             continue
-        c = inv.order.customer
+        c = inv.customer
         row = by_cust.setdefault(c.id, {
             "customer": c.id, "customer_name": c.name, "currency": inv.currency,
             "current": ZERO, "d30": ZERO, "d60": ZERO, "d90": ZERO, "d90plus": ZERO,
@@ -1800,9 +1870,10 @@ def aging(as_of=None):
         overdue = (today - (inv.due_date or inv.invoice_date)).days
         row[_bucket(overdue)] += out
         row["total"] += out
-        row["invoices"].append({"id": inv.id, "ref": inv.ref, "order": inv.order.ref,
-                                "order_id": inv.order_id,
-                                "so_ref": inv.order.so_ref, "invoice_date": inv.invoice_date,
+        row["invoices"].append({"id": inv.id, "ref": inv.ref,
+                                "order": inv.order.ref if inv.order_id else None,
+                                "order_id": inv.order_id, "historic": inv.historic,
+                                "so_ref": invoice_label(inv), "invoice_date": inv.invoice_date,
                                 "due_date": inv.due_date, "total": _s(inv.total),
                                 "outstanding": _s(out), "overdue_days": max(0, overdue),
                                 "currency": inv.currency})
@@ -1835,12 +1906,20 @@ def statement(customer, date_from=None, date_to=None):
     an opening balance for anything before the range (blueprint §7.6)."""
     to = date_to or timezone.localdate()
     entries = []
-    for inv in TradingInvoice.objects.filter(order__customer=customer,
+    for inv in TradingInvoice.objects.filter(customer=customer,
                                              status__in=("ISSUED", "PAID")) \
             .select_related("order"):
         entries.append({"date": inv.invoice_date, "kind": "INVOICE", "ref": inv.ref,
-                        "detail": f"{inv.order.so_ref} · {inv.order.title}",
+                        "detail": (f"{inv.order.so_ref} · {inv.order.title}" if inv.order_id
+                                   else f"{inv.description or 'Invoice'} (before Planet)"),
                         "debit": inv.total, "credit": ZERO, "currency": inv.currency})
+        if inv.historic and inv.advance_applied:
+            # What the customer had paid on it before Planet: shown as a
+            # credit on the invoice date so the balance carried is right.
+            entries.append({"date": inv.invoice_date, "kind": "RECEIPT", "ref": "before Planet",
+                            "detail": f"received on {inv.ref} before Planet",
+                            "debit": ZERO, "credit": inv.advance_applied,
+                            "currency": inv.currency})
         for cn in inv.credit_notes.all():
             entries.append({"date": cn.issued_at.date(), "kind": "CREDIT_NOTE", "ref": cn.ref,
                             "detail": f"against {inv.ref} — {cn.reason}",

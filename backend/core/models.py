@@ -1580,7 +1580,16 @@ class TradingInvoice(models.Model):
         VOID = "VOID"
 
     order = models.ForeignKey(TradingOrder, on_delete=models.PROTECT,
-                              related_name="invoices")
+                              related_name="invoices", null=True, blank=True)
+    # The customer directly, so an invoice needs no order behind it: a
+    # HISTORIC invoice (issued in the old system, still unpaid) is entered
+    # here just to be collected — it appears in the aging and the statement
+    # and receipts settle it, but it posts no revenue and prints no PDF
+    # (owner 2026-09-26).
+    customer = models.ForeignKey(Customer, on_delete=models.PROTECT,
+                                 related_name="trading_invoices", null=True, blank=True)
+    historic = models.BooleanField(default=False)
+    description = models.CharField(max_length=200, blank=True)
     ref = models.CharField(max_length=20, unique=True)             # INV-2026-0040
     status = models.CharField(max_length=8, choices=Status.choices,
                               default=Status.DRAFT)

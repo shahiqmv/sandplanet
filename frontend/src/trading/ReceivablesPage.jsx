@@ -155,6 +155,50 @@ function ReceiptForm({ customers, onSaved, onCancel, preset }) {
   );
 }
 
+// An invoice issued before Planet and still unpaid, entered so the customer's
+// statement and the aging show the full picture and receipts can settle it.
+function HistoricInvoiceForm({ customers, onSaved, onCancel }) {
+  const [d, setD] = useState({ customer: "", ref: "", invoice_date: "", due_date: "", currency: "MVR",
+                               subtotal: "", gst: "", received: "", description: "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const set = (k) => (e) => setD({ ...d, [k]: e.target.value });
+  const total = (Number(d.subtotal) || 0) + (Number(d.gst) || 0);
+  async function save(e) {
+    e.preventDefault(); setBusy(true); setError(null);
+    try { onSaved(await api("/trading/invoices/historic", { method: "POST", body: { ...d, customer: Number(d.customer), due_date: d.due_date || null } })); }
+    catch (err) { setError(err.message); } finally { setBusy(false); }
+  }
+  return (
+    <form onSubmit={save} style={{ ...card, marginBottom: 16 }}>
+      <h3 style={{ marginTop: 0 }}>Historic invoice — issued before Planet, still unpaid</h3>
+      <p className="t-sub" style={{ marginTop: 0 }}>Enters the invoice for collection only: it shows on the customer's statement and the aging and a receipt settles it. No revenue is posted and no PDF is printed — the original invoice stands.</p>
+      <div className="t-grid">
+        <label className="t-field"><span>Customer</span>
+          <select style={inputStyle} value={d.customer} onChange={set("customer")} required autoFocus>
+            <option value="">— pick —</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select></label>
+        <label className="t-field"><span>Invoice number (as issued)</span><input style={inputStyle} value={d.ref} onChange={set("ref")} required maxLength={20} /></label>
+        <label className="t-field"><span>Invoice date</span><input style={inputStyle} type="date" value={d.invoice_date} onChange={set("invoice_date")} required /></label>
+        <label className="t-field"><span>Due date (blank = credit days)</span><input style={inputStyle} type="date" value={d.due_date} onChange={set("due_date")} /></label>
+        <label className="t-field"><span>Currency</span>
+          <select style={inputStyle} value={d.currency} onChange={set("currency")}><option>MVR</option><option>USD</option></select></label>
+        <label className="t-field"><span>Amount before GST</span><input style={inputStyle} type="number" step="0.01" min="0" value={d.subtotal} onChange={set("subtotal")} required /></label>
+        <label className="t-field"><span>GST on it (0 if none)</span><input style={inputStyle} type="number" step="0.01" min="0" value={d.gst} onChange={set("gst")} /></label>
+        <label className="t-field"><span>Already received before Planet</span><input style={inputStyle} type="number" step="0.01" min="0" value={d.received} onChange={set("received")} placeholder="0" /></label>
+        <label className="t-field t-field-wide"><span>What it was for</span><input style={inputStyle} value={d.description} onChange={set("description")} maxLength={200} placeholder="e.g. Carpet tiles — Conrad, PI 2026/SO/612" /></label>
+      </div>
+      <div className="t-sub">Total {fmtMoney(total)} · outstanding {fmtMoney(total - (Number(d.received) || 0))}</div>
+      {error && <p className="t-note t-note-red">{error}</p>}
+      <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+        <Btn type="submit" disabled={busy || !d.customer || !d.ref || total <= 0}>{busy ? "Saving…" : "Enter invoice"}</Btn>
+        <Btn type="button" variant="secondary" onClick={onCancel}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
 function Statement({ customer, onClose }) {
   const [range, setRange] = useState({ from: "", to: "" });
   const [st, setSt] = useState(null);
@@ -204,6 +248,7 @@ export default function ReceivablesPage({ open }) {
   const [customers, setCustomers] = useState([]);
   const [receipts, setReceipts] = useState([]);
   const [recording, setRecording] = useState(null);      // null | customer id | ""
+  const [historic, setHistoric] = useState(false);
   const [statementFor, setStatementFor] = useState(null);
   const [expanded, setExpanded] = useState(null);
 
@@ -227,8 +272,10 @@ export default function ReceivablesPage({ open }) {
         <div className="t-tools">
           <span className="t-sub">as of {fmtDate(data.as_of)}</span>
           {data.can_receipt && recording === null && <Btn onClick={() => setRecording("")}>+ Record payment</Btn>}
+          {data.can_receipt && !historic && <Btn variant="secondary" onClick={() => setHistoric(true)}>+ Historic invoice</Btn>}
         </div>
       </div>
+      {historic && <HistoricInvoiceForm customers={customers} onSaved={() => { setHistoric(false); load(); }} onCancel={() => setHistoric(false)} />}
       {recording !== null && (
         <ReceiptForm customers={customers} preset={recording}
                      onSaved={() => { setRecording(null); load(); }} onCancel={() => setRecording(null)} />
@@ -262,8 +309,13 @@ export default function ReceivablesPage({ open }) {
                 {expanded === c.customer && c.invoices.map((inv) => (
                   <tr key={inv.id}>
                     <td style={{ ...td, paddingLeft: 28 }}>
-                      <button className="t-link" onClick={() => open(inv, "invoices")}>{inv.ref}</button>
-                      <span className="t-sub"> · {inv.so_ref} · issued {fmtDate(inv.invoice_date)} · due {fmtDate(inv.due_date)}</span>
+                      {inv.historic ? <b>{inv.ref}</b> : <button className="t-link" onClick={() => open(inv, "invoices")}>{inv.ref}</button>}
+                      <span className="t-sub"> · {inv.so_ref}{inv.historic ? " · before Planet" : ""} · issued {fmtDate(inv.invoice_date)} · due {fmtDate(inv.due_date)}</span>
+                      {inv.historic && data.can_receipt && <> · <button className="t-link" onClick={async () => {
+                        const r = window.prompt(`Void ${inv.ref} — why?`); if (!r) return;
+                        try { await api(`/trading/invoices/historic/${inv.id}/void`, { method: "POST", body: { reason: r } }); load(); }
+                        catch (e) { window.alert(e.message); }
+                      }}>void</button></>}
                     </td>
                     <td style={td} colSpan={5} className="t-sub">
                       {inv.overdue_days > 0 ? <Chip tone="alert">{inv.overdue_days} days overdue</Chip> : <Chip tone="info">not due</Chip>}

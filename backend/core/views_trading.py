@@ -671,8 +671,10 @@ def receipt_allocate(request):
            for o in TradingOrder.objects.filter(customer=customer, stage="WON")
            .order_by("-won_at")]
     return Response({"allocations": rows, "unallocated": left, "won_orders": won,
-                     "open_invoices": [{"id": i.id, "ref": i.ref, "order": i.order.ref,
-                                        "so_ref": i.order.so_ref, "currency": i.currency,
+                     "open_invoices": [{"id": i.id, "ref": i.ref,
+                                        "order": i.order.ref if i.order_id else None,
+                                        "so_ref": trading.invoice_label(i), "historic": i.historic,
+                                        "currency": i.currency,
                                         "total": trading._s(i.total),
                                         "outstanding": trading._s(trading.invoice_outstanding(i)),
                                         "due_date": i.due_date}
@@ -746,3 +748,29 @@ def order_proforma(request, pk):
     except Exception as e:                       # pragma: no cover - env dep
         return Response({"detail": f"PDF engine unavailable: {e}"}, status=500)
     return _pdf_response(pdf, f"PI-{order.so_ref}.pdf")
+
+
+# ---- historic invoices (before Planet), for collection only ----------------------
+
+@api_view(["POST"])
+@permission_classes([IsTradingReaderAnyMethod])
+def historic_invoices(request):
+    inv, msg = trading.create_historic_invoice(request.data, request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.invoice_dict(inv), status=201)
+
+
+@api_view(["POST"])
+@permission_classes([IsTradingReaderAnyMethod])
+def historic_invoice_void(request, iid):
+    inv = TradingInvoice.objects.filter(id=iid, historic=True).first()
+    if inv is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.user.role not in trading.HISTORIC_ROLES:
+        return Response({"detail": "Finance or the Sales Manager voids a historic invoice."},
+                        status=403)
+    msg = trading.void_invoice(inv, request.data.get("reason"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(trading.invoice_dict(inv))
