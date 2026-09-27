@@ -1956,6 +1956,18 @@ def statement(customer, date_from=None, date_to=None):
             "rows": rows, "closing": _s(_q2(opening + bal))}
 
 
+def _short(text, n=70):
+    """A description trimmed to one line for a statement row — the invoice
+    itself carries the full text."""
+    t = " ".join((text or "").split())
+    if len(t) <= n:
+        return t
+    cut = t[:n - 1]
+    if " " in cut[n // 2:]:
+        cut = cut[:cut.rfind(" ")]
+    return cut.rstrip(" ,;-") + "…"
+
+
 def statement_extras(open_invs, outstanding_fn, as_of=None, currency="MVR"):
     """What a customer needs beside the ledger: the invoices still open with
     their due dates and days overdue, and the balance by age. Shared with the
@@ -1968,7 +1980,7 @@ def statement_extras(open_invs, outstanding_fn, as_of=None, currency="MVR"):
         overdue = (today - (inv.due_date or inv.invoice_date)).days
         buckets[_bucket(overdue)] += out
         rows.append({"ref": inv.ref, "invoice_date": inv.invoice_date, "due_date": inv.due_date,
-                     "label": invoice_label(inv) if hasattr(inv, "order_id") else "",
+                     "label": _short(invoice_label(inv) if hasattr(inv, "order_id") else "", 60),
                      "total_f": money(inv.total), "outstanding_f": money(out),
                      "overdue_days": max(0, overdue), "currency": inv.currency})
     total = sum(buckets.values(), ZERO)
@@ -1986,6 +1998,7 @@ def statement_context(customer, date_from, date_to, actor=None):
     invs = open_invoices(customer)
     currency = invs[0].currency if invs else (customer.default_currency or "MVR")
     for r in st["rows"]:
+        r["detail"] = _short(r["detail"], 80)
         for k in ("debit", "credit", "balance"):
             r[k + "_f"] = money(r[k]) if r[k] not in (None, "") else ""
     advance = sum((advance_available(o) for o in TradingOrder.objects.filter(customer=customer, stage="WON")), ZERO)
