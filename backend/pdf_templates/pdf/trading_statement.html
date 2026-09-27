@@ -149,7 +149,7 @@
 {% endif %}
 {% if advance_f %}<p class="terms">Advance held on your account, to be applied to invoices as they issue: {{ currency }} {{ advance_f }}.</p>{% endif %}
 
-<div class="terms">Please quote the invoice numbers when remitting. Queries on this statement to {% if co.email %}{{ co.email }}{% else %}our office{% endif %}.</div>
+<div class="terms">Please quote the invoice numbers when remitting. Queries on this statement to {{ queries_email }}.</div>
 
 {% if co.bank.name or co.bank.account_no %}
 <table class="bankbox">

@@ -1117,6 +1117,10 @@ def statement_context(customer, date_from, date_to, actor=None):
             "invoiced_f": money(sum((Decimal(r["debit"]) for r in st["rows"] if r["debit"]), ZERO)),
             "received_f": money(sum((Decimal(r["credit"]) for r in st["rows"] if r["credit"]), ZERO)),
             "closing_f": money(st["closing"]), "advance_f": None,
+            # Where a customer sends a query about the statement: Finance's
+            # mailbox, not the general one (owner 2026-09-27). A parameter so
+            # the sister instance can name its own.
+            "queries_email": _param("company_finance_email", "finance@sandplanet.mv"),
             "prepared_by": actor.full_name if actor else None,
             **statement_extras(invs, invoice_outstanding,
                                currency=invs[0].currency if invs else (customer.default_currency or "MVR"))}
