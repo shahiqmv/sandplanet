@@ -659,6 +659,10 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
     + `${String(dn).padStart(2, "0")}`;
 
   const [reload, setReload] = useState(0);
+  const [showOt, setShowOt] = useState(() => {
+    try { return localStorage.getItem("planet:register-ot") !== "0"; } catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem("planet:register-ot", showOt ? "1" : "0"); } catch { /* private */ } }, [showOt]);
   useEffect(() => {
     setError(null);
     api(`/attendance/register?site=${site.id}&year=${year}&month=${month}`)
@@ -697,6 +701,18 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
           P present · F Friday/rest worked · A absent · L leave (no pay) ·
           PL leave (paid) · S sick · ½ half
         </span>
+        <label style={{ fontSize: 12, display: "flex", gap: 5, alignItems: "center", marginLeft: 8 }}>
+          <input type="checkbox" checked={showOt} onChange={(e) => setShowOt(e.target.checked)} />
+          show daily OT
+          <span style={{ color: "#2b5fa6", fontWeight: 700 }}>4</span> approved ·
+          <span style={{ color: "#b35900", fontWeight: 700 }}>4?</span> awaiting approval
+        </label>
+        {showOt && data?.totals?.ot_pending_days > 0 && (
+          <span style={{ fontSize: 12, color: "#b35900", fontWeight: 600 }}>
+            {data.totals.ot_pending_days} day{data.totals.ot_pending_days === 1 ? "" : "s"} of OT
+            ({Number(data.totals.ot_pending)} h) not yet approved
+          </span>
+        )}
       </div>
       <div style={{ display: "flex", gap: 8, alignItems: "center",
                     flexWrap: "wrap", marginTop: 8, fontSize: 12.5 }}>
@@ -768,6 +784,8 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
               <th style={{ ...th, textAlign: "right" }}>Pr</th>
               <th style={{ ...th, textAlign: "right" }}>Fr</th>
               <th style={{ ...th, textAlign: "right" }}>OT</th>
+              {showOt && <th style={{ ...th, textAlign: "right", color: "#b35900" }}
+                              title="OT hours requested but not yet approved">OT due</th>}
               <th style={{ ...th, textAlign: "right" }}>Ab</th>
               <th style={{ ...th, textAlign: "right" }}>Lv</th>
             </tr></thead>
@@ -794,11 +812,28 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
                     }
                     const c = r.days[String(d.day)] || "";
                     const s = CODE_STYLE[c];
+                    // The day's overtime under its mark: approved hours in
+                    // blue, hours still waiting for the PM in amber with a
+                    // "?" and an amber outline (owner 2026-09-28).
+                    const ot = showOt ? (r.ot || {})[String(d.day)] : null;
+                    const pending = ot && ot.a === null && Number(ot.r) > 0;
                     return (
-                      <td key={d.day} style={{ ...dcell,
+                      <td key={d.day}
+                          title={ot ? (pending ? `OT ${ot.r} h requested — not yet approved`
+                            : `OT approved ${ot.a} h${ot.r !== ot.a ? ` (requested ${ot.r})` : ""}`) : undefined}
+                          style={{ ...dcell,
                             background: s ? s.bg : (d.rest ? "#f7f9fc" : "#fff"),
-                            color: s ? s.c : "#c3ccd3", fontWeight: 600 }}>
-                        {c || "·"}</td>
+                            color: s ? s.c : "#c3ccd3", fontWeight: 600,
+                            boxShadow: pending ? "inset 0 0 0 1.5px #d98e04" : undefined,
+                            lineHeight: ot ? 1.05 : undefined }}>
+                        {c || "·"}
+                        {ot && (
+                          <div style={{ fontSize: 9.5, fontWeight: 700,
+                                        color: pending ? "#b35900" : "#2b5fa6" }}>
+                            {pending ? `${ot.r}?` : (Number(ot.a) ? ot.a : "0")}
+                          </div>
+                        )}
+                      </td>
                     );
                   })}
                   <td style={{ ...td, textAlign: "right" }}>{r.present}</td>
@@ -807,6 +842,10 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
                     {r.fridays || ""}</td>
                   <td style={{ ...td, textAlign: "right" }}>
                     {Number(r.ot_hours) || ""}</td>
+                  {showOt && (
+                    <td style={{ ...td, textAlign: "right", color: "#b35900", fontWeight: 600 }}
+                        title={r.ot_pending_days ? `${r.ot_pending_days} day(s) waiting for approval` : undefined}>
+                      {Number(r.ot_pending) || ""}</td>)}
                   <td style={{ ...td, textAlign: "right",
                                color: r.absent ? "#c0392b" : "" }}>
                     {r.absent || ""}</td>
@@ -815,7 +854,7 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
                 </tr>
               ))}
               {data.rows.length === 0 && (
-                <tr><td style={td} colSpan={data.days.length + 6}>
+                <tr><td style={td} colSpan={data.days.length + (showOt ? 7 : 6)}>
                   No employees allocated to this site.</td></tr>
               )}
             </tbody>
@@ -831,6 +870,8 @@ function Register({ site, canEnter, onOpenDay, narrow, isPm, onLock }) {
                   {data.totals.fridays}</td>
                 <td style={{ ...td, textAlign: "right" }}>
                   {Number(data.totals.ot_hours)}</td>
+                {showOt && <td style={{ ...td, textAlign: "right", color: "#b35900" }}>
+                  {Number(data.totals.ot_pending) || ""}</td>}
                 <td style={{ ...td, textAlign: "right" }}>
                   {data.totals.absent}</td>
                 <td style={{ ...td, textAlign: "right" }}>

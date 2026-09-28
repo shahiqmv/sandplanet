@@ -846,6 +846,25 @@ class StrayAttendanceTests(HrBase):
             f"/api/v1/attendance/register?site={self.site.id}"
             f"&year={self.day.year}&month={self.day.month}").data
 
+    def test_the_register_shows_each_days_ot_and_flags_what_is_unapproved(self):
+        """Approved OT beside the mark; requested-but-unapproved OT counted
+        as due, so a missing approval shows before payroll (owner 2026-09-28)."""
+        from decimal import Decimal
+        from .models import Attendance
+        a = Attendance.objects.get(employee=self.mason, day=self.day)
+        a.ot_requested, a.ot_approved = Decimal("3"), None
+        a.save()
+        row = next(r for r in self._register()["rows"] if r["emp_no"] == self.mason.emp_no)
+        self.assertEqual(row["ot"][str(self.day.day)], {"a": None, "r": "3"})
+        self.assertEqual((row["ot_pending"], row["ot_pending_days"]), (Decimal("3"), 1))
+        a.ot_approved = Decimal("2")
+        a.save()
+        reg = self._register()
+        row = next(r for r in reg["rows"] if r["emp_no"] == self.mason.emp_no)
+        self.assertEqual(row["ot"][str(self.day.day)], {"a": "2", "r": "3"})
+        self.assertEqual(row["ot_pending"], 0)
+        self.assertEqual(reg["totals"]["ot_pending_days"], 0)
+
     def test_a_mark_the_register_shows_can_be_reached_on_the_day(self):
         self._off_site()
         register = self._register()

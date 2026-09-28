@@ -866,7 +866,8 @@ def attendance_register(request):
 
     rest_days = {d["day"] for d in days if d["rest"]}
     rows, sums = [], {"present": 0, "absent": 0, "leave": 0, "sick": 0,
-                      "ot_hours": Decimal("0"), "fridays": 0}
+                      "ot_hours": Decimal("0"), "fridays": 0,
+                      "ot_pending": Decimal("0"), "ot_pending_days": 0}
     for emp in roster:
         cells, t = {}, {"present": 0, "absent": 0, "leave": 0, "sick": 0,
                         "half": 0, "ot_hours": Decimal("0"), "fridays": 0}
@@ -879,6 +880,12 @@ def attendance_register(request):
             start_day = jd.day
         elif jd and (jd.year, jd.month) > (year, month):
             start_day = ndays + 1          # joined after this month — all N/A
+        # Each day's overtime beside its mark: what the PM approved, and
+        # what was requested but is still waiting — so a missing approval is
+        # seen on the register, not discovered at payroll (owner 2026-09-28).
+        # A gang worker's hours sit in their own pair of fields.
+        ot_days, t["ot_pending"], t["ot_pending_days"] = {}, Decimal("0"), 0
+        is_sub = emp.engagement_type == "SUBCONTRACT"
         for d in range(1, ndays + 1):
             a = att.get((emp.id, d))
             c = code(a, d in rest_days)
@@ -886,6 +893,14 @@ def attendance_register(request):
                 cells[str(d)] = c
             if a is None:
                 continue
+            req = (a.sub_extra_hours if is_sub else a.ot_requested) or Decimal("0")
+            appr = a.sub_extra_approved if is_sub else a.ot_approved
+            if req or appr:
+                ot_days[str(d)] = {"a": str(appr.normalize()) if appr is not None else None,
+                                   "r": str(req.normalize())}
+                if appr is None and req > 0:
+                    t["ot_pending"] += req
+                    t["ot_pending_days"] += 1
             t["ot_hours"] += a.ot_approved or 0
             if a.remark in ("PRESENT", "PAID_LEAVE"):
                 # A paid leave day is a paid day — it belongs with the days
@@ -910,8 +925,9 @@ def attendance_register(request):
             "subcontractor_id": (emp.subcontractor_id
                                  if emp.engagement_type == "SUBCONTRACT"
                                  else None),
-            "start_day": start_day, "days": cells, **t})
-        for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays"):
+            "start_day": start_day, "days": cells, "ot": ot_days, **t})
+        for k in ("present", "absent", "leave", "sick", "ot_hours", "fridays",
+                  "ot_pending", "ot_pending_days"):
             sums[k] += t[k]
     return Response({
         "site": site.code, "year": year, "month": month,
