@@ -310,9 +310,9 @@ export default function EmployeesPage({ me, sites }) {
                 {seesPay && (
                   <td style={td}>
                     {emp.ot_effective
-                      ? <span title="Overtime applies"
+                      ? <span title={emp.ot_currency !== emp.currency ? "Overtime applies — paid in rufiyaa on the site run" : "Overtime applies"}
                               style={{ color: "#1a7f37" }}>
-                          ✓ {emp.ot_rate}/hr</span>
+                          ✓ {emp.ot_currency !== emp.currency ? `${emp.ot_currency} ` : ""}{emp.ot_rate}/hr</span>
                       : <span style={{ color: "#9fb0bc" }}>—</span>}
                   </td>
                 )}
@@ -939,7 +939,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
               </select>
               <span style={{ fontSize: 11, color: "#5a6b78" }}>
                 {employee.ot_effective
-                  ? `Currently: ${employee.ot_rate}/${employee.currency} per hr`
+                  ? `Currently: ${employee.ot_currency || employee.currency} ${employee.ot_rate} per hr${employee.ot_currency && employee.ot_currency !== employee.currency ? " — paid on the site's rufiyaa run" : ""}`
                   : "Currently: no overtime"}
               </span></L>
           )}

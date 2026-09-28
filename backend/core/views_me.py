@@ -161,7 +161,8 @@ def my_profile(request):
         "pay": None if _money_gate(request) is not None else {
             "basic_pay": e.basic_pay, "currency": e.currency,
             "usd_basic_pay": e.usd_basic_pay,
-            "ot_rate": e.ot_rate(), "ot_applies": e.ot_applies,
+            "ot_rate": e.ot_terms()[0], "ot_currency": e.ot_terms()[1],
+            "ot_applies": e.ot_applies,
         },
     })
 

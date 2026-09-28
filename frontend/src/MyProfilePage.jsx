@@ -186,7 +186,7 @@ export default function MyProfilePage() {
           )}
           <Row k="Overtime rate">
             {Number(p.pay.ot_rate) > 0
-              ? `${money(p.pay.ot_rate, p.pay.currency)} per hour`
+              ? `${money(p.pay.ot_rate, p.pay.ot_currency || p.pay.currency)} per hour`
               : "No overtime rate applies"}
           </Row>
           {cash && (

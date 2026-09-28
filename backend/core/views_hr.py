@@ -76,6 +76,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     subcontractor_name = serializers.SerializerMethodField()
     photo_url = serializers.SerializerMethodField()
     ot_rate = serializers.SerializerMethodField()
+    ot_currency = serializers.SerializerMethodField()
     ot_effective = serializers.SerializerMethodField()
     permit_state = serializers.SerializerMethodField()
     permit_days = serializers.SerializerMethodField()
@@ -141,7 +142,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "job_category", "job_category_name", "job_title",
                   "basic_pay",
                   "usd_basic_pay", "currency",
-                  "ot_applies", "ot_rate", "ot_effective", "employment_type",
+                  "ot_applies", "ot_rate", "ot_currency", "ot_effective",
+                  "employment_type",
                   "work_permit_no", "work_permit_expiry", "work_visa_number",
                   "medical_expiry", "insurance_expiry", "permit_state",
                   "permit_days", "permit_pending", "emergency_contact",
@@ -149,7 +151,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
                   "bank_account_no", "bank_swift",
                   "join_date", "is_active", "site_id", "site_code",
                   "engagement_type", "subcontractor_name"]
-        read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_effective",
+        read_only_fields = ["emp_no", "photo_url", "ot_rate", "ot_currency",
+                            "ot_effective",
                             "permit_state", "permit_days", "permit_pending",
                             "engagement_type", "subcontractor_name"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
@@ -172,10 +175,13 @@ class EmployeeSerializer(serializers.ModelSerializer):
         return obj.permit_renewals.filter(applied=False).exists()
 
     def get_ot_rate(self, obj):
-        return obj.ot_rate()
+        return obj.ot_terms()[0]
+
+    def get_ot_currency(self, obj):
+        return obj.ot_terms()[1]
 
     def get_ot_effective(self, obj):
-        return obj.ot_rate() > 0
+        return obj.ot_terms()[0] > 0
 
     def get_site_id(self, obj):
         return obj.current_site_id()
@@ -208,7 +214,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
             for field in SENSITIVE_FIELDS:
                 data.pop(field, None)
         if request and not _sees_pay(request.user):
-            for field in PAY_FIELDS + BANK_FIELDS + ("ot_rate", "currency"):
+            for field in PAY_FIELDS + BANK_FIELDS + ("ot_rate", "ot_currency",
+                                                   "currency"):
                 data.pop(field, None)
         return data
 
@@ -401,7 +408,8 @@ class EmployeeViewSet(viewsets.ModelViewSet):
             if seespay:
                 row += [e.get("basic_pay") or "", e.get("currency") or "",
                         e.get("usd_basic_pay") or "",
-                        f'{e["ot_rate"]}/hr' if e.get("ot_effective") else ""]
+                        (f'{e.get("ot_currency") or ""} {e["ot_rate"]}/hr'.strip()
+                         if e.get("ot_effective") else "")]
             row += [e.get("join_date") or ""]
             if full:
                 row += [e.get("emergency_contact", "")]
@@ -1293,7 +1301,7 @@ def ot_approve(request):
             row.ot_approved_at = timezone.now()
             row.save(update_fields=["ot_approved", "ot_approved_by",
                                     "ot_approved_at"])
-            rate = row.employee.ot_rate()
+            rate, _ccy = row.employee.ot_terms()
         cost = (hours * rate).quantize(Decimal("0.01"))
         total_cost += cost
         decided.append({"emp": row.employee.emp_no, "day": row.day.isoformat(),
@@ -1368,8 +1376,8 @@ def ot_pending_summary(site, days_back=31):
         rows += 1
         days.add(a.day)
         hours += a.ot_requested
-        ccy = a.employee.currency or "MVR"
-        cost[ccy] = cost.get(ccy, Decimal("0")) + a.ot_requested * a.employee.ot_rate()
+        rate, ccy = a.employee.ot_terms()
+        cost[ccy] = cost.get(ccy, Decimal("0")) + a.ot_requested * rate
     return {
         "rows": rows, "days": len(days),
         "oldest_day": min(days).isoformat() if days else None,
@@ -1443,10 +1451,10 @@ def ot_review(request):
           .order_by("employee__job_category__name", "employee__emp_no"))
     for a in qs:
         e = a.employee
-        rate = e.ot_rate()
+        rate, ccy = e.ot_terms()
         req = a.ot_requested or Decimal("0")
         appr = a.ot_approved
-        b = bucket(e.currency or "MVR")
+        b = bucket(ccy)
         b["requested_hours"] += req
         b["requested_cost"] += req * rate
         if appr is None:
@@ -1462,7 +1470,7 @@ def ot_review(request):
             "check_in": a.check_in, "check_out": a.check_out,
             "normal_hours": a.normal_hours,
             "ot_requested": req, "ot_approved": appr,
-            "ot_rate": rate, "currency": e.currency or "MVR",
+            "ot_rate": rate, "currency": ccy,
             "cost_requested": (req * rate).quantize(Decimal("0.01")),
             "cost_approved": ((appr * rate).quantize(Decimal("0.01"))
                               if appr is not None else None),
@@ -1518,11 +1526,11 @@ def ot_review(request):
                                         ot_approved__isnull=False)
               .exclude(employee__engagement_type=Employee.Engagement.SUBCONTRACT)
               .select_related("employee__job_category")):
-        ccy = a.employee.currency or "MVR"
+        rate, ccy = a.employee.ot_terms()
         m = mtd.setdefault(ccy, {"currency": ccy, "hours": Decimal("0"),
                                  "cost": Decimal("0")})
         m["hours"] += a.ot_approved
-        m["cost"] += a.ot_approved * a.employee.ot_rate()
+        m["cost"] += a.ot_approved * rate
     for b in totals.values():
         for k in ("requested_cost", "approved_cost"):
             b[k] = b[k].quantize(Decimal("0.01"))

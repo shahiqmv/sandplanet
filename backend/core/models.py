@@ -2636,6 +2636,19 @@ class Employee(models.Model):
             applies = rate.applies_by_default
         return rate.rate_per_hour if applies else Decimal("0")
 
+    def ot_terms(self):
+        """(rate, currency) the man's overtime is actually paid at — what
+        every screen should show and cost. A USD-salaried man (not split-pay)
+        is paid his overtime in rufiyaa on his site's run at his category's
+        MVR rate (owner 2026-09-05), so asking for his own-currency rate
+        showed "no overtime" for someone who is paid it."""
+        own = self.currency or "MVR"
+        split = bool(self.usd_basic_pay and self.usd_basic_pay > 0
+                     and self.employment_type == "PERMANENT")
+        if own == "USD" and not split:
+            return self.ot_rate("MVR"), "MVR"
+        return self.ot_rate(), own
+
 
 class Subcontractor(models.Model):
     """A gang/company engaged at a site on an internal contract (subcontractor

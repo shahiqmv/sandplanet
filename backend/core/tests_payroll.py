@@ -837,6 +837,19 @@ class PayrollRefreshTests(TestCase):
         self.assertEqual((money["earned_basic"], money["ot_pay"]),
                          (Decimal("0.00"), Decimal("50.00")))
 
+    def test_a_usd_worker_shows_the_rufiyaa_rate_he_is_paid(self):
+        """EMP-0060 (2026-09-28): his category pays MVR 25/h and the run pays
+        him it, but the employee page asked for his USD rate and said
+        "no overtime". Screens read ot_terms(): the rate and its currency."""
+        self.emp.currency = "USD"
+        self.emp.save(update_fields=["currency"])
+        self.assertEqual(self.emp.ot_rate(), Decimal("0"))
+        self.assertEqual(self.emp.ot_terms(), (Decimal("25"), "MVR"))
+        self.emp.usd_basic_pay = Decimal("900")          # split pay: own terms
+        self.emp.employment_type = "PERMANENT"
+        self.emp.currency = "MVR"
+        self.assertEqual(self.emp.ot_terms(), (Decimal("25"), "MVR"))
+
     def test_a_line_with_hr_money_on_it_is_never_dropped(self):
         """HR's own entry is theirs to withdraw, not ours."""
         from core import payroll
