@@ -74,6 +74,20 @@ def pyr_doc_threshold():
     return Decimal(str(_param("pyr_doc_threshold", 5000)))
 
 
+def needs_doc_override(doc, pr):
+    """Over the document threshold with no bill attached: someone other than
+    the raiser must agree to pay it without one (§5.9). The PM does that for
+    a site request, the Director for a Head-Office one, by approving it —
+    there was no other way to give an override, so these requests sat in
+    draft for good (owner 2026-09-28)."""
+    if doc.salary_advances.exists() or pr.payment_type == "PERMIT_RENEWAL":
+        return False
+    has_doc = pr.has_supporting_doc or doc.attachments.filter(
+        kind__in=("EVIDENCE", "QUOTATION", "ENCLOSURE")).exists()
+    return (not has_doc and not pr.override_by_id
+            and in_rufiyaa(pr.amount_requested, pr.currency) >= pyr_doc_threshold())
+
+
 def in_rufiyaa(amount, currency):
     """A requested amount as rufiyaa, for rules written in rufiyaa.
 
@@ -343,19 +357,15 @@ def pyr_action(request, doc, action_name):
             return Response({"detail": "Attach a bill/quotation, or give a "
                                        "reason for no supporting document."},
                             status=400)
-        over = in_rufiyaa(pr.amount_requested, pr.currency)
-        if (not exempt_doc and over >= pyr_doc_threshold()
-                and not has_doc and not pr.override_by_id):
-            worth = ("" if pr.currency == "MVR"
-                     else f" ({pr.currency} {pr.amount_requested:,.2f} is "
-                          f"MVR {over:,.0f})")
-            return Response({
-                "detail": f"Above MVR {pyr_doc_threshold():,.0f} a PYR needs "
-                          "a supporting document or a PM override with "
-                          f"reason{worth}.",
-                "needs_override": True}, status=400)
+        # Over the threshold with no bill: it goes, with its reason, to the
+        # person who must agree to pay without one — the site PM (who
+        # approves site requests anyway) or, for a Head-Office request that
+        # would otherwise clear straight to a voucher, the Director.
+        override_needed = needs_doc_override(doc, pr)
         _set_status(doc, "SUBMITTED", "SUBMIT", user, comment)
-        if pr.origin == "HR" and not pr.is_capitalized and not is_permit_renewal:
+        if override_needed and pr.origin != "SITE":
+            pass                    # waits at SUBMITTED for the Director
+        elif pr.origin == "HR" and not pr.is_capitalized and not is_permit_renewal:
             # HR advances / welfare wait for the Director (PD) — no PM, and kept
             # separate from onboarding (which has no PD layer). It stays at
             # SUBMITTED until the Director approves it onto a voucher.
@@ -373,11 +383,18 @@ def pyr_action(request, doc, action_name):
         return None
 
     if action_name == "approve":
+        # Approving a request that has no bill over the threshold IS the
+        # override: record who gave it (never the raiser).
+        def _override():
+            if needs_doc_override(doc, pr):
+                pr.override_by = user
+                pr.save(update_fields=["override_by"])
         if doc.status == "SUBMITTED":
             if pr.origin == "SITE":
                 if not _is_pm_for(user, doc):
                     return Response({"detail": "The site PM approves first."},
                                     status=403)
+                _override()
                 _set_status(doc, "PM_APPROVED", "PM_APPROVE", user, comment)
                 return None
             # Director approval at SUBMITTED — now only a legacy fallback for an
@@ -387,9 +404,11 @@ def pyr_action(request, doc, action_name):
             if user.role not in ("DIRECTOR", "ADMIN"):
                 return Response({"detail": "Director approval required."},
                                 status=403)
-            if doc.created_by_id == user.id and user.role != "ADMIN":
+            if doc.created_by_id == user.id and (
+                    user.role != "ADMIN" or needs_doc_override(doc, pr)):
                 return Response({"detail": "You cannot approve your own "
                                            "request."}, status=403)
+            _override()
             _set_status(doc, "DIRECTOR_APPROVED", "DIRECTOR_APPROVE", user,
                         comment)
             return None

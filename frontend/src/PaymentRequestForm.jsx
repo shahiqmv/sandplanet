@@ -399,7 +399,7 @@ export default function PaymentRequestForm({ site, sites, onSaved,
           </label>
         )}
         <p style={{ fontSize: 11.5, color: "var(--faint)", margin: "6px 0 0" }}>
-          Above MVR 5,000 an attachment (or a PM override) is required.
+          Above MVR 5,000 with no bill attached, the request needs the site PM's (or, for Head Office, the Director's) approval to pay without one.
         </p>
       </div>
       )}

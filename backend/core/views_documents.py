@@ -1031,6 +1031,16 @@ def pending_groups(user):
               "site_code": d.site.code if d.site_id else "HO",
               "project_code": None, "doc_date": d.doc_date, "status": d.status,
               "hint": "Director (PD) approval"} for d in hr_pyrs])
+        # A Head-Office request over the document threshold with no bill
+        # waits here for the Director to agree to pay it without one.
+        no_doc = base.filter(doc_type="PYR", status="SUBMITTED").exclude(
+            payment_request__origin__in=("SITE", "HR")).select_related("site")
+        add("To approve — payment requests with no supporting document",
+            [{"ref": d.ref, "doc_type": "PYR",
+              "site_code": d.site.code if d.site_id else "HO",
+              "project_code": None, "doc_date": d.doc_date, "status": d.status,
+              "hint": "Over the document limit with no bill — approve to pay "
+                      "without one"} for d in no_doc])
         # (Other non-site PYRs — CENTRAL/FINANCE/ONBOARDING/COMMERCIAL — clear
         # straight to Finance's voucher, no Director step, owner 2026-08-05.)
         add("To size & release — reviewed import requests (PMR)",

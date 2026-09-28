@@ -210,13 +210,46 @@ class PyrReturnPathTests(PyrBase):
 
 
 class PyrSupportingDocTests(PyrBase):
-    def test_above_threshold_needs_doc_or_override(self):
-        # 8000 > 5000 default, no supporting doc, no override → blocked
+    def test_above_threshold_without_a_bill_the_pm_approval_is_the_override(self):
+        # 8000 > 5000 default, no supporting doc: submits with its reason,
+        # and the PM's approval is recorded as the override.
+        from .models import Document
         ref = self.raise_pyr(amount=8000, has_supporting_doc=False,
                              no_doc_reason="informal labour").data["ref"]
         r = self.act(ref, "submit", self.sa)
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("supporting document", r.data["detail"].lower())
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(r.data["status"], "SUBMITTED")
+        self.act(ref, "approve", self.pm)
+        self.assertEqual(Document.objects.get(ref=ref).payment_request.override_by_id, self.pm.id)
+
+    def test_a_head_office_request_without_a_bill_waits_for_the_director(self):
+        """It used to clear straight to a voucher — or, over the limit, sit in
+        draft for ever asking for a PM override nobody could give."""
+        from .models import Document
+        admin = make_user("adm", User.Role.ADMIN)
+        ho = Site.objects.create(code="MLE", name="Head Office", status=Site.Status.ACTIVE,
+                                 is_head_office=True)
+        self.client.force_authenticate(admin)
+        r = self.client.post("/api/v1/documents", {
+            "doc_type": "PYR", "site_id": ho.id, "payload": {}, "cost_head_id": self.head.id,
+            "payee": "Rasel", "payment_type": "DIRECT", "payment_method": "BANK",
+            "currency": "USD", "amount_requested": 400, "purpose": "Surgery expenses",
+            "has_supporting_doc": False, "no_doc_reason": "director approved"}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        ref = r.data["ref"]
+        sub = self.act(ref, "submit", admin)
+        self.assertEqual(sub.status_code, 200, sub.data)
+        self.assertEqual(sub.data["status"], "SUBMITTED")          # not on a voucher yet
+        # the raiser cannot give their own override, even as admin
+        self.assertEqual(self.act(ref, "approve", admin).status_code, 403)
+        self.client.force_authenticate(self.director)
+        queue = self.client.get("/api/v1/approvals/pending").data["groups"]
+        self.assertTrue(any(i["ref"] == ref for g in queue for i in g["items"]))
+        r = self.act(ref, "approve", self.director)
+        self.assertEqual(r.status_code, 200, r.data)
+        doc = Document.objects.get(ref=ref)
+        self.assertEqual((doc.status, doc.payment_request.override_by_id),
+                         ("DIRECTOR_APPROVED", self.director.id))
 
     def test_no_doc_needs_reason(self):
         ref = self.raise_pyr(amount=1000, has_supporting_doc=False,
@@ -251,12 +284,12 @@ class PyrSupportingDocTests(PyrBase):
 
     def test_generic_advance_still_needs_doc(self):
         # a plain "Advance" (no worker breakdown) above the cap is still gated
+        from . import payments
         ref = self.raise_pyr(amount=8000, payment_type="ADVANCE",
                              has_supporting_doc=False,
                              no_doc_reason="x").data["ref"]
-        r = self.act(ref, "submit", self.sa)
-        self.assertEqual(r.status_code, 400)
-        self.assertIn("supporting document", r.data["detail"].lower())
+        doc = Document.objects.get(ref=ref)
+        self.assertTrue(payments.needs_doc_override(doc, doc.payment_request))
 
 
 class CentralPaymentTests(PyrBase):
@@ -303,10 +336,9 @@ class CentralPaymentTests(PyrBase):
                            has_supporting_doc=False,
                            no_doc_reason="Invoice to follow")
         self.assertEqual(r.status_code, 201, r.data)
-        sub = self.act(r.data["ref"], "submit", self.sa)
-        self.assertEqual(sub.status_code, 400, sub.data)
-        self.assertTrue(sub.data.get("needs_override"))
-        self.assertIn("MVR 6,168", sub.data["detail"])
+        from . import payments
+        doc = Document.objects.get(ref=r.data["ref"])
+        self.assertTrue(payments.needs_doc_override(doc, doc.payment_request))   # MVR 6,168 > 5,000
 
     def test_a_small_dollar_request_still_needs_no_override(self):
         r = self.raise_pyr(amount=100, currency="USD",
