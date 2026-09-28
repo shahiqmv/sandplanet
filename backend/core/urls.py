@@ -682,6 +682,8 @@ urlpatterns = [
          name="attendance-device"),
     path("employees/<int:pk>/biometric", biometric_api.employee_enrolment,
          name="employee-biometric"),
+    path("employees/<int:pk>/cost-report", hr.employee_cost_report,
+         name="employee-cost-report"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),
     path("attendance/register", hr.attendance_register,
          name="attendance-register"),

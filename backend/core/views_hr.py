@@ -1964,3 +1964,51 @@ def duplicate_passports(request):
         })
     out.sort(key=lambda g: -sum(r["attendance_rows"] for r in g["records"]))
     return Response({"count": len(out), "groups": out})
+
+
+@api_view(["GET"])
+def employee_cost_report(request, pk):
+    """One person's attendance, overtime and pay over a date range — on
+    screen, as a letterhead PDF or as a workbook (owner 2026-09-28). Pay is
+    shown to the same people who see salaries on the employee page."""
+    from . import staff_cost_report
+    if not _sees_pay(request.user):
+        return Response({"detail": "HR, Finance and Admin only."}, status=403)
+    try:
+        emp = Employee.objects.select_related("job_category",
+                                              "subcontractor").get(pk=pk)
+    except Employee.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    try:
+        start = date.fromisoformat(request.GET.get("from") or "")
+        end = date.fromisoformat(request.GET.get("to") or "")
+    except ValueError:
+        return Response({"detail": "from and to are required, YYYY-MM-DD."},
+                        status=400)
+    try:
+        rep = staff_cost_report.build(emp, start, end)
+    except ValueError as exc:
+        return Response({"detail": str(exc)}, status=400)
+    fmt = request.GET.get("export")
+    base = f"{emp.emp_no}-cost-{start}-to-{end}"
+    if fmt == "pdf":
+        from django.template.loader import render_to_string
+
+        from . import pdf as pdf_mod
+        from .views_payroll import _pdf_response
+        rep.update(logo_src=pdf_mod.logo_src(), co=pdf_mod.company_info(),
+                   prepared_on=timezone.localdate(),
+                   prepared_by=request.user.get_full_name()
+                   or request.user.username,
+                   subline=(f"{emp.emp_no}  |  {start:%d %b %Y} – "
+                            f"{end:%d %b %Y}"))
+        return _pdf_response(render_to_string("pdf/staff_cost.html", rep),
+                             f"{base}.pdf")
+    if fmt == "xlsx":
+        resp = HttpResponse(
+            staff_cost_report.workbook(rep),
+            content_type="application/vnd.openxmlformats-officedocument."
+                         "spreadsheetml.sheet")
+        resp["Content-Disposition"] = f'attachment; filename="{base}.xlsx"'
+        return resp
+    return Response(rep)

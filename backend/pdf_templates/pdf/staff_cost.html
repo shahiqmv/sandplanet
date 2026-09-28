@@ -1,0 +1,126 @@
+{% load brand %}<!doctype html>
+<html>
+<head>
+{% include "pdf/_styles.html" %}
+{% include "pdf/_report_styles.html" %}
+<style>
+  @page { size: A4 landscape; }
+  table.grid { font-size: 7.6pt; }
+  table.grid th { font-size: 6.4pt; padding: 4px 5px; }
+  table.grid td { padding: 3.5px 5px; }
+  table.grid tr.tot td { font-weight: 700; background: #F2F7FB; color: {% brand "heading" %}; }
+  table.facts { border-collapse: collapse; font-size: 8pt; }
+  table.facts td { padding: 1.5px 14px 1.5px 0; border: none; background: none; }
+  table.facts td.k2 { color: #61707C; }
+  table.days { width: 100%; border-collapse: collapse; font-size: 7pt; }
+  table.days th { background: {% brand "accent_deep" %}; color: #fff; padding: 3px 4px;
+                  font-size: 6.2pt; text-align: left; }
+  table.days td { padding: 2px 4px; border-bottom: .4px solid #E3EBF1; }
+  table.days td.rest { background: #EEF3F7; }
+  table.days th.num { text-align: right; }
+  table.days td.num { text-align: right; }
+  .cols { width: 100%; border-collapse: collapse; }
+  .cols > tbody > tr > td { vertical-align: top; width: 50%; padding: 0 6px 0 0; border: none; background: none; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+{% include "pdf/_footer.html" with footer_doc="STAFF COST REPORT" %}
+{% include "pdf/_letterhead.html" with title="STAFF COST REPORT" subline=subline %}
+
+<div class="sect" style="margin-top:6px">{{ employee.emp_no }} — {{ employee.full_name }}</div>
+<table class="facts">
+  <tr><td class="k2">Category</td><td>{{ employee.category|default:"—" }}{% if employee.job_title %} · {{ employee.job_title }}{% endif %}</td>
+      <td class="k2">Employment</td><td>{{ employee.employment_type }}{% if employee.subcontract %} · subcontract ({{ employee.subcontractor }}){% endif %}</td>
+      <td class="k2">Joined</td><td>{{ employee.join_date|date:"j M Y"|default:"—" }}{% if employee.left_on %} · left {{ employee.left_on|date:"j M Y" }}{% endif %}</td></tr>
+  <tr><td class="k2">Basic pay</td><td>{{ employee.currency }} {{ employee.basic_pay|floatformat:"2g" }} / month{% if employee.usd_basic_pay %} · USD basic {{ employee.usd_basic_pay|floatformat:"2g" }}{% endif %}</td>
+      <td class="k2">OT rate</td><td>{% if employee.ot_rate %}{{ employee.ot_currency }} {{ employee.ot_rate|floatformat:"2g" }} / h{% else %}none{% endif %}</td>
+      <td class="k2">Period</td><td>{{ start|date:"j M Y" }} – {{ end|date:"j M Y" }} ({{ calendar_days }} days)</td></tr>
+</table>
+
+<table class="stats">
+  <tr>
+    <td><div class="k">Days worked</div><div class="v">{{ attendance.worked|floatformat:"-1" }}</div>
+        <div class="sub">of {{ employed_days }} employed days · {{ attendance.rest_days_worked }} rest day{{ attendance.rest_days_worked|pluralize }} worked</div></td>
+    <td><div class="k">OT approved</div><div class="v">{{ ot.approved|floatformat:"-1" }} h</div>
+        <div class="sub">{{ ot.workday|floatformat:"-1" }} h paid as OT{% if ot.rest_day %} · {{ ot.rest_day|floatformat:"-1" }} h on rest days{% endif %}</div></td>
+    <td><div class="k">OT awaiting approval</div><div class="v">{{ ot.pending|floatformat:"-1" }} h</div>
+        <div class="sub">{{ ot.pending_days }} day{{ ot.pending_days|pluralize }}</div></td>
+    <td><div class="k">Net pay</div>
+        {% for t in pay_totals %}<div class="v" style="font-size:{% if pay_totals|length > 1 %}12{% else %}17{% endif %}pt">{{ t.currency }} {{ t.net|floatformat:"2g" }}</div>{% empty %}<div class="v">—</div>{% endfor %}
+        <div class="sub">{% if pay %}{{ pay|length }} payroll line{{ pay|length|pluralize }}{% else %}no payroll run in range{% endif %}</div></td>
+  </tr>
+</table>
+
+<table class="cols"><tr><td>
+<div class="sect">Attendance</div>
+<table class="grid">
+  <thead><tr><th>Mark</th><th class="num">Days</th></tr></thead>
+  <tbody>
+  {% for c in attendance.counts %}{% if c.days %}<tr><td>{{ c.label }}</td><td class="num">{{ c.days }}</td></tr>{% endif %}{% endfor %}
+  <tr><td>Not on the register</td><td class="num">{{ attendance.unmarked }}</td></tr>
+  <tr class="tot"><td>Days worked (half day = ½)</td><td class="num">{{ attendance.worked|floatformat:"-1" }}</td></tr>
+  </tbody>
+</table>
+</td><td>
+<div class="sect">By site</div>
+<table class="grid">
+  <thead><tr><th>Site</th><th class="num">Days marked</th><th class="num">Worked</th><th class="num">OT approved (h)</th></tr></thead>
+  <tbody>
+  {% for s in attendance.by_site %}<tr><td>{{ s.site }} — {{ s.name }}</td><td class="num">{{ s.days }}</td><td class="num">{{ s.worked|floatformat:"-1" }}</td><td class="num">{{ s.ot|floatformat:"-1" }}</td></tr>
+  {% empty %}<tr><td colspan="4" class="muted">No attendance in this range.</td></tr>{% endfor %}
+  </tbody>
+</table>
+</td></tr></table>
+
+<div class="sect">Salary — payroll runs in these months</div>
+{% if pay %}
+<table class="grid">
+  <thead><tr><th>Run</th><th>Period</th><th>Site</th><th>Status</th><th class="num">Days</th><th class="num">Fridays</th><th class="num">OT h</th>
+    <th class="num">Earned basic</th><th class="num">Friday pay</th><th class="num">OT pay</th><th class="num">Allowance</th><th class="num">Gross</th><th class="num">Deductions</th><th class="num">Net</th></tr></thead>
+  <tbody>
+  {% for p in pay %}
+  <tr><td>{{ p.run }}</td><td>{{ p.period }}{% if p.part_month %}*{% endif %}</td><td>{{ p.site }}</td><td>{{ p.status }}{% if p.excluded %} · excluded{% endif %}</td>
+      <td class="num">{{ p.days_worked|floatformat:"-1" }}</td><td class="num">{{ p.fridays_worked }}</td><td class="num">{{ p.ot_hours|floatformat:"-1" }}</td>
+      <td class="num">{{ p.earned_basic|floatformat:"2g" }}</td><td class="num">{{ p.friday_pay|floatformat:"2g" }}</td><td class="num">{{ p.ot_pay|floatformat:"2g" }}</td>
+      <td class="num">{{ p.allowance|floatformat:"2g" }}</td><td class="num">{{ p.gross|floatformat:"2g" }}</td><td class="num">{{ p.deductions|floatformat:"2g" }}</td>
+      <td class="num">{{ p.currency }} {{ p.net|floatformat:"2g" }}</td></tr>
+  {% endfor %}
+  {% for t in pay_totals %}
+  <tr class="tot"><td colspan="4">Total {{ t.currency }}</td><td></td><td class="num">{{ t.fridays }}</td><td class="num">{{ t.ot_hours|floatformat:"-1" }}</td>
+      <td class="num">{{ t.earned_basic|floatformat:"2g" }}</td><td class="num">{{ t.friday_pay|floatformat:"2g" }}</td><td class="num">{{ t.ot_pay|floatformat:"2g" }}</td>
+      <td class="num">{{ t.allowance|floatformat:"2g" }}</td><td class="num">{{ t.gross|floatformat:"2g" }}</td><td class="num">{{ t.deductions|floatformat:"2g" }}</td>
+      <td class="num">{{ t.currency }} {{ t.net|floatformat:"2g" }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if any_part_month %}<div class="muted" style="font-size:7pt">* A payroll run covers the whole month; the range covers only part of it.</div>{% endif %}
+{% else %}<div class="none">No payroll line in these months.</div>{% endif %}
+{% if not_run %}<div class="note" style="font-size:7.6pt;margin-top:4px">No payroll run yet for {{ not_run|join:", " }}.</div>{% endif %}
+
+{% if advances %}
+<div class="sect">Advances and loans raised in the range</div>
+<table class="grid">
+  <thead><tr><th>PYR</th><th>Kind</th><th class="num">Amount</th><th class="num">Instalments</th><th>Recovered from</th><th>Status</th></tr></thead>
+  <tbody>{% for a in advances %}<tr><td>{{ a.ref }}</td><td>{{ a.kind }}</td><td class="num">{{ a.amount|floatformat:"2g" }}</td><td class="num">{{ a.months }}</td><td>{{ a.from }}</td><td>{{ a.status }}</td></tr>{% endfor %}</tbody>
+</table>
+{% endif %}
+
+{% if days %}
+<div class="sect" style="page-break-before:always">Day by day</div>
+<table class="days">
+  <thead><tr><th>Date</th><th>Day</th><th>Site</th><th>Mark</th><th>In</th><th>Out</th><th class="num">OT requested</th><th class="num">OT approved</th><th></th></tr></thead>
+  <tbody>
+  {% for d in days %}
+  <tr><td{% if d.rest %} class="rest"{% endif %}>{{ d.day|date:"d M Y" }}</td><td{% if d.rest %} class="rest"{% endif %}>{{ d.dow }}</td><td>{{ d.site }}</td><td>{{ d.mark }}</td>
+      <td>{{ d.in }}</td><td>{{ d.out }}</td><td class="num">{% if d.ot_requested %}{{ d.ot_requested|floatformat:"-1" }}{% endif %}</td>
+      <td class="num">{% if d.ot_approved is not None %}{{ d.ot_approved|floatformat:"-1" }}{% endif %}</td>
+      <td>{% if d.pending %}<span class="warn">awaiting approval</span>{% elif d.rest and d.remark == "PRESENT" and d.ot_approved %}<span class="muted">rest day — flat Friday pay</span>{% endif %}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<div class="muted" style="font-size:7pt;margin-top:8px">Prepared {{ prepared_on|date:"j F Y" }} by {{ prepared_by }}. Rest-day rows are shaded; OT on a worked rest day is covered by the flat Friday pay ({{ ot.friday_hours|floatformat:"-1" }} h × OT rate), not paid again.</div>
+</body>
+</html>

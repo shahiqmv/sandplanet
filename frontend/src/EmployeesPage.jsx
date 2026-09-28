@@ -5,6 +5,7 @@ import { shrinkPhoto } from "./imageResize.js";
 import { NATIONALITIES } from "./constants.js";
 import { SelectOrOther, buttonStyle, card, ghostButton, inputStyle, td, th }
   from "./ui.jsx";
+import StaffCostReport from "./StaffCostReport.jsx";
 
 
 const EMPLOYMENT = [["PERMANENT", "Permanent"], ["CONTRACT", "Contract"]];
@@ -703,6 +704,7 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [history, setHistory] = useState(null);
+  const [costReport, setCostReport] = useState(false);
 
   const set = (patch) => setF((s) => ({ ...s, ...patch }));
   const otChoice = f.ot_applies === true ? "on"
@@ -778,8 +780,15 @@ function EmployeeProfile({ employee, categories, seesPay, isHr, sites = [],
                      }} />
             </label>
           </div>
+          {seesPay && !creating && (
+            <button onClick={() => setCostReport(true)} style={ghostButton}
+                    title="Attendance, overtime and pay over a date range">
+              Cost report</button>
+          )}
           <button onClick={onClose} style={ghostButton}>Close</button>
         </div>
+        {costReport && <StaffCostReport employee={employee}
+                                        onClose={() => setCostReport(false)} />}
 
         {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

@@ -444,7 +444,7 @@ main tbody tr:hover > td {
   top: 59px;                                  /* below the top bar */
   height: calc(100vh - 59px);
   transition: width 160ms ease;
-  z-index: 90;
+  z-index: 35;             /* over in-page dropdowns (20–30), under every modal (40+) */
 }
 .sidenav.collapsed { width: 52px; }
 .rail {
