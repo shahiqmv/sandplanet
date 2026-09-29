@@ -21,8 +21,10 @@ ROLES = ("HO_HR", "FINANCE", "ADMIN", "PA")  # PA = full HR (owner 2026-08-03)
 READ_ROLES = ROLES + ("SIGNATORY",)
 
 # HR-editable inputs on a draft line
+# No "penalty": it is filled from approved worker fines (core/fines.py), the
+# one route to that deduction (owner 2026-09-29).
 LINE_FIELDS = ("days_worked", "fridays_worked", "ot_hours", "allowance",
-               "penalty", "advance", "loan", "amount_to_site",
+               "advance", "loan", "amount_to_site",
                "amount_to_office", "remarks")
 
 

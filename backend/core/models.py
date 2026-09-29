@@ -8575,3 +8575,97 @@ class StaffRequest(models.Model):
         if self.from_date and self.to_date:
             return (self.to_date - self.from_date).days + 1
         return 0
+
+
+# ===== Worker fines (owner 2026-09-29) =====
+# A worker who breaks a safety rule or the disciplinary code is fined. The
+# site team records it, the site PM approves it, and an approved fine is
+# deducted on that month's payroll — it is what fills PayrollLine.penalty,
+# which is no longer typed in by hand. Deliberately stands alone: not tied to
+# an HSE record or anything else (owner, same day).
+
+class FineOffence(models.Model):
+    """The company's list of finable offences with a standard amount. HR keeps
+    it; a site picks from it (or "Other") so the same breach costs the same
+    at every site."""
+
+    class Category(models.TextChoices):
+        SAFETY = "SAFETY", "Safety"
+        DISCIPLINARY = "DISCIPLINARY", "Disciplinary"
+        OTHER = "OTHER", "Other"
+
+    name = models.CharField(max_length=120)
+    category = models.CharField(max_length=14, choices=Category.choices,
+                                default=Category.SAFETY)
+    default_amount = models.DecimalField(max_digits=10, decimal_places=2,
+                                         default=0)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        ordering = ["category", "sort_order", "name"]
+
+    def __str__(self):
+        return self.name
+
+
+def fine_evidence_path(instance, filename):
+    # Unique per record: S3 file_overwrite would otherwise let two fines'
+    # photos replace each other (see ipr-corrections-and-storage).
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"fines/{instance.ref or 'new'}/{uuid.uuid4().hex[:12]}{ext}"
+
+
+class WorkerFine(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Awaiting PM approval"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    ref = models.CharField(max_length=24, unique=True)
+    employee = models.ForeignKey(Employee, on_delete=models.PROTECT,
+                                 related_name="fines")
+    site = models.ForeignKey(Site, on_delete=models.PROTECT,
+                             related_name="worker_fines")
+    offence = models.ForeignKey(FineOffence, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="fines")
+    category = models.CharField(max_length=14,
+                                choices=FineOffence.Category.choices)
+    violation_date = models.DateField()
+    description = models.TextField()
+    amount = models.DecimalField(max_digits=10, decimal_places=2)  # MVR
+    evidence = models.FileField(upload_to=fine_evidence_path, null=True,
+                                blank=True)
+    status = models.CharField(max_length=10, choices=Status.choices,
+                              default=Status.PENDING)
+    recorded_by = models.ForeignKey(User, on_delete=models.PROTECT,
+                                    related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    decided_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    decided_at = models.DateTimeField(null=True, blank=True)
+    decision_note = models.CharField(max_length=300, blank=True)
+    # The payroll month it comes off: the month of the breach, or the first
+    # month after it whose run is still open to HR when the PM approves.
+    deduct_year = models.PositiveIntegerField(null=True, blank=True)
+    deduct_month = models.PositiveSmallIntegerField(null=True, blank=True)
+    # Set when the run it was deducted on locks — the fine is then spent.
+    payroll_line = models.ForeignKey("PayrollLine", on_delete=models.SET_NULL,
+                                     null=True, blank=True,
+                                     related_name="fines")
+    carried_note = models.CharField(max_length=200, blank=True)
+    cancelled_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                     blank=True, related_name="+")
+    cancelled_at = models.DateTimeField(null=True, blank=True)
+    cancel_reason = models.CharField(max_length=300, blank=True)
+
+    class Meta:
+        ordering = ["-violation_date", "-id"]
+        indexes = [models.Index(fields=["status", "deduct_year",
+                                        "deduct_month"]),
+                   models.Index(fields=["employee", "status"])]
+
+    def __str__(self):
+        return f"{self.ref} {self.employee.emp_no} {self.amount}"

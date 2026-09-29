@@ -1215,6 +1215,18 @@ def pending_groups(user):
                 if user.role == "ADMIN" or r.site_id and r.site.is_current_pm(user)]
         add("To verify — site salary drafts", payroll_rows(
             mine, "Check your site's days, OT and Fridays, then verify"))
+    # Worker fines wait on the site PM (the Director for head office or a
+    # site with no PM). Not Documents: fine_id opens the site's fines tab.
+    if user.role in ("PM", "DIRECTOR", "ADMIN"):
+        from .fines import pending_for
+        add("To approve — worker fines", [{
+            "ref": f.ref, "fine_id": f.id, "doc_type": "FINE",
+            "site_code": f.site.code, "project_code": None,
+            "doc_date": f.violation_date, "status": "PENDING",
+            "amount": f.amount, "currency": "MVR",
+            "hint": (f"{f.employee.emp_no} {f.employee.full_name} · "
+                     f"{f.offence.name if f.offence_id else f.get_category_display()}")[:120],
+        } for f in pending_for(user)[:50]])
     if user.role in ("DIRECTOR", "ADMIN"):
         add("To approve — salary drafts", payroll_rows(
             PayrollRun.objects.filter(status="PD_REVIEW").select_related("site"),

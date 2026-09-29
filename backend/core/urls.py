@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from . import version as version_api, \
-    views, views_biometric as biometric_api, views_bom as bom_api, views_cameras as cameras_api, \
+    views, views_biometric as biometric_api, views_bom as bom_api, views_fines as fines_api, views_cameras as cameras_api, \
     views_commercial as commercial, \
     views_cost as cost, \
     views_cost_heads as cost_heads_api, \
@@ -684,6 +684,14 @@ urlpatterns = [
          name="employee-biometric"),
     path("employees/<int:pk>/cost-report", hr.employee_cost_report,
          name="employee-cost-report"),
+    path("fines", fines_api.fines, name="fines"),
+    path("fines/workers", fines_api.fine_workers, name="fine-workers"),
+    path("fines/offences", fines_api.offences, name="fine-offences"),
+    path("fines/offences/<int:pk>", fines_api.offence_detail,
+         name="fine-offence"),
+    path("fines/<int:pk>", fines_api.fine_detail, name="fine"),
+    path("fines/<int:pk>/<str:action>", fines_api.fine_action,
+         name="fine-action"),
     path("attendance", hr.attendance_grid, name="attendance-grid"),
     path("attendance/register", hr.attendance_register,
          name="attendance-register"),

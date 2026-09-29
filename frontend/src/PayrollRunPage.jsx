@@ -399,7 +399,7 @@ function Marked({ line }) {
 const EDITABLE = [
   ["days_worked", "Days", 55], ["fridays_worked", "Fri", 45],
   ["ot_hours", "OT hrs", 60], ["allowance", "Allow.", 80],
-  ["advance", "Advance", 80], ["penalty", "Penalty", 75],
+  ["advance", "Advance", 80],
   ["loan", "Loan", 80], ["amount_to_site", "To site", 85],
   ["amount_to_office", "To office", 85],
 ];
@@ -504,7 +504,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
     if (!window.confirm(
       "Re-pull attendance, rates and pay policy into this run?\n\n"
       + "Days, OT hours, Fridays, OT rate and basic are recalculated from "
-      + "current data; your allowance and penalty entries are kept. Newly "
+      + "current data; your allowance entries are kept; fines are re-read. Newly "
       + "eligible workers are added.")) return;
     try {
       const d = await api(`/payroll/runs/${runId}`,
@@ -608,7 +608,7 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             📄 Report PDF</a>
           {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
             <button onClick={refresh} style={ghostButton}
-              title="Re-pull attendance, OT rates and pay policy — keeps your allowance/penalty entries">
+              title="Re-pull attendance, OT rates and pay policy — keeps your allowance entries, re-reads approved fines">
               ↻ Refresh from attendance</button>
           )}
           {!locked && isHR && ["DRAFT", "RETURNED"].includes(run.status) && (
@@ -686,9 +686,11 @@ function RunDetail({ runId, onBack, me, backLabel }) {
             <th style={{ ...th, textAlign: "right" }}>OT pay</th>
             <th style={{ ...th, textAlign: "right" }}>Allow.</th>
             <th style={{ ...th, textAlign: "right" }}>Gross</th>
-            {["advance", "penalty", "loan"].map((k) =>
-              <th key={k} style={{ ...th, textAlign: "right",
-                textTransform: "capitalize" }}>{k}</th>)}
+            <th style={{ ...th, textAlign: "right" }}>Advance</th>
+            <th style={{ ...th, textAlign: "right" }}
+                title="Approved worker fines for this month — recorded by the
+                       site, approved by the PM. Not typed here.">Fines</th>
+            <th style={{ ...th, textAlign: "right" }}>Loan</th>
             <th style={{ ...th, textAlign: "right" }}>Net</th>
             <th style={{ ...th, textAlign: "right" }}>To site</th>
             <th style={{ ...th, textAlign: "right" }}>To office</th>
@@ -758,7 +760,16 @@ function Row({ line, locked, showSite, onSave, onRestDay, onExclude }) {
       {ro(line.earned_basic)}{ro(line.ot_pay)}
       {cell("allowance", 70)}
       {ro(line.gross)}
-      {cell("advance", 70)}{cell("penalty", 65)}{cell("loan", 70)}
+      {cell("advance", 70)}
+      <td style={{ ...td, textAlign: "right" }}
+          title={Number(line.penalty) > 0
+            ? "Approved fines — see the worker's fines on the site's Workforce page"
+            : "No approved fine this month"}>
+        {Number(line.penalty) > 0
+          ? <span style={{ color: "var(--red-fg)", fontWeight: 600 }}>{money(line.penalty)}</span>
+          : <span style={{ color: "var(--muted)" }}>—</span>}
+      </td>
+      {cell("loan", 70)}
       {ro(line.net)}
       {cell("amount_to_site", 75)}{cell("amount_to_office", 75)}
       <td style={{ ...td, whiteSpace: "nowrap" }}>

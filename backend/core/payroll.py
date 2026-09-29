@@ -664,6 +664,8 @@ def generate_run(*, site, currency, year, month, working_days, actor):
                     basic_pay=emp.basic_pay or 0, ot_rate=emp.ot_rate(currency),
                     days_worked=days, ot_hours=ot, fridays_worked=fridays,
                     advance=ded["advance"], loan=ded["loan"])
+        from .fines import apply_fines
+        apply_fines(run)                # approved fines → penalty
     return run
 
 
@@ -895,7 +897,8 @@ def refresh_run(run, actor):
     Needed whenever something the run was built from changes underneath it —
     a site corrects attendance, an OT rate is fixed, or the Friday policy
     moves (owner 2026-08-12). Attendance-derived and rate fields are
-    recomputed; HR's own entries (allowance, penalty) are left alone.
+    recomputed; HR's own entries (allowance) are left alone, and the
+    penalty is re-read from the approved worker fines.
     Newly eligible workers are added; workers who are no longer eligible are
     reported, never silently dropped, so HR decides."""
     from django.db import transaction
@@ -940,7 +943,9 @@ def refresh_run(run, actor):
                 # KABIR and MD RUBEL on SSL's run at minus 2,000 apiece for a
                 # site they never worked at (owner 2026-08-15). Their advance
                 # is recovered on the run for the site where they did work.
-                empty_line = not any([line.allowance, line.penalty,
+                # The penalty is derived too — from approved fines — and a
+                # fine left behind is carried forward when the run locks.
+                empty_line = not any([line.allowance,
                                       line.amount_to_site,
                                       line.amount_to_office])
                 # Someone paid in another currency belongs on the OTHER
@@ -1056,6 +1061,8 @@ def refresh_run(run, actor):
                 days_worked=days, ot_hours=ot, fridays_worked=fridays,
                 advance=ded["advance"], loan=ded["loan"])
             added.append(emp.emp_no)
+        from .fines import apply_fines
+        changed += [e for e in apply_fines(run) if e not in changed]
     if changed or added:
         reset_to_draft(run, actor, "figures refreshed from attendance")
     summary = {"changed": changed, "added": added, "no_longer_eligible": stale,
@@ -1123,6 +1130,8 @@ def lock_run(run, actor):
                          source="STAFF", amount=share, currency=run.currency,
                          staff_year=run.year, staff_month=run.month,
                          actor=actor, book="RENTAL", vehicle=vehicle)
+        from .fines import settle_on_lock
+        settle_on_lock(run)             # fines on it are spent; strays carry
         run.status = "LOCKED"
         run.locked_by = actor
         run.locked_at = timezone.now()
@@ -1475,6 +1484,8 @@ def reopen_run(run, actor):
         # list never moved (owner 2026-09-14). The guards above already
         # refuse the reopen once any of this money is authorised or paid.
         withdrawn = withdraw_salary_payables(run)
+        from .fines import release_on_reopen
+        release_on_reopen(run)          # its fines are owed again, on it
         if doc is not None:
             doc.status = "CANCELLED"
             doc.save(update_fields=["status"])

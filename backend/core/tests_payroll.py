@@ -283,6 +283,8 @@ class PayrollRunTests(TestCase):
             "site_id": self.site.id, "year": 2026, "month": 5,
             "working_days": 31}, format="json").data
         line_id = run["lines"][0]["id"]
+        # "penalty" is ignored: fines come off through the worker-fine
+        # workflow only (owner 2026-09-29).
         r = self.client.patch(f"/api/v1/payroll/lines/{line_id}", {
             "days_worked": 19, "ot_hours": 49, "allowance": 2000,
             "penalty": 500, "fridays_worked": 2}, format="json")
@@ -294,7 +296,8 @@ class PayrollRunTests(TestCase):
         self.assertEqual(float(d["friday_pay"]), 600.0)
         self.assertEqual(float(d["ot_pay"]), 1225.0)         # 49 * 25
         self.assertEqual(float(d["gross"]), 7625.0)          # 3800+600+1225+2000
-        self.assertEqual(float(d["net"]), 7125.0)            # gross - 500
+        self.assertEqual(float(d["penalty"]), 0.0)
+        self.assertEqual(float(d["net"]), 7625.0)
 
     def _approve_chain(self, run_id):
         """HR submits → PM verifies → PD approves, which locks the run and
@@ -736,7 +739,10 @@ class PayrollRefreshTests(TestCase):
         self.assertEqual(float(payroll.compute_line(line)["friday_pay"]),
                          300.0)                       # 12h × 25
 
-    def test_refresh_keeps_manual_allowance_and_penalty(self):
+    def test_refresh_keeps_manual_allowance_but_rereads_the_penalty(self):
+        """The allowance is HR's own entry; the penalty is derived from
+        approved worker fines, so a typed one does not survive a refresh
+        (owner 2026-09-29)."""
         from core import payroll
         run = self._run()
         line = run.lines.get(employee=self.emp)
@@ -745,7 +751,7 @@ class PayrollRefreshTests(TestCase):
         payroll.refresh_run(run, self.hr)
         line.refresh_from_db()
         self.assertEqual(line.allowance, Decimal("1500.00"))
-        self.assertEqual(line.penalty, Decimal("200.00"))
+        self.assertEqual(line.penalty, Decimal("0.00"))
 
     def test_refresh_adds_a_newly_eligible_worker(self):
         from core import payroll

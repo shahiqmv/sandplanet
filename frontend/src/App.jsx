@@ -64,6 +64,7 @@ import PaymentVouchersPage from "./PaymentVouchersPage.jsx";
 import PayablesPage from "./PayablesPage.jsx";
 import PettyCashPage from "./PettyCashPage.jsx";
 import StaffCostPage from "./StaffCostPage.jsx";
+import FinesPanel, { OffencesPanel } from "./FinesPanel.jsx";
 import StockPage from "./StockPage.jsx";
 import TransfersPanel from "./TransfersPanel.jsx";
 import ToolsPage from "./ToolsPage.jsx";
@@ -221,6 +222,11 @@ const NAV_GROUPS = [
                                    "SIGNATORY"]],
            ["staff-cost", "Staff Cost",
             ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"]],
+           // Every site's fines, and HR's list of standard offences
+           // (owner 2026-09-29). A site's own live on its Workforce page.
+           ["fines", "Worker Fines",
+            ["HO_HR", "FINANCE", "DIRECTOR", "ADMIN", "PA", "SIGNATORY"]],
+           ["fine-offences", "Fine Offences", ["HO_HR", "ADMIN", "PA"]],
            ["pms", "PMs", ["DIRECTOR", "ADMIN", "SIGNATORY"]]] },
   // "Company", not "Admin": Company Profile folds in here, and MARKETING is a
   // minimal role that sees ONLY that page — labelling their whole app "Admin"
@@ -503,6 +509,7 @@ export default function App() {
   // Payroll nav entry and can't list runs, but they must be able to reach the
   // one run that is waiting on them (owner 2026-08-12).
   const [payrollRunId, setPayrollRunId] = useState(null);
+  const [fineId, setFineId] = useState(null);   // a fine opened from My Tasks
   // Set when a voucher is opened straight from My Tasks, so the vouchers page
   // expands it instead of showing the list.
   const [voucherRef, setVoucherRef] = useState(null);
@@ -876,6 +883,21 @@ export default function App() {
       setOpenSite(null);
       setPayrollRunId(item.run_id);
       setHoPage("payroll");
+      return;
+    }
+    // A fine is not a Document either. The site's PM decides it on the
+    // site's Workforce → Fines tab; head office on the all-sites page.
+    if (item.doc_type === "FINE") {
+      const site = sites.find((s) => s.code === item.site_code);
+      setFineId(item.fine_id);
+      if (site && me.role === "PM") {
+        setOpenSite(site);
+        setDocView({ mode: "workforce", tab: "fines" });
+      } else {
+        setDocView(null);
+        setOpenSite(null);
+        setHoPage("fines");
+      }
       return;
     }
     // A payment voucher has no document lines at all — the batch lives in
@@ -1562,6 +1584,14 @@ export default function App() {
             <StaffCostPage />
           )}
           {!docView && !openSite &&
+            hoPage === "fines" && (
+            <FinesPanel sites={sites} me={me} openId={fineId} />
+          )}
+          {!docView && !openSite &&
+            hoPage === "fine-offences" && (
+            <OffencesPanel />
+          )}
+          {!docView && !openSite &&
             ["HO_HR", "DIRECTOR", "ADMIN", "PM", "PA",
              "SIGNATORY"].includes(me.role) &&
             hoPage === "onboarding" && (
@@ -1604,7 +1634,7 @@ export default function App() {
           )}
           {docView?.mode === "workforce" && openSite && (
             <WorkforcePage site={openSite} me={me} onClose={closeDoc}
-              initialTab={docView.tab}
+              initialTab={docView.tab} fineId={fineId}
               onAttendance={(sub, tab) => setDocView({ mode: "attendance",
                                                        tab: tab || "day",
                                                        sub })} />

@@ -222,6 +222,8 @@ def generate_settlement(*, site, employees, last_working_day, reason, actor,
                 days_worked=days, ot_hours=ot, fridays_worked=fridays,
                 advance=bal["advance"], loan=bal["loan"])
             made += 1
+        from .fines import apply_fines
+        apply_fines(run)                # every fine he still owes
     audit("payroll_run", run.id, "SETTLEMENT_GENERATED", actor=actor,
           detail={"site": site.code if site else None, "workers": made,
                   "last_working_day": last_working_day.isoformat()})

@@ -154,7 +154,20 @@ def build(emp, start, end):
                                        "WITHDRAWN"))
         .select_related("document").order_by("created_at")]
 
+    from .models import WorkerFine
+    fines = [{
+        "ref": f.ref, "date": f.violation_date, "site": f.site.code,
+        "offence": f.offence.name if f.offence_id else f.get_category_display(),
+        "amount": f.amount, "status": f.get_status_display(),
+        "deducted": (f"{MONTHS[f.deduct_month]} {f.deduct_year}"
+                     if f.deduct_year else ""),
+    } for f in WorkerFine.objects.filter(
+        employee=emp, violation_date__gte=start, violation_date__lte=end,
+        status__in=("PENDING", "APPROVED")).select_related("site", "offence")
+        .order_by("violation_date")]
+
     return {
+        "fines": fines,
         "employee": {
             "id": emp.id, "emp_no": emp.emp_no, "full_name": emp.full_name,
             "category": emp.job_category.name if emp.job_category_id else "",
@@ -256,7 +269,7 @@ def workbook(rep):
     cols = ["Run", "Period", "Site", "Currency", "Status", "Days worked",
             "Fridays", "OT h", "OT rate", "Basic (monthly)", "Earned basic",
             "Friday pay", "OT pay", "Allowance", "Gross", "Advance", "Loan",
-            "Penalty", "Net", "Note"]
+            "Fines", "Net", "Note"]
     header(ws2, 1, cols)
     for i, p in enumerate(rep["pay"], 2):
         note = "; ".join(x for x in (
