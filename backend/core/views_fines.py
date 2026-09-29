@@ -97,13 +97,20 @@ def fines(request):
         })
 
     d = request.data
+    # One or many: the form is a tick list, so several men caught in the same
+    # breach are recorded together — each still gets his own fine, ref and
+    # PM decision (owner 2026-09-29).
+    ids = d.getlist("employees") if hasattr(d, "getlist") else d.get("employees")
+    ids = [x for x in (ids or []) if x] or ([d.get("employee")] if d.get("employee") else [])
     try:
         site = Site.objects.get(pk=d.get("site"))
-        emp = Employee.objects.get(pk=d.get("employee"))
+        emps = list(Employee.objects.filter(pk__in=ids))
         day = date.fromisoformat(d.get("violation_date") or "")
-    except (Site.DoesNotExist, Employee.DoesNotExist, ValueError, TypeError):
+    except (Site.DoesNotExist, ValueError, TypeError):
         return Response({"detail": "Pick the site, the worker and the date."},
                         status=400)
+    if not emps or len(emps) != len(set(map(str, ids))):
+        return Response({"detail": "Tick at least one worker."}, status=400)
     offence = None
     if d.get("offence"):
         offence = FineOffence.objects.filter(pk=d["offence"],
@@ -115,14 +122,21 @@ def fines(request):
         amount = Decimal(str(d.get("amount") or ""))
     except (InvalidOperation, ValueError):
         return Response({"detail": "Enter the fine amount."}, status=400)
-    fine, err = svc.record(user=user, employee=emp, site=site,
-                           violation_date=day,
-                           description=d.get("description"), amount=amount,
-                           offence=offence, category=d.get("category"),
-                           evidence=request.FILES.get("evidence"))
-    if err:
-        return Response({"detail": err}, status=400)
-    return Response(_row(fine, user), status=201)
+    from django.db import transaction
+    made = []
+    with transaction.atomic():
+        for emp in sorted(emps, key=lambda e: e.emp_no or ""):
+            fine, err = svc.record(user=user, employee=emp, site=site,
+                                   violation_date=day,
+                                   description=d.get("description"),
+                                   amount=amount, offence=offence,
+                                   category=d.get("category"),
+                                   evidence=request.FILES.get("evidence"))
+            if err:
+                transaction.set_rollback(True)
+                return Response({"detail": f"{emp.emp_no}: {err}"}, status=400)
+            made.append(fine)
+    return Response({"results": [_row(f, user) for f in made]}, status=201)
 
 
 def _get(request, pk):
@@ -176,6 +190,7 @@ def fine_workers(request):
             .exclude(engagement_type="SUBCONTRACT")
             .select_related("job_category").order_by("emp_no"))
     return Response([{"id": e.id, "emp_no": e.emp_no, "full_name": e.full_name,
+                      "photo_url": e.photo.url if e.photo else None,
                       "category": e.job_category.name if e.job_category_id
                       else ""} for e in emps])
 

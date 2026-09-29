@@ -24,7 +24,8 @@ function FineForm({ site, sites, offences, onSaved, onCancel }) {
   const [siteId, setSiteId] = useState(site?.id || "");
   const [day, setDay] = useState(today());
   const [workers, setWorkers] = useState([]);
-  const [f, setF] = useState({ employee: "", offence: "", category: "SAFETY", amount: "", description: "" });
+  const [f, setF] = useState({ offence: "", category: "SAFETY", amount: "", description: "" });
+  const [ticked, setTicked] = useState(() => new Set());   // employee ids
   const [evidence, setEvidence] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -34,6 +35,11 @@ function FineForm({ site, sites, offences, onSaved, onCancel }) {
     if (!siteId || !day) { setWorkers([]); return; }
     api(`/fines/workers?site=${siteId}&date=${day}`).then(setWorkers).catch((e) => { setWorkers([]); setError(e.message); });
   }, [siteId, day]);
+  // A man who is no longer in the list (site or date changed) drops off
+  useEffect(() => {
+    setTicked((t) => new Set([...t].filter((id) => workers.some((w) => w.id === id))));
+  }, [workers]);
+  const toggle = (id) => setTicked((t) => { const n = new Set(t); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   function pickOffence(id) {
     const o = offences.find((x) => String(x.id) === String(id));
@@ -43,14 +49,16 @@ function FineForm({ site, sites, offences, onSaved, onCancel }) {
   async function save(e) {
     e.preventDefault(); setBusy(true); setError(null);
     const fd = new FormData();
-    fd.append("site", siteId); fd.append("employee", f.employee); fd.append("violation_date", day);
+    fd.append("site", siteId); fd.append("violation_date", day);
+    [...ticked].forEach((id) => fd.append("employees", id));
     if (f.offence) fd.append("offence", f.offence);
     fd.append("category", f.category); fd.append("amount", f.amount); fd.append("description", f.description);
     if (evidence) fd.append("evidence", evidence);
-    try { onSaved(await apiUpload("/fines", fd)); }
+    try { onSaved((await apiUpload("/fines", fd)).results); }
     catch (err) { setError(err.message); } finally { setBusy(false); }
   }
   const shown = workers.filter((w) => !q || `${w.emp_no} ${w.full_name}`.toLowerCase().includes(q.toLowerCase()));
+  const chosen = workers.filter((w) => ticked.has(w.id));
   const label = (t) => <span style={{ fontWeight: 600, opacity: .8 }}>{t}</span>;
   const field = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13 };
   return (
@@ -59,19 +67,37 @@ function FineForm({ site, sites, offences, onSaved, onCancel }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: "10px 16px" }}>
         {sites && (
           <label style={field}>{label("Site")}
-            <select style={inputStyle} value={siteId} onChange={(e) => { setSiteId(e.target.value); setF({ ...f, employee: "" }); }} required>
+            <select style={inputStyle} value={siteId} onChange={(e) => setSiteId(e.target.value)} required>
               <option value="">— pick a site —</option>
               {sites.map((s) => <option key={s.id} value={s.id}>{s.code} · {s.name}</option>)}
             </select></label>
         )}
         <label style={field}>{label("Date of the breach")}
-          <input type="date" style={inputStyle} value={day} max={today()} onChange={(e) => { setDay(e.target.value); setF({ ...f, employee: "" }); }} required /></label>
-        <label style={{ ...field, gridColumn: "1 / -1" }}>{label("Worker")}
+          <input type="date" style={inputStyle} value={day} max={today()} onChange={(e) => setDay(e.target.value)} required /></label>
+        <div style={{ ...field, gridColumn: "1 / -1" }}>
+          {label(`Worker${ticked.size > 1 ? "s" : ""} — tick who was involved`)}
           <input style={inputStyle} placeholder="Search by number or name…" value={q} onChange={(e) => setQ(e.target.value)} />
-          <select style={{ ...inputStyle, minHeight: 34 }} value={f.employee} onChange={(e) => setF({ ...f, employee: e.target.value })} required size={shown.length > 8 ? 8 : undefined}>
-            <option value="">— {workers.length ? `${workers.length} at this site that day` : "pick the site and date first"} —</option>
-            {shown.map((w) => <option key={w.id} value={w.id}>{w.emp_no} · {w.full_name}{w.category ? ` · ${w.category}` : ""}</option>)}
-          </select></label>
+          <div style={{ maxHeight: 264, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 6, background: "var(--paper)" }}>
+            {workers.length === 0 && <div style={{ padding: 10, color: "var(--muted)", fontSize: 13 }}>{siteId && day ? "No direct workers at this site on that date." : "Pick the site and date first."}</div>}
+            {shown.map((w) => {
+              const on = ticked.has(w.id);
+              return (
+                <label key={w.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "5px 10px", cursor: "pointer",
+                                          borderBottom: "1px solid var(--line)", background: on ? "var(--sky-soft)" : undefined }}>
+                  <input type="checkbox" checked={on} onChange={() => toggle(w.id)} style={{ width: 18, height: 18 }} />
+                  {w.photo_url
+                    ? <img src={w.photo_url} alt="" style={{ width: 36, height: 36, borderRadius: "50%", objectFit: "cover", border: "1px solid var(--line)" }} />
+                    : <span style={{ width: 36, height: 36, borderRadius: "50%", background: "#eef2f5", color: "#9fb0bc", display: "inline-flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>{w.full_name?.[0] || "?"}</span>}
+                  <span style={{ flex: 1 }}><b>{w.emp_no}</b> {w.full_name}<span style={{ color: "var(--muted)", fontSize: 12 }}>{w.category ? ` · ${w.category}` : ""}</span></span>
+                </label>
+              );
+            })}
+            {workers.length > 0 && shown.length === 0 && <div style={{ padding: 10, color: "var(--muted)", fontSize: 13 }}>Nobody matches "{q}".</div>}
+          </div>
+          <div style={{ fontSize: 12.5, color: ticked.size ? "var(--ink)" : "var(--muted)" }}>
+            {ticked.size === 0 ? "Nobody ticked yet." : <><b>{ticked.size} ticked:</b> {chosen.map((w) => `${w.emp_no} ${w.full_name}`).join(", ")}{ticked.size > 1 && " — each gets his own fine for the PM to decide"}</>}
+          </div>
+        </div>
         <label style={field}>{label("Offence")}
           <select style={inputStyle} value={f.offence} onChange={(e) => pickOffence(e.target.value)}>
             <option value="">Other — describe below</option>
@@ -94,7 +120,8 @@ function FineForm({ site, sites, offences, onSaved, onCancel }) {
       </div>
       {error && <p style={{ color: "var(--red-fg)", fontSize: 13 }}>{error}</p>}
       <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center" }}>
-        <Btn type="submit" disabled={busy || !f.employee || !f.amount}>{busy ? "Saving…" : "Record fine"}</Btn>
+        <Btn type="submit" disabled={busy || ticked.size === 0 || !f.amount}>
+          {busy ? "Saving…" : ticked.size > 1 ? `Record ${ticked.size} fines` : "Record fine"}</Btn>
         <Btn type="button" variant="secondary" onClick={onCancel}>Cancel</Btn>
         <span style={{ fontSize: 12, color: "var(--muted)" }}>Goes to the site PM to approve. Approved fines are deducted on that month's payroll.</span>
       </div>
@@ -192,7 +219,7 @@ export default function FinesPanel({ site, sites, me, openId }) {
         {canRecord && !adding && <Btn onClick={() => setAdding(true)}>+ Record a fine</Btn>}
       </div>
       {adding && <div style={{ marginTop: 12 }}><FineForm site={site} sites={site ? null : sites} offences={offences}
-                    onSaved={(f) => { setAdding(false); setRows((rs) => [f, ...(rs || [])]); setOpen(f.id); }} onCancel={() => setAdding(false)} /></div>}
+                    onSaved={(made) => { setAdding(false); setRows((rs) => [...made, ...(rs || [])]); setOpen(made.length === 1 ? made[0].id : null); }} onCancel={() => setAdding(false)} /></div>}
       <div style={{ display: "flex", gap: 8, margin: "12px 0", flexWrap: "wrap" }}>
         <select style={{ ...inputStyle, width: 170 }} value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>

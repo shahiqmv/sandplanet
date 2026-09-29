@@ -68,13 +68,39 @@ class FineTests(TestCase):
     def test_site_team_records_and_it_waits_for_the_pm(self):
         r = self.record()
         self.assertEqual(r.status_code, 201, r.data)
-        self.assertEqual(r.data["status"], "PENDING")
-        self.assertTrue(r.data["ref"].startswith("FIN-FNS-"))
-        self.assertEqual(r.data["category"], "SAFETY")
+        f = r.data["results"][0]
+        self.assertEqual(f["status"], "PENDING")
+        self.assertTrue(f["ref"].startswith("FIN-FNS-"))
+        self.assertEqual(f["category"], "SAFETY")
         tasks = self.as_(self.pm).get("/api/v1/approvals/pending").data
         items = [i for g in tasks["groups"] for i in g["items"]
                  if i["doc_type"] == "FINE"]
-        self.assertEqual([i["ref"] for i in items], [r.data["ref"]])
+        self.assertEqual([i["ref"] for i in items], [f["ref"]])
+
+    def test_several_men_ticked_get_a_fine_each(self):
+        two = Employee.objects.create(
+            emp_no="EMP-7202", full_name="Second Worker", basic_pay=6000,
+            currency="MVR", join_date=date(2026, 1, 1))
+        EmployeeSiteAllocation.objects.create(employee=two, site=self.site,
+                                              from_date=date(2026, 1, 1))
+        r = self.as_(self.sa).post("/api/v1/fines", {
+            "site": self.site.id, "employees": [self.emp.id, two.id],
+            "violation_date": BREACH.isoformat(), "offence": self.helmet.id,
+            "amount": "100", "description": "Both without helmets"},
+            format="multipart")
+        self.assertEqual(r.status_code, 201, r.data)
+        self.assertEqual([x["emp_no"] for x in r.data["results"]],
+                         ["EMP-7201", "EMP-7202"])
+        self.assertEqual(len({x["ref"] for x in r.data["results"]}), 2)
+        # One man not at the site → nothing is recorded for either
+        stranger = Employee.objects.create(emp_no="EMP-7203",
+                                           full_name="Elsewhere", basic_pay=1)
+        r = self.as_(self.sa).post("/api/v1/fines", {
+            "site": self.site.id, "employees": [self.emp.id, stranger.id],
+            "violation_date": BREACH.isoformat(), "amount": "50",
+            "category": "OTHER", "description": "x"}, format="multipart")
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(WorkerFine.objects.count(), 2)
 
     def test_engineer_can_record_too(self):
         self.assertEqual(self.record(self.se).status_code, 201)
@@ -100,18 +126,18 @@ class FineTests(TestCase):
     # ---- deciding ---------------------------------------------------------
 
     def test_only_the_sites_pm_decides_never_the_recorder(self):
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.assertEqual(self.as_(self.sa).post(f"/api/v1/fines/{fid}/approve").status_code, 400)
         self.assertEqual(self.as_(self.pm2).post(f"/api/v1/fines/{fid}/approve").status_code, 404)
         r = self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
         self.assertEqual(r.status_code, 200, r.data)
         self.assertEqual(r.data["status"], "APPROVED")
-        pm_fid = self.record(self.pm).data["id"]
+        pm_fid = self.record(self.pm).data["results"][0]["id"]
         self.assertIn("never the person",
                       self.as_(self.pm).post(f"/api/v1/fines/{pm_fid}/approve").data["detail"])
 
     def test_reject_needs_a_reason(self):
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.assertEqual(self.as_(self.pm).post(f"/api/v1/fines/{fid}/reject").status_code, 400)
         r = self.as_(self.pm).post(f"/api/v1/fines/{fid}/reject", {"note": "Had a helmet"})
         self.assertEqual(r.data["status"], "REJECTED")
@@ -119,7 +145,7 @@ class FineTests(TestCase):
     # ---- payroll ----------------------------------------------------------
 
     def test_approved_fine_is_the_payroll_penalty(self):
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.record(amount="50", offence="", category="DISCIPLINARY",
                     description="Late back from break")   # still pending
         self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
@@ -130,7 +156,7 @@ class FineTests(TestCase):
 
     def test_approval_reaches_a_draft_run_at_once(self):
         run = self.make_run()
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
         self.assertEqual(run.lines.get(employee=self.emp).penalty, Decimal("100"))
         self.as_(self.pm).post(f"/api/v1/fines/{fid}/cancel", {"reason": "Appeal upheld"})
@@ -139,7 +165,7 @@ class FineTests(TestCase):
     def test_a_run_already_signed_off_is_left_alone(self):
         run = self.make_run()
         PayrollRun.objects.filter(pk=run.pk).update(status="PD_REVIEW")
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         r = self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
         nxt = (Y + 1, 1) if M == 12 else (Y, M + 1)
         f = WorkerFine.objects.get(pk=fid)
@@ -159,7 +185,7 @@ class FineTests(TestCase):
         self.assertEqual(line.penalty, Decimal("0"))
 
     def test_lock_spends_the_fine_and_refresh_keeps_it(self):
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
         run = self.make_run()
         payroll.refresh_run(run, self.hr)
@@ -173,7 +199,7 @@ class FineTests(TestCase):
         self.assertEqual(r.status_code, 400)
 
     def test_a_man_not_on_the_run_carries_to_next_month(self):
-        fid = self.record().data["id"]
+        fid = self.record().data["results"][0]["id"]
         self.as_(self.pm).post(f"/api/v1/fines/{fid}/approve")
         run = self.make_run()
         run.lines.filter(employee=self.emp).delete()     # moved away
