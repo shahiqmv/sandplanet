@@ -90,8 +90,19 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
   // (PD) gate at SUBMITTED — no PM (owner 2026-08-08).
   const canPmApprove = st === "SUBMITTED" && pr.origin === "SITE"
     && (isPmHere || isAdmin);
+  // ...and any other Head-Office request still at SUBMITTED is the
+  // Director's too: one over the document limit with no bill waits there for
+  // the Director to agree to pay without one. The server allowed it and My
+  // Tasks listed it, but this button was missing, so the Director opened the
+  // request and had nothing to press (owner 2026-09-30).
+  // Nobody approves their own no-bill request, and only an Admin may approve
+  // their own otherwise — the server refuses it, so don't offer it.
+  const ownHo = st === "SUBMITTED" && isRaiser
+    && (pr.needs_doc_override || !isAdmin);
   const canDirApprove = ((st === "PM_APPROVED")
-    || (st === "SUBMITTED" && pr.origin === "HR")) && (isDirector || isAdmin);
+    || (st === "SUBMITTED" && pr.origin !== "SITE" && !ownHo))
+    && (isDirector || isAdmin);
+  const noBill = pr.needs_doc_override && (canDirApprove || canPmApprove);
   // A Director-approved PYR is authorised on a Payment Voucher (M6d), not
   // here — Finance batches it and a signatory approves the batch.
   const awaitingVoucher = st === "DIRECTOR_APPROVED";
@@ -151,7 +162,10 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
             ["Purpose", pr.purpose],
             ["Supporting doc", pr.has_supporting_doc
               ? `Yes (${evidence.length} attached)`
-              : `No — ${pr.no_doc_reason || "(no reason)"}`],
+              : `No — ${pr.no_doc_reason || "(no reason)"}`
+                + (pr.override_by
+                  ? ` · paying without a bill approved by ${pr.override_by}`
+                  : "")],
             ...(pr.amount_paid != null
               ? [["Amount paid",
                   `${pr.currency || "MVR"} ${money(pr.amount_paid)}`
@@ -306,15 +320,31 @@ export default function PaymentRequestView({ doc, me, onClose, onChanged }) {
         </div>
       )}
 
+      {noBill && (
+        <div style={{ marginTop: 14, padding: "10px 14px", borderRadius: 8,
+                      border: "1px solid var(--amber-fg)",
+                      background: "var(--amber-bg, #fff4e0)", fontSize: 13.5 }}>
+          <strong>No supporting document.</strong> This request is over the
+          document limit and has no bill attached. Approving it agrees to pay
+          without one, and records you as having given that override.
+          {pr.no_doc_reason && (
+            <div style={{ marginTop: 4 }}>
+              Reason given: <em>{pr.no_doc_reason}</em></div>
+          )}
+        </div>
+      )}
       {/* Action bar */}
       <div style={{ marginTop: 14, display: "flex", gap: 8,
                     flexWrap: "wrap" }}>
         {canSubmit && <Btn variant="primary" onClick={() => act("submit")}
                            disabled={busy}>Submit</Btn>}
         {canPmApprove && <Btn variant="navy" onClick={() => act("approve")}
-                              disabled={busy}>PM approve</Btn>}
+                              disabled={busy}>
+          {noBill ? "PM approve — pay without a bill" : "PM approve"}</Btn>}
         {canDirApprove && <Btn variant="navy" onClick={() => act("approve")}
-                               disabled={busy}>Director approve</Btn>}
+                               disabled={busy}>
+          {noBill ? "Director approve — pay without a bill"
+            : "Director approve"}</Btn>}
         {awaitingVoucher && (
           <span className="text-sm text-slate-500">
             Awaiting a payment voucher — Finance batches this for a

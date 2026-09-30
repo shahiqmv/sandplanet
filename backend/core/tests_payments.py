@@ -245,11 +245,45 @@ class PyrSupportingDocTests(PyrBase):
         self.client.force_authenticate(self.director)
         queue = self.client.get("/api/v1/approvals/pending").data["groups"]
         self.assertTrue(any(i["ref"] == ref for g in queue for i in g["items"]))
+        # the Director's screen is told this approval is the override
+        view = self.client.get(f"/api/v1/documents/{ref}").data
+        self.assertTrue(view["payment_request"]["needs_doc_override"])
         r = self.act(ref, "approve", self.director)
         self.assertEqual(r.status_code, 200, r.data)
         doc = Document.objects.get(ref=ref)
         self.assertEqual((doc.status, doc.payment_request.override_by_id),
                          ("DIRECTOR_APPROVED", self.director.id))
+        view = self.client.get(f"/api/v1/documents/{ref}").data
+        self.assertFalse(view["payment_request"]["needs_doc_override"])
+        self.assertEqual(view["payment_request"]["override_by"],
+                         self.director.full_name)
+
+    def test_an_old_head_office_request_is_not_called_a_no_bill_one(self):
+        """PYR-MLE-075/083 (owner 2026-09-30): submitted before Head-Office
+        requests cleared straight to a voucher, they sat at SUBMITTED unseen.
+        They belong in the Director's queue, but under their own heading —
+        one had a bill and the other was under the limit."""
+        from .models import Document
+        admin = make_user("adm2", User.Role.ADMIN)
+        ho = Site.objects.create(code="MLE", name="Head Office",
+                                 status=Site.Status.ACTIVE, is_head_office=True)
+        self.client.force_authenticate(admin)
+        ref = self.client.post("/api/v1/documents", {
+            "doc_type": "PYR", "site_id": ho.id, "payload": {},
+            "cost_head_id": self.head.id, "payee": "Rasel",
+            "payment_type": "DIRECT", "payment_method": "BANK",
+            "amount_requested": 10000, "purpose": "Loading",
+            "has_supporting_doc": True}, format="json").data["ref"]
+        Document.objects.filter(ref=ref).update(status="SUBMITTED")  # as it was left
+        self.client.force_authenticate(self.director)
+        groups = self.client.get("/api/v1/approvals/pending").data["groups"]
+        title = [g["title"] for g in groups
+                 if any(i["ref"] == ref for i in g["items"])]
+        self.assertEqual(title, ["To approve — Head Office payment requests"])
+        r = self.act(ref, "approve", self.director)
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual(Document.objects.get(ref=ref).status,
+                         "DIRECTOR_APPROVED")
 
     def test_no_doc_needs_reason(self):
         ref = self.raise_pyr(amount=1000, has_supporting_doc=False,

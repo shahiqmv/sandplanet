@@ -1031,16 +1031,32 @@ def pending_groups(user):
               "site_code": d.site.code if d.site_id else "HO",
               "project_code": None, "doc_date": d.doc_date, "status": d.status,
               "hint": "Director (PD) approval"} for d in hr_pyrs])
-        # A Head-Office request over the document threshold with no bill
-        # waits here for the Director to agree to pay it without one.
-        no_doc = base.filter(doc_type="PYR", status="SUBMITTED").exclude(
-            payment_request__origin__in=("SITE", "HR")).select_related("site")
+        # A Head-Office request waiting at SUBMITTED is the Director's. Two
+        # kinds, and the row must say which: one over the document threshold
+        # with no bill (approving agrees to pay without one), and an old
+        # request from before Head-Office requests cleared straight to a
+        # voucher. The first version of this band called them all "no
+        # supporting document", which two of the three were not
+        # (owner 2026-09-30).
+        from .payments import needs_doc_override
+        waiting = list(base.filter(doc_type="PYR", status="SUBMITTED").exclude(
+            payment_request__origin__in=("SITE", "HR")).select_related(
+            "site", "payment_request"))
+
+        def ho_row(d, hint):
+            return {"ref": d.ref, "doc_type": "PYR",
+                    "site_code": d.site.code if d.site_id else "HO",
+                    "project_code": None, "doc_date": d.doc_date,
+                    "status": d.status, "hint": hint}
         add("To approve — payment requests with no supporting document",
-            [{"ref": d.ref, "doc_type": "PYR",
-              "site_code": d.site.code if d.site_id else "HO",
-              "project_code": None, "doc_date": d.doc_date, "status": d.status,
-              "hint": "Over the document limit with no bill — approve to pay "
-                      "without one"} for d in no_doc])
+            [ho_row(d, "Over the document limit with no bill — approve to "
+                       "pay without one")
+             for d in waiting if needs_doc_override(d, d.payment_request)])
+        add("To approve — Head Office payment requests",
+            [ho_row(d, "Waiting for Director approval — approve to send it "
+                       "to Finance, or return it")
+             for d in waiting
+             if not needs_doc_override(d, d.payment_request)])
         # (Other non-site PYRs — CENTRAL/FINANCE/ONBOARDING/COMMERCIAL — clear
         # straight to Finance's voucher, no Director step, owner 2026-08-05.)
         add("To size & release — reviewed import requests (PMR)",

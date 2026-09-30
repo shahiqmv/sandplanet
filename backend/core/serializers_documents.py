@@ -211,6 +211,7 @@ class DocumentSerializer(serializers.ModelSerializer):
     def get_payment_request(self, obj):
         if obj.doc_type != "PYR" or not hasattr(obj, "payment_request"):
             return None
+        from .payments import needs_doc_override as _needs_doc_override
         pr = obj.payment_request
         return {
             "payment_type": pr.payment_type, "cost_head": pr.cost_head.name,
@@ -227,6 +228,11 @@ class DocumentSerializer(serializers.ModelSerializer):
             "is_urgent": pr.is_urgent, "urgent_reason": pr.urgent_reason,
             "has_supporting_doc": pr.has_supporting_doc,
             "no_doc_reason": pr.no_doc_reason,
+            # Over the limit with no bill and nobody has agreed to pay without
+            # one yet — the approver's screen says so before they press.
+            "needs_doc_override": _needs_doc_override(obj, pr),
+            "override_by": pr.override_by.full_name if pr.override_by_id
+            else None,
             "authorised_by": pr.authorised_by.full_name
             if pr.authorised_by else None,
             "authorised_at": pr.authorised_at,
