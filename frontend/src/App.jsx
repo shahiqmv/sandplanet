@@ -136,8 +136,10 @@ const NAV_GROUPS = [
            // Offers, before there is a project to put them on. A site PM
            // sees their own site's enquiries — they walked the job (owner
            // 2026-09-08).
+           // Finance and the signatory read them; neither prices one
+           // (owner 2026-09-30).
            ["tenders", "Tenders & Offers",
-            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"]],
+            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM", "FINANCE"]],
            // The all-sites gang register, for the people who do not work
            // from one site's dashboard (owner 2026-09-12).
            ["subcontractors", "Subcontractors",
@@ -1494,7 +1496,8 @@ export default function App() {
             <CostHeadsPage me={me} />
           )}
           {!docView && !openSite &&
-            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM"].includes(me.role) &&
+            ["QS", "DIRECTOR", "ADMIN", "SIGNATORY", "PM", "FINANCE"]
+              .includes(me.role) &&
             hoPage === "tenders" && (
             <ErrorBoundary label="Tenders & Offers">
               <TendersPage me={me} sites={sites} />

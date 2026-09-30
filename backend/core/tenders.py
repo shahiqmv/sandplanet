@@ -27,7 +27,9 @@ from .numbering import next_ref
 # for their own site — they are the ones who walked the job (owner
 # 2026-09-08).
 MANAGE_ROLES = ("QS", "DIRECTOR", "ADMIN")
-VIEW_ROLES = MANAGE_ROLES + ("SIGNATORY", "PM")
+# Finance reads tenders too, and writes nothing — the same footing as the
+# signatory, minus the signatory's clearance step (owner 2026-09-30).
+VIEW_ROLES = MANAGE_ROLES + ("SIGNATORY", "PM", "FINANCE")
 # Everything before the client has answered. Pricing, the approval chain, and
 # the spell after it has gone out.
 OPEN_STATUSES = ("DRAFT", "PD_REVIEW", "SIGNATORY_REVIEW", "CLEARED",

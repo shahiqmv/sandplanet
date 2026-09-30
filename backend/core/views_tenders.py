@@ -250,6 +250,11 @@ def tender_action(request, pk, action):
 # project rather than copied (owner 2026-09-08).
 
 def _boq_target(request, pk, writing):
+    # Reading needs the right to see tenders at all. visible_to() only
+    # narrows a PM to their sites, so without this any signed-in role could
+    # search tender workings (found 2026-09-30).
+    if not svc.can_view(request.user):
+        return None, Response({"detail": "Not permitted."}, status=403)
     t = svc.visible_to(request.user).filter(pk=pk).first()
     if t is None:
         return None, Response({"detail": "Tender not found."}, status=404)

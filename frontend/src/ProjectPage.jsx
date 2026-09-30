@@ -51,9 +51,11 @@ export default function ProjectPage({ projectId, me, onClose, onOpenDoc,
 
   const canEdit = ["PM", "ADMIN", "DIRECTOR", "QS"].includes(me.role);
   const canDelete = ["ADMIN", "DIRECTOR"].includes(me.role);
-  // The Director's PA sees the Commercial tab read-only (the panels inside
-  // stay non-editable for her role); editors are canEdit as before.
-  const canSeeCommercial = canEdit || me.role === "PA";
+  // The Director's PA, Finance and the signatory see the Commercial tab
+  // read-only: the panels inside offer no edit to their roles and the server
+  // refuses every write from them (owner 2026-09-30). Editors are canEdit.
+  const canSeeCommercial = canEdit
+    || ["PA", "FINANCE", "SIGNATORY"].includes(me.role);
 
   async function deleteProject() {
     if (!window.confirm(
