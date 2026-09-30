@@ -1,12 +1,13 @@
 """Receivables — invoice due dates, aging analysis, client statement."""
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
 
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
 
 from . import receivables
-from .models import ProgressClaim, Project, Site, User
+from .models import ClientReceipt, ProgressClaim, Project, Site, User
 from .tests import make_user
 
 
@@ -109,6 +110,42 @@ class ReceivablesTests(TestCase):
         self.client.force_authenticate(self.se)
         self.assertEqual(
             self.client.get("/api/v1/receivables/aging").status_code, 403)
+
+    def test_finance_opens_the_invoice_behind_a_ledger_line(self):
+        """Finance had the receivable but no way to open the invoice or its
+        PDF from Receivables or the statement (owner 2026-09-30)."""
+        c = self._make_invoice()
+        ClientReceipt.objects.create(project=self.project, claim=c,
+                                     amount=Decimal("1000"),
+                                     received_on=date.today(),
+                                     reference="TT-77")
+        self.client.force_authenticate(self.fin)
+        # the ledger and the statement both say where the invoice opens
+        row = self.client.get("/api/v1/receivables/invoices").data["invoices"][0]
+        self.assertEqual((row["claim_id"], row["pdf_url"], row["ipc_url"]),
+                         (c.id, f"/api/v1/claims/{c.id}/invoice.pdf",
+                          f"/api/v1/claims/{c.id}/ipa.pdf"))
+        st = self.client.get(
+            f"/api/v1/receivables/statement?site={self.site.id}").data
+        inv = [r for r in st["rows"] if r["kind"] == "INVOICE"][0]
+        self.assertEqual((inv["source"], inv["claim_id"]), ("CLAIM", c.id))
+        # the detail: the invoice's own figures and what has come in
+        d = self.client.get(f"/api/v1/receivables/invoices/claim/{c.id}").data
+        self.assertEqual(d["invoice_no"], c.invoice_no)
+        self.assertEqual((float(d["net_due"]), float(d["gst"]),
+                          float(d["amount"])), (2000.0, 160.0, 2160.0))
+        self.assertEqual((float(d["received"]), float(d["outstanding"])),
+                         (1000.0, 1160.0))
+        self.assertEqual([r["reference"] for r in d["receipts"]], ["TT-77"])
+        self.assertTrue(d["summary"])
+        # and Finance can pull the PDF itself (503 = no PDF engine here)
+        r = self.client.get(row["pdf_url"])
+        self.assertIn(r.status_code, (200, 503))
+        # a site role gets none of it
+        self.client.force_authenticate(self.se)
+        self.assertEqual(self.client.get(
+            f"/api/v1/receivables/invoices/claim/{c.id}").status_code, 403)
+        self.assertEqual(self.client.get(row["pdf_url"]).status_code, 403)
 
     def test_statement_requires_a_client(self):
         self.assertEqual(

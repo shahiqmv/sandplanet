@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { card, th, td, Btn, Chip, ghostButton } from "./ui.jsx";
+import { InvoiceModal, InvoiceRef, InvoicesTab } from "./ReceivableInvoice.jsx";
 
 const RECEIPT_ROLES = ["FINANCE", "ADMIN"];
 // Who may record a manual client invoice (mirrors manual_invoices.CREATE_ROLES).
@@ -17,7 +18,8 @@ const mono = { fontFamily: "var(--font-mono)" };
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString("en-GB",
   { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
-const TABS = [["aging", "Aging analysis"], ["statement", "Statement of account"],
+const TABS = [["aging", "Aging analysis"], ["invoices", "Invoices"],
+  ["statement", "Statement of account"],
   ["manual", "Manual invoices"], ["receipts", "Official receipts"]];
 
 // Client receivables — invoice due dates, aging buckets, per-client statements
@@ -25,6 +27,8 @@ const TABS = [["aging", "Aging analysis"], ["statement", "Statement of account"]
 // Director.
 export default function ReceivablesPage({ me }) {
   const [tab, setTab] = useState("aging");
+  // The invoice opened from any tab: {source: "claim" | "manual", id}
+  const [openInv, setOpenInv] = useState(null);
   const canReceipt = RECEIPT_ROLES.includes(me.role);
   const canManual = MANUAL_ROLES.includes(me.role);
   return (
@@ -45,17 +49,32 @@ export default function ReceivablesPage({ me }) {
               color: tab === k ? "#fff" : "var(--navy)" }}>{label}</button>
         ))}
       </div>
-      {tab === "aging" && <Aging />}
-      {tab === "statement" && <Statement />}
+      {tab === "aging" && <Aging onOpen={setOpenInv} />}
+      {tab === "invoices" && <InvoicesTab onOpen={setOpenInv} />}
+      {tab === "statement" && <Statement onOpen={setOpenInv} />}
+      {openInv && <InvoiceModal invoice={openInv}
+                                onClose={() => setOpenInv(null)} />}
       {tab === "manual" && <ManualInvoices canManual={canManual} />}
       {tab === "receipts" && <Receipts canReceipt={canReceipt} />}
     </div>
   );
 }
 
-function Aging() {
+function Aging({ onOpen }) {
   const [d, setD] = useState(null);
   const [error, setError] = useState(null);
+  // A client row opens to the invoices that make up its total.
+  const [openKey, setOpenKey] = useState(null);   // "siteId-currency"
+  const [inv, setInv] = useState({});             // siteId -> invoices
+  function toggle(c) {
+    const key = `${c.site_id}-${c.currency}`;
+    if (openKey === key) { setOpenKey(null); return; }
+    setOpenKey(key);
+    if (!inv[c.site_id])
+      api(`/receivables/invoices?site=${c.site_id}&outstanding=1`)
+        .then((r) => setInv((m) => ({ ...m, [c.site_id]: r.invoices })))
+        .catch((e) => setError(e.message));
+  }
   useEffect(() => {
     api("/receivables/aging").then(setD).catch((e) => setError(e.message));
   }, []);
@@ -97,9 +116,14 @@ function Aging() {
           </tr></thead>
           <tbody>
             {d.clients.map((c) => (
-              <tr key={`${c.site_id}-${c.currency}`}>
+              <Fragment key={`${c.site_id}-${c.currency}`}>
+              <tr style={{ cursor: "pointer" }} onClick={() => toggle(c)}
+                  title="Show this client's outstanding invoices">
                 <td style={td}>
-                  <div style={{ fontWeight: 600 }}>{c.client}</div>
+                  <div style={{ fontWeight: 600 }}>
+                    <span style={{ color: "var(--muted)", marginRight: 6 }}>
+                      {openKey === `${c.site_id}-${c.currency}` ? "▾" : "▸"}</span>
+                    {c.client}</div>
                   <div style={{ fontSize: 11, color: "var(--muted)" }}>
                     {c.site_code}
                     {c.currency && c.currency !== "USD" && (
@@ -115,6 +139,34 @@ function Aging() {
                 <td style={{ ...td, textAlign: "right", ...mono,
                              fontWeight: 700 }}>{money(c.total)}</td>
               </tr>
+              {openKey === `${c.site_id}-${c.currency}` && (
+                <tr>
+                  <td colSpan={cols.length + 3}
+                      style={{ ...td, background: "var(--paper)", padding: "6px 14px 10px 30px" }}>
+                    {!inv[c.site_id] ? "Loading…" : (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12.5 }}>
+                        <tbody>
+                          {inv[c.site_id].filter((r) => r.currency === c.currency).map((r) => (
+                            <tr key={`${r.source}-${r.claim_id || r.manual_invoice_id}`}>
+                              <td style={{ padding: "3px 8px 3px 0" }}>
+                                <InvoiceRef row={r} onOpen={onOpen} /></td>
+                              <td style={{ padding: "3px 8px" }}>{r.project_code}</td>
+                              <td style={{ padding: "3px 8px", whiteSpace: "nowrap" }}>
+                                due {fmtDate(r.due_date)}</td>
+                              <td style={{ padding: "3px 8px", color: r.days_overdue
+                                ? "var(--red-fg)" : "var(--muted)" }}>
+                                {r.days_overdue ? `${r.days_overdue} days overdue` : "not yet due"}</td>
+                              <td style={{ padding: "3px 0", textAlign: "right", ...mono, fontWeight: 600 }}>
+                                {money(r.outstanding)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </td>
+                </tr>
+              )}
+              </Fragment>
             ))}
           </tbody>
           <tfoot>
@@ -143,7 +195,7 @@ function Aging() {
   );
 }
 
-function Statement() {
+function Statement({ onOpen }) {
   const [clients, setClients] = useState(null);
   const [siteId, setSiteId] = useState("");
   const [from, setFrom] = useState("");
@@ -242,7 +294,10 @@ function Statement() {
                 {stmt.rows.map((r, i) => (
                   <tr key={i}>
                     <td style={td}>{fmtDate(r.date)}</td>
-                    <td style={{ ...td, ...mono }}>{r.ref || "—"}</td>
+                    <td style={{ ...td, ...mono }}>
+                      {r.kind === "INVOICE"
+                        ? <InvoiceRef row={r} label={r.ref} onOpen={onOpen} />
+                        : (r.ref || "—")}</td>
                     <td style={td}>{r.project_code}</td>
                     <td style={td}>{r.description}
                       {r.kind === "INVOICE" && <> <Chip tone="info">INV</Chip></>}

@@ -655,6 +655,8 @@ urlpatterns = [
     path("receivables/manual-invoices/<int:pk>/claims",
          receivables_api.manual_invoice_claims,
          name="rcv-manual-invoice-claims"),
+    path("receivables/invoices/<str:source>/<int:pk>",
+         receivables_api.invoice_detail, name="rcv-invoice-detail"),
     path("receivables/manual-invoices/<int:pk>.pdf",
          receivables_api.manual_invoice_pdf, name="rcv-manual-invoice-pdf"),
     # Official receipts + the company bank accounts credited

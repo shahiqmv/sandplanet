@@ -117,6 +117,25 @@ def _manual_invoices(site_id=None):
     return list(qs)
 
 
+def invoice_links(source, ident, manual=None):
+    """Where an invoice's documents open from. A claim's tax invoice and its
+    payment certificate are generated on demand; a Planet-issued manual
+    invoice likewise; a historical one only has whatever was scanned in.
+    Finance had the ledger line but no way to open the invoice behind it
+    (owner 2026-09-30)."""
+    if source == "CLAIM":
+        return {"pdf_url": f"/api/v1/claims/{ident}/invoice.pdf",
+                "ipc_url": f"/api/v1/claims/{ident}/ipa.pdf",
+                "attachment_url": None}
+    issued = manual is not None and manual.origin == "ISSUED"
+    return {"pdf_url": (f"/api/v1/receivables/manual-invoices/{ident}.pdf"
+                        if issued else None),
+            "ipc_url": None,
+            "attachment_url": (manual.attachment.url
+                               if manual is not None and manual.attachment
+                               else None)}
+
+
 def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
     """One row per tax invoice — from certified claims AND manual invoices —
     with amount / received / outstanding and its aging bucket relative to
@@ -129,7 +148,7 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
     rows = []
 
     def _add(source, ident, invoice_no, ref, claim_type, project, inv_date,
-             dd, amt, got, currency="USD"):
+             dd, amt, got, currency="USD", manual=None):
         out = amt - got
         if only_outstanding and out <= 0:
             return
@@ -148,6 +167,7 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
             "bucket": _bucket(overdue),
             "status": "PAID" if out <= 0 else (
                 "OVERDUE" if overdue > 0 else "CURRENT"),
+            **invoice_links(source, ident, manual),
         })
 
     for c in claims:
@@ -164,7 +184,8 @@ def invoice_rows(site_id=None, as_of=None, only_outstanding=False):
     for m in manual:
         _add("MANUAL", m.id, m.invoice_no, m.invoice_no, m.origin, m.project,
              m.invoice_date, m.effective_due_date, _q2(m.amount),
-             _q2(rm.get(m.id, ZERO)), currency=(m.currency or "USD"))
+             _q2(rm.get(m.id, ZERO)), currency=(m.currency or "USD"),
+             manual=m)
     rows.sort(key=lambda r: (r["due_date"], r["invoice_no"]))
     return rows
 
@@ -298,6 +319,8 @@ def client_statement(site, date_from=None, date_to=None):
                            f"({c.get_claim_type_display()})",
             "due_date": due_date(c),
             "debit": invoiced_amount(c), "credit": ZERO,
+            "source": "CLAIM", "claim_id": c.id, "manual_invoice_id": None,
+            **invoice_links("CLAIM", c.id),
         })
     for m in manual:
         kind = ("Historical invoice" if m.origin == "HISTORICAL"
@@ -310,6 +333,8 @@ def client_statement(site, date_from=None, date_to=None):
                            + (f" ({m.description})" if m.description else ""),
             "due_date": m.effective_due_date,
             "debit": _q2(m.amount), "credit": ZERO,
+            "source": "MANUAL", "claim_id": None, "manual_invoice_id": m.id,
+            **invoice_links("MANUAL", m.id, m),
         })
     for rc in receipts:
         ref = rc.reference or (rc.claim.invoice_no if rc.claim else "") \
@@ -355,3 +380,92 @@ def client_statement(site, date_from=None, date_to=None):
         "opening": opening, "rows": rows,
         "billed": billed, "received": received, "closing": balance,
     }
+
+
+def invoice_detail(source, ident):
+    """Everything behind one receivable: what was billed and how it was
+    arrived at, what has been received against it, and its documents. For a
+    claim the figures are the ones printed on its tax invoice."""
+    as_of = _today()
+    if source == "CLAIM":
+        c = (ProgressClaim.objects.select_related("project", "project__site",
+                                                  "certified_by", "created_by")
+             .filter(pk=ident, status__in=["CERTIFIED", "PAID"])
+             .exclude(invoice_no="").first())
+        if c is None:
+            return None
+        from .commercial import invoice_pdf_context
+        ctx = invoice_pdf_context(c)
+        project, amount = c.project, invoiced_amount(c)
+        inv_date, dd = invoice_date(c), due_date(c)
+        receipts = ClientReceipt.objects.filter(claim=c)
+        body = {
+            "invoice_no": c.invoice_no, "claim_ref": c.ref,
+            "ipc_ref": c.ipc_ref, "type_label": ctx["type_label"],
+            "currency": contract_currency(project),
+            "net_due": ctx["net_due"], "gst_pct": ctx["gst_pct"],
+            "gst": ctx["gst"], "total": ctx["total"],
+            "deductions": [{"label": d["label"], "amount": _q2(d["present"])}
+                           for d in ctx["deductions"]
+                           if not d.get("before_gst")],
+            "summary": ctx["summary"], "lines": [],
+            "description": "", "origin": "CLAIM",
+            "prepared_by": ctx["prepared_by"],
+            "certified_by": ctx["certified_name"],
+            "certified_at": c.certified_at,
+            "superseded_by": None,
+        }
+    else:
+        m = (ManualInvoice.objects.select_related("project", "project__site",
+                                                  "created_by",
+                                                  "superseded_by")
+             .filter(pk=ident).first())
+        if m is None:
+            return None
+        project, amount = m.project, _q2(m.amount)
+        inv_date, dd = m.invoice_date, m.effective_due_date
+        receipts = ClientReceipt.objects.filter(manual_invoice=m)
+        body = {
+            "invoice_no": m.invoice_no, "claim_ref": None, "ipc_ref": None,
+            "type_label": ("Historical invoice" if m.origin == "HISTORICAL"
+                           else "Tax invoice"),
+            "currency": m.currency or "USD",
+            "net_due": m.net_amount, "gst_pct": m.gst_pct,
+            "gst": m.gst_amount, "total": amount, "deductions": [],
+            "summary": None,
+            "lines": [{"description": ln.description, "quantity": ln.quantity,
+                       "unit_price": ln.unit_price, "amount": ln.amount}
+                      for ln in m.lines.all()],
+            "description": m.description, "origin": m.origin,
+            "prepared_by": m.created_by.full_name if m.created_by_id else "",
+            "certified_by": "", "certified_at": None,
+            "superseded_by": (m.superseded_by.ref if m.superseded_by_id
+                              else None),
+            "is_void": m.is_void,
+        }
+    rec = [{"date": r.received_on, "amount": _q2(r.amount),
+            "reference": r.reference,
+            "receipt_no": (r.official_receipt.receipt_no
+                           if r.official_receipt_id else ""),
+            "receipt_id": r.official_receipt_id}
+           for r in receipts.select_related("official_receipt")
+           .order_by("received_on", "id")]
+    got = sum((r["amount"] for r in rec), ZERO)
+    out = amount - got
+    overdue = (as_of - dd).days
+    site = project.site
+    body.update({
+        "source": source, "id": ident,
+        "project_id": project.id, "project_code": project.code,
+        "project_title": project.title, "site_code": site.code,
+        "client": (site.client_name.strip() if site.client_name.strip()
+                   else site.name),
+        "invoice_date": inv_date, "due_date": dd,
+        "amount": amount, "received": got, "outstanding": out,
+        "days_overdue": max(overdue, 0) if out > 0 else 0,
+        "status": "PAID" if out <= 0 else (
+            "OVERDUE" if overdue > 0 else "CURRENT"),
+        "receipts": rec,
+        **invoice_links(source, ident, manual=None if source == "CLAIM" else m),
+    })
+    return body

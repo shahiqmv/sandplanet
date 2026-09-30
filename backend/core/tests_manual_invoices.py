@@ -35,6 +35,38 @@ class ManualInvoiceTests(TestCase):
         return self.client.post("/api/v1/receivables/manual-invoices", body,
                                 format="json")
 
+    # ---- opening one from Receivables (owner 2026-09-30) ------------------
+    def test_a_manual_invoice_opens_with_its_lines_and_documents(self):
+        hist = self._create(gst_pct="8").data
+        issued = self._create(origin="ISSUED", invoice_no="").data
+        self.client.force_authenticate(self.fin)
+        d = self.client.get(
+            f"/api/v1/receivables/invoices/manual/{hist['id']}").data
+        self.assertEqual((d["invoice_no"], d["type_label"]),
+                         ("CL-2024-07", "Historical invoice"))
+        self.assertEqual((float(d["net_due"]), float(d["gst"]),
+                          float(d["amount"]), float(d["outstanding"])),
+                         (5000.0, 400.0, 5400.0, 5400.0))
+        self.assertEqual([ln["description"] for ln in d["lines"]],
+                         ["Value of work"])
+        # nothing was scanned in, and a historical invoice is not generated
+        self.assertIsNone(d["pdf_url"])
+        self.assertIsNone(d["attachment_url"])
+        d2 = self.client.get(
+            f"/api/v1/receivables/invoices/manual/{issued['id']}").data
+        self.assertEqual(
+            d2["pdf_url"],
+            f"/api/v1/receivables/manual-invoices/{issued['id']}.pdf")
+        self.assertIn(self.client.get(d2["pdf_url"]).status_code, (200, 503))
+        # the ledger row carries the same link
+        rows = self.client.get("/api/v1/receivables/invoices").data["invoices"]
+        by = {r["manual_invoice_id"]: r for r in rows}
+        self.assertEqual(by[issued["id"]]["pdf_url"], d2["pdf_url"])
+        self.assertIsNone(by[hist["id"]]["pdf_url"])
+        self.client.force_authenticate(self.se)
+        self.assertEqual(self.client.get(
+            f"/api/v1/receivables/invoices/manual/{hist['id']}").status_code, 403)
+
     # ---- creation --------------------------------------------------------
     def test_historical_uses_client_number_and_back_dates(self):
         r = self._create()

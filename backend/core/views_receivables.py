@@ -78,6 +78,21 @@ def invoices(request):
         site_id=site_id, as_of=as_of, only_outstanding=outstanding)})
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def invoice_detail(request, source, pk):
+    """One receivable opened up: its figures, receipts and documents."""
+    if (bad := _gate(request)):
+        return bad
+    source = source.upper()
+    if source not in ("CLAIM", "MANUAL"):
+        return Response({"detail": "Not found."}, status=404)
+    d = receivables.invoice_detail(source, pk)
+    if d is None:
+        return Response({"detail": "Not found."}, status=404)
+    return Response(d)
+
+
 def _get_site(request):
     sid = request.query_params.get("site")
     if not sid or not sid.isdigit():
