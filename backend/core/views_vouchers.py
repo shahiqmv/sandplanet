@@ -1,7 +1,7 @@
 """Payment Voucher API (M6d). Finance builds and submits vouchers; a
 signatory approves or queries them."""
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db.models import Count
 
@@ -581,6 +581,67 @@ def payment_voucher_pdf(request, ref):
     resp = HttpResponse(pdf_bytes, content_type="application/pdf")
     resp["Content-Disposition"] = f'inline; filename="{pv.ref}.pdf"'
     return resp
+
+
+BATCH_APPROVE_MAX = 100
+
+
+@api_view(["POST"])
+def payment_vouchers_batch_approve(request):
+    """The signatory approves several vouchers in one go (owner 2026-09-30:
+    ninety-six were waiting, approved one modal at a time).
+
+    A batch approves every line — a voucher with a line to query is opened
+    and decided on its own, as before. Each voucher is approved in its own
+    transaction, so one that cannot go through does not hold the rest back,
+    and each is checked against the total the signatory was looking at: a
+    voucher that changed since their screen loaded is refused, not approved
+    blind."""
+    user = request.user
+    if user.role not in ("SIGNATORY", "ADMIN"):
+        return Response({"detail": "Only a signatory approves a voucher — "
+                                   "Finance prepares it."}, status=403)
+    items = request.data.get("items") or []
+    if not isinstance(items, list) or not items:
+        return Response({"detail": "Tick at least one voucher."}, status=400)
+    if len(items) > BATCH_APPROVE_MAX:
+        return Response({"detail": f"Approve at most {BATCH_APPROVE_MAX} "
+                                   "vouchers at a time."}, status=400)
+    refs = [str(i.get("ref") or "") for i in items if isinstance(i, dict)]
+    if len(refs) != len(items) or len(set(refs)) != len(refs):
+        return Response({"detail": "The list of vouchers is not valid."},
+                        status=400)
+    found = {d.ref: d for d in Document.objects.filter(doc_type="PV",
+                                                       ref__in=refs)}
+    approved, failed = [], []
+    for it in items:
+        ref = str(it["ref"])
+        pv = found.get(ref)
+        if pv is None:
+            failed.append({"ref": ref, "detail": "Not found."})
+            continue
+        info = _voucher_info(pv)
+        try:
+            seen = Decimal(str(it.get("total")))
+        except (InvalidOperation, TypeError, ValueError):
+            seen = None
+        if (seen is None or seen != Decimal(str(info["total"]))
+                or it.get("lines") != len(info["lines"])):
+            failed.append({"ref": ref, "detail": "Changed since you loaded "
+                           "the list — open it and check."})
+            continue
+        err = vouchers.approve_voucher(pv, user, queried_ids=[],
+                                       note="")
+        if err:
+            failed.append({"ref": ref, "detail": err})
+        else:
+            approved.append(ref)
+    if approved:
+        audit("document", found[approved[0]].id, "PV_BATCH_APPROVED",
+              actor=user, detail={"count": len(approved),
+                                  "refs": approved[:BATCH_APPROVE_MAX],
+                                  "refused": len(failed)})
+    return Response({"approved": approved, "failed": failed})
 
 
 @api_view(["POST"])

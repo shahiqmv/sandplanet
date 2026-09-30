@@ -413,3 +413,66 @@ class VoucherListPerfTests(VoucherBase):
             self.client.post("/api/v1/payment-vouchers",
                              {"source_refs": []}, format="json").status_code,
             403)
+
+
+class VoucherBatchApproveTests(VoucherBase):
+    """The signatory ticks several vouchers and approves them together
+    (owner 2026-09-30). Every line is approved; a voucher that needs a line
+    queried is still opened and decided on its own."""
+
+    def _submitted(self, amount, payee):
+        src = self.director_approved_pyr(amount=amount, payee=payee)
+        r = self.create_voucher([src])
+        self.voucher_action(r.data["ref"], "submit", self.finance)
+        return r.data["ref"], src
+
+    def _batch(self, user, items):
+        self.client.force_authenticate(user)
+        return self.client.post("/api/v1/payment-vouchers/batch-approve",
+                                {"items": items}, format="json")
+
+    def test_signatory_approves_several_at_once(self):
+        (a, sa), (b, sb) = self._submitted(3000, "A"), self._submitted(1500, "B")
+        r = self._batch(self.signatory, [
+            {"ref": a, "total": "3000.00", "lines": 1},
+            {"ref": b, "total": "1500", "lines": 1}])
+        self.assertEqual(r.status_code, 200, r.data)
+        self.assertEqual((r.data["approved"], r.data["failed"]), ([a, b], []))
+        for pv, src, amt in ((a, sa, "3000"), (b, sb, "1500")):
+            self.assertEqual(Document.objects.get(ref=pv).status, "APPROVED")
+            doc = Document.objects.get(ref=src)
+            self.assertEqual(doc.status, "AUTHORISED")
+            self.assertEqual(costing.document_net(doc, state="COMMITTED"),
+                             Decimal(amt))
+        # each voucher carries its own approval record
+        self.assertEqual(Document.objects.get(ref=a).approvals.filter(
+            action="APPROVE", actor=self.signatory).count(), 1)
+
+    def test_only_a_signatory(self):
+        a, _ = self._submitted(3000, "A")
+        r = self._batch(self.finance, [{"ref": a, "total": "3000", "lines": 1}])
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(Document.objects.get(ref=a).status, "SUBMITTED")
+
+    def test_one_that_cannot_go_does_not_hold_the_rest(self):
+        (a, _), (b, _) = self._submitted(3000, "A"), self._submitted(1500, "B")
+        self.voucher_action(a, "approve", self.signatory)   # already done
+        r = self._batch(self.signatory, [
+            {"ref": a, "total": "3000", "lines": 1},
+            {"ref": b, "total": "1500", "lines": 1},
+            {"ref": "PV-999", "total": "1", "lines": 1}])
+        self.assertEqual(r.data["approved"], [b])
+        self.assertEqual([f["ref"] for f in r.data["failed"]], [a, "PV-999"])
+
+    def test_a_voucher_that_changed_since_the_list_loaded_is_refused(self):
+        a, _ = self._submitted(3000, "A")
+        r = self._batch(self.signatory, [{"ref": a, "total": "2500", "lines": 1}])
+        self.assertEqual(r.data["approved"], [])
+        self.assertIn("Changed since", r.data["failed"][0]["detail"])
+        self.assertEqual(Document.objects.get(ref=a).status, "SUBMITTED")
+
+    def test_empty_and_oversized_batches(self):
+        self.assertEqual(self._batch(self.signatory, []).status_code, 400)
+        self.assertEqual(self._batch(self.signatory, [
+            {"ref": f"PV-{i}", "total": "1", "lines": 1}
+            for i in range(101)]).status_code, 400)

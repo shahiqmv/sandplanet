@@ -40,6 +40,17 @@ function lineDetail(l) {
   return [l.payee, l.purpose].filter(Boolean).join(" · ");
 }
 
+// The same line on the signatory's batch card: WHO is paid comes first, since
+// they are deciding without opening the voucher (owner 2026-09-30).
+function cardDetail(l) {
+  if (l.doc_type === "PR")
+    return [l.payee, "Procurement"].filter(Boolean).join(" · ");
+  if (l.doc_type === "MILESTONE")
+    return [l.payee, `Overseas TT · ${l.milestone_label || l.purpose || ""}`]
+      .filter(Boolean).join(" · ");
+  return lineDetail(l);
+}
+
 // A stable pick key for an awaiting row (docs by ref, milestones by id)
 const awKey = (d) => d.kind === "MILESTONE" ? `M:${d.milestone_id}`
   : d.kind === "PAYABLE" ? `P:${d.payable_id}` : d.ref;
@@ -66,6 +77,10 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
     me.role === "SIGNATORY" ? "SUBMITTED" : isFinance ? "DRAFT" : "all");
   const [counts, setCounts] = useState({});
   const [queries, setQueries] = useState({});    // line_id -> bool
+  // Batch approval (owner 2026-09-30): the signatory ticks vouchers on the
+  // "Awaiting signatory" tab and approves them together.
+  const [ticked, setTicked] = useState({});      // PV ref -> bool
+  const [batchResult, setBatchResult] = useState(null);
   const [note, setNote] = useState("");
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -82,7 +97,9 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const [companyFx, setCompanyFx] = useState(null);
   const [paySlip, setPaySlip] = useState(null);
 
-  const VPAGE = 25;
+  // The signatory's queue loads a full batch at a time, so "select all"
+  // covers what is waiting rather than the first screenful.
+  const VPAGE = isSignatory && tab === "SUBMITTED" ? 100 : 25;
   // Load a page of vouchers, filtered server-side by the status tab + ref
   // search. reset=true restarts at the top; otherwise it appends (Load more).
   const loadVouchers = (reset = true) => {
@@ -108,7 +125,7 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   };
   useEffect(reload, []);
   // Refetch from the top whenever the status tab changes.
-  useEffect(() => { loadVouchers(true); }, [tab]);   // eslint-disable-line
+  useEffect(() => { loadVouchers(true); setTicked({}); }, [tab]);   // eslint-disable-line
   // The company MVR/USD rate: prefills the field and calibrates the warning.
   useEffect(() => {
     api("/fx/usd-rate").then((r) => {
@@ -152,6 +169,18 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
   const reqAwaiting = awaiting.filter((d) => d.kind !== "PAYABLE");
   const payables = awaiting.filter((d) => d.kind === "PAYABLE");
   const shown = vouchers;               // already filtered server-side
+  const batchMode = isSignatory && tab === "SUBMITTED";
+  const approvable = batchMode
+    ? shown.filter((pv) => pv.status === "SUBMITTED" && !pv.is_void) : [];
+  const tickedPvs = approvable.filter((pv) => ticked[pv.ref]);
+  const tickedTotals = tickedPvs.reduce((acc, pv) => {
+    acc[pv.currency] = (acc[pv.currency] || 0) + Number(pv.total || 0);
+    return acc;
+  }, {});
+  const totalsText = Object.entries(tickedTotals)
+    .map(([c, v]) => cur(v, c)).join(" + ");
+  const allTicked = approvable.length > 0
+    && tickedPvs.length === approvable.length;
 
   const run = async (fn) => {
     setBusy(true); setError(null);
@@ -185,6 +214,23 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
               { method: "POST", body: body || {} });
     setOpen(null); setQueries({}); setNote(""); reload();
   });
+
+  const approveTicked = () => {
+    if (!tickedPvs.length) return;
+    if (!window.confirm(
+      `Approve ${tickedPvs.length} voucher${tickedPvs.length === 1 ? "" : "s"}`
+      + ` — ${totalsText}?\n\nEvery line on them is approved. To query a `
+      + "line, open that voucher on its own instead.")) return;
+    run(async () => {
+      const r = await api("/payment-vouchers/batch-approve", {
+        method: "POST",
+        body: { items: tickedPvs.map((pv) => ({
+          ref: pv.ref, total: pv.total, lines: pv.lines.length })) } });
+      setBatchResult(r);
+      setTicked({});
+      reload();
+    });
+  };
 
   const approve = (pv) => {
     const queried_ids = pv.lines
@@ -744,6 +790,65 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
           </div>
         </div>
 
+        {batchResult && (
+          <div style={{ border: "1px solid var(--line)", borderRadius: 8,
+                        padding: "10px 14px", marginBottom: 12, fontSize: 13.5,
+                        background: batchResult.failed.length
+                          ? "var(--amber-bg, #fff4e0)" : "var(--green-bg)" }}>
+            <strong>{batchResult.approved.length} voucher
+              {batchResult.approved.length === 1 ? "" : "s"} approved.</strong>
+            {batchResult.failed.length > 0 && (
+              <>
+                {" "}{batchResult.failed.length} could not be approved and
+                {batchResult.failed.length === 1 ? " is" : " are"} still waiting:
+                <ul style={{ margin: "6px 0 0", paddingLeft: 18 }}>
+                  {batchResult.failed.map((f) => (
+                    <li key={f.ref}><strong>{f.ref}</strong> — {f.detail}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <button onClick={() => setBatchResult(null)}
+                    style={{ ...ghostButton, padding: "2px 10px", fontSize: 12,
+                             marginLeft: 10 }}>Dismiss</button>
+          </div>
+        )}
+        {batchMode && approvable.length > 0 && (
+          <div style={{ position: "sticky", top: 62, zIndex: 5,
+                        display: "flex", alignItems: "center", gap: 12,
+                        flexWrap: "wrap", padding: "10px 14px",
+                        marginBottom: 12, borderRadius: 8,
+                        border: "1px solid var(--sky)",
+                        background: "var(--sky-soft)" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8,
+                            fontSize: 13.5, fontWeight: 600,
+                            cursor: "pointer" }}>
+              <input type="checkbox" checked={allTicked}
+                     style={{ width: 18, height: 18 }}
+                     onChange={() => setTicked(allTicked ? {}
+                       : Object.fromEntries(approvable.map(
+                         (pv) => [pv.ref, true])))} />
+              Select all {approvable.length}
+              {vHasMore ? ` shown (of ${vTotal})` : ""}
+            </label>
+            <span style={{ fontSize: 13.5 }}>
+              {tickedPvs.length === 0
+                ? "Tick the vouchers to approve together."
+                : <><strong>{tickedPvs.length} ticked</strong> · <span
+                    style={mono}>{totalsText}</span></>}
+            </span>
+            <span style={{ marginLeft: "auto", display: "flex", gap: 10,
+                           alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: "var(--muted)" }}>
+                To query a line, open that voucher on its own.</span>
+              <Btn disabled={busy || tickedPvs.length === 0}
+                   onClick={approveTicked}>
+                {busy ? "Approving…"
+                  : `Approve ${tickedPvs.length || ""} selected`}</Btn>
+            </span>
+          </div>
+        )}
+
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
           {shown.map((pv) => {
             const { canApprove, canPay } = perms(pv);
@@ -760,8 +865,17 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                               padding: "12px 16px",
                               background: "transparent" }}
                      onClick={() => openVoucher(pv.ref)}>
-                  <span style={{ color: "var(--muted)", fontSize: 13,
-                                 width: 14 }} aria-hidden="true">›</span>
+                  {batchMode && canApprove ? (
+                    <input type="checkbox" checked={!!ticked[pv.ref]}
+                           aria-label={`Select ${pv.ref}`}
+                           onClick={(e) => e.stopPropagation()}
+                           onChange={() => setTicked(
+                             { ...ticked, [pv.ref]: !ticked[pv.ref] })}
+                           style={{ width: 18, height: 18 }} />
+                  ) : (
+                    <span style={{ color: "var(--muted)", fontSize: 13,
+                                   width: 14 }} aria-hidden="true">›</span>
+                  )}
                   <RefStamp>{pv.ref}</RefStamp>
                   <StatusChip status={pv.status} />
                   {pv.status === "APPROVED" && (
@@ -826,6 +940,39 @@ export default function PaymentVouchersPage({ me, onOpenDoc, openRef }) {
                      onClick={(e) => e.stopPropagation()}
                      style={{ marginLeft: "auto" }}>📄 PDF</a>
                 </div>
+                {/* What the voucher pays, on the card: a signatory ticking a
+                    batch must see who and what for without opening each one
+                    (owner 2026-09-30). */}
+                {batchMode && canApprove && (
+                  <div style={{ padding: "0 16px 12px 40px", fontSize: 13,
+                                cursor: "pointer" }}
+                       onClick={() => openVoucher(pv.ref)}>
+                    {pv.lines.slice(0, 4).map((l) => (
+                      <div key={l.line_id} style={{ display: "flex", gap: 10,
+                        alignItems: "baseline", padding: "2px 0" }}>
+                        <span style={{ ...mono, fontSize: 12,
+                                       color: "var(--muted)",
+                                       whiteSpace: "nowrap" }}>
+                          {l.ref} · {l.site_code}</span>
+                        <span style={{ flex: 1 }}>{cardDetail(l)}
+                          {l.doc_type === "PYR" && l.has_supporting_doc === false
+                            && <span style={{ color: "var(--amber-fg)",
+                                 fontWeight: 600 }}> · no supporting document</span>}
+                        </span>
+                        {pv.lines.length > 1 && (
+                          <span style={{ ...mono, whiteSpace: "nowrap" }}>
+                            {cur(l.amount, l.currency)}</span>
+                        )}
+                      </div>
+                    ))}
+                    {pv.lines.length > 4 && (
+                      <div style={{ color: "var(--muted)", fontSize: 12.5 }}>
+                        + {pv.lines.length - 4} more line
+                        {pv.lines.length - 4 === 1 ? "" : "s"} — open to see all
+                      </div>
+                    )}
+                  </div>
+                )}
 
               </div>
             );
