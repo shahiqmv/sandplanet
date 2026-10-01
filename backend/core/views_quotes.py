@@ -361,6 +361,46 @@ def pr_coverage_data(pr):
     return rows
 
 
+@api_view(["GET", "POST"])
+def pr_withdraw_award(request, ref):
+    """Take awarded items back off one vendor of an approved PR.
+
+    GET  ?line_id=<vendor row>  → that vendor's awarded items, or why not
+    POST {line_id, quote_line_ids, reason}"""
+    from . import procurement
+    pr, err = _get_pr(request, ref)
+    if err:
+        return err
+    if request.user.role not in ("HO_PURCHASING", "ADMIN", "DIRECTOR"):
+        return Response({"detail": "Purchasing or the Director withdraws an "
+                                   "award."}, status=403)
+    src = request.data if request.method == "POST" else request.GET
+    try:
+        row = pr.current_revision.lines.get(pk=src.get("line_id"))
+    except (DocumentLine.DoesNotExist, ValueError, TypeError):
+        return Response({"detail": "line_id must be a vendor row of this "
+                                   "request."}, status=400)
+    if request.method == "GET":
+        block = procurement.award_withdrawal_block(pr, row)
+        q = procurement.award_quotation(pr, row)
+        return Response({
+            "vendor": row.vendor, "block": block,
+            "credit": "credit" in ((q.payment_terms if q else "") or "").lower(),
+            "gst_applicable": bool(q and q.gst_applicable),
+            "lines": [] if (block or q is None) else [
+                {"id": ln.id, "line_no": ln.line_no,
+                 "supplier_desc": ln.supplier_desc, "unit": ln.unit,
+                 "qty": ln.qty, "rate": ln.rate, "amount": ln.amount}
+                for ln in q.lines.filter(awarded=True).order_by("line_no")],
+        })
+    out, msg = procurement.withdraw_award(
+        pr, row, request.data.get("quote_line_ids") or [],
+        request.data.get("reason"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(out)
+
+
 @api_view(["POST"])
 @parser_classes([MultiPartParser, FormParser])
 def pr_vendor_payment(request, ref):

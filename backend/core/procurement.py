@@ -278,6 +278,162 @@ def release_pr_lines(pr, line_ids, actor):
     return len(ids), None
 
 
+WITHDRAW_STATUSES = ("APPROVED", "AUTHORISED", "PAYMENT_PROCESSING")
+
+
+def award_quotation(pr, row):
+    """The quotation behind a PR vendor row — its own quote where a supplier
+    quoted twice, else the supplier's only one."""
+    qs = pr.quotations.filter(supplier__name=(row.vendor or "").strip())
+    return (qs.filter(quote_ref=row.quotation_ref or "").first()
+            or (qs.first() if qs.count() == 1 else None))
+
+
+def award_withdrawal_block(pr, row):
+    """Why this vendor row's award cannot be reduced now — or None.
+
+    Only money nobody has committed to yet can simply be taken back: no
+    order standing for the vendor, nothing paid, nothing on the cost ledger,
+    and (for cash) the PR not sitting on a payment voucher at a fixed
+    amount. Past any of those the correction is a different one — an order
+    amendment, a voided voucher."""
+    from .models import PaymentVoucherLine
+    if pr.is_void or pr.status in ("CANCELLED", "REJECTED"):
+        return "This request is no longer live."
+    if pr.status in ("DRAFT", "SUBMITTED"):
+        return ("This request is not approved yet — edit the quotation "
+                "instead.")
+    if (row.amount_cash or 0) + (row.amount_credit or 0) <= 0:
+        return "Nothing is awarded to this vendor."
+    if (row.action_taken or "").strip():
+        return "A payment is already recorded against this vendor."
+    if (row.po_ref or "").strip():
+        return (f"{row.po_ref.strip()} stands for this vendor. Return and "
+                "cancel that order first — or, if it has been issued, amend "
+                "the order itself.")
+    if pr.status not in WITHDRAW_STATUSES:
+        return "This request is already settled."
+    if _already_committed(pr, row) > 0:
+        return ("This vendor's amount is already committed on the cost "
+                "ledger. Have Finance withdraw the authorisation first.")
+    if (row.amount_cash or 0) > 0:
+        live = (PaymentVoucherLine.objects
+                .filter(source_document=pr, status__in=("INCLUDED", "APPROVED"),
+                        voucher__is_void=False)
+                .exclude(voucher__status="CANCELLED")
+                .select_related("voucher").first())
+        if live is not None:
+            return (f"This request's cash is on {live.voucher.ref}. Void "
+                    "that voucher first, then withdraw the items.")
+    if award_quotation(pr, row) is None:
+        return ("This row has no quotation behind it — it was entered on the "
+                "request directly.")
+    return None
+
+
+def withdraw_award(pr, row, quote_line_ids, reason, actor):
+    """Take awarded items back off one vendor on an approved PR.
+
+    The case (owner 2026-10-01, PR-259): a fault found in one line of a
+    vendor's quotation after the Director had awarded it and the other
+    vendors' orders had gone out. The order was cancelled, but the request
+    could not be touched — approved and part-processed — so the award stood
+    with no order, the request could never settle, and every item on it
+    stayed locked to this request.
+
+    Withdrawing un-awards the chosen lines, hands their MR items back to be
+    put on a new request, brings the vendor row down to what is left, and
+    re-cuts the vendor's order for the rest (which goes to the signatory
+    like any order). It only ever REDUCES what the Director awarded, so it
+    needs no fresh approval; the Director is told.
+
+    Returns (summary dict, error)."""
+    from django.db import transaction
+
+    from .models import Approval, QuotationLine
+    reason = (reason or "").strip()
+    if not reason:
+        return None, "Say why the items are being withdrawn."
+    block = award_withdrawal_block(pr, row)
+    if block:
+        return None, block
+    quotation = award_quotation(pr, row)
+    lines = list(quotation.lines.filter(awarded=True,
+                                        id__in=quote_line_ids or []))
+    if not lines:
+        return None, "Tick the items to withdraw."
+    is_credit = "credit" in (quotation.payment_terms or "").lower()
+    with transaction.atomic():
+        amount = sum((ln.amount or Decimal("0")) for ln in lines)
+        mr_ids = {ln.mr_line_id for ln in lines if ln.mr_line_id}
+        stamp = f"award withdrawn {date.today():%d %b %Y}: {reason}"[:300]
+        for ln in lines:
+            ln.awarded = False
+            ln.remarks = (f"{ln.remarks} · {stamp}" if ln.remarks else stamp)
+            ln.save(update_fields=["awarded", "remarks"])
+        # An item still awarded to another vendor on this request stays put;
+        # the rest go back to the MR for a new request.
+        still = set(QuotationLine.objects.filter(
+            quotation__document=pr, awarded=True, mr_line_id__in=mr_ids)
+            .values_list("mr_line_id", flat=True))
+        free = mr_ids - still
+        DocumentLine.objects.filter(id__in=free, ordered_pr=pr).update(
+            ordered_pr=None)
+        QuotationLine.objects.filter(
+            quotation__document=pr, mr_line_id__in=free).update(mr_line=None)
+
+        # The vendor row follows its quotation — this row only. A full
+        # rebuild would also reset rows an order amendment has since moved.
+        all_lines = list(quotation.lines.all())
+        left = [ln for ln in all_lines if ln.awarded]
+        total = sum((ln.amount or Decimal("0")) for ln in left)
+        gst = ((total * company_gst_rate() / Decimal("100"))
+               .quantize(Decimal("0.01"))
+               if quotation.gst_applicable else Decimal("0"))
+        row.amount_credit = (total or None) if is_credit else None
+        row.amount_cash = None if is_credit else (total or None)
+        row.gst_amount = gst
+        row.remarks = (f"{len(left)}/{len(all_lines)} lines awarded · "
+                       f"{len(lines)} withdrawn — {reason}")[:300]
+        row.save(update_fields=["amount_credit", "amount_cash", "gst_amount",
+                                "remarks"])
+
+        claimed = active_pr_claimed_line_ids()
+        for mr in linked_docs(pr, "MR_PR", "from"):
+            if mr.status == "PR_RAISED" and remaining_mr_lines(mr, claimed):
+                set_status(mr, "PARTIALLY_ORDERED", actor, "MR_PR_RAISED")
+        Approval.objects.create(
+            document=pr, revision=pr.current_revision,
+            action="AWARD_WITHDRAWN", actor=actor,
+            actor_role=getattr(actor, "role", "") or "",
+            comment=(f"{row.vendor}: {len(lines)} item(s), "
+                     f"{amount:,.2f} — {reason}")[:500])
+        # What is left of a credit award still needs its order; nothing left
+        # and the row is simply settled.
+        orders = generate_pos_for_pr(pr, actor) if is_credit and total > 0 \
+            else []
+        if not orders:
+            advance_pr_settlement(pr, actor)
+    audit("document", pr.id, "PR_AWARD_WITHDRAWN", actor=actor,
+          detail={"ref": pr.ref, "vendor": row.vendor, "lines": len(lines),
+                  "amount": str(amount), "left": str(total),
+                  "released_items": len(free), "reason": reason[:200],
+                  "new_orders": [po.ref for po in orders]})
+    try:
+        from .notify import _role_users, notify_user
+        for u in _role_users("DIRECTOR"):
+            if actor is None or u.id != actor.id:
+                notify_user(
+                    u, f"{pr.ref}: award to {row.vendor} reduced",
+                    body=(f"{len(lines)} item(s), {amount:,.2f} withdrawn — "
+                          f"{reason}"), doc=pr)
+    except Exception:                       # pragma: no cover - never block
+        pass
+    return {"vendor": row.vendor, "withdrawn": len(lines),
+            "amount": amount, "left": total, "released_items": len(free),
+            "new_orders": [po.ref for po in orders]}, None
+
+
 def on_pr_approved(pr, actor):
     """Issuing a PR against an MR marks the MR PR-raised (spec §4.3). When the
     PR only covered some of a long MR, the MR goes to Partially Ordered and

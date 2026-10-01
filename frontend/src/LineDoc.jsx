@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUpload } from "./api.js";
 import { shrinkPhoto } from "./imageResize.js";
 import PoAmendPanel from "./PoAmendPanel.jsx";
+import AwardWithdrawModal from "./AwardWithdrawModal.jsx";
 import { QuotationsSummary } from "./QuotationsPanel.jsx";
 import { VesselPicker, VesselTrack } from "./Vessels.jsx";
 import { SectionTitle, StatusChip, buttonStyle, card, ghostButton, inputStyle,
@@ -1216,6 +1217,8 @@ function CreditTermsEditor({ doc, onSaved, onError }) {
 export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
                               onOpenMatch, onOpenDoc }) {
   const [doc, setDoc] = useState(initial);
+  const [withdrawRow, setWithdrawRow] = useState(null);  // PR vendor row
+  const [withdrawNote, setWithdrawNote] = useState(null);
   const [error, setError] = useState(null);
   const [gstRate, setGstRate] = useState(8);
   const [quotes, setQuotes] = useState([]);   // this PR's captured quotations
@@ -1389,6 +1392,12 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
     ["SITE_ADMIN", "SITE_ENGINEER", "DIRECTOR", "PM", "ADMIN"].includes(me.role);
 
   const isPR = doc.doc_type === "PR";
+  // Withdrawing awarded items from one vendor after approval (owner
+  // 2026-10-01, PR-259): offered on a row with money on it and neither an
+  // order nor a payment against it. The server gives the exact refusal.
+  const canWithdrawAward = isPR && !doc.is_void
+    && ["APPROVED", "AUTHORISED", "PAYMENT_PROCESSING"].includes(doc.status)
+    && ["HO_PURCHASING", "ADMIN", "DIRECTOR"].includes(me.role);
   const p = doc.payload || {};
   // Vendor payments are recorded on the Payment Voucher (M6d); this view is
   // read-only for the PO / payment references.
@@ -1628,6 +1637,24 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
         </p>
       )}
 
+      {withdrawRow && (
+        <AwardWithdrawModal prRef={doc.ref} row={withdrawRow}
+          onClose={() => setWithdrawRow(null)}
+          onDone={async (r) => {
+            setWithdrawRow(null);
+            setWithdrawNote(`${r.withdrawn} item${r.withdrawn === 1 ? "" : "s"} `
+              + `withdrawn from ${r.vendor} and released for a new request.`
+              + (r.new_orders.length
+                ? ` ${r.new_orders.join(", ")} was drawn up for the rest and sent to the signatory.`
+                : " Nothing is left with this vendor."));
+            setDoc(await api(`/documents/${doc.ref}`));
+            onChanged?.();
+          }} />
+      )}
+      {withdrawNote && (
+        <p style={{ background: "var(--green-bg)", borderRadius: 8,
+                    padding: "8px 12px", fontSize: 13 }}>{withdrawNote}</p>
+      )}
       <SectionTitle>{isPR ? "Vendors" : "Items"}</SectionTitle>
       {isPR && doc.status === "APPROVED"
         && ["HO_PURCHASING", "FINANCE", "ADMIN"].includes(me.role)
@@ -1676,7 +1703,24 @@ export function LineDocView({ doc: initial, me, onClose, onChanged, onEdit,
               <tr key={line.id}
                   style={line.is_changed ? { background: "#fff8e6" } : {}}>
                 {isPR ? (<>
-                  <td style={td}>{line.vendor}</td>
+                  <td style={td}>{line.vendor}
+                    {/withdrawn/.test(line.remarks || "") && (
+                      <div style={{ fontSize: 11.5, color: "var(--amber-fg)" }}>
+                        {line.remarks}</div>
+                    )}
+                    {canWithdrawAward && !line.po_ref && !line.action_taken
+                      && (num(line.amount_cash) + num(line.amount_credit)) > 0 && (
+                      <div>
+                        <button onClick={() => setWithdrawRow(line)}
+                                title="A fault found after the award: take items off this vendor and release them for a new request"
+                                style={{ background: "none", border: 0,
+                                  padding: 0, cursor: "pointer", fontSize: 12,
+                                  color: "var(--sp-navy)",
+                                  textDecoration: "underline" }}>
+                          Withdraw items…</button>
+                      </div>
+                    )}
+                  </td>
                   <td style={td}>
                     {line.quotation_ref}
                     {(() => { const u = quoteUrlForLine(line); return u && (

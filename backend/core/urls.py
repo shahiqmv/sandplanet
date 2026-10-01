@@ -456,6 +456,8 @@ urlpatterns = [
          name="pr-release-lines"),
     path("pr/<str:ref>/sync-vendor-rows", quotes.pr_sync_vendor_rows,
          name="pr-sync-vendor-rows"),
+    path("pr/<str:ref>/withdraw-award", quotes.pr_withdraw_award,
+         name="pr-withdraw-award"),
     path("pr/<str:ref>/vendor-payment", quotes.pr_vendor_payment,
          name="pr-vendor-payment"),
     path("pr/<str:ref>/credit-terms", quotes.pr_credit_terms,
