@@ -5,18 +5,31 @@ from .models import Approval, Attachment, Document, DocumentLine, Item, PendingI
 
 class ItemSerializer(serializers.ModelSerializer):
     photo_url = serializers.SerializerMethodField()
+    # tracked_tool is the item's own answer (None = follow its category);
+    # is_tool is what that works out to.
+    is_tool = serializers.SerializerMethodField()
 
     class Meta:
         model = Item
         fields = ["id", "code", "description", "unit", "category", "brand",
                   "spec_ref", "notes", "is_active", "is_major",
-                  "is_provisional", "photo", "photo_url", "merged_into"]
+                  "is_provisional", "tracked_tool", "is_tool", "photo",
+                  "photo_url", "merged_into"]
         read_only_fields = ["code", "merged_into", "photo_url",
-                            "is_provisional"]
+                            "is_provisional", "is_tool"]
         extra_kwargs = {"photo": {"write_only": True, "required": False}}
 
     def get_photo_url(self, obj):
         return obj.photo.url if obj.photo else None
+
+    def get_is_tool(self, obj):
+        if obj.tracked_tool is not None:
+            return obj.tracked_tool
+        names = self.context.get("_tool_cats")
+        if names is None:
+            from .tools import tool_category_names
+            names = self.context["_tool_cats"] = tool_category_names()
+        return bool(obj.category and obj.category.lower() in names)
 
     def validate_category(self, value):
         # Category is a controlled list (owner, 2026-07-08): must be blank

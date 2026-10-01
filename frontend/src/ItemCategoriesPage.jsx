@@ -35,7 +35,20 @@ export default function ItemCategoriesPage({ me }) {
     load();
   }
 
+  // This tick decides, at every site, whether an item received in this
+  // category becomes a tools-register entry or counted stock. It was switched
+  // off once with no warning and no site could add a tool for two months
+  // (owner 2026-10-01) — so it asks first, and the change is recorded.
   async function toggleTool(c) {
+    if (!window.confirm(c.is_tool
+      ? `Stop treating "${c.name}" as tools?\n\nItems in it will be received `
+        + "into counted stock instead of the tools register, at every site, "
+        + "and drop out of the Add-tool list — unless an item is marked as a "
+        + "tracked tool on the Items page."
+      : `Treat every item in "${c.name}" as a tracked tool?\n\nEach unit `
+        + "received on a GRN will become its own entry on the site's tools "
+        + "register. Hand tools in it can be switched off one by one on the "
+        + "Items page.")) return;
     await api(`/item-categories/${c.id}`, { method: "PATCH",
                                             body: { is_tool: !c.is_tool } });
     load();

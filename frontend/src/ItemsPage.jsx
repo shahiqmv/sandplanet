@@ -18,6 +18,8 @@ function ItemDialog({ item, categories, onClose, onSaved, onError }) {
     category: item.category || "", brand: item.brand || "",
     spec_ref: item.spec_ref || "", notes: item.notes || "",
     is_major: !!item.is_major, is_active: !!item.is_active,
+    // null = follow the category; true / false = this item's own answer
+    tracked_tool: item.tracked_tool ?? null,
   });
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState(null);
@@ -171,6 +173,29 @@ function ItemDialog({ item, categories, onClose, onSaved, onError }) {
                                           is_active: e.target.checked })} />
                 In use
               </label>
+            </div>
+            {/* Whether each unit goes on a site's tools register or is
+                counted in stock (owner 2026-10-01). */}
+            <div style={{ ...field, marginTop: 12 }}>
+              <span style={label}>🔧 Tools register</span>
+              <select value={draft.tracked_tool === null ? ""
+                               : String(draft.tracked_tool)}
+                      onChange={(e) => setDraft({ ...draft,
+                        tracked_tool: e.target.value === "" ? null
+                          : e.target.value === "true" })}
+                      style={{ ...inputStyle, width: "100%" }}>
+                <option value="">Follow the category
+                  {item.tracked_tool == null
+                    ? ` (now: ${item.is_tool ? "tracked tool" : "counted in stock"})`
+                    : ""}</option>
+                <option value="true">Tracked tool — one register entry per
+                  unit (drills, grinders, machines)</option>
+                <option value="false">Counted in stock — not tracked one by
+                  one (pliers, trowels, blades)</option>
+              </select>
+              <span style={{ fontSize: 11.5, color: "var(--muted)" }}>
+                Applies to what is received from now on. Units already on a
+                site's register stay until the site removes them.</span>
             </div>
           </div>
         </div>
@@ -406,7 +431,12 @@ export default function ItemsPage({ me }) {
                 )}
               </td>
               <td style={td}>{item.unit}</td>
-              <td style={td}>{item.category}</td>
+              <td style={td}>{item.category}
+                {item.is_tool && (
+                  <span title="Tracked tool — each unit goes on the site's tools register"
+                        style={{ marginLeft: 6, fontSize: 12 }}>🔧</span>
+                )}
+              </td>
               <td style={td}>{item.brand}</td>
               <td style={{ ...td, textAlign: "center" }}>
                 {canEdit ? (

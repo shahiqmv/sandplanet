@@ -949,6 +949,18 @@ class ItemCategoryViewSet(viewsets.ModelViewSet):
     queryset = ItemCategory.objects.all()
     http_method_names = ["get", "post", "patch", "delete", "head", "options"]
 
+    def perform_update(self, serializer):
+        # The tool tick decides whether a received item becomes a register
+        # entry or counted stock, at every site. It was switched off with no
+        # trace and nobody could add a tool for two months (owner
+        # 2026-10-01) — so who changed it, and when, is now kept.
+        before = serializer.instance.is_tool
+        cat = serializer.save()
+        if cat.is_tool != before:
+            audit("item_category", cat.id, "CATEGORY_TOOL_FLAG_SET",
+                  actor=self.request.user,
+                  detail={"name": cat.name, "is_tool": cat.is_tool})
+
     def perform_destroy(self, instance):
         # Keep categories still in use by items — deactivate instead
         if Item.objects.filter(category=instance.name).exists():

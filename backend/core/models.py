@@ -1080,6 +1080,13 @@ class Item(models.Model):
     # Created by a site team when an item was missing from the catalogue —
     # awaiting HO Purchasing review (owner, temporary access).
     is_provisional = models.BooleanField(default=False)
+    # Whether each unit is tracked on a site's tools register (a drill, a
+    # grinder: one row per unit, with serial and condition) rather than
+    # counted in stock (pliers, trowels). None = follow the item's category;
+    # True / False = this item's own answer. The category tick alone was too
+    # blunt, and switching it off froze every site's register for two months
+    # (owner 2026-10-01).
+    tracked_tool = models.BooleanField(null=True, blank=True)
     photo = models.FileField(upload_to="items/", null=True, blank=True)
     merged_into = models.ForeignKey(  # duplicate resolution
         "self", on_delete=models.PROTECT, null=True, blank=True, related_name="+"
@@ -6284,6 +6291,7 @@ class ToolAsset(models.Model):
         MOBILISATION = "MOBILISATION", "Mobilisation"
         GRN = "GRN", "Received (GRN)"
         MANUAL = "MANUAL", "Added manually"
+        STOCK = "STOCK", "Moved from stock"
 
     site = models.ForeignKey(Site, on_delete=models.PROTECT,
                              related_name="tools")

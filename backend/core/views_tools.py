@@ -1,7 +1,8 @@
 """Tools & Equipment register API (per site).
 
     GET  /tools/<site_id>              register (filter ?state=)
-    POST /tools/<site_id>              add a tool manually (mobilisation)
+    POST /tools/<site_id>              add units: item_id or new_name, qty
+    POST /tools/<site_id>/remove       take units off (optionally to stock)
     GET  /tools/<site_id>/summary      in-use summary by name (DPR loader)
     PATCH /tools/<asset_id>            edit serial / model / details
     POST  /tools/<asset_id>/state      faulty / repair / return / retire
@@ -51,28 +52,39 @@ def tools_register(request, site_id):
         if request.user.role not in MANAGE_ROLES:
             return Response({"detail": "Only site staff manage tools."},
                             status=403)
-        # Tool name/category are controlled — pick a catalog item in a tool
-        # category so every unit of the same tool shares one exact name.
+        d = request.data
+        # Pick the tool from the catalog, or type its name if it is not
+        # there. Either way every unit of one tool shares one exact name, so
+        # the DPR summary never splits on spelling.
         item = None
-        if request.data.get("item_id"):
-            item = Item.objects.filter(pk=request.data["item_id"]).first()
-        if not item or not tools_svc.is_tool_item(item):
-            return Response(
-                {"detail": "Choose a tool from the catalog. Tool types are "
-                           "controlled — add a new one in the Item Register "
-                           "under a tool category first."}, status=400)
-        asset = ToolAsset.objects.create(
-            site=site, item=item,
-            name=item.description.strip(),
-            category=item.category,
-            serial_no=request.data.get("serial_no", ""),
-            model=request.data.get("model", ""),
-            brand=(request.data.get("brand") or item.brand or ""),
-            notes=request.data.get("notes", ""),
-            source=ToolAsset.Source.MOBILISATION, added_by=request.user)
-        audit("tool_asset", asset.id, "TOOL_ADDED", actor=request.user,
-              detail={"site": site.code, "name": asset.name})
-        return Response(_asset_info(asset), status=201)
+        if d.get("item_id"):
+            item = Item.objects.filter(pk=d["item_id"]).first()
+            if not item or not tools_svc.is_tool_item(item):
+                return Response({"detail": "That item is not a tracked tool. "
+                                 "Pick one from the list, or type the tool's "
+                                 "name to add it."}, status=400)
+        elif (d.get("new_name") or "").strip():
+            item, msg = tools_svc.tool_type_for(d["new_name"], request.user)
+            if msg:
+                return Response({"detail": msg}, status=400)
+        else:
+            return Response({"detail": "Pick the tool, or type its name."},
+                            status=400)
+        raw = d.get("qty")
+        try:
+            qty = 1 if raw in (None, "") else int(raw)
+        except (TypeError, ValueError):
+            qty = 0
+        if not 1 <= qty <= tools_svc.MAX_UNITS:
+            return Response({"detail": "Add between 1 and "
+                             f"{tools_svc.MAX_UNITS} units at a time."},
+                            status=400)
+        made = tools_svc.add_units(site, item, qty, request.user, details={
+            k: (d.get(k) or "") for k in DETAIL_FIELDS})
+        audit("tool_asset", made[0].id, "TOOL_ADDED", actor=request.user,
+              detail={"site": site.code, "name": made[0].name, "qty": qty})
+        return Response({"added": [_asset_info(t) for t in made]},
+                        status=201)
 
     qs = ToolAsset.objects.filter(site=site).select_related("document")
     if request.GET.get("state"):
@@ -86,6 +98,29 @@ def tools_register(request, site_id):
         "counts": counts,
         "tools": [_asset_info(t) for t in qs],
     })
+
+
+@api_view(["POST"])
+def tools_remove(request, site_id):
+    """Take units off the register — a wrong entry, or something that should
+    be counted in stock rather than tracked one by one."""
+    site, err = _get_site(request, site_id)
+    if err:
+        return err
+    if request.user.role not in MANAGE_ROLES:
+        return Response({"detail": "Only site staff manage tools."}, status=403)
+    reason = (request.data.get("reason") or "").strip()
+    if not reason:
+        return Response({"detail": "Say why they are being removed."},
+                        status=400)
+    ids = request.data.get("ids") or []
+    assets = list(ToolAsset.objects.filter(site=site, pk__in=ids)
+                  .select_related("site", "item"))
+    if not assets or len(assets) != len(set(ids)):
+        return Response({"detail": "Tick the tools to remove."}, status=400)
+    removed, kept = tools_svc.remove(assets, request.user, reason,
+                                     bool(request.data.get("to_stock")))
+    return Response({"removed": len(removed), "kept": kept})
 
 
 @api_view(["GET"])

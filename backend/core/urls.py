@@ -396,6 +396,8 @@ urlpatterns = [
     path("tool-catalog", tools_api.tool_catalog, name="tool-catalog"),
     path("tools/<int:site_id>", tools_api.tools_register,
          name="tools-register"),
+    path("tools/<int:site_id>/remove", tools_api.tools_remove,
+         name="tools-remove"),
     path("tools/<int:site_id>/summary", tools_api.tools_summary,
          name="tools-summary"),
     path("tools/asset/<int:pk>", tools_api.tool_detail, name="tool-detail"),
