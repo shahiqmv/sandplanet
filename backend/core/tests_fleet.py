@@ -563,8 +563,21 @@ class OperatorAllocationTests(RentalBase):
 
     def test_locking_the_run_posts_the_share_to_the_vehicle_and_the_rest_to_site_labour(self):
         gross = payroll.compute_line(self.line)["gross"]
-        payroll.lock_run(self.run, self.rm)
+        # A posting is dated the day the run locks. Lock it inside September
+        # so this does not depend on the day the test happens to run: it
+        # passed all month and failed on 1 October, when "today" left the
+        # P&L range below. (Whether a September run locked in October should
+        # count in September's P&L is the owner's call — raised 2026-10-01.)
+        from unittest import mock
+
+        class Sep30(date):
+            @classmethod
+            def today(cls):
+                return cls(2026, 9, 30)
+        with mock.patch("core.costing.date", Sep30):
+            payroll.lock_run(self.run, self.rm)
         veh = CostPosting.objects.get(book="RENTAL", source="STAFF", vehicle=self.ex)
+        self.assertEqual(veh.posted_on, date(2026, 9, 30))
         self.assertEqual(veh.cost_head.code, "RNT_OPERATOR")
         self.assertEqual(veh.amount, (gross / 26 * 5).quantize(Decimal("0.01")))
         site = CostPosting.objects.get(book="PROJECT", source="STAFF", staff_year=2026, staff_month=9)

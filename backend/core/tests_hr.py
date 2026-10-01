@@ -890,9 +890,13 @@ class StrayAttendanceTests(HrBase):
         # He stays listed for the month he was here — that is deliberate, a
         # leaver must not vanish from the month he worked. What must go is the
         # MARK, which is what gets counted and paid.
-        row = next(x for x in self._register()["rows"]
-                   if x["emp_no"] == self.mason.emp_no)
-        self.assertEqual([d for d in row["days"] if d], [],
+        # On the 1st of a month "taken off the day before" puts his whole
+        # allocation in last month, so he is rightly not on this month's
+        # register at all — which is also "no mark survives". The lookup
+        # used to assume a row and broke every month-start (2026-10-01).
+        row = next((x for x in self._register()["rows"]
+                    if x["emp_no"] == self.mason.emp_no), None)
+        self.assertEqual([d for d in (row["days"] if row else []) if d], [],
                          "no mark should survive on any day")
 
     def test_someone_still_on_the_roster_is_not_flagged(self):
