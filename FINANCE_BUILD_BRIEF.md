@@ -75,6 +75,55 @@ than a constant, and confirmed by the accounting consultant.
   transaction date, monetary balances retranslated at the reporting date
   with the difference to profit or loss (the policy in the 2025 accounts).
 
+### What MIRA's published guidance says (read 2026-10-02, mira.gov.mv)
+
+*Tax invoice* (GST → Tax Invoice). Issued by a registered person to another
+registered person within 28 days of a request. Must carry: the words "Tax
+Invoice" prominently; name, address and TIN of the supplier; name, address
+and TIN of the recipient; an invoice number that is pre-printed or
+software-generated; date of issue; quantity and details of the goods or
+services; the value excluding tax; the tax charged; the total inclusive of
+tax (or a statement that tax is included in the price).
+
+*Input tax* (GST → Input Tax, How does GST work?). Claimed on the GST
+return, which is filed **together with an input tax statement**. Not
+claimable when: incurred before GST registration; the supply was not in the
+Maldives; **no valid tax invoice is held**; more than **12 months** have
+passed since the end of the taxable period in which it could first have been
+claimed; or it was incurred for exempt supplies. Excess input tax is not
+refunded — it is carried forward against later output tax.
+
+*Taxable period and return* (GST → Taxable Period; return form MIRA 205).
+Monthly where average taxable sales exceed MVR 1 million a month, otherwise
+calendar quarters; taxable sales include standard-rated and zero-rated.
+Return and payment due by the 28th of the month after the period.
+
+*Zero-rated vs exempt.* Zero-rated supplies are taxable at 0% (Schedule 1
+essential goods, exports, transfer of a going concern): no GST charged,
+input tax claimable, tax invoice raised, reported on the return. Exempt
+supplies (utilities, postal, education, health, financial services, rent of
+immovable property, international transport, and others listed): no GST, no
+input tax claim on related costs, **no tax invoice**, still reported on the
+return.
+
+*Records* (GST Regulation): tax invoices and receipts issued and received,
+credit and debit notes, the statements of output tax and input tax behind
+each return, import/export documents — kept at least **5 years**.
+
+*Income tax* (Income Tax Act 25/2019): interim payments 31 July and
+31 January, final return 30 June; employee withholding tax on remuneration
+above MVR 60,000 a month at progressive rates; non-resident withholding tax
+10% (5% for non-resident contractors), monthly by the 15th. To be re-read
+from the Act when those features are built.
+
+**What this fixes in the design:** every purchase line records its GST
+treatment, the supplier's TIN, the tax invoice number and date, and whether
+a valid tax invoice is held — input GST goes to the recoverable account only
+when it is, otherwise it is part of the cost. Every sales line records its
+treatment (standard / zero-rated / exempt / out of scope) so the return's
+figures and the two statements come straight from the books. The GST rate is
+a setting with an effective date, never a constant.
+
 ## Principles
 
 - **Every entry balances.** A journal cannot be posted unless debits equal

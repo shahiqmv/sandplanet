@@ -209,8 +209,14 @@ class ProcurementScheduleTests(TestCase):
                          ("SIGNED_OFF", "SIGNED_OFF", False))
 
     def test_eta_is_entered_by_the_team_not_computed(self):
+        # Dates relative to today. They were fixed at 1 and 5 October 2026,
+        # which read as "required date passed" from 2 October onwards and
+        # failed the build on a day nothing in this module had changed.
+        from datetime import timedelta
+        required = date.today() + timedelta(days=30)
+        eta = required + timedelta(days=4)
         pk = self._open()
-        line_id = self._add_line(pk, required_date="2026-10-01",
+        line_id = self._add_line(pk, required_date=required.isoformat(),
                                  lead_time_days=30).data["lines"][0]["id"]
         d = self.client.get(f"/api/v1/procurement-schedules/{pk}").data
         ln = next(x for x in d["lines"] if x["id"] == line_id)
@@ -219,17 +225,17 @@ class ProcurementScheduleTests(TestCase):
         eta_stage = next(s for s in ln["pipeline"] if s["key"] == "eta")
         self.assertEqual(eta_stage["detail"], "No ETA entered")
         r = self.client.post(f"/api/v1/procurement-schedule-lines/{line_id}/eta",
-                             {"eta_date": "2026-10-05"}, format="json")
+                             {"eta_date": eta.isoformat()}, format="json")
         self.assertEqual(r.status_code, 200, r.data)
         ln = next(x for x in r.data["lines"] if x["id"] == line_id)
-        self.assertEqual(ln["eta_date"], date(2026, 10, 5))
-        self.assertEqual(ln["risk"]["level"], "LATE")   # after 1 Oct
+        self.assertEqual(ln["eta_date"], eta)
+        self.assertEqual(ln["risk"]["level"], "LATE")   # after the required date
         eta_stage = next(s for s in ln["pipeline"] if s["key"] == "eta")
-        self.assertEqual(eta_stage["detail"], "Late — 2026-10-05")
+        self.assertEqual(eta_stage["detail"], f"Late — {eta.isoformat()}")
         from .models import ScheduleLine
         from .procurement_client import client_row
         self.assertEqual(client_row(ScheduleLine.objects.get(pk=line_id))["eta"],
-                         date(2026, 10, 5))
+                         eta)
         # Purchasing may enter it too; a Site Engineer may not.
         self.client.force_authenticate(self.purch)
         r = self.client.post(f"/api/v1/procurement-schedule-lines/{line_id}/eta",
