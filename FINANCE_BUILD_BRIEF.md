@@ -207,6 +207,18 @@ journals, foreign-currency revaluation at period end, budgets.
 - Marine: a second set of books in its own instance, later.
 
 ## Where things live
-`backend/core/ledger.py` (rules), `views_ledger.py` (API, `/api/v1/ledger/*`),
-models `LedgerAccount`, `JournalEntry`, `JournalLine`;
+`backend/core/ledger.py` (journal rules), `books.py` (the transaction forms,
+the register, Profit & Loss and Balance Sheet), `views_ledger.py` (API,
+`/api/v1/ledger/*`, refused where the `books` feature is off); models
+`LedgerAccount`, `JournalEntry`, `JournalLine`, `LedgerTxn`, `LedgerTxnLine`;
 `frontend/f.html`, `frontend/src/finance/`.
+
+## Built so far
+- Stage 1 — live 2026-10-02.
+- Stage 2, first part — Expense, Deposit, Transfer (`EXP-`/`DEP-`/`TRF-NNN`),
+  the register per bank and cash account, Profit & Loss, Balance Sheet. A
+  form posts its own journal; a change reverses that journal on its own date
+  and posts a new one; a void reverses it. The register shows a changed or
+  voided transaction once, as the bank statement does.
+- Next, in the order agreed: Bills and Pay bills; Invoices and Receive
+  payment; reconcile; customers and suppliers; Excel import.

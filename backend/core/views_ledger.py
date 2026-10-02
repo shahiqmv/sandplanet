@@ -2,14 +2,25 @@
 from io import BytesIO
 
 from django.http import HttpResponse
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, parser_classes
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from . import ledger
+from . import brand, ledger
 from .models import JournalEntry, LedgerAccount
 
 
+def _off():
+    # A sister company's instance keeps no books here until its own are set up.
+    if not brand.brand()["features"].get("books"):
+        return Response({"detail": "The books are not switched on for this "
+                                   "company."}, status=403)
+    return None
+
+
 def _read(request):
+    if (off := _off()):
+        return off
     if request.user.role not in ledger.READ_ROLES:
         return Response({"detail": "The books are open to Finance, the "
                                    "Director and the signatory."}, status=403)
@@ -17,6 +28,8 @@ def _read(request):
 
 
 def _write(request):
+    if (off := _off()):
+        return off
     if request.user.role not in ledger.WRITE_ROLES:
         return Response({"detail": "Finance keeps the books."}, status=403)
     return None
@@ -85,8 +98,19 @@ def accounts(request):
            for r in JournalLine.objects.filter(entry__status="POSTED")
            .values("account").annotate(d=Sum("debit"), c=Sum("credit"))}
     rows = list(LedgerAccount.objects.all())
+    # an account held in a foreign currency also shows what it holds in it
+    held = {}
+    for r in (JournalLine.objects.filter(entry__status="POSTED")
+              .exclude(account__currency="").values("account", "debit")
+              .annotate(fc=Sum("amount_fc"))):
+        fc = r["fc"] or 0
+        held[r["account"]] = held.get(r["account"], 0) + (fc if r["debit"] else -fc)
+    out = [_account(a, bal) for a in rows]
+    for o in out:
+        if o["currency"]:
+            o["balance_fc"] = held.get(o["id"], 0)
     return Response({
-        "accounts": [_account(a, bal) for a in rows],
+        "accounts": out,
         "types": [{"value": v, "label": lab}
                   for v, lab in LedgerAccount.Type.choices],
         "can_edit": request.user.role in ledger.WRITE_ROLES,
@@ -333,3 +357,223 @@ def account_ledger(request, pk):
             [12, 10, 40, 34, 24, 8, 15, 15, 16],
             f"ledger-{a.code}-{led['date_to']}")
     return Response(led)
+
+
+# ---- QuickBooks-style transactions (core/books.py) --------------------------
+
+def _txn(t, lines=True):
+    out = {
+        "id": t.id, "number": t.number, "type": t.type,
+        "type_label": t.get_type_display(), "status": t.status, "date": t.date,
+        "account": t.account_id, "account_name": t.account.name,
+        "to_account": t.to_account_id,
+        "to_account_name": t.to_account.name if t.to_account_id else "",
+        "party": t.party, "party_tin": t.party_tin, "reference": t.reference,
+        "memo": t.memo, "currency": t.currency, "fx_rate": t.fx_rate,
+        "amount": t.amount, "amount_mvr": t.amount_mvr,
+        "amount_to": t.amount_to, "tax_invoice_no": t.tax_invoice_no,
+        "tax_invoice_date": t.tax_invoice_date,
+        "tax_invoice_held": t.tax_invoice_held,
+        "attachment_url": t.attachment.url if t.attachment else None,
+        "journal": t.journal_id, "journal_ref": t.journal.ref if t.journal_id else "",
+        "void_reason": t.void_reason,
+        "created_by": t.created_by.full_name if t.created_by_id else "",
+    }
+    if lines:
+        out["lines"] = [{
+            "id": ln.id, "account": ln.account_id,
+            "account_code": ln.account.code, "account_name": ln.account.name,
+            "description": ln.description, "amount": ln.amount,
+            "gst_treatment": ln.gst_treatment, "gst_rate": ln.gst_rate,
+            "gst_amount": ln.gst_amount, "site": ln.site_id,
+            "site_code": ln.site.code if ln.site_id else "",
+            "project": ln.project_id,
+        } for ln in t.lines.select_related("account", "site")]
+    return out
+
+
+def _txn_qs():
+    from .models import LedgerTxn
+    return LedgerTxn.objects.select_related("account", "to_account", "journal",
+                                            "created_by")
+
+
+def _txn_data(request):
+    """A form sends JSON; with a receipt attached it sends multipart, the
+    fields as one JSON string beside the file."""
+    import json
+    if "payload" in request.data:
+        try:
+            return json.loads(request.data["payload"])
+        except (TypeError, ValueError):
+            return {}
+    return request.data
+
+
+@api_view(["GET"])
+def books_meta(request):
+    if (bad := _read(request)):
+        return bad
+    from . import books
+    return Response(books.meta())
+
+
+@api_view(["GET", "POST"])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
+def txns(request):
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    if request.method == "POST":
+        if (bad := _write(request)):
+            return bad
+        data = _txn_data(request)
+        t, msg = books.save_txn(data.get("type"), data, request.user,
+                                attachment=request.FILES.get("attachment"))
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(_txn(_txn_qs().get(pk=t.pk)), status=201)
+    qs = books.txn_filter(_txn_qs(), request.GET)
+    if request.GET.get("status") != "all":
+        qs = qs.exclude(status="VOID")
+    try:
+        limit = min(int(request.GET.get("limit", 100)), 300)
+    except ValueError:
+        limit = 100
+    total = qs.count()
+    return Response({"txns": [_txn(t, lines=False) for t in qs[:limit]],
+                     "total": total,
+                     "can_edit": request.user.role in ledger.WRITE_ROLES})
+
+
+@api_view(["GET", "PATCH"])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
+def txn_detail(request, pk):
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    t = _txn_qs().filter(pk=pk).first()
+    if t is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "PATCH":
+        if (bad := _write(request)):
+            return bad
+        data = _txn_data(request)
+        t2, msg = books.save_txn(t.type, data, request.user, txn=t,
+                                 attachment=request.FILES.get("attachment"))
+        if msg:
+            return Response({"detail": msg}, status=400)
+        t = _txn_qs().get(pk=pk)
+    return Response(_txn(t))
+
+
+@api_view(["POST"])
+def txn_void(request, pk):
+    from . import books
+    if (bad := _write(request)):
+        return bad
+    t = _txn_qs().filter(pk=pk).first()
+    if t is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = books.void_txn(t, request.user, request.data.get("reason"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(_txn(_txn_qs().get(pk=pk)))
+
+
+@api_view(["GET"])
+def account_register(request, pk):
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    a = LedgerAccount.objects.filter(pk=pk).first()
+    if a is None:
+        return Response({"detail": "Not found."}, status=404)
+    if a.is_group or a.type not in books.MONEY_TYPES:
+        return Response({"detail": "A register is kept for a bank, cash or "
+                                   "card account."}, status=400)
+    reg = books.register(a, ledger._as_date(request.GET.get("from")),
+                         ledger._as_date(request.GET.get("to")))
+    if request.GET.get("export") == "xlsx":
+        return _xlsx(
+            f"{a.code} {a.name}",
+            f"Register · {reg['date_from']:%d %b %Y} to "
+            f"{reg['date_to']:%d %b %Y} · {reg['account']['currency']}",
+            ["Date", "Number", "Payee", "Memo", "Reference", "Account",
+             "Payment", "Deposit", "Balance"],
+            [["", "", "Brought forward", "", "", "", "", "", reg["opening"]]]
+            + [[r["date"], r["number"], r["payee"], r["memo"], r["reference"],
+                r["split"], r["payment"] or None, r["deposit"] or None,
+                r["balance"]] for r in reg["rows"]],
+            ["", "", "Total", "", "", "", reg["payments"], reg["deposits"],
+             reg["closing"]],
+            [12, 11, 28, 34, 16, 30, 15, 15, 16],
+            f"register-{a.code}-{reg['date_to']}")
+    return Response(reg)
+
+
+def _statement_rows(sec):
+    return [[("    " * r["depth"]) + (f"{r['code']} " if r["code"] else "")
+             + r["name"], r["amount"]] for r in sec["rows"]]
+
+
+@api_view(["GET"])
+def report_pnl(request):
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    r = books.profit_and_loss(ledger._as_date(request.GET.get("from")),
+                              ledger._as_date(request.GET.get("to")))
+    if request.GET.get("export") == "xlsx":
+        s = r["sections"]
+        rows = []
+        for key, total_label in (("INCOME", "Total income"),
+                                 ("COGS", "Total cost of goods sold")):
+            rows += [[s[key]["label"], None]] + _statement_rows(s[key]) \
+                + [[total_label, s[key]["total"]]]
+        rows += [["GROSS PROFIT", r["gross_profit"]],
+                 [s["EXPENSE"]["label"], None]] + _statement_rows(s["EXPENSE"]) \
+            + [["Total expenses", s["EXPENSE"]["total"]],
+               ["OPERATING PROFIT", r["operating_profit"]]]
+        for key in ("OTHER_INCOME", "OTHER_EXPENSE"):
+            rows += [[s[key]["label"], None]] + _statement_rows(s[key]) \
+                + [[f"Total {s[key]['label'].lower()}", s[key]["total"]]]
+        return _xlsx("Profit and loss",
+                     f"{r['date_from']:%d %b %Y} to {r['date_to']:%d %b %Y} "
+                     "· MVR", ["", "MVR"], rows,
+                     ["NET PROFIT", r["net_profit"]], [52, 18],
+                     f"profit-and-loss-{r['date_to']}")
+    return Response(r)
+
+
+@api_view(["GET"])
+def report_balance_sheet(request):
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    r = books.balance_sheet(ledger._as_date(request.GET.get("as_of")))
+    if request.GET.get("export") == "xlsx":
+        s = r["sections"]
+        rows = [["ASSETS", None]]
+        for key in ("BANK", "AR", "OTHER_CURRENT_ASSET"):
+            rows += [[s[key]["label"], None]] + _statement_rows(s[key])
+        rows += [["Total current assets", r["current_assets"]]]
+        for key in ("FIXED_ASSET", "OTHER_ASSET"):
+            rows += [[s[key]["label"], None]] + _statement_rows(s[key])
+        rows += [["TOTAL ASSETS", r["total_assets"]],
+                 ["LIABILITIES", None]]
+        for key in ("AP", "CREDIT_CARD", "OTHER_CURRENT_LIABILITY",
+                    "LONG_TERM_LIABILITY"):
+            rows += [[s[key]["label"], None]] + _statement_rows(s[key])
+        rows += [["Total liabilities", r["total_liabilities"]],
+                 ["EQUITY", None]] + _statement_rows(s["EQUITY"]) \
+            + [["Net profit — earlier years, not yet closed",
+                r["net_profit_earlier_years"]],
+               ["Net profit for the year", r["net_profit_this_year"]],
+               ["Total equity", r["total_equity"]]]
+        return _xlsx("Balance sheet", f"As at {r['as_of']:%d %b %Y} · MVR",
+                     ["", "MVR"], rows,
+                     ["TOTAL LIABILITIES AND EQUITY",
+                      r["total_liabilities_and_equity"]], [52, 18],
+                     f"balance-sheet-{r['as_of']}")
+    return Response(r)

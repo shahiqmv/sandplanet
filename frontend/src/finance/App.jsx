@@ -16,6 +16,8 @@ import PayablesPage from "../PayablesPage.jsx";
 import PaymentVouchersPage from "../PaymentVouchersPage.jsx";
 import ReceivablesPage from "../ReceivablesPage.jsx";
 import AccountsPage from "./AccountsPage.jsx";
+import BankingPage from "./BankingPage.jsx";
+import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
 import { fmtDate, money } from "./shared.jsx";
@@ -29,6 +31,7 @@ const BOOK_ROLES = [...BOOKS];
 // section → its pages: [key, label, roles]
 const SECTIONS = [
   ["overview", "Overview", [["home", "Overview", [...READERS]]]],
+  ["banking", "Banking", [["banking", "Banking", BOOK_ROLES]]],
   ["payments", "Payments", [
     ["dashboard", "Dashboard", PAYERS],
     ["vouchers", "Payment vouchers", PAYERS],
@@ -36,8 +39,11 @@ const SECTIONS = [
     ["import-payments", "International payables", PAYERS]]],
   ["receivables", "Receivables", [["receivables", "Receivables", RECEIVABLE]]],
   ["books", "Books", [
-    ["journals", "Journals", BOOK_ROLES],
     ["accounts", "Chart of accounts", BOOK_ROLES],
+    ["journals", "Journal entries", BOOK_ROLES]]],
+  ["reports", "Reports", [
+    ["pnl", "Profit and loss", BOOK_ROLES],
+    ["bs", "Balance sheet", BOOK_ROLES],
     ["tb", "Trial balance", BOOK_ROLES],
     ["ledger", "Account ledger", BOOK_ROLES]]],
   ["setup", "Setup", [
@@ -148,7 +154,8 @@ function Home({ me, go, can, settings }) {
         {can("vouchers") && <button className="t-tile" onClick={() => go("vouchers")}><span className="t-tile-l">Payment vouchers</span><span className="t-tile-s">build, approve, pay</span></button>}
         {can("payables") && <button className="t-tile" onClick={() => go("payables")}><span className="t-tile-l">Payables</span><span className="t-tile-s">what we owe and when</span></button>}
         {can("receivables") && <button className="t-tile" onClick={() => go("receivables")}><span className="t-tile-l">Receivables</span><span className="t-tile-s">invoices, aging, statements</span></button>}
-        {can("journals") && <button className="t-tile" onClick={() => go("journals", "new")}><span className="t-tile-l">New journal</span><span className="t-tile-s">enter a balanced entry</span></button>}
+        {can("banking") && <button className="t-tile" onClick={() => go("banking")}><span className="t-tile-l">Banking</span><span className="t-tile-s">expenses, deposits, transfers</span></button>}
+        {can("pnl") && <button className="t-tile" onClick={() => go("pnl")}><span className="t-tile-l">Profit and loss</span><span className="t-tile-s">and the balance sheet</span></button>}
       </div>
       {seesBooks && settings && (
         <p style={{ fontSize: 12.5, color: "var(--muted)" }}>
@@ -277,6 +284,10 @@ export default function App() {
         {page === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
         {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
         {page === "receivables" && <ReceivablesPage me={me} />}
+        {page === "banking" && <BankingPage sub={sub} go={go} settings={settings}
+                                             canEdit={["FINANCE", "ADMIN"].includes(me.role)} key={sub || "home"} />}
+        {page === "pnl" && <ProfitLossPage go={go} settings={settings} />}
+        {page === "bs" && <BalanceSheetPage go={go} />}
         {page === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}
         {page === "accounts" && <AccountsPage go={go} />}
         {page === "tb" && <TrialBalancePage go={go} settings={settings} />}

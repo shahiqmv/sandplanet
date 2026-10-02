@@ -304,4 +304,10 @@ class FeatureTests(TestCase):
         self.assertFalse(brand.brand(fresh=True)["features"]["books"])
         apps = [a["key"] for a in brand.public_dict()["apps"]]
         self.assertNotIn("finance", apps)
+        # and the API refuses there too, for Finance as for anyone
+        c = APIClient()
+        c.force_authenticate(make_user("lg_fin2", User.Role.FINANCE))
+        self.assertEqual(c.get("/api/v1/ledger/accounts").status_code, 403)
+        self.assertEqual(c.post("/api/v1/ledger/setup").status_code, 403)
+        self.assertEqual(LedgerAccount.objects.count(), 0)
         brand.invalidate()

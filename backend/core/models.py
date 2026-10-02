@@ -8773,6 +8773,7 @@ class JournalEntry(models.Model):
         OPENING = "OPENING", "Opening balances"
         REVERSAL = "REVERSAL", "Reversal"
         AUTO = "AUTO", "Posted from operations"
+        TXN = "TXN", "Transaction"       # an expense, deposit, transfer…
 
     ref = models.CharField(max_length=20, blank=True, db_index=True)  # JV-0001 at posting
     date = models.DateField()
@@ -8840,3 +8841,107 @@ class JournalLine(models.Model):
     class Meta:
         ordering = ["entry_id", "line_no"]
         indexes = [models.Index(fields=["account", "entry"])]
+
+
+def ledger_txn_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"books/{instance.type.lower()}/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class LedgerTxn(models.Model):
+    """A transaction entered on a form, QuickBooks-style — an expense, a
+    deposit, a transfer — instead of as debits and credits. The form posts
+    the journal for the user. The journal stays permanent: changing a
+    transaction reverses its entry and posts a new one, voiding reverses it,
+    so the history MIRA requires is kept without the bookkeeper seeing it."""
+
+    class Type(models.TextChoices):
+        EXPENSE = "EXPENSE", "Expense"
+        DEPOSIT = "DEPOSIT", "Deposit"
+        TRANSFER = "TRANSFER", "Transfer"
+
+    class Status(models.TextChoices):
+        POSTED = "POSTED", "Posted"
+        VOID = "VOID", "Void"
+
+    PREFIX = {"EXPENSE": "EXP", "DEPOSIT": "DEP", "TRANSFER": "TRF"}
+
+    number = models.CharField(max_length=20, unique=True)
+    type = models.CharField(max_length=10, choices=Type.choices)
+    status = models.CharField(max_length=8, choices=Status.choices,
+                              default=Status.POSTED)
+    date = models.DateField()
+    # paid from (expense) / deposited to (deposit) / transferred from
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                related_name="txns")
+    to_account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                   null=True, blank=True, related_name="+")
+    party = models.CharField(max_length=160, blank=True)   # payee / received from
+    party_tin = models.CharField(max_length=40, blank=True)
+    reference = models.CharField(max_length=80, blank=True)  # cheque / transfer / slip
+    memo = models.TextField(blank=True)
+    currency = models.CharField(max_length=3, default="MVR")
+    fx_rate = models.DecimalField(max_digits=14, decimal_places=6, null=True,
+                                  blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2)   # total, in `currency`
+    amount_mvr = models.DecimalField(max_digits=16, decimal_places=2)
+    # a transfer between currencies: what arrived, in the other account's own
+    amount_to = models.DecimalField(max_digits=16, decimal_places=2,
+                                    null=True, blank=True)
+    # The supplier's tax invoice — MIRA allows input tax only against a
+    # valid one, and the input tax statement lists these particulars.
+    tax_invoice_no = models.CharField(max_length=60, blank=True)
+    tax_invoice_date = models.DateField(null=True, blank=True)
+    tax_invoice_held = models.BooleanField(default=False)
+    attachment = models.FileField(upload_to=ledger_txn_path, null=True,
+                                  blank=True)
+    journal = models.ForeignKey(JournalEntry, on_delete=models.PROTECT,
+                                null=True, blank=True, related_name="+")
+    void_reason = models.CharField(max_length=300, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+        indexes = [models.Index(fields=["type", "date"]),
+                   models.Index(fields=["account", "date"])]
+
+    def __str__(self):
+        return self.number
+
+
+class LedgerTxnLine(models.Model):
+    """What the money was for (an expense) or from (a deposit): the account,
+    the amount before GST, and how GST applies to it."""
+
+    class Gst(models.TextChoices):
+        NONE = "NONE", "No GST"
+        STANDARD = "STANDARD", "Standard rated"
+        ZERO = "ZERO", "Zero rated"
+        EXEMPT = "EXEMPT", "Exempt"
+        OUT_OF_SCOPE = "OUT_OF_SCOPE", "Out of scope"
+
+    txn = models.ForeignKey(LedgerTxn, on_delete=models.CASCADE,
+                            related_name="lines")
+    line_no = models.PositiveIntegerField()
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                related_name="+")
+    description = models.CharField(max_length=300, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2)   # before GST
+    gst_treatment = models.CharField(max_length=14, choices=Gst.choices,
+                                     default=Gst.NONE)
+    gst_rate = models.DecimalField(max_digits=6, decimal_places=2, default=0)
+    gst_amount = models.DecimalField(max_digits=16, decimal_places=2,
+                                     default=0)
+    site = models.ForeignKey(Site, on_delete=models.PROTECT, null=True,
+                             blank=True, related_name="+")
+    project = models.ForeignKey(Project, on_delete=models.PROTECT, null=True,
+                                blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["txn_id", "line_no"]

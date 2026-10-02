@@ -554,6 +554,32 @@ def post(entry, actor):
     return None
 
 
+def post_entry(*, on, memo, lines, actor, kind="TXN", source_type="",
+               source_id=None, source_ref=""):
+    """Post a balanced entry straight to the books — what a transaction form
+    or an automatic rule does. `lines` are dicts as clean_lines returns.
+    Raises ValueError with the reason if it can't be posted."""
+    from .numbering import next_ref
+    lines = [ln for ln in lines if ln["debit"] or ln["credit"]]
+    msg = check_balanced(lines) or check_date(on, kind)
+    if msg:
+        raise ValueError(msg)
+    for ln in lines:
+        acc = ln["account"]
+        if acc.is_group or not acc.is_active:
+            raise ValueError(f"{acc.code} {acc.name} can't take postings.")
+    with transaction.atomic():
+        entry = JournalEntry.objects.create(
+            date=on, kind=kind, memo=memo[:500], created_by=actor,
+            source_type=source_type, source_id=source_id,
+            source_ref=source_ref, ref=next_ref("JV", None), status="POSTED",
+            posted_by=actor, posted_at=timezone.now())
+        JournalLine.objects.bulk_create([
+            JournalLine(entry=entry, line_no=i, **ln)
+            for i, ln in enumerate(lines, 1)])
+    return entry
+
+
 def reverse(entry, actor, on=None, reason=""):
     """Undo a posted entry with its mirror. Returns (reversal, error)."""
     if entry.status != "POSTED":
