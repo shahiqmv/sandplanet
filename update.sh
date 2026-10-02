@@ -133,6 +133,9 @@ ensure_crons() {
   add_cron "# planet-meeting-reminders" "*/15 * * * *" \
     "$C meeting_reminders >> /var/log/meeting_reminders.log 2>&1" \
     "meeting reminders"
+  add_cron "# planet-post-books" "*/20 * * * *" \
+    "$C post_books >> /var/log/post_books.log 2>&1" \
+    "posting Planet's operations to the books (no-op until a rule is switched on)"
   add_cron "# planet-fleet-expiry" "40 6 * * *" \
     "$C fleet_expiry >> /var/log/fleet_expiry.log 2>&1" \
     "vehicle document expiry alerts (no-op without the rental module)"

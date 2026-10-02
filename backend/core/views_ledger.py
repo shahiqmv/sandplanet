@@ -594,6 +594,85 @@ def report_aging(request):
     return Response(r)
 
 
+# ---- posting Planet's operations (core/posting.py) ----------------------------
+
+def _rule_names():
+    from . import posting
+    return {r[0]: r[2] for r in posting.RULES}
+
+
+def _posting_report(rows):
+    names = _rule_names()
+    return [{**r, "name": names[r["rule"]]} for r in rows]
+
+
+def _posting_state(request):
+    """What the Posting screen shows — the same after every action."""
+    from . import posting
+    return {**posting.status(), "heads": posting.heads(),
+            "can_edit": request.user.role in ledger.WRITE_ROLES}
+
+
+@api_view(["GET", "POST"])
+def posting_rules(request):
+    """GET: the rules, which are on, and each cost head's account.
+    POST {on: [...], from}: switch rules on or off, set the date to post
+    from."""
+    from . import posting
+    if (bad := _read(request)):
+        return bad
+    if request.method == "POST":
+        if (bad := _write(request)):
+            return bad
+        msg = posting.save_settings(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    return Response(_posting_state(request))
+
+
+@api_view(["POST"])
+def posting_action(request, action):
+    """preview: what posting would do, nothing saved. run: do it, for the
+    rules that are switched on. take-out: reverse a rule's entries."""
+    from . import posting
+    if (bad := _write(request)):
+        return bad
+    keys = request.data.get("rules") or []
+    if action == "preview":
+        if not keys:
+            return Response({"detail": "Say which rules."}, status=400)
+        return Response({"report": _posting_report(
+            posting.run(keys, request.user, commit=False)), "saved": False})
+    if action == "run":
+        on = posting.rules_on()
+        keys = [k for k in (keys or on) if k in on]
+        if not keys:
+            return Response({"detail": "No rule is switched on."}, status=400)
+        return Response({"report": _posting_report(
+            posting.run(keys, request.user, commit=True)), "saved": True})
+    if action == "take-out":
+        n, msg = posting.take_out(request.data.get("rule"), request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response({"reversed": n, **_posting_state(request)})
+    return Response({"detail": "Unknown action."}, status=404)
+
+
+@api_view(["PATCH"])
+def posting_head(request, pk):
+    from . import posting
+    from .models import CostHead
+    if (bad := _write(request)):
+        return bad
+    h = CostHead.objects.filter(pk=pk).first()
+    if h is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = posting.map_head(h, request.data.get("account"), request.user)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"heads": posting.heads()})
+
+
 # ---- GST return (core/gst_return.py) ------------------------------------------
 
 @api_view(["GET"])

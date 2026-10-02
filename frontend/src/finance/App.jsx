@@ -22,6 +22,7 @@ import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
 import GstPage from "./GstPage.jsx";
 import ImportPage from "./ImportPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
+import PostingPage from "./PostingPage.jsx";
 import ReconcilePage from "./ReconcilePage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
 import { fmtDate, money } from "./shared.jsx";
@@ -65,6 +66,7 @@ const SECTIONS = [
     ["tb", "Trial balance", BOOK_ROLES],
     ["ledger", "Account ledger", BOOK_ROLES]]],
   ["setup", "Setup", [
+    ["posting", "Posting from Planet", BOOK_ROLES],
     ["cost-heads", "Cost heads", ["FINANCE", "ADMIN", "DIRECTOR", "SIGNATORY"]],
     ["settings", "Books settings", BOOK_ROLES]]],
 ];
@@ -321,6 +323,7 @@ export default function App() {
         {page === "import" && <ImportPage canEdit={canWrite} />}
         {page === "tb" && <TrialBalancePage go={go} settings={settings} />}
         {page === "ledger" && <LedgerPage accountId={sub ? Number(sub) : null} go={go} settings={settings} />}
+        {page === "posting" && <PostingPage />}
         {page === "cost-heads" && <CostHeadsPage me={me} />}
         {page === "settings" && <SettingsPage me={me} settings={settings} onSaved={setSettings} />}
       </main>

@@ -210,7 +210,8 @@ journals, foreign-currency revaluation at period end, budgets.
 `backend/core/ledger.py` (journal rules), `books.py` (the transaction forms,
 the register, Profit & Loss and Balance Sheet), `reconcile.py` (bank
 reconciliation and reading the bank's file), `books_import.py` (Excel
-import), `gst_return.py` (MIRA 205 and its two statements), `views_ledger.py` (API,
+import), `gst_return.py` (MIRA 205 and its two statements), `posting.py` (posting
+Planet's operations), `views_ledger.py` (API,
 `/api/v1/ledger/*`, refused where the `books` feature is off); models
 `LedgerAccount`, `JournalEntry`, `JournalLine`, `LedgerTxn`, `LedgerTxnLine`;
 `frontend/f.html`, `frontend/src/finance/`.
@@ -301,6 +302,55 @@ import), `gst_return.py` (MIRA 205 and its two statements), `views_ledger.py` (A
     forward from an earlier period.
 - Not yet: supplier and customer credit notes; a payment on account
   (unapplied); writing off a small balance; withholding tax on a payment.
+
+## Stage 3 — posting from Planet (built 2026-10-02, `core/posting.py`)
+
+The owner asked for Planet's own transactions to be posted, and what the
+rules are. Each rule is **off until switched on** in the Finance app (Setup →
+Posting from Planet), where it can be previewed first; the preview only
+reads. Once on, a job every 20 minutes (`manage.py post_books`) keeps the
+books in step. The engine works out the entry each event *should* have and
+brings the books into line: a new event is posted, a changed one reversed
+and re-posted, a vanished one reversed. Nothing is posted twice. Entries are
+`kind=AUTO`, found again by `source_type` + `source_ref`.
+
+| Rule | When | Entry |
+|---|---|---|
+| Claim invoices | claim CERTIFIED with its invoice number (a reopen reverses it) | Dr receivable (net to pay); Cr contract revenue (the work certified), Cr output GST; retention held → Dr retention receivable; advance invoiced → Cr advances from clients, recovered → Dr; contra after GST → Dr client back charges |
+| Other project invoices | manual invoice raised (void or replaced by a claim reverses it) | Dr receivable; Cr contract revenue, Cr output GST |
+| Trading invoices, credit notes | invoice ISSUED; credit note issued | Dr customer; Cr resort supply sales, Cr output GST; advance applied → Dr advances from clients |
+| Money received | receipt recorded (deleted → reversed) | Dr the bank on the receipt (none named → "receipts not yet banked"); Cr receivable; an order advance → Cr advances from clients |
+| Local purchases | cost INCURRED in Planet's cost ledger — the PO signed, or the cash purchase approved on a voucher (the owner's M7 rule: at authorisation, not at GRN); then PAID | Dr the cost head's account, by site, and input GST; Cr trade payables. Paid: Dr trade payables; Cr the bank on the voucher |
+| Payment requisitions | PYR paid | Dr its cost by head and site; Cr the bank on the voucher. No cost in Planet → by what it is: petty cash top-up, salary advance (staff advances), payroll payment (wages payable), import charge (goods in transit), subcontract advance (supplier advances), deposit held (1310 / 1360) |
+| Petty cash | entries approved by the PM | Dr each cost; Cr petty cash |
+| Payroll | run locked (the timesheet estimate and its reversal are mirrored too) | Dr wages at gross by site; Cr wages payable. Deductions: Dr wages payable; Cr staff advances (advances, loans), Cr other income (fines). Dollar salaries paid per head: Dr wages payable; Cr bank |
+| Subcontract valuations | SVC authorised; payable settled | Dr subcontract cost and input GST; Cr subcontractors payable. Paid: Dr payable; Cr bank |
+| Import payments, store issues | TT paid on a milestone; imported goods received at a site | Dr goods in transit, exchange difference to FX gain / loss; Cr bank. Issue: Dr materials; Cr stock |
+
+- **A PO approval posts nothing.** A purchase is posted when Planet's cost
+  ledger says it is incurred, and a payment when the money is recorded as
+  paid. A claim posts when its tax invoice exists, not on submission.
+- **Cost heads → accounts**: each head has a usual account (Materials 5110,
+  Labour 5130, Subcontract 5140, Plant 5150, Transport 5160, Site overheads
+  and Other 5180, Import charges 5120, Permits 6240, Recruitment 6150,
+  Insurance & bonds 6210, Input GST 1430, General stock 1510, Forex 9010);
+  the accountant re-maps any of them on the screen
+  (`CostHead.ledger_account`). A head with no account holds its costs back.
+- **Held back, never guessed**: a payment whose voucher names no bank
+  account, a head with no account, a receipt in two currencies, an entry on
+  a reconciled statement or in a closed period. Each is listed with why.
+- **Dollars** go in at the company rate (Planet stores no rate on a sales
+  document); a PYR keeps the rate it was paid at.
+- **From**: events dated before "post from" (default: the books' start) are
+  left to the opening balances and hand entry.
+- A rule switched off can have its entries taken out again (each reversed).
+
+Open for the consultant: revenue on certification (vs stage of completion —
+a WIP journal at period end); fines to other income; goods in transit are
+not yet moved to stock when the IRN is posted (the group total is right,
+the split between 1510 and 1520 is not); trading cost of sales at despatch
+is not posted; a subcontract advance recovered on a valuation is not moved
+off supplier advances; import GST is in landed cost, not input tax.
 
 ## To settle before automatic posting (stage 3)
 PLANET holds purchases, payments, payroll and claims from July 2026. If the

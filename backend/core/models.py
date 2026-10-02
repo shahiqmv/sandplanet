@@ -5671,6 +5671,12 @@ class CostHead(models.Model):
     code = models.CharField(max_length=30, unique=True)
     name = models.CharField(max_length=60, unique=True)
     sort_order = models.IntegerField(default=100)
+    # Where this head's costs land in the books when operations are posted
+    # (core/posting.py). Blank = the usual account for the head, if it has
+    # one; a head with neither is held back until the accountant maps it.
+    ledger_account = models.ForeignKey("LedgerAccount",
+                                       on_delete=models.SET_NULL, null=True,
+                                       blank=True, related_name="+")
     is_pool = models.BooleanField(default=False)  # HO pool, never a project
     is_active = models.BooleanField(default=True)
     # A head the code depends on: it may be renamed and reordered, never
