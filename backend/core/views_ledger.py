@@ -106,9 +106,20 @@ def accounts(request):
         fc = r["fc"] or 0
         held[r["account"]] = held.get(r["account"], 0) + (fc if r["debit"] else -fc)
     out = [_account(a, bal) for a in rows]
+    # how far each bank account is agreed to its statement
+    from .models import BankReconciliation
+    recs = {}
+    for r in BankReconciliation.objects.order_by("statement_date", "id"):
+        row = recs.setdefault(r.account_id, {"reconciled_to": None,
+                                             "reconciling": None})
+        if r.status == "DONE":
+            row["reconciled_to"] = r.statement_date
+        else:
+            row["reconciling"] = r.id
     for o in out:
         if o["currency"]:
             o["balance_fc"] = held.get(o["id"], 0)
+        o.update(recs.get(o["id"], {}))
     return Response({
         "accounts": out,
         "types": [{"value": v, "label": lab}
@@ -581,6 +592,134 @@ def report_aging(request):
             f"{'payables' if kind == 'SUPPLIER' else 'receivables'}-aging-"
             f"{r['as_of']}")
     return Response(r)
+
+
+# ---- bank reconciliation (core/reconcile.py) ---------------------------------
+
+def _rec_row(r):
+    return {"id": r.id, "status": r.status,
+            "statement_date": r.statement_date,
+            "statement_balance": r.statement_balance,
+            "opening_balance": r.opening_balance,
+            "finished_by": r.finished_by.full_name if r.finished_by_id else "",
+            "finished_at": r.finished_at}
+
+
+@api_view(["GET", "POST"])
+def account_reconciliations(request, pk):
+    """An account's reconciliations, newest first; POST starts one."""
+    from . import reconcile
+    if (bad := _read(request)):
+        return bad
+    a = LedgerAccount.objects.filter(pk=pk).first()
+    if a is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "POST":
+        if (bad := _write(request)):
+            return bad
+        rec, msg = reconcile.start(a, request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(reconcile.detail(rec), status=201)
+    return Response({
+        "account": {"id": a.id, "code": a.code, "name": a.name,
+                    "currency": a.currency or ledger.BASE},
+        "book_balance": (ledger.balance_of(a) if not a.currency else None),
+        "reconciliations": [_rec_row(r) for r in a.reconciliations
+                            .select_related("finished_by")],
+        "can_edit": request.user.role in ledger.WRITE_ROLES,
+        **reconcile.summary(a)})
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+def reconciliation_detail(request, pk):
+    from . import reconcile
+    from .models import BankReconciliation
+    if (bad := _read(request)):
+        return bad
+    rec = BankReconciliation.objects.select_related(
+        "account", "finished_by", "created_by").filter(pk=pk).first()
+    if rec is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method in ("PATCH", "DELETE"):
+        if (bad := _write(request)):
+            return bad
+        if request.method == "DELETE":
+            msg = reconcile.discard(rec)
+            if msg:
+                return Response({"detail": msg}, status=400)
+            return Response(status=204)
+        msg = reconcile.update(rec, request.data)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    d = reconcile.detail(rec)
+    if request.GET.get("export") == "xlsx":
+        cur = d["account"]["currency"]
+        rows = [["Balance per the bank statement", "", "", "", "",
+                 d["statement_balance"]], []]
+        for title, sign in (("Add: deposits not yet on the statement", 1),
+                            ("Less: payments not yet on the statement", -1)):
+            rows.append([title])
+            for r in d["rows"]:
+                if not r["ticked"] and (r["amount"] > 0) == (sign > 0):
+                    rows.append([r["date"], r["number"], r["payee"], r["memo"],
+                                 r["reference"], r["amount"]])
+            rows.append([])
+        rows += [["Ticked off against this statement"]] + [
+            [r["date"], r["number"], r["payee"], r["memo"], r["reference"],
+             r["amount"]] for r in d["rows"] if r["ticked"]]
+        return _xlsx(
+            f"{d['account']['name']} reconciliation",
+            f"Statement to {d['statement_date']:%d %b %Y} · {cur} · "
+            f"{rec.get_status_display()}",
+            ["Date", "Number", "Payee", "Memo", "Reference", cur], rows,
+            ["Balance per the books", "", "", "", "", d["book_balance"]],
+            [34, 12, 28, 34, 16, 16],
+            f"reconciliation-{d['account']['code']}-{d['statement_date']}")
+    d["can_edit"] = request.user.role in ledger.WRITE_ROLES
+    return Response(d)
+
+
+@api_view(["POST"])
+@parser_classes([JSONParser, MultiPartParser, FormParser])
+def reconciliation_action(request, pk, action):
+    from . import reconcile
+    from .models import BankReconciliation
+    if (bad := _write(request)):
+        return bad
+    rec = BankReconciliation.objects.select_related("account").filter(
+        pk=pk).first()
+    if rec is None:
+        return Response({"detail": "Not found."}, status=404)
+    extra = {}
+    if action == "tick":
+        ids = request.data.get("lines") or []
+        msg = reconcile.tick(rec, ids, bool(request.data.get("on")))
+    elif action == "import":
+        f = request.FILES.get("file")
+        if f is None:
+            return Response({"detail": "Attach the statement file."},
+                            status=400)
+        res, msg = reconcile.import_statement(rec, f, request.user)
+        extra = {"imported": res} if res else {}
+    elif action == "match":
+        if rec.status != "DRAFT":
+            msg = "It is finished — reopen it to change it."
+        else:
+            extra, msg = {"matched_now": reconcile.match(rec)}, None
+    elif action == "finish":
+        msg = reconcile.finish(rec, request.user)
+    elif action == "reopen":
+        msg = reconcile.reopen(rec, request.user)
+    else:
+        return Response({"detail": "Unknown action."}, status=404)
+    if msg:
+        return Response({"detail": msg}, status=400)
+    rec.refresh_from_db()
+    d = reconcile.detail(rec)
+    d["can_edit"] = True
+    d.update(extra)
+    return Response(d)
 
 
 @api_view(["GET"])

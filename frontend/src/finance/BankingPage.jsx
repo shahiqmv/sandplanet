@@ -24,8 +24,23 @@ function MoneyForm({ type, id, presetAccount, go }) {
   const [inclusive, setInclusive] = useState(false);
   const [file, setFile] = useState(null);
   const [existing, setExisting] = useState(null);
+  const [back, setBack] = useState(null);           // where to return after saving
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
+  // Sent here from a bank statement line the books don't have: start with
+  // what the bank shows, and go back to the reconciliation once saved.
+  useEffect(() => {
+    if (id) return;
+    try {
+      const p = JSON.parse(sessionStorage.getItem("f_prefill") || "null");
+      if (!p || p.type !== type) return;
+      sessionStorage.removeItem("f_prefill");
+      setH((x) => ({ ...x, account: String(p.account), date: p.date, memo: p.memo || "", reference: p.reference || "" }));
+      setLines([{ ...blank(), amount: String(p.amount), description: p.memo || "" }, blank()]);
+      setInclusive(true);
+      setBack(p.back);
+    } catch { /* a blank form */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const bank = banks.find((b) => String(b.id) === String(h.account));
   const ccy = bank?.currency || "MVR";
 
@@ -56,7 +71,7 @@ function MoneyForm({ type, id, presetAccount, go }) {
         const fd = new FormData(); fd.append("payload", JSON.stringify(payload)); fd.append("attachment", file);
         saved = await apiUpload(path, fd, method);
       } else saved = await api(path, { method, body: payload });
-      go("banking", `reg-${saved.account}`);
+      if (back) go(...back); else go("banking", `reg-${saved.account}`);
     } catch (e) { setError(e.message); } finally { setBusy(false); }
   }
 
@@ -255,6 +270,7 @@ function Register({ accountId, go, settings, canEdit }) {
         {reg && <Chip tone="info">{c}</Chip>}
         {reg && <span style={{ fontSize: 15, fontWeight: 700 }}>Balance {c} {money(reg.closing)}</span>}
         <span className="spacer" />
+        <button className="f-link" onClick={() => go("reconcile", `acct-${accountId}`)}>Reconcile</button>
         <button style={ghostButton} onClick={() => go("banking")}>← All accounts</button>
       </div>
       <div className="f-bar">
@@ -337,7 +353,8 @@ function Home({ go, canEdit }) {
               {a.currency ? `${a.currency} ${money(a.balance_fc)}` : `MVR ${money(a.balance)}`}
             </span>
             <span className="t-tile-l">{a.name}</span>
-            <span className="t-tile-s">{a.currency ? `MVR ${money(a.balance)} in the books · ` : ""}open register</span>
+            <span className="t-tile-s">{a.currency ? `MVR ${money(a.balance)} in the books · ` : ""}
+              {a.reconciled_to ? `reconciled to ${fmtDate(a.reconciled_to)}` : "not yet reconciled"}</span>
           </button>
         ))}
       </div>

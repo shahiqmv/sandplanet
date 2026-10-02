@@ -208,7 +208,8 @@ journals, foreign-currency revaluation at period end, budgets.
 
 ## Where things live
 `backend/core/ledger.py` (journal rules), `books.py` (the transaction forms,
-the register, Profit & Loss and Balance Sheet), `views_ledger.py` (API,
+the register, Profit & Loss and Balance Sheet), `reconcile.py` (bank
+reconciliation and reading the bank's file), `views_ledger.py` (API,
 `/api/v1/ledger/*`, refused where the `books` feature is off); models
 `LedgerAccount`, `JournalEntry`, `JournalLine`, `LedgerTxn`, `LedgerTxnLine`;
 `frontend/f.html`, `frontend/src/finance/`.
@@ -239,8 +240,27 @@ the register, Profit & Loss and Balance Sheet), `views_ledger.py` (API,
     receivables are listed this way.
   - The sales invoice here is a *record* of an invoice issued (its number as
     issued); the tax invoice itself is still raised in Projects / Trading.
-- Next, in the order agreed: reconcile against the bank statement; Excel
-  import; the GST return figures and the input / output tax statements.
+- Stage 2, third part — **Reconcile** (`core/reconcile.py`): a bank or cash
+  account agreed to its statement at a date, in the account's own currency.
+  Lines the bank also shows are ticked; it finishes only when the opening
+  balance plus the ticks equals the statement's closing balance; what is
+  left is outstanding, and the finished statement proves the books' balance
+  (statement + deposits not yet credited − payments not yet presented).
+  - The bank's own file (Excel `.xlsx` or CSV; the header row is found by
+    itself, Debit/Credit columns or one Amount column with a Dr/Cr marker)
+    is paired with the books by amount, then by a reference the bank quotes,
+    then by nearest date (60 days before to 5 after). What the bank shows
+    that the books don't — charges, interest — is listed with a button that
+    opens the expense or deposit form filled in, and is ticked on return.
+  - A line on a finished statement is fixed: its transaction can't be
+    changed or voided until that reconciliation is reopened; only the
+    latest one reopens.
+  - The first reconciliation starts from nil and lists the audited opening
+    balance as a line to tick. If the bank's own balance at 31 Dec 2025
+    differed (cheques then outstanding), the opening entry needs those as
+    separate lines.
+- Next, in the order agreed: Excel import for January–June 2026; the GST
+  return figures and the input / output tax statements.
 - Not yet: supplier and customer credit notes; a payment on account
   (unapplied); writing off a small balance; withholding tax on a payment.
 

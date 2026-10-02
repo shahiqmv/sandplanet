@@ -8837,6 +8837,12 @@ class JournalLine(models.Model):
     cost_head = models.ForeignKey(CostHead, on_delete=models.PROTECT,
                                   null=True, blank=True, related_name="+")
     party = models.CharField(max_length=160, blank=True)  # customer / supplier / person
+    # A line on a bank account: the statement it has been ticked off
+    # against. Null = not yet seen on a statement (an outstanding cheque, a
+    # deposit in transit).
+    cleared_in = models.ForeignKey("BankReconciliation",
+                                   on_delete=models.SET_NULL, null=True,
+                                   blank=True, related_name="lines")
 
     class Meta:
         ordering = ["entry_id", "line_no"]
@@ -9017,3 +9023,64 @@ class LedgerTxnLine(models.Model):
 
     class Meta:
         ordering = ["txn_id", "line_no"]
+
+
+def bank_statement_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"books/statements/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class BankReconciliation(models.Model):
+    """A bank or cash account agreed to its statement at a date —
+    QuickBooks' Reconcile. The lines ticked off are the ones the bank also
+    shows; what is left unticked is outstanding. Finished only when the
+    balance the ticks come to equals the statement's. Amounts are in the
+    account's own currency."""
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "In progress"
+        DONE = "DONE", "Reconciled"
+
+    account = models.ForeignKey(LedgerAccount, on_delete=models.PROTECT,
+                                related_name="reconciliations")
+    statement_date = models.DateField()
+    statement_balance = models.DecimalField(max_digits=16, decimal_places=2)
+    # where the last reconciled statement ended (nil for the first)
+    opening_balance = models.DecimalField(max_digits=16, decimal_places=2,
+                                          default=0)
+    status = models.CharField(max_length=6, choices=Status.choices,
+                              default=Status.DRAFT)
+    statement_file = models.FileField(upload_to=bank_statement_path,
+                                      null=True, blank=True)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                    blank=True, related_name="+")
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-statement_date", "-id"]
+
+
+class BankStatementLine(models.Model):
+    """A line of the bank's own statement, read from the file the bank
+    gives. `amount` is signed as the account sees it: money in is positive.
+    `matched` is the line in the books it was paired with."""
+
+    reconciliation = models.ForeignKey(BankReconciliation,
+                                       on_delete=models.CASCADE,
+                                       related_name="statement_lines")
+    line_no = models.PositiveIntegerField()
+    date = models.DateField()
+    description = models.CharField(max_length=300, blank=True)
+    reference = models.CharField(max_length=80, blank=True)
+    amount = models.DecimalField(max_digits=16, decimal_places=2)
+    balance = models.DecimalField(max_digits=16, decimal_places=2, null=True,
+                                  blank=True)
+    matched = models.ForeignKey(JournalLine, on_delete=models.SET_NULL,
+                                null=True, blank=True, related_name="+")
+
+    class Meta:
+        ordering = ["reconciliation_id", "line_no"]

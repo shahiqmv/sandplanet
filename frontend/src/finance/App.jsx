@@ -20,6 +20,7 @@ import BankingPage from "./BankingPage.jsx";
 import { AgingPage, DocsPage, PartiesPage } from "./CreditPage.jsx";
 import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
+import ReconcilePage from "./ReconcilePage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
 import { fmtDate, money } from "./shared.jsx";
 
@@ -32,7 +33,9 @@ const BOOK_ROLES = [...BOOKS];
 // section → its pages: [key, label, roles]
 const SECTIONS = [
   ["overview", "Overview", [["home", "Overview", [...READERS]]]],
-  ["banking", "Banking", [["banking", "Banking", BOOK_ROLES]]],
+  ["banking", "Banking", [
+    ["banking", "Accounts", BOOK_ROLES],
+    ["reconcile", "Reconcile", BOOK_ROLES]]],
   // the books' own purchases and sales on credit, QuickBooks-style
   ["purchases", "Purchases", [
     ["bills", "Bills", BOOK_ROLES],
@@ -299,6 +302,7 @@ export default function App() {
         {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
         {page === "receivables" && <ReceivablesPage me={me} />}
         {page === "banking" && <BankingPage sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "home"} />}
+        {page === "reconcile" && <ReconcilePage sub={sub} go={go} />}
         {page === "bills" && <DocsPage side="AP" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
         {page === "suppliers" && <PartiesPage side="AP" sub={sub} go={go} canEdit={canWrite} />}
         {page === "ap-aging" && <AgingPage side="AP" go={go} />}

@@ -592,6 +592,9 @@ def reverse(entry, actor, on=None, reason=""):
     reason = (reason or "").strip()
     if not reason:
         return None, "Say why it is being reversed."
+    from . import reconcile
+    if (msg := reconcile.reversal_block(entry)):
+        return None, msg
     on = on or max(entry.date, timezone.localdate()) \
         if entry.kind != "OPENING" else entry.date
     kind = "OPENING" if entry.kind == "OPENING" else "REVERSAL"
@@ -599,6 +602,7 @@ def reverse(entry, actor, on=None, reason=""):
     if msg:
         return None, msg
     with transaction.atomic():
+        reconcile.release(entry)
         rev = JournalEntry.objects.create(
             date=on, kind="REVERSAL", memo=f"Reversal of {entry.ref} — "
                                             f"{reason}",
