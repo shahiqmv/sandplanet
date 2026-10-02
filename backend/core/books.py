@@ -1,7 +1,9 @@
 """QuickBooks-style working on top of the ledger (FINANCE_BUILD_BRIEF.md,
-stage 2): transactions entered on forms — expense, deposit, transfer — that
-post their own journal; a register per bank and cash account; and the two
-statements, Profit & Loss and Balance Sheet.
+stage 2): transactions entered on forms — expense, deposit, transfer, bill
+and its payment, sales invoice and its receipt — that post their own
+journal; a register per bank and cash account; suppliers and customers with
+what is owed either way; and the two statements, Profit & Loss and Balance
+Sheet.
 
 GST follows MIRA's published rules (brief, "What MIRA's published guidance
 says"): input tax on a purchase is recoverable only where a valid tax
@@ -11,18 +13,33 @@ lines carry no tax; the rate is the company setting, never a constant here.
 from datetime import date
 from decimal import Decimal
 
+from datetime import timedelta
+
 from django.db import transaction
-from django.db.models import Q, Sum
+from django.db.models import DecimalField, Q, Sum
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from . import ledger
 from .audit import audit
 from .ledger import BASE, ZERO, q2
-from .models import (JournalLine, LedgerAccount, LedgerTxn, LedgerTxnLine)
+from .models import (JournalLine, LedgerAccount, LedgerParty, LedgerTxn,
+                     LedgerTxnApply, LedgerTxnLine)
 
 T = LedgerAccount.Type
 GST = LedgerTxnLine.Gst
 MONEY_TYPES = ("BANK", "CREDIT_CARD")     # what a register is kept for
+DOC_TYPES = ("BILL", "INVOICE")           # owed, until a payment settles it
+PAY_TYPES = ("BILL_PAY", "RECEIPT")
+# the document a payment settles, and whose it is
+PAYS = {"BILL_PAY": "BILL", "RECEIPT": "INVOICE"}
+KIND = {"BILL": "SUPPLIER", "BILL_PAY": "SUPPLIER",
+        "INVOICE": "CUSTOMER", "RECEIPT": "CUSTOMER"}
+# the control account a document sits on: its type, and the usual one
+CONTROL = {"BILL": ("AP", "AP_TRADE"), "INVOICE": ("AR", "AR_TRADE")}
+LABEL = {"EXPENSE": "Expense", "DEPOSIT": "Deposit", "TRANSFER": "Transfer",
+         "BILL": "Bill", "INVOICE": "Invoice", "BILL_PAY": "Bill payment",
+         "RECEIPT": "Payment received"}
 
 
 def gst_rate():
@@ -31,18 +48,217 @@ def gst_rate():
 
 
 def meta():
-    """What the forms need: the GST rate and treatments, payees to suggest."""
-    from .models import Supplier
+    """What the forms need: the GST rate and treatments, names to suggest."""
+    from .models import Customer, Site, Supplier
+    suppliers = set(Supplier.objects.filter(is_active=True)
+                    .values_list("name", flat=True))
+    known = {k: set(LedgerParty.objects.filter(kind=k, is_active=True)
+                    .values_list("name", flat=True))
+             for k in ("SUPPLIER", "CUSTOMER")}
+    customers = (set(Customer.objects.values_list("name", flat=True))
+                 | set(Site.objects.exclude(client_name="")
+                       .values_list("client_name", flat=True)))
+
+    def names(*sets):
+        seen = {}
+        for group in sets:
+            for n in group:
+                n = " ".join((n or "").split())
+                if n:
+                    seen.setdefault(n.lower(), n)
+        return sorted(seen.values(), key=str.lower)[:1500]
     return {
         "gst_rate": gst_rate(),
         "gst_treatments": [{"value": v, "label": lab} for v, lab in GST.choices],
-        "payees": sorted({s for s in Supplier.objects.filter(is_active=True)
-                          .values_list("name", flat=True)}
-                         | set(LedgerTxn.objects.exclude(party="")
-                               .values_list("party", flat=True)),
-                         key=str.lower)[:1500],
+        "payees": names(suppliers, known["SUPPLIER"],
+                        LedgerTxn.objects.exclude(party="")
+                        .filter(type__in=("EXPENSE", "DEPOSIT"))
+                        .values_list("party", flat=True)),
+        "suppliers": names(known["SUPPLIER"], suppliers),
+        "customers": names(known["CUSTOMER"], customers),
         "settings": ledger.settings_dict(),
     }
+
+
+# ---- suppliers and customers -------------------------------------------------
+
+def party_for(kind, ref=None, name="", tin=""):
+    """The supplier or customer a form names — the one on file under that
+    name, or a new one (QuickBooks' quick add), tied to Purchasing's
+    supplier or Trading's customer where the name is theirs."""
+    from .models import Customer, Supplier
+    p = LedgerParty.objects.filter(pk=ref, kind=kind).first() if ref else None
+    if p is None:
+        name = " ".join((name or "").split())[:160]
+        if not name:
+            raise ValueError("Say which supplier." if kind == "SUPPLIER"
+                             else "Say which customer.")
+        p = LedgerParty.objects.filter(kind=kind, name__iexact=name).first()
+        if p is None:
+            p = LedgerParty(kind=kind, name=name)
+            if kind == "SUPPLIER":
+                src = Supplier.objects.filter(name__iexact=name).first()
+                if src:
+                    p.supplier, p.credit_days = src, src.credit_days
+                    p.address = src.address
+                    cur = (src.default_currency or "").upper()
+                    p.currency = cur if cur and cur != BASE else ""
+            else:
+                src = Customer.objects.filter(name__iexact=name).first()
+                if src:
+                    p.customer, p.credit_days = src, src.credit_days
+                    p.tin, p.address = src.tin, src.billing_address
+                    cur = (src.default_currency or "").upper()
+                    p.currency = cur if cur and cur != BASE else ""
+            p.save()
+    tin = (tin or "").strip()[:40]
+    if tin and not p.tin:
+        p.tin = tin
+        p.save(update_fields=["tin"])
+    return p
+
+
+def save_party(data, actor, party=None):
+    """Create or correct a supplier / customer. Returns (party, error)."""
+    kind = party.kind if party else data.get("kind")
+    if kind not in LedgerParty.Kind.values:
+        return None, "Say whether it is a supplier or a customer."
+    name = " ".join((data.get("name") or (party.name if party else "")).split())
+    if not name:
+        return None, "Give the name."
+    clash = LedgerParty.objects.filter(kind=kind, name__iexact=name)
+    if party:
+        clash = clash.exclude(pk=party.pk)
+    if clash.exists():
+        return None, f"{name} is already on the list."
+    party = party or LedgerParty(kind=kind)
+    party.name = name[:160]
+    for f, n in (("tin", 40), ("contact", 200), ("address", None)):
+        if f in data:
+            setattr(party, f, (data.get(f) or "").strip()[:n])
+    if "currency" in data:
+        cur = (data.get("currency") or "").strip().upper()[:3]
+        party.currency = "" if cur == BASE else cur
+    if "credit_days" in data:
+        cd = data.get("credit_days")
+        try:
+            party.credit_days = None if cd in (None, "") else max(0, int(cd))
+        except (TypeError, ValueError):
+            return None, "Credit days is a number of days."
+    if "is_active" in data:
+        party.is_active = bool(data.get("is_active"))
+    party.save()
+    audit("ledger_party", party.id, "PARTY_SAVED", actor=actor,
+          detail={"kind": kind, "name": party.name})
+    return party, None
+
+
+def _paid(prefix="applied__", as_of=None):
+    """Annotations: how much of a document posted payments have settled."""
+    live = Q(**{f"{prefix}payment__status": "POSTED"})
+    if as_of:
+        live &= Q(**{f"{prefix}payment__date__lte": as_of})
+    money = DecimalField(max_digits=16, decimal_places=2)
+    return {
+        "paid": Coalesce(Sum(f"{prefix}amount", filter=live), ZERO,
+                         output_field=money),
+        "paid_mvr": Coalesce(Sum(f"{prefix}amount_mvr", filter=live), ZERO,
+                             output_field=money),
+    }
+
+
+def docs(typ=None):
+    """Bills / invoices with what has been paid against each."""
+    qs = LedgerTxn.objects.filter(type__in=[typ] if typ else DOC_TYPES)
+    return qs.annotate(**_paid())
+
+
+def parties(kind):
+    """The list, each with what is open between us, in rufiyaa."""
+    doc_type = "BILL" if kind == "SUPPLIER" else "INVOICE"
+    owed = {}
+    for d in docs(doc_type).filter(status="POSTED"):
+        bal = d.amount_mvr - d.paid_mvr
+        if d.amount - d.paid > ZERO:
+            row = owed.setdefault(d.party_ref_id, [ZERO, 0])
+            row[0] += bal
+            row[1] += 1
+    out = []
+    for p in LedgerParty.objects.filter(kind=kind):
+        bal, n = owed.get(p.id, (ZERO, 0))
+        out.append({**party_dict(p), "balance": bal, "open": n})
+    return out
+
+
+def party_dict(p):
+    return {"id": p.id, "kind": p.kind, "name": p.name, "tin": p.tin,
+            "address": p.address, "contact": p.contact,
+            "credit_days": p.credit_days, "currency": p.currency or BASE,
+            "is_active": p.is_active,
+            "linked": ("Purchasing's supplier list" if p.supplier_id else
+                       "Trading's customer list" if p.customer_id else "")}
+
+
+def party_statement(party):
+    """Everything between us and one supplier or customer, oldest first,
+    with the balance running in rufiyaa."""
+    doc_type = "BILL" if party.kind == "SUPPLIER" else "INVOICE"
+    rows, bal = [], ZERO
+    txns = (LedgerTxn.objects.filter(party_ref=party, status="POSTED")
+            .order_by("date", "id"))
+    for t in txns:
+        if t.type == doc_type:
+            change = t.amount_mvr
+        else:
+            change = -sum((a.amount_mvr for a in t.applies.all()), ZERO)
+        bal += change
+        rows.append({"id": t.id, "number": t.number, "type": t.type,
+                     "type_label": LABEL[t.type], "date": t.date,
+                     "reference": t.reference, "due_date": t.due_date,
+                     "currency": t.currency, "amount": t.amount,
+                     "change": change, "balance": bal,
+                     "is_opening": t.is_opening})
+    return {"party": party_dict(party), "rows": rows, "balance": bal}
+
+
+def aging(kind, as_of=None):
+    """What is owed, per supplier or customer, by how long past its due
+    date — in rufiyaa, at the value each bill stands at in the books — and
+    whether it agrees with the control accounts."""
+    as_of = as_of or timezone.localdate()
+    doc_type = "BILL" if kind == "SUPPLIER" else "INVOICE"
+    qs = (LedgerTxn.objects.filter(type=doc_type, status="POSTED",
+                                   date__lte=as_of)
+          .annotate(**_paid(as_of=as_of)).select_related("party_ref"))
+    buckets = ("current", "d30", "d60", "d90", "older")
+    by, total = {}, dict.fromkeys(buckets + ("total",), ZERO)
+    for d in qs:
+        bal = d.amount_mvr - d.paid_mvr
+        if d.amount - d.paid <= ZERO or bal == ZERO:
+            continue
+        late = (as_of - (d.due_date or d.date)).days
+        b = ("current" if late <= 0 else "d30" if late <= 30 else
+             "d60" if late <= 60 else "d90" if late <= 90 else "older")
+        row = by.setdefault(d.party_ref_id, {
+            "party": d.party_ref_id, "name": d.party_ref.name if d.party_ref
+            else d.party, **dict.fromkeys(buckets + ("total",), ZERO),
+            "docs": []})
+        row[b] += bal
+        row["total"] += bal
+        total[b] += bal
+        total["total"] += bal
+        row["docs"].append({"id": d.id, "number": d.number,
+                            "reference": d.reference, "date": d.date,
+                            "due_date": d.due_date, "days_late": max(late, 0),
+                            "currency": d.currency,
+                            "balance_fc": d.amount - d.paid, "balance": bal})
+    # the same figure, per the books
+    typ, sign = ("AP", -1) if kind == "SUPPLIER" else ("AR", 1)
+    books_bal = sign * sum(_balances(None, as_of, (typ,)).values(), ZERO)
+    return {"kind": kind, "as_of": as_of,
+            "rows": sorted(by.values(), key=lambda r: r["name"].lower()),
+            "total": total, "per_books": books_bal,
+            "difference": books_bal - total["total"]}
 
 
 # ---- building the journal a form stands for ---------------------------------
@@ -66,10 +282,12 @@ def _fc(account, amount, rate):
 
 
 def _journal_lines(txn, lines):
-    """The balanced entry for an expense or a deposit. Amounts on the form
-    are in the bank account's currency; the books are in rufiyaa."""
+    """The balanced entry for an expense or a deposit — or for a bill or an
+    invoice, which are the same thing bought or sold on credit: the total
+    lands on the payable or receivable instead of the bank. Amounts on the
+    form are in the transaction's currency; the books are in rufiyaa."""
     rate = txn.fx_rate or Decimal("1")
-    expense = txn.type == "EXPENSE"
+    expense = txn.type in ("EXPENSE", "BILL")
     input_gst = ledger.account_for("INPUT_GST")
     output_gst = ledger.account_for("OUTPUT_GST")
     out, total_mvr, tax_mvr = [], ZERO, ZERO
@@ -96,9 +314,14 @@ def _journal_lines(txn, lines):
             f"GST · {txn.tax_invoice_no}" if txn.tax_invoice_no else "GST"),
             **({"debit": tax_mvr} if expense else {"credit": tax_mvr})))
         total_mvr += tax_mvr
+    if txn.type in DOC_TYPES:
+        fc = ({"currency": txn.currency, "amount_fc": q2(txn.amount),
+               "fx_rate": rate} if txn.currency != BASE else {})
+    else:
+        fc = _fc(txn.account, txn.amount, rate)
     bank = _jl(txn.account, party=txn.party, description=txn.reference,
                **({"credit": total_mvr} if expense else {"debit": total_mvr}),
-               **_fc(txn.account, txn.amount, rate))
+               **fc)
     return [bank] + out, total_mvr
 
 
@@ -134,21 +357,106 @@ def _dec(v, what):
         raise ValueError(f"{what} is not a number.")
 
 
-def _clean(data, typ):
+def _control_account(data, typ):
+    """The payable or receivable account a bill / invoice sits on."""
+    want, usual = CONTROL[typ]
+    if data.get("account"):
+        account = LedgerAccount.objects.filter(pk=data.get("account")).first()
+    else:
+        account = ledger.account_for(usual) or LedgerAccount.objects.filter(
+            type=want, is_group=False, is_active=True).order_by("code").first()
+    what = "payable" if typ == "BILL" else "receivable"
+    if account is None or account.type != want or account.is_group:
+        raise ValueError(f"Pick the accounts {what} account.")
+    if account.currency:
+        raise ValueError(f"{account.name} is held in {account.currency}; "
+                         f"the {what} account is kept in rufiyaa.")
+    return account
+
+
+def _clean_doc_head(data, typ, head, txn):
+    """What a bill or an invoice adds to the header: whose it is, its own
+    number, when it falls due, its currency."""
+    supplier = typ == "BILL"
+    party = party_for(KIND[typ], data.get("party_ref"), data.get("party"),
+                      data.get("party_tin"))
+    if not head["reference"]:
+        raise ValueError("Give the supplier's bill or invoice number."
+                         if supplier else "Give the invoice number.")
+    twin = LedgerTxn.objects.filter(
+        type=typ, status="POSTED", party_ref=party,
+        reference__iexact=head["reference"])
+    if txn is not None and txn.pk:
+        twin = twin.exclude(pk=txn.pk)
+    twin = twin.first()
+    if twin:
+        raise ValueError(f"{head['reference']} from {party.name} is already "
+                         f"entered, as {twin.number}." if supplier else
+                         f"Invoice {head['reference']} to {party.name} is "
+                         f"already entered, as {twin.number}.")
+    cur = (data.get("currency") or BASE).strip().upper()[:3]
+    if len(cur) != 3 or not cur.isalpha():
+        raise ValueError("The currency is a three-letter code, like USD.")
+    head.update(party_ref=party, party=party.name,
+                party_tin=head["party_tin"] or party.tin, currency=cur,
+                is_opening=bool(data.get("is_opening")))
+    if cur != BASE:
+        head["fx_rate"] = _dec(data.get("fx_rate"), "The rate")
+        if head["fx_rate"] <= 0:
+            raise ValueError(f"Give the {cur} rate to rufiyaa.")
+    due = ledger._as_date(data.get("due_date"))
+    if due is None:
+        due = head["date"] + timedelta(days=party.credit_days or 0)
+    if due < head["date"]:
+        raise ValueError("The due date is before the date of the "
+                         + ("bill." if supplier else "invoice."))
+    head["due_date"] = due
+    if supplier:
+        if head["tax_invoice_held"]:
+            # MIRA's input tax statement lists the invoice and the supplier's
+            # TIN; without them the claim does not stand.
+            head["tax_invoice_no"] = head["tax_invoice_no"] or head["reference"]
+            head["tax_invoice_date"] = head["tax_invoice_date"] or head["date"]
+            if not head["party_tin"]:
+                raise ValueError("A tax invoice carries the supplier's TIN — "
+                                 "enter it to claim the GST.")
+    else:
+        head["tax_invoice_no"] = head["reference"]
+        head["tax_invoice_date"] = head["date"]
+        head["tax_invoice_held"] = False
+    if head["is_opening"]:
+        start = ledger.books_start()
+        if head["date"] >= start:
+            raise ValueError(
+                f"An opening item is dated before the books start "
+                f"({start:%d %b %Y}) — it is something still unpaid from "
+                "before.")
+        amount = q2(_dec(data.get("amount"), "The amount"))
+        if amount <= 0:
+            raise ValueError("Give the amount still unpaid.")
+        head["amount"] = amount
+
+
+def _clean(data, typ, txn=None):
     """Validated header + lines from what the form sent. Raises ValueError."""
     from .models import Project, Site
     d = ledger._as_date(data.get("date"))
     if d is None:
         raise ValueError("Give the date.")
-    account = LedgerAccount.objects.filter(pk=data.get("account")).first()
-    if account is None or account.type not in MONEY_TYPES or account.is_group:
-        raise ValueError("Pick the bank or cash account.")
+    if typ in DOC_TYPES:
+        account = _control_account(data, typ)
+    else:
+        account = LedgerAccount.objects.filter(pk=data.get("account")).first()
+        if (account is None or account.type not in MONEY_TYPES
+                or account.is_group):
+            raise ValueError("Pick the bank or cash account.")
     if not account.is_active:
         raise ValueError(f"{account.name} is closed.")
     head = {
         "date": d, "account": account, "to_account": None,
         "party": (data.get("party") or "").strip()[:160],
         "party_tin": (data.get("party_tin") or "").strip()[:40],
+        "party_ref": None, "due_date": None, "is_opening": False,
         "reference": (data.get("reference") or "").strip()[:80],
         "memo": (data.get("memo") or "").strip(),
         "currency": account.currency or BASE, "fx_rate": None,
@@ -157,7 +465,11 @@ def _clean(data, typ):
         "tax_invoice_date": ledger._as_date(data.get("tax_invoice_date")),
         "tax_invoice_held": bool(data.get("tax_invoice_held")),
     }
-    if account.currency:
+    if typ in DOC_TYPES:
+        _clean_doc_head(data, typ, head, txn)
+        if head["is_opening"]:
+            return head, []
+    elif account.currency:
         head["fx_rate"] = _dec(data.get("fx_rate"), "The rate")
         if head["fx_rate"] <= 0:
             raise ValueError(f"Give the {account.currency} rate to rufiyaa.")
@@ -236,13 +548,20 @@ def save_txn(typ, data, actor, txn=None, attachment=None):
     """Create a transaction, or change one — which reverses its entry and
     posts a new one, so the books keep both. Returns (txn, error)."""
     from .numbering import next_ref
+    if typ in PAY_TYPES:
+        if txn is not None:
+            return None, ("A payment isn't changed — void it and enter it "
+                          "again.")
+        return save_payment(typ, data, actor, attachment=attachment)
     if typ not in LedgerTxn.Type.values:
         return None, "Unknown kind of transaction."
     if txn is not None and txn.status == "VOID":
         return None, "A void transaction can't be changed."
+    if txn is not None and (msg := _settled_block(txn, "changed")):
+        return None, msg
     try:
-        head, lines = _clean(data, typ)
         with transaction.atomic():
+            head, lines = _clean(data, typ, txn)
             if txn is None:
                 txn = LedgerTxn(type=typ, created_by=actor,
                                 number=next_ref(LedgerTxn.PREFIX[typ], None))
@@ -260,22 +579,201 @@ def save_txn(typ, data, actor, txn=None, attachment=None):
             txn.updated_by = actor
             if attachment is not None:
                 txn.attachment = attachment
-            jl, mvr = (_transfer_lines(txn) if typ == "TRANSFER"
-                       else _journal_lines(txn, lines))
+            if txn.is_opening:
+                # already inside the opening balances: no entry of its own
+                jl, mvr = None, q2(txn.amount * (txn.fx_rate or 1))
+                txn.journal = None
+            else:
+                jl, mvr = (_transfer_lines(txn) if typ == "TRANSFER"
+                           else _journal_lines(txn, lines))
             txn.amount_mvr = mvr
             txn.save()
             txn.lines.all().delete()
             LedgerTxnLine.objects.bulk_create([
                 LedgerTxnLine(txn=txn, line_no=i, **ln)
                 for i, ln in enumerate(lines, 1)])
-            label = {"EXPENSE": "Expense", "DEPOSIT": "Deposit",
-                     "TRANSFER": "Transfer"}[typ]
-            who = txn.party or (f"{txn.account.name} → {txn.to_account.name}"
-                                if txn.to_account_id else "")
+            if jl is not None:
+                who = txn.party or (
+                    f"{txn.account.name} → {txn.to_account.name}"
+                    if txn.to_account_id else "")
+                txn.journal = ledger.post_entry(
+                    on=txn.date, actor=actor, kind="TXN",
+                    memo=" · ".join(x for x in (
+                        f"{LABEL[typ]} {txn.number}", who,
+                        txn.reference if typ in DOC_TYPES else "",
+                        txn.memo) if x),
+                    lines=jl, source_type="TXN", source_id=txn.id,
+                    source_ref=txn.number)
+                txn.save(update_fields=["journal"])
+    except ValueError as exc:
+        return None, str(exc)
+    audit("ledger_txn", txn.id, "TXN_SAVED", actor=actor,
+          detail={"number": txn.number, "type": typ,
+                  "amount_mvr": str(txn.amount_mvr),
+                  "journal": txn.journal.ref if txn.journal_id else ""})
+    return txn, None
+
+
+def _settled_block(txn, verb):
+    """Why a bill or invoice with a payment against it can't be touched."""
+    if txn.type not in DOC_TYPES:
+        return None
+    pay = (LedgerTxnApply.objects.filter(doc=txn, payment__status="POSTED")
+           .select_related("payment").first())
+    if pay:
+        return (f"{txn.number} has a payment against it "
+                f"({pay.payment.number}) — void the payment first, then it "
+                f"can be {verb}.")
+    return None
+
+
+def save_payment(typ, data, actor, attachment=None):
+    """Pay bills, or receive payment against invoices: one sum through one
+    bank or cash account, set against one or more open documents of one
+    supplier or customer. Returns (txn, error).
+
+    Each document leaves the books at the rufiyaa value it went in at; where
+    the money that actually moved is worth more or less than that — a dollar
+    bill paid at a different rate — the difference is an exchange gain or
+    loss, as the audited statements' policy has it."""
+    from .numbering import next_ref
+    pay = typ == "BILL_PAY"
+    doc_word = "bill" if pay else "invoice"
+    try:
+        d = ledger._as_date(data.get("date"))
+        if d is None:
+            raise ValueError("Give the date.")
+        account = LedgerAccount.objects.filter(pk=data.get("account")).first()
+        if (account is None or account.type not in MONEY_TYPES
+                or account.is_group):
+            raise ValueError("Pick the bank or cash account.")
+        if not account.is_active:
+            raise ValueError(f"{account.name} is closed.")
+        want = {}
+        for r in data.get("applies") or []:
+            amt = q2(_dec(r.get("amount"), "An amount"))
+            if amt < ZERO:
+                raise ValueError("An amount can't be negative.")
+            if amt and r.get("doc"):
+                want[int(r["doc"])] = want.get(int(r["doc"]), ZERO) + amt
+        if not want:
+            raise ValueError(f"Tick at least one {doc_word} and give the "
+                             "amount.")
+        with transaction.atomic():
+            found = list(docs(PAYS[typ]).filter(pk__in=want, status="POSTED")
+                         .select_related("account", "party_ref")
+                         .order_by("date", "id"))
+            if len(found) != len(want):
+                raise ValueError(f"One of those {doc_word}s is void or gone "
+                                 "— open the list again.")
+            if len({x.party_ref_id for x in found}) != 1:
+                raise ValueError(f"One payment settles one "
+                                 f"{'supplier' if pay else 'customer'}'s "
+                                 f"{doc_word}s.")
+            if len({x.currency for x in found}) != 1:
+                raise ValueError(f"Those {doc_word}s are in different "
+                                 "currencies — settle each currency with its "
+                                 "own payment.")
+            party, cur = found[0].party_ref, found[0].currency
+            bank_cur = account.currency or BASE
+            applied, carrying, items = ZERO, ZERO, []
+            for x in found:
+                amt, left = want[x.id], x.amount - x.paid
+                if x.date > d:
+                    raise ValueError(f"{x.number} is dated {x.date:%d %b %Y}, "
+                                     "after this payment.")
+                if amt > left:
+                    raise ValueError(
+                        f"{x.number} has {cur} {left:,.2f} left to settle — "
+                        f"{cur} {amt:,.2f} is more than that.")
+                # the last of a document takes whatever value is left on it,
+                # so the payable or receivable clears to the laari
+                mvr = (x.amount_mvr - x.paid_mvr if amt == left
+                       else q2(amt * (x.fx_rate or 1)))
+                items.append((x, amt, mvr))
+                applied += amt
+                carrying += mvr
+            rate = None
+            if cur == bank_cur:
+                moved = applied                      # in the bank's currency
+                if cur == BASE:
+                    value = applied
+                else:
+                    rate = _dec(data.get("fx_rate"), "The rate")
+                    if rate <= 0:
+                        raise ValueError(f"Give the {cur} rate to rufiyaa on "
+                                         "the day of the payment.")
+                    value = q2(applied * rate)
+            elif bank_cur == BASE:
+                # a foreign bill settled from a rufiyaa account
+                moved = value = q2(_dec(data.get("amount"), "The amount"))
+                if value <= 0:
+                    raise ValueError(
+                        f"Give the rufiyaa amount that "
+                        f"{'left' if pay else 'reached'} {account.name} for "
+                        f"{cur} {applied:,.2f}.")
+            elif cur == BASE:
+                # a rufiyaa bill settled from a foreign-currency account
+                moved = q2(_dec(data.get("amount"), "The amount"))
+                if moved <= 0:
+                    raise ValueError(
+                        f"Give the {bank_cur} amount that "
+                        f"{'left' if pay else 'reached'} {account.name}.")
+                value = applied
+            else:
+                raise ValueError(
+                    f"{account.name} is in {bank_cur} and the {doc_word}s in "
+                    f"{cur} — settle them through a {cur} or a rufiyaa "
+                    "account.")
+            if bank_cur != BASE:
+                rate = (value / moved).quantize(Decimal("0.000001"))
+            txn = LedgerTxn.objects.create(
+                type=typ, number=next_ref(LedgerTxn.PREFIX[typ], None),
+                date=d, account=account, party_ref=party, party=party.name,
+                party_tin=party.tin,
+                reference=(data.get("reference") or "").strip()[:80],
+                memo=(data.get("memo") or "").strip(), currency=bank_cur,
+                fx_rate=rate, amount=moved, amount_mvr=value,
+                attachment=attachment, created_by=actor, updated_by=actor)
+            LedgerTxnApply.objects.bulk_create([
+                LedgerTxnApply(payment=txn, doc=x, amount=amt, amount_mvr=mvr)
+                for x, amt, mvr in items])
+            side, other = (("credit", "debit") if pay else ("debit", "credit"))
+            fc = ({"currency": bank_cur, "amount_fc": moved, "fx_rate": rate}
+                  if bank_cur != BASE else {})
+            jl = [_jl(account, party=party.name, description=txn.reference,
+                      **{side: value}, **fc)]
+            ctrl = {}
+            for x, amt, mvr in items:
+                row = ctrl.setdefault(x.account_id, [x.account, ZERO, ZERO, []])
+                row[1] += mvr
+                row[2] += amt
+                row[3].append(x.reference or x.number)
+            for acc, mvr, amt, refs in ctrl.values():
+                jl.append(_jl(acc, party=party.name,
+                              description=", ".join(refs)[:300],
+                              **{other: mvr},
+                              **({"currency": cur, "amount_fc": amt,
+                                  "fx_rate": (mvr / amt).quantize(
+                                      Decimal("0.000001"))}
+                                 if cur != BASE else {})))
+            diff = value - carrying
+            if diff:
+                loss = (diff > 0) == pay     # paid more, or received less
+                fx = ledger.account_for("FX_LOSS" if loss else "FX_GAIN")
+                if fx is None:
+                    raise ValueError(
+                        "The chart has no exchange "
+                        f"{'loss' if loss else 'gain'} account for the "
+                        "difference — restore it in the chart of accounts.")
+                jl.append(_jl(fx, party=party.name,
+                              description="Exchange difference",
+                              **({"debit": abs(diff)} if loss
+                                 else {"credit": abs(diff)})))
             txn.journal = ledger.post_entry(
-                on=txn.date, actor=actor, kind="TXN",
-                memo=" · ".join(x for x in (f"{label} {txn.number}", who,
-                                            txn.memo) if x),
+                on=d, actor=actor, kind="TXN",
+                memo=" · ".join(x for x in (
+                    f"{LABEL[typ]} {txn.number}", party.name, txn.memo) if x),
                 lines=jl, source_type="TXN", source_id=txn.id,
                 source_ref=txn.number)
             txn.save(update_fields=["journal"])
@@ -284,6 +782,7 @@ def save_txn(typ, data, actor, txn=None, attachment=None):
     audit("ledger_txn", txn.id, "TXN_SAVED", actor=actor,
           detail={"number": txn.number, "type": typ,
                   "amount_mvr": str(txn.amount_mvr),
+                  "settles": [x.number for x, _, _ in items],
                   "journal": txn.journal.ref})
     return txn, None
 
@@ -294,6 +793,8 @@ def void_txn(txn, actor, reason):
     reason = (reason or "").strip()
     if not reason:
         return "Say why it is being voided."
+    if (msg := _settled_block(txn, "voided")):
+        return msg
     with transaction.atomic():
         if txn.journal_id:
             _, msg = ledger.reverse(txn.journal, actor, on=txn.journal.date,
@@ -489,7 +990,9 @@ def balance_sheet(as_of=None):
 
 def txn_filter(qs, params):
     if params.get("type"):
-        qs = qs.filter(type=params["type"])
+        qs = qs.filter(type__in=[t for t in params["type"].split(",") if t])
+    if params.get("party"):
+        qs = qs.filter(party_ref_id=params["party"])
     if params.get("account"):
         qs = qs.filter(Q(account_id=params["account"])
                        | Q(to_account_id=params["account"]))

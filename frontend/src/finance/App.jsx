@@ -17,6 +17,7 @@ import PaymentVouchersPage from "../PaymentVouchersPage.jsx";
 import ReceivablesPage from "../ReceivablesPage.jsx";
 import AccountsPage from "./AccountsPage.jsx";
 import BankingPage from "./BankingPage.jsx";
+import { AgingPage, DocsPage, PartiesPage } from "./CreditPage.jsx";
 import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
@@ -32,12 +33,22 @@ const BOOK_ROLES = [...BOOKS];
 const SECTIONS = [
   ["overview", "Overview", [["home", "Overview", [...READERS]]]],
   ["banking", "Banking", [["banking", "Banking", BOOK_ROLES]]],
-  ["payments", "Payments", [
+  // the books' own purchases and sales on credit, QuickBooks-style
+  ["purchases", "Purchases", [
+    ["bills", "Bills", BOOK_ROLES],
+    ["suppliers", "Suppliers", BOOK_ROLES],
+    ["ap-aging", "What we owe", BOOK_ROLES]]],
+  ["sales", "Sales", [
+    ["invoices", "Invoices", BOOK_ROLES],
+    ["customers", "Customers", BOOK_ROLES],
+    ["ar-aging", "What we are owed", BOOK_ROLES]]],
+  // what Projects and Trading feed in: requisitions to pay, claims to collect
+  ["operations", "Operations", [
     ["dashboard", "Dashboard", PAYERS],
     ["vouchers", "Payment vouchers", PAYERS],
     ["payables", "Payables", PAYERS],
-    ["import-payments", "International payables", PAYERS]]],
-  ["receivables", "Receivables", [["receivables", "Receivables", RECEIVABLE]]],
+    ["import-payments", "International payables", PAYERS],
+    ["receivables", "Receivables", RECEIVABLE]]],
   ["books", "Books", [
     ["accounts", "Chart of accounts", BOOK_ROLES],
     ["journals", "Journal entries", BOOK_ROLES]]],
@@ -155,6 +166,8 @@ function Home({ me, go, can, settings }) {
         {can("payables") && <button className="t-tile" onClick={() => go("payables")}><span className="t-tile-l">Payables</span><span className="t-tile-s">what we owe and when</span></button>}
         {can("receivables") && <button className="t-tile" onClick={() => go("receivables")}><span className="t-tile-l">Receivables</span><span className="t-tile-s">invoices, aging, statements</span></button>}
         {can("banking") && <button className="t-tile" onClick={() => go("banking")}><span className="t-tile-l">Banking</span><span className="t-tile-s">expenses, deposits, transfers</span></button>}
+        {can("bills") && <button className="t-tile" onClick={() => go("bills")}><span className="t-tile-l">Bills</span><span className="t-tile-s">enter, pay, what we owe</span></button>}
+        {can("invoices") && <button className="t-tile" onClick={() => go("invoices")}><span className="t-tile-l">Invoices</span><span className="t-tile-s">enter, receive, what we are owed</span></button>}
         {can("pnl") && <button className="t-tile" onClick={() => go("pnl")}><span className="t-tile-l">Profit and loss</span><span className="t-tile-s">and the balance sheet</span></button>}
       </div>
       {seesBooks && settings && (
@@ -242,6 +255,7 @@ export default function App() {
   const page = can(route.page) ? route.page : "home";
   const { sub } = route;
   const active = sections.find(([, , pages]) => pages.some(([k]) => k === page)) || sections[0];
+  const canWrite = ["FINANCE", "ADMIN"].includes(me.role);
   // A document opens where it lives — in Projects, in its own tab.
   const openDoc = (ref) => window.open(`${planetUrl}#/open/${encodeURIComponent(ref)}`, "_blank", "noopener");
 
@@ -284,8 +298,13 @@ export default function App() {
         {page === "payables" && <PayablesPage me={me} onOpenDoc={openDoc} />}
         {page === "import-payments" && <ImportPaymentsDue onOpenIpr={openDoc} />}
         {page === "receivables" && <ReceivablesPage me={me} />}
-        {page === "banking" && <BankingPage sub={sub} go={go} settings={settings}
-                                             canEdit={["FINANCE", "ADMIN"].includes(me.role)} key={sub || "home"} />}
+        {page === "banking" && <BankingPage sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "home"} />}
+        {page === "bills" && <DocsPage side="AP" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
+        {page === "suppliers" && <PartiesPage side="AP" sub={sub} go={go} canEdit={canWrite} />}
+        {page === "ap-aging" && <AgingPage side="AP" go={go} />}
+        {page === "invoices" && <DocsPage side="AR" sub={sub} go={go} settings={settings} canEdit={canWrite} key={sub || "list"} />}
+        {page === "customers" && <PartiesPage side="AR" sub={sub} go={go} canEdit={canWrite} />}
+        {page === "ar-aging" && <AgingPage side="AR" go={go} />}
         {page === "pnl" && <ProfitLossPage go={go} settings={settings} />}
         {page === "bs" && <BalanceSheetPage go={go} />}
         {page === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}

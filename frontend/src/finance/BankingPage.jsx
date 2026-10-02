@@ -2,37 +2,21 @@
 // and the three forms that move money — Expense, Deposit, Transfer. Each form
 // posts its own balanced entry; nobody types debits and credits here
 // (FINANCE_BUILD_BRIEF.md, stage 2).
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, apiDownload, apiUpload } from "../api.js";
 import { Btn, Chip, card, ghostButton, inputStyle } from "../ui.jsx";
 import { amt, fmtDate, money, today, tree } from "./shared.jsx";
+import { LinesTable, MONEY, VoidBar, blank, field, lab, lineSums, linesFromTxn, linesPayload, num, useBooks } from "./forms.jsx";
 
-const num = (v) => Number(String(v ?? "").replace(/,/g, "")) || 0;
-const r2 = (v) => Math.round(v * 100) / 100;
-const MONEY = ["BANK", "CREDIT_CARD"];
 const TITLE = { EXPENSE: "Expense", DEPOSIT: "Deposit", TRANSFER: "Transfer" };
-const blank = () => ({ account: "", text: "", description: "", amount: "", gst_treatment: "NONE", gst: "", site: "" });
-const field = { display: "flex", flexDirection: "column", gap: 4, fontSize: 13 };
-const lab = (t) => <span style={{ fontWeight: 600, opacity: .8 }}>{t}</span>;
-
-function useBooks() {
-  const [accounts, setAccounts] = useState([]);
-  const [meta, setMeta] = useState(null);
-  const [sites, setSites] = useState([]);
-  const [fx, setFx] = useState("");
-  useEffect(() => {
-    api("/ledger/accounts").then((d) => setAccounts(tree(d.accounts).filter((a) => !a.is_group && a.is_active)));
-    api("/ledger/meta").then(setMeta).catch(() => {});
-    api("/sites").then((s) => setSites(Array.isArray(s) ? s : s.results || [])).catch(() => {});
-    api("/fx/usd-rate").then((r) => setFx(String(r.rate))).catch(() => {});
-  }, []);
-  return { accounts, meta, sites, fx, banks: accounts.filter((a) => MONEY.includes(a.type)) };
-}
+// payments made and received live with their bills and invoices
+const ELSEWHERE = { BILL_PAY: "bills", RECEIPT: "invoices" };
 
 // ---- Expense / Deposit ------------------------------------------------------------
 
 function MoneyForm({ type, id, presetAccount, go }) {
-  const { accounts, meta, sites, fx, banks } = useBooks();
+  const books = useBooks();
+  const { meta, fx, banks, pick } = books;
   const expense = type === "EXPENSE";
   const [h, setH] = useState({ date: today(), account: presetAccount || "", party: "", party_tin: "", reference: "",
                                memo: "", fx_rate: "", tax_invoice_no: "", tax_invoice_date: "", tax_invoice_held: false });
@@ -40,12 +24,8 @@ function MoneyForm({ type, id, presetAccount, go }) {
   const [inclusive, setInclusive] = useState(false);
   const [file, setFile] = useState(null);
   const [existing, setExisting] = useState(null);
-  const [voiding, setVoiding] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
-  const rate = num(meta?.gst_rate);
-  const pick = useMemo(() => accounts.filter((a) => !MONEY.includes(a.type) && !a.currency), [accounts]);
-  const byLabel = useMemo(() => Object.fromEntries(pick.map((a) => [`${a.code} ${a.name}`, a])), [pick]);
   const bank = banks.find((b) => String(b.id) === String(h.account));
   const ccy = bank?.currency || "MVR";
 
@@ -58,32 +38,16 @@ function MoneyForm({ type, id, presetAccount, go }) {
       setH({ date: t.date, account: String(t.account), party: t.party, party_tin: t.party_tin, reference: t.reference,
              memo: t.memo, fx_rate: t.fx_rate || "", tax_invoice_no: t.tax_invoice_no,
              tax_invoice_date: t.tax_invoice_date || "", tax_invoice_held: t.tax_invoice_held });
-      setLines(t.lines.map((l) => ({ account: l.account, text: `${l.account_code} ${l.account_name}`, description: l.description,
-        amount: String(l.amount), gst_treatment: l.gst_treatment, gst: Number(l.gst_amount) ? String(l.gst_amount) : "", site: l.site || "" })));
+      setLines(linesFromTxn(t));
     }).catch((e) => setError(e.message));
   }, [id, pick.length]);
 
-  const setLine = (i, patch) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
-  // What a line comes to: the amount before GST and the GST. Typed
-  // inclusive, the GST is taken out of the figure; exclusive, it is added,
-  // and can be corrected to the invoice's own figure.
-  const calc = (l) => {
-    const v = num(l.amount);
-    if (l.gst_treatment !== "STANDARD") return { net: v, gst: 0 };
-    if (inclusive) { const net = r2(v / (1 + rate / 100)); return { net, gst: r2(v - net) }; }
-    return { net: v, gst: l.gst !== "" ? num(l.gst) : r2(v * rate / 100) };
-  };
-  const sums = lines.map(calc);
-  const net = r2(sums.reduce((s, x) => s + x.net, 0));
-  const gst = r2(sums.reduce((s, x) => s + x.gst, 0));
-  const total = r2(net + gst);
+  const { sums, gst, total } = lineSums(lines, num(meta?.gst_rate), inclusive);
 
   async function save() {
     setBusy(true); setError(null);
     const payload = { type, ...h, account: Number(h.account), fx_rate: bank?.currency ? h.fx_rate : null,
-      lines: lines.map((l, i) => ({ account: l.account || null, description: l.description, amount: sums[i].net,
-        gst_treatment: l.gst_treatment, gst_amount: l.gst_treatment === "STANDARD" ? sums[i].gst : 0,
-        site: l.site ? Number(l.site) : null })).filter((l) => l.account || l.amount) };
+      lines: linesPayload(lines, sums) };
     try {
       const path = existing ? `/ledger/txns/${existing.id}` : "/ledger/txns";
       const method = existing ? "PATCH" : "POST";
@@ -94,11 +58,6 @@ function MoneyForm({ type, id, presetAccount, go }) {
       } else saved = await api(path, { method, body: payload });
       go("banking", `reg-${saved.account}`);
     } catch (e) { setError(e.message); } finally { setBusy(false); }
-  }
-  async function doVoid() {
-    if (!voiding.reason.trim()) { setError("Say why it is being voided."); return; }
-    try { await api(`/ledger/txns/${existing.id}/void`, { method: "POST", body: voiding }); go("banking", `reg-${existing.account}`); }
-    catch (e) { setError(e.message); }
   }
 
   const isVoid = existing?.status === "VOID";
@@ -135,54 +94,9 @@ function MoneyForm({ type, id, presetAccount, go }) {
         </div>
       </div>
 
-      <div style={{ ...card, padding: 10, overflowX: "auto" }}>
-        <div className="f-bar" style={{ margin: "2px 6px 8px", fontSize: 13 }}>
-          <span>Amounts in <b>{ccy}</b> are</span>
-          <label><input type="radio" checked={!inclusive} onChange={() => setInclusive(false)} /> before GST</label>
-          <label><input type="radio" checked={inclusive} onChange={() => setInclusive(true)} /> including GST</label>
-          <span style={{ color: "var(--muted)" }}>GST rate {rate}%</span>
-        </div>
-        <datalist id="f-lineacc">{pick.map((a) => <option key={a.id} value={`${a.code} ${a.name}`} />)}</datalist>
-        <table className="f-table f-lines" style={{ minWidth: 940 }}>
-          <thead><tr>
-            <th style={{ width: "26%" }}>{expense ? "What for (account)" : "From (account)"}</th><th>Description</th>
-            <th style={{ width: 130, textAlign: "right" }}>Amount</th><th style={{ width: 150 }}>GST</th>
-            <th style={{ width: 110, textAlign: "right" }}>GST amount</th><th style={{ width: 100 }}>Site</th><th style={{ width: 26 }} />
-          </tr></thead>
-          <tbody>
-            {lines.map((l, i) => (
-              <tr key={i}>
-                <td><input list="f-lineacc" value={l.text} placeholder="Code or name…"
-                           style={l.text && !l.account ? { borderColor: "var(--red-fg, #b3261e)" } : undefined}
-                           onChange={(e) => setLine(i, { text: e.target.value, account: byLabel[e.target.value]?.id || "" })} /></td>
-                <td><input value={l.description} onChange={(e) => setLine(i, { description: e.target.value })} /></td>
-                <td><input className="f-amt" value={l.amount} onChange={(e) => setLine(i, { amount: e.target.value, gst: "" })} /></td>
-                <td><select value={l.gst_treatment} onChange={(e) => setLine(i, { gst_treatment: e.target.value, gst: "" })}>
-                  {(meta?.gst_treatments || []).map((g) => <option key={g.value} value={g.value}>{g.value === "STANDARD" ? `${g.label} ${rate}%` : g.label}</option>)}
-                </select></td>
-                <td>{l.gst_treatment === "STANDARD"
-                  ? <input className="f-amt" disabled={inclusive} value={inclusive || l.gst === "" ? (sums[i].gst ? sums[i].gst.toFixed(2) : "") : l.gst}
-                           onChange={(e) => setLine(i, { gst: e.target.value })} />
-                  : null}</td>
-                <td><select value={l.site} onChange={(e) => setLine(i, { site: e.target.value })}>
-                  <option value="">—</option>{sites.map((s) => <option key={s.id} value={s.id}>{s.code}</option>)}</select></td>
-                <td><button className="f-link" style={{ textDecoration: "none", color: "var(--muted)" }} title="Remove line"
-                            onClick={() => setLines((ls) => (ls.length > 1 ? ls.filter((_, j) => j !== i) : ls))}>✕</button></td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr><td colSpan={2} style={{ paddingTop: 10 }}>
-              <button style={{ ...ghostButton, padding: "4px 12px", fontSize: 13 }} onClick={() => setLines((ls) => [...ls, blank()])}>+ Add line</button></td>
-              <td className="f-num" style={{ paddingTop: 10 }}>{money(net)}</td><td style={{ paddingTop: 10 }}>before GST</td><td colSpan={3} /></tr>
-            <tr><td colSpan={2} /><td className="f-num">{money(gst)}</td><td>GST</td><td colSpan={3} /></tr>
-            <tr><td colSpan={2} /><td className="f-num" style={{ fontWeight: 800, fontSize: 15 }}>{ccy} {money(total)}</td>
-              <td style={{ fontWeight: 700 }}>{expense ? "paid" : "deposited"}
-                {bank?.currency && num(h.fx_rate) ? <span style={{ fontWeight: 400, color: "var(--muted)" }}> = MVR {money(total * num(h.fx_rate))}</span> : null}</td>
-              <td colSpan={3} /></tr>
-          </tfoot>
-        </table>
-      </div>
+      <LinesTable books={books} lines={lines} setLines={setLines} inclusive={inclusive} setInclusive={setInclusive}
+                  ccy={ccy} heading={expense ? "What for (account)" : "From (account)"} word={expense ? "paid" : "deposited"}
+                  mvrRate={bank?.currency ? num(h.fx_rate) : 0} />
 
       {expense && (
         <div style={{ ...card, marginTop: 12, background: hasGst && !h.tax_invoice_held ? "var(--amber-bg, #fff4de)" : undefined }}>
@@ -222,14 +136,7 @@ function MoneyForm({ type, id, presetAccount, go }) {
       {!isVoid && (
         <div className="f-bar" style={{ marginTop: 12 }}>
           <Btn disabled={busy || !h.account || total <= 0} onClick={save}>{busy ? "Saving…" : existing ? "Save changes" : `Save ${TITLE[type].toLowerCase()}`}</Btn>
-          {existing && (voiding === null
-            ? <Btn variant="secondary" onClick={() => setVoiding({ reason: "" })}>Void…</Btn>
-            : <>
-              <input style={{ ...inputStyle, width: 280 }} placeholder="Why is it being voided?" value={voiding.reason}
-                     onChange={(e) => setVoiding({ reason: e.target.value })} />
-              <Btn variant="secondary" onClick={doVoid}>Void it</Btn>
-              <button className="f-link" onClick={() => setVoiding(null)}>cancel</button>
-            </>)}
+          {existing && <VoidBar txnId={existing.id} onError={setError} onDone={() => go("banking", `reg-${existing.account}`)} />}
           {existing && <span style={{ fontSize: 12.5, color: "var(--muted)" }}>
             Saving a change reverses the old entry and posts a new one — the history stays in the journals.</span>}
         </div>
@@ -245,7 +152,6 @@ function TransferForm({ id, presetAccount, go }) {
   const [h, setH] = useState({ date: today(), account: presetAccount || "", to_account: "", amount: "", amount_to: "",
                                fx_rate: "", reference: "", memo: "" });
   const [existing, setExisting] = useState(null);
-  const [voiding, setVoiding] = useState(null);
   const [error, setError] = useState(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -275,11 +181,6 @@ function TransferForm({ id, presetAccount, go }) {
                              : await api("/ledger/txns", { method: "POST", body });
       go("banking", `reg-${saved.account}`);
     } catch (e) { setError(e.message); } finally { setBusy(false); }
-  }
-  async function doVoid() {
-    if (!voiding.reason.trim()) { setError("Say why it is being voided."); return; }
-    try { await api(`/ledger/txns/${existing.id}/void`, { method: "POST", body: voiding }); go("banking", `reg-${existing.account}`); }
-    catch (e) { setError(e.message); }
   }
   const isVoid = existing?.status === "VOID";
   const opt = (b) => <option key={b.id} value={b.id}>{b.name}{b.currency ? ` (${b.currency})` : ""}</option>;
@@ -324,14 +225,7 @@ function TransferForm({ id, presetAccount, go }) {
       {!isVoid && (
         <div className="f-bar" style={{ marginTop: 12 }}>
           <Btn disabled={busy || !h.account || !h.to_account || !num(h.amount)} onClick={save}>{busy ? "Saving…" : existing ? "Save changes" : "Save transfer"}</Btn>
-          {existing && (voiding === null
-            ? <Btn variant="secondary" onClick={() => setVoiding({ reason: "" })}>Void…</Btn>
-            : <>
-              <input style={{ ...inputStyle, width: 260 }} placeholder="Why is it being voided?" value={voiding.reason}
-                     onChange={(e) => setVoiding({ reason: e.target.value })} />
-              <Btn variant="secondary" onClick={doVoid}>Void it</Btn>
-              <button className="f-link" onClick={() => setVoiding(null)}>cancel</button>
-            </>)}
+          {existing && <VoidBar txnId={existing.id} onError={setError} onDone={() => go("banking", `reg-${existing.account}`)} />}
         </div>
       )}
     </div>
@@ -351,7 +245,8 @@ function Register({ accountId, go, settings, canEdit }) {
     setReg(null);
     api(`/ledger/accounts/${accountId}/register?from=${from}&to=${to}`).then(setReg).catch((e) => setError(e.message));
   }, [accountId, from, to]);
-  const openRow = (r) => (r.txn ? go("banking", `txn-${r.txn}`) : go("journals", r.entry));
+  const openRow = (r) => (!r.txn ? go("journals", r.entry)
+    : ELSEWHERE[r.txn_type] ? go(ELSEWHERE[r.txn_type], `payment-${r.txn}`) : go("banking", `txn-${r.txn}`));
   const c = reg?.account.currency;
   return (
     <div className="t-page">
@@ -417,7 +312,7 @@ function Home({ go, canEdit }) {
   const [recent, setRecent] = useState(null);
   const load = useCallback(() => {
     api("/ledger/accounts").then((d) => setAccounts(tree(d.accounts).filter((a) => !a.is_group && MONEY.includes(a.type) && a.is_active)));
-    api("/ledger/txns?limit=15").then(setRecent).catch(() => {});
+    api("/ledger/txns?limit=15&type=EXPENSE,DEPOSIT,TRANSFER,BILL_PAY,RECEIPT").then(setRecent).catch(() => {});
   }, []);
   useEffect(() => { load(); }, [load]);
   if (!accounts) return <div style={card}>Loading…</div>;
@@ -455,7 +350,8 @@ function Home({ go, canEdit }) {
             <thead><tr><th>Date</th><th>Number</th><th>Type</th><th>Account</th><th>Payee / to</th><th>Memo</th>
               <th style={{ textAlign: "right" }}>Amount</th></tr></thead>
             <tbody>{recent.txns.map((t) => (
-              <tr key={t.id} className="f-click" onClick={() => go("banking", `txn-${t.id}`)}>
+              <tr key={t.id} className="f-click"
+                  onClick={() => (ELSEWHERE[t.type] ? go(ELSEWHERE[t.type], `payment-${t.id}`) : go("banking", `txn-${t.id}`))}>
                 <td style={{ whiteSpace: "nowrap" }}>{fmtDate(t.date)}</td>
                 <td style={{ fontFamily: "var(--font-mono)" }}>{t.number}</td><td>{t.type_label}</td>
                 <td>{t.account_name}</td><td>{t.party || t.to_account_name}</td><td>{t.memo}</td>
@@ -487,6 +383,7 @@ export default function BankingPage({ sub, go, settings, canEdit }) {
   if (m) {
     if (!txn) return <div style={card}>Loading…</div>;
     if (txn.missing) return <div style={card}>That transaction can't be found.</div>;
+    if (!TITLE[txn.type]) return <div style={card}>{txn.number} is kept under {txn.type === "BILL" || txn.type === "BILL_PAY" ? "Purchases" : "Sales"}.</div>;
     return txn.type === "TRANSFER" ? <TransferForm id={txn.id} go={go} /> : <MoneyForm type={txn.type} id={txn.id} go={go} />;
   }
   return <Home go={go} canEdit={canEdit} />;

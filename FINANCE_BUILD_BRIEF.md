@@ -220,5 +220,34 @@ the register, Profit & Loss and Balance Sheet), `views_ledger.py` (API,
   form posts its own journal; a change reverses that journal on its own date
   and posts a new one; a void reverses it. The register shows a changed or
   voided transaction once, as the bank statement does.
-- Next, in the order agreed: Bills and Pay bills; Invoices and Receive
-  payment; reconcile; customers and suppliers; Excel import.
+- Stage 2, second part — **Bills** and **Pay bills**, **Sales invoices** and
+  **Receive payment** (`BILL-`/`BPAY-`/`SALE-`/`RCPT-NNN`), **Suppliers** and
+  **Customers** (`LedgerParty`, added the first time a form names them and
+  tied to Purchasing's supplier or Trading's customer of the same name),
+  each party's account, and **aging** by due date that states whether it
+  agrees with the payable / receivable accounts.
+  - A bill or invoice is refused if that party's same number is already in.
+  - A payment settles one party's documents in one currency. Each document
+    leaves the books at the rufiyaa value it went in at; a different rate on
+    the day is an exchange gain or loss (8020 / 9010).
+  - A document with a payment against it is fixed until the payment is
+    voided. A payment is voided, not edited.
+  - **Opening items**: a bill or invoice still unpaid on 31 Dec 2025 is
+    entered dated before the books start and posts nothing — its amount is
+    already in the opening balances — so the 2026 payment has something to
+    be set against. Aging agrees with the books once the opening
+    receivables are listed this way.
+  - The sales invoice here is a *record* of an invoice issued (its number as
+    issued); the tax invoice itself is still raised in Projects / Trading.
+- Next, in the order agreed: reconcile against the bank statement; Excel
+  import; the GST return figures and the input / output tax statements.
+- Not yet: supplier and customer credit notes; a payment on account
+  (unapplied); writing off a small balance; withholding tax on a payment.
+
+## To settle before automatic posting (stage 3)
+PLANET holds purchases, payments, payroll and claims from July 2026. If the
+staff key July-onwards bills and invoices by hand and the rules then replay
+that history, each would be in the books twice. Hand entry should cover
+January–June 2026, and from July only what PLANET does not hold (rent,
+utilities, bank charges, anything outside procurement); the consultant to
+confirm the cut-over date.

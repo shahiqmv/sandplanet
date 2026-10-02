@@ -378,7 +378,24 @@ def _txn(t, lines=True):
         "journal": t.journal_id, "journal_ref": t.journal.ref if t.journal_id else "",
         "void_reason": t.void_reason,
         "created_by": t.created_by.full_name if t.created_by_id else "",
+        "party_ref": t.party_ref_id, "due_date": t.due_date,
+        "is_opening": t.is_opening,
     }
+    if t.type in ("BILL", "INVOICE"):
+        paid = getattr(t, "paid", 0) if t.status == "POSTED" else 0
+        out["paid"], out["balance"] = paid, t.amount - paid
+        if lines:
+            out["payments"] = [{
+                "id": a.payment_id, "number": a.payment.number,
+                "date": a.payment.date, "amount": a.amount,
+            } for a in t.applied.filter(payment__status="POSTED")
+                .select_related("payment")]
+    elif t.type in ("BILL_PAY", "RECEIPT") and lines:
+        out["applies"] = [{
+            "doc": a.doc_id, "number": a.doc.number,
+            "reference": a.doc.reference, "date": a.doc.date,
+            "currency": a.doc.currency, "amount": a.amount,
+        } for a in t.applies.select_related("doc")]
     if lines:
         out["lines"] = [{
             "id": ln.id, "account": ln.account_id,
@@ -393,9 +410,11 @@ def _txn(t, lines=True):
 
 
 def _txn_qs():
+    from . import books
     from .models import LedgerTxn
-    return LedgerTxn.objects.select_related("account", "to_account", "journal",
-                                            "created_by")
+    return (LedgerTxn.objects.select_related("account", "to_account",
+                                             "journal", "created_by")
+            .annotate(**books._paid()))
 
 
 def _txn_data(request):
@@ -436,6 +455,11 @@ def txns(request):
     qs = books.txn_filter(_txn_qs(), request.GET)
     if request.GET.get("status") != "all":
         qs = qs.exclude(status="VOID")
+    if request.GET.get("open"):
+        # bills / invoices not yet settled in full, the oldest due first
+        from django.db.models import F
+        qs = (qs.filter(type__in=books.DOC_TYPES, status="POSTED",
+                        paid__lt=F("amount")).order_by("due_date", "id"))
     try:
         limit = min(int(request.GET.get("limit", 100)), 300)
     except ValueError:
@@ -479,6 +503,84 @@ def txn_void(request, pk):
     if msg:
         return Response({"detail": msg}, status=400)
     return Response(_txn(_txn_qs().get(pk=pk)))
+
+
+@api_view(["GET", "POST"])
+def parties(request):
+    """Suppliers or customers, each with what is open between us."""
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    if request.method == "POST":
+        if (bad := _write(request)):
+            return bad
+        p, msg = books.save_party(request.data, request.user)
+        if msg:
+            return Response({"detail": msg}, status=400)
+        return Response(books.party_dict(p), status=201)
+    kind = request.GET.get("kind")
+    if kind not in ("SUPPLIER", "CUSTOMER"):
+        return Response({"detail": "kind is SUPPLIER or CUSTOMER."}, status=400)
+    return Response({"parties": books.parties(kind),
+                     "can_edit": request.user.role in ledger.WRITE_ROLES})
+
+
+@api_view(["GET", "PATCH"])
+def party_detail(request, pk):
+    from . import books
+    from .models import LedgerParty
+    if (bad := _read(request)):
+        return bad
+    p = LedgerParty.objects.filter(pk=pk).first()
+    if p is None:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "PATCH":
+        if (bad := _write(request)):
+            return bad
+        p, msg = books.save_party(request.data, request.user, party=p)
+        if msg:
+            return Response({"detail": msg}, status=400)
+    st = books.party_statement(p)
+    if request.GET.get("export") == "xlsx":
+        return _xlsx(
+            p.name, f"{p.get_kind_display()} account · MVR",
+            ["Date", "Number", "Type", "Their number", "Due", "Currency",
+             "Amount", "Change (MVR)", "Balance (MVR)"],
+            [[r["date"], r["number"], r["type_label"], r["reference"],
+              r["due_date"], r["currency"], r["amount"], r["change"],
+              r["balance"]] for r in st["rows"]],
+            ["", "", "Balance", "", "", "", "", "", st["balance"]],
+            [12, 11, 18, 20, 12, 9, 15, 15, 16],
+            f"account-{p.id}")
+    st["can_edit"] = request.user.role in ledger.WRITE_ROLES
+    return Response(st)
+
+
+@api_view(["GET"])
+def report_aging(request):
+    """What we owe suppliers (kind=SUPPLIER) or are owed by customers
+    (kind=CUSTOMER), aged by due date, against the control accounts."""
+    from . import books
+    if (bad := _read(request)):
+        return bad
+    kind = request.GET.get("kind")
+    if kind not in ("SUPPLIER", "CUSTOMER"):
+        return Response({"detail": "kind is SUPPLIER or CUSTOMER."}, status=400)
+    r = books.aging(kind, ledger._as_date(request.GET.get("as_of")))
+    if request.GET.get("export") == "xlsx":
+        cols = ("current", "d30", "d60", "d90", "older", "total")
+        return _xlsx(
+            "Payables aging" if kind == "SUPPLIER" else "Receivables aging",
+            f"As at {r['as_of']:%d %b %Y} · MVR · by due date",
+            ["Supplier" if kind == "SUPPLIER" else "Customer", "Not yet due",
+             "1–30 days", "31–60 days", "61–90 days", "Over 90 days", "Total"],
+            [[row["name"]] + [row[c] or None for c in cols]
+             for row in r["rows"]],
+            ["Total"] + [r["total"][c] for c in cols],
+            [40, 15, 15, 15, 15, 15, 16],
+            f"{'payables' if kind == 'SUPPLIER' else 'receivables'}-aging-"
+            f"{r['as_of']}")
+    return Response(r)
 
 
 @api_view(["GET"])

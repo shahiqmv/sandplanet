@@ -8860,12 +8860,21 @@ class LedgerTxn(models.Model):
         EXPENSE = "EXPENSE", "Expense"
         DEPOSIT = "DEPOSIT", "Deposit"
         TRANSFER = "TRANSFER", "Transfer"
+        # bought or sold on credit, and settling it later
+        BILL = "BILL", "Bill"
+        BILL_PAY = "BILL_PAY", "Bill payment"
+        INVOICE = "INVOICE", "Sales invoice"
+        RECEIPT = "RECEIPT", "Payment received"
 
     class Status(models.TextChoices):
         POSTED = "POSTED", "Posted"
         VOID = "VOID", "Void"
 
-    PREFIX = {"EXPENSE": "EXP", "DEPOSIT": "DEP", "TRANSFER": "TRF"}
+    # SALE, not INV: the tax invoice keeps its own INV-YYYY-NNNN number, which
+    # is entered on the form as issued.
+    PREFIX = {"EXPENSE": "EXP", "DEPOSIT": "DEP", "TRANSFER": "TRF",
+              "BILL": "BILL", "BILL_PAY": "BPAY", "INVOICE": "SALE",
+              "RECEIPT": "RCPT"}
 
     number = models.CharField(max_length=20, unique=True)
     type = models.CharField(max_length=10, choices=Type.choices)
@@ -8879,6 +8888,16 @@ class LedgerTxn(models.Model):
                                    null=True, blank=True, related_name="+")
     party = models.CharField(max_length=160, blank=True)   # payee / received from
     party_tin = models.CharField(max_length=40, blank=True)
+    # A bill, an invoice and their payments belong to a supplier or customer
+    # in the books, so what is owed can be told per party. (An expense or a
+    # deposit just names who.)
+    party_ref = models.ForeignKey("LedgerParty", on_delete=models.PROTECT,
+                                  null=True, blank=True, related_name="txns")
+    due_date = models.DateField(null=True, blank=True)
+    # A bill or invoice still unpaid when the books opened. Its amount is
+    # already inside the opening balances, so it posts no entry of its own —
+    # it is here so the payment has something to be set against.
+    is_opening = models.BooleanField(default=False)
     reference = models.CharField(max_length=80, blank=True)  # cheque / transfer / slip
     memo = models.TextField(blank=True)
     currency = models.CharField(max_length=3, default="MVR")
@@ -8909,10 +8928,63 @@ class LedgerTxn(models.Model):
     class Meta:
         ordering = ["-date", "-id"]
         indexes = [models.Index(fields=["type", "date"]),
-                   models.Index(fields=["account", "date"])]
+                   models.Index(fields=["account", "date"]),
+                   models.Index(fields=["party_ref", "type"])]
 
     def __str__(self):
         return self.number
+
+
+class LedgerParty(models.Model):
+    """A supplier or a customer as the books know them — QuickBooks' vendor
+    and customer lists. Kept apart from Purchasing's supplier database and
+    Trading's customers because the books also deal with people neither
+    knows (the landlord, the auditor, a client from before PLANET); linked
+    to those records where they are the same party, so operations can post
+    to the right one."""
+
+    class Kind(models.TextChoices):
+        SUPPLIER = "SUPPLIER", "Supplier"
+        CUSTOMER = "CUSTOMER", "Customer"
+
+    kind = models.CharField(max_length=8, choices=Kind.choices)
+    name = models.CharField(max_length=160)
+    tin = models.CharField(max_length=40, blank=True)
+    address = models.TextField(blank=True)
+    contact = models.CharField(max_length=200, blank=True)
+    credit_days = models.PositiveIntegerField(null=True, blank=True)
+    currency = models.CharField(max_length=3, blank=True)   # blank = rufiyaa
+    supplier = models.ForeignKey(Supplier, on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+    customer = models.ForeignKey(Customer, on_delete=models.SET_NULL,
+                                 null=True, blank=True, related_name="+")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+        constraints = [models.UniqueConstraint(
+            fields=["kind", "name"], name="ledger_party_kind_name")]
+
+    def __str__(self):
+        return self.name
+
+
+class LedgerTxnApply(models.Model):
+    """How much of a payment settles which bill or invoice. `amount` is in
+    the bill's own currency; `amount_mvr` is what that part of the bill
+    stands at in the books, so the payable or receivable clears exactly and
+    any difference from the money actually paid is an exchange difference."""
+
+    payment = models.ForeignKey(LedgerTxn, on_delete=models.CASCADE,
+                                related_name="applies")
+    doc = models.ForeignKey(LedgerTxn, on_delete=models.PROTECT,
+                            related_name="applied")
+    amount = models.DecimalField(max_digits=16, decimal_places=2)
+    amount_mvr = models.DecimalField(max_digits=16, decimal_places=2)
+
+    class Meta:
+        ordering = ["payment_id", "id"]
 
 
 class LedgerTxnLine(models.Model):
