@@ -8924,6 +8924,10 @@ class LedgerTxn(models.Model):
     journal = models.ForeignKey(JournalEntry, on_delete=models.PROTECT,
                                 null=True, blank=True, related_name="+")
     void_reason = models.CharField(max_length=300, blank=True)
+    # brought in from a spreadsheet, and which one
+    import_batch = models.ForeignKey("LedgerImport", on_delete=models.SET_NULL,
+                                     null=True, blank=True,
+                                     related_name="txns")
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
                                    blank=True, related_name="+")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -9084,3 +9088,29 @@ class BankStatementLine(models.Model):
 
     class Meta:
         ordering = ["reconciliation_id", "line_no"]
+
+
+def ledger_import_path(instance, filename):
+    import uuid
+    ext = ("." + filename.rsplit(".", 1)[1].lower()[:6]) if "." in filename else ""
+    return f"books/imports/{uuid.uuid4().hex[:14]}{ext}"
+
+
+class LedgerImport(models.Model):
+    """A spreadsheet of transactions brought into the books in one go — how
+    the months before PLANET held the operations are caught up. The file is
+    kept; the same file is not taken twice; the whole batch can be undone
+    (each of its transactions voided) while none has been built on."""
+
+    file = models.FileField(upload_to=ledger_import_path)
+    filename = models.CharField(max_length=200)
+    sha256 = models.CharField(max_length=64, db_index=True)
+    count = models.PositiveIntegerField(default=0)
+    total_mvr = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    undone = models.BooleanField(default=False)
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, null=True,
+                                   blank=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-id"]

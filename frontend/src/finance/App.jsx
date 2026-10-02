@@ -19,6 +19,7 @@ import AccountsPage from "./AccountsPage.jsx";
 import BankingPage from "./BankingPage.jsx";
 import { AgingPage, DocsPage, PartiesPage } from "./CreditPage.jsx";
 import { BalanceSheetPage, ProfitLossPage } from "./StatementsPage.jsx";
+import ImportPage from "./ImportPage.jsx";
 import JournalsPage from "./JournalsPage.jsx";
 import ReconcilePage from "./ReconcilePage.jsx";
 import { LedgerPage, TrialBalancePage } from "./ReportsPages.jsx";
@@ -54,7 +55,8 @@ const SECTIONS = [
     ["receivables", "Receivables", RECEIVABLE]]],
   ["books", "Books", [
     ["accounts", "Chart of accounts", BOOK_ROLES],
-    ["journals", "Journal entries", BOOK_ROLES]]],
+    ["journals", "Journal entries", BOOK_ROLES],
+    ["import", "Import from Excel", BOOK_ROLES]]],
   ["reports", "Reports", [
     ["pnl", "Profit and loss", BOOK_ROLES],
     ["bs", "Balance sheet", BOOK_ROLES],
@@ -313,6 +315,7 @@ export default function App() {
         {page === "bs" && <BalanceSheetPage go={go} />}
         {page === "journals" && <JournalsPage sub={sub} go={go} settings={settings} planetUrl={planetUrl} key={sub || "list"} />}
         {page === "accounts" && <AccountsPage go={go} />}
+        {page === "import" && <ImportPage canEdit={canWrite} />}
         {page === "tb" && <TrialBalancePage go={go} settings={settings} />}
         {page === "ledger" && <LedgerPage accountId={sub ? Number(sub) : null} go={go} settings={settings} />}
         {page === "cost-heads" && <CostHeadsPage me={me} />}

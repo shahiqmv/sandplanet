@@ -209,7 +209,8 @@ journals, foreign-currency revaluation at period end, budgets.
 ## Where things live
 `backend/core/ledger.py` (journal rules), `books.py` (the transaction forms,
 the register, Profit & Loss and Balance Sheet), `reconcile.py` (bank
-reconciliation and reading the bank's file), `views_ledger.py` (API,
+reconciliation and reading the bank's file), `books_import.py` (Excel
+import), `views_ledger.py` (API,
 `/api/v1/ledger/*`, refused where the `books` feature is off); models
 `LedgerAccount`, `JournalEntry`, `JournalLine`, `LedgerTxn`, `LedgerTxnLine`;
 `frontend/f.html`, `frontend/src/finance/`.
@@ -259,8 +260,15 @@ reconciliation and reading the bank's file), `views_ledger.py` (API,
     balance as a line to tick. If the bank's own balance at 31 Dec 2025
     differed (cheques then outstanding), the opening entry needs those as
     separate lines.
-- Next, in the order agreed: Excel import for January–June 2026; the GST
-  return figures and the input / output tax statements.
+- Stage 2, fourth part — **Import from Excel** (`core/books_import.py`): a
+  template (one row per expense, deposit, transfer, bill or invoice; a row
+  with no Type is another line of the one above) with the chart and the
+  sites on their own sheets. Each row goes through its form's rules. The
+  file is checked first — the real import, rolled back — and every problem
+  is listed by row; it then goes in whole or not at all, at most 2,000
+  transactions a file. The same file is not taken twice; a batch can be
+  undone (every transaction voided) unless something has been built on it.
+- Next: the GST return figures and the input / output tax statements.
 - Not yet: supplier and customer credit notes; a payment on account
   (unapplied); writing off a small balance; withholding tax on a payment.
 

@@ -594,6 +594,61 @@ def report_aging(request):
     return Response(r)
 
 
+# ---- import from Excel (core/books_import.py) --------------------------------
+
+@api_view(["GET"])
+def import_template(request):
+    from . import books_import
+    if (bad := _read(request)):
+        return bad
+    buf = BytesIO()
+    books_import.template().save(buf)
+    resp = HttpResponse(buf.getvalue(), content_type=(
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+    resp["Content-Disposition"] = ('attachment; '
+                                   'filename="books-import-template.xlsx"')
+    return resp
+
+
+@api_view(["GET", "POST"])
+@parser_classes([MultiPartParser, FormParser, JSONParser])
+def imports(request):
+    """GET: the files imported so far. POST a file: check it (nothing is
+    saved), or with commit=1 import it — whole, or not at all."""
+    from . import books_import
+    if (bad := _read(request)):
+        return bad
+    if request.method == "GET":
+        return Response({"imports": books_import.history(),
+                         "can_edit": request.user.role in ledger.WRITE_ROLES})
+    if (bad := _write(request)):
+        return bad
+    f = request.FILES.get("file")
+    if f is None:
+        return Response({"detail": "Attach the filled-in template."},
+                        status=400)
+    res, msg = books_import.run(
+        f, request.user, commit=str(request.data.get("commit")) == "1")
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response(res, status=201 if res["imported"] else 200)
+
+
+@api_view(["POST"])
+def import_undo(request, pk):
+    from . import books_import
+    from .models import LedgerImport
+    if (bad := _write(request)):
+        return bad
+    b = LedgerImport.objects.filter(pk=pk).first()
+    if b is None:
+        return Response({"detail": "Not found."}, status=404)
+    msg = books_import.undo(b, request.user, request.data.get("reason"))
+    if msg:
+        return Response({"detail": msg}, status=400)
+    return Response({"imports": books_import.history()})
+
+
 # ---- bank reconciliation (core/reconcile.py) ---------------------------------
 
 def _rec_row(r):
