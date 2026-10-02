@@ -63,7 +63,10 @@ class ImportTests(BooksBase):
         self.assertEqual([x["lines"] for x in r.data["rows"]], [1, 2, 1, 1, 1])
         self.assertEqual((LedgerTxn.objects.count(), AuditLog.objects.count(),
                           LedgerParty.objects.count()), (*before, 0))
-        r = self.post(sheet(GOOD), commit=True)
+        # one file, byte for byte: a workbook built again a second later
+        # carries a different timestamp inside and is a different file
+        raw = sheet(GOOD).read()
+        r = self.post(SimpleUploadedFile("jan.xlsx", raw), commit=True)
         self.assertEqual(r.status_code, 201, r.data)
         self.assertEqual([x["number"] for x in r.data["rows"]],
                          ["EXP-001", "BILL-001", "DEP-001", "TRF-001",
@@ -86,7 +89,8 @@ class ImportTests(BooksBase):
         self.assertEqual((b.count, b.txns.count(), b.filename),
                          (5, 5, "jan.xlsx"))
         # the same file is not taken twice
-        self.assertIn("already imported", self.post(sheet(GOOD)).data["detail"])
+        self.assertIn("already imported", self.post(
+            SimpleUploadedFile("jan-copy.xlsx", raw)).data["detail"])
 
     def test_one_bad_row_and_nothing_goes_in(self):
         rows = [dict(GOOD[0]), dict(GOOD[3], Account="9999 Nowhere"),
